@@ -6,13 +6,15 @@
 //! `caret <id> <start> [<end>]`, `caret-event <id>`, `set-text <id> <text>`,
 //! `notify <text>`,
 //! `active-text-position <id> <start> <end>`, `take-runtime-id <id> <from>`,
-//! `stall <ms>`, `slow <ms>`, and `quit`.
+//! `stall <ms>`, `slow <ms>`, `hold`, `release`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
 //! message. The window thread acknowledges each command on stdout once it
 //! has taken effect: `applied`, or `rejected: <reason>`; `stall` with its
-//! own two lines instead, and `quit` not at all.
+//! own two lines instead, and `quit` not at all. `release` is applied and
+//! acknowledged by the reading thread itself, since the window thread is
+//! the one a `hold` holds.
 
 use std::io::BufRead;
 use std::sync::mpsc::Sender;
@@ -112,6 +114,15 @@ pub(crate) enum Command {
     /// and `EVENT_OBJECT_STATECHANGE` is raised on the client area.
     /// MSAA-only.
     DisableClient,
+    /// `hold`: the next provider call, whichever client makes it, prints
+    /// `held <method>` on stdout as it begins and then waits until
+    /// `release`, so a test knows a call is in progress and decides when it
+    /// finishes. Applied on the window thread, so the calls before it are
+    /// not held.
+    Hold,
+    /// `release`: lets the call `hold` held go on. Applied and acknowledged
+    /// on the stdin thread, since the window thread is the one held.
+    Release,
     /// `quit`.
     Quit,
     /// A line that is no command, rejected on the window thread, so its
@@ -131,6 +142,8 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
     let rest = rest.trim();
     match verb {
         "quit" => Some(Command::Quit),
+        "hold" => Some(Command::Hold),
+        "release" => Some(Command::Release),
         "focus" if !rest.is_empty() => Some(Command::Focus(rest.to_owned())),
         "set-focus" if !rest.is_empty() => Some(Command::SetFocus(rest.to_owned())),
         "select" if !rest.is_empty() => Some(Command::Select(rest.to_owned())),
@@ -232,6 +245,10 @@ pub(crate) fn run(sink: &Sender<Command>, wake: impl Fn()) {
                 let _ = sink.send(Command::Quit);
                 wake();
                 break;
+            }
+            Some(Command::Release) => {
+                crate::hits::release();
+                crate::window::acknowledge("applied");
             }
             Some(command) => {
                 if sink.send(command).is_err() {

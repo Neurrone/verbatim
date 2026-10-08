@@ -45,6 +45,9 @@ pub(crate) struct JobRecord {
     pub(crate) running: HashMap<u32, (Option<OwnedHandle>, String)>,
     /// The processes that have exited, in the order they exited.
     pub(crate) exits: Vec<ProcessExit>,
+    /// Whether Windows has said no process in the job is running any more,
+    /// since the last process joined it.
+    pub(crate) empty: bool,
 }
 
 /// Every launched child's job record, by the child's pid.
@@ -124,6 +127,7 @@ fn watch(port: HANDLE) {
         if let Some(record) = jobs.get_mut(&root) {
             match message {
                 JOB_OBJECT_MSG_NEW_PROCESS => {
+                    record.empty = false;
                     let handle = open(pid);
                     let image = handle
                         .as_ref()
@@ -151,6 +155,7 @@ fn watch(port: HANDLE) {
                     for (pid, entry) in ended {
                         record.exits.push(exit_of(pid, entry, false));
                     }
+                    record.empty = true;
                 }
                 _ => {}
             }
@@ -209,6 +214,41 @@ pub(crate) fn exits(pid: u32) -> io::Result<Vec<ProcessExit>> {
         .get(&pid)
         .map(|record| record.exits.clone())
         .ok_or_else(|| io::Error::other(format!("the agent did not launch process {pid}")))
+}
+
+/// Waits up to `timeout` for Windows to say that no process in the job of
+/// the launched child `pid` is running any more, on the job watcher's
+/// notifications, and returns every exit in the job, in the order the
+/// processes exited.
+///
+/// # Errors
+///
+/// Returns an error when the agent did not launch `pid`, or when processes
+/// are still running in its job once the wait runs out, naming them.
+pub(crate) fn wait_until_empty(
+    pid: u32,
+    timeout: std::time::Duration,
+) -> io::Result<Vec<ProcessExit>> {
+    let jobs = JOBS.lock().unwrap_or_else(PoisonError::into_inner);
+    let (jobs, _) = CHANGED
+        .wait_timeout_while(jobs, timeout, |jobs| {
+            jobs.get(&pid).is_some_and(|record| !record.empty)
+        })
+        .unwrap_or_else(PoisonError::into_inner);
+    let record = jobs
+        .get(&pid)
+        .ok_or_else(|| io::Error::other(format!("the agent did not launch process {pid}")))?;
+    if record.empty {
+        return Ok(record.exits.clone());
+    }
+    let running: Vec<(u32, &str)> = record
+        .running
+        .iter()
+        .map(|(pid, (_, image))| (*pid, image.as_str()))
+        .collect();
+    Err(io::Error::other(format!(
+        "processes in the job of {pid} were still running {timeout:?} later: {running:?}"
+    )))
 }
 
 /// Forgets the job of the launched child `pid`.

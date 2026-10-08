@@ -467,6 +467,12 @@ impl Intake {
         let (key, category, hwnd) = classify(&entry.item);
         let thread = super::window::window_thread(hwnd);
         let mut state = self.lock();
+        if state.closed {
+            // Shutting down: nothing new is taken. The entry is dropped
+            // here, outside the lock, with whatever it holds.
+            drop(state);
+            return;
+        }
         if let Some(key) = &key {
             state
                 .waiting
@@ -579,6 +585,33 @@ impl Intake {
                     .unwrap_or_else(PoisonError::into_inner),
             };
         }
+    }
+
+    /// Closes the queue for the outpost's shutdown: everything waiting, the
+    /// batch in progress, and a batch held for its foreground change are
+    /// dropped, nothing pushed from now on is kept, and every
+    /// [`next`](Self::next) answers `None` once the entry in hand is done.
+    /// The entries are returned for the caller to drop on a thread in COM's
+    /// multithreaded apartment, since an entry can hold a UIA element.
+    pub(super) fn close(&self) -> Vec<Entry> {
+        let mut state = self.lock();
+        state.closed = true;
+        state.hold = None;
+        state.wake = None;
+        let mut dropped: Vec<Entry> = state
+            .waiting
+            .drain(..)
+            .map(|waiting| waiting.entry)
+            .collect();
+        for planned in state.batch.drain(..) {
+            match planned {
+                Planned::Run(entry) | Planned::Menu(entry) => dropped.push(entry),
+                Planned::Focus(entries) => dropped.extend(entries),
+            }
+        }
+        drop(state);
+        self.ready.notify_all();
+        dropped
     }
 
     /// Asks [`next`](Self::next) for an [`Item::Wake`] at `at` if nothing

@@ -347,7 +347,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     let reports_tx = command_tx.clone();
     let caret_keys: HashMap<GestureId, CaretKey> =
         verbatim_input::caret_bindings().into_iter().collect();
-    let _hook = InputHook::start(
+    let hook = InputHook::start(
         decision_config(&store),
         Arc::clone(&bound_gestures),
         gesture_tx,
@@ -420,15 +420,34 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // The wx loop has exited (Exit menu item, control-plane quit, or a
-    // replacing instance's WM_QUIT). The exit sound is heard before
-    // Verbatim goes, within a bound. The keyboard hook stops when `_hook`
-    // drops; job objects kill the outposts and the focus listener when the
-    // process exits.
+    // replacing instance's WM_QUIT). The keyboard hook stops first. The
+    // outposts and the focus listener are shut down cleanly while the exit
+    // sound plays, which is heard before Verbatim goes, within a bound:
+    // each is asked to shut down and killed through its job only if it
+    // has not exited in time. Job objects still kill anything left when
+    // the process exits.
+    drop(hook);
+    let shutdown = {
+        let supervisor = Arc::clone(&supervisor);
+        thread::Builder::new()
+            .name("verbatim-shutdown".to_owned())
+            .spawn(move || supervisor.shutdown())?
+    };
     if !manager.play_earcon_to_end(Earcon::Exit, EXIT_SOUND_TIMEOUT) {
         tracing::warn!(
             timeout = ?EXIT_SOUND_TIMEOUT,
             "the exit sound was not heard in time; exiting anyway"
         );
+    }
+    if let Ok(summary) = shutdown.join() {
+        tracing::info!(
+            clean = summary.clean,
+            exited = summary.exited,
+            killed = summary.killed,
+            "outposts and the focus listener have ended: how every one that ended while Verbatim ran ended"
+        );
+    } else {
+        tracing::error!("shutting down the outposts failed; their jobs end them");
     }
     Ok(())
 }
@@ -886,12 +905,13 @@ impl ReducerThread<'_> {
                 tracing::info!(%outpost, %target_pid, %reason, "outpost ended");
                 // A crashed or killed outpost of the attention application
                 // is replaced at once; ask the replacement for the focus,
-                // which is taken silently if the user already heard it.
-                if reason != EndReason::Retired && self.state.attention() == Some(target_pid) {
+                // which is taken silently if the user already heard it. A
+                // retired outpost, or one whose application exited, is not
+                // replaced.
+                let replaced = !matches!(reason, EndReason::Retired | EndReason::TargetExited);
+                if replaced && self.state.attention() == Some(target_pid) {
                     self.focus_now_wanted.insert(target_pid);
-                } else if reason != EndReason::Retired
-                    && self.state.focus_source() == Some(target_pid)
-                {
+                } else if replaced && self.state.focus_source() == Some(target_pid) {
                     // The focus's application is not the attention one (a
                     // Settings page's content, inside ApplicationFrameHost's
                     // window): its outpost is replaced only when asked.

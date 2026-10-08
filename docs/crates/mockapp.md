@@ -136,7 +136,13 @@ the window thread prints `stall started` on stdout as it begins and
 ends, so a test waits for the stall itself rather than for a guessed
 time), `slow <ms>` (every provider call on either backend from then on is
 answered that many milliseconds late, as by an application busy building
-a window, until `slow 0`; acknowledged `applied`), and `quit`.
+a window, until `slow 0`; acknowledged `applied`), `hold` (the next
+provider call, whichever client makes it, prints `held <method>` on
+stdout as it begins and waits until `release`, so a test knows a client's
+call is in progress and decides when it ends; acknowledged `applied`),
+`release` (lets the held call go on; applied and acknowledged `applied` by
+the stdin thread itself, since the window thread is the one held), and
+`quit`.
 
 Every other command is acknowledged on stdout by the window thread once it
 has taken effect, events included: `applied`, or `rejected: <reason>` for a
@@ -253,7 +259,18 @@ its crate-internal modules are the reviewable surface:
   counts every hit that call caused: `WM_APP + 2` returns the counter
   whose index in `Method::ALL` is `wParam`, and `WM_APP + 3` zeroes them
   all. The tests compile `src/hits.rs` into their shared module, so the
-  method list and message numbers cannot drift apart.
+  method list and message numbers cannot drift apart. Every counted call
+  is also where `slow` delays a call and `hold` holds one. Started with
+  `--count-registrations`, mockapp answers for its UIA root, the fragment
+  root, with a provider that also implements
+  `IRawElementProviderAdviseEvents` (`CountingRootProvider`, which answers
+  every other call through the ordinary root provider), which UIA calls as
+  clients register and remove handlers for events in the fragment, and the
+  module counts each event's live registrations (the flag is off
+  otherwise, since implementing the interface changes the calls UIA makes
+  as clients register, which the call-count tests pin): `WM_APP + 4` returns them for the event
+  whose id is `wParam` (`common::advised` in the tests), how
+  `tests/shutdown.rs` sees that an outpost removed its handlers.
 
 Implementation notes:
 

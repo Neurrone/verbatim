@@ -17,9 +17,22 @@
 //!
 //! Counting is also where every provider call starts, so the `slow`
 //! command's delay is applied here: each counted call is answered that
-//! much later ([`set_delay`]).
+//! much later ([`set_delay`]); and so is the `hold` command's hold: the
+//! next counted call announces itself and waits until `release`
+//! ([`hold_next`], [`release`]).
+//!
+//! The registrations UIA reports to the fragment root
+//! (`IRawElementProviderAdviseEvents`) are counted here too, per event,
+//! and read with [`WM_ADVISED_READ`]: how many registrations for the
+//! event are live, added less removed.
+//!
+//! - [`WM_ADVISED_READ`]: `wParam` is the event's id, and the result is
+//!   its live registrations.
 
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::collections::BTreeMap;
+use std::io::Write as _;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Condvar, Mutex};
 
 use windows::Win32::UI::WindowsAndMessaging::WM_APP;
 
@@ -28,6 +41,10 @@ pub(crate) const WM_HITS_READ: u32 = WM_APP + 2;
 
 /// Zeroes every counter.
 pub(crate) const WM_HITS_RESET: u32 = WM_APP + 3;
+
+/// Reads how many registrations for one event are live: `wParam` is the
+/// event's id.
+pub(crate) const WM_ADVISED_READ: u32 = WM_APP + 4;
 
 /// A provider method mockapp counts calls to, named as its interface names
 /// it.
@@ -374,13 +391,79 @@ static DELAY_MS: AtomicU64 = AtomicU64::new(0);
 
 /// Counts one call to `method`, then waits the `slow` command's delay, so
 /// the call is answered that much later, as by an application busy
-/// building a window.
+/// building a window; or, when the `hold` command asked for it, says
+/// `held <method>` on stdout and waits until `release`, so a test knows a
+/// client's call is in progress and decides when it ends.
 pub(crate) fn hit(method: Method) {
     HITS[method.index()].fetch_add(1, Ordering::Relaxed);
+    if HOLD.swap(false, Ordering::Relaxed) {
+        // Printed as the window thread's acknowledgements are, where
+        // `ready` went.
+        let mut stdout = std::io::stdout().lock();
+        let _ = writeln!(stdout, "held {method:?}");
+        let _ = stdout.flush();
+        drop(stdout);
+        let released = RELEASED
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _released = RELEASED
+            .1
+            .wait_while(released, |released| !*released)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    }
     let delay = DELAY_MS.load(Ordering::Relaxed);
     if delay > 0 {
         std::thread::sleep(std::time::Duration::from_millis(delay));
     }
+}
+
+/// Whether the next counted call is held ([`hold_next`]).
+static HOLD: AtomicBool = AtomicBool::new(false);
+
+/// Whether a held call may go on, and the condition it waits on.
+static RELEASED: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
+
+/// Holds the next provider call, whichever it is, until [`release`]: the
+/// `hold` command.
+pub(crate) fn hold_next() {
+    *RELEASED
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
+    HOLD.store(true, Ordering::Relaxed);
+}
+
+/// Lets a held call go on: the `release` command, which the stdin thread
+/// applies itself, since the window thread is the one held.
+pub(crate) fn release() {
+    *RELEASED
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+    RELEASED.1.notify_all();
+}
+
+/// The live registrations per event, by event id.
+static ADVISED: Mutex<BTreeMap<i32, i64>> = Mutex::new(BTreeMap::new());
+
+/// Counts a registration UIA reported added (`added`) or removed for event
+/// `event`.
+pub(crate) fn advise(event: i32, added: bool) {
+    let mut advised = ADVISED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *advised.entry(event).or_default() += if added { 1 } else { -1 };
+}
+
+/// The live registrations for event `event`.
+pub(crate) fn advised(event: i32) -> i64 {
+    ADVISED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&event)
+        .copied()
+        .unwrap_or(0)
 }
 
 /// Makes every provider call from now on wait `ms` milliseconds before it

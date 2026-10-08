@@ -30,6 +30,7 @@
 mod owner;
 mod policy;
 mod process;
+mod retire;
 mod writer;
 
 use std::collections::BTreeSet;
@@ -42,6 +43,7 @@ use verbatim_model::{OutpostId, Pid};
 
 use crate::protocol::{OutpostToSupervisor, SupervisorToOutpost};
 
+pub use retire::ShutdownSummary;
 pub use writer::QueueError;
 
 /// How often every child is pinged.
@@ -74,12 +76,15 @@ const CRASH_WINDOW: Duration = Duration::from_mins(1);
 pub enum EndReason {
     /// Its pipe closed: it exited or crashed.
     Exited,
-    /// The owner killed it for not answering pings or for piling up abandoned
-    /// workers.
+    /// The owner ended it for not answering pings or for piling up abandoned
+    /// workers: it was asked to shut down and killed if it did not exit in
+    /// time.
     Killed,
     /// The owner retired it: its application had not held attention for two
     /// minutes and Core held none of its nodes.
     Retired,
+    /// Its application exited, so the owner shut it down.
+    TargetExited,
 }
 
 impl std::fmt::Display for EndReason {
@@ -88,6 +93,7 @@ impl std::fmt::Display for EndReason {
             EndReason::Exited => "exited",
             EndReason::Killed => "killed",
             EndReason::Retired => "retired",
+            EndReason::TargetExited => "target exited",
         })
     }
 }
@@ -173,6 +179,23 @@ impl Supervisor {
             .parent()
             .ok_or_else(|| io::Error::other("current exe has no parent directory"))?
             .join("verbatim-outpost.exe");
+        Self::with_executable(events_tx, options, exe_path, retire::SHUTDOWN_LIMIT)
+    }
+
+    /// [`Supervisor::new`], launching every child from `exe_path` and giving
+    /// each `shutdown_limit` to exit after the shutdown message before it is
+    /// killed. For tests that launch a stand-in for the outpost binary;
+    /// Verbatim uses [`Supervisor::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the owner thread cannot be started.
+    pub fn with_executable(
+        events_tx: Sender<OutpostMessage>,
+        options: crate::OutpostOptions,
+        exe_path: std::path::PathBuf,
+        shutdown_limit: Duration,
+    ) -> io::Result<Self> {
         // The launch's log directory was prepared by the app at startup,
         // before any child (the synthesizer host first) began writing to it.
         let writers: Writers = Arc::default();
@@ -180,6 +203,7 @@ impl Supervisor {
         owner::start(owner::Setup {
             exe_path,
             options,
+            shutdown_limit,
             events_tx,
             writers: Arc::clone(&writers),
             own_tx: owner_tx.clone(),
@@ -252,6 +276,25 @@ impl Supervisor {
                 },
             ));
         }
+    }
+
+    /// Shuts down every outpost and the focus listener for Verbatim's exit,
+    /// and returns once every one has ended: each is sent the shutdown
+    /// message and given its time limit to exit, and killed through its job
+    /// only if it has not, which is logged with the reason. No child is
+    /// started afterwards. Returns how every child that ended during this
+    /// Verbatim's life ended, the ones ended now included.
+    #[must_use]
+    pub fn shutdown(&self) -> ShutdownSummary {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if self
+            .owner
+            .send(owner::OwnerEvent::Shutdown(reply_tx))
+            .is_err()
+        {
+            return ShutdownSummary::default();
+        }
+        reply_rx.recv().unwrap_or_default()
     }
 
     /// Tells the owner the views the app derives from the reducer state:

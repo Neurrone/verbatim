@@ -369,6 +369,14 @@ pub enum SupervisorToOutpost {
         /// The position of the last message Core has handled.
         acknowledged: u64,
     },
+    /// Shut down cleanly and exit: take no new work, let the call or remote
+    /// operation in progress finish (UIA's own timeouts end one the
+    /// application never answers), remove every UIA event handler and
+    /// `WinEvent` hook, release every object held, leave COM, and exit with
+    /// code 0. The supervisor kills the process through its job only if it
+    /// has not exited within its time limit. Nothing is answered: the pipe
+    /// closing and the process exiting are the answer.
+    Shutdown,
 }
 
 /// What a [`SupervisorToOutpost::Query`] asks for.
@@ -585,6 +593,11 @@ pub enum OutpostToSupervisor {
         /// epoch.
         ended_at_ms: u64,
     },
+    /// The outpost's target application has exited. Sent once, ahead of
+    /// ordinary messages; the supervisor then shuts the outpost down
+    /// ([`SupervisorToOutpost::Shutdown`]), as it has nothing left to
+    /// watch.
+    TargetExited,
 }
 
 impl OutpostToSupervisor {

@@ -26,7 +26,13 @@ Public API:
   whose closing kills the process; `process`, the process handle (closing
   it only releases the reference); and `pid`, for logs. Dropping a
   `Contained` ends the child. `has_exited()` says whether the process has
-  exited, once the system has finished ending it.
+  exited, once the system has finished ending it; `wait_for_exit(timeout)`
+  waits up to `timeout` for it to; `exit_code()` reads its exit code once
+  it has; and `kill()` ends everything in its job with
+  `KILLED_EXIT_CODE` and returns once the child has ended, so a kill made
+  on purpose, the supervisor's fallback when a child does not shut down in
+  time, says so in the exit code, apart from a clean exit (0) or a crash
+  (an exception code).
 - `ChildPipes` — Core's ends of the two pipes: `to_child`, where Core
   writes commands, and `from_child`, where Core reads the child's
   messages. Both are `std::fs::File`.

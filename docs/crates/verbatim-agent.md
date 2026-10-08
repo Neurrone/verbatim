@@ -18,7 +18,7 @@ it when the suite is done.
 Public API:
 
 - `protocol` — the agent's own wire vocabulary, versioned separately from
-  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 9) and framed
+  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 10) and framed
   with the same newline-JSON helpers the control plane uses
   (`verbatim_control::protocol::write_message`/`read_message`). Its pids
   are raw OS process ids naming a process a test is driving, not
@@ -33,7 +33,11 @@ Public API:
     host), `JobExits` (the processes that exited in a launched child's job,
     in order, with exit codes and whether the exit was abnormal: how a test
     finds that one of Verbatim's own processes ended while it ran),
-    `WaitForExit` (on the process handle), and `ProcessStatus`.
+    `WaitForJobEmpty` (a wait, on the job's own messages, until no process
+    in a launched child's job runs, answered with every exit in the job:
+    how a test checks that Verbatim left none of its processes behind and
+    how each ended), `WaitForExit` (on the process handle), and
+    `ProcessStatus`.
   - The desktop: `ForegroundInfo` (the foreground window and the visible
     top-level windows, each with its handle, owning pid, title, class,
     program, and whether it is cloaked or minimized), `SetForeground`
@@ -43,9 +47,15 @@ Public API:
     `Absent`; `AllMinimized`, where a cloaked window, kept but not shown,
     counts as not shown), `MinimizeAll` (the taskbar's Show Desktop command,
     a wait until every window that can be minimized is, then the desktop
-    brought to the foreground), and `CloseWindows` (an ordinary close
+    brought to the foreground), `CloseWindows` (an ordinary close
     request to every visible window whose title contains some text, then a
-    wait for them to go).
+    wait for them to go), and `TakeForeignTerminalWindows` (every Windows
+    Terminal window shown since the last such request by a process outside
+    the jobs of every process the agent launched, forgotten as it is
+    reported: a console handed to the default terminal application, or
+    anything else reaching the user's own Windows Terminal; the first
+    request starts the watch, a `WinEvent` hook for windows shown on a
+    thread of its own, and reports nothing).
   - State a test fixes its expectations from, read independently of any
     screen reader: `FocusedElement` (UI Automation's focused element: its
     name, its position and the size of its set, counted among its parent's
@@ -86,7 +96,16 @@ Public API:
   leaves its message; `console_title` titles the console window a console
   program opens from its first frame (`STARTUPINFO`'s title), since the
   console host started directly otherwise shows its own path until the
-  shell sets a title. Both fields default when omitted on the wire.
+  shell sets a title. Both fields default when omitted on the wire. A
+  launch without a `console_title` is started with `CREATE_NO_WINDOW`: a
+  console program, such as Verbatim, mockapp, ffmpeg, or the Windows
+  PowerShell that shows the harness's Windows Forms text box, gets a
+  console with no window (and a windowless console host process in its
+  job), so Windows never hands its console to the default terminal
+  application, which on a development machine is the user's own Windows
+  Terminal; the flag changes nothing for a program with windows of its
+  own. Only the console host the console scenarios start explicitly
+  (`conhost.exe`, with a title) has a console window.
 - `server::serve(listener, pipe_name)` — the TCP accept loop, one thread
   per connection; blocking, so callers needing to do other work run it on
   a background thread.

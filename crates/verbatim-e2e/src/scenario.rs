@@ -78,8 +78,18 @@ const MINIMIZE_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long [`Scenario::launch`] waits for Verbatim to say it is ready.
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// How long [`Scenario::quit_verbatim`] waits for the process to exit.
-const QUIT_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long [`Scenario::quit_verbatim`] waits for the process to exit: a
+/// bound on a hang, longer than the 21 seconds Verbatim gives an outpost to
+/// shut down before it kills it, which it waits for before it exits.
+const QUIT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long, once Verbatim has exited, every process of its job has to
+/// have exited too: Verbatim waits for its outposts and the focus listener
+/// before it exits, and its synthesizer host ends with its job at once.
+const JOB_EMPTY_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// The executable of Verbatim's outposts and its focus listener.
+const OUTPOST_IMAGE: &str = "verbatim-outpost.exe";
 
 /// The folder Windows Error Reporting writes crash dumps of Verbatim's
 /// processes into, once `vm\scripts\Enable-VerbatimCrashDumps.ps1` has
@@ -260,6 +270,9 @@ impl Scenario {
         if ended > 0 {
             println!("ended {ended} process(es) an earlier run left running");
         }
+        // Windows Terminal windows are watched from here on: one opened
+        // before the run is not the run's (`Scenario::foreign_terminal_windows`).
+        let _ = agent.take_foreign_terminal_windows()?;
 
         let verbatim_exe = verbatim_exe_path();
         let remote = is_remote();
@@ -1203,6 +1216,82 @@ impl Scenario {
         }
     }
 
+    /// Checks, once Verbatim has quit, that it left no outpost or focus
+    /// listener behind and that every one shut down cleanly rather than
+    /// being killed: each `verbatim-outpost.exe` process of its job, but
+    /// one the scenario ended on purpose, exited with code 0, not
+    /// abnormally, and before Verbatim itself did. A child Verbatim's
+    /// supervisor had to kill exits with `verbatim_process::KILLED_EXIT_CODE`;
+    /// one still running when Verbatim exited ends with its job afterwards.
+    /// At least one must have exited, the focus listener. Returns every
+    /// problem found.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the job's processes cannot be read, or some are
+    /// still running once [`JOB_EMPTY_TIMEOUT`] has passed.
+    pub fn outposts_shut_down_cleanly(&mut self) -> io::Result<Vec<String>> {
+        let exits = self
+            .agent
+            .wait_for_job_empty(self.verbatim_pid, JOB_EMPTY_TIMEOUT)?;
+        let verbatim_exited_at = exits.iter().position(|exit| exit.pid == self.verbatim_pid);
+        let mut problems = Vec::new();
+        let mut outposts = 0;
+        for (index, exit) in exits.iter().enumerate() {
+            if !exit.image.eq_ignore_ascii_case(OUTPOST_IMAGE)
+                || self.expected_exits.contains(&exit.pid)
+            {
+                continue;
+            }
+            outposts += 1;
+            let killed = exit.exit_code
+                == Some(i32::from_ne_bytes(
+                    verbatim_process::KILLED_EXIT_CODE.to_ne_bytes(),
+                ));
+            if killed {
+                problems.push(format!(
+                    "outpost process {} was killed: it did not exit within its time limit after the shutdown message",
+                    exit.pid
+                ));
+            } else if exit.exit_code != Some(0) || exit.abnormal {
+                problems.push(format!(
+                    "outpost process {} did not shut down cleanly: exit code {:?}{}",
+                    exit.pid,
+                    exit.exit_code,
+                    if exit.abnormal {
+                        ", abnormally (a crash)"
+                    } else {
+                        ""
+                    }
+                ));
+            } else if verbatim_exited_at.is_none_or(|at| index > at) {
+                problems.push(format!(
+                    "outpost process {} was still running when Verbatim exited, and ended with its job",
+                    exit.pid
+                ));
+            }
+        }
+        if outposts == 0 {
+            problems.push(format!(
+                "no outpost process of Verbatim's exited, not even the focus listener: {exits:?}"
+            ));
+        }
+        Ok(problems)
+    }
+
+    /// The Windows Terminal windows shown during the run by a process the
+    /// agent did not launch, which must be none: the terminal scenarios use
+    /// the harness's portable copy, which the agent launches, and every
+    /// other program the harness starts has no console window, so nothing
+    /// the run does may reach the user's own Windows Terminal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the agent cannot be asked.
+    pub fn foreign_terminal_windows(&mut self) -> io::Result<Vec<WindowInfo>> {
+        self.agent.take_foreign_terminal_windows()
+    }
+
     /// Fetches the scenario's recent latency timelines.
     ///
     /// # Errors
@@ -1853,8 +1942,10 @@ fn build_default_source_binaries() -> io::Result<()> {
     OUTCOME
         .get_or_init(|| {
             // Cargo sets CARGO for the processes it runs, tests included.
+            use std::os::windows::process::CommandExt as _;
             let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
             let status = std::process::Command::new(cargo)
+                .creation_flags(crate::CREATE_NO_WINDOW)
                 .args([
                     "build",
                     "-p",

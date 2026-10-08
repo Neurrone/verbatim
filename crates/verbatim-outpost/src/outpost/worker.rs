@@ -130,6 +130,10 @@ struct WatchState {
     /// The position of the last message that may have reported each node,
     /// by node number.
     reported: HashMap<u64, u64>,
+    /// Whether the outpost is shutting down: the watchdog abandons no
+    /// worker from then on, since the shutdown waits for the call in
+    /// progress to finish, and it ends.
+    stopping: bool,
 }
 
 impl WatchState {
@@ -178,6 +182,11 @@ pub(super) struct Watch {
     /// Abandoned workers that have not yet returned. An atomic, so the reader
     /// answers a ping without waiting on the watch lock.
     abandoned: AtomicUsize,
+    /// Every worker thread started, the one in charge and the abandoned
+    /// ones alike, for the shutdown to wait for.
+    workers: Mutex<Vec<thread::JoinHandle<()>>>,
+    /// The watchdog's thread.
+    watchdog: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 impl Watch {
@@ -387,18 +396,66 @@ pub(super) fn take_calls() -> CallCounts {
 /// Starts the first worker and the watchdog.
 pub(super) fn start(context: &Arc<Context>) {
     spawn_worker(Arc::clone(context), 0);
-    let context = Arc::clone(context);
-    thread::Builder::new()
+    let watched = Arc::clone(context);
+    let watchdog = thread::Builder::new()
         .name("verbatim-watchdog".to_owned())
-        .spawn(move || watchdog(&context))
+        .spawn(move || watchdog(&watched))
         .expect("spawn the watchdog");
+    *context
+        .watch
+        .watchdog
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = Some(watchdog);
 }
 
 fn spawn_worker(context: Arc<Context>, generation: u64) {
-    thread::Builder::new()
+    let watch = Arc::clone(&context);
+    let worker = thread::Builder::new()
         .name("verbatim-worker".to_owned())
         .spawn(move || run(&context, generation))
         .expect("spawn a worker");
+    let mut workers = watch
+        .watch
+        .workers
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    // Workers that have returned are forgotten, so the list holds at most
+    // the one in charge and the abandoned ones still in their calls.
+    workers.retain(|worker| !worker.is_finished());
+    workers.push(worker);
+}
+
+/// Stops the worker for the outpost's shutdown, once the intake is closed:
+/// the watchdog ends without abandoning anything more, and every worker
+/// thread is waited for, the one in charge finishing the entry in hand
+/// and each abandoned one returning from its call, however long UIA takes
+/// to end a call the application does not answer. Returns how many worker
+/// threads were waited for.
+pub(super) fn stop(context: &Context) -> usize {
+    context.watch.lock().stopping = true;
+    context.watch.changed.notify_all();
+    let watchdog = context
+        .watch
+        .watchdog
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
+    if let Some(watchdog) = watchdog {
+        let _ = watchdog.join();
+    }
+    // The watchdog has ended, so no worker is started from here on.
+    let workers: Vec<thread::JoinHandle<()>> = std::mem::take(
+        &mut *context
+            .watch
+            .workers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner),
+    );
+    let count = workers.len();
+    for worker in workers {
+        let _ = worker.join();
+    }
+    count
 }
 
 /// The activity id of Windows Terminal's output notifications, each a piece
@@ -479,6 +536,9 @@ fn next_check(now: Instant, deadline: Instant, started: Instant, window: isize) 
 fn watchdog(context: &Arc<Context>) {
     let mut state = context.watch.lock();
     loop {
+        if state.stopping {
+            return;
+        }
         let Some(deadline) = state.deadline else {
             state = context
                 .watch
@@ -527,11 +587,15 @@ fn watchdog(context: &Arc<Context>) {
 /// from its thread-local destructors under the loader lock.
 fn run(context: &Context, generation: u64) {
     // Held objects are agile references, resolved in this apartment.
-    if let Err(error) = verbatim_uia::init_mta() {
+    let joined = verbatim_uia::init_mta();
+    if let Err(error) = &joined {
         tracing::warn!(%error, "the worker could not join the multithreaded apartment");
     }
     run_loop(context, generation);
     verbatim_uia::release_thread_state();
+    if joined.is_ok() {
+        verbatim_uia::leave_mta();
+    }
 }
 
 /// The worker's loop, until the intake closes or this worker is abandoned.

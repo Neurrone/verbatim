@@ -18,8 +18,8 @@
 //! request, so the element arrives with its properties prefetched and the
 //! callback reads them without a cross-process call.
 
-use std::sync::Arc;
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use windows::Win32::UI::Accessibility::{
@@ -136,8 +136,9 @@ pub enum Subscription {
 /// A live subscription: one or more [`Subscription`]s registered together
 /// as one event handler group. Dropping it unregisters and ends its thread.
 pub struct Registration {
-    retarget: Option<mpsc::Sender<Command>>,
-    join: Option<JoinHandle<()>>,
+    /// The registration's thread and the channel to it, until
+    /// [`Registration::close`] takes them.
+    live: Mutex<Option<(mpsc::Sender<Command>, JoinHandle<()>)>>,
 }
 
 impl Registration {
@@ -161,8 +162,7 @@ impl Registration {
             })?;
         match ready_rx.recv() {
             Ok(Ok(())) => Ok(Self {
-                retarget: Some(retarget_tx),
-                join: Some(join),
+                live: Mutex::new(Some((retarget_tx, join))),
             }),
             Ok(Err(error)) => {
                 let _ = join.join();
@@ -181,7 +181,7 @@ impl Registration {
     /// Moves the subscription to `scope`, without waiting: the registration's
     /// own thread removes the old handlers and registers the new ones.
     pub fn retarget(&self, scope: Scope) {
-        if let Some(sender) = &self.retarget {
+        if let Some(sender) = self.sender() {
             let _ = sender.send(Command::Retarget(scope));
         }
     }
@@ -191,7 +191,7 @@ impl Registration {
     /// ones registered, so every call those make into an application has
     /// returned. Returns at once if the registration's thread has ended.
     pub fn settle(&self) {
-        let Some(sender) = &self.retarget else {
+        let Some(sender) = self.sender() else {
             return;
         };
         let (done_tx, done_rx) = mpsc::channel();
@@ -199,6 +199,35 @@ impl Registration {
             // An error means the thread ended, with nothing left to move.
             let _ = done_rx.recv();
         }
+    }
+
+    /// Ends the subscription: every move already asked for is made, then
+    /// everything its client registered is removed
+    /// (`RemoveAllEventHandlers`, which waits for any callback in progress
+    /// to return), its objects are released, its thread leaves COM's
+    /// multithreaded apartment, and the thread ends. Returns once all of
+    /// that is done. Moving or settling a closed registration does
+    /// nothing; closing it again returns at once. Dropping a registration
+    /// closes it.
+    pub fn close(&self) {
+        let live = self
+            .live
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some((sender, join)) = live {
+            drop(sender);
+            let _ = join.join();
+        }
+    }
+
+    /// The channel to the registration's thread, unless it is closed.
+    fn sender(&self) -> Option<mpsc::Sender<Command>> {
+        self.live
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .map(|(sender, _)| sender.clone())
     }
 }
 
@@ -212,10 +241,7 @@ enum Command {
 
 impl Drop for Registration {
     fn drop(&mut self) {
-        drop(self.retarget.take());
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
-        }
+        self.close();
     }
 }
 
@@ -358,6 +384,10 @@ fn run(
     unsafe {
         let _ = parts.uia.client().RemoveAllEventHandlers();
     }
+    // The handlers, the cache request, and the client are released before
+    // the thread leaves the apartment `Uia::new` joined it to.
+    drop(parts);
+    crate::com::leave_mta();
 }
 
 /// Removes everything this registration's client registered and registers

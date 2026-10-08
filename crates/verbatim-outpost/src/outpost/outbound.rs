@@ -28,6 +28,9 @@ enum Ordinary {
     Message(OutpostToSupervisor),
     /// Answered once every ordinary message queued before it is written.
     Flushed(std::sync::mpsc::Sender<()>),
+    /// Ends the writer once every message queued before it is written,
+    /// closing the pipe: the outpost is shutting down.
+    Close,
 }
 
 /// The sending side of the writer.
@@ -64,6 +67,13 @@ impl Outbound {
         let _ = self.ordinary.send(Ordinary::Message(message));
     }
 
+    /// Has the writer write every message queued before this call and
+    /// then end, closing the pipe, for the outpost's shutdown. Whatever is
+    /// sent afterwards is dropped.
+    pub(crate) fn close(&self) {
+        let _ = self.ordinary.send(Ordinary::Close);
+    }
+
     /// Waits until every ordinary message queued before this call has been
     /// written to the pipe, or the writer has stopped.
     pub(crate) fn flush(&self) {
@@ -94,6 +104,16 @@ fn write_loop(
                     Ok(Ordinary::Flushed(done)) => {
                         let _ = done.send(());
                         continue;
+                    }
+                    Ok(Ordinary::Close) => {
+                        // Urgent messages queued before the close go too.
+                        while let Ok(message) = urgent.try_recv() {
+                            if write_message(&mut pipe, &message).is_err() {
+                                return;
+                            }
+                        }
+                        let _ = pipe.flush();
+                        return;
                     }
                     Err(_) => return,
                 },

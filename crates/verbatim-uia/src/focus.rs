@@ -155,6 +155,8 @@ fn run(
             }
             drop(handler);
             drop(uia);
+            // Leaves the apartment `Uia::new` joined this thread to.
+            crate::com::leave_mta();
         }
     }
 }

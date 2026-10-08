@@ -84,6 +84,9 @@ struct OutgoingState {
     /// dropped or fail to read, so Core, which knows which focus it applied,
     /// decides, and every end is told.
     menu_end_at: Option<(Instant, u64)>,
+    /// Whether the listener is shutting down: what is queued is written,
+    /// then the writer ends.
+    closed: bool,
 }
 
 impl Outgoing {
@@ -128,17 +131,27 @@ impl Outgoing {
         self.urgent(OutpostToSupervisor::Fault { detail });
     }
 
+    /// Ends the writer once what is queued is written, for the listener's
+    /// shutdown.
+    fn close(&self) {
+        self.lock().closed = true;
+        self.ready.notify_one();
+    }
+
     /// The next message to write, urgent ones first, then facts, then a
     /// menu or switcher end that no focus event followed. Blocks while there
-    /// is none.
-    fn next(&self) -> OutpostToSupervisor {
+    /// is none; `None` once the queue is closed and empty.
+    fn next(&self) -> Option<OutpostToSupervisor> {
         let mut state = self.lock();
         loop {
             if let Some(message) = state.urgent.pop_front() {
-                return message;
+                return Some(message);
             }
             if let Some((_, message)) = state.facts.pop_front() {
-                return message;
+                return Some(message);
+            }
+            if state.closed {
+                return None;
             }
             let Some((ended, ended_at_ms)) = state.menu_end_at else {
                 state = self
@@ -151,7 +164,7 @@ impl Outgoing {
             let now = Instant::now();
             if now >= due {
                 state.menu_end_at = None;
-                return OutpostToSupervisor::MenuOrSwitchEnded { ended_at_ms };
+                return Some(OutpostToSupervisor::MenuOrSwitchEnded { ended_at_ms });
             }
             state = self
                 .ready
@@ -194,12 +207,12 @@ impl Listener {
         let writer = thread::Builder::new()
             .name("verbatim-listener-outbound".to_owned())
             .spawn(move || {
-                loop {
-                    let message = writer_outgoing.next();
+                while let Some(message) = writer_outgoing.next() {
                     if write_message(&mut pipe, &message).is_err() {
                         return;
                     }
                 }
+                let _ = pipe.flush();
             })
             .expect("spawn the listener writer");
 
@@ -229,6 +242,36 @@ impl Listener {
             _event_thread: event_thread,
             _writer: writer,
         }
+    }
+
+    /// Shuts the listener down cleanly ([`SupervisorToOutpost::Shutdown`]),
+    /// returning once it is done: the `WinEvent` hooks are removed with the
+    /// thread that pumped them, the desktop-wide UIA focus handler and the
+    /// other desktop-wide handlers are removed (each subscription's thread
+    /// waits for a callback in progress, releases its client, and leaves
+    /// COM), the writer writes what is queued and closes the pipe, and the
+    /// process's hold on COM's multithreaded apartment is given back. The
+    /// listener makes no call into an application, so nothing else can be
+    /// in progress.
+    fn shutdown(self) {
+        let started = Instant::now();
+        let Self {
+            outgoing,
+            _focus_registration: focus_registration,
+            _registration: registration,
+            _event_thread: event_thread,
+            _writer: writer,
+        } = self;
+        drop(event_thread);
+        drop(focus_registration);
+        drop(registration);
+        outgoing.close();
+        let _ = writer.join();
+        verbatim_uia::release_mta_usage();
+        tracing::info!(
+            elapsed_ms = started.elapsed().as_millis(),
+            "the focus listener shut down"
+        );
     }
 
     /// Answers `Ping` with a `Pong` (the listener never abandons a worker, so
@@ -438,22 +481,35 @@ fn window_pid(hwnd: isize) -> u32 {
 }
 
 /// Runs the focus listener driven by the Core pipes: reads commands from
-/// `pipe_in`, writes facts and replies to `pipe_out`, until end of stream.
-/// Core ends a listener by closing its job handle.
+/// `pipe_in` and writes facts and replies to `pipe_out` until Core asks it
+/// to shut down ([`SupervisorToOutpost::Shutdown`]) or the command stream
+/// ends, then shuts it down cleanly and returns.
 ///
 /// # Errors
 ///
-/// Returns any I/O error reading the command stream.
+/// Returns any I/O error reading the command stream, after the shutdown.
 pub fn run_listener(
     pipe_in: Box<dyn io::Read + Send>,
     pipe_out: Box<dyn Write + Send>,
 ) -> io::Result<()> {
     let listener = Listener::new(pipe_out);
     let mut reader = BufReader::new(pipe_in);
-    while let Some(command) = read_message::<_, SupervisorToOutpost>(&mut reader)? {
-        listener.handle_command(&command);
-    }
-    Ok(())
+    let ended = loop {
+        match read_message::<_, SupervisorToOutpost>(&mut reader) {
+            Ok(Some(SupervisorToOutpost::Shutdown)) => {
+                tracing::info!("shutting down, as Core asked");
+                break Ok(());
+            }
+            Ok(Some(command)) => listener.handle_command(&command),
+            Ok(None) => {
+                tracing::warn!("Core's command pipe closed; shutting down");
+                break Ok(());
+            }
+            Err(error) => break Err(error),
+        }
+    };
+    listener.shutdown();
+    ended
 }
 
 #[cfg(test)]
@@ -467,7 +523,13 @@ mod tests {
     fn drain(outgoing: &Arc<Outgoing>) -> mpsc::Receiver<OutpostToSupervisor> {
         let (tx, rx) = mpsc::channel();
         let outgoing = Arc::clone(outgoing);
-        thread::spawn(move || while tx.send(outgoing.next()).is_ok() {});
+        thread::spawn(move || {
+            while let Some(message) = outgoing.next() {
+                if tx.send(message).is_err() {
+                    return;
+                }
+            }
+        });
         rx
     }
 

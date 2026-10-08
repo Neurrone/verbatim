@@ -568,6 +568,17 @@ drives the window, it asserts that the process the agent launched owns
 the window, and that no other Windows Terminal process opened a window
 meanwhile. At cleanup it closes that window by its title, and the copy's
 process, which had no other window, must exit; nothing else is closed.
+
+Nothing else a run starts can reach your Windows Terminal either. Windows
+gives a console program started from a process without a console a new
+console, and hands that console to the default terminal application,
+which opens it in your Windows Terminal. So every program the agent
+starts without a console title, Verbatim, mockapp, ffmpeg, and the
+Windows PowerShell that shows the Windows Forms text box among them, and
+every console program the harness itself runs, is started with no console
+window (`CREATE_NO_WINDOW`); the console host scenarios start
+`conhost.exe` explicitly. Every scenario fails if a window of a Windows
+Terminal process the agent did not launch appears while it runs.
 CI's `e2e` job runs `cargo xtask windows-terminal` as a step of its own
 before the suite, so GitHub's runner tests the same release, not the
 Windows Terminal its image ships.
@@ -848,6 +859,13 @@ Verbatim launched from WinRM or PowerShell Direct says why it cannot run. If
 reports `interactive_window_station: false`, something restarted the agent
 outside that scheduled task; check the task's last run result in the guest
 before debugging anything downstream.
+
+**Starting the agent on a machine whose own Windows Terminal is in use.**
+Start it from a shell with a hidden console of its own, so neither the
+agent nor anything it starts is attached to a terminal you are using, for
+example from PowerShell:
+`Start-Process powershell.exe -WindowStyle Hidden -PassThru -ArgumentList '-NoProfile','-Command',"& 'target\debug\verbatim-agent.exe' --bind-address 127.0.0.1 --port 44001 *> agent.log"`.
+Stop it afterwards by the process ids of the agent and of that shell.
 
 **A port band around 47xxx silently refuses binds on some machines.** On at
 least one real development machine, every port tried in a band around

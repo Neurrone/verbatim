@@ -232,6 +232,30 @@ impl MockApp {
             .unwrap_or_else(|| panic!("mockapp acknowledged {line:?}, not the stall's end"))
     }
 
+    /// Holds mockapp's next provider call, whichever client makes it, until
+    /// [`release`](Self::release): returns once mockapp has taken the
+    /// command, so every call from here on is the one held.
+    pub fn hold(&mut self) {
+        self.send("hold");
+    }
+
+    /// Waits for the call [`hold`](Self::hold) holds to begin, and returns
+    /// the provider method it called, as mockapp names it: the evidence that
+    /// a client's call is in progress.
+    pub fn held(&mut self) -> String {
+        let line = self.next_line("a call to be held", WAIT_TIMEOUT);
+        line.strip_prefix("held ").map_or_else(
+            || panic!("mockapp said {line:?}, not which call it held"),
+            str::to_owned,
+        )
+    }
+
+    /// Lets the call [`hold`](Self::hold) held go on, and returns once
+    /// mockapp has taken the command.
+    pub fn release(&mut self) {
+        self.send("release");
+    }
+
     /// The next line mockapp prints, waiting at most `timeout`.
     fn next_line(&self, what: &str, timeout: Duration) -> String {
         self.lines
@@ -259,6 +283,19 @@ pub fn now_us() -> u64 {
 /// guard. Panics with a clear message if the process never becomes ready.
 #[must_use]
 pub fn spawn(fixture: &str, backend: &str, title: &str) -> MockApp {
+    spawn_with(fixture, backend, title, &[])
+}
+
+/// [`spawn`], counting the client registrations for events on mockapp's
+/// UIA root (`--count-registrations`), which [`advised`] reads. It changes
+/// the provider calls UIA makes as clients register, so only the tests
+/// that count registrations use it.
+#[must_use]
+pub fn spawn_counting_registrations(fixture: &str, title: &str) -> MockApp {
+    spawn_with(fixture, "uia", title, &["--count-registrations"])
+}
+
+fn spawn_with(fixture: &str, backend: &str, title: &str, extra: &[&str]) -> MockApp {
     contain_children();
     let exe = env!("CARGO_BIN_EXE_mockapp");
     let mut child = Command::new(exe)
@@ -268,6 +305,7 @@ pub fn spawn(fixture: &str, backend: &str, title: &str) -> MockApp {
         .arg(backend)
         .arg("--title")
         .arg(title)
+        .args(extra)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -372,6 +410,27 @@ pub fn read_hits(hwnd: HWND) -> Vec<(&'static str, u32)> {
             (count != 0).then(|| (method.name(), count))
         })
         .collect()
+}
+
+/// How many client registrations for UIA event `event` are live on
+/// mockapp's window, as UIA has reported them to its fragment root: added
+/// less removed. Counted only by a mockapp started with
+/// [`spawn_counting_registrations`].
+#[must_use]
+pub fn advised(hwnd: HWND, event: i32) -> i64 {
+    // SAFETY: as in `reset_hits`; the event id travels as a plain integer.
+    let count = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::SendMessageW(
+            hwnd,
+            hits::WM_ADVISED_READ,
+            Some(windows::Win32::Foundation::WPARAM(
+                usize::try_from(event).unwrap_or_default(),
+            )),
+            None,
+        )
+    }
+    .0;
+    i64::try_from(count).unwrap_or(i64::MAX)
 }
 
 /// Sends `line` to mockapp and waits until it has taken effect, then zeroes

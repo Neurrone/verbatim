@@ -36,6 +36,7 @@ mod process;
 pub mod protocol;
 pub mod server;
 pub mod session;
+mod terminals;
 mod tunnel;
 mod typing;
 mod wait;

@@ -364,16 +364,31 @@ resulting abort ends the process, and the supervisor respawns it. The synth host
 carries the same kill-on-close flag; control-plane clients such as
 `verbatim-inspect` are deliberately not children and not in any job.
 
-Outposts and the listener end by being killed with their job (the
-supervisor closes the pipe and the job handle together), never by
-returning from `main`. Keep it that way unless the following is solved: a
-process that has used UIA as a client sometimes hangs at full CPU or
-crashes as it exits normally, inside `UIAutomationCore.dll`'s own shutdown
-code, which walks a corrupt list in its telemetry of provider connections.
-Releasing every UIA object first does not prevent it. A killed process
-never runs that code. The evidence and what is still unknown are recorded
-in the handoff of 2026-09-02 ("Open: a process that has used UIA as a
-client").
+Outposts and the listener shut down cleanly whenever they end: Verbatim
+exiting, a child replaced or restarted, an outpost retired or ended
+because its application exited. The supervisor sends a shutdown message;
+the child takes no new work, lets the call or remote operation in
+progress finish (UIA's own timeouts end one the application never
+answers), removes every UIA event handler and `WinEvent` hook, releases
+every object it holds, leaves COM, and exits with code 0. Only a child
+that has not exited within the time limit, 21 seconds, longer than UIA's
+own call timeouts, is killed through its job, and the kill is logged with
+the reason (`docs/crates/verbatim-outpost.md`, "Shutting down"). Killing a
+UIA client in the middle of a call is the leading suspect in a crash of a
+Windows Terminal it was reading (`phase6-design.md`, "Windows Terminal
+crash of 2026-10-08"). The job's kill-on-close stays the guarantee for a
+Core that dies.
+
+A child ends itself with `TerminateProcess` once its shutdown is done,
+never by returning from `main`. Keep it that way unless the following is
+solved: a process that has used UIA as a client sometimes hangs at full
+CPU or crashes as it exits normally, inside `UIAutomationCore.dll`'s own
+shutdown code, which walks a corrupt list in its telemetry of provider
+connections. Releasing every UIA object first does not prevent it. A
+process that ends itself with `TerminateProcess` never runs that code,
+and by then nothing is left for it to do. The evidence and what is still
+unknown are recorded in the handoff of 2026-09-02 ("Open: a process that
+has used UIA as a client").
 
 Core and each outpost (and the synth host) communicate over private
 parent-child channels created at spawn via handle inheritance — no named

@@ -71,6 +71,10 @@ name = "remote_ops"
 harness = false
 
 [[test]]
+name = "shutdown"
+harness = false
+
+[[test]]
 name = "terminal"
 harness = false
 

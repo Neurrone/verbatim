@@ -42,11 +42,12 @@ use windows::Win32::System::JobObjects::{
     JobObjectBasicAccountingInformation, QueryInformationJobObject, TerminateJobObject,
 };
 use windows::Win32::System::Threading::{
-    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, GetExitCodeProcess, OpenProcess,
-    PROCESS_ACCESS_RIGHTS, PROCESS_INFORMATION, PROCESS_NAME_WIN32,
-    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
-    QueryFullProcessImageNameW, ResumeThread, STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES,
-    STARTUPINFOW, TerminateProcess, WaitForSingleObject,
+    CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
+    GetExitCodeProcess, OpenProcess, PROCESS_ACCESS_RIGHTS, PROCESS_CREATION_FLAGS,
+    PROCESS_INFORMATION, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, QueryFullProcessImageNameW, ResumeThread,
+    STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOW, TerminateProcess,
+    WaitForSingleObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow;
 use windows::core::{PCWSTR, PWSTR};
@@ -81,7 +82,15 @@ use crate::protocol::{KillOutcome, ProcessInfo, ProcessState};
 /// whether it was allowed.
 ///
 /// A console program's window is titled `console_title`, when given, from
-/// its first frame. With `minimized`, the program's first window opens
+/// its first frame: the console host started explicitly
+/// (`conhost.exe`), for a scenario that drives a console window. Without a
+/// title, a console program is given no console window at all
+/// (`CREATE_NO_WINDOW`): the agent may run without a console of its own,
+/// and a console program started from such a process is given a new
+/// console, which Windows hands to the default terminal application, the
+/// user's own Windows Terminal, opening a window there. A program with
+/// windows of its own, such as Notepad or Windows Terminal itself, is not
+/// affected. With `minimized`, the program's first window opens
 /// minimized and inactive (`SW_SHOWMINNOACTIVE`), for a caller that brings
 /// it forward itself once it is ready.
 ///
@@ -138,7 +147,7 @@ pub fn launch(
             None,
             None,
             capture.is_some(),
-            CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,
+            CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | console_window(console_title),
             environment.as_ref().map(|block| block.as_ptr().cast()),
             directory
                 .as_ref()
@@ -194,6 +203,16 @@ pub fn launch(
         },
     );
     Ok((pid, foreground_allowed))
+}
+
+/// The creation flag that decides whether a console program has a console
+/// window: none unless it is given a title ([`launch`]).
+fn console_window(console_title: Option<&str>) -> PROCESS_CREATION_FLAGS {
+    if console_title.is_some() {
+        PROCESS_CREATION_FLAGS(0)
+    } else {
+        CREATE_NO_WINDOW
+    }
 }
 
 /// `text` as UTF-16, nul-terminated.
@@ -580,6 +599,30 @@ pub fn child_processes(pid: u32) -> io::Result<Vec<ProcessInfo>> {
     Ok(children)
 }
 
+/// Whether process `pid` is in the job of a child [`launch`] started: one
+/// of the agent's own launches, or something one of them started.
+pub(crate) fn in_launched_job(pid: u32) -> bool {
+    let Some(process) = open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION) else {
+        return false;
+    };
+    let launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
+    let found = launched.values().any(|entry| {
+        let mut result = windows::core::BOOL(0);
+        // SAFETY: both handles are open for the call; `result` is a local.
+        unsafe {
+            windows::Win32::System::JobObjects::IsProcessInJob(
+                process,
+                Some(HANDLE(entry.job.as_raw_handle())),
+                &raw mut result,
+            )
+        }
+        .is_ok_and(|()| result.as_bool())
+    });
+    drop(launched);
+    close(process);
+    found
+}
+
 /// Ends every child the agent launched that is still running, with
 /// everything in its job, and returns how many were running.
 ///
@@ -752,23 +795,25 @@ mod tests {
             false,
         )
         .expect("spawns cmd");
-        wait_for_job(pid, |job| job.running.len() == 2);
+        // cmd, the console host of the window-less console it was started
+        // with, and PowerShell.
+        wait_for_job(pid, |job| job.running.len() == 3);
         let grandchild = child_processes(pid)
             .expect("lists children")
             .into_iter()
+            .find(|child| child.image.eq_ignore_ascii_case("powershell.exe"))
             .map(|child| child.pid)
-            .next()
             .expect("cmd started powershell");
         assert_eq!(kill(pid).expect("kills"), KillOutcome::Terminated);
         assert!(matches!(
             wait_for_exit(grandchild, WAIT).expect("waits"),
             ProcessState::Exited { .. }
         ));
-        wait_for_job(pid, |job| job.exits.len() == 2);
+        wait_for_job(pid, |job| job.exits.len() == 3);
         let exits = crate::jobs::exits(pid).expect("the job is known");
         let mut images: Vec<&str> = exits.iter().map(|exit| exit.image.as_str()).collect();
         images.sort_unstable();
-        assert_eq!(images, ["cmd.exe", "powershell.exe"]);
+        assert_eq!(images, ["cmd.exe", "conhost.exe", "powershell.exe"]);
         assert!(
             exits
                 .iter()

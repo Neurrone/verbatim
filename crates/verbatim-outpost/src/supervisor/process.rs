@@ -32,9 +32,11 @@ pub(super) enum Role {
 
 /// A launched process: its job, which kills it when dropped.
 pub(super) struct Launched {
-    /// Held so the kernel kills the process when this handle closes. Every
-    /// ending, for any reason, closes it.
-    pub(super) _contained: Contained,
+    /// The process in its job: waited on for a clean exit, and killed
+    /// through the job when it does not exit in time. Every ending, for
+    /// any reason, closes the job handle, which kills the process if it is
+    /// still running.
+    pub(super) contained: Contained,
     /// The process's own id, for logs.
     pub(super) process_id: Pid,
 }
@@ -84,7 +86,7 @@ pub(super) fn launch(
     let process_id = Pid(contained.pid);
     Ok((
         Launched {
-            _contained: contained,
+            contained,
             process_id,
         },
         pipes,

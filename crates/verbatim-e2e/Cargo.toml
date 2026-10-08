@@ -14,6 +14,9 @@ verbatim-config.workspace = true
 verbatim-control.workspace = true
 # TraceId, which speech.rs's paced waits match utterance completions by.
 verbatim-model.workspace = true
+# The exit code Verbatim's supervisor kills a child with, which the check
+# that every outpost shut down cleanly names.
+verbatim-process.workspace = true
 # The pinned Windows Terminal release's SHA-256 (windows_terminal.rs).
 sha2 = "0.11"
 workspace-hack = { version = "0.1", path = "../workspace-hack" }

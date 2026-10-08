@@ -6,8 +6,8 @@ use windows::Win32::Foundation::{
     CO_E_OBJNOTCONNECTED, RPC_E_DISCONNECTED, RPC_E_SERVER_DIED, RPC_E_SERVER_DIED_DNE,
 };
 use windows::Win32::System::Com::{
-    COINIT_MULTITHREADED, CoInitializeEx, CoTaskMemFree, FADF_BSTR, FADF_DISPATCH, FADF_RECORD,
-    FADF_UNKNOWN, FADF_VARIANT, SAFEARRAY,
+    COINIT_MULTITHREADED, CoInitializeEx, CoTaskMemFree, CoUninitialize, FADF_BSTR, FADF_DISPATCH,
+    FADF_RECORD, FADF_UNKNOWN, FADF_VARIANT, SAFEARRAY,
 };
 use windows::Win32::System::Ole::{
     SafeArrayDestroy, SafeArrayGetDim, SafeArrayGetElement, SafeArrayGetElemsize,
@@ -91,6 +91,19 @@ pub fn init_mta() -> windows::core::Result<()> {
     // SAFETY: CoInitializeEx with no reserved pointer is always sound; the
     // returned HRESULT is inspected rather than assumed successful.
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok()
+}
+
+/// Leaves COM on the calling thread, balancing one successful
+/// [`init_mta`] (or [`crate::Uia::new`], which calls it). A thread that is
+/// done with UIA for good calls it once, after releasing every UIA object
+/// it holds, as an outpost's threads do when it shuts down. A thread that
+/// joined more than once is still in the apartment afterwards, which costs
+/// nothing: the apartment ends only once every thread has left it and the
+/// process's own hold is given back ([`crate::release_mta_usage`]).
+pub fn leave_mta() {
+    // SAFETY: balances an earlier successful CoInitializeEx on this
+    // thread, which every caller has made.
+    unsafe { CoUninitialize() };
 }
 
 /// Reads a `VARIANT` as text, returning `None` for empty or absent values

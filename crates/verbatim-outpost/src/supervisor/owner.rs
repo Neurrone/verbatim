@@ -8,8 +8,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
 use std::io::{self, BufReader};
 use std::path::PathBuf;
-use std::thread;
-use std::time::Instant;
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, select, tick};
 use verbatim_model::{OutpostId, Pid, TraceId};
@@ -23,6 +23,7 @@ use super::policy::{
     CrashHistory, HeldFact, HeldFacts, WedgeReason, retirement_decision, wedge_decision,
 };
 use super::process::{self, Launched, Role};
+use super::retire::{Ending, ShutdownSummary, retire};
 use super::writer::{self, Outgoing, WriterHandle};
 use super::{
     ABANDONED_WORKER_LIMIT, CRASH_LIMIT, CRASH_WINDOW, EndReason, IDLE_RETIREMENT,
@@ -66,19 +67,26 @@ pub(super) enum OwnerEvent {
         outpost: OutpostId,
         result: io::Result<Child>,
     },
+    /// From an outpost's reader: its target application exited.
+    TargetExited(OutpostId),
+    /// From the app: Verbatim is exiting. Every child is shut down, and the
+    /// summary of every ending in Verbatim's life is sent back once all
+    /// have ended; the owner then ends.
+    Shutdown(Sender<ShutdownSummary>),
 }
 
 /// A running child: its process, held so ending the record kills it, and
 /// its writer.
 pub(super) struct Child {
-    process: Launched,
-    writer: WriterHandle,
+    pub(super) process: Launched,
+    pub(super) writer: WriterHandle,
 }
 
 /// What the owner thread starts with.
 pub(super) struct Setup {
     pub(super) exe_path: PathBuf,
     pub(super) options: crate::OutpostOptions,
+    pub(super) shutdown_limit: Duration,
     pub(super) events_tx: Sender<OutpostMessage>,
     pub(super) writers: Writers,
     pub(super) own_tx: Sender<OwnerEvent>,
@@ -128,6 +136,16 @@ struct Owner {
     holding: BTreeSet<OutpostId>,
     ping_seq: u64,
     own_pid: Pid,
+    /// How long an ending child has to exit after the shutdown message.
+    shutdown_limit: Duration,
+    /// The children being ended, each on a thread of its own
+    /// ([`retire`]).
+    retiring: Vec<JoinHandle<Ending>>,
+    /// How the children that have finished ending ended.
+    summary: ShutdownSummary,
+    /// Set once Verbatim is exiting: where the summary goes once every
+    /// child has ended.
+    shutting_down: Option<Sender<ShutdownSummary>>,
 }
 
 /// Starts the owner thread, which starts the listener at once.
@@ -135,6 +153,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
     let Setup {
         exe_path,
         options,
+        shutdown_limit,
         events_tx,
         writers,
         own_tx,
@@ -143,6 +162,10 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
     let mut owner = Owner {
         exe_path,
         options,
+        shutdown_limit,
+        retiring: Vec::new(),
+        summary: ShutdownSummary::default(),
+        shutting_down: None,
         events_tx,
         writers,
         own_tx,
@@ -166,6 +189,9 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
                     recv(events) -> event => {
                         let Ok(event) = event else { return };
                         owner.handle(event);
+                        if owner.finish_shutdown() {
+                            return;
+                        }
                     }
                     recv(heartbeat) -> _ => owner.heartbeat(),
                     recv(sweep) -> _ => owner.sweep(),
@@ -178,8 +204,12 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
 impl Owner {
     fn handle(&mut self, event: OwnerEvent) {
         match event {
+            OwnerEvent::Shutdown(reply) => self.shut_down_all(reply),
             OwnerEvent::EnsureSpawned(pid) => {
-                if !self.records.contains_key(&pid) && !self.respawn_stopped(pid) {
+                if self.shutting_down.is_none()
+                    && !self.records.contains_key(&pid)
+                    && !self.respawn_stopped(pid)
+                {
                     self.start_outpost(pid, None);
                 }
             }
@@ -195,12 +225,19 @@ impl Owner {
                 }
                 self.holding = holding;
             }
+            OwnerEvent::Fact { .. } if self.shutting_down.is_some() => {}
             OwnerEvent::Fact {
                 trace_id,
                 observed_at_ms,
                 timing,
                 fact,
             } => self.route_fact(trace_id, observed_at_ms, timing, fact),
+            OwnerEvent::TargetExited(outpost) => {
+                if let Some(pid) = self.pid_of(outpost) {
+                    self.crashes.remove(&pid);
+                    self.end(pid, EndReason::TargetExited);
+                }
+            }
             OwnerEvent::MenuOrSwitchEnded { ended_at_ms } => {
                 let _ = self
                     .events_tx
@@ -336,6 +373,9 @@ impl Owner {
                 Ok(child) => {
                     listener.child = Some(child);
                     listener.last_pong_at = Instant::now();
+                    if self.shutting_down.is_some() {
+                        self.end_listener("Verbatim is exiting");
+                    }
                 }
                 Err(error) => {
                     tracing::error!(%error, "failed to launch the focus listener; retrying on the next heartbeat");
@@ -354,8 +394,11 @@ impl Owner {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .remove(&outpost);
-                child.writer.close();
-                drop(child.process);
+                self.retire_child(
+                    child,
+                    format!("outpost {outpost}"),
+                    "launched after it was no longer wanted".to_owned(),
+                );
             }
             return;
         };
@@ -364,6 +407,9 @@ impl Owner {
                 if let Some(record) = self.records.get_mut(&pid) {
                     record.child = Some(child);
                     record.last_pong_at = Instant::now();
+                }
+                if self.shutting_down.is_some() {
+                    self.end_quietly(pid, "Verbatim is exiting");
                 }
             }
             Err(error) => {
@@ -455,38 +501,146 @@ impl Owner {
             .as_ref()
             .is_some_and(|listener| listener.outpost == outpost)
         {
+            if self.shutting_down.is_some() {
+                self.end_listener("its pipe closed while Verbatim is exiting");
+                return;
+            }
             tracing::warn!(%outpost, "focus listener exited; replacing it");
-            self.end_listener();
+            self.end_listener("its pipe closed; it is replaced");
             self.start_listener(true);
             return;
         }
         if let Some(pid) = self.pid_of(outpost) {
+            if self.shutting_down.is_some() {
+                self.end_quietly(pid, "its pipe closed while Verbatim is exiting");
+                return;
+            }
             self.end(pid, EndReason::Exited);
             self.after_crash(pid);
         }
         // Otherwise the owner already ended it, and the app already heard.
     }
 
-    /// Ends `pid`'s outpost: removes its record and writer, closes its job
-    /// handle, which kills it if it is still running, and tells the app.
+    /// Ends `pid`'s outpost: removes its record and writer, shuts the
+    /// process down cleanly, killing it only if it does not exit in time
+    /// ([`retire`], on a thread of its own), and tells the app at once.
     fn end(&mut self, pid: Pid, reason: EndReason) {
-        let Some(record) = self.records.remove(&pid) else {
+        self.end_because(pid, reason, &reason.to_string());
+    }
+
+    /// [`end`](Self::end), saying `why` in the log of the process's end.
+    fn end_because(&mut self, pid: Pid, reason: EndReason, why: &str) {
+        let Some(outpost) = self.take_record(pid, why) else {
             return;
         };
+        tracing::info!(%outpost, %pid, %reason, "outpost ended");
+        let _ = self.events_tx.send(OutpostMessage::Ended {
+            outpost,
+            target_pid: pid,
+            reason,
+        });
+    }
+
+    /// Ends `pid`'s outpost as [`end`](Self::end) does, without telling the
+    /// app: Verbatim is exiting.
+    fn end_quietly(&mut self, pid: Pid, why: &str) {
+        let _ = self.take_record(pid, why);
+    }
+
+    /// Removes `pid`'s record and writer and retires its process, if it
+    /// has one yet, for `why`. Returns the record's outpost id.
+    fn take_record(&mut self, pid: Pid, why: &str) -> Option<OutpostId> {
+        let record = self.records.remove(&pid)?;
         self.writers
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&record.outpost);
         if let Some(child) = record.child {
-            child.writer.close();
-            drop(child.process);
+            self.retire_child(
+                child,
+                format!("outpost {} for {pid}", record.outpost),
+                why.to_owned(),
+            );
         }
-        tracing::info!(outpost = %record.outpost, %pid, %reason, "outpost ended");
-        let _ = self.events_tx.send(OutpostMessage::Ended {
-            outpost: record.outpost,
-            target_pid: pid,
-            reason,
-        });
+        Some(record.outpost)
+    }
+
+    /// Ends `child` cleanly on a thread of its own ([`retire`]).
+    fn retire_child(&mut self, child: Child, label: String, why: String) {
+        let limit = self.shutdown_limit;
+        let spawned = thread::Builder::new()
+            .name("verbatim-retire".to_owned())
+            .spawn(move || retire(child, &label, &why, limit));
+        match spawned {
+            Ok(handle) => self.retiring.push(handle),
+            // The child went with the closure; dropping it closed its job
+            // handle, which killed it.
+            Err(error) => {
+                tracing::error!(%error, "no thread to end a child cleanly; it was killed");
+                self.summary.count(Ending::Killed);
+            }
+        }
+    }
+
+    /// Counts the endings that have finished, keeping those still waiting
+    /// for their child; with `wait`, waits for every one.
+    fn collect_endings(&mut self, wait: bool) {
+        let (finished, waiting): (Vec<_>, Vec<_>) = self
+            .retiring
+            .drain(..)
+            .partition(|handle| wait || handle.is_finished());
+        self.retiring = waiting;
+        for handle in finished {
+            // A panic while ending a child leaves it to its job handle,
+            // which was closed as the thread unwound: it was killed.
+            let ending = handle.join().unwrap_or(Ending::Killed);
+            self.summary.count(ending);
+        }
+    }
+
+    /// Verbatim is exiting: no child is started from now on, and every
+    /// child is shut down. Children still being launched are shut down as
+    /// their launch reports back.
+    fn shut_down_all(&mut self, reply: Sender<ShutdownSummary>) {
+        tracing::info!("Verbatim is exiting: shutting down every outpost and the focus listener");
+        self.shutting_down = Some(reply);
+        let launched: Vec<Pid> = self
+            .records
+            .iter()
+            .filter(|(_, record)| record.child.is_some())
+            .map(|(pid, _)| *pid)
+            .collect();
+        for pid in launched {
+            self.end_quietly(pid, "Verbatim is exiting");
+        }
+        if self
+            .listener
+            .as_ref()
+            .is_some_and(|listener| listener.child.is_some())
+        {
+            self.end_listener("Verbatim is exiting");
+        }
+    }
+
+    /// Once Verbatim is exiting and every child has been ended, waits for
+    /// every ending to finish, sends the summary, and says the owner is
+    /// done.
+    fn finish_shutdown(&mut self) -> bool {
+        if self.shutting_down.is_none() || !self.records.is_empty() || self.listener.is_some() {
+            return false;
+        }
+        self.collect_endings(true);
+        let summary = self.summary;
+        tracing::info!(
+            clean = summary.clean,
+            exited = summary.exited,
+            killed = summary.killed,
+            "every outpost and the focus listener has ended"
+        );
+        if let Some(reply) = self.shutting_down.take() {
+            let _ = reply.send(summary);
+        }
+        true
     }
 
     /// After a crash or a kill: replace the outpost at once only if its
@@ -512,17 +666,26 @@ impl Owner {
         }
     }
 
-    fn end_listener(&mut self) {
+    /// Ends the focus listener, shutting its process down cleanly, for
+    /// `why`.
+    fn end_listener(&mut self, why: &str) {
         if let Some(listener) = self.listener.take()
             && let Some(child) = listener.child
         {
-            child.writer.close();
-            drop(child.process);
+            self.retire_child(
+                child,
+                format!("focus listener {}", listener.outpost),
+                why.to_owned(),
+            );
         }
     }
 
     /// Pings every running child and ends any that is wedged.
     fn heartbeat(&mut self) {
+        self.collect_endings(false);
+        if self.shutting_down.is_some() {
+            return;
+        }
         let now = Instant::now();
         self.ping_seq += 1;
         let ping = SupervisorToOutpost::Ping { seq: self.ping_seq };
@@ -548,7 +711,11 @@ impl Owner {
         }
         for (pid, reason) in wedged {
             tracing::warn!(%pid, %reason, "ending a wedged outpost");
-            self.end(pid, EndReason::Killed);
+            self.end_because(
+                pid,
+                EndReason::Killed,
+                &format!("ended as wedged: {reason}"),
+            );
             self.after_crash(pid);
         }
 
@@ -567,7 +734,7 @@ impl Owner {
                     );
                     if decision == Some(WedgeReason::MissedHeartbeats) {
                         tracing::warn!("focus listener stopped answering; replacing it");
-                        self.end_listener();
+                        self.end_listener("it stopped answering pings; it is replaced");
                         self.start_listener(true);
                     } else {
                         let _ = child.writer.push(Outgoing::Ping(ping));
@@ -581,6 +748,9 @@ impl Owner {
     /// two minutes and in which Core holds no nodes. Core's own outpost is
     /// never retired: its next menu would otherwise spawn it cold.
     fn sweep(&mut self) {
+        if self.shutting_down.is_some() {
+            return;
+        }
         let now = Instant::now();
         let retiring: Vec<Pid> = self
             .records
@@ -708,6 +878,10 @@ fn read_outpost(
             }
             OutpostToSupervisor::Ready { .. } => {
                 let _ = own_tx.send(OwnerEvent::Ready(outpost));
+            }
+            OutpostToSupervisor::TargetExited => {
+                let _ = own_tx.send(OwnerEvent::TargetExited(outpost));
+                continue;
             }
             _ => {}
         }

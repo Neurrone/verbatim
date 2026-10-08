@@ -195,7 +195,8 @@ fn is_minimized(window: HWND) -> bool {
     unsafe { IsIconic(window) }.as_bool()
 }
 
-fn window_info(window: HWND) -> WindowInfo {
+/// What a test is told of `window`.
+pub(crate) fn window_info(window: HWND) -> WindowInfo {
     let mut pid = 0u32;
     // SAFETY: tolerates any handle, writing 0 for an invalid one.
     unsafe {

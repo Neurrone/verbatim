@@ -32,7 +32,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{PCWSTR, w};
 use windows_core::Interface;
 
-use crate::hits::{self, WM_HITS_READ, WM_HITS_RESET};
+use crate::hits::{self, WM_ADVISED_READ, WM_HITS_READ, WM_HITS_RESET};
 use crate::stdin::{self, Command};
 use crate::tree::SharedTree;
 use crate::{msaa, uia};
@@ -241,6 +241,10 @@ unsafe extern "system" fn wnd_proc(
             hits::reset();
             return LRESULT(0);
         }
+        WM_ADVISED_READ => {
+            let event = i32::try_from(wparam.0).unwrap_or(0);
+            return LRESULT(isize::try_from(hits::advised(event)).unwrap_or(isize::MAX));
+        }
         // A key an editor moves its caret with, on the focused text
         // (`uia::caret_key`), as the end-to-end suite presses them.
         WM_KEYDOWN => {
@@ -321,10 +325,9 @@ fn handle_get_object(
     let obj_id = lparam.0 as i32;
     match context.backend {
         Backend::Uia => {
-            if obj_id == UiaRootObjectId {
-                let provider = uia::root_provider(context.tree.clone(), hwnd);
-                let simple: windows::Win32::UI::Accessibility::IRawElementProviderSimple =
-                    provider.into();
+            if obj_id == UiaRootObjectId
+                && let Ok(simple) = uia::root_provider(context.tree.clone(), hwnd)
+            {
                 // SAFETY: `simple` is a live provider for the root node.
                 return unsafe { UiaReturnRawElementProvider(hwnd, wparam, lparam, &simple) };
             }
@@ -378,6 +381,11 @@ fn drain_commands(hwnd: HWND, context: &WindowContext) {
             acknowledge("applied");
             continue;
         }
+        if let Command::Hold = command {
+            hits::hold_next();
+            acknowledge("applied");
+            continue;
+        }
         let applied = match command {
             Command::Unrecognized(line) => Err(format!("unrecognized command: {line}")),
             command => match context.backend {
@@ -397,7 +405,7 @@ fn drain_commands(hwnd: HWND, context: &WindowContext) {
 
 /// Writes one acknowledgement line to stdout, where `ready` went, and
 /// flushes it at once.
-fn acknowledge(line: &str) {
+pub(crate) fn acknowledge(line: &str) {
     let mut stdout = std::io::stdout().lock();
     let _ = writeln!(stdout, "{line}");
     let _ = stdout.flush();

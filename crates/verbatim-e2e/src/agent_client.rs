@@ -24,7 +24,7 @@ use base64::engine::general_purpose::STANDARD;
 use verbatim_agent::protocol::{
     AGENT_PROTOCOL_VERSION, EventOutcome, FocusedElement, ForegroundInfo, Frame, KillOutcome,
     ProcessExit, ProcessInfo, ProcessState, ReplyPayload, Request, RequestEnvelope, SessionInfo,
-    WindowCondition,
+    WindowCondition, WindowInfo,
 };
 use verbatim_control::client::Client as ControlClient;
 use verbatim_control::protocol::{MessageReader, write_message};
@@ -372,6 +372,51 @@ impl AgentClient {
                 ..
             } => Ok(state),
             other => Err(unexpected("WaitForExit", &other)),
+        }
+    }
+
+    /// Waits up to `timeout` for every process in the job of `pid`, which
+    /// the agent launched, to have exited, and returns every exit in the
+    /// job, oldest first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, naming the processes still
+    /// running when the wait ran out.
+    pub fn wait_for_job_empty(
+        &mut self,
+        pid: u32,
+        timeout: Duration,
+    ) -> io::Result<Vec<ProcessExit>> {
+        match self.request_waiting(
+            Request::WaitForJobEmpty {
+                pid,
+                timeout_ms: millis(timeout),
+            },
+            timeout,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::Exits { exits },
+                ..
+            } => Ok(exits),
+            other => Err(unexpected("WaitForJobEmpty", &other)),
+        }
+    }
+
+    /// Takes the Windows Terminal windows shown since the last call by
+    /// processes the agent did not launch; the first call starts the watch
+    /// and returns none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn take_foreign_terminal_windows(&mut self) -> io::Result<Vec<WindowInfo>> {
+        match self.request(Request::TakeForeignTerminalWindows)? {
+            Frame::Reply {
+                payload: ReplyPayload::TerminalWindows { windows },
+                ..
+            } => Ok(windows),
+            other => Err(unexpected("TakeForeignTerminalWindows", &other)),
         }
     }
 

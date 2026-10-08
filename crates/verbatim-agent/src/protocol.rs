@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 /// [`Request::EndLaunched`], and [`Request::CreateEvent`]. A test run
 /// against an older agent is refused at `Hello` instead of losing its
 /// connection mid-run.
-pub const AGENT_PROTOCOL_VERSION: u32 = 9;
+pub const AGENT_PROTOCOL_VERSION: u32 = 10;
 
 /// The default TCP port the agent listens on.
 ///
@@ -95,7 +95,11 @@ pub enum Request {
         stderr_to: Option<String>,
         /// When set, the title of the console window a console program
         /// opens, from its first frame: a console host started directly
-        /// otherwise shows its own path until the shell sets a title.
+        /// otherwise shows its own path until the shell sets a title. When
+        /// not set, a console program is started with no console window
+        /// (`CREATE_NO_WINDOW`), so Windows never hands its console to the
+        /// default terminal application; only a console host started
+        /// explicitly, for a scenario that drives its window, is given one.
         #[serde(default)]
         console_title: Option<String>,
         /// Whether the program's first window opens minimized and
@@ -182,6 +186,25 @@ pub enum Request {
         /// The launched process's OS pid.
         pid: u32,
     },
+    /// Waits up to `timeout_ms` for every process in the job of the process
+    /// `pid` the agent launched to have exited, on the job's own messages,
+    /// and lists every exit in the job in the order they happened: how a
+    /// test checks that Verbatim left none of its processes behind, and how
+    /// each one ended. Answered by [`ReplyPayload::Exits`]; fails, naming
+    /// the processes still running, when the wait runs out.
+    WaitForJobEmpty {
+        /// The launched process's OS pid.
+        pid: u32,
+        /// How long to wait, in milliseconds.
+        timeout_ms: u64,
+    },
+    /// Reports, and forgets, every Windows Terminal window shown since the
+    /// last such request by a process outside the jobs of every process the
+    /// agent launched: a console handed to the default terminal
+    /// application, or anything else reaching the user's own Windows
+    /// Terminal. The first request starts the watch and reports nothing.
+    /// Answered by [`ReplyPayload::TerminalWindows`].
+    TakeForeignTerminalWindows,
     /// Waits up to `timeout_ms` for process `pid` to exit, on its process
     /// handle. Answered by [`ReplyPayload::ProcessStatus`]: still running
     /// when the wait ran out.
@@ -414,7 +437,12 @@ pub enum ReplyPayload {
         /// it trimmed.
         words: Vec<String>,
     },
-    /// Answer to [`Request::JobExits`].
+    /// Answer to [`Request::TakeForeignTerminalWindows`].
+    TerminalWindows {
+        /// The windows shown, in the order they were shown.
+        windows: Vec<WindowInfo>,
+    },
+    /// Answer to [`Request::JobExits`] and [`Request::WaitForJobEmpty`].
     Exits {
         /// The processes that exited, oldest first.
         exits: Vec<ProcessExit>,

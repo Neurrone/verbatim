@@ -5,7 +5,8 @@
 //! When the queue is full, each kind of command has its own policy:
 //!
 //! - a ping always gets through, past the bound, since a missed ping would
-//!   get a healthy outpost killed;
+//!   get a healthy outpost killed, and so does the shutdown message, the
+//!   last command a child is sent;
 //! - a list of the nodes Core holds replaces any older list still waiting,
 //!   and otherwise gets through past the bound, since only the newest list
 //!   matters and an outpost that never hears one keeps every node;
@@ -37,6 +38,8 @@ pub(super) const WRITER_CAPACITY: usize = 64;
 pub(super) enum Outgoing {
     /// A liveness ping.
     Ping(SupervisorToOutpost),
+    /// The shutdown message, [`SupervisorToOutpost::Shutdown`].
+    Shutdown,
     /// The nodes Core holds.
     NodesHeld(SupervisorToOutpost),
     /// A routed fact, keyed by the object and kind it concerns (`None` for
@@ -49,6 +52,7 @@ pub(super) enum Outgoing {
 impl Outgoing {
     fn command(&self) -> &SupervisorToOutpost {
         match self {
+            Outgoing::Shutdown => &SupervisorToOutpost::Shutdown,
             Outgoing::Ping(command)
             | Outgoing::NodesHeld(command)
             | Outgoing::Fact(_, command)
@@ -90,7 +94,7 @@ impl Queue {
             return Err(QueueError::Closed);
         }
         match item {
-            Outgoing::Ping(_) => {}
+            Outgoing::Ping(_) | Outgoing::Shutdown => {}
             Outgoing::NodesHeld(_) => {
                 self.items
                     .retain(|waiting| !matches!(waiting, Outgoing::NodesHeld(_)));

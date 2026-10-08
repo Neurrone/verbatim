@@ -231,7 +231,8 @@ Public API:
   `Role::Terminal`. The console host's text area is recognized by its
   window, in the outpost.
 - `FocusRegistration::new(callback)` — the self-contained, desktop-global
-  UIA focus registration; drop unregisters and tears down its own thread.
+  UIA focus registration; drop unregisters and tears down its own thread,
+  which leaves COM's multithreaded apartment as it ends.
   UIA's focus registration is desktop-global and unscopeable, so exactly one
   exists per process. Under decision D13 the one process that holds it is the
   focus listener, which watches every application at once; the per-application
@@ -249,7 +250,13 @@ Public API:
   kind, processing, display string, and activity id), or
   `Subscription::ActiveTextPosition` (`IUIAutomation6`'s active text
   position changed event, delivering the raising element and the range now
-  active, when the event carries one). The
+  active, when the event carries one). `close()` ends a registration for
+  good and returns once it is done: every move already asked for is made,
+  then its client removes everything it registered
+  (`RemoveAllEventHandlers`, which waits for a callback in progress), its
+  objects are released, and its thread leaves the apartment and ends;
+  moving or settling a closed registration does nothing, and dropping one
+  closes it. An outpost closes its registrations when it shuts down. The
   `Scope` is nothing yet, the subtree of given top-level windows, the whole
   desktop (the subtree of the root element), or exactly given elements.
   A registration takes any number of subscriptions and registers them as
@@ -356,9 +363,14 @@ Public API:
   gone; the outpost calls it before reporting a focus whose runtime id
   names a node whose element no longer has the keyboard focus, or cannot
   be read. `init_mta()` joins the multithreaded apartment,
-  failing on a thread already in a single-threaded one; each call adds an
-  initialization that is never undone, since the MTA is pinned for the
-  process's life. Role and state mapping in
+  failing on a thread already in a single-threaded one; `leave_mta()`
+  leaves it again, once, for a thread done with UIA for good, after it
+  has released its objects. A thread that joined more than once stays in
+  the apartment, which costs nothing. The apartment itself is pinned by
+  UIA's first-time setup (`CoIncrementMTAUsage`) until
+  `release_mta_usage()` gives that hold back, which an outpost and the
+  focus listener do at the end of their shutdown, so COM ends the
+  apartment once every thread has left it. Role and state mapping in
   `map`, plus `map`'s total `notification_kind_from_uia` and
   `notification_processing_from_uia` tables for the notification payload.
   Every snapshot's name, value, and description lose their bidirectional

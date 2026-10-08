@@ -19,6 +19,7 @@
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Read as _};
+use std::os::windows::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -195,6 +196,7 @@ fn system_tool(name: &str) -> PathBuf {
 /// Runs `command`, failing unless it succeeds.
 fn run(command: &mut Command) -> io::Result<()> {
     let status = command
+        .creation_flags(crate::CREATE_NO_WINDOW)
         .status()
         .map_err(|error| io::Error::other(format!("could not run {command:?}: {error}")))?;
     if status.success() {

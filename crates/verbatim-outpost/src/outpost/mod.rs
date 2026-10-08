@@ -286,6 +286,31 @@ impl Context {
         self.classic_windows().remove(&hwnd);
     }
 
+    /// Releases every object the outpost holds, for its shutdown, once no
+    /// worker runs: every node leaves both registries, and its text
+    /// patterns, what its text is known to support, its anchors, and its
+    /// terminal memory go with it. Returns how many nodes there were.
+    fn release_everything(&self) -> usize {
+        let nodes: Vec<u64> = self
+            .uia_registry
+            .ids()
+            .into_iter()
+            .chain(self.msaa_registry.ids())
+            .map(NodeId::number)
+            .collect();
+        let objects = (
+            self.uia_registry.retain(|_| false),
+            self.msaa_registry.retain(|_| false),
+        );
+        text_reads::forget(self, nodes.iter().copied());
+        self.patterns().clear();
+        self.text_support().clear();
+        self.terminals().clear();
+        *self.caret_watch() = None;
+        drop(objects);
+        nodes.len()
+    }
+
     fn push(&self, item: Item, trace: TraceId, observed_at_ms: u64, timing: EventTiming) {
         self.intake.push(Entry {
             item,
@@ -459,6 +484,69 @@ impl Outpost {
         let _ = done_rx.recv();
     }
 
+    /// Shuts the outpost down cleanly ([`SupervisorToOutpost::Shutdown`]),
+    /// on the calling thread, returning once it is done:
+    ///
+    /// 1. The intake closes: nothing new is taken, and what was waiting is
+    ///    dropped.
+    /// 2. The `WinEvent` hooks are removed, with the thread that pumped
+    ///    them.
+    /// 3. Every UIA event handler is removed: each subscription's client
+    ///    removes everything it registered (`RemoveAllEventHandlers`).
+    /// 4. The worker finishes the entry in hand, and every abandoned worker
+    ///    returns from its call, however long the application takes to
+    ///    answer or UIA takes to end the call (its connection and
+    ///    transaction timeouts). No call is cut off.
+    /// 5. Every object held is released: the registries' UIA elements and
+    ///    MSAA objects, and the text patterns and ranges kept for text and
+    ///    terminals.
+    /// 6. The writer writes what is queued and closes the pipe.
+    /// 7. The calling thread leaves COM, and the process's hold on the
+    ///    multithreaded apartment is given back.
+    ///
+    /// The calling thread must be in COM's multithreaded apartment, or able
+    /// to join it, since it releases UIA objects. What happens to the
+    /// process afterwards is the caller's: the outpost binary ends itself
+    /// without running DLL detach code (`docs/architecture.md`, "Process
+    /// lifetime").
+    pub fn shutdown(self) {
+        let started = std::time::Instant::now();
+        let joined = verbatim_uia::init_mta();
+        let Self {
+            context,
+            _event_thread: event_thread,
+            _writer: writer,
+        } = self;
+        drop(context.intake.close());
+        drop(event_thread);
+        if let Some(registration) = context.focus_properties.get() {
+            registration.close();
+        }
+        if let Some(registration) = context.text_events.get() {
+            registration.close();
+        }
+        let handlers_removed = started.elapsed();
+        let workers = worker::stop(&context);
+        let calls_finished = started.elapsed();
+        let objects = context.release_everything();
+        verbatim_uia::release_thread_state();
+        context.outbound.close();
+        let _ = writer.join();
+        if joined.is_ok() {
+            verbatim_uia::leave_mta();
+        }
+        verbatim_uia::release_mta_usage();
+        tracing::info!(
+            target_pid = context.target_pid,
+            handlers_removed_ms = handlers_removed.as_millis(),
+            calls_finished_ms = calls_finished.as_millis(),
+            elapsed_ms = started.elapsed().as_millis(),
+            workers,
+            objects,
+            "the outpost shut down"
+        );
+    }
+
     /// Reads the time for arbitration's kept verdicts from `clock` from now
     /// on, in place of the system's ([`Arbitrator::set_clock`]): a test
     /// that counts an operation's calls decides when a window's verdict of
@@ -553,6 +641,9 @@ impl Outpost {
                     std::sync::atomic::Ordering::Relaxed,
                 );
             }
+            // `run_pipe` ends its loop on it and calls `shutdown`, which
+            // takes the outpost.
+            SupervisorToOutpost::Shutdown => {}
             SupervisorToOutpost::NodesHeld {
                 nodes,
                 anchors,
@@ -723,12 +814,15 @@ fn fault(context: &Context, detail: String) {
 
 /// Runs an outpost driven by the Core pipes, watching `target_pid` for its
 /// whole life: reads commands from `pipe_in` and writes outbound messages to
-/// `pipe_out` until end of stream. Core ends an outpost by closing its job
-/// handle.
+/// `pipe_out` until Core asks it to shut down
+/// ([`SupervisorToOutpost::Shutdown`]) or the command stream ends, then
+/// shuts it down cleanly ([`Outpost::shutdown`]) and returns. When the
+/// target application exits, Core is told
+/// ([`OutpostToSupervisor::TargetExited`]) and asks for the shutdown.
 ///
 /// # Errors
 ///
-/// Returns any I/O error reading the command stream.
+/// Returns any I/O error reading the command stream, after the shutdown.
 pub fn run_pipe(
     pipe_in: Box<dyn io::Read + Send>,
     pipe_out: Box<dyn Write + Send>,
@@ -736,11 +830,45 @@ pub fn run_pipe(
     options: OutpostOptions,
 ) -> io::Result<()> {
     let outpost = Outpost::with_options(pipe_out, target_pid, options);
+    watch_target(&outpost.context);
     let mut reader = BufReader::new(pipe_in);
-    while let Some(command) = read_message::<_, SupervisorToOutpost>(&mut reader)? {
-        outpost.handle_command(&command);
+    let ended = loop {
+        match read_message::<_, SupervisorToOutpost>(&mut reader) {
+            Ok(Some(SupervisorToOutpost::Shutdown)) => {
+                tracing::info!("shutting down, as Core asked");
+                break Ok(());
+            }
+            Ok(Some(command)) => outpost.handle_command(&command),
+            Ok(None) => {
+                tracing::warn!("Core's command pipe closed; shutting down");
+                break Ok(());
+            }
+            Err(error) => break Err(error),
+        }
+    };
+    outpost.shutdown();
+    ended
+}
+
+/// Tells Core when the target application exits, from a thread of its own
+/// that waits on the application's process. The thread is not waited for:
+/// it holds nothing of COM's and ends with the process.
+fn watch_target(context: &Arc<Context>) {
+    let context = Arc::clone(context);
+    let spawned = thread::Builder::new()
+        .name("verbatim-target-watch".to_owned())
+        .spawn(move || {
+            if window::wait_for_process_exit(context.target_pid) {
+                tracing::info!(
+                    target_pid = context.target_pid,
+                    "the target application exited"
+                );
+                context.outbound.urgent(OutpostToSupervisor::TargetExited);
+            }
+        });
+    if let Err(error) = spawned {
+        tracing::warn!(%error, "the target application's exit is not watched");
     }
-    Ok(())
 }
 
 /// Runs an outpost in dev-attach mode: writes outbound messages as JSON lines

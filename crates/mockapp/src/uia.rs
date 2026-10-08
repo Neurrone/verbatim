@@ -17,17 +17,18 @@
 use verbatim_model::Role;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
-    IRawElementProviderSimple, NotificationKind_Other, NotificationProcessing_All,
-    UIA_AutomationFocusChangedEventId, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
-    UIA_ComboBoxControlTypeId, UIA_EditControlTypeId, UIA_GroupControlTypeId,
-    UIA_HyperlinkControlTypeId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
-    UIA_MenuBarControlTypeId, UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_NamePropertyId,
-    UIA_PROPERTY_ID, UIA_PaneControlTypeId, UIA_RadioButtonControlTypeId,
-    UIA_SelectionItem_ElementSelectedEventId, UIA_SliderControlTypeId, UIA_SpinnerControlTypeId,
-    UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
-    UIA_Text_TextSelectionChangedEventId, UIA_TextControlTypeId, UIA_ToolBarControlTypeId,
-    UIA_TreeControlTypeId, UIA_TreeItemControlTypeId, UIA_ValueValuePropertyId,
-    UIA_WindowControlTypeId, UiaRaiseActiveTextPositionChangedEvent, UiaRaiseAutomationEvent,
+    IRawElementProviderFragment, IRawElementProviderSimple, NotificationKind_Other,
+    NotificationProcessing_All, UIA_AutomationFocusChangedEventId, UIA_ButtonControlTypeId,
+    UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId, UIA_EditControlTypeId,
+    UIA_GroupControlTypeId, UIA_HyperlinkControlTypeId, UIA_ListControlTypeId,
+    UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId, UIA_MenuControlTypeId,
+    UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_PROPERTY_ID, UIA_PaneControlTypeId,
+    UIA_RadioButtonControlTypeId, UIA_SelectionItem_ElementSelectedEventId,
+    UIA_SliderControlTypeId, UIA_SpinnerControlTypeId, UIA_StatusBarControlTypeId,
+    UIA_TabControlTypeId, UIA_TabItemControlTypeId, UIA_Text_TextSelectionChangedEventId,
+    UIA_TextControlTypeId, UIA_ToolBarControlTypeId, UIA_TreeControlTypeId,
+    UIA_TreeItemControlTypeId, UIA_ValueValuePropertyId, UIA_WindowControlTypeId,
+    UiaRaiseActiveTextPositionChangedEvent, UiaRaiseAutomationEvent,
     UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent,
 };
 use windows_core::Interface;
@@ -35,19 +36,48 @@ use windows_core::Interface;
 use crate::stdin::Command;
 use crate::tree::SharedTree;
 
-pub(crate) use handler::{ChildProvider, RootProvider};
+pub(crate) use handler::{ChildProvider, CountingRootProvider, RootProvider};
+
+/// Whether the root's provider counts client registrations
+/// (`--count-registrations`): it then also implements
+/// `IRawElementProviderAdviseEvents`, which changes the calls UIA makes as
+/// clients register, so only the tests that count registrations ask for it.
+static COUNT_REGISTRATIONS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Has the root's provider count client registrations from now on.
+pub(crate) fn count_registrations() {
+    COUNT_REGISTRATIONS.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The root's provider, as a fragment: a [`RootProvider`], or a
+/// [`CountingRootProvider`] around one when registrations are counted.
+pub(crate) fn root_fragment(tree: SharedTree, hwnd: HWND) -> IRawElementProviderFragment {
+    let root: IRawElementProviderFragment = RootProvider {
+        tree,
+        hwnd,
+        index: 0,
+    }
+    .into();
+    if !COUNT_REGISTRATIONS.load(std::sync::atomic::Ordering::Relaxed) {
+        return root;
+    }
+    match CountingRootProvider::around(&root) {
+        Ok(counting) => counting,
+        Err(_) => root,
+    }
+}
 
 mod text;
 
 pub(crate) use text::{KeyMoved, caret_key};
 
 /// Builds the root's provider, for answering `WM_GETOBJECT`.
-pub(crate) fn root_provider(tree: SharedTree, hwnd: HWND) -> RootProvider {
-    RootProvider {
-        tree,
-        hwnd,
-        index: 0,
-    }
+pub(crate) fn root_provider(
+    tree: SharedTree,
+    hwnd: HWND,
+) -> windows::core::Result<IRawElementProviderSimple> {
+    root_fragment(tree, hwnd).cast()
 }
 
 /// Applies a parsed stdin [`Command`] against `tree` and raises the matching
@@ -136,7 +166,12 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take_runtime_id(&id, &from)?,
         // Handled by the window thread before dispatch.
-        Command::Stall(_) | Command::Slow(_) | Command::Quit | Command::Unrecognized(_) => {}
+        Command::Stall(_)
+        | Command::Slow(_)
+        | Command::Hold
+        | Command::Release
+        | Command::Quit
+        | Command::Unrecognized(_) => {}
     }
     Ok(())
 }
@@ -364,7 +399,7 @@ mod props {
     use windows::core::{BSTR, Interface, Result as WinResult};
     use windows_core::Error;
 
-    use super::{ChildProvider, RootProvider, role_to_control_type};
+    use super::{ChildProvider, role_to_control_type};
     use crate::tree::SharedTree;
 
     /// Builds the provider for `index`: the root gets a [`RootProvider`],
@@ -375,7 +410,7 @@ mod props {
         index: usize,
     ) -> IRawElementProviderFragment {
         if index == 0 {
-            RootProvider { tree, hwnd, index }.into()
+            super::root_fragment(tree, hwnd)
         } else {
             ChildProvider { tree, hwnd, index }.into()
         }
@@ -803,19 +838,20 @@ mod handler {
     use windows::Win32::System::Com::SAFEARRAY;
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Accessibility::{
-        IExpandCollapseProvider, IExpandCollapseProvider_Impl, IRawElementProviderFragment,
+        IExpandCollapseProvider, IExpandCollapseProvider_Impl, IRawElementProviderAdviseEvents,
+        IRawElementProviderAdviseEvents_Impl, IRawElementProviderFragment,
         IRawElementProviderFragment_Impl, IRawElementProviderFragmentRoot,
         IRawElementProviderFragmentRoot_Impl, IRawElementProviderSimple,
         IRawElementProviderSimple_Impl, ISelectionItemProvider, ISelectionItemProvider_Impl,
         ISelectionProvider, ISelectionProvider_Impl, ISelectionProvider2, ISelectionProvider2_Impl,
         IToggleProvider, IToggleProvider_Impl, NavigateDirection, ProviderOptions,
-        ProviderOptions_ServerSideProvider, ProviderOptions_UseComThreading,
+        ProviderOptions_ServerSideProvider, ProviderOptions_UseComThreading, UIA_EVENT_ID,
         UIA_ExpandCollapsePatternId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_SelectionItemPatternId,
         UIA_SelectionPattern2Id, UIA_SelectionPatternId, UIA_TextPattern2Id, UIA_TextPatternId,
         UIA_TogglePatternId, UIA_ValuePatternId, UiaRect,
     };
     use windows::core::Result as WinResult;
-    use windows_core::{Error, IUnknown, implement};
+    use windows_core::{Error, IUnknown, Interface, implement};
 
     use super::{props, text};
     use crate::hits;
@@ -834,6 +870,102 @@ mod handler {
         pub(crate) tree: SharedTree,
         pub(crate) hwnd: HWND,
         pub(crate) index: usize,
+    }
+
+    /// The root's provider when client registrations are counted
+    /// (`--count-registrations`): a [`RootProvider`] it answers every call
+    /// through, which as the fragment root is also told of every client
+    /// registration for an event in its fragment, and of its removal
+    /// (`IRawElementProviderAdviseEvents`), and counts them
+    /// ([`hits::advise`]), for the tests that check a client removed its
+    /// handlers.
+    #[implement(
+        IRawElementProviderSimple,
+        IRawElementProviderFragment,
+        IRawElementProviderFragmentRoot,
+        IRawElementProviderAdviseEvents,
+        Agile = false
+    )]
+    pub(crate) struct CountingRootProvider {
+        simple: IRawElementProviderSimple,
+        fragment: IRawElementProviderFragment,
+        root: IRawElementProviderFragmentRoot,
+    }
+
+    impl CountingRootProvider {
+        /// A counting provider answering through `root`, a
+        /// [`RootProvider`].
+        pub(crate) fn around(
+            root: &IRawElementProviderFragment,
+        ) -> WinResult<IRawElementProviderFragment> {
+            Ok(Self {
+                simple: root.cast()?,
+                fragment: root.clone(),
+                root: root.cast()?,
+            }
+            .into())
+        }
+    }
+
+    impl IRawElementProviderSimple_Impl for CountingRootProvider_Impl {
+        fn ProviderOptions(&self) -> WinResult<ProviderOptions> {
+            // SAFETY: an in-process call on a live provider of this process.
+            unsafe { self.simple.ProviderOptions() }
+        }
+        fn GetPatternProvider(&self, pattern_id: UIA_PATTERN_ID) -> WinResult<IUnknown> {
+            // SAFETY: as above.
+            unsafe { self.simple.GetPatternProvider(pattern_id) }
+        }
+        fn GetPropertyValue(&self, property_id: UIA_PROPERTY_ID) -> WinResult<VARIANT> {
+            // SAFETY: as above.
+            unsafe { self.simple.GetPropertyValue(property_id) }
+        }
+        fn HostRawElementProvider(&self) -> WinResult<IRawElementProviderSimple> {
+            // SAFETY: as above.
+            unsafe { self.simple.HostRawElementProvider() }
+        }
+    }
+
+    impl IRawElementProviderFragment_Impl for CountingRootProvider_Impl {
+        fn Navigate(&self, direction: NavigateDirection) -> WinResult<IRawElementProviderFragment> {
+            // SAFETY: as above.
+            unsafe { self.fragment.Navigate(direction) }
+        }
+        fn GetRuntimeId(&self) -> WinResult<*mut SAFEARRAY> {
+            // SAFETY: as above.
+            unsafe { self.fragment.GetRuntimeId() }
+        }
+        fn BoundingRectangle(&self) -> WinResult<UiaRect> {
+            // SAFETY: as above.
+            unsafe { self.fragment.BoundingRectangle() }
+        }
+        fn GetEmbeddedFragmentRoots(&self) -> WinResult<*mut SAFEARRAY> {
+            // SAFETY: as above.
+            unsafe { self.fragment.GetEmbeddedFragmentRoots() }
+        }
+        fn SetFocus(&self) -> WinResult<()> {
+            // SAFETY: as above.
+            unsafe { self.fragment.SetFocus() }
+        }
+        fn FragmentRoot(&self) -> WinResult<IRawElementProviderFragmentRoot> {
+            // SAFETY: as above.
+            unsafe { self.fragment.FragmentRoot() }
+        }
+    }
+
+    impl IRawElementProviderFragmentRoot_Impl for CountingRootProvider_Impl {
+        fn ElementProviderFromPoint(
+            &self,
+            x: f64,
+            y: f64,
+        ) -> WinResult<IRawElementProviderFragment> {
+            // SAFETY: as above.
+            unsafe { self.root.ElementProviderFromPoint(x, y) }
+        }
+        fn GetFocus(&self) -> WinResult<IRawElementProviderFragment> {
+            // SAFETY: as above.
+            unsafe { self.root.GetFocus() }
+        }
     }
 
     /// The provider for every non-root node.
@@ -891,12 +1023,7 @@ mod handler {
         }
         fn FragmentRoot(&self) -> WinResult<IRawElementProviderFragmentRoot> {
             hits::hit(hits::Method::FragmentRoot);
-            Ok(RootProvider {
-                tree: self.tree.clone(),
-                hwnd: self.hwnd,
-                index: 0,
-            }
-            .into())
+            super::root_fragment(self.tree.clone(), self.hwnd).cast()
         }
     }
 
@@ -915,6 +1042,25 @@ mod handler {
         fn GetFocus(&self) -> WinResult<IRawElementProviderFragment> {
             hits::hit(hits::Method::GetFocus);
             props::get_focus(&self.tree, self.hwnd)
+        }
+    }
+
+    impl IRawElementProviderAdviseEvents_Impl for CountingRootProvider_Impl {
+        fn AdviseEventAdded(
+            &self,
+            event_id: UIA_EVENT_ID,
+            _property_ids: *const SAFEARRAY,
+        ) -> WinResult<()> {
+            hits::advise(event_id.0, true);
+            Ok(())
+        }
+        fn AdviseEventRemoved(
+            &self,
+            event_id: UIA_EVENT_ID,
+            _property_ids: *const SAFEARRAY,
+        ) -> WinResult<()> {
+            hits::advise(event_id.0, false);
+            Ok(())
         }
     }
 
@@ -975,12 +1121,7 @@ mod handler {
         fn FragmentRoot(&self) -> WinResult<IRawElementProviderFragmentRoot> {
             hits::hit(hits::Method::FragmentRoot);
             props::alive(&self.tree, self.index)?;
-            Ok(RootProvider {
-                tree: self.tree.clone(),
-                hwnd: self.hwnd,
-                index: 0,
-            }
-            .into())
+            super::root_fragment(self.tree.clone(), self.hwnd).cast()
         }
     }
 

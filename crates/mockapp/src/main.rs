@@ -50,6 +50,12 @@ struct Cli {
     /// real keys; the cross-process tests leave it hidden.
     #[arg(long)]
     show: bool,
+    /// Counts client registrations for events on the UIA root, as UIA
+    /// reports them (`IRawElementProviderAdviseEvents`), for the tests that
+    /// check a client removed its handlers; it changes the calls UIA makes,
+    /// so the tests that count calls leave it off.
+    #[arg(long)]
+    count_registrations: bool,
 }
 
 /// The `--backend` values `mockapp` accepts, translated to
@@ -78,6 +84,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     let native = root.take_native();
     let edit_version_6 = root.edit_version_6();
     let tree = std::sync::Arc::new(std::sync::Mutex::new(tree::Tree::build(root)));
+    if cli.count_registrations {
+        uia::count_registrations();
+    }
     let backend = match cli.backend {
         BackendArg::Uia => Backend::Uia,
         BackendArg::Msaa => Backend::Msaa,

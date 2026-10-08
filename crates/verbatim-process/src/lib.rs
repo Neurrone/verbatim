@@ -40,7 +40,7 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::JobObjects::{
     CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-    SetInformationJobObject,
+    SetInformationJobObject, TerminateJobObject,
 };
 use windows::Win32::System::Pipes::CreatePipe;
 use windows::Win32::System::Threading::{
@@ -70,6 +70,12 @@ pub struct ChildSpec<'a> {
     pub from_child_buffer: u32,
 }
 
+/// The exit code a child is given when [`Contained::kill`] ends it: the
+/// ASCII letters "KILL" read as a number, so a process ended this way is
+/// told apart from one that exited on its own (0) or crashed (an
+/// exception code such as `0xC0000005`).
+pub const KILLED_EXIT_CODE: u32 = 0x4B49_4C4C;
+
 /// A launched child: its job, which kills it when dropped.
 pub struct Contained {
     /// Held so the kernel kills the process when this handle closes. Every
@@ -91,6 +97,55 @@ impl Contained {
         // a zero timeout only reads whether it is signaled.
         let state = unsafe { WaitForSingleObject(HANDLE(self.process.as_raw_handle()), 0) };
         state == WAIT_OBJECT_0
+    }
+
+    /// Waits up to `timeout` for the process to exit, and says whether it
+    /// has.
+    #[must_use]
+    pub fn wait_for_exit(&self, timeout: std::time::Duration) -> bool {
+        let milliseconds = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX - 1);
+        // SAFETY: the process handle this value owns, open for its life.
+        let state =
+            unsafe { WaitForSingleObject(HANDLE(self.process.as_raw_handle()), milliseconds) };
+        state == WAIT_OBJECT_0
+    }
+
+    /// The process's exit code, once it has exited; `None` while it runs
+    /// or when the code cannot be read.
+    #[must_use]
+    pub fn exit_code(&self) -> Option<u32> {
+        if !self.has_exited() {
+            return None;
+        }
+        let mut code = 0u32;
+        // SAFETY: the process handle this value owns; `code` is a local.
+        unsafe {
+            windows::Win32::System::Threading::GetExitCodeProcess(
+                HANDLE(self.process.as_raw_handle()),
+                &raw mut code,
+            )
+        }
+        .ok()
+        .map(|()| code)
+    }
+
+    /// Ends every process in the child's job with [`KILLED_EXIT_CODE`],
+    /// and waits for the system to finish ending the child, so the kill is
+    /// over when this returns. Dropping a `Contained` kills it too, but
+    /// with whatever exit code the system gives a job closed under it; a
+    /// kill made on purpose says so in the exit code.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error if the job cannot be terminated.
+    pub fn kill(&self) -> io::Result<()> {
+        // SAFETY: the job handle this value owns, open for its life.
+        unsafe { TerminateJobObject(HANDLE(self.job.as_raw_handle()), KILLED_EXIT_CODE) }
+            .map_err(io::Error::other)?;
+        // SAFETY: as in `wait_for_exit`; the process ends promptly once
+        // its job is terminated.
+        let _ = unsafe { WaitForSingleObject(HANDLE(self.process.as_raw_handle()), u32::MAX) };
+        Ok(())
     }
 }
 

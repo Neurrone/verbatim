@@ -1722,6 +1722,7 @@ dependencies = [
  "verbatim-config",
  "verbatim-control",
  "verbatim-model",
+ "verbatim-process",
  "workspace-hack",
 ]
 

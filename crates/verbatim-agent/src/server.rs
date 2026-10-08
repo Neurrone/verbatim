@@ -18,7 +18,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::protocol::{AGENT_PROTOCOL_VERSION, Frame, ReplyPayload, Request, RequestEnvelope};
-use crate::{desktop, events, files, focus, jobs, keys, process, session, tunnel, typing};
+use crate::{
+    desktop, events, files, focus, jobs, keys, process, session, terminals, tunnel, typing,
+};
 
 /// The number the next key stroke or typed character the agent injects
 /// carries for the end-to-end harness (`verbatim_input::harness`), shared by
@@ -216,6 +218,7 @@ fn dispatch(id: u64, request: Request) -> Frame {
         request @ (Request::EndLaunched
         | Request::ChildProcesses { .. }
         | Request::JobExits { .. }
+        | Request::WaitForJobEmpty { .. }
         | Request::WaitForExit { .. }
         | Request::WaitForFile { .. }
         | Request::CreateEvent { .. }
@@ -253,6 +256,7 @@ fn dispatch(id: u64, request: Request) -> Frame {
         | Request::SetForeground { .. }
         | Request::WaitForWindow { .. }
         | Request::MinimizeAll { .. }
+        | Request::TakeForeignTerminalWindows
         | Request::WriteFile { .. }
         | Request::DeleteFile { .. }
         | Request::DeleteFolder { .. }) => desktop_request(id, request),
@@ -297,6 +301,15 @@ fn process_request(id: u64, request: Request) -> Frame {
             },
             Err(error) => error_frame(id, &error),
         },
+        Request::WaitForJobEmpty { pid, timeout_ms } => {
+            match jobs::wait_until_empty(pid, Duration::from_millis(timeout_ms)) {
+                Ok(exits) => Frame::Reply {
+                    to: id,
+                    payload: ReplyPayload::Exits { exits },
+                },
+                Err(error) => error_frame(id, &error),
+            }
+        }
         Request::WaitForExit { pid, timeout_ms } => {
             match process::wait_for_exit(pid, Duration::from_millis(timeout_ms)) {
                 Ok(state) => Frame::Reply {
@@ -430,6 +443,13 @@ fn type_text(id: u64, text: &str) -> Frame {
 /// file, and deleting a folder.
 fn desktop_request(id: u64, request: Request) -> Frame {
     match request {
+        Request::TakeForeignTerminalWindows => match terminals::take_foreign() {
+            Ok(windows) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::TerminalWindows { windows },
+            },
+            Err(error) => error_frame(id, &error),
+        },
         Request::ForegroundInfo => Frame::Reply {
             to: id,
             payload: ReplyPayload::ForegroundInfo(desktop::foreground_info()),

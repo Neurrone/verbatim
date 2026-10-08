@@ -962,8 +962,14 @@ fn run(def: &ScenarioDef) {
         })),
         Err(error) => problems.push(format!("could not read Verbatim's process exits: {error}")),
     }
-    if let Err(error) = scenario.quit_verbatim() {
-        problems.push(format!("quitting Verbatim failed: {error}"));
+    match scenario.quit_verbatim() {
+        Ok(()) => match scenario.outposts_shut_down_cleanly() {
+            Ok(found) => problems.extend(found),
+            Err(error) => problems.push(format!(
+                "could not check that Verbatim's outposts shut down cleanly: {error}"
+            )),
+        },
+        Err(error) => problems.push(format!("quitting Verbatim failed: {error}")),
     }
     let teardown_outcome = state.map(|state| {
         panic::catch_unwind(AssertUnwindSafe(|| (def.teardown)(&mut scenario, state)))
@@ -978,6 +984,17 @@ fn run(def: &ScenarioDef) {
     problems.extend(scenario.collect_run_artifacts(&dir));
     if let Err(error) = scenario.finish_recording(&dir.join(format!("{}.mp4", def.name))) {
         problems.push(format!("the recording could not be saved: {error}"));
+    }
+    match scenario.foreign_terminal_windows() {
+        Ok(windows) => problems.extend(windows.into_iter().map(|window| {
+            format!(
+                "a Windows Terminal window the run did not open appeared: {:?} (pid {}, class {})",
+                window.title, window.pid, window.class
+            )
+        })),
+        Err(error) => problems.push(format!(
+            "could not check for Windows Terminal windows the run did not open: {error}"
+        )),
     }
     foreground.push(format!("after cleanup: {}", scenario.foreground_report()));
     drop(scenario);

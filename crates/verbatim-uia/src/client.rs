@@ -764,6 +764,38 @@ fn take_ancestor(
 /// [`ensure_ready`].
 static UIA_READY: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
 
+/// The cookie of the process's hold on the multithreaded apartment, taken
+/// by the first-time setup ([`ensure_ready`]) and given back by
+/// [`release_mta_usage`].
+static MTA_USAGE: std::sync::Mutex<Option<usize>> = std::sync::Mutex::new(None);
+
+/// Gives back the process's hold on COM's multithreaded apartment, which
+/// the first use of UIA took so the apartment, and UIA's setup with it,
+/// outlives whichever thread happens to be in it. For a process that has
+/// finished with UIA for good, such as an outpost shutting down: once
+/// every thread has left the apartment ([`crate::leave_mta`]), COM tears
+/// it down. A later use of UIA sets it up again. Does nothing when UIA
+/// was never used.
+pub fn release_mta_usage() {
+    let mut ready = UIA_READY
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let cookie = MTA_USAGE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    if let Some(cookie) = cookie {
+        // SAFETY: the cookie `CoIncrementMTAUsage` returned, given back
+        // once: it was taken out of the slot above.
+        let _ = unsafe {
+            windows::Win32::System::Com::CoDecrementMTAUsage(
+                windows::Win32::System::Com::CO_MTA_USAGE_COOKIE(cookie as *mut _),
+            )
+        };
+    }
+    *ready = false;
+}
+
 /// Finishes UIA's first-time setup in this process before this thread uses
 /// UIA, doing it if no thread has: a client is created and a cache request
 /// built from it while holding [`UIA_READY`], so no other thread uses UIA
@@ -795,9 +827,12 @@ pub(crate) fn ensure_ready() -> windows::core::Result<()> {
         let setup = std::thread::Builder::new()
             .name("verbatim-uia-setup".to_owned())
             .spawn(|| -> windows::core::Result<()> {
-                // SAFETY: keeps the apartment alive; the cookie is never
-                // released, for the life of the process.
-                unsafe { windows::Win32::System::Com::CoIncrementMTAUsage() }?;
+                // SAFETY: keeps the apartment alive until
+                // `release_mta_usage` gives the cookie back.
+                let cookie = unsafe { windows::Win32::System::Com::CoIncrementMTAUsage() }?;
+                *MTA_USAGE
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cookie.0 as usize);
                 init_mta()?;
                 // SAFETY: as in `create_client`.
                 let result = unsafe {

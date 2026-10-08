@@ -65,6 +65,14 @@ pub use timeline::Timeline;
 /// [`endpoint`] first and fails when it is unset.
 pub const ENDPOINT_ENV: &str = "VERBATIM_E2E_ENDPOINT";
 
+/// `CREATE_NO_WINDOW`, the process creation flag every console program the
+/// harness starts itself (cargo, `curl.exe`, `tar.exe`) is started with:
+/// it gets a console with no window, writing to the standard handles it
+/// inherits, so a harness run without a console of its own never has
+/// Windows give one a new console, which Windows would hand to the default
+/// terminal application, the user's own Windows Terminal.
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// Reads [`ENDPOINT_ENV`], which every live test in this crate checks
 /// first. `None` means "no agent is reachable", and the live test fails.
 #[must_use]

@@ -51,8 +51,8 @@ Public API:
   request id and a `Query`: `FocusNow`, `Navigate` with a model `QueryKind`,
   `Activate`, `Ancestors`, `DumpTree`, or `Text`, a node and a model
   `TextOp`, milestone M4's text protocol), `Cancel` (withdraws a query that
-  has not started), and `Ping`. There is no shutdown message: Core ends a
-  child by closing its job handle. `OutpostToSupervisor`: `Ready`, `Event`
+  has not started), `Ping`, and `Shutdown` (shut down cleanly and exit,
+  under "Shutting down" below). `OutpostToSupervisor`: `Ready`, `Event`
   (trace id, observation timestamp, backend, the event window's
   `WindowFacts`, normalized event), `Reply` (exactly one per accepted query,
   echoing its request id, with its `EventTiming`, default for a query
@@ -62,8 +62,10 @@ Public API:
   when it started and passed its deadline, so side effects such as an
   activation may already have happened), `Pong` (echoes the ping's sequence
   number and reports how many abandoned workers have not yet returned, which
-  the supervisor watches), `Fault`, and `FocusFact` (sent only by the
-  listener). A `FocusNow` answer carries the application's foreground
+  the supervisor watches), `Fault`, `FocusFact` (sent only by the
+  listener), and `TargetExited` (the outpost's application has exited,
+  sent once, ahead of ordinary messages, so the supervisor shuts the
+  outpost down). A `FocusNow` answer carries the application's foreground
   window and its facts, when it holds the system foreground, and its focused
   control with ancestors, selected child, and window facts, and the time
   the outpost began reading it, which orders it among the focus events. A
@@ -191,7 +193,12 @@ Public API:
     `NotStarted` reply, and queues everything else.
   - The writer (`outpost::outbound`) sends pongs and `Ready` ahead of
     ordinary messages, which wait in a bounded queue.
-  `run_pipe` is the production mode over inherited pipe handles; `run_attach`
+  `run_pipe` is the production mode over inherited pipe handles, which
+  reads Core's commands until Core asks it to shut down, or the command
+  pipe ends, and then shuts the outpost down cleanly (`Outpost::shutdown`,
+  under "Shutting down" below); it also tells Core when the target
+  application exits, from a thread that waits on the application's
+  process. `run_attach`
   watches a pid directly, asks for its focus, and prints outbound messages as
   JSON lines to stdout, the standalone dev mode. Both take an
   `OutpostOptions`, fixed for the outpost's life, whose one field,
@@ -294,7 +301,13 @@ Public API:
   only for the focus, and live regions are milestone M6's.
 - `Supervisor` (the `supervisor` module; outpost redesign, "The
   supervisor") — `new(events_tx)` starts the lifecycle owner thread, which
-  starts the focus listener at once; `ensure_spawned(pid)` starts an outpost
+  starts the focus listener at once (`with_executable` launches every
+  child from a given executable with a given shutdown time limit, for the
+  test that launches a stand-in); `shutdown()` shuts every outpost and the
+  listener down for Verbatim's exit, returning once every one has ended
+  with a `ShutdownSummary`, how many of the children that ended during
+  Verbatim's life shut down cleanly, had already exited or exited with an
+  error, or had to be killed; `ensure_spawned(pid)` starts an outpost
   without asking it to report anything (used once, at Core startup, for
   Core's own pid, so its outpost is warm before the first gesture);
   `send_to_outpost(outpost_id, command)` queues a command for one outpost
@@ -306,7 +319,7 @@ Public API:
   through
   `OutpostMessage`: `Started` before
   any of its messages, `Event(pid, outpost_id, message)` for each message,
-  and `Ended` with a reason (exited, killed, or retired).
+  and `Ended` with a reason (exited, killed, retired, or target exited).
   - The lifecycle owner (`owner`) is one thread that makes every lifecycle
     decision and owns the per-application records and the listener record.
     Readers, the heartbeat and sweep timers (`crossbeam_channel::tick`
@@ -345,10 +358,16 @@ Public API:
     minutes, which is not Core's own, and in which the reducer holds no
     nodes, is ended (`Ended`, retired) by the sweep every 30 seconds (the
     pure `retirement_decision`).
-  - Every ending closes the child's job handle, which kills it if it is
-    still running; there is no shutdown message. When the owner kills or
-    retires an outpost, `Ended` is sent at once and anything the child wrote
-    afterwards follows it, which the app drops.
+  - Target exit: an outpost whose application has exited says so
+    (`TargetExited`), and the owner ends it (`Ended`, target exited); it is
+    not replaced.
+  - Every ending shuts the child down cleanly (`retire`, on a thread of
+    its own, under "Shutting down" below): unless it has already exited,
+    the child is sent `Shutdown`, its command pipe is closed once that is
+    written, and it is killed through its job only if it has not exited
+    within `SHUTDOWN_LIMIT`. When the owner ends an outpost for any reason
+    but the end of its pipe, `Ended` is sent at once and anything the
+    child wrote afterwards follows it, which the app drops.
   - The focus listener is supervised the same way from its own record: its
     facts go to the owner, which routes them; it is pinged and replaced when
     it stops answering or its pipe closes, and a replacement's `Ready` asks
@@ -881,6 +900,99 @@ Implementation notes:
   replies grew the message enum well past the lifecycle notices, and boxing
   keeps every channel send small. `Supervisor::send_nodes_held` queues a
   `NodesHeld` list for one incarnation.
+
+## Shutting down
+
+Outposts and the listener are UI Automation clients of every application
+Verbatim reads, and killing a client in the middle of a call or a remote
+operation into an application is the leading suspect in a Windows Terminal
+crash inside `UIAutomationCore.dll` (`phase6-design.md`, "Windows Terminal
+crash of 2026-10-08"); it also happened to every application whenever
+Verbatim exited, since ending a child used to mean closing its job. So
+every way a child ends goes through a clean shutdown, and the kill is
+only the fallback:
+
+- Verbatim exiting: `Supervisor::shutdown`, which the app runs while the
+  exit sound plays, after removing its keyboard hook, and waits for before
+  it exits. No child is started from then on, and a child whose launch
+  reports back afterwards is shut down at once.
+- An outpost or the listener replaced or restarted: one that stopped
+  answering pings, piled up abandoned workers, or closed its pipe, and a
+  child launched after it was no longer wanted.
+- An outpost retired, or ended because its application exited.
+
+The supervisor's side (`supervisor::retire`): the child is sent
+`Shutdown`, which passes a full command queue, its command pipe is closed
+once everything before it is written, and the supervisor waits on the
+process for `SHUTDOWN_LIMIT`. A child that exits with code 0 shut down
+cleanly. One that has not exited by then is killed through its job
+(`Contained::kill`, with `verbatim_process::KILLED_EXIT_CODE`), and the
+kill is logged as a warning with why the child was being ended, and counted
+in the summary; so is an exit with another code. The end-to-end suite
+checks after every scenario that each outpost and the listener exited
+with code 0 before Verbatim did.
+
+The outpost's side (`Outpost::shutdown`), in order:
+
+1. The intake closes: nothing new is taken, and what was waiting is
+   dropped.
+2. The `WinEvent` hooks are removed, with the thread that pumped them.
+3. Both focus-following UIA subscriptions are closed: each client removes
+   everything it registered (`RemoveAllEventHandlers`).
+4. The worker finishes the entry in hand and every abandoned worker
+   returns from its call. The watchdog ends first, so nothing more is
+   abandoned. No call is cut off: a call into an application that does
+   not answer is ended by UIA's own timeouts.
+5. Every object held is released: every node leaves both registries, with
+   its text patterns, anchors, and terminal memory.
+6. The writer writes what is queued, the answer to the call that was in
+   progress included, and closes the pipe.
+7. The thread leaves COM's multithreaded apartment, and the process's
+   hold on it is given back (`verbatim_uia::release_mta_usage`), so COM
+   ends the apartment once every thread has left it; each worker and each
+   subscription thread leaves it as it ends.
+
+The outpost logs how long each step took (`the outpost shut down`). The
+listener's shutdown removes its hooks, its desktop-wide focus handler, and
+its other desktop-wide handlers, writes what is queued, and gives back
+the apartment; it makes no call into an application, so nothing else can
+be in progress. Both then end the process with `TerminateProcess` and
+exit code 0 rather than returning from `main`, so no DLL's process-detach
+code runs (`docs/architecture.md`, "Process lifetime").
+
+The time limit, `SHUTDOWN_LIMIT`, is 21 seconds. Over the end-to-end
+suite on the development machine (2026-10-08, 436 shutdowns), a clean
+shutdown took from 4 to 443 milliseconds from the shutdown message to the
+process's exit, as the supervisor logs it (`shut down cleanly`,
+`elapsed_ms`): a median of 15 and a 99th percentile of 31, the slowest
+the focus listener's once. The only thing that can make it take longer is a call in
+progress, which the outpost lets finish. UIA ends a call to a provider
+that never answers by its transaction timeout, 20 seconds, UIA's default,
+which Verbatim leaves as it is; this bounds a classic call and a remote
+operation's `Execute` alike (mockapp's `remote_ops` tests pin it), and the
+connection timeout, 10 seconds, ends a call to a provider that cannot be
+reached. So 20 seconds covers every call UIA ends by itself, and one more
+second covers the shutdown's own work; waiting longer could only wait on
+an MSAA call into a hung application, which nothing times out, and that
+child is killed. The kill only ever happens while an application is not
+answering, and Verbatim's exit then waits up to the limit, after the exit
+sound.
+
+Tests: `crates/mockapp/tests/shutdown.rs` tells a real outpost to shut
+down while its read into mockapp is held at its first provider call, once
+for a remote operation and once for classic reads, and checks that the
+read's answer is sent, the outpost's four UIA event registrations on
+mockapp's window are removed (counted by mockapp's fragment root through
+`IRawElementProviderAdviseEvents`), the pipe is closed, and mockapp still
+answers another client. `crates/verbatim-outpost/tests/shutdown_fallback.rs`
+has a real supervisor launch a stand-in listener that never exits, and
+checks that it is killed once its time limit has passed and that the kill
+is reported in the shutdown's summary.
+`crates/verbatim-outpost/tests/target_exit.rs` runs the real outpost
+binary against a stand-in application, which it ends, and checks that the
+outpost says `TargetExited` and, sent `Shutdown`, closes its pipe and
+exits with code 0. The end-to-end suite checks every run's outposts and
+listener as above.
 
 ## Terminals (milestone M4 item 9)
 

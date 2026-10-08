@@ -70,10 +70,10 @@ fn main() -> ExitCode {
                 }
             };
             match run_pipe(Box::new(reader), Box::new(writer), target_pid, options) {
-                Ok(()) => ExitCode::SUCCESS,
+                Ok(()) => end_without_detach(0),
                 Err(error) => {
                     report_error!("outpost pipe loop ended with error: {error}");
-                    ExitCode::FAILURE
+                    end_without_detach(1)
                 }
             }
         }
@@ -91,10 +91,10 @@ fn main() -> ExitCode {
                 }
             };
             match run_listener(Box::new(reader), Box::new(writer)) {
-                Ok(()) => ExitCode::SUCCESS,
+                Ok(()) => end_without_detach(0),
                 Err(error) => {
                     report_error!("listener pipe loop ended with error: {error}");
-                    ExitCode::FAILURE
+                    end_without_detach(1)
                 }
             }
         }
@@ -115,6 +115,25 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Ends this process with `code` once an outpost or the listener has shut
+/// down cleanly: every UIA handler and hook removed, every call finished,
+/// every object released, and COM left. It ends with `TerminateProcess`
+/// rather than by returning from `main`, so no DLL's process-detach code
+/// runs: `UIAutomationCore.dll`'s sometimes hangs or crashes in a process
+/// that has used UIA as a client (`docs/architecture.md`, "Process
+/// lifetime"). Nothing is left for that code to do; standard error, the
+/// log, is written unbuffered.
+fn end_without_detach(code: u32) -> ! {
+    use windows::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
+    // SAFETY: the calling process's pseudo-handle, which needs no closing.
+    let this_process = unsafe { GetCurrentProcess() };
+    // SAFETY: ends the calling process.
+    let ended = unsafe { TerminateProcess(this_process, code) };
+    // Unreachable unless the call failed; exit the ordinary way then.
+    report_error!("the process could not end itself ({ended:?}); exiting normally");
+    std::process::exit(i32::try_from(code).unwrap_or(1))
 }
 
 /// Installs a tracing subscriber writing to this process's stderr (which the

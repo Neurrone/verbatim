@@ -351,6 +351,28 @@ pub(crate) fn top_level_windows(target_pid: u32) -> Vec<isize> {
     search.windows
 }
 
+/// Waits, for as long as it takes, for process `pid` to exit, and says
+/// whether it did: true once it has exited, or when no process has that
+/// id (it exited before the wait began); false when the process cannot be
+/// waited on, such as one running at a higher integrity level.
+pub(crate) fn wait_for_process_exit(pid: u32) -> bool {
+    use windows::Win32::Foundation::{ERROR_INVALID_PARAMETER, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{
+        INFINITE, OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+    };
+    // SAFETY: a wait-only open of a plain process id; the handle is closed
+    // below.
+    let process = match unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) } {
+        Ok(process) => process,
+        Err(error) => return error.code() == ERROR_INVALID_PARAMETER.to_hresult(),
+    };
+    // SAFETY: the handle opened above, with SYNCHRONIZE access.
+    let waited = unsafe { WaitForSingleObject(process, INFINITE) };
+    // SAFETY: the handle opened above, closed once.
+    let _ = unsafe { CloseHandle(process) };
+    waited == WAIT_OBJECT_0
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;

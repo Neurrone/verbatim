@@ -191,9 +191,30 @@ Any of Verbatim's own processes (Verbatim, an outpost, the focus
 listener, a synthesizer host) that exits during the scenario without the
 scenario having ended it on purpose fails the run, read from the exits
 the agent records for Verbatim's job (`JobExits`). Verbatim must quit with
-exit code 0. When crash dumps are configured
+exit code 0, and must leave none of its processes behind: once it has
+exited, the harness waits for its job to empty (`WaitForJobEmpty`), and
+every outpost and the focus listener (`verbatim-outpost.exe`) but one the
+scenario ended on purpose must have shut down cleanly, exiting with code 0
+before Verbatim did; one that Verbatim's supervisor had to kill exits with
+`verbatim_process::KILLED_EXIT_CODE` and fails the run
+(`Scenario::outposts_shut_down_cleanly`; `docs/crates/verbatim-outpost.md`,
+"Shutting down"). When crash dumps are configured
 (`vm/scripts/Enable-VerbatimCrashDumps.ps1`), the dumps that appeared in
 `CRASH_DUMP_FOLDER` during the run are copied into its artifacts.
+
+### The user's Windows Terminal
+
+The suite runs on the owner's desktop, whose own Windows Terminal hosts
+their work, so nothing a run does may reach it. Every program the agent
+starts without a console title, and every console program the harness
+runs itself (cargo, `curl.exe`, `tar.exe`, with `CREATE_NO_WINDOW`), has
+no console window, so Windows never hands a console to the default
+terminal application; the console host scenarios start `conhost.exe`
+explicitly, and the Windows Terminal scenarios start the harness's
+portable copy. The agent watches for Windows Terminal windows from the
+start of each run (`TakeForeignTerminalWindows`), and any window of a
+Windows Terminal process the agent did not launch that appears during the
+run fails it (`Scenario::foreign_terminal_windows`).
 
 ## The run
 
@@ -203,8 +224,10 @@ setup and the body, which ends with `expect_nothing_more`; save the
 latency timelines, Core's focus (`collect_focus`, `focus.txt`: the focus,
 its ancestors, and the navigator, from the control plane's `DumpFocus`),
 and the flight recorder while Verbatim is up; check for unexpected exits;
-quit Verbatim; run the teardown; clean up; collect the artifacts; finish
-the recording; write `foreground.txt`, the summary, and archive the run.
+quit Verbatim and check that its outposts and listener shut down cleanly;
+run the teardown; clean up; collect the artifacts; finish the recording;
+check that no Windows Terminal window the run did not open appeared;
+write `foreground.txt`, the summary, and archive the run.
 Every step after the body runs whatever happened before it, and every
 problem is a failure reported together with the body's own panic.
 
