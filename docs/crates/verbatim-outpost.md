@@ -831,7 +831,11 @@ Implementation notes:
   observed before the worker last read that node's caret (a caret key's
   check reads it after the event) is dropped. A caret event, a text
   change, and a text selection change of the node a caret key's watch is
-  open on check the watch first.
+  open on check the watch first. A focus-now answer's control has its caret
+  and text changes followed too (the subscription moved to it, and an
+  edit control's caret events checked against a watch on it), since Core
+  takes it as its focus and its caret keys are answered by those events;
+  it gets no caret report and no property subscription.
 - Queries (the worker): `DumpTree` walks the target's foreground window (or
   its first visible top-level window) through its backend — UIA via
   `Uia::walk_tree` with the base cache request, MSAA via

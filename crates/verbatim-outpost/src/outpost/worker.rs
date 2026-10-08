@@ -908,6 +908,14 @@ impl Worker<'_> {
         }
     }
 
+    /// The node of the open caret key's watch, when it is the client area
+    /// of the edit control `hwnd`.
+    fn watched_edit(&self, hwnd: isize) -> Option<NodeId> {
+        let node_id = self.context.caret_watch().as_ref()?.node_id;
+        (self.context.msaa_registry.key_of(node_id) == Some((hwnd, OBJID_CLIENT.0, CHILDID_SELF)))
+            .then_some(node_id)
+    }
+
     /// Ends the open caret key's watch, if there is one, without evidence:
     /// answered `WatchEnded`, for which Core says nothing. `why` is logged.
     fn end_watch(&mut self, why: &str) {
@@ -1094,20 +1102,11 @@ impl Worker<'_> {
     /// changes to it (to nothing for a focus without text, or one read
     /// through MSAA, whose caret events come from the hooks).
     fn follow_text(&self, node: &NodeSnapshot, trace: TraceId) {
-        let has_text = text_reads::may_have_text(self.context, node);
+        let has_text = self.follow_text_events(node);
         let role_has_text = matches!(
             node.role,
             Role::EditableText | Role::Document | Role::Terminal
         );
-        if let Some(subscription) = self.context.text_events.get() {
-            let element = has_text
-                .then(|| self.context.uia_registry.element_of(node.id))
-                .flatten();
-            subscription.retarget(match element {
-                Some(element) => verbatim_uia::Scope::Elements(vec![element]),
-                None => verbatim_uia::Scope::Nothing,
-            });
-        }
         if has_text || role_has_text {
             self.context.intake.push(Entry {
                 item: Item::CaretOf { node_id: node.id },
@@ -1119,6 +1118,24 @@ impl Worker<'_> {
                 },
             });
         }
+    }
+
+    /// Moves the subscription to caret and text changes to `node` when it
+    /// may have text and is read through UIA, and to nothing otherwise
+    /// (an edit control's caret events come from the hooks). Returns
+    /// whether the node may have text.
+    fn follow_text_events(&self, node: &NodeSnapshot) -> bool {
+        let has_text = text_reads::may_have_text(self.context, node);
+        if let Some(subscription) = self.context.text_events.get() {
+            let element = has_text
+                .then(|| self.context.uia_registry.element_of(node.id))
+                .flatten();
+            subscription.retarget(match element {
+                Some(element) => verbatim_uia::Scope::Elements(vec![element]),
+                None => verbatim_uia::Scope::Nothing,
+            });
+        }
+        has_text
     }
 
     /// Releases every node Core does not hold that was reported at or before
@@ -1334,6 +1351,10 @@ impl Worker<'_> {
                     if !self.check_open_watch(node_id, true) {
                         self.caret_of(node_id, trace, observed_at_ms, false);
                     }
+                } else if let Some(node_id) = self.watched_edit(hwnd) {
+                    // A caret key's watch on an edit control Core took as
+                    // its focus from a focus-now answer.
+                    self.check_open_watch(node_id, true);
                 }
                 return;
             }
@@ -2466,6 +2487,12 @@ impl Worker<'_> {
                     window.chain(focus),
                     (&previous, &mut None, false),
                 );
+                // Core takes the answer's control as its focus, and a caret
+                // key there is answered by the control's caret events, so
+                // they are followed as a reported focus's are.
+                if let Some(control) = &answer.focus {
+                    self.follow_text_events(&control.node);
+                }
                 Ok(QueryResult::Focus(answer))
             }
             Query::Navigate { node_id, kind } => {
