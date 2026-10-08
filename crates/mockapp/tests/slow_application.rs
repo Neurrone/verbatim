@@ -9,6 +9,8 @@
 //! outpost now.
 
 mod common;
+#[path = "common/harness.rs"]
+mod harness;
 
 use std::io::BufReader;
 use std::sync::mpsc;
@@ -30,7 +32,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// Longer than the old focus deadline, well under NVDA's ten seconds.
 const STALL: Duration = Duration::from_millis(2500);
 
-#[test]
 fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
     common::init_com();
     let title = common::unique_title("mockapp-slow-focus");
@@ -141,4 +142,12 @@ fn pump_until<T>(mut value: impl FnMut() -> Option<T>) -> T {
             unsafe { MsgWaitForMultipleObjectsEx(None, left, QS_ALLINPUT, MWMO_INPUTAVAILABLE) };
         assert_ne!(woke, WAIT_TIMEOUT, "mockapp's focus event did not arrive");
     }
+}
+
+/// Runs each test on a desktop of its own (`common/harness.rs`).
+fn main() {
+    harness::run_isolated(&[(
+        "a_focus_read_that_waits_on_a_busy_application_is_still_reported",
+        a_focus_read_that_waits_on_a_busy_application_is_still_reported,
+    )]);
 }

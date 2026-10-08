@@ -49,9 +49,17 @@ struct Entry {
 
 /// When an announcement reached each stage, in microseconds since the Unix
 /// epoch, for its latency line. The speech stages are those of the trace's
-/// first utterance.
+/// first utterance, and the event's are those of the one message from an
+/// outpost whose reduction first asked for speech on the trace
+/// ([`LatencyLedger::speech_requested`]): the newest Core received for the
+/// trace until then. A message received after it, such as a text focus's
+/// caret report, which speaks the focus's line, changes nothing here, so a
+/// line never mixes two messages' stages.
 #[derive(Default)]
 struct Stages {
+    /// Whether the trace's speech has been asked for, which fixes the
+    /// message whose stages these are.
+    speech_requested: bool,
     /// When the keyboard hook saw the caret key behind the trace.
     key_pressed: Option<u64>,
     /// When the reducer first handled the trace's input before any outpost
@@ -315,18 +323,28 @@ impl LatencyLedger {
     /// Records when an OS event behind `trace_id` was first observed.
     pub fn event_observed(&self, trace_id: TraceId, at_ms: u64) {
         self.update(trace_id, |entry| {
-            entry.event_observed_at_ms = Some(at_ms);
+            // The message the trace's speech came from, as its stages.
+            if !entry.stages.speech_requested {
+                entry.event_observed_at_ms = Some(at_ms);
+            }
         });
     }
 
     /// Records that Core received the event or query reply behind
     /// `trace_id` from its outpost, with when it passed each point there and
-    /// the cross-process calls the outpost made for it.
+    /// the cross-process calls the outpost made for it. Until the trace's
+    /// speech is asked for, each message replaces the one before whole,
+    /// with its own reduction to come; after it, a message is not the
+    /// speech's, and is left out ([`Stages`]).
     pub fn event_received(&self, trace_id: TraceId, timing: EventTiming) {
         let now = (self.clock)();
         self.update(trace_id, |entry| {
-            entry.stages.event = Some(timing);
-            entry.stages.core_received = Some(now);
+            let stages = &mut entry.stages;
+            if !stages.speech_requested {
+                stages.event = Some(timing);
+                stages.core_received = Some(now);
+                stages.reduced = None;
+            }
         });
     }
 
@@ -338,12 +356,23 @@ impl LatencyLedger {
         let now = (self.clock)();
         self.update(trace_id, |entry| {
             let stages = &mut entry.stages;
-            if stages.core_received.is_some() {
+            if stages.speech_requested {
+                // A message after the speech's, which is not its.
+            } else if stages.core_received.is_some() {
                 stages.reduced.get_or_insert(now);
             } else {
                 stages.requested.get_or_insert(now);
             }
         });
+    }
+
+    /// Records that the reducer asked for speech on `trace_id`, as Core
+    /// hands it to the speech pipeline: the message it handled last for the
+    /// trace is the one the speech came from, whose stages the trace keeps.
+    /// The pipeline queues the utterance on its own thread, by which time
+    /// Core may have received the trace's next message.
+    pub fn speech_requested(&self, trace_id: TraceId) {
+        self.update(trace_id, |entry| entry.stages.speech_requested = true);
     }
 
     /// Records a speech milestone for `utterance`, when it is its trace's
@@ -654,6 +683,7 @@ mod tests {
     #[test]
     fn the_latency_line_names_each_stage_and_leaves_out_the_wait() {
         let stages = Stages {
+            speech_requested: true,
             key_pressed: None,
             requested: None,
             event: Some(EventTiming {
@@ -748,6 +778,7 @@ mod tests {
     #[test]
     fn a_caret_keys_line_starts_at_the_hook_and_divides_the_wait_from_the_read() {
         let stages = Stages {
+            speech_requested: true,
             key_pressed: Some(1_000),
             requested: Some(1_400),
             event: Some(EventTiming {
@@ -837,6 +868,70 @@ mod tests {
                 LatencyStageKind::Reducer,
             ],
             "the request's reduction and the answer's are separate stages"
+        );
+    }
+
+    /// A text focus is announced as its message is reduced, and its line
+    /// when its caret report, a second message on the same trace, is: the
+    /// announcement's line and record keep the focus message's stages, with
+    /// its listener stage, not the caret report's, though the pipeline
+    /// queues the announcement only after Core has received the caret
+    /// report.
+    #[test]
+    fn a_line_keeps_the_stages_of_the_message_its_speech_came_from() {
+        let ledger = ledger_at(9_300);
+        let trace = TraceId::mint();
+        let now = std::time::Instant::now;
+        ledger.event_observed(trace, 1);
+        ledger.event_received(
+            trace,
+            EventTiming {
+                observed_at_us: 1_000,
+                relayed_at_us: 1_500,
+                dequeued_at_us: 2_000,
+                published_at_us: 9_000,
+                ..EventTiming::default()
+            },
+        );
+        FAKE_US.set(9_400);
+        ledger.reduced(trace);
+        ledger.speech_requested(trace);
+        FAKE_US.set(21_300);
+        ledger.event_observed(trace, 20);
+        ledger.event_received(
+            trace,
+            EventTiming {
+                dequeued_at_us: 20_000,
+                published_at_us: 21_000,
+                ..EventTiming::default()
+            },
+        );
+        FAKE_US.set(21_400);
+        ledger.reduced(trace);
+        ledger.speech_requested(trace);
+        FAKE_US.set(21_500);
+        ledger.utterance_queued(UtteranceId(1), trace, "Text editor", now());
+        ledger.utterance_queued(UtteranceId(2), trace, "hello", now());
+        FAKE_US.set(30_000);
+        ledger.audio_started(UtteranceId(1), trace, now());
+
+        let record = &ledger.recent(1)[0];
+        assert_eq!(record.event_observed_at_ms, 1);
+        let stages: Vec<_> = record
+            .stages
+            .iter()
+            .map(|stage| (stage.kind, stage.duration_us))
+            .collect();
+        assert_eq!(
+            stages,
+            [
+                (LatencyStageKind::ListenerToOutpost, 500),
+                (LatencyStageKind::OutpostQueue, 500),
+                (LatencyStageKind::OutpostRead, 7_000),
+                (LatencyStageKind::ToCore, 300),
+                (LatencyStageKind::Reducer, 100),
+                (LatencyStageKind::ToSpeech, 12_100),
+            ]
         );
     }
 

@@ -351,27 +351,34 @@ running `MockApp`'s drop, and a `mockapp` left running would keep the
 standard error it inherited open, on which `cargo test` then waits
 forever. `child_cleanup.rs` pins this: it runs itself as a subprocess
 that starts a `mockapp` and panics where the panic cannot unwind, and
-asserts that the subprocess's standard error closes promptly. The test files that use UIA as a
-client (`arbitration.rs`, `call_counts.rs`, `controller_for.rs`,
-`caret_watch.rs`, `events.rs`, `focus_reports.rs`, `instruction_limit.rs`,
-`remote_ops.rs`, `terminal.rs`, `text.rs`, `uia_tree.rs`)
-run through `tests/common/harness.rs` instead of libtest (`harness =
-false`): it runs and reports the tests as libtest does, then ends the
-process without running DLL detach code, because `UIAutomationCore.dll`'s
-own detach code sometimes hangs or crashes in a process that has connected
-to providers; the file's comment gives the evidence. The two that pin
-the calls mockapp's providers answer, `call_counts.rs` and `terminal.rs`,
-and `caret_watch.rs`, whose tests raise mockapp's events and must hear no
-other client's, run each test isolated (`harness::run_isolated`): the runner starts the
-binary again for each test, with `--isolated-test` and its name, on a
-new desktop made for it, and reports its result. A provider cannot tell
-which client called it (UIA's calls reach it from UI Automation's own
-threads in mockapp, with nothing of the client's identity), and other
-clients call mockapp at times of their own: a screen reader or another
-test agent answering its window's creation, and this binary's other
-tests, whose desktop-wide registrations read every new window. A window
-and its events are seen only from its own desktop, so on its own desktop
-the test is the only client. The outpost those tests run
+asserts that the subprocess's standard error closes promptly. Every test file runs through `tests/common/harness.rs` instead of
+libtest (`harness = false`): it runs and reports the tests as libtest
+does, then ends the process without running DLL detach code, because
+`UIAutomationCore.dll`'s own detach code sometimes hangs or crashes in a
+process that has connected to providers; the file's comment gives the
+evidence. It runs every test isolated (`harness::run_isolated`): the
+runner starts the binary again for each test, with `--isolated-test` and
+its name, on a new desktop made for it, and reports its result. A window
+and its events are seen only from its own desktop, and a process started
+on one, mockapp included, starts its children there, so no test puts a
+window on the desktop the run was started from, which may be in use by an
+end-to-end run, and on its own desktop the test is the only client. That
+matters most to the tests that pin the calls mockapp's providers answer
+(`call_counts.rs`, `terminal.rs`) and to those that raise mockapp's events
+and must hear no other client's: a provider cannot tell which client
+called it (UIA's calls reach it from UI Automation's own threads in
+mockapp, with nothing of the client's identity), and other clients call
+mockapp at times of their own, a screen reader or another test agent
+answering its window's creation, and this binary's other tests, whose
+desktop-wide registrations read every new window. No mockapp test needs
+the foreground or the keyboard focus, which no window on such a desktop
+can have: a test that needs a window to be the foreground, or an element
+to have the focus, tells the outpost under test which (below). Since
+2026-10-08 this covers every file; before, only `call_counts.rs`,
+`terminal.rs`, `caret_watch.rs`, and `shutdown.rs` ran isolated, and
+`cargo xtask ci` put the others' mockapp windows on the interactive
+desktop, where they disturbed end-to-end runs.
+The outpost those tests run
 (`tests/common/outpost.rs`) reads arbitration's time from the test,
 which stands still unless the test moves it on (`pass_time`), so a
 window's verdict of no UIA provider runs out, and its probe's
@@ -454,7 +461,17 @@ watch opened answers it with the character there
 (`a_caret_move_raised_later_answers_the_watch`); and a key that moves
 nothing says nothing, a caret event that shows no change leaves its watch
 open, and the next key's watch ends it, answered `WatchEnded`
-(`a_key_that_moves_nothing_is_answered_with_nothing`).
+(`a_key_that_moves_nothing_is_answered_with_nothing`). mockapp
+acknowledges `caret-event` once the call that raised the event has
+returned, but the outpost's handlers receive it later, on UI Automation's
+threads, and once more as the `WinEvent` UIA raises alongside it for MSAA
+clients, by a second route in no fixed order; so before each step moves
+on, the test waits until the outpost has heard both
+(`OutpostUnderTest::heard`, from `Outpost::observe_heard`) and then
+settles. Without that wait the moves-nothing test once failed under CI
+load: the first step's caret event, still on its way, answered the second
+key's watch, and the second step's event, arriving after that answer, was
+reported as a caret move no assertion expected.
 `slow_application.rs` runs a real
 `verbatim_outpost::Outpost` in the test process against an `msaa`-backend
 mockapp: it captures the address of mockapp's own scripted focus event,

@@ -488,7 +488,7 @@ fn moving_to_a_tree_items_parent_says_only_the_parent() {
 }
 
 fn main() {
-    harness::run(&[
+    harness::run_isolated(&[
         (
             "a_windows_forms_tree_item_is_read_as_a_tree_view_item",
             a_windows_forms_tree_item_is_read_as_a_tree_view_item,

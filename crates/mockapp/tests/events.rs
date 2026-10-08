@@ -625,7 +625,7 @@ fn a_command_for_an_unknown_node_is_rejected() {
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
-    harness::run(&[
+    harness::run_isolated(&[
         (
             "uia_set_name_raises_a_property_changed_event",
             uia_set_name_raises_a_property_changed_event,

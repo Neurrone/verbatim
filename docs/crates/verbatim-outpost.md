@@ -225,7 +225,15 @@ Public API:
   subscriptions have made every move asked of them, and every message
   published has been written to the pipe: the evidence those tests wait on
   before they read what the application answered, and before they assert
-  the outpost said nothing more. The worker and its reads (`worker.rs`, `read.rs`), the
+  the outpost said nothing more. `settle` covers only what has reached the
+  outpost: an application's event reaches a client after the call that
+  raised it has returned, on UI Automation's threads or the hook thread.
+  `Outpost::observe_heard` hands an observer (`HeardObserver`) each event
+  the outpost's own UIA handlers and `WinEvent` hooks take in, as a
+  `Heard` (a property change by id, a text selection change, a text
+  change, an active text position change, or a `WinEvent` by kind), once
+  it is queued for the worker; a test waits to hear the events it had
+  mockapp raise, then settles. The worker and its reads (`worker.rs`, `read.rs`), the
   intake, the writer, the protocol, and the supervisor's owner, policy, and
   writer modules forbid `unsafe` code: every UIA and MSAA read goes through
   the backend crates' safe wrappers, and what remains `unsafe` in the crate
@@ -570,11 +578,20 @@ Implementation notes:
   NVDA accepts a UIA focus event whose own element has the keyboard focus
   (`shouldAllowUIAFocusEvent`), where the outpost had held the focus back
   and read again (`phase6-design.md`, "Notepad at launch and the
-  outposts' loose ends"). Otherwise the focus has most
-  likely moved on (NVDA 2027.1 drops a focus event whose element no longer
-  has the keyboard focus), but an application still starting can answer
-  with a stand-in, so the fact is held back and reported only if a
-  follow-up finds its element focused after all. For an
+  outposts' loose ends"). Otherwise the focus has moved on and
+  the fact is dropped, as NVDA ignores a UIA focus event whose sender no
+  longer has the keyboard focus, read live (`shouldAllowUIAFocusEvent` in
+  `NVDAObjects/UIA/__init__.py`, lines 1632 to 1637, checked by
+  `IUIAutomationFocusChangedEventHandler_HandleFocusChangedEvent` in
+  `UIAHandler/__init__.py`, lines 948 to 953, which returns without
+  queuing the focus); the application's next focus event reports where
+  the focus is. Until 2026-10-08 such a fact was held back and the focused
+  element read up to three times more, which could only find the stand-in
+  again; and since a held fact was looked for only while it named the
+  focus last reported, a fact for any other element was dropped at its
+  first follow-up anyway (mockapp's
+  `a_windowless_focus_that_lost_the_keyboard_focus_waits_for_the_next_focus_event`).
+  For an
   element with no window of its own the listener also sends the keyboard
   focus window it found when it captured the event (`focus_window`, the
   foreground thread's focus window when it belongs to the element's

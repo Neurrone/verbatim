@@ -379,16 +379,18 @@ mod tests {
     use std::thread;
 
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, WINDOW_EX_STYLE, WS_OVERLAPPED,
+        CreateWindowExW, DestroyWindow, HWND_MESSAGE, WINDOW_EX_STYLE, WS_OVERLAPPED,
     };
     use windows::core::w;
 
     use super::*;
 
-    /// A hidden window owned by the calling thread.
+    /// A message-only window owned by the calling thread: never on any
+    /// desktop, so a test run puts no window on the one it runs on.
     fn create_window() -> isize {
-        // SAFETY: a predefined class, no parent, menu, or creation data; the
-        // window is destroyed by the thread that created it.
+        // SAFETY: a predefined class, the message-only parent, no menu or
+        // creation data; the window is destroyed by the thread that created
+        // it.
         let window = unsafe {
             CreateWindowExW(
                 WINDOW_EX_STYLE(0),
@@ -399,7 +401,7 @@ mod tests {
                 0,
                 10,
                 10,
-                None,
+                Some(HWND_MESSAGE),
                 None,
                 None,
                 None,

@@ -261,7 +261,17 @@ knowing for review:
   ledger keeps the reducer's handling of the key (`requested`, any
   reduction before an outpost answered) apart from its handling of the
   answer, so the line names the hook to Core, Core to outpost, and caret
-  wait stages as well. `recent` returns each timeline's
+  wait stages as well. The event's stages are one message's own: the
+  message whose reduction first asked for speech on the trace, which Core
+  tells the ledger as it hands the utterance to the pipeline
+  (`speech_requested`, on the reducer thread, so a message received before
+  the pipeline queues the utterance on its own thread is not taken for
+  it). Each message received before then replaces the one before it whole,
+  receipt and reduction included, and those after it are left out: a text
+  focus's line, whose caret report on the same trace speaks the line,
+  keeps the focus message's stages (until 2026-10-08 it showed the caret
+  report's outpost stages with the focus's receipt and reduction).
+  `recent` returns each timeline's
   stages and calls in its `LatencyRecord`. It mirrors
   each utterance's milestones to speech subscribers as a `Speech` frame at
   queue time, a `SpeechStarted` frame when its first frame plays, and a

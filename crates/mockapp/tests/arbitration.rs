@@ -182,7 +182,7 @@ fn a_window_that_never_answers_gets_no_verdict_within_the_budget() {
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
-    harness::run(&[
+    harness::run_isolated(&[
         (
             "uia_backend_has_a_server_side_provider_and_arbitrates_to_uia",
             uia_backend_has_a_server_side_provider_and_arbitrates_to_uia,

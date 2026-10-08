@@ -651,15 +651,23 @@ impl Scenario {
     }
 
     /// Launches `command`, which opens a window titled with `title`, a
-    /// title of this run's own ([`harness_marker`]), and waits for that
-    /// window to take the foreground, as a program a user starts does.
+    /// title of this run's own ([`harness_marker`]), its first window
+    /// minimized and inactive, then brings that window forward as clicking
+    /// its taskbar button does, and waits for it to take the foreground.
     /// The window is closed by its title at cleanup, and when
     /// `owner_exits`, the process that owned it must exit then.
     ///
+    /// A window opened in front is refused the foreground unless the agent
+    /// may allow it, which it may only while it injected the last input
+    /// (`docs/tooling.md`, "Windows' foreground lock keeps launched
+    /// applications behind"); a minimized window restored and set as the
+    /// foreground, as Notepad's documents are brought forward, takes it
+    /// whatever input came last.
+    ///
     /// # Errors
     ///
-    /// Returns an error if the agent cannot start `command`, or the window
-    /// does not take the foreground.
+    /// Returns an error if the agent cannot start `command`, no window
+    /// titled with `title` opens, or it does not take the foreground.
     pub fn launch_titled(
         &mut self,
         command: &str,
@@ -667,8 +675,39 @@ impl Scenario {
         title: &str,
         owner_exits: bool,
     ) -> io::Result<WindowInfo> {
-        let launch = self.agent.launch_process(command, args, None, &[], None)?;
-        self.require_launched_in_front(launch, title, owner_exits)
+        let launch = self.agent.launch_minimized(command, args)?;
+        self.launched.push(Launched {
+            pid: launch.pid,
+            title: Some(title.to_owned()),
+            owners: Vec::new(),
+            owners_exit: owner_exits,
+            document: None,
+            notepad: false,
+            also_exit: Vec::new(),
+        });
+        let (present, desktop) = self.agent.wait_for_window(
+            WindowCondition::Present {
+                title_contains: title.to_owned(),
+            },
+            WINDOW_TIMEOUT,
+        )?;
+        let window = desktop
+            .windows
+            .iter()
+            .find(|window| present && window.title.contains(title))
+            .ok_or_else(|| {
+                io::Error::other(format!(
+                    "no window titled {title:?} opened within {WINDOW_TIMEOUT:?}: {}",
+                    describe_foreground(&desktop)
+                ))
+            })?;
+        if !self.agent.set_foreground(window.window)? {
+            return Err(io::Error::other(format!(
+                "the window titled {title:?} could not be brought to the foreground: {}",
+                describe_foreground(&desktop)
+            )));
+        }
+        self.require_in_front(title, launch)
     }
 
     /// Launches `command`, which opens a window titled with `title`, a
@@ -757,6 +796,14 @@ impl Scenario {
     /// no window of the program may be open before, so the window is the
     /// scenario's own.
     ///
+    /// The window opens in front, as [`Scenario::launch_titled`]'s did
+    /// before 2026-10-08, so it takes the foreground only while the agent
+    /// injected the last input. Launched minimized and brought forward as
+    /// `launch_titled` does, msinfo32, its one user, could not be brought
+    /// to the foreground once other input had come (found 2026-10-08; why
+    /// is not yet known), where it passes this way whenever the agent's
+    /// input came last.
+    ///
     /// # Errors
     ///
     /// Returns an error if a window so titled is already open, the agent
@@ -770,7 +817,8 @@ impl Scenario {
     ) -> io::Result<WindowInfo> {
         self.require_absent(title)?;
         let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
-        self.launch_titled(command, &args, title, true)
+        let launch = self.agent.launch_process(command, &args, None, &[], None)?;
+        self.require_launched_in_front(launch, title, true)
     }
 
     /// Brings the harness document `name`, which Notepad opened before
