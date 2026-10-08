@@ -25,11 +25,21 @@
 //!   burst, and is skipped down to its last lines.
 //!
 //! Windows Terminal's `windows_terminal_scrollback_overflow` has the script
-//! split its second part: Windows Terminal takes a write of 12,000 lines
-//! whole before a client hears that its text changed, so the burst's first
-//! lines could leave the history before any read. Its first 30 lines come
-//! in a write of their own, and the rest once the first has been heard, as
-//! a second go file lets it.
+//! split its second part: its first 30 lines come in a write of their own,
+//! and the rest once the first has been heard, as a second go file lets
+//! it, so the burst's first lines are read live and the overflow lands
+//! while their group plays. Written whole, 12,000 lines may or may not
+//! leave the history before Windows Terminal's first text change reaches
+//! the outpost (measured 2026-10-08: the first read found line 11,881 in
+//! two runs of three, and line 6 in the third), so what is spoken has no
+//! one correct form the scenario could fix: either the burst's first lines
+//! and "skipped more than 9001 lines", or that count alone, each followed
+//! by the last lines. NVDA, on the same single write, spoke lines 10,758 to
+//! 10,772 and 11,902 to 12,000 and the prompt, whatever its diff found
+//! current, with nothing for the rest (captured live, 2026-10-08). The
+//! whole write landing before any read is tested deterministically by
+//! `windows_terminal_scrollback_overflow_during_group`, whose write lands
+//! while Core holds the terminal.
 //!
 //! Within the history, 5,000 lines; past it, 12,000. Past it, the anchor is
 //! known to be gone, and Verbatim says "skipped more than N lines", N being

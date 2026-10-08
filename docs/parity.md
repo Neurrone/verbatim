@@ -1786,7 +1786,12 @@ verified.
   spoken.
 - New terminal output. NVDA: [Editable text and
   terminals](nvda/editable-text-and-terminals.md), "Terminals": diffing by
-  default, the whole document per text change; Windows Terminal's output
+  default, the whole document per text change, on UIA's text changes
+  alone for the console host (`UIAHandler/__init__.py` 145 to 147 and 674
+  to 679). **Different (since 2026-10-08):** in the console host,
+  Verbatim also takes the console's own update `WinEvents` as text
+  changes, since UIA's stopped reaching the outpost in the middle of large
+  writes in 2 of 14 runs; Windows Terminal's output
   notifications only behind a flag; every new line spoken, queued, until a
   key cancels speech; a one-character change dropped as probably typed.
   Verbatim: **implemented since 2026-10-06** (M4 item 9); since
