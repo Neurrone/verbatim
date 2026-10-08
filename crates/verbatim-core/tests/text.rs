@@ -195,6 +195,8 @@ fn message(message: Message) -> UtteranceSegment {
 fn caret_reply(moved: bool, line: TextChunk, unit: Option<TextChunk>) -> TextReply {
     TextReply::Caret(Box::new(CaretReply {
         same_line: None,
+        redrawn: None,
+        removed: None,
         moved,
         read_at_ms: 0,
         caret: CaretReport {
@@ -487,6 +489,8 @@ fn shift_movement_speaks_what_was_selected_and_unselected() {
     );
     let reply = TextReply::Caret(Box::new(CaretReply {
         same_line: None,
+        redrawn: None,
+        removed: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
@@ -549,6 +553,8 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
     let effects = reduce(&mut state, &key(CaretMotion::StartOfLine, true));
     let reply = TextReply::Caret(Box::new(CaretReply {
         same_line: None,
+        redrawn: None,
+        removed: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
@@ -581,6 +587,8 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
     );
     let reply = TextReply::Caret(Box::new(CaretReply {
         same_line: None,
+        redrawn: None,
+        removed: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
@@ -619,6 +627,8 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
     let effects = reduce(&mut state, &key(CaretMotion::NextWord, true));
     let reply = TextReply::Caret(Box::new(CaretReply {
         same_line: None,
+        redrawn: None,
+        removed: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
@@ -678,6 +688,8 @@ fn key_at(motion: CaretMotion, pressed_at_ms: u64) -> Input {
 fn caret_reply_at(line: TextChunk, read_at_ms: u64) -> TextReply {
     TextReply::Caret(Box::new(CaretReply {
         same_line: None,
+        redrawn: None,
+        removed: None,
         moved: true,
         caret: CaretReport {
             line,
@@ -2914,4 +2926,21 @@ fn reporting_the_focus_with_none_says_no_focus() {
     let mut state = SrState::new();
     let effects = reduce(&mut state, &command(ReviewCommand::ReportFocus, 0));
     assert_eq!(spoken(&effects), vec![message(Message::NoFocus)]);
+}
+
+#[test]
+fn a_line_key_speaks_the_line_a_terminal_program_redrew() {
+    let mut state = SrState::new();
+    focus(&mut state, node(5, Role::Terminal, StateSet::new()));
+    caret_event(&mut state, 5, line("\n", 100, 0));
+    let effects = reduce(&mut state, &key(CaretMotion::NextLine, false));
+    let TextReply::Caret(mut reply) = caret_reply(true, line("\n", 100, 0), None) else {
+        unreachable!("a caret reply");
+    };
+    reply.redrawn = Some("> banana".to_owned());
+    let effects = reduce(
+        &mut state,
+        &completed(request_of(&effects), TextReply::Caret(reply)),
+    );
+    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("> banana")]);
 }

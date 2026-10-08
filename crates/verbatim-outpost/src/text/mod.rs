@@ -1385,6 +1385,8 @@ fn answer_caret<S: TextSource>(
         unit,
         selection_changes,
         same_line,
+        redrawn: None,
+        removed: None,
     })))
 }
 

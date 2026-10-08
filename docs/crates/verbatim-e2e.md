@@ -373,6 +373,11 @@ the top and one near the bottom changed ("changed"), the rows scrolled down
 and back up ("row 0", "row 30"), and the alternate screen closed, after
 which only "closed" and the prompt are new.
 
+The selection-list scenarios (`scenarios/terminal_lists.rs`) run a
+list whose ">" marker moves by two rewritten cells, and one redrawn whole
+on each move with the caret below it: Down, Down and Up say "> banana",
+"> cherry" and "> banana", once each.
+
 The flood scenarios assert the flood policy exactly within the
 scrollback: 2,000 lines are heard as lines 1 to 30, "skipped 1941 lines"
 after the skipped-lines sound, and lines 1,972 to 2,000 with the prompt.

@@ -2156,7 +2156,82 @@ Outcome of the terminal package (2026-10-08):
 - Windows Terminal takes a write of 12,000 lines whole before its first text change reaches a client in most runs, so the single write has no one correct spoken form; `windows_terminal_scrollback_overflow` writes the burst's first 30 lines on their own and the rest while their group plays (the reasons and NVDA's capture are in the scenario's module).
 - The NVDA study's risks: the password leak (a rewrite echoes held typing only when what it gained is the typing), Control+C, Control+D, Control+Break and Escape forgetting held typing (they type no text, so they come as `Input::ClearingKey`), a typed space at a line's end and typing over ghost text (echoed by the caret's move), typing above a status line (the caret's line is the changed line), mid-line edits after `cls`, typing past the right margin, a rewrite read half done ("51%", not "oading 51%"), and the console host's keyboard layout (its own thread, from its `WinEvents`, NVDA's issue 10113). A key press letting lines through is fixed by `SpeechCancelled`'s time. Resizing and a scrollback full of identical lines whose history is full are not fixed: the first needs a live check of how each terminal reflows its rows, and the second cannot be counted from text alone.
 - What a key did: Backspace and Control+Backspace speak the text removed, from evidence, so the classic edit control's Control+Backspace, which inserts DEL, says nothing; any other key that types no text (`CaretMotion::Other`) speaks text it removed at the caret, a new line, or by where the caret landed. A caret key's answer read after a later key was pressed is not spoken for it, and a terminal's line redrawn by a caret key is the key's own, not output.
-- Not done: the selection-list scripts, the full-screen 40-row alternate screen, tabs and two windows of each terminal, the review cursor test after new output, the flood above a redrawing footer, the long-line scenarios, and NVDA captures for the new typing scenarios; each needs desktop time for live checks and NVDA captures first.
+- Done since (2026-10-09): NVDA captures for the typing scenarios, the selection-list scripts ("Selection lists in a terminal" below), the full-screen alternate screen and the long-line scenarios, each with NVDA captured first.
+- Not done: tabs and two windows of each terminal, the review cursor test after new output, and the flood above a redrawing footer; each needs desktop time for live checks and NVDA captures first.
+
+### Selection lists in a terminal (Dickson, 2026-10-09)
+
+When Up or Down Arrow makes a program rewrite other lines and the caret is
+not on a changed line, Verbatim speaks the line that gained the marker,
+a deliberate difference from NVDA recorded in `docs/parity.md`. Reading a
+redraw half done is a bug under any rule: the console host's marker
+script said "> banana" three times, its watch answered by the caret
+moving to the line the marker was leaving, before the program had written
+anything.
+
+No event says a program has finished redrawing. The console host raises a
+console update event for every write and moves its caret as each write
+asks, and both terminals raise their UIA events for whatever their
+renderer last painted, so every event can come from a redraw under way.
+The evidence is therefore the screen itself, compared with the screen
+before the key: the outpost reads the terminal on each of its text and
+caret changes while the key's watch is open, and a read answers the key
+only when it shows a finished effect. A line gained text that another
+line lost: the marker moved, whichever was written first, and that line is
+spoken (the caret's line, when it is that one). The caret's line gained
+text: a line recalled from history. The caret's line was cut short with
+nothing else changed: a shorter line recalled. The caret moved to the next
+or previous line and no line only lost text: an editor's caret. A read
+showing only text removed (the marker erased and not yet drawn again), or
+the caret moved elsewhere over unchanged lines, is a redraw under way and
+answers nothing. While the watch is open the terminal's memory stays at
+the screen before the key, so no read under way is spoken as output
+either, and the answering read's output leaves out the line the answer
+speaks. A watch that ends unanswered (the next caret key, or its
+ten-second bound) keeps the screen before the key, so what the key did is
+then spoken as output.
+
+Scenarios, each in both terminals, with exact speech:
+`windows_terminal_marker_list`, `conhost_marker_list`,
+`windows_terminal_redrawn_list` and `conhost_redrawn_list`.
+
+Escape on a typed line that had wrapped onto a second row (2026-10-09)
+says the text removed, as on a line of one row. The caret's line, as both
+terminals' text pattern gives it, is one row, so the caret's line before
+the key (the second row) and after it (the prompt's row) do not show the
+removal, and the caret going up a row was spoken by the landing rule as
+the new line ("ready>"). The screen's text, though, gives a line that
+wrapped whole (measured in both terminals). When a key judged by where
+the caret landed takes the caret off its row, the outpost compares the
+screen before the key with the screen now: when the caret is on the same
+line of the screen and that line was cut short, the rest of it is the
+text removed (`CaretReply::removed`); while the next line still shows
+that rest, the redraw is under way and the watch stays open. The screen
+before the key is the newest of the last few reads that ended before it
+was pressed, since the program's answer can be read more than once before
+the key's request reaches the outpost. Both typing scenarios end with this
+case.
+
+## Decisions to confirm with Dickson
+
+Made while Dickson was away (2026-10-09), each to be confirmed:
+
+- Selection lists: the rules above for when a redraw has finished. A list
+  marked only by colour, with no marker in its text, changes no text, so
+  Up and Down in it say nothing; a key that changes nothing (Up at the top
+  of a list, or with no history) says nothing, as in a text field.
+- Selection lists: when more than one line gains a marker another line
+  lost, the first on the screen is spoken.
+- Selection lists: output the program writes while a line key's watch is
+  open is held until the key is answered, or its watch ends, and is then
+  spoken.
+- The outpost keeps the screens of the last eight reads of a terminal
+  for finding the screen before a key; a key whose request arrives after
+  more reads than that is judged by the caret alone.
+- The full-screen scenarios use the terminal's own height (30 rows in
+  both test windows) rather than the 40 rows the plan named, so the
+  alternate screen is exactly the window: the script draws as many rows as
+  the window has.
 
 ## Language audit (2026-10-08)
 

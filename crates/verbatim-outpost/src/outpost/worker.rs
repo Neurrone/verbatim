@@ -39,8 +39,9 @@ use std::time::{Duration, Instant};
 use verbatim_ia2::acquire::Purpose;
 use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{
-    Backend, CallCounts, CaretWatch, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role,
-    State, StateSet, TerminalOutput, TextOp, TextReply, TraceId,
+    Backend, CallCounts, CaretReply, CaretReport, CaretWatch, NodeId, NodeSnapshot,
+    NormalizedEvent, PropertyChange, Role, State, StateSet, TerminalOutput, TextOp, TextReply,
+    TextUnit, TraceId,
 };
 use verbatim_uia::map::{
     cached_process_id, snapshot_from_cached_element, with_legacy_checked_state,
@@ -68,6 +69,7 @@ use super::window::{
     window_is_hidden_frame, window_owner,
 };
 use crate::arbitration::window_class_name;
+use crate::terminal::keys::{self, KeyEffect};
 use crate::terminal::reading::{Action, Event};
 use crate::terminal::{Found, Memory, ReadMode};
 use crate::text::Watched;
@@ -869,7 +871,37 @@ impl Worker<'_> {
     /// [`check_open_watch`]: Self::check_open_watch
     fn caret_key(&mut self, request_id: u64, trace: TraceId, node_id: NodeId, watch: &CaretWatch) {
         self.end_watch("the next caret key replaced it");
-        match text_reads::check_watch(self.context, node_id, watch, false) {
+        if let Some(before) = self.terminal_line_key(node_id, watch) {
+            // Checked by the terminal's reads (`crate::terminal::keys`),
+            // starting with one now.
+            if !self.context.watch.release_query(self.generation) {
+                self.thaw(node_id, None);
+                return;
+            }
+            *self.context.caret_watch() = Some(OpenWatch {
+                request_id,
+                trace,
+                node_id,
+                watch: watch.clone(),
+                opened: Instant::now(),
+                timing: self.timing,
+                calls: take_calls(),
+                terminal_before: Some(before),
+            });
+            self.context
+                .intake
+                .wake_at(Some(Instant::now() + CARET_WATCH_BOUND));
+            tracing::debug!(%trace, "a terminal line key's watch is open");
+            self.terminal_event(node_id, Event::TextChanged, None, (trace, now_ms()));
+            return;
+        }
+        let mut watched = text_reads::check_watch(self.context, node_id, watch, false);
+        if let Watched::Answered(reply) = &mut watched
+            && self.wrapped_removal(node_id, watch, reply, trace)
+        {
+            watched = Watched::Watching;
+        }
+        match watched {
             Watched::Answered(reply) => self.reply(
                 request_id,
                 trace,
@@ -891,6 +923,7 @@ impl Worker<'_> {
                     opened,
                     timing: self.timing,
                     calls,
+                    terminal_before: None,
                 });
                 self.context
                     .intake
@@ -908,6 +941,10 @@ impl Worker<'_> {
     /// read shows nothing that read did not see, and checks nothing.
     fn check_open_watch(&mut self, node_id: NodeId, caret_event: bool) -> bool {
         let context = self.context;
+        if self.terminal_watch_open(node_id) {
+            // The terminal's reads check it.
+            return false;
+        }
         if context.caret_read_since(node_id, self.timing.observed_at_us) {
             return false;
         }
@@ -925,7 +962,13 @@ impl Worker<'_> {
             *context.caret_watch() = Some(open);
             return false;
         }
-        match text_reads::check_watch(context, node_id, &open.watch, caret_event) {
+        let mut watched = text_reads::check_watch(context, node_id, &open.watch, caret_event);
+        if let Watched::Answered(reply) = &mut watched
+            && self.wrapped_removal(node_id, &open.watch, reply, open.trace)
+        {
+            watched = Watched::Watching;
+        }
+        match watched {
             Watched::Watching => {
                 open.calls += take_calls();
                 if context.watch.release_query(self.generation) {
@@ -980,6 +1023,9 @@ impl Worker<'_> {
         let Some(open) = self.context.caret_watch().take() else {
             return;
         };
+        if open.terminal_before.is_some() {
+            self.thaw(open.node_id, None);
+        }
         self.context.intake.wake_at(None);
         let published = publish_aside(
             self.context,
@@ -1018,7 +1064,21 @@ impl Worker<'_> {
             .as_ref()
             .map(|open| open.opened + CARET_WATCH_BOUND);
         match bound {
-            Some(bound) if Instant::now() >= bound => self.end_watch("its bound passed"),
+            Some(bound) if Instant::now() >= bound => {
+                let terminal = self
+                    .context
+                    .caret_watch()
+                    .as_ref()
+                    .filter(|open| open.terminal_before.is_some())
+                    .map(|open| (open.node_id, open.trace));
+                self.end_watch("its bound passed");
+                // What a line key's watch held back, as new output.
+                if let Some((node_id, trace)) = terminal
+                    && self.focused_terminal(node_id)
+                {
+                    self.terminal_event(node_id, Event::TextChanged, None, (trace, now_ms()));
+                }
+            }
             Some(bound) => self.context.intake.wake_at(Some(bound)),
             None => {}
         }
@@ -1126,6 +1186,176 @@ impl Worker<'_> {
             && self.context.tracking().role == Some(Role::Terminal)
     }
 
+    /// For a line key (Up or Down Arrow) in the focused terminal
+    /// `node_id`, the screen before it, its reads then frozen there
+    /// (`crate::terminal::Terminal::frozen`); `None` for any other key, or
+    /// when no read kept ended before the key.
+    fn terminal_line_key(&self, node_id: NodeId, watch: &CaretWatch) -> Option<Memory> {
+        let line_key =
+            watch.unit == TextUnit::Line && !watch.landing && watch.previous_selection.is_none();
+        if !line_key || !self.focused_terminal(node_id) {
+            return None;
+        }
+        let mut terminals = self.context.terminals();
+        let terminal = terminals.get_mut(&node_id.number())?;
+        let before = terminal.screen_before(watch.pressed_at_ms)?;
+        terminal.frozen = true;
+        Some(before)
+    }
+
+    /// For `reply`, the answer to a key judged by where the caret landed
+    /// (`watch`) in the focused terminal `node_id`, whose caret left its
+    /// row: reads the terminal, and adds the text removed when the key
+    /// removed a typed line that had wrapped onto more rows
+    /// ([`keys::wrapped_removal`]). Returns whether that removal is still
+    /// under way, the watch then staying open.
+    fn wrapped_removal(
+        &mut self,
+        node_id: NodeId,
+        watch: &CaretWatch,
+        reply: &mut TextReply,
+        trace: TraceId,
+    ) -> bool {
+        let TextReply::Caret(reply) = reply else {
+            return false;
+        };
+        if !watch.landing || reply.same_line != Some(false) || !self.focused_terminal(node_id) {
+            return false;
+        }
+        let before = self
+            .context
+            .terminals()
+            .get(&node_id.number())
+            .and_then(|terminal| terminal.screen_at(watch.pressed_at_ms).cloned());
+        let Some(before) = before else {
+            tracing::debug!("no read of the terminal kept ended before the key");
+            return false;
+        };
+        self.terminal_event(node_id, Event::TextChanged, None, (trace, now_ms()));
+        let now = self
+            .context
+            .terminals()
+            .get(&node_id.number())
+            .and_then(|terminal| terminal.memory().cloned());
+        let Some(now) = now else {
+            return false;
+        };
+        let removal = keys::wrapped_removal(&before, &now);
+        tracing::debug!(?removal, "a landing key's answer in a terminal");
+        match removal {
+            Some(keys::WrappedRemoval::Removed(text)) => {
+                reply.removed = Some(text);
+                false
+            }
+            Some(keys::WrappedRemoval::UnderWay) => true,
+            None => false,
+        }
+    }
+
+    /// Whether a line key's watch on the terminal `node_id` is open.
+    fn terminal_watch_open(&self, node_id: NodeId) -> bool {
+        self.context
+            .caret_watch()
+            .as_ref()
+            .is_some_and(|open| open.node_id == node_id && open.terminal_before.is_some())
+    }
+
+    /// Ends a line key's watch on the terminal `node_id`
+    /// ([`crate::terminal::Terminal::thaw`]).
+    fn thaw(&self, node_id: NodeId, memory: Option<Memory>) {
+        if let Some(terminal) = self.context.terminals().get_mut(&node_id.number()) {
+            terminal.thaw(memory);
+        }
+    }
+
+    /// A read of the terminal `node_id` while a line key's watch is open on
+    /// it: answers the watch once `memory`, the screen just read with
+    /// `caret`, shows what the key did (`crate::terminal::keys`), and
+    /// returns what of `output` is still new, without the line the answer
+    /// says. Until then, nothing is new: the read compared with the screen
+    /// before the key, and the next does too. Without such a watch,
+    /// `output` as it is.
+    fn line_key_read(
+        &mut self,
+        node_id: NodeId,
+        mut output: TerminalOutput,
+        memory: &Memory,
+        caret: Option<&CaretReport>,
+    ) -> TerminalOutput {
+        let context = self.context;
+        let before = context
+            .caret_watch()
+            .as_ref()
+            .filter(|open| open.node_id == node_id)
+            .and_then(|open| open.terminal_before.clone());
+        let Some(before) = before else {
+            return output;
+        };
+        let effect = keys::line_key_effect(&before, memory);
+        tracing::debug!(?effect, caret = ?memory.caret, "a terminal line key's read");
+        let (Some(effect), Some(caret)) = (effect, caret) else {
+            return TerminalOutput::default();
+        };
+        let Some(open) = context.caret_watch().take() else {
+            return TerminalOutput::default();
+        };
+        // An abandonment answers the key instead.
+        if !context
+            .watch
+            .adopt(self.generation, (open.request_id, open.trace))
+        {
+            *context.caret_watch() = Some(open);
+            return TerminalOutput::default();
+        }
+        context.intake.wake_at(None);
+        self.thaw(node_id, Some(memory.clone()));
+        let redrawn = match effect {
+            KeyEffect::CaretLine => None,
+            KeyEffect::Redrawn(line) => {
+                if let Some(at) = output.above.iter().position(|said| *said == line) {
+                    output.above.remove(at);
+                } else if let Some(at) = output.lines.iter().position(|said| *said == line) {
+                    output.lines.remove(at);
+                }
+                Some(line)
+            }
+        };
+        let calls = take_calls();
+        tracing::debug!(
+            trace = %open.trace,
+            waited_ms = open.opened.elapsed().as_millis(),
+            "a terminal line key's watch is answered"
+        );
+        let reply = CaretReply {
+            moved: true,
+            caret: caret.clone(),
+            read_at_ms: now_ms(),
+            unit: None,
+            selection_changes: Vec::new(),
+            same_line: None,
+            redrawn,
+            removed: None,
+        };
+        publish_aside(
+            context,
+            self.generation,
+            open.request_id,
+            OutpostToSupervisor::Reply {
+                trace_id: open.trace,
+                request_id: open.request_id,
+                outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Caret(Box::new(reply)))),
+                timing: EventTiming {
+                    awaited_at_us: self.timing.dequeued_at_us,
+                    awaited_calls: open.calls,
+                    calls: open.calls + calls,
+                    published_at_us: now_us(),
+                    ..open.timing
+                },
+            },
+        );
+        output
+    }
+
     /// Takes a focused terminal's on-demand reading through `event`
     /// ([`crate::terminal::reading`]) and does what the transition says:
     /// reads and reports what is new, answers Core's request (`request`, its
@@ -1219,7 +1449,7 @@ impl Worker<'_> {
         // The caret read with the text: the console host raises no caret
         // event for every character typed, so this keeps Core's copy of it
         // following typing.
-        if let Some(caret) = caret {
+        if let Some(caret) = caret.clone() {
             self.emit(
                 trace,
                 observed_at_ms,
@@ -1228,8 +1458,10 @@ impl Worker<'_> {
                 NormalizedEvent::CaretMoved { node_id, caret },
             );
         }
+        let caret_read = caret;
         match found {
-            Found::Output(output, _) => {
+            Found::Output(output, memory) => {
+                let output = self.line_key_read(node_id, output, &memory, caret_read.as_ref());
                 if let Some(request) = owed {
                     // An answer too large for one message carries its
                     // first part, and the rest follows as output.
@@ -1919,6 +2151,11 @@ impl Worker<'_> {
                     .existing_id(&event.parts.runtime_id)
                 {
                     text_reads::text_event_from(self.context, node_id, element.as_ref());
+                    if self.terminal_watch_open(node_id) {
+                        // A line key's caret move is judged with the screen.
+                        self.terminal_output(node_id, trace, observed_at_ms);
+                        return;
+                    }
                     if !self.check_open_watch(node_id, true) {
                         self.caret_of(node_id, trace, observed_at_ms, false);
                     }

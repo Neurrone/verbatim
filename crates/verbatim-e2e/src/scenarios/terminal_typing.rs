@@ -23,6 +23,11 @@
 //!    starts as the one cleared did), and Enter gives "ok" and the prompt.
 //! 4. `cls` clears the screen down to the prompt, which is spoken as new
 //!    (NVDA, captured live on 2026-10-09, says it too).
+//! 5. Escape on a typed line that wrapped onto a second row says all it
+//!    removed, as on a line of one row: `echo ` and 108 "a"s fill the
+//!    120-column row after the 7-cell prompt, "xyz" goes onto the next
+//!    row, and Escape says the whole command. (NVDA, captured live on
+//!    2026-10-09, says nothing.)
 //!
 //! Commands are typed with the agent's `TypeText` a character at a time,
 //! and keys pressed with `SendKeys`.
@@ -66,6 +71,14 @@ fn type_each(scenario: &mut Scenario, text: &str, heard: &[&str]) {
     }
 }
 
+/// Escape on a typed line that wrapped onto a second row.
+fn escape_on_a_wrapped_line(scenario: &mut Scenario) {
+    let command = format!("echo {}xyz", "a".repeat(108));
+    terminal::type_hearing(scenario, &command, terminal::Echo::Shown);
+    scenario.send_keys(&["escape"]).expect("presses escape");
+    scenario.speech().expect(&[command.as_str()]);
+}
+
 /// `windows_terminal_typing`.
 pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
     let title = terminal::title(state).to_owned();
@@ -105,6 +118,8 @@ pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut Scenari
     // `cls` clears the screen down to the prompt, which is new.
     terminal::type_with_echo(scenario, "cls", terminal::Echo::Shown);
     scenario.speech().expect(&[PROMPT]);
+
+    escape_on_a_wrapped_line(scenario);
 }
 
 /// `conhost_typing`.
@@ -143,4 +158,6 @@ pub(crate) fn body_console_host(scenario: &mut Scenario, state: &mut ScenarioSta
     // `cls` clears the screen down to the prompt, which is new.
     terminal::type_with_echo(scenario, "cls", terminal::Echo::Shown);
     scenario.speech().expect(&[PROMPT]);
+
+    escape_on_a_wrapped_line(scenario);
 }

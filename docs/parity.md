@@ -1695,7 +1695,10 @@ verified.
   character); NVDA says nothing for such keys (captured live on
   2026-10-09 in both terminals: Escape after `echo hi` is silent in NVDA,
   "echo hi" in Verbatim; Escape after inline prediction showed `git
-  status` is silent in NVDA, "git" in Verbatim, the text typed). In a
+  status` is silent in NVDA, "git" in Verbatim, the text typed). Escape
+  on a typed line that had wrapped onto a second row says all it removed,
+  as on a line of one row, though the caret went up a row (since
+  2026-10-09; NVDA, captured live in both terminals, is silent). In a
   terminal, Backspace and Control+Backspace now say what NVDA says ("o"
   and "tw" after `echo one two`, both terminals, captured live); a
   backspace over a line break
@@ -1897,6 +1900,24 @@ verified.
   screen being as it was (**different, since 2026-10-09**). NVDA echoes
   each key a script reads without showing it ("space"); Verbatim does
   not, as for any typing the terminal does not show.
+
+  **Different:** Up and Down Arrow in a selection list a program draws in
+  a terminal. Decision (Dickson, 2026-10-09): when the key makes the
+  program rewrite lines and the caret is not on a changed line, Verbatim
+  speaks the line that gained the marker, and it never speaks a redraw
+  read half done. NVDA reads the caret's line at the first caret or text
+  change event, or the first change of the caret's position, after the key
+  (`source/editableText.py`, lines 93 to 138 and 181 to 192; the line
+  spoken by lines 165 to 178), so it speaks whatever line the caret is on
+  part-way through the redraw. Captured live on 2026-10-09 with two
+  scripts, one moving a ">" marker by rewriting two cells and one
+  redrawing the whole list: for the first, NVDA said "greater banana",
+  "greater cherry" and "greater banana" in Windows Terminal but "greater
+  banana", "greater banana" and "cherry" in the console host; for the
+  second, "blank" for every key in both, the caret being on the row below
+  the list. Verbatim says "> banana", "> cherry" and "> banana" for both
+  scripts in both terminals (`terminal::keys` in
+  `docs/crates/verbatim-outpost.md`).
 
   **Different:** a line the
   terminal rewrites in place speaks from the start of the word where it
