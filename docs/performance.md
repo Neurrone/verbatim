@@ -574,17 +574,55 @@ spelling and grammar errors. Measured against mockapp's text provider
 
 ### A caret wait that finds nothing, UIA
 
-A caret key that changed nothing (Left Arrow at the start of the text):
-the wait reads the caret every 10 milliseconds until its 100 run out,
-then answers.
+A caret key that could have moved the caret but changed nothing (Right
+Arrow one character into the text, which the application ignored): the
+wait reads the caret every 10 milliseconds until its 100 run out, then
+answers.
 
 - Minimum: one round trip per read: 11 for a wait of 100 milliseconds.
 - Today: 11 remotely, each read the whole caret read above, so the read
-  that would find the evidence is the answer. Classically 132, 12 per
-  read; before remote operations each read was 9 calls (the caret, the
-  comparisons, and the line, whose characters at the caret are evidence
-  too).
+  that would find the evidence is the answer; the first also reads the
+  document's range and compares its end with the caret (one
+  `DocumentRange` and one `CompareEndpoints` inside the provider), which
+  tells whether the key could have moved it at all (the next section).
+  Classically 134, 12 per read and those 2 calls once; 132 before the
+  comparison (2026-10-08). Before remote operations each read was 9 calls
+  (the caret, the comparisons, and the line, whose characters at the
+  caret are evidence too).
 - Target: 11.
+
+### A caret key that cannot move the caret
+
+A caret key that finds the caret where it takes it: Control+Home at the
+start of the text, Home at the start of a line whose first character is
+not white space, End before a line's break, Down Arrow on the last line,
+Right Arrow at the end, and likewise Left Arrow, Control with Left or
+Right Arrow, Up Arrow, and the page keys at their edges. The application
+raises nothing for such a key. Archived end-to-end runs showed about one
+caret key in ten taking about 110 milliseconds, every one of them a key
+like these: the wait read the caret until its 100-millisecond deadline,
+which the wait's timer rounds up to its tick, and answered unmoved. Since
+2026-10-08 the wait's first read also finds whether the caret is at the
+key's destination, and when it is, and is where it was before the key,
+answers at once (`docs/crates/verbatim-outpost.md`, the wait for
+evidence). Measured by `crates/mockapp/tests/call_counts.rs` in mockapp's
+text ("alpha beta", "gamma", and an empty last line), both ways, and in
+its edit control.
+
+- Minimum: one caret read, with no wait.
+- Today: through UIA, 1 round trip remotely for each of the five keys
+  measured, 11 before. Classically: Control+Home 38 calls (the line's
+  formatting walked, with the document's range read and its start
+  compared with the caret), 396 before; Home and End 12 (the line already
+  read tells, at no cost), 132 before; Down Arrow on the empty last line
+  12 (the document's range read and its end compared with the line's),
+  110 before; Right Arrow at the end 14 (the same comparison with the
+  caret), 132 before. In the edit control, 5 window messages for each, 55
+  before: the start of its text is offset zero, its end the text's
+  length, which reading the last line reads anyway.
+- Wall clock: about 110 milliseconds before, the deadline and the timer's
+  rounding; now one caret read.
+- Target: one caret read.
 
 ### A caret report, UIA
 

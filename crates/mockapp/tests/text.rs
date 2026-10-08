@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
-    Backend, CaretWait, CaretWatch, Effect, Input, NodeDetails, NodeId, NodeSnapshot,
+    Backend, CaretMotion, CaretWait, CaretWatch, Effect, Input, NodeDetails, NodeId, NodeSnapshot,
     NormalizedEvent, OutpostId, Pid, PreviousSelection, ReviewCommand, Role, SegmentContent,
     SpeechMark, StateSet, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead,
     TextReadAhead, TextReply, TextUnit, TraceId,
@@ -315,6 +315,7 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
             pressed_at_ms: 0,
             since: Some(point_of(&before.line)),
             unit: TextUnit::Word,
+            motion: CaretMotion::NextWord,
             compare: None,
             previous_selection: None,
             wait: CaretWait::Standard,
@@ -339,6 +340,7 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
             pressed_at_ms: 0,
             since: Some(at),
             unit: TextUnit::Character,
+            motion: CaretMotion::NextCharacter,
             compare: None,
             previous_selection: Some(PreviousSelection { start: at, end: at }),
             wait: CaretWait::Standard,
@@ -493,6 +495,7 @@ fn remote_and_classic_caret_reads_agree() {
         learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
+        edge: None,
     };
 
     // The caret in "beta", a spelling error after bold "alpha": the line's
@@ -613,6 +616,7 @@ fn a_failing_attribute_is_not_supported() {
         learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
+        edge: None,
     };
     common::apply(&mut app, hwnd, "caret doc 1");
     let classic = caret_read_classic(&query).expect("the classic reads run");
@@ -655,6 +659,7 @@ fn a_mixed_stretch_is_read_by_words_then_characters() {
         learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
+        edge: None,
     };
     let italic = |italic| RunAttributes {
         italic: Some(italic),
@@ -831,6 +836,7 @@ fn remote_and_classic_text_reads_agree() {
         learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
+        edge: None,
     })
     .expect("the caret");
     let selection = selected.selection.expect("the selection made");
@@ -1259,6 +1265,7 @@ fn every_attribute_is_read_both_ways() {
         learning,
         max_text: 1024,
         max_change_text: 1024,
+        edge: None,
     };
     let plain = plain_formatting;
     let read = |formats| {
@@ -1386,6 +1393,7 @@ fn unsupported_attributes_are_found_both_ways() {
         learning: Attributes::ALL,
         max_text: 1024,
         max_change_text: 1024,
+        edge: None,
     };
     let unsupported = Some(Attributes::of(&[
         TextAttribute::StrikethroughStyle,

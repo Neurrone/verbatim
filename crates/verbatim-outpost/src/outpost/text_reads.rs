@@ -30,7 +30,7 @@ use crate::arbitration::{normalize_class_name, window_class_name};
 use crate::protocol::now_us;
 use crate::text::edit::EditText;
 use crate::text::uia::UiaText;
-use crate::text::{self, CaretSignal, TextError};
+use crate::text::{self, CaretSignal, TextError, WaitEnd};
 
 use super::Context;
 
@@ -157,7 +157,8 @@ impl CaretSignal for Signal<'_> {
         self.context.caret_read(self.node_id);
     }
 
-    fn awaited(&mut self) {
+    fn awaited(&mut self, ended: WaitEnd) {
+        tracing::debug!(?ended, "a caret key's wait for evidence ended");
         self.awaited = Some(Awaited {
             at_us: now_us(),
             calls: super::worker::take_calls(),

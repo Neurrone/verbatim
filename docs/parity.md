@@ -1543,7 +1543,24 @@ verified.
   a caret event alone is not evidence when the caret's position is known,
   since an application's late caret event can belong to an earlier key; the
   position, the characters either side of the caret, or the selection must
-  change, polled every 10 ms. The caret as it was when the key was pressed
+  change, polled every 10 ms. **Different:** NVDA waits its full 100 ms
+  for a key that cannot move the caret, such as Control+Home at the start
+  of the text, and answers that the caret did not move; Verbatim's wait
+  answers on its first read, unmoved, when the caret is still where it was
+  before the key and that is where the key takes it, since the key cannot
+  move it however late the application handles it (since 2026-10-08): the
+  start of the text for Control+Home, Left Arrow, and Control+Left Arrow;
+  its end for Control+End, Right Arrow, and Control+Right Arrow; the first
+  line for Up Arrow and Page Up and the last for Down Arrow and Page Down;
+  a line's start, before a character that is not white space, for Home;
+  and a line's end, before its break, for End. For Control+Home and
+  Control+End the end of the text is enough even when Core did not know
+  where the caret was. With text selected it waits as NVDA does, since the
+  key may collapse the selection, and in a terminal too, whose program
+  gives keys meanings of its own. An application whose Up Arrow on the
+  first line, or Down Arrow on the last, moves the caret to the line's
+  start or end has that move reported by its caret event afterwards
+  rather than as the key's answer. The caret as it was when the key was pressed
   is the baseline: the outpost's own newest report, when the read behind it
   finished before the hook saw the key, else where Core knew it; a report
   read after the key, from the application's caret event for that very key

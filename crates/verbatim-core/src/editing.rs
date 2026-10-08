@@ -145,6 +145,7 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
         since: context.map(CaretBefore::caret),
         pressed_at_ms,
         unit,
+        motion: key.motion,
         compare,
         previous_selection,
         wait: if grid {

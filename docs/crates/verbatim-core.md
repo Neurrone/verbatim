@@ -383,7 +383,8 @@ Caret keys (`docs/nvda/editable-text-and-terminals.md`). An
 `Input::CaretKey` on a focus with text asks its outpost to wait for
 evidence (`TextOp::AwaitCaret`), with the caret Core last knew and when
 the key was pressed, the unit
-to report, for Delete the character or word at the caret (whose change is
+to report, the key's motion (from which the outpost tells a key that
+cannot move the caret and answers it at once), for Delete the character or word at the caret (whose change is
 evidence), for a selecting key the selection before it, and a wait three
 times longer in a terminal. The caret, the Delete text, the selection,
 and what Backspace deletes all come from the caret as the key found it:

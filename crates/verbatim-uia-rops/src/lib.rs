@@ -53,8 +53,9 @@ mod text;
 pub use builder::{Builder, Index, Numeric, Ordered, Reg, kind};
 pub use caret::{
     ANNOTATION_GRAMMAR_ERROR, ANNOTATION_SPELLING_ERROR, Attributes, CaretAnswer, CaretQuery,
-    CaretReadFn, FormatSpan, MAX_RUNS, RangeEnd, Run, RunAttributes, SelectionTextChange,
-    TextAttribute, UnitRead, caret_read, caret_read_classic, caret_read_remote,
+    CaretReadFn, EdgeQuery, FormatSpan, MAX_RUNS, RangeEnd, Run, RunAttributes,
+    SelectionTextChange, TextAttribute, UnitRead, caret_read, caret_read_classic,
+    caret_read_remote,
 };
 pub use error::{Error, Failure};
 pub use focus::{

@@ -230,6 +230,20 @@ pub struct CaretQuery<'a> {
     /// The most UTF-16 code units read for each selection change, when the
     /// selection is not [`previous_selection`](Self::previous_selection).
     pub max_change_text: i32,
+    /// A comparison with an end of the document, for a caret key that
+    /// cannot take the caret past it ([`CaretAnswer::at_edge`]).
+    pub edge: Option<EdgeQuery>,
+}
+
+/// A comparison of the caret, or of its line, with an end of the document
+/// ([`CaretQuery::edge`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EdgeQuery {
+    /// Whether the caret's line is compared, rather than the caret.
+    pub line: bool,
+    /// Which end: the line's end and the document's, or the line's start
+    /// and the document's; for the caret, the document's.
+    pub end: Endpoint,
 }
 
 /// Text that became selected or stopped being selected
@@ -333,6 +347,11 @@ pub struct CaretAnswer {
     /// `None` for any other read: a character's one read, or an empty
     /// line's, says too little about the provider.
     pub unsupported: Option<Attributes>,
+    /// Whether the comparison [`CaretQuery::edge`] asked for holds: the
+    /// caret, or the line's end, is at that end of the document; `None`
+    /// without one. False, with no comparison made, when the caret or the
+    /// selection moved, which is evidence already.
+    pub at_edge: Option<bool>,
 }
 
 /// The signature both implementations share.
@@ -807,6 +826,7 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
     };
     let element = b.import_element(query.element);
     let CaretRegisters {
+        pattern,
         caret,
         collapsed,
         has_selection,
@@ -863,6 +883,25 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
     let unit = query.unit.map(|unit| {
         let unit = b.int(unit.0);
         c.unit_at(&mut b, point, unit)
+    });
+    let at_edge = query.edge.map(|edge| {
+        let at = b.new_bool(false);
+        let at = b.add_to_results(at);
+        // Evidence already found needs no comparison.
+        let found = b.or(moved, selection_moved);
+        let still = b.not(found);
+        b.if_(still, |b| {
+            let document = b.text_pattern_get_document_range(pattern);
+            let end = b.int(endpoint_number(edge.end));
+            let order = if edge.line {
+                b.text_range_compare_endpoints(line.range, end, document, end)
+            } else {
+                b.text_range_compare_endpoints(point, c.start, document, end)
+            };
+            let equal = b.equal(order, c.zero);
+            b.set(at, equal);
+        });
+        at
     });
     let ids: Vec<TextAttribute> = query.attributes.iter().collect();
     let runs = match query.formats {
@@ -926,6 +965,7 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
             .map(|(selected, texts)| read_changes(&outcome, selected, texts))
             .transpose()?,
         unsupported,
+        at_edge: at_edge.map(|at| outcome.get(at)).transpose()?,
     })
 }
 
@@ -1051,6 +1091,8 @@ fn read_changes(
 /// The registers of the caret and the selection.
 #[derive(Clone, Copy)]
 pub(crate) struct CaretRegisters {
+    /// The text pattern the caret was read through.
+    pub(crate) pattern: Reg<kind::TextPattern>,
     pub(crate) caret: Reg<kind::TextRange>,
     pub(crate) collapsed: Reg<kind::Bool>,
     pub(crate) has_selection: Reg<kind::Bool>,
@@ -1119,6 +1161,7 @@ pub(crate) fn emit_caret(
         },
     );
     CaretRegisters {
+        pattern,
         caret,
         collapsed,
         has_selection,
@@ -1391,6 +1434,23 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         .unit
         .map(|unit| unit_at(&point, unit, query.max_text))
         .transpose()?;
+    let at_edge = query
+        .edge
+        .map(|edge| -> Result<bool, Error> {
+            if moved || selection_moved {
+                // Evidence already found needs no comparison.
+                return Ok(false);
+            }
+            let document = query.pattern.document_range()?;
+            let order = if edge.line {
+                line.range
+                    .compare_endpoints(edge.end, &document, edge.end)?
+            } else {
+                point.compare_endpoints(Endpoint::Start, &document, edge.end)?
+            };
+            Ok(order == 0)
+        })
+        .transpose()?;
     let (runs, unsupported) = classic_formats(query, &point, &line, unit.as_ref())?;
     Ok(CaretAnswer {
         caret,
@@ -1403,6 +1463,7 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         runs,
         changes,
         unsupported,
+        at_edge,
     })
 }
 

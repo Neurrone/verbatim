@@ -318,7 +318,12 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   character or word at the caret before a Delete); the selection no longer
   `previous_selection`. Wait up to 100 milliseconds for
   `CaretWait::Standard` and 300 for `CaretWait::Extended` (terminals), and
-  answer when the wait runs out too, with `moved` false. The reply carries
+  answer when the wait runs out too, with `moved` false. The watch carries
+  the key's `motion` (a `CaretMotion`): when the caret is still where it
+  was before the key and that is where the motion takes it (Control+Home
+  at the start of the text, Home at a line's start, Down Arrow on the last
+  line), the key cannot move it, and the outpost answers at once with
+  `moved` false rather than waiting. The reply carries
   the caret as it now is, with `read_at_ms`, when the outpost read it on
   the clock of `observed_at_ms` (0 when unknown, which Core compares with
   a later key's `pressed_at_ms`), the requested `unit` at the caret as a chunk

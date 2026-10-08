@@ -50,14 +50,14 @@ use verbatim_model::{
 };
 use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt, caret_range, uia_text_unit};
 use verbatim_uia_rops::{
-    Attributes, CaretQuery, FoundPoint, LocationQuery, Movement, Path, Position, RangeEnd,
-    RangeQuery, RunAttributes, TextAttribute, TextFrom, TextTarget, UnitsQuery,
+    Attributes, CaretQuery, EdgeQuery, FoundPoint, LocationQuery, Movement, Path, Position,
+    RangeEnd, RangeQuery, RunAttributes, TextAttribute, TextFrom, TextTarget, UnitsQuery,
 };
 
 use super::{
-    CaretRead, CaretRequest, CaretState, FormatSpan, Located, MAX_CHUNK_UNITS, MAX_RANGE_UNITS,
-    PointFrom, RangeAction, RangeRead, Sentences, TextError, TextResult, TextSource, Unit,
-    UnitRead, UnitsAnswer, UnitsRead, UnitsRequest,
+    CaretRead, CaretRequest, CaretState, Edge, FormatSpan, Located, MAX_CHUNK_UNITS,
+    MAX_RANGE_UNITS, PointFrom, RangeAction, RangeRead, Sentences, TextError, TextResult,
+    TextSource, Unit, UnitRead, UnitsAnswer, UnitsRead, UnitsRequest,
 };
 
 /// A position in UIA text: an end of a range.
@@ -592,6 +592,24 @@ impl TextSource for UiaText {
             learning,
             max_text: i32::try_from(MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
             max_change_text: i32::try_from(MAX_RANGE_UNITS).unwrap_or(i32::MAX),
+            edge: request.edge.map(|edge| match edge {
+                Edge::CaretAtStart => EdgeQuery {
+                    line: false,
+                    end: Endpoint::Start,
+                },
+                Edge::CaretAtEnd => EdgeQuery {
+                    line: false,
+                    end: Endpoint::End,
+                },
+                Edge::LineAtStart => EdgeQuery {
+                    line: true,
+                    end: Endpoint::Start,
+                },
+                Edge::LineAtEnd => EdgeQuery {
+                    line: true,
+                    end: Endpoint::End,
+                },
+            }),
         };
         let (answer, path) =
             verbatim_uia_rops::caret_read(&query, self.remote).map_err(rops_failed)?;
@@ -635,6 +653,7 @@ impl TextSource for UiaText {
                     .map(|change| (change.selected, change.text))
                     .collect()
             }),
+            at_edge: answer.at_edge,
         }))
     }
 

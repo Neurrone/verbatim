@@ -394,6 +394,12 @@ pub struct CaretWatch {
     pub pressed_at_ms: u64,
     /// The unit to report at the caret once the wait ends, besides the line.
     pub unit: TextUnit,
+    /// The key's motion. When the caret is still at `since` and that is
+    /// where the motion takes it (Control+Home at the document's start,
+    /// Home at a line's start, Down Arrow on the last line), the key cannot
+    /// move it, and the outpost answers at once with `moved` false rather
+    /// than waiting the wait out.
+    pub motion: CaretMotion,
     /// The text of `unit` at the caret before the key, when a change of it is
     /// evidence.
     pub compare: Option<String>,
