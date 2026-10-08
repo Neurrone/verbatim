@@ -126,7 +126,9 @@ Public API:
   count of characters; `Positioned` with screen coordinates; and the new
   values of the typing echo toggles, and `SkippedLines` with a count, for
   terminal output too much to read, or `SkippedUncountedLines`, "skipped
-  lines", when the count is not known; and `Items` with a count, "52
+  lines", when the count is not known, or `SkippedMoreThanLines` with a
+  count, "skipped more than 9001 lines", when lines went by past the
+  terminal's history; and `Items` with a count, "52
   items", for a tree view item just expanded), and `Format` (a `TextFormat`: a
   spelling or grammar error starting or ending, bold, italic, or underline
   starting or ending, a font name, size, color, or background color as
@@ -278,18 +280,28 @@ the contract the Windows side implements.
 - `NormalizedEvent::TerminalOutput { node_id, output }` (M4 item 9): sent
   for a focused terminal in place of `TextChanged`, and only when its text
   really changed. A `TerminalOutput` (`terminal.rs`) is what the outpost's
-  diff found, in the order it is spoken: `changed`, the last line read
+  diff of the screen found, in the order it is spoken: `above`, what is
+  new above the last line read (lines inserted there, and what changed of
+  lines rewritten in place there; `serde(default)`); `changed`, the last line read
   changed in place (a `LineChange`: the `text` to speak, the whole `line`
   as it now is, whether it was `appended` to, so `text` is exactly the
   characters added, and, for a line that grew, how many `uncertain` bytes
   of white space at the start of `text` the line may already have had,
-  its padding or its own trailing spaces); `head`, when lines went by
+  its padding or its own trailing spaces, and what the line gained where
+  it changed, `inserted`, which Core matches with typing held; and,
+  where it differs, its change from the line as last read rather than
+  from what it last said, `since_read`, which Core matches typing with
+  while it holds typing;
+  `serde(default)`); `head`, when lines went by
   unread, the first new lines before them, so a flood's start is spoken in
-  full, empty otherwise (`serde(default)`); `skipped`, lines that went by unread (`Skipped::Count`
-  or `Skipped::Uncounted` when the scrollback overflowed past the anchor
-  and the count is lost; `plus` adds two); and `lines`, the newest lines
-  without padding, an empty string for a blank line, each at most
-  `MAX_TERMINAL_LINE_BYTES` (4 KB). Core echoes typing it held when the
+  full, empty otherwise (`serde(default)`); `skipped`, lines that went by
+  unread (`Skipped::Count`; `Skipped::Uncounted` when the count is lost;
+  or `Skipped::MoreThan` when the terminal's history overflowed past the
+  screen last read, its count the history's rows left unspoken; `plus`
+  adds an older and a newer count, a newer `MoreThan` standing for
+  everything before it); and `lines`, the newest lines
+  without padding, an empty string for a blank line, each whole however
+  long. Core echoes typing it held when the
   terminal shows it at the end of the line, and speaks the rest by the
   flood policy ([verbatim-core](verbatim-core.md), "Terminals").
 - `NormalizedEvent::ActiveTextPositionChanged { node_id, position }`: the
@@ -318,7 +330,9 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   which case its newest such report; a caret read at or after that time
   may already show the key's effect); the text of `unit` at the caret differing from `compare` (the
   character or word at the caret before a Delete); the selection no longer
-  `previous_selection`. The outpost checks for it when the request
+  `previous_selection`. A watch marked `landing` (a key judged by where the
+  caret landed) is answered with `same_line`, whether the caret is still on
+  the line where it was. The outpost checks for it when the request
   arrives and whenever the application reports a caret, text, or
   selection change, and answers with `moved` true. A watch that ends with
   no evidence, when the next caret key's watch replaces it, the focus
@@ -381,6 +395,14 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   reads; answer `Done` or `Unsupported`. Core does not wait for the answer.
 - `Location(point)`: the point's screen position, answered `Location { x,
   y }` in pixels, or `Unsupported`.
+- `TerminalHold`, `TerminalRead { hold }`, and `TerminalCancel`: a focused
+  terminal's on-demand reading (`phase6-design.md`, "Terminal decisions").
+  Hold: Core's output queue is full, so the outpost only notes changes
+  (answer `Done`). Read: what is new now, read only when the text changed
+  since the last read, then holding or reading each change at once again
+  (answer `Terminal(output)`). Cancel: speech was cut off, so read to the
+  end without speaking, live again (answer `Terminal(output)`, which Core
+  uses only to echo typing).
 
 Any request can also be answered `NoText` (the node has no text interface
 at all; Core then reviews its value or name as flat text, as NVDA's object
@@ -397,7 +419,8 @@ failed). A caret key's watch that ends with no evidence is answered
   event's `observed_at_ms` (0 when unknown). A `CaretKey` is a
   `CaretMotion` (previous or next character, word, line, paragraph, or
   page; start or end of the line; top or bottom; Backspace and
-  Control+Backspace; Delete and Control+Delete; Control+A) and whether
+  Control+Backspace; Delete and Control+Delete; Control+A; or `Other`, any
+  other key that types no text, judged by its evidence) and whether
   Shift extends the selection. `CaretMotion::unit` is the unit spoken
   after it. `verbatim-input`'s `caret_bindings` maps gestures to these.
 - `Input::CharacterTyped { trace_id, text }`: text typed into the focused
@@ -405,10 +428,16 @@ failed). A caret key's watch that ends with no evidence is answered
   committed composition), a tab as a tab character and Enter as a
   carriage return. The platform side produces it, from the keyboard hook's
   translation of keys to text or from the application's text-edit events.
+- `Input::ClearingKey { trace_id }`: a key that ends or clears the command
+  line being typed (Escape, Control+C, Control+D, Control+Break) was passed
+  to the focused application; these type no text. A terminal forgets the
+  typing it holds.
 - `Input::MarkReached { mark }`: playback reached a `SpeechMark` the
   reducer placed, as the speech pipeline's `mark_reached` reports it.
-- `Input::SpeechCancelled`: a key press cut speech off outside the reducer
-  (the hook's `KeySpeechEffect::Cancel`); say-all stops.
+- `Input::SpeechCancelled { at_ms }`: a key press cut speech off outside
+  the reducer (the hook's `KeySpeechEffect::Cancel`), at `at_ms`, Unix
+  milliseconds on the clock outposts stamp events with; say-all stops, and
+  terminal output read before then is used only to echo typing.
 - `Input::Settings(ReaderSettings)`: the reader settings, at startup and
   whenever they change.
 - `Input::Fetches(Fetches)`: the details the active theme wants fetched

@@ -17,6 +17,8 @@ use crate::fixture::FixtureNode;
 pub(crate) struct NodeData {
     pub(crate) role: Role,
     pub(crate) name: Option<String>,
+    /// The UIA class name (`ClassName`).
+    pub(crate) class_name: Option<String>,
     pub(crate) value: Option<String>,
     pub(crate) states: StateSet,
     /// Accessible description (UIA `FullDescription`, MSAA `accDescription`).
@@ -42,6 +44,9 @@ pub(crate) struct NodeData {
     /// The text's selection, start and end as UTF-16 offsets; the caret is
     /// at its start, and a collapsed selection is the caret alone.
     pub(crate) selection: (usize, usize),
+    /// How many of the text's last lines are on screen, as a terminal shows
+    /// the end of its buffer (`screen`); `None` shows the whole text.
+    pub(crate) screen_rows: Option<usize>,
     /// The text's spelling errors and bold stretches, UTF-16 offsets.
     pub(crate) formats: Formats,
     pub(crate) parent: Option<usize>,
@@ -176,6 +181,7 @@ fn insert(
     nodes.push(NodeData {
         role: node.role,
         name: node.name,
+        class_name: node.class_name,
         value: node.value,
         states: node.states,
         description: node.description,
@@ -188,6 +194,7 @@ fn insert(
         controller_for: None,
         text: node.text.map(|text| text.encode_utf16().collect()),
         selection: (0, 0),
+        screen_rows: None,
         formats: Formats {
             spelling_errors: node.spelling_errors,
             bold: node.bold,
@@ -251,6 +258,7 @@ mod tests {
             backward_moves_positive: false,
             native: None,
             window_class: None,
+            class_name: None,
             columns: Vec::new(),
             state_images: false,
             edit_version_6: false,

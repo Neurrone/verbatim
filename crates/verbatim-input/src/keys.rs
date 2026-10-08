@@ -38,6 +38,7 @@ pub struct KeyName {
 /// `period` are ordinary single-vk keys with no twin, following the same
 /// `None` convention as `escape` or `tab` above.
 const NAMED_KEYS: &[(&str, u16, Option<bool>)] = &[
+    ("break", 0x03, None),
     ("backspace", 0x08, None),
     ("tab", 0x09, None),
     ("enter", 0x0D, Some(false)),

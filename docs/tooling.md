@@ -479,11 +479,13 @@ More environment variables matter for less common cases:
   without. Set but
   empty, Verbatim logs as its own configuration says. For a terminal's
   reads during a flood, set it to `info,verbatim_outpost::terminal=debug,verbatim_outpost::outpost::worker=debug`:
-  each tail read then logs `terminal tail timing` (whether it started at
-  the anchor or afresh, the path, its time in microseconds, its calls,
-  where the fingerprint was found, and whether it settled), each text
-  change's read `terminal read timing` (its time and how long it waited
-  in the queue), and each caret read `caret read timing`. The console
+  each screen read then logs `terminal screen timing` (the path, its time
+  in microseconds, its calls, how far the text scrolled, the unread rows
+  read, the text's rows when counted, whether the screen had history
+  above it and whether the read settled, and its top row), each event of
+  on-demand reading `terminal read timing` (the event, what it did, its
+  time, how long it waited in the queue, and what it found), and each
+  caret read `caret read timing`. The console
   host's outpost log then grows past the agent's 8 MB file limit, so
   read it from `target\e2e-stage\logs\<Verbatim's pid>` rather than from
   the artifacts.
@@ -545,7 +547,13 @@ password prompt), spoken_password (its typing spoken with "speak
 passwords" on), flood (two thousand lines of output heard as their first
 30 lines, one exact "skipped 1941 lines", and the last 30; Verbatim+5;
 and the wall-time ratio, saved as `wall-time-ratio.txt` in its artifacts
-directory for trends, never asserted), editing (a command corrected
+directory for trends, never asserted), history_flood and
+scrollback_overflow (thirty lines heard in full, then 5,000 or 12,000
+written in one go, within the terminal's history or past it: the next
+30, one exact "skipped 4941 lines" or "skipped more than N lines", N the
+history's rows less the last 30, and the last 30), their
+`_during_group` twins (the second part written while the first 30 still
+play, so it joins their burst), editing (a command corrected
 with Backspace, punctuation echoed by name, and the review cursor's
 current word down a column), review_grid (the review cursor down a
 column of a text table), progress (a line rewritten in place, each step
@@ -865,6 +873,15 @@ Install `nvda-addon/verbatimTranscript.nvda-addon` into NVDA and run
 `cargo xtask nvda capture` with the keys to press;
 [the NVDA transcript guide](nvda-transcript.md) has the details.
 
+The capture presses its keys only in the window it means to: the one in
+front when it starts, then the one each `--front` brings forward. It
+stops with an error, sending nothing more, when a `--front` finds no
+window to bring forward, and before any key or typing step when the
+window in front belongs to another process, or when a `--launch` has not
+been followed by a `--front`. Before this guard (2026-10-09), a `--front`
+that failed only printed a note, and the steps after it typed into
+whatever window was in front.
+
 ## Troubleshooting
 
 **The agent is unreachable after a checkpoint restore, but perfectly
@@ -977,10 +994,15 @@ default is 200000). So the harness no longer relies on the right for its
 own windows: `Scenario::launch_titled`, which launches mockapp and the
 Windows Forms text box, opens the window minimized and inactive and then
 restores it and sets it as the foreground, as Notepad's documents have
-always been brought forward, which works whatever input came last. Only
-`system_information_tree`'s msinfo32 still opens in front
-(`Scenario::launch_target`), and the console host and Windows Terminal
-scenarios, so those still need the agent's input to have come last;
+always been brought forward, which works whatever input came last. The
+console host and Windows Terminal scenarios open theirs the same way
+(`Scenario::launch_console` and `Scenario::launch_owning_window`): both
+honor the launch's `SW_SHOWMINNOACTIVE`, the console host for the console
+window it creates and Windows Terminal for its first window, which the
+harness found minimized when it appeared, so Windows Terminal needs no
+option of its own. Only `system_information_tree`'s msinfo32 still opens
+in front (`Scenario::launch_target`), so it still needs the agent's input
+to have come last;
 `phase6-design.md`, "Test isolation and the foreground lock (2026-10-08)",
 has the evidence.
 

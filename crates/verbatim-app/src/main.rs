@@ -351,6 +351,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     let reports_tx = command_tx.clone();
     let caret_keys: HashMap<GestureId, CaretKey> =
         verbatim_input::caret_bindings().into_iter().collect();
+    let clearing_keys: HashSet<GestureId> = verbatim_input::clearing_keys().into_iter().collect();
     let hook = InputHook::start(
         decision_config(&store),
         Arc::clone(&bound_gestures),
@@ -358,7 +359,9 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         Box::new(move |effect, key| match effect {
             KeySpeechEffect::Cancel => {
                 speech_control.cancel_through(key);
-                let _ = cancelled_tx.send(ShellCommand::Input(Box::new(Input::SpeechCancelled)));
+                let _ = cancelled_tx.send(ShellCommand::Input(Box::new(Input::SpeechCancelled {
+                    at_ms: latency::now_ms(),
+                })));
             }
             KeySpeechEffect::TogglePause => speech_control.toggle_pause(),
         }),
@@ -376,7 +379,41 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
                         }),
                         pressed_at_us,
                     },
+                    None if clearing_keys.contains(&gesture.gesture) => {
+                        // The typing held is forgotten first; then the key
+                        // is judged like any other (Escape clearing a line
+                        // speaks what it removed).
+                        let _ =
+                            reports_tx.send(ShellCommand::Input(Box::new(Input::ClearingKey {
+                                trace_id: gesture.trace_id,
+                            })));
+                        ShellCommand::CaretKey {
+                            input: Box::new(Input::CaretKey {
+                                trace_id: gesture.trace_id,
+                                key: CaretKey {
+                                    motion: verbatim_model::CaretMotion::Other,
+                                    select: false,
+                                },
+                                pressed_at_ms: pressed_at_us / 1_000,
+                            }),
+                            pressed_at_us,
+                        }
+                    }
                     None => return,
+                },
+                KeyReport::Passed {
+                    trace_id,
+                    pressed_at_us,
+                } => ShellCommand::CaretKey {
+                    input: Box::new(Input::CaretKey {
+                        trace_id,
+                        key: CaretKey {
+                            motion: verbatim_model::CaretMotion::Other,
+                            select: false,
+                        },
+                        pressed_at_ms: pressed_at_us / 1_000,
+                    }),
+                    pressed_at_us,
                 },
                 KeyReport::Typed { trace_id, text } => {
                     ShellCommand::Input(Box::new(Input::CharacterTyped { trace_id, text }))
@@ -1274,7 +1311,8 @@ impl ReducerThread<'_> {
             | Input::Command { trace_id, .. }
             | Input::TextCompleted { trace_id, .. }
             | Input::CaretKey { trace_id, .. }
-            | Input::CharacterTyped { trace_id, .. } => *trace_id,
+            | Input::CharacterTyped { trace_id, .. }
+            | Input::ClearingKey { trace_id } => *trace_id,
             _ => TraceId::mint(),
         };
         let effects = reduce(&mut self.state, &input);
@@ -1694,7 +1732,8 @@ fn bound_gestures(layout: KeyboardLayout) -> SharedGestureMap {
         .with_observed(
             verbatim_input::caret_bindings()
                 .into_iter()
-                .map(|(gesture, _key)| gesture),
+                .map(|(gesture, _key)| gesture)
+                .chain(verbatim_input::clearing_keys()),
         )
         .into_shared()
 }
@@ -1892,7 +1931,9 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
             let trace_id = TraceId::mint();
             verbatim_input_windows::record_key_origin(trace_id, key);
             speech_control.cancel_through(key);
-            let _ = cancelled_tx.send(ShellCommand::Input(Box::new(Input::SpeechCancelled)));
+            let _ = cancelled_tx.send(ShellCommand::Input(Box::new(Input::SpeechCancelled {
+                at_ms: latency::now_ms(),
+            })));
             gesture_tx
                 .send(Routed::Gesture(EmittedGesture {
                     trace_id,

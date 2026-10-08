@@ -400,6 +400,11 @@ pub struct CaretWatch {
     /// carries one, the reply's `selection_changes` describe how the
     /// selection changed from it.
     pub previous_selection: Option<PreviousSelection>,
+    /// The key is judged by where the caret landed
+    /// ([`CaretMotion::Other`]): the reply says whether the caret is still
+    /// on the line it was on ([`CaretReply::same_line`]).
+    #[serde(default)]
+    pub landing: bool,
 }
 
 /// The selection before a selecting key: the selection Core knew, or a
@@ -450,6 +455,11 @@ pub struct CaretReply {
     /// How the selection changed, when the watch asked.
     #[serde(default)]
     pub selection_changes: Vec<SelectionChange>,
+    /// For a watch judged by where the caret landed
+    /// ([`CaretWatch::landing`]), whether the caret is on the line where
+    /// it was before the key; `None` when not asked or not known.
+    #[serde(default)]
+    pub same_line: Option<bool>,
 }
 
 /// A movement by whole units, positive forward and negative back.
@@ -528,6 +538,23 @@ pub enum TextOp {
     /// Read several units ahead (say-all): answered [`TextReply::Chunks`],
     /// or as [`TextOp::Read`] is when the first unit cannot be read.
     ReadAhead(TextReadAhead),
+    /// A focused terminal's on-demand reading (`phase6-design.md`,
+    /// "Terminal decisions"): Core's output queue is full, so the outpost
+    /// only notes that the terminal's text changed from now on, without
+    /// reading it. Answered [`TextReply::Done`].
+    TerminalHold,
+    /// Read what is new in a focused terminal now, if its text changed
+    /// since the last read, and then hold (`hold`) or read each change at
+    /// once again. Answered [`TextReply::Terminal`].
+    TerminalRead {
+        /// Whether to go on holding after this read.
+        hold: bool,
+    },
+    /// Speech was cut off: read the terminal to its end without speaking
+    /// what is new, as NVDA drops what was pending, and read each change at
+    /// once again. Answered [`TextReply::Terminal`], whose output Core uses
+    /// only to echo typing it shows.
+    TerminalCancel,
 }
 
 /// A text request from Core to the outpost that owns `node_id`; the answer
@@ -576,8 +603,12 @@ pub enum TextReply {
         /// The text was cut.
         truncated: bool,
     },
-    /// A [`TextOp::Select`] or [`TextOp::MoveCaret`] was done.
+    /// A [`TextOp::Select`], [`TextOp::MoveCaret`], or
+    /// [`TextOp::TerminalHold`] was done.
     Done,
+    /// The answer to [`TextOp::TerminalRead`] and
+    /// [`TextOp::TerminalCancel`]: what is new, empty when nothing is.
+    Terminal(Box<crate::TerminalOutput>),
     /// The answer to [`TextOp::Location`]: screen coordinates of the point,
     /// in pixels.
     Location {
@@ -662,9 +693,21 @@ pub enum CaretMotion {
     DeleteWord,
     /// Control+A: selects everything.
     SelectAll,
+    /// Any other key passed to the application that types no text (bash's
+    /// Control+A and Control+E, Alt+B and Alt+F, Control+W): what it did is
+    /// judged by its evidence, text removed at the caret or where the caret
+    /// landed (`phase6-design.md`, "What a key did to the text").
+    Other,
 }
 
 impl CaretMotion {
+    /// Whether the key deletes backward from the caret: Backspace, or with
+    /// Control, the word before it.
+    #[must_use]
+    pub fn deletes_back(self) -> bool {
+        matches!(self, Self::Backspace | Self::BackspaceWord)
+    }
+
     /// Whether the key deletes text rather than moving the caret: Backspace
     /// and Delete, alone or with Control.
     #[must_use]
@@ -688,9 +731,11 @@ impl CaretMotion {
             | Self::EndOfLine
             | Self::Backspace
             | Self::Delete => TextUnit::Character,
-            Self::PreviousWord | Self::NextWord | Self::BackspaceWord | Self::DeleteWord => {
-                TextUnit::Word
-            }
+            Self::PreviousWord
+            | Self::NextWord
+            | Self::BackspaceWord
+            | Self::DeleteWord
+            | Self::Other => TextUnit::Word,
             Self::PreviousParagraph | Self::NextParagraph => TextUnit::Paragraph,
             Self::PreviousLine
             | Self::NextLine

@@ -130,6 +130,11 @@ pub(crate) fn grapheme_at(content: &str, offset: usize) -> Option<Range<usize>> 
     verbatim_text::grapheme_at(content, offset)
 }
 
+/// How many graphemes `text` has.
+pub(crate) fn graphemes_count(text: &str) -> usize {
+    verbatim_text::graphemes(text).len()
+}
+
 /// The start of the grapheme cluster before the one at `offset`, or `None`
 /// at the start.
 pub(crate) fn previous_grapheme(content: &str, offset: usize) -> Option<Range<usize>> {

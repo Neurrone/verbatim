@@ -54,12 +54,15 @@ const LINES: u32 = 2_000;
 /// e2e settings' "Lines spoken in full" and "Last lines to speak".
 const GROUP: u32 = 30;
 
-/// The flood script; its argument names the run's elapsed-time file.
+/// The flood script; its argument names the run's elapsed-time file, which
+/// is written under another name and renamed, so it never exists empty for
+/// the scenario to read.
 pub(crate) const SCRIPT: &str = "param([string]$Run)\r\n\
 $watch = [Diagnostics.Stopwatch]::StartNew()\r\n\
 for ($line = 1; $line -le 2000; $line++) { \"flood line $line\" }\r\n\
 $watch.Stop()\r\n\
-[IO.File]::WriteAllText(\"$PSScriptRoot\\flood-$Run.ms\", [string]$watch.ElapsedMilliseconds)\r\n";
+[IO.File]::WriteAllText(\"$PSScriptRoot\\flood-$Run.tmp\", [string]$watch.ElapsedMilliseconds)\r\n\
+[IO.File]::Move(\"$PSScriptRoot\\flood-$Run.tmp\", \"$PSScriptRoot\\flood-$Run.ms\")\r\n";
 
 /// The longest a flood and the speech it causes may take between one
 /// utterance and the next; it only bounds a hang.

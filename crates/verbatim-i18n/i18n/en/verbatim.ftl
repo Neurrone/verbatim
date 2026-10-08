@@ -225,6 +225,7 @@ message-not-supported = Not supported in this document
 message-no-caret = No caret
 message-report-new-output-on = report new output on
 message-report-new-output-off = report new output off
+message-terminal-line-cut = line cut
 
 ## Reader messages with values in them. Wording matches NVDA's.
 
@@ -239,6 +240,8 @@ phrase-speak-typed-words = speak typed words { $mode }
 phrase-skipped-line = skipped { $count } line
 phrase-skipped-lines = skipped { $count } lines
 phrase-skipped-uncounted-lines = skipped lines
+phrase-skipped-more-than-line = skipped more than { $count } line
+phrase-skipped-more-than-lines = skipped more than { $count } lines
 phrase-item = { $count } item
 phrase-items = { $count } items
 typing-echo-off = off

@@ -1,32 +1,28 @@
-//! The anchored diff on simulated terminal text: a buffer of padded rows,
-//! an anchor that keeps its row while the text moves beneath it, and the
-//! same reads the remote program makes, run through [`read_new`].
+//! Reading a terminal by diffing its screen, on simulated text: a buffer of
+//! padded rows whose last `height` rows are the screen, a history that
+//! keeps at most `capacity` rows, and the anchor found again by its text as
+//! the remote program finds it, run through [`read_new`].
 
+use super::screen::line_change;
 use super::*;
 
 /// The columns every simulated row is padded to.
 const WIDTH: usize = 20;
 
-/// How many of the newest lines a read takes.
-const WANTED: u32 = 5;
+/// How many of the unread lines a read takes from their first.
+const HEAD: u32 = 3;
 
-/// How far up the simulated search looks.
-const SEARCH: usize = 4;
+/// How many matches the simulated search checks.
+const MATCHES: usize = 20;
 
-/// A terminal's text: rows padded to the width, an anchor row, a
-/// scrollback that keeps at most `capacity` rows, and whether the anchor
-/// still compares with the text (it does not after a switch of screens).
 struct Sim {
     rows: Vec<String>,
+    height: usize,
     capacity: usize,
-    anchor: Option<usize>,
-    comparable: bool,
-    /// How many of the next reads the text moves under.
-    unsettled: usize,
-    /// Whether the text moving under them scrolls it.
-    scrolling: bool,
-    /// How many fresh reads were made.
-    fresh_reads: usize,
+    /// Whether the screen is an alternate screen, with no history.
+    alternate: bool,
+    /// Whether the next read is disturbed.
+    disturbed: bool,
 }
 
 fn padded(text: &str) -> String {
@@ -34,15 +30,13 @@ fn padded(text: &str) -> String {
 }
 
 impl Sim {
-    fn new(capacity: usize, rows: &[&str]) -> Self {
+    fn new(height: usize, capacity: usize, rows: &[&str]) -> Self {
         let mut sim = Self {
             rows: Vec::new(),
+            height,
             capacity,
-            anchor: None,
-            comparable: true,
-            unsettled: 0,
-            scrolling: false,
-            fresh_reads: 0,
+            alternate: false,
+            disturbed: false,
         };
         sim.push(rows);
         sim
@@ -55,522 +49,289 @@ impl Sim {
         self.rows.drain(..excess);
     }
 
-    /// Rewrites the last row in place.
-    fn rewrite_last(&mut self, text: &str) {
-        if let Some(last) = self.rows.last_mut() {
-            *last = padded(text);
-        }
+    /// Rewrites row `index` from the end (0 is the last).
+    fn rewrite(&mut self, from_end: usize, text: &str) {
+        let index = self.rows.len() - 1 - from_end;
+        self.rows[index] = padded(text);
     }
 
     /// Replaces every row, as clearing the screen or switching screens does.
-    fn replace(&mut self, rows: &[&str], comparable: bool) {
+    fn replace(&mut self, rows: &[&str], alternate: bool) {
         self.rows = rows.iter().map(|row| padded(row)).collect();
-        self.comparable = comparable;
+        self.alternate = alternate;
+    }
+
+    /// Where the screen starts: the last `height` rows.
+    fn screen_start(&self) -> usize {
+        self.rows.len().saturating_sub(self.height)
     }
 
     fn row(&self, index: usize) -> String {
         self.rows.get(index).cloned().unwrap_or_default()
     }
 
-    /// Whether this read settles, counting down the unsettled reads.
-    fn settles(&mut self) -> bool {
-        let settled = self.unsettled == 0;
-        self.unsettled = self.unsettled.saturating_sub(1);
-        settled
-    }
-
-    /// The reads after the line at `from`: the count to the last line, the
-    /// last lines, and the last line and the one before it; the anchor
-    /// moves to the last, unless the read does not settle.
-    fn tail(&mut self, from: usize, count_from: bool, wanted: u32, settled: bool) -> TailText {
-        let rows = self.rows.len();
-        let last = rows.saturating_sub(1);
-        let count = if count_from {
-            last.saturating_sub(from)
-        } else {
-            rows
-        };
-        let wanted = usize::try_from(wanted).unwrap_or(usize::MAX);
-        let reading = count.min(wanted);
-        let lines = self.rows[rows - reading..]
-            .iter()
-            .map(|row| row.trim_end_matches(['\r', '\n']).to_owned())
-            .collect();
-        // From an anchor, as the program does, the first of the lines after
-        // it too, as many more as follow the last lines, up to the number
-        // wanted.
-        let heading = if count_from {
-            (count - reading).min(wanted)
-        } else {
-            0
-        };
-        let head = self.rows[from + 1..from + 1 + heading]
-            .iter()
-            .map(|row| row.trim_end_matches(['\r', '\n']).to_owned())
-            .collect();
-        // As the program does, the last line and the one before it are
-        // read only when lines are read.
-        let (last_line, before_last) = if reading == 0 {
-            (String::new(), String::new())
-        } else {
-            (
-                self.row(last),
-                last.checked_sub(1)
-                    .map(|row| self.row(row))
-                    .unwrap_or_default(),
-            )
-        };
-        let scrolled = !settled && self.scrolling;
-        if settled || scrolled {
-            self.anchor = Some(last);
-            self.comparable = true;
+    /// Where the anchor's top row is, searched as the program does: the
+    /// more distinctive row, nearest the screen first, with its partner
+    /// beside it.
+    fn find(&self, memory: &Memory) -> Option<usize> {
+        let top = memory.top_row.trim_end();
+        let next = memory.next_row.trim_end();
+        if top.is_empty() && next.is_empty() {
+            return None;
         }
-        TailText {
-            found: Found::Afresh,
-            line: String::new(),
-            previous: String::new(),
-            found_line: String::new(),
-            count: u32::try_from(count).unwrap_or(u32::MAX),
-            rows: u32::try_from(reading).unwrap_or(u32::MAX),
-            lines,
-            head_rows: u32::try_from(heading).unwrap_or(u32::MAX),
-            head,
-            last_line,
-            before_last,
-            settled,
-            scrolled,
+        let by_next = top.is_empty() || (!next.is_empty() && next.len() > top.len());
+        let last = (self.screen_start() + 1).min(self.rows.len().saturating_sub(1));
+        (0..=last)
+            .rev()
+            .filter(|&index| {
+                let sought = if by_next {
+                    &memory.next_row
+                } else {
+                    &memory.top_row
+                };
+                self.row(index) == *sought
+            })
+            .take(MATCHES)
+            .find_map(|index| {
+                if by_next {
+                    (index > 0 && self.row(index - 1) == memory.top_row).then(|| index - 1)
+                } else {
+                    let pairs =
+                        memory.next_row.is_empty() || self.row(index + 1) == memory.next_row;
+                    pairs.then_some(index)
+                }
+            })
+    }
+}
+
+impl ScreenSource for Sim {
+    type Error = std::convert::Infallible;
+
+    fn read(
+        &mut self,
+        anchor: Option<&Memory>,
+        seen_rows: u32,
+        head_wanted: u32,
+    ) -> Result<ScreenText, Self::Error> {
+        let start = self.screen_start();
+        let text: String = self.rows[start..].concat();
+        let mut screen = ScreenText {
+            text,
+            top_row: self.row(start),
+            next_row: if start + 1 < self.rows.len() {
+                self.row(start + 1)
+            } else {
+                String::new()
+            },
+            alternate: self.alternate || start == 0,
+            settled: !std::mem::take(&mut self.disturbed),
+            ..ScreenText::default()
+        };
+        if let Some(memory) = anchor {
+            match self.find(memory) {
+                Some(found) if found <= start => {
+                    let shift = start - found;
+                    screen.shift = Some(u32::try_from(shift).unwrap());
+                    let seen = seen_rows as usize;
+                    if seen > 0 {
+                        screen.old_last_row = self.row(found + seen - 1);
+                    }
+                    let unread = shift.saturating_sub(seen).min(head_wanted as usize);
+                    if unread > 0 {
+                        screen.head = self.rows[found + seen..found + seen + unread].concat();
+                        screen.head_rows = u32::try_from(unread).unwrap();
+                    }
+                }
+                _ if memory.top_row.trim().is_empty() && memory.next_row.trim().is_empty() => {}
+                _ => screen.document_rows = Some(u32::try_from(self.rows.len()).unwrap()),
+            }
         }
+        Ok(screen)
     }
 }
 
-impl TailSource for Sim {
-    type Error = ();
-
-    fn anchored(&mut self, memory: &Memory, wanted: u32) -> Result<Option<TailText>, ()> {
-        let Some(anchor) = self
-            .anchor
-            .filter(|&row| self.comparable && row < self.rows.len())
-        else {
-            return Ok(None);
-        };
-        let line = self.row(anchor);
-        let previous = anchor
-            .checked_sub(1)
-            .map(|row| self.row(row))
-            .unwrap_or_default();
-        let (found, at) = if previous == memory.previous {
-            (Found::AtAnchor, anchor)
-        } else {
-            (1..=SEARCH)
-                .filter_map(|shift| anchor.checked_sub(shift).map(|row| (shift, row)))
-                .find(|&(_, row)| {
-                    let above = row
-                        .checked_sub(1)
-                        .map(|row| self.row(row))
-                        .unwrap_or_default();
-                    let tells = !memory.previous.trim().is_empty();
-                    (tells || self.row(row) == memory.line) && above == memory.previous
-                })
-                .map_or((Found::NotFound, anchor), |(shift, row)| {
-                    (Found::Moved(u32::try_from(shift).unwrap_or(0)), row)
-                })
-        };
-        let settled = self.settles();
-        let found_line = match found {
-            Found::NotFound => String::new(),
-            _ => self.row(at),
-        };
-        Ok(Some(TailText {
-            found,
-            line,
-            previous,
-            found_line,
-            ..self.tail(at, true, wanted, settled)
-        }))
-    }
-
-    fn fresh(&mut self, wanted: u32) -> Result<TailText, ()> {
-        self.fresh_reads += 1;
-        let settled = self.settles();
-        Ok(self.tail(0, false, wanted, settled))
+/// Reads `sim` after `memory`, expecting a settled read.
+fn read(sim: &mut Sim, memory: Option<&Memory>) -> (TerminalOutput, Memory) {
+    match read_new(sim, memory, ReadMode::Change, HEAD).unwrap() {
+        Found::Output(output, memory) => (output, memory),
+        Found::Unsettled => panic!("the read settles"),
     }
 }
 
-/// A terminal being read, with what the outpost remembers.
-struct Reader {
-    sim: Sim,
-    memory: Option<Memory>,
-}
-
-impl Reader {
-    /// Starts with a baseline read, which speaks nothing.
-    fn new(sim: Sim) -> Self {
-        let mut reader = Self { sim, memory: None };
-        let output = reader.read_with(true);
-        assert!(output.is_empty(), "a baseline speaks nothing: {output:?}");
-        reader
-    }
-
-    fn read_with(&mut self, baseline: bool) -> TerminalOutput {
-        let (output, memory) =
-            read_new(&mut self.sim, self.memory.as_ref(), baseline, WANTED).expect("reads");
-        self.memory = Some(memory);
-        output
-    }
-
-    fn read(&mut self) -> TerminalOutput {
-        self.read_with(false)
-    }
-}
-
-fn lines(texts: &[&str]) -> Vec<String> {
-    texts.iter().map(|&text| text.to_owned()).collect()
+fn strings(lines: &[&str]) -> Vec<String> {
+    lines.iter().map(|line| (*line).to_owned()).collect()
 }
 
 #[test]
-fn appended_lines_are_read_and_a_prompt_that_grew_speaks_what_it_gained() {
-    // The prompt's own trailing space reads as padding: it is uncertain.
-    let mut reader = Reader::new(Sim::new(100, &["welcome", "ready> "]));
-    reader.sim.rewrite_last("ready> echo hi");
-    let output = reader.read();
+fn a_first_read_and_a_baseline_find_nothing_new() {
+    let mut sim = Sim::new(4, 100, &["ready>"]);
+    let (output, memory) = read(&mut sim, None);
+    assert!(output.is_empty());
+    assert_eq!(memory.screen, ["ready>"]);
+    sim.push(&["more"]);
+    let Found::Output(output, _) =
+        read_new(&mut sim, Some(&memory), ReadMode::Baseline, HEAD).unwrap()
+    else {
+        panic!("a baseline settles");
+    };
+    assert!(output.is_empty());
+}
+
+#[test]
+fn output_on_a_screen_not_yet_full_is_new() {
+    let mut sim = Sim::new(5, 100, &["ready>"]);
+    let (_, memory) = read(&mut sim, None);
+    sim.rewrite(0, "ready> echo hi");
+    sim.push(&["hi", "ready>"]);
+    let (output, memory) = read(&mut sim, Some(&memory));
     assert_eq!(
-        output.changed,
-        Some(LineChange {
-            text: " echo hi".to_owned(),
-            line: "ready> echo hi".to_owned(),
-            appended: true,
-            uncertain: 1,
-        })
+        output.changed.as_ref().map(|change| change.text.as_str()),
+        Some(" echo hi")
+    );
+    assert_eq!(output.lines, ["hi", "ready>"]);
+    assert_eq!(output.skipped, None);
+    assert_eq!(memory.screen, ["ready> echo hi", "hi", "ready>"]);
+}
+
+#[test]
+fn a_flood_within_the_history_is_counted_exactly() {
+    let mut sim = Sim::new(3, 100, &["a", "b", "c"]);
+    let (_, memory) = read(&mut sim, None);
+    let lines: Vec<String> = (1..=10).map(|line| format!("line {line}")).collect();
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    sim.push(&lines);
+    let (output, memory) = read(&mut sim, Some(&memory));
+    // Ten new lines: the first three read, four counted, the last three on
+    // the screen.
+    assert_eq!(output.head, ["line 1", "line 2", "line 3"]);
+    assert_eq!(output.skipped, Some(Skipped::Count(4)));
+    assert_eq!(output.lines, ["line 8", "line 9", "line 10"]);
+    assert_eq!(output.changed, None);
+    assert_eq!(output.above, Vec::<String>::new());
+    assert_eq!(memory.screen, ["line 8", "line 9", "line 10"]);
+}
+
+#[test]
+fn a_flood_after_typing_speaks_the_command_line_that_scrolled_away() {
+    let mut sim = Sim::new(3, 100, &["a", "b", "ready>"]);
+    let (_, memory) = read(&mut sim, None);
+    sim.rewrite(0, "ready> run");
+    let lines: Vec<String> = (1..=6).map(|line| format!("line {line}")).collect();
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    sim.push(&lines);
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert_eq!(
+        output.changed.as_ref().map(|change| change.text.as_str()),
+        Some(" run")
+    );
+    assert_eq!(output.head, ["line 1", "line 2", "line 3"]);
+    assert_eq!(output.skipped, None);
+    assert_eq!(output.lines, ["line 4", "line 5", "line 6"]);
+}
+
+#[test]
+fn a_flood_past_the_history_is_more_than_the_history_holds() {
+    let mut sim = Sim::new(3, 8, &["a", "b", "c", "d"]);
+    let (_, memory) = read(&mut sim, None);
+    let lines: Vec<String> = (1..=20).map(|line| format!("line {line}")).collect();
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    sim.push(&lines);
+    let (output, _) = read(&mut sim, Some(&memory));
+    // The history holds 8 rows, 3 of them on the screen and spoken.
+    assert_eq!(output.skipped, Some(Skipped::MoreThan(5)));
+    assert_eq!(output.lines, ["line 18", "line 19", "line 20"]);
+    assert_eq!(output.head, Vec::<String>::new());
+}
+
+#[test]
+fn a_full_history_shifting_beneath_the_screen_is_still_counted() {
+    let mut sim = Sim::new(3, 6, &["a", "b", "c", "d", "e", "f"]);
+    let (_, memory) = read(&mut sim, None);
+    sim.push(&["g", "h"]);
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert_eq!(output.lines, ["g", "h"]);
+    assert_eq!(output.skipped, None);
+}
+
+#[test]
+fn a_line_rewritten_in_place_speaks_the_word_that_changed() {
+    let mut sim = Sim::new(4, 100, &["ready>", "Loading 10%"]);
+    let (_, memory) = read(&mut sim, None);
+    sim.rewrite(0, "Loading 20%");
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert_eq!(
+        output.changed.as_ref().map(|change| change.text.as_str()),
+        Some("20%")
     );
     assert_eq!(output.lines, Vec::<String>::new());
+}
 
-    reader.sim.push(&["hi", "ready>"]);
-    let output = reader.read();
-    assert_eq!(output.changed, None);
+#[test]
+fn a_redraw_with_the_same_text_finds_nothing() {
+    let mut sim = Sim::new(4, 100, &["ready>", "x"]);
+    let (_, memory) = read(&mut sim, None);
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert!(output.is_empty());
+}
+
+#[test]
+fn a_cleared_screen_speaks_what_it_shows() {
+    let mut sim = Sim::new(4, 100, &["a", "b", "ready> cls"]);
+    let (_, memory) = read(&mut sim, None);
+    sim.replace(&["ready>"], false);
+    let (output, _) = read(&mut sim, Some(&memory));
     assert_eq!(output.skipped, None);
-    assert_eq!(output.lines, lines(&["hi", "ready>"]));
+    assert_eq!([output.above, output.lines].concat(), strings(&["ready>"]));
 }
 
 #[test]
-fn a_read_the_text_moved_under_is_set_aside_for_the_next() {
-    let mut reader = Reader::new(Sim::new(100, &["ready>"]));
-    reader.sim.push(&["one", "two"]);
-    reader.sim.unsettled = 1;
-    assert!(reader.read().is_empty());
-    reader.sim.push(&["three"]);
-    assert_eq!(reader.read().lines, lines(&["one", "two", "three"]));
-}
-
-#[test]
-fn a_read_the_text_scrolled_under_skips_lines_and_starts_again_from_there() {
-    let mut reader = Reader::new(Sim::new(4, &["ready>"]));
-    reader.sim.push(&["one", "two", "three", "four", "five"]);
-    reader.sim.unsettled = 1;
-    reader.sim.scrolling = true;
-    let output = reader.read();
-    assert_eq!(output.skipped, Some(Skipped::Uncounted));
-    assert_eq!(output.lines, Vec::<String>::new());
-    // What follows is read from where that read ended.
-    reader.sim.push(&["six"]);
-    assert_eq!(reader.read().lines, lines(&["six"]));
-}
-
-#[test]
-fn a_scrolled_read_that_lost_the_fingerprint_reads_afresh_and_finds_it_next() {
-    // A full scrollback, anchored on its last row: more scrolls by than
-    // the search covers while the read is under way. The read counted
-    // from the anchor would read no lines, and so have no fingerprint for
-    // the next; the terminal is read afresh instead.
-    let mut reader = Reader::new(Sim::new(8, &["a", "b", "c", "d", "e", "f", "g", "h"]));
-    reader
-        .sim
-        .push(&["one", "two", "three", "four", "five", "six"]);
-    reader.sim.unsettled = 1;
-    reader.sim.scrolling = true;
-    let fresh = reader.sim.fresh_reads;
-    let output = reader.read();
-    assert_eq!(reader.sim.fresh_reads, fresh + 1);
-    assert_eq!(output.skipped, Some(Skipped::Uncounted));
-    // The next read finds the fingerprint that read took, without
-    // reading afresh again.
-    reader.sim.push(&["seven"]);
-    let output = reader.read();
-    assert_eq!(reader.sim.fresh_reads, fresh + 1);
+fn an_alternate_screen_is_diffed_without_a_count() {
+    let mut sim = Sim::new(3, 100, &["one", "two", "three", "ready> vim"]);
+    let (_, memory) = read(&mut sim, None);
+    sim.replace(&["~", "file.txt", "~"], true);
+    let (output, memory) = read(&mut sim, Some(&memory));
     assert_eq!(output.skipped, None);
-    assert_eq!(output.lines, lines(&["seven"]));
-}
-
-#[test]
-fn a_scrolled_read_of_no_lines_keeps_the_fingerprint() {
-    // The text scrolled under a read that found the fingerprint on the
-    // last line, so it read no lines: the fingerprint it had still names
-    // that line, and the next read finds it.
-    let mut reader = Reader::new(Sim::new(4, &["a", "b", "c", "d"]));
-    reader.sim.unsettled = 1;
-    reader.sim.scrolling = true;
-    let output = reader.read();
-    assert_eq!(output.skipped, Some(Skipped::Uncounted));
-    let fresh = reader.sim.fresh_reads;
-    reader.sim.push(&["e"]);
-    let output = reader.read();
-    assert_eq!(reader.sim.fresh_reads, fresh);
-    assert_eq!(output.lines, lines(&["e"]));
-}
-
-#[test]
-fn a_half_written_last_line_is_found_grown_when_the_text_moved() {
-    let mut reader = Reader::new(Sim::new(5, &["one", "two", "three", "fo"]));
-    reader.sim.rewrite_last("four");
-    reader.sim.push(&["five", "six"]);
-    let output = reader.read();
+    assert_eq!(output.above, ["~", "file.txt"]);
     assert_eq!(
         output.changed.map(|change| change.text),
-        Some("ur".to_owned())
+        Some("~".to_owned())
     );
-    assert_eq!(output.skipped, None);
-    assert_eq!(output.lines, lines(&["five", "six"]));
+    // A row changed near the top of the alternate screen.
+    sim.replace(&["~", "file.txt [+]", "~"], true);
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert_eq!(output.above, ["[+]"]);
 }
 
 #[test]
-fn screens_compared_after_more_output_find_the_last_line_grown() {
-    let memory = Memory {
-        previous: padded("b"),
-        line: padded("fo"),
-        screen: lines(&["a", "b", "fo"]),
-    };
-    let rows = ["a", "b", "four", "c"].map(padded);
-    let tail = TailText {
-        found: Found::Afresh,
-        line: String::new(),
-        previous: String::new(),
-        found_line: String::new(),
-        count: 4,
-        rows: 4,
-        lines: rows
-            .iter()
-            .map(|row| row.trim_end_matches(['\r', '\n']).to_owned())
-            .collect(),
-        head_rows: 0,
-        head: Vec::new(),
-        last_line: rows[3].clone(),
-        before_last: rows[2].clone(),
-        settled: true,
-        scrolled: false,
-    };
-    let (output, _) = after_fresh(Some(&memory), &tail, 5);
+fn a_disturbed_read_is_set_aside() {
+    let mut sim = Sim::new(3, 100, &["a"]);
+    let (_, memory) = read(&mut sim, None);
+    sim.push(&["b"]);
+    sim.disturbed = true;
     assert_eq!(
-        output.changed.map(|change| change.text),
-        Some("ur".to_owned())
+        read_new(&mut sim, Some(&memory), ReadMode::Change, HEAD).unwrap(),
+        Found::Unsettled
     );
-    assert_eq!(output.skipped, None);
-    assert_eq!(output.lines, lines(&["c"]));
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert_eq!(output.lines, ["b"]);
 }
 
 #[test]
-fn a_shorter_screen_is_found_where_it_ends_in_the_new_one() {
-    // An unsettled read remembered only the few lines it read; the fresh
-    // read after the output stopped holds more, ending with them and then
-    // one new line. Only the line after them is new.
-    let memory = Memory {
-        previous: padded("8"),
-        line: padded("9"),
-        screen: lines(&["7", "8", "9"]),
-    };
-    let rows = ["5", "6", "7", "8", "9", "ready>"].map(padded);
-    let tail = TailText {
-        found: Found::Afresh,
-        line: String::new(),
-        previous: String::new(),
-        found_line: String::new(),
-        count: 100,
-        rows: 6,
-        lines: rows
-            .iter()
-            .map(|row| row.trim_end_matches(['\r', '\n']).to_owned())
-            .collect(),
-        head_rows: 0,
-        head: Vec::new(),
-        last_line: rows[5].clone(),
-        before_last: rows[4].clone(),
-        settled: true,
-        scrolled: false,
-    };
-    let (output, _) = after_fresh(Some(&memory), &tail, 6);
-    assert_eq!(output.changed, None);
-    assert_eq!(output.skipped, None);
-    assert_eq!(output.lines, lines(&["ready>"]));
+fn white_space_padding_of_any_kind_is_not_text() {
+    let mut sim = Sim::new(3, 100, &["ready>"]);
+    let (_, memory) = read(&mut sim, None);
+    sim.push(&["x\u{3000}\u{a0}\t"]);
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert_eq!(output.lines, ["x"]);
 }
 
 #[test]
-fn a_blank_last_line_alone_does_not_tie_two_screens() {
-    // Both screens end with the cursor's blank line; nothing else of the
-    // old one is left, and the text holds more than was read.
-    let memory = Memory {
-        previous: padded("two"),
-        line: padded(""),
-        screen: lines(&["one", "two", ""]),
-    };
-    let rows = ["six", "seven", ""].map(padded);
-    let tail = TailText {
-        found: Found::Afresh,
-        line: String::new(),
-        previous: String::new(),
-        found_line: String::new(),
-        count: 100,
-        rows: 3,
-        lines: rows
-            .iter()
-            .map(|row| row.trim_end_matches(['\r', '\n']).to_owned())
-            .collect(),
-        head_rows: 0,
-        head: Vec::new(),
-        last_line: rows[2].clone(),
-        before_last: rows[1].clone(),
-        settled: true,
-        scrolled: false,
-    };
-    let (output, _) = after_fresh(Some(&memory), &tail, 5);
-    assert_eq!(output.changed, None);
-    assert_eq!(output.skipped, Some(Skipped::Uncounted));
-    assert_eq!(output.lines, lines(&["six", "seven"]));
-}
-
-#[test]
-fn more_output_than_the_read_limit_reads_its_first_and_last_lines_and_counts_the_rest() {
-    let mut reader = Reader::new(Sim::new(100, &["ready>"]));
-    let flood: Vec<String> = (1..=12).map(|n| format!("line {n}")).collect();
-    let flood: Vec<&str> = flood.iter().map(String::as_str).collect();
-    reader.sim.push(&flood);
-    let output = reader.read();
-    assert_eq!(
-        output.head,
-        lines(&["line 1", "line 2", "line 3", "line 4", "line 5"])
-    );
-    assert_eq!(output.skipped, Some(Skipped::Count(2)));
-    assert_eq!(
-        output.lines,
-        lines(&["line 8", "line 9", "line 10", "line 11", "line 12"])
-    );
-}
-
-#[test]
-fn a_line_rewritten_in_place_speaks_from_the_word_that_changed() {
-    let mut reader = Reader::new(Sim::new(100, &["fetching", "progress 10% done"]));
-    reader.sim.rewrite_last("progress 50% done");
-    let output = reader.read();
-    assert_eq!(
-        output.changed,
-        Some(LineChange {
-            text: "50% done".to_owned(),
-            line: "progress 50% done".to_owned(),
-            appended: false,
-            uncertain: 0,
-        })
-    );
-    // Backspace shortens the line: nothing is spoken for it.
-    reader.sim.rewrite_last("progress 50%");
-    assert!(reader.read().is_empty());
-}
-
-#[test]
-fn a_redraw_with_the_same_text_speaks_nothing() {
-    let mut reader = Reader::new(Sim::new(100, &["a", "b", "ready>"]));
-    // A program redraws the whole screen with the text it already had, as
-    // on a resize: the rows are written anew, so the anchor no longer
-    // compares with the text, and the read made while they were being
-    // written does not settle.
-    reader.sim.replace(&["a", "b", "ready>"], false);
-    reader.sim.unsettled = 1;
-    assert_eq!(reader.read(), TerminalOutput::default());
-    // The settled read compares the redrawn screen with the one before it,
-    // read afresh as the baseline was, and finds nothing new.
-    assert_eq!(reader.read(), TerminalOutput::default());
-    assert_eq!(reader.sim.fresh_reads, 3);
-}
-
-#[test]
-fn a_full_scrollback_shifting_beneath_the_anchor_is_followed_exactly() {
-    let mut reader = Reader::new(Sim::new(6, &["one", "two", "three", "four", "five", "six"]));
-    // The scrollback is full: two new rows discard the two oldest, and the
-    // anchor's row now holds other text.
-    reader.sim.push(&["seven", "eight"]);
-    let output = reader.read();
-    assert_eq!(output.changed, None);
-    assert_eq!(output.skipped, None);
-    assert_eq!(output.lines, lines(&["seven", "eight"]));
-}
-
-#[test]
-fn a_shift_past_the_search_says_lines_were_skipped_without_a_count() {
-    let mut reader = Reader::new(Sim::new(8, &["a", "b", "c", "d", "e", "f", "g", "h"]));
-    let flood: Vec<String> = (1..=20).map(|n| format!("flood {n}")).collect();
-    let flood: Vec<&str> = flood.iter().map(String::as_str).collect();
-    reader.sim.push(&flood);
-    let output = reader.read();
-    assert_eq!(output.skipped, Some(Skipped::Uncounted));
-    assert_eq!(
-        output.lines,
-        lines(&["flood 16", "flood 17", "flood 18", "flood 19", "flood 20"])
-    );
-}
-
-#[test]
-fn a_cleared_screen_speaks_what_is_on_it_now() {
-    let mut reader = Reader::new(Sim::new(100, &["old 1", "old 2", "ready> cls"]));
-    reader.sim.replace(&["hello", "ready>"], true);
-    let output = reader.read();
-    assert_eq!(output.skipped, None);
-    assert_eq!(output.lines, lines(&["hello", "ready>"]));
-}
-
-#[test]
-fn the_alternate_screen_is_compared_line_by_line() {
-    let mut reader = Reader::new(Sim::new(100, &["ready> vim notes"]));
-    // A full-screen program switches screens: the anchor no longer compares
-    // with the text, and the new screen is read.
-    reader
-        .sim
-        .replace(&["first line", "~", "~", "notes 1L"], false);
-    let output = reader.read();
-    assert_eq!(output.skipped, None);
-    assert_eq!(output.lines, lines(&["first line", "~", "~", "notes 1L"]));
-    // It redraws one row above the anchor: only that row is spoken.
-    reader.sim.rows[1] = padded("second line");
-    let output = reader.read();
-    assert_eq!(output.lines, lines(&["second line"]));
-    // Leaving it, the main screen returns.
-    reader.sim.replace(&["ready> vim notes", "ready>"], false);
-    let output = reader.read();
-    assert_eq!(output.lines, lines(&["ready> vim notes", "ready>"]));
-}
-
-#[test]
-fn padding_of_any_white_space_is_trimmed() {
-    assert_eq!(trimmed("total 42      \r\n"), "total 42");
-    // An ideographic space pads as well as an ASCII one; inner spaces stay.
-    assert_eq!(trimmed("合計 42\u{3000}\u{3000}\n"), "合計 42");
-    // A long line is cut at the limit, which here falls between two
-    // characters, and back to the start of a character it falls inside.
-    let long = "é".repeat(MAX_TERMINAL_LINE_BYTES);
-    assert_eq!(trimmed(&long), "é".repeat(MAX_TERMINAL_LINE_BYTES / 2));
-    let long = format!("a{long}");
-    assert_eq!(
-        trimmed(&long),
-        format!("a{}", "é".repeat((MAX_TERMINAL_LINE_BYTES - 1) / 2))
-    );
-}
-
-#[test]
-fn line_changes_are_worked_out_character_by_character() {
-    assert_eq!(line_change("ready>  ", "ready>   \r\n"), None);
-    assert_eq!(line_change("ready> ls", "ready> l"), None);
-    let grew = line_change("ready> l", "ready> ls").expect("a change");
-    assert_eq!((grew.text.as_str(), grew.appended), ("s", true));
-    let rewritten = line_change("[###   ] 30%", "[####  ] 40%").expect("a change");
-    assert_eq!(
-        (rewritten.text.as_str(), rewritten.appended),
-        ("[####  ] 40%", false)
-    );
+fn a_scrollback_of_identical_lines_is_counted_by_the_shift() {
+    let mut sim = Sim::new(3, 100, &["ready>", "y", "y"]);
+    let (_, memory) = read(&mut sim, None);
+    sim.push(&["y", "y"]);
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert_eq!(output.lines, ["y", "y"]);
 }
 
 fn output(
@@ -580,11 +341,26 @@ fn output(
     new: &[&str],
 ) -> TerminalOutput {
     TerminalOutput {
+        above: Vec::new(),
         changed,
-        head: lines(head),
+        head: strings(head),
         skipped,
-        lines: lines(new),
+        lines: strings(new),
     }
+}
+
+#[test]
+fn combined_output_speaks_what_was_found_above_the_last_line_first() {
+    let older = TerminalOutput {
+        above: strings(&["message"]),
+        changed: line_change("ready> ec", "ready> echo"),
+        ..TerminalOutput::default()
+    };
+    let newer = output(None, &[], None, &["out"]);
+    assert_eq!(
+        combine(older, newer, 5),
+        output(None, &[], None, &["message", "ho", "out"])
+    );
 }
 
 #[test]
@@ -649,6 +425,8 @@ fn two_changes_of_the_same_line_become_one() {
                 line: "ready> ls".to_owned(),
                 appended: true,
                 uncertain: first.uncertain,
+                inserted: " ls".to_owned(),
+                since_read: None,
             }),
             &[],
             None,
@@ -665,11 +443,150 @@ fn two_changes_of_the_same_line_become_one() {
         )
         .changed,
         Some(LineChange {
-            text: "[####  ] 40% done".to_owned(),
+            text: "#  ] 40% done".to_owned(),
             line: "[####  ] 40% done".to_owned(),
             appended: false,
             uncertain: 0,
+            inserted: "#  ] 4 done".to_owned(),
+            since_read: None,
         }),
-        "a rewrite then growth says the line from where it first differed"
+        "a rewrite then growth says the line from the word where it first differed"
     );
+}
+
+#[test]
+fn output_too_large_for_one_message_is_split_in_order() {
+    let small = output(None, &[], None, &["a", "b"]);
+    assert_eq!(split(small.clone(), 100), [small]);
+    let large = TerminalOutput {
+        above: strings(&["message"]),
+        changed: line_change("ready>", "ready> ls"),
+        head: strings(&["h1", "h2", "h3"]),
+        skipped: Some(Skipped::Count(5)),
+        lines: strings(&["l1", "l2", "l3"]),
+    };
+    let parts = split(large, 30);
+    assert_eq!(
+        parts,
+        [
+            TerminalOutput {
+                above: strings(&["message"]),
+                changed: line_change("ready>", "ready> ls"),
+                ..TerminalOutput::default()
+            },
+            // Ten bytes a line here, so three lines fill a part.
+            output(None, &[], None, &["h1", "h2", "h3"]),
+            output(None, &[], Some(Skipped::Count(5)), &["l1"]),
+            output(None, &[], None, &["l2", "l3"]),
+        ]
+    );
+}
+
+#[test]
+fn typing_above_a_status_line_is_the_changed_line() {
+    use super::screen::{Shift, diff};
+    let old = strings(&["ready> ech", "-- 12:00 --"]);
+    // Typing on the prompt, with the caret there, while the status line
+    // below it ticks.
+    let new = strings(&["ready> echo", "-- 12:01 --"]);
+    let found = diff(&old, &new, Shift::Known(0), Some(0));
+    assert_eq!(
+        found.changed.map(|change| (change.text, change.appended)),
+        Some(("o".to_owned(), true))
+    );
+    assert_eq!(found.above, ["01 --"]);
+    // With the status line unchanged, the prompt's change is still the
+    // changed line, not the last line's.
+    let new = strings(&["ready> echo", "-- 12:00 --"]);
+    let found = diff(&old, &new, Shift::Known(0), Some(0));
+    assert_eq!(
+        found.changed.map(|change| (change.text, change.appended)),
+        Some(("o".to_owned(), true))
+    );
+    assert_eq!(found.above, Vec::<String>::new());
+    assert_eq!(found.below, Vec::<String>::new());
+}
+
+#[test]
+fn a_rewrite_read_half_done_speaks_the_word_that_changed_once_done() {
+    let mut sim = Sim::new(3, 100, &["one", "two", "ready>", "Loading 50%"]);
+    let (_, memory) = read(&mut sim, None);
+    // Read while the line was cleared and only its first letter written.
+    sim.rewrite(0, "L");
+    let (output, memory) = read(&mut sim, Some(&memory));
+    assert!(output.is_empty());
+    sim.rewrite(0, "Loading 51%");
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert_eq!(
+        output.changed.map(|change| change.text),
+        Some("51%".to_owned())
+    );
+}
+
+#[test]
+fn a_line_typed_back_to_what_it_said_says_nothing_but_shows_the_typing() {
+    let mut sim = Sim::new(3, 100, &["one", "two", "ready>", "ready> ls"]);
+    let (_, memory) = read(&mut sim, None);
+    // Backspace, then the same letter typed again.
+    sim.rewrite(0, "ready> l");
+    let (output, memory) = read(&mut sim, Some(&memory));
+    assert!(output.is_empty());
+    sim.rewrite(0, "ready> ls");
+    let (output, _) = read(&mut sim, Some(&memory));
+    let change = output.changed.expect("a change");
+    assert_eq!(change.text, "");
+    assert_eq!(
+        change.since_read.map(|since| (since.text, since.appended)),
+        Some(("s".to_owned(), true))
+    );
+}
+
+#[test]
+fn a_line_cleared_and_typed_again_shows_the_typing_since_it_was_read() {
+    // "echo hi" cleared with Escape, then " o" typed after "echo": from
+    // what the line said, a rewrite of its last word; since it was read,
+    // " o" added.
+    let mut sim = Sim::new(3, 100, &["one", "two", "ready>", "ready> echo hi"]);
+    let (_, memory) = read(&mut sim, None);
+    sim.rewrite(0, "ready> echo");
+    let (output, memory) = read(&mut sim, Some(&memory));
+    assert!(output.is_empty());
+    sim.rewrite(0, "ready> echo o");
+    let (output, _) = read(&mut sim, Some(&memory));
+    let change = output.changed.expect("a change");
+    assert_eq!((change.text.as_str(), change.appended), ("o", false));
+    assert_eq!(
+        change.since_read.map(|since| (since.text, since.appended)),
+        Some((" o".to_owned(), true))
+    );
+}
+
+#[test]
+fn a_character_typed_mid_line_after_a_cleared_screen_is_the_insertion() {
+    let mut sim = Sim::new(3, 100, &["one", "two", "three", "ready> abd"]);
+    let (_, memory) = read(&mut sim, None);
+    // `cls`: the screen holds only the prompt, nothing above it.
+    sim.replace(&["ready> abd"], false);
+    let (_, memory) = read(&mut sim, Some(&memory));
+    sim.rewrite(0, "ready> abcd");
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert_eq!(
+        output
+            .changed
+            .map(|change| (change.text, change.appended, change.inserted)),
+        Some(("abcd".to_owned(), false, "c".to_owned()))
+    );
+    assert!(output.above.is_empty() && output.lines.is_empty());
+}
+
+#[test]
+fn a_screen_cleared_down_to_its_prompt_speaks_the_prompt() {
+    use super::screen::{Shift, diff};
+    // `cls`: the old screen's lines give way to the prompt alone, which
+    // starts as the old last line did; it is new, not that line shortened.
+    let old = strings(&["ready> echo hi", "hi", "ready> cls"]);
+    let new = strings(&["ready>"]);
+    let found = diff(&old, &new, Shift::Unknown, None);
+    assert_eq!(found.changed, None);
+    assert_eq!([found.above, found.below].concat(), strings(&["ready>"]));
 }

@@ -35,7 +35,11 @@ from startup at the system timer's resolution of about 16 milliseconds,
 and converted to Unix time it could fall after the application handled
 the key. Or `Typed`, the text the
 key types, with a trace id minted when it was observed (the source of
-`Input::CharacterTyped`, milestone M4). Both are called on the hook thread,
+`Input::CharacterTyped`, milestone M4). Or `Passed`, any other key-down
+passed to the application that types no text and is neither observed, a
+modifier, nor a lock key, with its trace id and `pressed_at_us` (the
+source of a caret key judged by where the caret landed,
+`CaretMotion::Other`). All are called on the hook thread,
 so they must not block. `OWN_INPUT_TAG` is the `dwExtraInfo` Verbatim
 gives keys it injects for its own purposes (the GUI's Control tap that
 unlocks the foreground): the hook still decides them, but leaves speech
@@ -75,7 +79,15 @@ does):
   Shift, or with AltGr (Control and Alt together), is translated with
   `ToUnicodeEx`, using the keyboard layout of the thread that owns the
   foreground window (each thread has its own layout) and the modifier and
-  Caps Lock state read locally. Control or Alt alone, or the Windows key,
+  Caps Lock state read locally. A console host window is the exception:
+  Windows answers which thread owns it with the first process attached to
+  the console (a shell), not the console host's own thread, whose layout
+  the console translates keys with. The hook thread's `WinEvent` hooks
+  (the foreground event and the console events, out of context) note the
+  thread each console window's events come from, which is always the real
+  one, and the translation uses it, as NVDA does for its issue 10113; a
+  console window none of whose events were seen yet falls back to the
+  answer Windows gives. Control or Alt alone, or the Windows key,
   make a shortcut, which types nothing. The result counts when it is text
   other than control characters, a tab and the carriage return of Enter
   excepted.

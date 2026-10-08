@@ -125,6 +125,7 @@ fn raise_caret_event(hwnd: HWND) -> Result<(), String> {
 
 /// Applies a parsed stdin [`Command`] against `tree` and raises the matching
 /// `WinEvent`. Runs on the window thread.
+#[expect(clippy::too_many_lines, reason = "one arm per stdin command")]
 pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> Result<(), String> {
     let unknown = |id: &str| format!("no node has the id {id}");
     match command {
@@ -214,6 +215,12 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         }
         Command::SetText(..) => {
             return Err("set-text is not supported on the msaa backend".into());
+        }
+        Command::Screen(..) => {
+            return Err("screen is not supported on the msaa backend".into());
+        }
+        Command::TextChanged(..) => {
+            return Err("text-changed is not supported on the msaa backend".into());
         }
         Command::ActiveTextPosition(..) => {
             return Err("active-text-position is not supported on the msaa backend".into());

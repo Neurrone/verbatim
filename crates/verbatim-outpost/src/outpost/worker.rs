@@ -40,7 +40,7 @@ use verbatim_ia2::acquire::Purpose;
 use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{
     Backend, CallCounts, CaretWatch, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role,
-    State, StateSet, TextOp, TextReply, TraceId,
+    State, StateSet, TerminalOutput, TextOp, TextReply, TraceId,
 };
 use verbatim_uia::map::{
     cached_process_id, snapshot_from_cached_element, with_legacy_checked_state,
@@ -68,6 +68,8 @@ use super::window::{
     window_is_hidden_frame, window_owner,
 };
 use crate::arbitration::window_class_name;
+use crate::terminal::reading::{Action, Event};
+use crate::terminal::{Found, Memory, ReadMode};
 use crate::text::Watched;
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
 
@@ -428,6 +430,17 @@ pub(super) fn stop(context: &Context) -> usize {
         let _ = worker.join();
     }
     count
+}
+
+/// The on-demand reading event a terminal text request is, `None` for any
+/// other request.
+fn terminal_event_of(op: &TextOp) -> Option<Event> {
+    match op {
+        TextOp::TerminalHold => Some(Event::Hold),
+        TextOp::TerminalRead { hold } => Some(Event::Read { hold: *hold }),
+        TextOp::TerminalCancel => Some(Event::Cancel),
+        _ => None,
+    }
 }
 
 /// The activity id of Windows Terminal's output notifications, each a piece
@@ -1101,9 +1114,7 @@ impl Worker<'_> {
         if after_focus && self.focused_terminal(node_id) {
             // Where the terminal's text ends now: what it held before the
             // focus arrived is not new output.
-            if let Some(uia) = self.client.uia() {
-                let _ = text_reads::terminal_output(self.context, uia, node_id, true);
-            }
+            self.terminal_event(node_id, Event::Focused, None, (trace, observed_at_ms));
         }
     }
 
@@ -1115,39 +1126,96 @@ impl Worker<'_> {
             && self.context.tracking().role == Some(Role::Terminal)
     }
 
-    /// Reports a focused terminal's new output, when its text really
-    /// changed: a redraw with the same text sends nothing.
-    fn terminal_output(&mut self, node_id: NodeId, trace: TraceId, observed_at_ms: u64) {
+    /// Takes a focused terminal's on-demand reading through `event`
+    /// ([`crate::terminal::reading`]) and does what the transition says:
+    /// reads and reports what is new, answers Core's request (`request`, its
+    /// id and trace, asked now, or the one owed from an earlier read the
+    /// terminal disturbed), or only notes the change. An answer the
+    /// transition no longer owes is given, empty.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one transition and the read it calls for, top to bottom"
+    )]
+    fn terminal_event(
+        &mut self,
+        node_id: NodeId,
+        event: Event,
+        request: Option<(u64, TraceId)>,
+        (trace, observed_at_ms): (TraceId, u64),
+    ) {
+        let (action, owed, superseded) = {
+            let mut terminals = self.context.terminals();
+            let terminal = terminals.entry(node_id.number()).or_default();
+            let (reading, action) = terminal.reading.next(event);
+            terminal.reading = reading;
+            let mut owed = terminal.owed.take();
+            // A request asked now takes the place of one owed.
+            let superseded = request.and_then(|request| owed.replace(request));
+            (action, owed, superseded)
+        };
+        if let Some(earlier) = superseded {
+            self.reply_terminal(earlier, TerminalOutput::default());
+        }
+        let mode = match action {
+            Action::Nothing => {
+                if owed.is_some() {
+                    self.context
+                        .terminals()
+                        .entry(node_id.number())
+                        .or_default()
+                        .owed = owed;
+                }
+                return;
+            }
+            Action::ReplyEmpty => {
+                if let Some(request) = owed {
+                    self.reply_terminal(request, TerminalOutput::default());
+                }
+                return;
+            }
+            Action::Baseline => {
+                if let Some(request) = owed {
+                    self.reply_terminal(request, TerminalOutput::default());
+                }
+                ReadMode::Baseline
+            }
+            Action::Report | Action::Reply => ReadMode::Change,
+            Action::ReplySilently => ReadMode::Cancel,
+        };
+        let replies = matches!(action, Action::Reply | Action::ReplySilently);
+        let owed = owed.filter(|_| replies);
         let Some(uia) = self.client.uia() else {
+            if let Some(request) = owed {
+                self.reply_terminal(request, TerminalOutput::default());
+            }
             return;
         };
         let started = std::time::Instant::now();
-        let read = text_reads::terminal_output(self.context, uia, node_id, false);
-        // Each text change's read, end to end, and how long it waited in
-        // the queue: during a flood the reads follow one another, so these
-        // say how much of the time the outpost spends in the terminal.
+        let read = text_reads::terminal_output(self.context, uia, node_id, mode);
+        // Each read, end to end, and how long its event waited in the
+        // queue: during a flood the reads follow one another, so these say
+        // how much of the time the outpost spends in the terminal.
         tracing::debug!(
+            ?event,
+            ?action,
             queued_us = self
                 .timing
                 .dequeued_at_us
                 .saturating_sub(self.timing.observed_at_us),
             elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-            lines = read.as_ref().map_or(0, |(output, _)| output.lines.len()),
+            found = ?read.as_ref().map(|(found, _)| found),
             "terminal read timing"
         );
-        let Some((output, caret)) = read else {
-            return;
-        };
         let window = self.context.tracking().window;
-        if !output.is_empty() {
-            self.emit(
-                trace,
-                observed_at_ms,
-                Backend::Uia,
-                window,
-                NormalizedEvent::TerminalOutput { node_id, output },
-            );
-        }
+        let (found, caret) = match read {
+            Some(read) => read,
+            // Gone or failed: nothing to say, and Core's request is
+            // answered empty.
+            None => (
+                Found::Output(TerminalOutput::default(), Memory::default()),
+                None,
+            ),
+        };
         // The caret read with the text: the console host raises no caret
         // event for every character typed, so this keeps Core's copy of it
         // following typing.
@@ -1160,6 +1228,73 @@ impl Worker<'_> {
                 NormalizedEvent::CaretMoved { node_id, caret },
             );
         }
+        match found {
+            Found::Output(output, _) => {
+                if let Some(request) = owed {
+                    // An answer too large for one message carries its
+                    // first part, and the rest follows as output.
+                    let mut parts =
+                        crate::terminal::split(output, crate::terminal::MESSAGE_TEXT_BUDGET)
+                            .into_iter();
+                    self.reply_terminal(request, parts.next().unwrap_or_default());
+                    for output in parts {
+                        self.emit(
+                            trace,
+                            observed_at_ms,
+                            Backend::Uia,
+                            window,
+                            NormalizedEvent::TerminalOutput { node_id, output },
+                        );
+                    }
+                } else if action == Action::Report && !output.is_empty() {
+                    self.emit(
+                        trace,
+                        observed_at_ms,
+                        Backend::Uia,
+                        window,
+                        NormalizedEvent::TerminalOutput { node_id, output },
+                    );
+                }
+            }
+            Found::Unsettled if owed.is_some() => {
+                // The writing that disturbed it raises a change, which
+                // reads again and answers.
+                let mut terminals = self.context.terminals();
+                let terminal = terminals.entry(node_id.number()).or_default();
+                terminal.reading = terminal.reading.next(Event::ReplyUnsettled).0;
+                terminal.owed = owed;
+            }
+            // A report the terminal wrote to while it was read: the change
+            // that disturbed it raises another.
+            Found::Unsettled => {}
+        }
+    }
+
+    /// Answers Core's terminal request `request` with `output`.
+    fn reply_terminal(&self, (request_id, trace): (u64, TraceId), output: TerminalOutput) {
+        self.reply(
+            request_id,
+            trace,
+            QueryOutcome::Done(QueryResult::Text(TextReply::Terminal(Box::new(output)))),
+        );
+    }
+
+    /// A focused terminal's text changed: read at once or noted, as its
+    /// on-demand reading stands.
+    /// A change observed before the last read began is covered by that read
+    /// and changes nothing (a console terminal's text change comes by UIA
+    /// and as a console update both).
+    fn terminal_output(&mut self, node_id: NodeId, trace: TraceId, observed_at_ms: u64) {
+        let covered = observed_at_ms != 0
+            && self
+                .context
+                .terminals()
+                .get(&node_id.number())
+                .is_some_and(|terminal| observed_at_ms < terminal.read_started_ms);
+        if covered {
+            return;
+        }
+        self.terminal_event(node_id, Event::TextChanged, None, (trace, observed_at_ms));
     }
 
     /// Asks for the caret of a newly reported focus that may have text, or
@@ -1417,6 +1552,23 @@ impl Worker<'_> {
         trace: TraceId,
         observed_at_ms: u64,
     ) {
+        if kind == WinEventKind::ConsoleUpdate {
+            // The console host's text changed. Its UIA text changes stop
+            // reaching a client now and then in the middle of a large write,
+            // while these go on, so they are the focused console terminal's
+            // text changes too (`docs/crates/verbatim-outpost.md`,
+            // "Terminals").
+            let (focus, window) = {
+                let tracking = self.context.tracking();
+                (tracking.focus, tracking.window)
+            };
+            if let Some(node_id) = focus.filter(|_| window == Some(hwnd))
+                && self.focused_terminal(node_id)
+            {
+                self.terminal_output(node_id, trace, observed_at_ms);
+            }
+            return;
+        }
         if kind == WinEventKind::Destroy {
             if id_object == OBJID_WINDOW.0 && id_child == CHILDID_SELF {
                 self.context.arbitrator().forget(hwnd);
@@ -2747,6 +2899,42 @@ impl Worker<'_> {
         } = query
         {
             self.caret_key(request_id, trace, *node_id, watch);
+            return;
+        }
+        if let Query::Text { node_id, op } = query
+            && let Some(event) = terminal_event_of(op)
+        {
+            // Core's on-demand reading of the focused terminal; a node that
+            // is not a focused terminal has nothing to read.
+            if !self.focused_terminal(*node_id) {
+                let reply = if event == Event::Hold {
+                    TextReply::Done
+                } else {
+                    TextReply::Terminal(Box::default())
+                };
+                self.reply(
+                    request_id,
+                    trace,
+                    QueryOutcome::Done(QueryResult::Text(reply)),
+                );
+                return;
+            }
+            let observed_at_ms = now_ms();
+            if event == Event::Hold {
+                self.terminal_event(*node_id, event, None, (trace, observed_at_ms));
+                self.reply(
+                    request_id,
+                    trace,
+                    QueryOutcome::Done(QueryResult::Text(TextReply::Done)),
+                );
+            } else {
+                self.terminal_event(
+                    *node_id,
+                    event,
+                    Some((request_id, trace)),
+                    (trace, observed_at_ms),
+                );
+            }
             return;
         }
         let context = self.context;

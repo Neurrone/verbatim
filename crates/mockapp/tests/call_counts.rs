@@ -1547,6 +1547,7 @@ fn answered(watched: Watched) -> verbatim_model::CaretReply {
 /// Right Arrow's watch, with the caret Core knew before the key.
 fn right_arrow(before: &verbatim_model::CaretReport) -> CaretWatch {
     CaretWatch {
+        landing: false,
         pressed_at_ms: 0,
         since: Some(TextPosition {
             anchor: before.line.start,
@@ -2259,6 +2260,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         &mut source,
         &mut anchors,
         &CaretWatch {
+            landing: false,
             pressed_at_ms: 0,
             since: Some(at),
             unit: TextUnit::Character,

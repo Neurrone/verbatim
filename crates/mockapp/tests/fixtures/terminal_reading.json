@@ -1,0 +1,15 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Terminal Reading Fixture",
+  "children": [
+    {
+      "id": "term",
+      "role": "editable_text",
+      "name": "Terminal",
+      "class_name": "TermControl",
+      "states": ["focusable"],
+      "text": "one\ntwo\nready>"
+    }
+  ]
+}

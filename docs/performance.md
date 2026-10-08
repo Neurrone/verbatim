@@ -893,43 +893,40 @@ The same caret key in a standard edit control, read through its messages.
 
 ### A terminal output line
 
-A focused terminal's text changed, and the outpost finds what is new
-(`docs/crates/verbatim-outpost.md`, "Terminals"): the anchor's line and
-the line before it checked against what they held, the lines to the end
-counted, and only the lines spoken read. Measured against mockapp's text
-provider (`tests/fixtures/terminal.json`, `tests/terminal.rs`), whose
-`set-text` command rewrites the text as a terminal's buffer changes.
+A focused terminal's text changed, and the outpost reads its screen and
+diffs it with the screen as last read (`docs/crates/verbatim-outpost.md`,
+"Terminals"): the screen's text in one call, its top two rows and the
+text's first row, the anchor found at its range or by its text, the rows
+from it to the screen counted by moving, and the first unread rows when
+any went by. Measured against mockapp's text provider
+(`tests/fixtures/terminal.json` with a four-row screen,
+`tests/terminal.rs`), whose `set-text` command rewrites the text as a
+terminal's buffer changes and whose `screen` command puts only its last
+lines on screen.
 
 - Minimum: 1 UIA call, one remote operations program
-  (`verbatim_uia_rops::terminal_tail`), whatever the size of the
-  scrollback and however many lines it reads.
-- Today: 1 UIA call for a read that finds new output, a prompt that grew
-  or a command's output line. A read that finds nothing new after the
-  anchor reads the screen afresh to compare it line by line, 1 more, a
-  second program that gets the document range itself (2 before, the
-  document range read first); so is a terminal's first read when it gains
-  the focus, the baseline (1 call, 2 before). Classically, with
-  `uia.remote_operations` off or a provider that cannot run programs, one
-  call per provider method: 31 for the baseline of a six-line text, 27 for
-  a grown prompt, 39 for an output line and a new prompt, 46 for more
-  lines than a read takes (39 before the first of them were read too, on
-  2026-10-07), 58 for a read that finds nothing new and reads
-  afresh, and 61 for a cleared screen (34, 30, 43, 43, 64, and 67 before
-  the text range audit of 2026-10-07, which reads a line's text from a
-  copy expanded to its line without collapsing the copy first, since
-  expanding normalizes a range from its start alone), whose classic read also finds the
-  last line by its text (`FindText`), as the remote program now does too
-  (it walked up line by line before 2026-10-07). Every one of these is
-  pinned, both ways. The provider's
-  own work is the same either way, and pinned too: 13 clones, 6 line
-  expansions, 6 reads, 5 moves, and 9 other range calls for the output
-  line (13 before the audit). The lines spoken are read in one call, however many there are, so
-  the cost does not grow with them. Of these calls, the line above where
-  the read started, read again at the end, and the last line and the one
-  before it, compared with the end of that one read, tell whether the
-  text moved while it was read (a full scrollback scrolling beneath the
-  ranges during a flood), when the read is set aside for the next.
+  (`verbatim_uia_rops::terminal_screen`), whatever the size of the
+  history and however many lines changed.
+- Today: 1 UIA call for every read, the baseline when the terminal gains
+  the focus included. Classically, with `uia.remote_operations` off or a
+  provider that cannot run programs, one call per provider method: 23 for
+  the baseline, 41 for a read that finds the anchor at its range (a grown
+  prompt, an output line, a redraw), 48 for one that also reads the first
+  rows that went by unread, 41 for one whose anchor has left the history
+  (searched by its text, then the text's rows counted), and 36 for a
+  cleared screen. Every one of these is pinned, both ways, and so is the
+  provider's own work, which is the same either way but for the remote
+  program's import of the element and its text pattern. The screen is
+  read in one call however many lines it holds, so the cost does not grow
+  with them. Of these calls, the top row read again at the end and the
+  walk from the screen's top to the text's end made twice tell whether
+  the terminal wrote to the screen while it was read, when the read is
+  not trusted.
 - Target: 1.
+
+The read it replaced (an anchor at the last line read, its two-line
+fingerprint, and a read afresh when it did not match) cost the same one
+call remotely and 27 to 61 classically.
 
 ### A terminal's caret
 
@@ -938,17 +935,16 @@ host raises its caret events on a schedule of its own, so a character
 echoed between two of them leaves Core's copy of the caret behind, and a
 Backspace then says the character the caret was last heard after. So each
 read of a focused terminal's changed text reads the caret and its line
-too (`verbatim_uia_rops::TailQuery::caret`), and the outpost reports it
-after the output (`docs/crates/verbatim-outpost.md`, "Terminals").
+too (`verbatim_uia_rops::ScreenQuery::caret`), and the outpost reports
+it with the output (`docs/crates/verbatim-outpost.md`, "Terminals"),
+stamped as read when the read began.
 
 - Minimum: no call more, since it goes in the program the text's read
   already runs.
-- Today: no call more remotely, for 27 more instructions and, from
-  mockapp, the text pattern got from the element (5 provider calls), the
-  selection, and the caret's line read (1 selection, 3 clones, 1
-  comparison, 1 expansion, 2 reads, and 2 other range calls). Classically,
-  8 calls more: 35 for a grown prompt where the read without the caret
-  is 27. Both are pinned (`tests/terminal.rs`,
+- Today: no call more remotely; from mockapp, the text pattern got from
+  the element again, the selection, and the caret's line read.
+  Classically, 8 calls more: 49 for a grown prompt where the read without
+  the caret is 41. Both are pinned (`tests/terminal.rs`,
   `a_read_with_the_caret_costs_exactly`).
 - Target: the minimum, met.
 
@@ -1016,53 +1012,52 @@ audio ran dry thirteen times in the fourth flood alone: the machine was
 starved. Twelve busy threads at normal priority make the same flood take
 75 to 99 seconds in Windows Terminal with no screen reader at all.
 
+With the screen read and on-demand reading (2026-10-08, the flood
+scenarios' 2,000 lines, debug build, one run each after ten in a row
+passed in Windows Terminal):
+
+- The console host: 1,054 reads of the screen, each a whole remote
+  program, 0.7 to 4.5 milliseconds (median 1.8, 90th percentile 2.6); the
+  flood took 1.87 seconds with output reported and 1.97 with it off, a
+  ratio of 0.95.
+- Windows Terminal: 84 reads, 0.8 to 2.3 milliseconds (median 1.3); 0.32
+  seconds reported against 0.38 off.
+- The gap before "skipped 1941 lines": Core asks for new output when it
+  hands a group's last line to speech, so the answer is there before that
+  line ends. In both terminals the skipped-lines announcement started
+  within 1 millisecond of the 30th line finishing (the speech request
+  came 0 to 1 milliseconds before).
+
 ### A terminal's upward search
 
-When a full scrollback has moved the text beneath the anchor, the tail
-read searches the text above it for the fingerprint by its text
-(`FindText`), both ways and with no bound in lines (decided with Dickson
-on 2026-10-07 for a predictable cost; `docs/crates/verbatim-uia-rops.md`,
-"Layer 3: a terminal's tail"). Until then it searched up to 256 lines
-(`SEARCH_LINES`), line by line remotely and by `FindText` over those
-lines classically. Measured on 2026-10-07 against Windows Terminal and
-the console host, each with a full scrollback of 9,001 lines, the
-fingerprint 0, 10, 100, and 256 lines up:
+A read finds the screen's top row as last read without any search while
+the terminal has discarded nothing since (its text's first row reads as
+it did, or the old screen had no history above it): a range kept at that
+row stays on it, and the rows from it to the screen are counted by
+moving, so the read costs the same wherever the row now is. Only once a
+full history discards its oldest rows does a range keep its row while the
+text moves beneath it, and the row is then sought by its text
+(`FindText`), at most 20 matches, nearest the screen first (Dickson,
+2026-10-07), with the row padded in the console host, whose `FindText`
+matches a row's padding, so a longer row starting with the same text is
+not a match (a flood of numbered lines made "flood line 14" match "flood
+line 1499" down to "flood line 140" before reaching itself, exhausting
+the 20 matches, on 2026-10-08). Windows Terminal's `FindText` throws on
+padding, so there the row is sought without it. Neither terminal can
+search across a line break: the console host's `FindText` returns a range
+for such a needle whose text then cannot be read, and Windows Terminal's
+matches none (measured 2026-10-08).
 
-- The remote program, searching line by line: Windows Terminal 0.5, 0.7,
-  1.4, and 2.5 milliseconds; the console host 0.4, 0.5, 1.1, and 1.9. One
-  call each.
-- The classic search line by line, before 2026-10-07: 43, 104, 644, and
-  1,580 calls; Windows Terminal 4, 11, 69, and 169 milliseconds, the
-  console host 2, 5, 32, and 79.
-- The classic search by `FindText`, now: 43 calls with no search and 65
-  with one at any distance; Windows Terminal 4, 9, 10, and 10
-  milliseconds, the console host 3, 6, 6, and 7.
-- `FindText` itself, one call over the 256 lines or over the whole
-  scrollback alike: 0.1 to 0.2 milliseconds classically, whether it finds
-  the text or not. Inside a program, 0.2 milliseconds on an imported range
-  but about 3 on a range the program made, which is why the program does
-  not use it.
-
-So the bound cost the remote program about 0.01 milliseconds per line
-searched, 2.5 at 256 lines, and cost the classic search nothing beyond
-the first match: a larger bound, the whole scrollback included, costs the
-classic search no more. The remote program now searches as the classic
-search does, at about 3 milliseconds for its `FindText` on a range it
-made, about 4 in all, wherever the fingerprint is, where its walk took
-0.5 at the anchor and 2.5 at 256 lines and could not look further.
-
-Against mockapp (`a_fingerprint_far_up_is_found_and_costs_exactly` in
-`crates/mockapp/tests/terminal.rs`), a fingerprint 300 lines up, which
-the bound of 256 missed, is found in 1 call remotely and 65 classically
-(58 before the first of the lines after it were read too), with one
-`FindText` either way, and the provider calls of both are pinned.
-
-In a console
-host whose scrollback is not yet full the text does not move beneath the
-anchor, so no search runs there; but its lines are slow to walk (about
-1.6 milliseconds a line in a 9,001-line buffer holding 600 lines), and
-there the line-by-line program took 413 milliseconds at 256 lines where
-the classic read with `FindText` took 18.
+Measured on 2026-10-07 for the tail read this replaced, against Windows
+Terminal and the console host each with a full scrollback of 9,001 lines:
+one `FindText` costs 0.1 to 0.2 milliseconds classically wherever the
+text is, and about 3 inside a program on a range the program made, so a
+search costs about 3 milliseconds a match remotely; a walk up line by
+line, the earlier search, cost 0.01 milliseconds a line remotely and
+could not look further than its bound. In a console host whose
+scrollback is not yet full, lines are slow to walk one at a time (about
+1.6 milliseconds a line in a 9,001-line buffer holding 600 lines), which
+the screen read never does: it moves by many rows in one call.
 
 ## Newer UIA features
 
@@ -1396,11 +1391,10 @@ share of the limit in brackets:
   position with its lines in three languages, each line's then read; 647
   for a first batch from the caret in one language. The count does not
   grow with the lines' length.
-- A terminal's tail, with the caret and its line read in the same
-  program as the outpost reads a focused terminal: 1,164 (12 percent)
-  when its fingerprint is nowhere and the search checks its 64 matches
-  (`SEARCH_MATCHES`), about 16 each; 137 for an anchor in place under new
-  output, 9 of them deciding whether to read the first of the new lines
-  too, when more follow than the last lines read (the start of a flood),
-  and 27 the caret's (1,137 and 110 before 2026-10-08, without it). The count does not grow with the
-  scrollback or the lines read.
+- A terminal's screen, with the caret and its line read in the same
+  program as the outpost reads a focused terminal: 432 (4 percent) when
+  its anchor is nowhere and the search checks its 20 matches
+  (`SEARCH_MATCHES`), about 15 each, before the text's rows are counted;
+  154 for an anchor found by its text one row up under new output (the
+  tail read it replaced took 1,164 and 137, its search checking 64
+  matches). The count does not grow with the history or the lines read.

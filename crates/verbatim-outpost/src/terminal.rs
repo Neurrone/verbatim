@@ -1,477 +1,312 @@
-//! A terminal's new output (milestone M4 item 9; `phase6-design.md`, "How
-//! the outpost finds new lines"), public so mockapp's tests drive it as the
-//! worker does.
+//! A terminal's new output (milestone M4 item 9; `phase6-design.md`,
+//! "Terminal reading by diffing the screen"), public so mockapp's tests
+//! drive it as the worker does.
 //!
-//! The outpost keeps, for the focused terminal, an anchor at the start of
-//! the last line it read and a [`Memory`]: that line's text and the text of
-//! the line before it (the fingerprint), and the last lines it read, the
-//! screen as it last saw it. On each change of the terminal's text, one
-//! remote program ([`verbatim_uia_rops::terminal_tail`]) checks the
-//! fingerprint at the anchor, searches upward for it when the text scrolled
-//! beneath the anchor (a full scrollback discarding its oldest lines),
-//! counts the lines from there to the end, and reads only the last of them.
-//! [`after_anchor`] turns that into [`TerminalOutput`]:
+//! Every read fetches the screen, in one remote program
+//! ([`verbatim_uia_rops::terminal_screen`]), and diffs it by line with the
+//! screen as last seen ([`screen::diff`]): what was inserted is spoken,
+//! never what was only deleted, and a changed line speaks from the start of
+//! the word that changed. The screen's top two rows as last read are the
+//! anchor, found again by their text; how far up they now lie is how far
+//! the text scrolled, which lines the two screens up, and the rows that
+//! scrolled by beyond the old screen's lines went by unread: the first of
+//! them are read too, so a flood's start is heard, and the rest are
+//! counted as skipped. When the anchor has left a history it is not found;
+//! with history above both screens that means the history overflowed, and
+//! the skipped lines are "more than" the history's rows left unspoken.
+//! Otherwise (the screen cleared, a full-screen program's alternate screen
+//! opened or closed) the screens are lined up by their common lines.
 //!
-//! - The anchor's own line is compared character by character: a line that
-//!   grew speaks what was added, one rewritten in place speaks from the
-//!   start of the word where it first differs, and one that only got
-//!   shorter (Backspace) speaks nothing.
-//! - The lines after it are spoken, all of them up to the read limit, or the
-//!   last ones with the rest counted as skipped.
-//! - A redraw with the same text finds nothing new and sends nothing.
-//!
-//! When the fingerprint is not found, or the anchor can no longer be
-//! compared with the text (a full-screen program switched screens), the
-//! terminal is read afresh from the end of its document and
-//! [`after_fresh`] compares the lines read with the screen last read, line
-//! by line, as NVDA does for consoles that scroll: the lines after where
-//! the old screen's end reappears at the new one's start, or else the lines
-//! that differ in place, preceded by "skipped lines" without a count when
-//! nothing matched and the text holds more than was read. Trailing padding
-//! is removed from every line (`verbatim_text::trim_padding`, by Unicode's
-//! `White_Space` property, whatever the language).
-//!
-//! A read the text changed under while it was read is set aside: when only
-//! the last lines were being written to, it finds nothing and the next read
-//! finds everything since; when the text scrolled beneath it, lines went by
-//! unread, and it says so without a count and starts again from its own
-//! last line.
+//! When to read is decided by on-demand reading ([`reading`]).
+
+pub mod reading;
+pub mod screen;
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange,
 };
 use windows::core::AgileReference;
 
-use verbatim_model::{LineChange, MAX_TERMINAL_LINE_BYTES, Skipped, TerminalOutput};
+use verbatim_model::{LineChange, Skipped, TerminalOutput};
 use verbatim_uia::Uia;
 use verbatim_uia_rops::{
-    CaretAnswer, CaretLineQuery, Error as RopsError, Fingerprint, Found, Path, Tail, TailQuery,
-    TailStart, terminal_tail,
+    CaretAnswer, CaretLineQuery, Error as RopsError, Path, Screen, ScreenAnchor, ScreenQuery,
+    terminal_screen,
 };
 
 use crate::text::TextError;
+use reading::Reading;
+use screen::{Shift, diff, screen_lines};
 
-/// What the outpost remembers of a terminal's text between reads.
+/// What the outpost remembers of a terminal's screen between reads.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Memory {
-    /// The text of the line before the last line read, as the provider gave
-    /// it; empty at the top.
-    pub previous: String,
-    /// The text of the last line read, as the provider gave it.
-    pub line: String,
-    /// The last lines read, without padding, oldest first: the screen as it
-    /// was last seen, at most the read limit's lines.
+    /// The screen's lines as last read ([`screen_lines`]).
     pub screen: Vec<String>,
+    /// The same lines as they were last said: a line that has only got
+    /// shorter since keeps what it said before it was cut, because it is
+    /// being rewritten (a progress line cleared and written again), and
+    /// the read that finds it written again says what changed from what it
+    /// said ("51%"), not from a fragment ("oading 51%").
+    pub said: Vec<String>,
+    /// Its top row, as the provider gave it: the anchor.
+    pub top_row: String,
+    /// The row after it.
+    pub next_row: String,
+    /// Whether that screen had no history above it.
+    pub alternate: bool,
+    /// The text's first row as it was read, as the provider gave it: while
+    /// it reads the same, the terminal has discarded nothing.
+    pub first_row: String,
 }
 
-/// A read of a terminal's tail, as text: [`Tail`] without its range, so the
-/// diff can be tested on simulated text.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TailText {
-    /// Where the fingerprint was found.
-    pub found: Found,
-    /// The line at the anchor now.
-    pub line: String,
-    /// The line before the anchor now.
-    pub previous: String,
-    /// The line where the fingerprint was found, as it is now.
-    pub found_line: String,
-    /// The lines after the anchor's line, or with no anchor, all of them.
-    pub count: u32,
-    /// How many of the last lines were read.
-    pub rows: u32,
-    /// The text of those lines, oldest first; a line the terminal wrapped
-    /// is one line here.
-    pub lines: Vec<String>,
-    /// How many of the first lines after the anchor's were read too, when
-    /// more followed it than the last lines read.
+/// A read of a terminal's screen, as text: [`Screen`] without its caret,
+/// so the diff can be tested on simulated text.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScreenText {
+    /// The screen's text.
+    pub text: String,
+    /// Its top row.
+    pub top_row: String,
+    /// The row after it.
+    pub next_row: String,
+    /// Whether it has no history above it.
+    pub alternate: bool,
+    /// How far up the anchor's top row now lies, when it was found.
+    pub shift: Option<u32>,
+    /// The first rows that went by unread.
+    pub head: String,
+    /// How many rows `head` holds.
     pub head_rows: u32,
-    /// The text of those first lines, oldest first.
-    pub head: Vec<String>,
-    /// The last line, read as a line: the next fingerprint's line.
-    pub last_line: String,
-    /// The line before it: the next fingerprint's line before.
-    pub before_last: String,
-    /// Whether the text held still while it was read; when it did not, the
-    /// read is set aside, and the change that disturbed it causes another.
+    /// The row the old screen's last line was on, as it is now.
+    pub old_last_row: String,
+    /// The rows of the whole text, when the anchor was sought and not
+    /// found.
+    pub document_rows: Option<u32>,
+    /// Whether the text held still while it was read.
     pub settled: bool,
-    /// Whether, unsettled, it was because the text scrolled beneath the
-    /// read's ranges, so lines went by unread.
-    pub scrolled: bool,
+    /// The text's first row.
+    pub first_row: String,
+    /// The caret's line, when the caret was read with the screen, as the
+    /// provider gave it.
+    pub caret_line: Option<String>,
 }
 
-impl From<&Tail> for TailText {
-    fn from(tail: &Tail) -> Self {
+impl From<&Screen> for ScreenText {
+    fn from(screen: &Screen) -> Self {
         Self {
-            found: tail.found,
-            line: tail.line.clone(),
-            previous: tail.previous.clone(),
-            found_line: tail.found_line.clone(),
-            count: tail.count,
-            rows: tail.rows,
-            lines: tail.lines.clone(),
-            head_rows: tail.head_rows,
-            head: tail.head.clone(),
-            last_line: tail.last_line.clone(),
-            before_last: tail.before_last.clone(),
-            settled: tail.settled,
-            scrolled: tail.scrolled,
+            text: screen.text.clone(),
+            top_row: screen.top_row.clone(),
+            next_row: screen.next_row.clone(),
+            alternate: screen.alternate,
+            shift: screen.shift,
+            head: screen.head.clone(),
+            head_rows: screen.head_rows,
+            old_last_row: screen.old_last_row.clone(),
+            document_rows: screen.document_rows,
+            settled: screen.settled,
+            first_row: screen.first_row.clone(),
+            caret_line: screen
+                .caret
+                .as_ref()
+                .map(|caret| String::from_utf16_lossy(&caret.line.text)),
         }
     }
 }
 
-/// A line as it is spoken: without its padding and line break, and at most
-/// [`MAX_TERMINAL_LINE_BYTES`].
-#[must_use]
-pub fn trimmed(raw: &str) -> String {
-    let text = verbatim_text::trim_padding(raw);
-    let mut end = text.len().min(MAX_TERMINAL_LINE_BYTES);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text[..end].to_owned()
-}
-
-/// How the last line read changed in place, `None` when it did not or only
-/// got shorter: what it gained at its end, or, rewritten, the line from the
-/// start of the word where it first differs. `old` and `new` are the lines
-/// as the provider gave them; they are compared without their padding,
-/// and the white space a grown line gained where `old` already had the same
-/// white space (its padding, or its own trailing spaces, which cannot be
-/// told apart) is counted as uncertain.
-#[must_use]
-pub fn line_change(old_raw: &str, new_raw: &str) -> Option<LineChange> {
-    let old = trimmed(old_raw);
-    let new = trimmed(new_raw);
-    if old == new || old.starts_with(&new) {
-        return None;
-    }
-    if let Some(added) = new.strip_prefix(&old) {
-        let uncertain = added
-            .chars()
-            .zip(old_raw[old.len()..].chars())
-            .take_while(|&(gained, had)| gained == had && gained.is_whitespace())
-            .map(|(gained, _)| gained.len_utf8())
-            .sum();
-        return Some(LineChange {
-            text: added.to_owned(),
-            line: new.clone(),
-            appended: true,
-            uncertain,
-        });
-    }
-    let differs = old
-        .char_indices()
-        .zip(new.chars())
-        .find(|((_, a), b)| a != b)
-        .map_or(old.len().min(new.len()), |((index, _), _)| index);
-    let word = new[..differs]
-        .rfind(char::is_whitespace)
-        .map_or(0, |space| {
-            space + new[space..].chars().next().map_or(1, char::len_utf8)
-        });
-    Some(LineChange {
-        text: new[word..].to_owned(),
-        line: new.clone(),
-        appended: false,
-        uncertain: 0,
-    })
-}
-
-/// What [`after_anchor`] found.
-#[derive(Debug, PartialEq, Eq)]
-pub enum Next {
-    /// The new output, and what to remember.
-    Output(TerminalOutput, Memory),
-    /// The anchor no longer marks where the text was read to: read the
-    /// terminal afresh and compare screens ([`after_fresh`]).
-    Afresh,
-}
-
-/// The output an anchored read found, or that the terminal must be read
-/// afresh. The fingerprint counts as found at the anchor when the line
-/// before it is unchanged and the anchor's own line is unchanged, grew,
-/// got shorter, or is rewritten under a line that is not blank (a blank
-/// line before it matches too easily to trust a rewrite).
-#[must_use]
-pub fn after_anchor(memory: &Memory, tail: &TailText, wanted: usize) -> Next {
-    let (changed, line_now) = match tail.found {
-        // Found above the anchor as it was read or grown since (the line
-        // output was still being written to), under a line that is not
-        // blank: what it gained is new.
-        Found::Moved(_) => (
-            line_change(&memory.line, &tail.found_line),
-            tail.found_line.as_str(),
-        ),
-        Found::AtAnchor => {
-            let changed = line_change(&memory.line, &tail.line);
-            let trusted = changed.as_ref().is_none_or(|change| {
-                change.appended || !trimmed(&memory.previous).trim().is_empty()
-            });
-            if !trusted {
-                return Next::Afresh;
-            }
-            (changed, tail.line.as_str())
-        }
-        Found::NotFound | Found::Afresh => return Next::Afresh,
-    };
-    let lines: Vec<String> = tail.lines.iter().map(|line| trimmed(line)).collect();
-    let head: Vec<String> = tail.head.iter().map(|line| trimmed(line)).collect();
-    let unread = tail
-        .count
-        .saturating_sub(tail.rows)
-        .saturating_sub(tail.head_rows);
-    let skipped = (unread > 0).then_some(Skipped::Count(unread));
-    let previous_now = if matches!(tail.found, Found::Moved(_)) {
-        memory.previous.as_str()
-    } else {
-        tail.previous.as_str()
-    };
-    let (line, previous) = if tail.rows == 0 {
-        (line_now.to_owned(), previous_now.to_owned())
-    } else {
-        (tail.last_line.clone(), tail.before_last.clone())
-    };
-    let mut screen = if skipped.is_some() {
-        Vec::new()
-    } else {
-        // The anchor's line as it is now, however it changed.
-        let mut screen = memory.screen.clone();
-        if let Some(last) = screen.last_mut() {
-            *last = trimmed(line_now);
-        }
-        screen.extend(head.iter().cloned());
-        screen
-    };
-    screen.extend(lines.iter().cloned());
-    keep_last(&mut screen, wanted);
-    let output = TerminalOutput {
-        changed,
-        head,
-        skipped,
-        lines,
-    };
-    Next::Output(
-        output,
-        Memory {
-            previous,
-            line,
-            screen,
-        },
-    )
-}
-
-/// Keeps the last `count` lines.
-fn keep_last(lines: &mut Vec<String>, count: usize) {
-    let excess = lines.len().saturating_sub(count);
-    lines.drain(..excess);
-}
-
-/// The output a fresh read found, compared with what was remembered (none
-/// for a first read, which only sets the baseline), and what to remember.
-#[must_use]
-pub fn after_fresh(
-    memory: Option<&Memory>,
-    tail: &TailText,
-    wanted: usize,
-) -> (TerminalOutput, Memory) {
-    let screen: Vec<String> = tail.lines.iter().map(|line| trimmed(line)).collect();
-    let (line, previous) = if tail.rows == 0 {
-        (String::new(), String::new())
-    } else {
-        (tail.last_line.clone(), tail.before_last.clone())
-    };
-    let mut remembered = Memory {
-        previous,
-        line,
-        screen,
-    };
-    keep_last(&mut remembered.screen, wanted);
-    let Some(memory) = memory else {
-        return (TerminalOutput::default(), remembered);
-    };
-    let old = &memory.screen;
-    let new = &remembered.screen;
-    let blank = |lines: &[String]| lines.iter().all(|line| line.trim().is_empty());
-    // The old screen's end reappears in the new one, ending at `at`, its
-    // last line as it was or grown since (the line output was still being
-    // written to when it was read): as much of the old screen as fits
-    // above `at`. When both screens hold as many lines, it reappears at the
-    // new one's start once the text scrolled; an old screen of fewer lines
-    // (an unsettled read remembers only the lines it read) reappears
-    // further down. The lines that reappear as they were must not all be
-    // blank, or a blank last line, which any line starts with, would match
-    // anywhere.
-    let reappears = |at: usize| {
-        let m = old.len().min(at);
-        let (end, start) = (&old[old.len() - m..], &new[at - m..at]);
-        let (same, grown) = if end[m - 1] == start[m - 1] {
-            (m, true)
-        } else {
-            (m - 1, start[m - 1].starts_with(end[m - 1].as_str()))
-        };
-        grown && end[..same] == start[..same] && !blank(&start[..same])
-    };
-    let output = if old == new {
-        TerminalOutput::default()
-    } else if let Some(at) = (!old.is_empty())
-        .then(|| (1..=new.len()).rev().find(|&at| reappears(at)))
-        .flatten()
-    {
-        // What the last line gained, and what follows, is new. The latest
-        // place it reappears is taken, so nothing read before is new again.
-        TerminalOutput {
-            changed: line_change(&old[old.len() - 1], &new[at - 1]),
-            lines: new[at..].to_vec(),
-            ..TerminalOutput::default()
-        }
-    } else {
-        let lines: Vec<String> = new
-            .iter()
-            .enumerate()
-            .filter(|&(index, line)| old.get(index) != Some(line))
-            .map(|(_, line)| line.clone())
-            .collect();
-        // A blank line in its place (the cursor's line, at the end of both)
-        // says nothing about whether the text moved.
-        let none_kept = !new
-            .iter()
-            .enumerate()
-            .any(|(index, line)| !line.trim().is_empty() && old.get(index) == Some(line));
-        let more = tail.count > tail.rows;
-        TerminalOutput {
-            skipped: (none_kept && more).then_some(Skipped::Uncounted),
-            lines,
-            ..TerminalOutput::default()
-        }
-    };
-    (output, remembered)
-}
-
-/// What an unsettled read finds. When only the last lines were being written
-/// to, nothing, and what was remembered stays, so the read that the
-/// change's own event causes finds everything since. When the text scrolled
-/// beneath the read (a flood in a full scrollback, which may keep every
-/// read from settling until it ends), lines went by unread: "skipped lines"
-/// without a count, and the read's own last lines are remembered, so the
-/// next read starts from there rather than from an anchor the text has long
-/// left, which identical later output could match by accident.
-fn set_aside(tail: &TailText, memory: &Memory, wanted: usize) -> (TerminalOutput, Memory) {
-    if !tail.scrolled {
-        return (TerminalOutput::default(), memory.clone());
-    }
-    let skipped = TerminalOutput {
-        skipped: Some(Skipped::Uncounted),
-        ..TerminalOutput::default()
-    };
-    // A read that read no lines (none followed the line where the
-    // fingerprint was found, which is the last line, the next anchor) has
-    // no last line of its own to remember: the fingerprint stays, and it
-    // describes that line still.
-    if tail.rows == 0 {
-        return (skipped, memory.clone());
-    }
-    let mut screen: Vec<String> = tail.lines.iter().map(|line| trimmed(line)).collect();
-    keep_last(&mut screen, wanted);
-    (
-        skipped,
-        Memory {
-            previous: tail.before_last.clone(),
-            line: tail.last_line.clone(),
-            screen,
-        },
-    )
-}
-
-/// Where a terminal's tail is read from: the provider, or simulated text in
-/// the unit tests.
-pub trait TailSource {
+/// Where a terminal's screen is read from: the provider, or simulated text
+/// in the unit tests.
+pub trait ScreenSource {
     /// What a read fails with.
     type Error;
 
-    /// Reads from the anchor, checking the fingerprint `memory` holds;
-    /// `Ok(None)` when there is no anchor or it can no longer be compared
-    /// with the text (a full-screen program switched screens).
+    /// Reads the screen, finding `anchor`'s rows when given, and reading up
+    /// to `head_wanted` of the rows past the old screen's `seen_rows` that
+    /// went by unread.
     ///
     /// # Errors
     ///
     /// The source's error, when the terminal is gone or cannot be read.
-    fn anchored(&mut self, memory: &Memory, wanted: u32) -> Result<Option<TailText>, Self::Error>;
-
-    /// Reads afresh from the end of the document.
-    ///
-    /// # Errors
-    ///
-    /// The source's error, when the terminal is gone or cannot be read.
-    fn fresh(&mut self, wanted: u32) -> Result<TailText, Self::Error>;
+    fn read(
+        &mut self,
+        anchor: Option<&Memory>,
+        seen_rows: u32,
+        head_wanted: u32,
+    ) -> Result<ScreenText, Self::Error>;
 }
 
-/// What is new in a terminal's text since `memory` was read, and what to
-/// remember: from the anchor first, and afresh, comparing screens, when the
-/// anchor no longer marks where the text was read to or found nothing new
-/// after it (a full-screen program redrawing a line above the anchor). With
-/// no memory, or with `baseline` (a focus arriving, whose earlier output is
-/// not new to the user), the text is read afresh and nothing is new. A read
-/// the text changed under ([`TailText::settled`] false: output scrolling a
-/// full scrollback while its lines were read one by one) finds nothing and
-/// keeps the memory and the anchor as they were, so the read that the
-/// change's own event causes finds everything since; one the text scrolled
-/// under says lines were skipped and starts again from it (`set_aside`).
+/// What a read found.
+#[derive(Debug, PartialEq, Eq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one per read, handed straight to the caller, never stored"
+)]
+pub enum Found {
+    /// What is new (empty when nothing is), and what to remember.
+    Output(TerminalOutput, Memory),
+    /// The terminal wrote to the screen while it was read, so nothing is
+    /// trusted and nothing is remembered: the change that disturbed it
+    /// causes another read.
+    Unsettled,
+}
+
+/// The lines of a block of rows read in one call, each without its line
+/// break and padding.
+fn block_lines(text: &str, rows: u32) -> Vec<String> {
+    if rows == 0 {
+        return Vec::new();
+    }
+    let body = text.strip_suffix('\n').unwrap_or(text);
+    body.split('\n')
+        .map(|line| verbatim_text::trim_padding(line.strip_suffix('\r').unwrap_or(line)).to_owned())
+        .collect()
+}
+
+/// Why a terminal is read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadMode {
+    /// A focus arriving: only note where the text is now; what the screen
+    /// holds is not new to the user.
+    Baseline,
+    /// Its text changed, or Core asked: what is new.
+    Change,
+    /// Speech was cut off: what is new, for typing echo only. A read the
+    /// terminal wrote to meanwhile is still remembered, finding nothing, so
+    /// what came before the cut is never spoken.
+    Cancel,
+}
+
+/// What is new on a terminal's screen since `memory` was read, and what to
+/// remember. With no memory, or for a baseline, nothing is new.
+/// `head_wanted` is how many of the lines that went by unread are read
+/// from their first.
 ///
 /// # Errors
 ///
 /// The source's error.
-pub fn read_new<S: TailSource>(
+pub fn read_new<S: ScreenSource>(
     source: &mut S,
     memory: Option<&Memory>,
-    baseline: bool,
-    wanted: u32,
-) -> Result<(TerminalOutput, Memory), S::Error> {
-    let lines = usize::try_from(wanted).unwrap_or(usize::MAX);
-    let mut anchored = None;
-    if !baseline
-        && let Some(memory) = memory
-        && let Some(tail) = source.anchored(memory, wanted)?
-    {
-        // A read that did not find the fingerprint has nowhere to start
-        // from, settled or not: the terminal is read afresh. Set aside, it
-        // would count from the anchor, which a full scrollback keeps on
-        // its last row, and so read no lines to take the next fingerprint
-        // from.
-        if !tail.settled && tail.found != Found::NotFound {
-            return Ok(set_aside(&tail, memory, lines));
-        }
-        if let Next::Output(output, remembered) = after_anchor(memory, &tail, lines) {
-            if !output.is_empty() {
-                return Ok((output, remembered));
-            }
-            anchored = Some(remembered);
-        }
+    mode: ReadMode,
+    head_wanted: u32,
+) -> Result<Found, S::Error> {
+    let earlier = memory.filter(|_| mode != ReadMode::Baseline);
+    let seen = earlier.map_or(0, |memory| {
+        u32::try_from(memory.screen.len()).unwrap_or(u32::MAX)
+    });
+    let screen = source.read(earlier, seen, head_wanted)?;
+    let unsettled = !screen.settled && earlier.is_some();
+    if unsettled && mode != ReadMode::Cancel {
+        return Ok(Found::Unsettled);
     }
-    let tail = source.fresh(wanted)?;
-    if !tail.settled
-        && !baseline
-        && let Some(memory) = memory
-    {
-        return Ok(set_aside(&tail, anchored.as_ref().unwrap_or(memory), lines));
-    }
-    let earlier = if baseline {
-        None
-    } else {
-        anchored.as_ref().or(memory)
+    let new = screen_lines(&screen.text);
+    let mut remembered = Memory {
+        screen: new.clone(),
+        said: new.clone(),
+        top_row: screen.top_row.clone(),
+        next_row: screen.next_row.clone(),
+        alternate: screen.alternate,
+        first_row: screen.first_row.clone(),
     };
-    Ok(after_fresh(earlier, &tail, lines))
+    let Some(old) = earlier.filter(|_| !unsettled) else {
+        return Ok(Found::Output(TerminalOutput::default(), remembered));
+    };
+    // The caret's line on the new screen, the last that reads as it does.
+    let cursor = screen.caret_line.as_deref().and_then(|line| {
+        let line = verbatim_text::trim_padding(line.trim_end_matches(['\r', '\n']));
+        new.iter().rposition(|row| row == line)
+    });
+    let output = match screen.shift {
+        Some(shift) => {
+            let unread = shift.saturating_sub(seen);
+            let head = block_lines(&screen.head, screen.head_rows);
+            let counted = unread.saturating_sub(screen.head_rows);
+            let shift_rows = Shift::Known(shift as usize);
+            let mut found = diff(&old.said, &new, shift_rows, cursor);
+            let since_read = diff(&old.screen, &new, shift_rows, cursor).changed;
+            found.changed = with_since_read(found.changed, since_read);
+            // The old screen scrolled away whole: its last line, which
+            // output may have been written to, is read where it is now.
+            let changed = if shift >= seen {
+                old.screen.last().and_then(|last| {
+                    screen::line_change(
+                        last,
+                        verbatim_text::trim_padding(
+                            screen.old_last_row.trim_end_matches(['\r', '\n']),
+                        ),
+                    )
+                })
+            } else {
+                found.changed
+            };
+            TerminalOutput {
+                above: found.above,
+                changed,
+                head,
+                skipped: (counted > 0).then_some(Skipped::Count(counted)),
+                lines: found.below,
+            }
+        }
+        None => match screen.document_rows {
+            // The anchor left a history above both screens: it overflowed.
+            Some(rows) if !screen.alternate && !old.alternate => TerminalOutput {
+                // With no history beyond the screen, no count is possible.
+                skipped: Some(
+                    match rows.saturating_sub(u32::try_from(new.len()).unwrap_or(u32::MAX)) {
+                        0 => Skipped::Uncounted,
+                        beyond => Skipped::MoreThan(beyond),
+                    },
+                ),
+                lines: new,
+                ..TerminalOutput::default()
+            },
+            _ => {
+                let found = diff(&old.screen, &new, Shift::Unknown, cursor);
+                TerminalOutput {
+                    above: found.above,
+                    changed: found.changed,
+                    lines: found.below,
+                    ..TerminalOutput::default()
+                }
+            }
+        },
+    };
+    if let Some(shift) = screen.shift {
+        let kept = old.said.get(shift as usize..).unwrap_or_default();
+        for (row, was) in remembered.said.iter_mut().zip(kept) {
+            if was.starts_with(row.as_str()) && was != row {
+                row.clone_from(was);
+            }
+        }
+    }
+    Ok(Found::Output(output, remembered))
 }
 
-/// A focused terminal's anchor and memory, kept by the worker between reads.
+/// A focused terminal's memory and reading state, kept by the worker
+/// between reads.
 #[derive(Default)]
 pub struct Terminal {
-    anchor: Option<AgileReference<IUIAutomationTextRange>>,
     memory: Option<Memory>,
+    /// On-demand reading.
+    pub reading: Reading,
+    /// Core's request, by its id and trace, whose read the terminal
+    /// disturbed: answered by the next read that settles.
+    pub owed: Option<(u64, verbatim_model::TraceId)>,
+    /// Whether the terminal's `FindText` matches a row's padding, as the
+    /// console host's does and Windows Terminal's does not
+    /// ([`ScreenQuery::matches_padding`]), set by the worker from the
+    /// terminal's window.
+    pub matches_padding: bool,
+    /// When the last read began, in milliseconds since the Unix epoch: a
+    /// text change observed before it is covered by that read.
+    pub read_started_ms: u64,
+    /// A range at the start of the screen's top row as last read, tried
+    /// before a search ([`ScreenAnchor::range`]).
+    top: Option<AgileReference<IUIAutomationTextRange>>,
 }
 
 impl Terminal {
-    /// What is remembered of the text, `None` before the first read.
+    /// What is remembered of the screen, `None` before the first read.
     #[must_use]
     pub fn memory(&self) -> Option<&Memory> {
         self.memory.as_ref()
@@ -486,145 +321,102 @@ fn is_gone(error: &RopsError) -> bool {
         .is_some_and(|code| verbatim_uia::element_is_gone(&windows::core::Error::from(code)))
 }
 
-/// A failed read as a text error.
-fn text_error(error: &RopsError) -> TextError {
-    if is_gone(error) {
-        TextError::Gone
-    } else {
-        TextError::Failed(error.to_string())
-    }
-}
-
-/// A terminal's tail read through UIA: the remote program when `remote`,
+/// A terminal's screen read through UIA: the remote program when `remote`,
 /// the classic implementation otherwise or when the program fails.
-struct UiaTail<'a> {
+struct UiaScreen<'a> {
     uia: &'a Uia,
     element: &'a IUIAutomationElement,
     pattern: &'a IUIAutomationTextPattern,
-    /// The caret to read with each read of the text.
+    /// The caret to read with the screen.
     caret: Option<CaretLineQuery<'a>>,
-    /// The caret the newest read found.
+    /// The caret the read found.
     caret_found: Option<CaretAnswer>,
-    anchor: Option<IUIAutomationTextRange>,
     remote: bool,
-    /// The last line of the newest read, the next anchor.
-    last: Option<IUIAutomationTextRange>,
-    /// The path each read took.
-    paths: Vec<Path>,
+    matches_padding: bool,
+    /// The range at the start of the top row the last read remembered.
+    top: Option<IUIAutomationTextRange>,
+    /// The range at the start of the top row this read found.
+    top_found: Option<IUIAutomationTextRange>,
+    /// The path the read took.
+    path: Option<Path>,
 }
 
-impl UiaTail<'_> {
-    fn run(&mut self, query: &TailQuery<'_>) -> Result<TailText, RopsError> {
+impl ScreenSource for UiaScreen<'_> {
+    type Error = TextError;
+
+    fn read(
+        &mut self,
+        anchor: Option<&Memory>,
+        seen_rows: u32,
+        head_wanted: u32,
+    ) -> Result<ScreenText, TextError> {
+        let query = ScreenQuery {
+            element: self.element,
+            pattern: self.pattern,
+            anchor: anchor.map(|memory| ScreenAnchor {
+                top: &memory.top_row,
+                next: &memory.next_row,
+                range: self.top.as_ref(),
+                first: &memory.first_row,
+                no_history: memory.alternate,
+            }),
+            matches_padding: self.matches_padding,
+            seen_rows,
+            head_wanted,
+            caret: self.caret,
+        };
         let started = std::time::Instant::now();
         let calls_before = verbatim_uia::calls::peek().uia;
-        let result = terminal_tail(self.uia, query, self.remote);
+        let result = terminal_screen(self.uia, &query, self.remote);
         let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let calls = verbatim_uia::calls::peek().uia.saturating_sub(calls_before);
-        let start = match query.start {
-            TailStart::Anchor { .. } => "anchor",
-            TailStart::Document(_) | TailStart::Text { .. } => "fresh",
-        };
-        let (mut tail, path) = match result {
+        let (mut screen, path) = match result {
             Ok(answer) => answer,
             Err(error) => {
-                tracing::debug!(start, elapsed_us, calls, %error, "terminal tail read failed");
-                return Err(error);
+                tracing::debug!(elapsed_us, calls, %error, "terminal screen read failed");
+                return Err(if is_gone(&error) {
+                    TextError::Gone
+                } else {
+                    TextError::Failed(error.to_string())
+                });
             }
         };
-        // What each read costs, which a flood repeats back to back
-        // (`docs/performance.md`, "A terminal flood").
+        // What each read costs (`docs/performance.md`, "A terminal
+        // flood").
         tracing::debug!(
-            start,
             path = path.name(),
             elapsed_us,
             calls,
-            found = ?tail.found,
-            count = tail.count,
-            settled = tail.settled,
-            scrolled = tail.scrolled,
-            "terminal tail timing"
+            shift = ?screen.shift,
+            head_rows = screen.head_rows,
+            document_rows = ?screen.document_rows,
+            alternate = screen.alternate,
+            settled = screen.settled,
+            top = screen.top_row.trim_end(),
+            "terminal screen timing"
         );
-        self.paths.push(path);
-        if let Some(caret) = tail.caret.take() {
-            self.caret_found = Some(caret);
-        }
-        let text = TailText::from(&tail);
-        if !text.settled {
-            tracing::debug!("a terminal's text changed while it was read; the read is set aside");
-        }
-        tracing::debug!(
-            found = ?text.found,
-            count = text.count,
-            read = text.lines.len(),
-            line = trimmed(&text.line),
-            previous = trimmed(&text.previous),
-            first = text.lines.first().map(|line| trimmed(line)),
-            last = text.lines.last().map(|line| trimmed(line)),
-            "terminal tail read"
-        );
-        if tail.settled || tail.scrolled {
-            self.last = Some(tail.last);
-        }
+        self.path = Some(path);
+        let text = ScreenText::from(&screen);
+        self.caret_found = screen.caret.take();
+        self.top_found = screen.top.take();
         Ok(text)
     }
 }
 
-impl TailSource for UiaTail<'_> {
-    type Error = TextError;
-
-    fn anchored(&mut self, memory: &Memory, wanted: u32) -> Result<Option<TailText>, TextError> {
-        let Some(anchor) = self.anchor.clone() else {
-            return Ok(None);
-        };
-        tracing::debug!(
-            line = ?memory.line,
-            previous = ?memory.previous,
-            "terminal fingerprint sought"
-        );
-        let query = TailQuery {
-            start: TailStart::Anchor {
-                range: &anchor,
-                fingerprint: Fingerprint {
-                    line: &memory.line,
-                    previous: &memory.previous,
-                },
-            },
-            lines_wanted: wanted,
-            caret: self.caret,
-        };
-        match self.run(&query) {
-            Ok(tail) => Ok(Some(tail)),
-            Err(error) if is_gone(&error) => Err(TextError::Gone),
-            // A range from before a switch of screens no longer compares
-            // with the text: read afresh.
-            Err(error) => {
-                tracing::debug!(%error, "a terminal's anchor could not be read");
-                Ok(None)
-            }
-        }
-    }
-
-    fn fresh(&mut self, wanted: u32) -> Result<TailText, TextError> {
-        let query = TailQuery {
-            start: TailStart::Text {
-                element: self.element,
-                pattern: self.pattern,
-            },
-            lines_wanted: wanted,
-            caret: self.caret,
-        };
-        self.run(&query).map_err(|error| text_error(&error))
-    }
+/// What [`read`] found.
+pub struct ReadAnswer {
+    /// What is new, or that the read was disturbed.
+    pub found: Found,
+    /// The caret the read found.
+    pub caret: Option<CaretAnswer>,
+    /// The path the read took, for the caller to log a fallback.
+    pub path: Option<Path>,
 }
 
-/// Reads what is new in a focused terminal's text since the last read
-/// ([`read_new`]) through UIA, keeping the anchor and memory in `terminal`.
-/// `remote` tries the remote program first. With `caret`, each read of the
-/// text reads the caret and its line too, in the same round trip. The
-/// answer is the output (empty when nothing changed), the caret the last
-/// read found, and the path each read took, for the caller to log a
-/// fallback and stop trying the remote program for a window whose import
-/// failed.
+/// Reads what is new on a focused terminal's screen since the last read
+/// ([`read_new`]) through UIA, keeping the memory in `terminal` (unless the
+/// read was disturbed). `remote` tries the remote program first. With
+/// `caret`, the caret and its line are read in the same round trip.
 ///
 /// # Errors
 ///
@@ -635,28 +427,112 @@ pub fn read<'a>(
     (element, pattern): (&'a IUIAutomationElement, &'a IUIAutomationTextPattern),
     caret: Option<CaretLineQuery<'a>>,
     terminal: &mut Terminal,
-    (wanted, remote, baseline): (u32, bool, bool),
-) -> Result<(TerminalOutput, Option<CaretAnswer>, Vec<Path>), TextError> {
-    let mut source = UiaTail {
+    (head_wanted, remote, mode): (u32, bool, ReadMode),
+) -> Result<ReadAnswer, TextError> {
+    let mut source = UiaScreen {
         uia,
         element,
         pattern,
         caret,
         caret_found: None,
-        anchor: terminal
-            .anchor
-            .as_ref()
-            .and_then(|anchor| anchor.resolve().ok()),
         remote,
-        last: None,
-        paths: Vec::new(),
+        matches_padding: terminal.matches_padding,
+        top: terminal.top.as_ref().and_then(|range| range.resolve().ok()),
+        top_found: None,
+        path: None,
     };
-    let (output, memory) = read_new(&mut source, terminal.memory.as_ref(), baseline, wanted)?;
-    if let Some(last) = &source.last {
-        terminal.anchor = AgileReference::new(last).ok();
+    let found = read_new(&mut source, terminal.memory.as_ref(), mode, head_wanted)?;
+    if let Found::Output(_, memory) = &found {
+        terminal.memory = Some(memory.clone());
+        terminal.top = source
+            .top_found
+            .as_ref()
+            .and_then(|range| AgileReference::new(range).ok());
     }
-    terminal.memory = Some(memory);
-    Ok((output, source.caret_found, source.paths))
+    Ok(ReadAnswer {
+        found,
+        caret: source.caret_found,
+        path: source.path,
+    })
+}
+
+/// The text one message's terminal output may take, well inside
+/// [`crate::protocol::MAX_MESSAGE_BYTES`], since JSON's escaping can make a
+/// line several times longer ([`split`]).
+pub const MESSAGE_TEXT_BUDGET: usize = crate::protocol::MAX_MESSAGE_BYTES / 8;
+
+/// `output` split into outputs that each take at most `budget` bytes of
+/// text, in order, so that a message carrying one stays within
+/// [`crate::protocol::MAX_MESSAGE_BYTES`] (`phase6-design.md`, the limit
+/// on outpost messages). What is said of the last line read before
+/// (`above` and `changed`) goes in the first; the rest keeps its order,
+/// the lines before a skipped count as a head and those after it as the
+/// newest lines. A single line larger than the budget is an output of its
+/// own. One output that fits is returned as it is.
+#[must_use]
+pub fn split(output: TerminalOutput, budget: usize) -> Vec<TerminalOutput> {
+    let size = |line: &String| line.len() + 8;
+    let total: usize = output
+        .above
+        .iter()
+        .chain(&output.head)
+        .chain(&output.lines)
+        .map(size)
+        .sum::<usize>()
+        + output
+            .changed
+            .as_ref()
+            .map_or(0, |change| change.text.len() + change.line.len());
+    if total <= budget {
+        return vec![output];
+    }
+    let mut first = TerminalOutput {
+        changed: output.changed.clone(),
+        ..TerminalOutput::default()
+    };
+    let mut parts: Vec<TerminalOutput> = Vec::new();
+    let mut used = first
+        .changed
+        .as_ref()
+        .map_or(0, |change| change.text.len() + change.line.len());
+    let mut above = output.above;
+    let mut stream = pieces(TerminalOutput {
+        above: Vec::new(),
+        ..output
+    });
+    for line in above.drain(..) {
+        if used + size(&line) > budget && !first.above.is_empty() {
+            break;
+        }
+        used += size(&line);
+        first.above.push(line);
+    }
+    // Lines of `above` that did not fit go first among the rest.
+    let mut rest: Vec<Piece> = above.into_iter().map(Piece::Line).collect();
+    rest.append(&mut stream);
+    let mut current = first;
+    for piece in rest {
+        let cost = match &piece {
+            Piece::Line(line) => size(line),
+            Piece::Skipped(_) => 16,
+        };
+        if used + cost > budget && !current.is_empty() {
+            parts.push(std::mem::take(&mut current));
+            used = 0;
+        }
+        used += cost;
+        match piece {
+            Piece::Skipped(skipped) => {
+                current.head.append(&mut current.lines);
+                current.skipped = Some(current.skipped.map_or(skipped, |was| was.plus(skipped)));
+            }
+            Piece::Line(line) => current.lines.push(line),
+        }
+    }
+    if !current.is_empty() {
+        parts.push(current);
+    }
+    parts
 }
 
 /// One piece of new output, in the order it is spoken.
@@ -697,33 +573,60 @@ fn is_blank(line: &str) -> bool {
 #[must_use]
 pub fn combine(older: TerminalOutput, newer: TerminalOutput, wanted: usize) -> TerminalOutput {
     let wanted = wanted.max(1);
-    let older_changed = older.changed.clone();
-    let mut stream = pieces(older);
+    let mut older = older;
+    // What `older` found above its last line comes first; its change of
+    // that line is then a line like the others.
+    let mut stream: Vec<Piece> = std::mem::take(&mut older.above)
+        .into_iter()
+        .map(Piece::Line)
+        .collect();
+    let mut older_changed = older.changed.take();
+    if !stream.is_empty()
+        && let Some(change) = older_changed.take()
+    {
+        stream.push(Piece::Line(change.text));
+    }
+    stream.extend(pieces(older));
     let TerminalOutput {
+        above: newer_above,
         changed: newer_changed,
         head,
         skipped,
         lines,
     } = newer;
-    let changed = if stream.is_empty() {
+    let changed = if stream.is_empty() && newer_above.is_empty() {
         merged_change(older_changed, newer_changed)
     } else {
-        if let Some(change) = newer_changed {
-            match stream.last_mut() {
-                Some(Piece::Line(line)) if !is_blank(line) => *line = change.line,
-                _ => stream.push(Piece::Line(change.text)),
+        if stream.is_empty()
+            && let Some(change) = older_changed.take()
+        {
+            stream.push(Piece::Line(change.text));
+        }
+        let in_place = matches!(stream.last(), Some(Piece::Line(line)) if !is_blank(line));
+        match newer_changed {
+            Some(change) if in_place => {
+                if let Some(Piece::Line(line)) = stream.last_mut() {
+                    *line = change.line;
+                }
+                stream.extend(newer_above.into_iter().map(Piece::Line));
             }
+            Some(change) => {
+                stream.extend(newer_above.into_iter().map(Piece::Line));
+                stream.push(Piece::Line(change.text));
+            }
+            None => stream.extend(newer_above.into_iter().map(Piece::Line)),
         }
         older_changed
     };
     stream.extend(pieces(TerminalOutput {
-        changed: None,
         head,
         skipped,
         lines,
+        ..TerminalOutput::default()
     }));
     let (head, skipped, lines) = fit(stream, wanted);
     TerminalOutput {
+        above: Vec::new(),
         changed,
         head,
         skipped,
@@ -803,16 +706,52 @@ fn merged_change(older: Option<LineChange>, newer: Option<LineChange>) -> Option
             line: newer.line,
             appended: false,
             uncertain: 0,
+            inserted: String::new(),
+            since_read: None,
         });
     };
     let from = older_start.min(newer_start);
     let appended = older.appended && newer.appended;
+    let inserted = if appended {
+        newer.line[from..].to_owned()
+    } else {
+        older.inserted + &newer.inserted
+    };
     Some(LineChange {
         text: newer.line[from..].to_owned(),
         line: newer.line,
         appended,
         uncertain: if appended { older.uncertain } else { 0 },
+        inserted,
+        since_read: merged_change(
+            older.since_read.map(|change| *change),
+            newer.since_read.map(|change| *change),
+        )
+        .map(Box::new),
     })
+}
+
+/// The changed line's change from what it said, `said`, with its change
+/// since it was read, `since_read`, kept beside it where the two differ
+/// ([`LineChange::since_read`]); a line whose change since it was read
+/// brought it back to what it said is a change with nothing to speak.
+fn with_since_read(said: Option<LineChange>, since_read: Option<LineChange>) -> Option<LineChange> {
+    match (said, since_read) {
+        (said, None) => said,
+        (Some(said), Some(since_read)) if said == since_read => Some(said),
+        (Some(said), Some(since_read)) => Some(LineChange {
+            since_read: Some(Box::new(since_read)),
+            ..said
+        }),
+        (None, Some(since_read)) => Some(LineChange {
+            text: String::new(),
+            line: since_read.line.clone(),
+            appended: false,
+            uncertain: 0,
+            inserted: String::new(),
+            since_read: Some(Box::new(since_read)),
+        }),
+    }
 }
 
 #[cfg(test)]

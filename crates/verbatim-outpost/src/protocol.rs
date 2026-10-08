@@ -667,14 +667,34 @@ pub struct DumpedTree {
     pub truncated: bool,
 }
 
+/// The most bytes one message may take, its line feed aside, in either
+/// direction between Core and a child (`phase6-design.md`, "Terminal risks
+/// found by studying NVDA", the limit on outpost messages): room for 10 MB
+/// of terminal output and JSON's escaping. A writer never sends more, and a
+/// reader that receives more treats the other end as failed rather than
+/// reading on, so an enormous line from an application cannot make it
+/// allocate without bound.
+pub const MAX_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
+
 /// Writes one message as a single JSON line and flushes.
 ///
 /// # Errors
 ///
-/// Returns any I/O error from the underlying writer; serialization of these
+/// Returns any I/O error from the underlying writer, and
+/// [`io::ErrorKind::InvalidInput`] for a message larger than
+/// [`MAX_MESSAGE_BYTES`], which is not sent; serialization of these
 /// message types cannot fail.
 pub fn write_message<W: Write, T: Serialize>(writer: &mut W, message: &T) -> io::Result<()> {
     let line = serde_json::to_string(message).map_err(io::Error::other)?;
+    if line.len() > MAX_MESSAGE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "a message of {} bytes is larger than the {MAX_MESSAGE_BYTES} a message may take",
+                line.len()
+            ),
+        ));
+    }
     writer.write_all(line.as_bytes())?;
     writer.write_all(b"\n")?;
     writer.flush()
@@ -685,14 +705,24 @@ pub fn write_message<W: Write, T: Serialize>(writer: &mut W, message: &T) -> io:
 ///
 /// # Errors
 ///
-/// Returns an error for I/O failures and for lines that are not valid
-/// messages (a protocol violation, not a recoverable condition).
+/// Returns an error for I/O failures, for a message larger than
+/// [`MAX_MESSAGE_BYTES`] ([`io::ErrorKind::InvalidData`], read no further
+/// than the limit), and for lines that are not valid messages (a protocol
+/// violation, not a recoverable condition).
 pub fn read_message<R: BufRead, T: DeserializeOwned>(reader: &mut R) -> io::Result<Option<T>> {
-    let mut line = String::new();
-    if reader.read_line(&mut line)? == 0 {
+    let mut line = Vec::new();
+    let limit = u64::try_from(MAX_MESSAGE_BYTES).unwrap_or(u64::MAX) + 1;
+    let mut limited = io::Read::take(&mut *reader, limit);
+    if limited.read_until(b'\n', &mut line)? == 0 {
         return Ok(None);
     }
-    serde_json::from_str(line.trim_end())
+    if line.len() > MAX_MESSAGE_BYTES && line.last() != Some(&b'\n') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("a message is larger than the {MAX_MESSAGE_BYTES} bytes a message may take"),
+        ));
+    }
+    serde_json::from_slice(line.trim_ascii_end())
         .map(Some)
         .map_err(io::Error::other)
 }
@@ -701,6 +731,29 @@ pub fn read_message<R: BufRead, T: DeserializeOwned>(reader: &mut R) -> io::Resu
 mod tests {
     use super::*;
     use verbatim_model::{NodeDetails, NodeId, NodeSnapshot, Role, State, StateSet};
+
+    #[test]
+    fn a_message_larger_than_the_limit_is_neither_sent_nor_read() {
+        let mut written = Vec::new();
+        let large = "x".repeat(MAX_MESSAGE_BYTES);
+        let error = write_message(&mut written, &large).expect_err("too large to send");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(written, Vec::<u8>::new());
+        // A peer that sends one anyway: the reader stops at the limit.
+        let mut stream = std::io::Cursor::new(format!("\"{large}\"\n").into_bytes());
+        let error = read_message::<_, String>(&mut stream).expect_err("too large to read");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            usize::try_from(stream.position()).expect("a position"),
+            MAX_MESSAGE_BYTES + 1
+        );
+        // One at the limit is read.
+        let fits = "y".repeat(MAX_MESSAGE_BYTES - 2);
+        let mut written = Vec::new();
+        write_message(&mut written, &fits).expect("fits");
+        let read: Option<String> = read_message(&mut std::io::Cursor::new(written)).expect("reads");
+        assert_eq!(read.as_deref(), Some(fits.as_str()));
+    }
 
     #[test]
     fn messages_round_trip_over_a_byte_stream() {

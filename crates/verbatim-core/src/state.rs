@@ -212,8 +212,20 @@ pub(crate) struct PendingCaret {
     pub(crate) query_id: QueryId,
     pub(crate) node: NodeId,
     pub(crate) key: CaretKey,
-    /// What a Backspace deleted, worked out from the caret before the key.
+    /// What a Backspace deleted, worked out from the caret before the key:
+    /// the prediction, used only when the line after the key cannot be
+    /// compared with the line before (`before`).
     pub(crate) deleted: Option<String>,
+    /// For a Backspace, the caret's line before the key and the caret's
+    /// offset in it, which the line after the key is compared with to find
+    /// what the key really removed.
+    #[serde(default)]
+    pub(crate) before: Option<(String, u32)>,
+    /// When the next key after this one was pressed (Unix milliseconds),
+    /// once one has been: an answer read at or after then may show that
+    /// key's effect, not this one's, so it only keeps the caret current.
+    #[serde(default)]
+    pub(crate) later_key_at_ms: Option<u64>,
 }
 
 /// A focus with text whose announcement still has its text to say: the

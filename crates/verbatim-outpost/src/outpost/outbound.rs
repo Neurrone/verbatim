@@ -384,8 +384,11 @@ fn write_loop(mut pipe: Box<dyn Write + Send>, shared: &Shared) {
         // Written with no lock held.
         match next {
             Next::Message(message) => {
-                if write_message(&mut pipe, &message).is_err() {
-                    return;
+                for message in within_limit(*message) {
+                    if let Err(error) = write_message(&mut pipe, &message) {
+                        tracing::warn!(%error, "a message to Core could not be written");
+                        return;
+                    }
                 }
             }
             Next::Flushed(done) => {
@@ -409,6 +412,36 @@ fn write_loop(mut pipe: Box<dyn Write + Send>, shared: &Shared) {
                 return;
             }
         }
+    }
+}
+
+/// `message` as messages that each stay within the limit on outpost
+/// messages: a terminal's output larger than
+/// [`crate::terminal::MESSAGE_TEXT_BUDGET`] is
+/// split ([`crate::terminal::split`]) into outputs sent one after
+/// another, an answer to Core's request carrying the first; anything else
+/// as it is.
+fn within_limit(message: OutpostToSupervisor) -> Vec<OutpostToSupervisor> {
+    match message {
+        OutpostToSupervisor::Event {
+            trace_id,
+            observed_at_ms,
+            backend,
+            window,
+            timing,
+            event: NormalizedEvent::TerminalOutput { node_id, output },
+        } => crate::terminal::split(output, crate::terminal::MESSAGE_TEXT_BUDGET)
+            .into_iter()
+            .map(|output| OutpostToSupervisor::Event {
+                trace_id,
+                observed_at_ms,
+                backend,
+                window,
+                timing,
+                event: NormalizedEvent::TerminalOutput { node_id, output },
+            })
+            .collect(),
+        other => vec![other],
     }
 }
 
@@ -541,6 +574,7 @@ mod tests {
         assert_eq!(
             output,
             &TerminalOutput {
+                above: Vec::new(),
                 changed: None,
                 head: vec!["one".to_owned(), "two".to_owned(), "three".to_owned()],
                 skipped: None,

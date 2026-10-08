@@ -258,6 +258,7 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
         trace_id: TraceId::mint(),
         query_id: request.query_id,
         reply: TextReply::Caret(Box::new(CaretReply {
+            same_line: None,
             moved: true,
             read_at_ms: 101,
             caret: CaretReport {
@@ -299,6 +300,7 @@ fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
         event: NormalizedEvent::TerminalOutput {
             node_id: NodeId::new(1),
             output: verbatim_model::TerminalOutput {
+                above: Vec::new(),
                 changed: None,
                 head: Vec::new(),
                 skipped: None,

@@ -310,6 +310,7 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
         source,
         anchors,
         &CaretWatch {
+            landing: false,
             pressed_at_ms: 0,
             since: Some(point_of(&before.line)),
             unit: TextUnit::Word,
@@ -333,6 +334,7 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
         source,
         anchors,
         &CaretWatch {
+            landing: false,
             pressed_at_ms: 0,
             since: Some(at),
             unit: TextUnit::Character,

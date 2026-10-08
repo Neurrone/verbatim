@@ -109,6 +109,13 @@ pub trait TextPatternExt {
     ///
     /// The COM error if the provider fails.
     fn document_range(&self) -> windows::core::Result<IUIAutomationTextRange>;
+
+    /// The ranges of the text now on screen, in order. Cross-process.
+    ///
+    /// # Errors
+    ///
+    /// The COM error if the provider fails.
+    fn visible_ranges(&self) -> windows::core::Result<Vec<IUIAutomationTextRange>>;
 }
 
 impl TextPatternExt for IUIAutomationTextPattern {
@@ -124,6 +131,13 @@ impl TextPatternExt for IUIAutomationTextPattern {
         count(CallKind::Uia);
         // SAFETY: as in `selection`.
         unsafe { self.DocumentRange() }
+    }
+
+    fn visible_ranges(&self) -> windows::core::Result<Vec<IUIAutomationTextRange>> {
+        count(CallKind::Uia);
+        // SAFETY: as in `selection`.
+        let array = unsafe { self.GetVisibleRanges() }?;
+        Ok(ranges_of(&array))
     }
 }
 

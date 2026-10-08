@@ -218,7 +218,8 @@ impl AgentClient {
 
     /// Launches the console program `command` with `args`, as
     /// [`AgentClient::launch_process`] does, its console window titled
-    /// `title` from its first frame.
+    /// `title` from its first frame and opening minimized and inactive, for
+    /// the caller to bring forward once it is ready.
     ///
     /// # Errors
     ///
@@ -237,7 +238,7 @@ impl AgentClient {
             env: Vec::new(),
             stderr_to: None,
             console_title: Some(title.to_owned()),
-            minimized: false,
+            minimized: true,
             ignore_foreign_terminals: false,
         })
     }

@@ -22,10 +22,10 @@
 //!   [`focus_ancestry`], which call sites use: it runs the remote program
 //!   when asked to, falls back to the classic walk when the program fails,
 //!   and says which path answered; and, for milestone M4's terminals,
-//!   [`terminal_tail_remote`], [`terminal_tail_classic`], and
-//!   [`terminal_tail`]: the line at an anchor checked against what it held,
-//!   searched for upward when the text scrolled beneath it, the count of
-//!   lines to the end, and the text of only the last lines; and, for
+//!   [`terminal_screen_remote`], [`terminal_screen_classic`], and
+//!   [`terminal_screen`]: the text on screen, and how far the screen's top
+//!   row as last read now lies above it, found again by its text, with the
+//!   first rows that went by unread; and, for
 //!   caret reports, [`caret_read_remote`], [`caret_read_classic`], and
 //!   [`caret_read`]: the caret, the evidence a caret key moved it, its line
 //!   and another unit at it, the formatting of the text to be spoken, and
@@ -73,8 +73,8 @@ pub use opcode::{
 };
 pub use operation::{Operation, Outcome, Read, Value, counting};
 pub use terminal::{
-    Fingerprint, Found, SEARCH_MATCHES, Tail, TailQuery, TailStart, TerminalTailFn, terminal_tail,
-    terminal_tail_classic, terminal_tail_remote,
+    SEARCH_MATCHES, Screen, ScreenAnchor, ScreenQuery, TerminalScreenFn, terminal_screen,
+    terminal_screen_classic, terminal_screen_remote,
 };
 pub use text::{
     FoundPoint, LocationAnswer, LocationQuery, Movement, Position, RangeAction, RangeAnswer,

@@ -29,13 +29,15 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS,
-    EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION,
-    EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE, EVENT_OBJECT_SELECTIONWITHIN,
-    EVENT_OBJECT_SHOW, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_TEXTSELECTIONCHANGED,
-    EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND,
-    EVENT_SYSTEM_MENUPOPUPEND, EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, OBJID_ALERT,
-    OBJID_CARET, OBJID_CLIENT, OBJID_MENU, OBJID_SYSMENU, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT,
+    EVENT_CONSOLE_LAYOUT, EVENT_CONSOLE_UPDATE_REGION, EVENT_CONSOLE_UPDATE_SCROLL,
+    EVENT_CONSOLE_UPDATE_SIMPLE, EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_DESTROY,
+    EVENT_OBJECT_FOCUS, EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE,
+    EVENT_OBJECT_SELECTION, EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE,
+    EVENT_OBJECT_SELECTIONWITHIN, EVENT_OBJECT_SHOW, EVENT_OBJECT_STATECHANGE,
+    EVENT_OBJECT_TEXTSELECTIONCHANGED, EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT,
+    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND, EVENT_SYSTEM_MENUPOPUPEND,
+    EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, OBJID_ALERT, OBJID_CARET, OBJID_CLIENT,
+    OBJID_MENU, OBJID_SYSMENU, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT,
 };
 
 /// Which MSAA change a `WinEvent` reports. Events outside this set are dropped
@@ -90,6 +92,10 @@ pub enum WinEventKind {
     /// balloons it reports. Every other show event is dropped at the hook,
     /// as it would flood.
     Show,
+    /// `EVENT_CONSOLE_UPDATE_REGION`, `EVENT_CONSOLE_UPDATE_SIMPLE`,
+    /// `EVENT_CONSOLE_UPDATE_SCROLL`, or `EVENT_CONSOLE_LAYOUT`: the console
+    /// host's text changed, scrolled, or was laid out anew.
+    ConsoleUpdate,
 }
 
 /// Every raw `WinEvent` id Verbatim subscribes to, paired with its normalized
@@ -98,7 +104,7 @@ pub enum WinEventKind {
 /// table. `StateChange` maps four raw ids to the one kind, so a caller that
 /// wants state changes also gets the selection add, remove, and within
 /// hooks.
-const SUBSCRIPTIONS: [(u32, WinEventKind); 19] = [
+const SUBSCRIPTIONS: [(u32, WinEventKind); 23] = [
     (EVENT_OBJECT_FOCUS, WinEventKind::Focus),
     (EVENT_SYSTEM_FOREGROUND, WinEventKind::Foreground),
     (EVENT_OBJECT_VALUECHANGE, WinEventKind::ValueChange),
@@ -127,6 +133,10 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 19] = [
         EVENT_OBJECT_TEXTSELECTIONCHANGED,
         WinEventKind::TextSelectionChange,
     ),
+    (EVENT_CONSOLE_UPDATE_REGION, WinEventKind::ConsoleUpdate),
+    (EVENT_CONSOLE_UPDATE_SIMPLE, WinEventKind::ConsoleUpdate),
+    (EVENT_CONSOLE_UPDATE_SCROLL, WinEventKind::ConsoleUpdate),
+    (EVENT_CONSOLE_LAYOUT, WinEventKind::ConsoleUpdate),
 ];
 
 /// The per-application outpost's subscription set (decision D13): the
@@ -144,6 +154,7 @@ pub const APP_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::Destroy,
     WinEventKind::Caret,
     WinEventKind::TextSelectionChange,
+    WinEventKind::ConsoleUpdate,
 ];
 
 /// The focus listener's subscription set (decisions D13 and D14): the

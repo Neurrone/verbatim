@@ -1007,7 +1007,8 @@ the watch lock, could not abandon a hung worker.
   do. An event replaces a waiting event of the same kind for the same node
   (for a property change, the same property; for a focus, the same kind of
   focus) and goes to the back. A terminal's new output is combined with
-  its output still waiting (`terminal::combine`): every line in order, a
+  its output still waiting (`terminal::combine`): every line in order (what
+  either found above its last line taking its place in the stream), a
   change to a line still waiting putting the whole line in its place as
   Core does, two changes of the same line made one, and the flood
   policy's limits kept, at most the read limit in the head and as many in
@@ -1131,8 +1132,8 @@ listener as above.
 ## Terminals (milestone M4 item 9)
 
 The `terminal` module (public, so mockapp's tests drive it as the worker
-does) finds a focused terminal's new output by an anchored diff of its
-text (`phase6-design.md`, "How the outpost finds new lines"). Terminal
+does) finds a focused terminal's new output by diffing its screen
+(`phase6-design.md`, "Terminal reading by diffing the screen"). Terminal
 behavior is generic, keyed by the control, never the window's title: a
 UIA element of class `TermControl` (Windows Terminal) or `WPFTermControl`
 (the terminal embedded in Visual Studio), or a focus in a
@@ -1145,89 +1146,116 @@ owner, and inside a remote operation the host's provider gives no native
 window handle for the window; the classic walk to the nearest window
 finds it.
 
-- The worker keeps, per terminal node, a `Terminal`: an anchor (a range at
-  the start of the last line read) and a `Memory` (that line's text and
-  the line before it, the fingerprint, and the last lines read without
-  padding, the screen as last seen). It is forgotten when the node is
-  released.
-- When a terminal gains the focus, after its caret report, the worker reads
-  it afresh as a baseline, which speaks nothing: output from before the
-  focus arrived is not new.
-- A `Text_TextChanged` event for the focus, when it is a terminal, runs
-  `terminal::read` in place of reporting `TextChanged` (events that arrive
-  while a read is in progress are coalesced by the intake into one more
-  read, one waiting entry per element). It is one remote program
-  (`verbatim_uia_rops::terminal_tail`), with the classic fallback behind
-  the same entry point, which reads the caret and its line too: the
-  worker reports the caret as `CaretMoved` after the output
-  (`UiaText::caret_read_from` and `text::caret_report_from` make the
-  report of it), since a terminal raises no caret event for every
-  character typed (the console host's come on a schedule of their own),
-  and Core works out what a Backspace deleted from the caret it last
-  heard of; a window whose elements cannot be imported is read
-  classically from then on, as for the focus ancestry. `after_anchor`
-  turns the read into a `TerminalOutput`: the anchor's line compared
-  character by character with what it held (grown: the text added;
-  rewritten: from the start of the word where it first differs; shorter:
-  nothing), and the lines after it, all of them up to the read limit, or,
-  when more follow, the first ones (`TerminalOutput::head`, so a flood's
-  start is heard) and the last ones, each up to the read limit, with those
-  between counted (`Skipped::Count`). A rewrite under
-  a blank line is not trusted, since a blank line matches too easily. The
-  anchor's line found above the anchor (`Found::Moved`) is compared the
-  same way, since the last line read is often the one output was still
-  being written to. A line that grew reports, as `LineChange::uncertain`,
-  how much of the white space it gained it already had at the same place:
-  its padding, or its own trailing spaces, which cannot be told apart, so
-  Core matches typing after a prompt's trailing space.
-- A read the text changed under (`settled` false: the line above where it
-  started read differently at its end, or the one read of its lines did
-  not end with the last line and the one before it read on their own)
-  finds nothing and keeps the memory and the anchor, and the text change
-  that disturbed it causes the next read. When the text scrolled beneath
-  the read (`scrolled`: the line above where it started changed), lines
-  went by unread instead: the read says "skipped lines" without a count
-  (`Skipped::Uncounted`) and remembers its own last lines and last line
-  as the anchor, so the next read starts from there; a set-aside read that
-  read no lines (the fingerprint was found on the last line) keeps the
-  fingerprint it had, which still names that line. An unsettled read that
-  did not find the fingerprint is not set aside but read afresh, as a
-  settled one is: counted from an anchor a full scrollback keeps on its
-  last row, it would read no lines, and a fingerprint of two empty lines
-  then kept every later read of the flood searching all 256 lines in
-  vain (measured live in the console host, `docs/performance.md`, "A
-  terminal flood"). Live, a flood in
-  Windows Terminal's full scrollback kept every read from settling until
-  it ended; kept back at an anchor from before it, a second, identical
-  flood's end matched the first's and nothing was spoken. Before reads
-  were checked at all, lines read one by one during such a flood came
-  back twice or out of order.
-- When the fingerprint is not found, the anchor no longer compares with
-  the text (a full-screen program switched screens), or the anchored read
-  found nothing new after the anchor (a full-screen program redrawing a
-  line above it), the terminal is read afresh from the end of its
-  document (one program, which gets the document range from the element
-  itself, `TailStart::Text`), and `after_fresh` compares the lines read with the screen
-  last seen: when the old screen's end reappears in the new one (its last
-  line as it was or grown since; at the new one's start when both hold as
-  many lines and the text scrolled, further down when the old one holds
-  fewer, as a set-aside read's does), what that line gained and the lines
-  after it, taking the latest place it reappears; otherwise the lines that differ in place, preceded
-  by `Skipped::Uncounted` ("skipped lines") when no line kept its place
-  and the text holds more lines than were read (the scrollback overflowed
-  past the search). A redraw with the same text finds nothing, and
-  nothing is sent.
-- Lines lose their trailing padding, every trailing character with
-  Unicode's `White_Space` property (`verbatim_text::trim_padding`), and are
-  cut to `MAX_TERMINAL_LINE_BYTES`.
-- Each tail read logs its cost at debug (`terminal tail timing`: anchored
-  or fresh, the path, microseconds, calls, where the fingerprint was
-  found, settled and scrolled), as does each text change's read (`terminal
-  read timing`, with its wait in the queue) and each caret read (`caret
-  read timing`).
-- `TerminalOutput` is sent only when something changed, as
-  `NormalizedEvent::TerminalOutput`.
-- How many of the newest lines a read takes comes from Core,
+- The worker keeps, per terminal node, a `Terminal`: a `Memory` (the
+  screen's lines as last read, its top two rows as the provider gave
+  them, which are the anchor, the text's first row, and whether it had
+  history above it), a range at the start of that top row, its on-demand
+  reading state (`terminal::reading`), and an answer to Core it owes. It
+  is forgotten when the node is released.
+- Every read is one remote program (`verbatim_uia_rops::terminal_screen`,
+  with the classic fallback behind the same entry point), which also
+  reads the caret and its line, as the worker reports it after the
+  output (`text_reads::terminal_output`, `CaretMoved`), since a terminal
+  raises no caret event for every character typed (the console host's
+  come on a schedule of their own). The caret is stamped as read when the
+  round trip began (`Context::caret_read_from`), so a caret event observed
+  while it was in flight is not taken as already seen. The program reads
+  the text pattern's first visible range in one call (the screen), its
+  top two rows, whether the text starts where the screen starts (no
+  history above it), and, given the anchor, finds the anchor's top row
+  again (`docs/crates/verbatim-uia-rops.md`, "Layer 3: a terminal's
+  screen"): at the range kept for it while nothing can have been
+  discarded from the text (its first row reads as it did, or the old
+  screen had no history above it), and otherwise by its text with
+  `FindText`, the row padded in the console host, whose `FindText`
+  matches padding (`Terminal::matches_padding`, set from the console
+  window), at most `SEARCH_MATCHES` (20) matches. Found, the rows from it
+  to the screen's top (moving by rows, which transfers no text) are how
+  far the text scrolled; the row the old screen's last line was on is
+  read as it is now; and the first rows past the old screen's lines,
+  which went by unread, are read too, up to the read limit, so a flood's
+  start is heard. Not found by its text, the rows of the whole text are
+  counted. A screen whose top row read differently from its text, or
+  changed by the end of the read, or whose walks to the text's end
+  disagree, was written to while it was read, and is not trusted
+  (`settled` false).
+- `read_new` turns a read into a `TerminalOutput` with the pure screen
+  diff (`terminal::screen`). The old screen's lines that scrolled off its
+  top are set aside, and the rest are lined up with the new screen: where
+  the new screen still has the old last line in its place, as it was or
+  grown, output was written at it and after it, so everything after it is
+  new and the lines above it are compared on their own; otherwise the two
+  are lined up by their longest common run of lines. Lines inserted are
+  new, spoken whole; a line replaced in place speaks what changed of it
+  (`screen::line_change`: what it gained at its end, or from the start of
+  the word that changed, by Unicode's word rules with ICU's dictionaries
+  for scripts written without spaces, and whole graphemes); a line that
+  only lost text or gained only white space, and a spinner (one symbol
+  replaced by another, nothing else), say nothing; lines only deleted say
+  nothing. What is new above the old last line is `above`, the old last
+  line's change is `changed` (or, when the caret was read on a line above
+  it, a prompt above a status line, that line's change, the old last
+  line's then coming after it), then the first unread lines (`head`), the
+  rest counted (`Skipped::Count`), and the screen's new lines (`lines`).
+  When the old screen scrolled away whole, its last line's change is
+  worked out from the row it was on. When the anchor has left a history
+  above both screens, the history overflowed: the skipped lines are
+  "more than" the history's rows less the screen's lines
+  (`Skipped::MoreThan`; `Skipped::Uncounted` when the history holds no
+  more than the screen), and the screen's lines are new. When the anchor
+  was not found and either screen had no history above it (the screen
+  cleared, a full-screen program's alternate screen opened or closed),
+  the screens are lined up by their common lines. Lines lose their
+  trailing padding, every trailing character with Unicode's `White_Space`
+  property (`verbatim_text::trim_padding`), and blank rows at the end of
+  the screen are rows not yet written to.
+- A line changed in place also reports what it gained where it changed
+  (`LineChange::inserted`), which Core matches with typing held. The
+  memory keeps each line twice: as read (`Memory::screen`) and as said
+  (`Memory::said`), where a line that has only got shorter since keeps
+  what it said before. A progress line cleared and written again, read
+  half written, is so compared with what it said ("51%", not "oading
+  51%"). Where the line's change since it was read differs, it goes
+  with the change as `LineChange::since_read`: a line cut short by the
+  user (Backspace, Escape) and typed again shows the typing only there,
+  and a line that came back to what it said has nothing else to speak.
+  Lines are taken as rewritten in place, first to first, only where at
+  least as many new lines replace them; a screen cleared down to its
+  prompt speaks the prompt as new.
+- On-demand reading (`terminal::reading`, `phase6-design.md`, "Terminal
+  decisions"), a pure transition function the worker drives. Live, the
+  default, a text change of the focused terminal (`Text_TextChanged`) is
+  read at once and its output sent as `NormalizedEvent::TerminalOutput`,
+  when it is not empty. Core's text requests change it:
+  `TextOp::TerminalHold` (Core's queue is full: changes are only noted,
+  answered `Done`), `TextOp::TerminalRead { hold }` (answered with what
+  is new, read only if the text changed since the last read, then
+  holding or live again), and `TextOp::TerminalCancel` (speech was cut
+  off: read to the end, answered with the read for typing echo only,
+  live again; a read written to meanwhile is still remembered). A read
+  Core asked for that the terminal disturbed is owed, and the next change,
+  which the writing raises, reads again and answers it. In the console
+  host, the console's own `WinEvents` (`EVENT_CONSOLE_UPDATE_REGION`,
+  `_SIMPLE`, `_SCROLL` and `EVENT_CONSOLE_LAYOUT`, merged into one per
+  window while they wait) are its terminal's text changes as well as UIA's:
+  in 2 of 14 runs of a 12,000-line write, UIA's text changes stopped
+  reaching the outpost after a few reads of about 0.12 seconds, for the
+  rest of the write, while its value and text selection `WinEvents` (about
+  27,500) went on (measured 2026-10-08); why UIA's stopped is not known.
+  NVDA's console support for UIA listens to UIA's text changes alone
+  (`UIAHandler/__init__.py` 145 to 147 and 674 to 679, the "Text Area"
+  automation id given them at 713 to 721); its `WinEvent` handling of the
+  console (`winConsoleHandler.py` 84 to 87) is for the legacy console. A
+  change observed before the last read began is covered by it and reads
+  nothing (`Terminal::read_started_ms`). A terminal gaining
+  the focus is read as a baseline, which speaks nothing, and reading is
+  live.
+- Each read logs its cost at debug (`terminal screen timing`: the path,
+  microseconds, calls, the shift, the head's rows, the rows counted,
+  whether it had history above it and settled, and its top row), as does
+  the worker's handling of each event (`terminal read timing`, with the
+  event, the action, its wait in the queue, and what it found).
+- How many unread lines a read takes from their first comes from Core,
   `SupervisorToOutpost::TerminalLines` (`SrState::terminal_read_lines`, as
   many as the flood policy's limits keep, 30 by default), sent when an
   outpost starts and whenever it changes, beside `Fetches`.
@@ -1237,10 +1265,16 @@ finds it.
   terminal overlays ignore them, or every line would be spoken twice; a
   terminal's other notifications, and other controls' with that activity
   id, are reported as usual.
-- The unit tests (`terminal/tests.rs`) run `read_new`, the logic the UIA
-  read goes through, over simulated padded rows behind the `TailSource`
-  trait: appended lines and a grown prompt, more output than a read takes,
-  a line rewritten in place and shortened, a redraw with the same text, a
-  full scrollback shifting beneath the anchor, a shift past the search, a
-  cleared screen, the alternate screen and a redraw inside it, and padding
-  of any `White_Space`.
+- The unit tests: `terminal/screen.rs` holds the screen diff's table of
+  cases (insertion at the end, in the middle and above a footer; deletion
+  only; scrolling up and down; repeated identical lines; a selection
+  list's marker; several changes in one block; blank lines; symbol-only
+  lines) and the changed-word rule's (Chinese, Thai, combining marks, wide
+  characters and tabs, spinners); `terminal/reading.rs` every state and
+  event of on-demand reading; and `terminal/tests.rs` runs `read_new` over
+  simulated padded rows behind the `ScreenSource` trait (output on a screen
+  not yet full, a flood within the history and past it, a full history
+  shifting beneath the screen, a command line that scrolled away, a line
+  rewritten in place, a redraw, a cleared screen, the alternate screen, a
+  disturbed read, padding of any `White_Space`, identical lines), and
+  `terminal::combine`'s cases.

@@ -248,6 +248,7 @@ fn report_at(source: &mut Fake, anchors: &mut Anchors<usize>, read_at_ms: u64) -
 /// The watch of a key that moves by `unit`.
 fn watch(since: Option<TextPosition>, unit: TextUnit) -> CaretWatch {
     CaretWatch {
+        landing: false,
         since,
         pressed_at_ms: PRESSED_AT,
         unit,
@@ -849,4 +850,30 @@ fn text_cut_short_ends_at_a_whole_character() {
     );
     let (text, _, cut) = to_utf8(&units, 4, &[]);
     assert_eq!((text.as_str(), cut), ("ae\u{301}", true));
+}
+
+#[test]
+fn a_landing_watch_says_whether_the_caret_stayed_on_its_line() {
+    for (moved_to, same_line) in [(2, true), (3, true), (6, false)] {
+        // The caret at "one"'s start; a key the caret table does not know
+        // moves it within the line, to its end, or onto the next.
+        let mut source = Fake::new("one\ntwo", 0);
+        let mut anchors = store();
+        let line = report(&mut source, &mut anchors).line;
+        let watch = CaretWatch {
+            landing: true,
+            ..watch(
+                Some(TextPosition::at(line.start)),
+                CaretMotion::Other.unit(),
+            )
+        };
+        source.caret = moved_to;
+        let reply = answered(check(
+            &mut source,
+            &mut anchors,
+            &watch,
+            &mut FakeSignal::new(),
+        ));
+        assert_eq!(reply.same_line, Some(same_line), "moved to {moved_to}");
+    }
 }

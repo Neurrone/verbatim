@@ -691,6 +691,14 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
             id_child,
         } => match kind {
             WinEventKind::Destroy => (None, Category::Exempt, *hwnd),
+            // Each console update names the cells it changed; only that the
+            // window's text changed matters, so they merge into one per
+            // window while they wait.
+            WinEventKind::ConsoleUpdate => (
+                Some(Key::Msaa(*kind as u8, *hwnd, 0, 0)),
+                Category::Other,
+                *hwnd,
+            ),
             _ => (
                 Some(Key::Msaa(*kind as u8, *hwnd, *id_object, *id_child)),
                 Category::Other,
@@ -1049,6 +1057,29 @@ mod tests {
 
     fn never_hung(_: isize) -> bool {
         false
+    }
+
+    #[test]
+    fn a_windows_console_updates_merge_into_one_while_they_wait() {
+        let key = |kind, object, child| {
+            classify(&Item::Msaa {
+                kind,
+                hwnd: 7,
+                id_object: object,
+                id_child: child,
+            })
+            .0
+        };
+        // Console updates name the cells they changed; one per window waits.
+        assert_eq!(
+            key(WinEventKind::ConsoleUpdate, 3, 65),
+            key(WinEventKind::ConsoleUpdate, 9, 66)
+        );
+        // Other events keep their objects apart.
+        assert_ne!(
+            key(WinEventKind::ValueChange, 3, 0),
+            key(WinEventKind::ValueChange, 9, 0)
+        );
     }
 
     #[test]

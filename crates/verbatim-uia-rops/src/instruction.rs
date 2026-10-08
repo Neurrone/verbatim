@@ -390,6 +390,10 @@ pub enum Instruction {
         result: OperandId,
         target: OperandId,
     },
+    TextPatternGetVisibleRanges {
+        result: OperandId,
+        target: OperandId,
+    },
     TextPatternGetDocumentRange {
         result: OperandId,
         target: OperandId,
@@ -568,6 +572,7 @@ impl Instruction {
             Self::GetTextPattern { .. } => Opcode::GetTextPattern,
             Self::GetTextPattern2 { .. } => Opcode::GetTextPattern2,
             Self::TextPatternGetSelection { .. } => Opcode::TextPatternGetSelection,
+            Self::TextPatternGetVisibleRanges { .. } => Opcode::TextPatternGetVisibleRanges,
             Self::TextPatternGetDocumentRange { .. } => Opcode::TextPatternGetDocumentRange,
             Self::TextPattern2GetCaretRange { .. } => Opcode::TextPattern2GetCaretRange,
             Self::TextRangeCompare { .. } => Opcode::TextRangeCompare,
@@ -712,6 +717,10 @@ impl Instruction {
                 target: b,
             }
             | I::TextPatternGetSelection {
+                result: a,
+                target: b,
+            }
+            | I::TextPatternGetVisibleRanges {
                 result: a,
                 target: b,
             }
@@ -1687,6 +1696,13 @@ mod tests {
                     target: id(2),
                 },
                 (10014 << 10) | 5,
+            ),
+            (
+                I::TextPatternGetVisibleRanges {
+                    result: id(1),
+                    target: id(2),
+                },
+                (10014 << 10) | 6,
             ),
             (
                 I::TextPatternGetDocumentRange {

@@ -117,6 +117,9 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
     let line_break = current.and_then(|caret| caret.line_break.as_deref());
     let context = caret_before(state, node, pressed_at_ms);
     let deleted = context.and_then(|caret| deleted_text(caret.line, line_break, key.motion, grid));
+    let before = context
+        .filter(|_| key.motion.deletes_back() || key.motion == CaretMotion::Other)
+        .map(|caret| (caret.line.text.clone(), caret.line.offset));
     let compare = context.and_then(|caret| compared_text(caret.line, key.motion, grid));
     let previous_selection = context.and_then(|caret| {
         if key.select || key.motion == CaretMotion::SelectAll {
@@ -150,6 +153,7 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
         unit,
         compare,
         previous_selection,
+        landing: key.motion == CaretMotion::Other,
     };
     // The key is moving the caret, which the review cursor follows: a
     // review command from now on reads where the caret is, not where Core
@@ -161,6 +165,8 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
         node,
         key,
         deleted,
+        before,
+        later_key_at_ms: None,
     });
     effects.push(Effect::Text(TextRequest {
         query_id,
@@ -256,6 +262,66 @@ fn deleted_text(
     }
 }
 
+/// What a key that deletes backward really did to the caret's line,
+/// compared before and after it.
+#[derive(Debug, PartialEq, Eq)]
+enum Removal {
+    /// This text, which ended at the caret before the key, is gone, and the
+    /// caret is where it began (`phase6-design.md`, "What a key did to the
+    /// text", the guard by text positions).
+    Removed(String),
+    /// The line after the key ends with the whole of the line before, and
+    /// the caret is where it began: the line was joined to the one above,
+    /// its line break removed.
+    Joined,
+    /// Nothing was removed at the caret (text was added, or the line is
+    /// another).
+    Nothing,
+}
+
+/// What a key that deletes backward did, from the caret's line `before`
+/// and `after` it, each its text and the caret's byte offset in it. In a
+/// terminal (`grid`) a row's padding is not text, but the caret may stand
+/// in it, past the text: there the row reads as spaces up to the caret, so
+/// a typed space a Backspace removes is found, which padding hides.
+fn removal(before: (&str, usize), after: (&str, usize), grid: bool) -> Removal {
+    let read = |(text, caret): (&str, usize)| {
+        let mut content = text::line_content(text, grid).to_owned();
+        if grid && caret > content.len() {
+            content.push_str(&" ".repeat(caret - content.len()));
+        }
+        (content, caret)
+    };
+    let ((was, b), (now, a)) = (read(before), read(after));
+    if a > b
+        || !was.is_char_boundary(b)
+        || !now.is_char_boundary(a)
+        || b > was.len()
+        || a > now.len()
+    {
+        return if a == now.len().saturating_sub(was.len()) && now.ends_with(&was) {
+            Removal::Joined
+        } else {
+            Removal::Nothing
+        };
+    }
+    let kept_before = was.get(..a) == now.get(..a);
+    if a == b && kept_before && was.len() > now.len() {
+        // The caret stayed and text after it went (Control+K).
+        let gone = was.len() - now.len();
+        if was.is_char_boundary(a + gone) && was.get(a + gone..) == now.get(a..) {
+            return Removal::Removed(was[a..a + gone].to_owned());
+        }
+    }
+    let kept_after = was.get(b..) == now.get(a..)
+        || (grid && was.get(b..).map(str::trim_end) == now.get(a..).map(str::trim_end));
+    if kept_before && kept_after && a < b {
+        Removal::Removed(was[a..b].to_owned())
+    } else {
+        Removal::Nothing
+    }
+}
+
 /// The text at the caret before a Delete, whose change is evidence the key
 /// did something even though the caret stays where it is, from the caret's
 /// line before the key.
@@ -292,6 +358,19 @@ pub(crate) fn caret_reply(
     let TextReply::Caret(reply) = reply else {
         return Vec::new();
     };
+    // Read once a later key had been pressed, the answer may show that
+    // key's effect rather than this one's, so it is not spoken for this
+    // key: a key's effect is never answered by a later key's (the live
+    // caret checks of 2026-10-08). The caret it read is still the newest.
+    if pending
+        .later_key_at_ms
+        .is_some_and(|later| reply.read_at_ms == 0 || reply.read_at_ms >= later)
+    {
+        if state.focus_matches(pending.node) {
+            update_caret(state, pending.node, reply.caret, reply.read_at_ms);
+        }
+        return Vec::new();
+    }
     if !reply.moved {
         return Vec::new();
     }
@@ -309,15 +388,43 @@ pub(crate) fn caret_reply(
         read_at_ms,
         unit,
         selection_changes,
+        same_line,
     } = *reply;
     let segments = if pending.key.select || pending.key.motion == CaretMotion::SelectAll {
         selection_segments(&selection_changes)
     } else {
         match pending.key.motion {
-            CaretMotion::Backspace | CaretMotion::BackspaceWord => match &pending.deleted {
-                Some(deleted) if moved => deleted_segments(deleted, pending.key.motion),
-                _ => Vec::new(),
-            },
+            CaretMotion::Backspace | CaretMotion::BackspaceWord => {
+                let removed = pending.before.as_ref().map(|(text, offset)| {
+                    removal(
+                        (text, *offset as usize),
+                        (&caret.line.text, caret.line.offset as usize),
+                        grid,
+                    )
+                });
+                match (removed, &pending.deleted) {
+                    (Some(Removal::Removed(text)), _) => {
+                        deleted_segments(&text, pending.key.motion)
+                    }
+                    // A line joined to the one before it: the line break
+                    // went, as predicted.
+                    (Some(Removal::Joined) | None, Some(deleted)) if moved => {
+                        deleted_segments(deleted, pending.key.motion)
+                    }
+                    // Nothing removed (a control that inserted a character
+                    // instead, as the classic edit control does for
+                    // Control+Backspace), or nothing known.
+                    _ => Vec::new(),
+                }
+            }
+            CaretMotion::Other => {
+                let mut reported = reported_format(state, pending.node);
+                let segments =
+                    other_key_segments(pending.before.as_ref(), &caret.line, same_line, grid)
+                        .unwrap_or_else(|| line_segments(&caret.line, grid, &mut reported));
+                state.reported_format = Some((pending.node, reported));
+                segments
+            }
             motion => {
                 let mut reported = reported_format(state, pending.node);
                 let segments =
@@ -342,6 +449,85 @@ pub(crate) fn caret_reply(
         effects.push(speak(trace_id, unselected));
     }
     effects
+}
+
+/// What a key outside the caret table did (`phase6-design.md`, "What a
+/// key did to the text"), from the caret's line `before` it (its text and
+/// the caret's byte offset) and `after` it, and whether the caret is on the
+/// line it was on (`same_line`, from the outpost): text removed at the
+/// caret is spoken; a caret on another line speaks that line (`None`
+/// here, which the caller reads with its formatting); a caret that moved
+/// over an unchanged line speaks by where it landed ([`landing_segments`]);
+/// anything else (text added, which typing echo or terminal output speak)
+/// says nothing.
+fn other_key_segments(
+    before: Option<&(String, u32)>,
+    after: &TextChunk,
+    same_line: Option<bool>,
+    grid: bool,
+) -> Option<Vec<UtteranceSegment>> {
+    let Some((text, offset)) = before else {
+        return (same_line != Some(false)).then(Vec::new);
+    };
+    let removed = removal(
+        (text, *offset as usize),
+        (&after.text, after.offset as usize),
+        grid,
+    );
+    if let Removal::Removed(removed) = removed {
+        let language = after.language_at(0);
+        let single = text::graphemes_count(&removed) == 1;
+        return Some(if single {
+            text::character_segments(Some(&removed), language)
+        } else {
+            text::text_segments(removed.trim(), language)
+        });
+    }
+    if same_line == Some(false) {
+        return None;
+    }
+    if text::line_content(text, grid) == text::line_content(&after.text, grid) {
+        return Some(landing_segments(*offset as usize, after, grid));
+    }
+    Some(Vec::new())
+}
+
+/// The landing rule (`phase6-design.md`, "What a key did to the text"): a
+/// caret that moved from `from` (a byte offset) on a line whose text is
+/// unchanged, now at `line`'s offset, speaks by where it landed. By exactly
+/// one character, or at the start or end of the line: the character at the
+/// caret. At the start of a word, or just after its end: the whole word.
+/// Inside a word: the word and then the character at the caret.
+fn landing_segments(from: usize, line: &TextChunk, grid: bool) -> Vec<UtteranceSegment> {
+    let content = text::line_content(&line.text, grid);
+    let at = text::boundary(content, line.offset as usize);
+    let from = text::boundary(content, from);
+    let language = line.language_at(at);
+    let character = || {
+        text::character_segments(
+            text::grapheme_at(content, at).map(|range| &content[range]),
+            language,
+        )
+    };
+    let one_character = text::grapheme_at(content, from.min(at))
+        .is_some_and(|range| range.start == from.min(at) && range.end == from.max(at));
+    if at == 0 || at >= content.len() || one_character {
+        return character();
+    }
+    let words = text::words(content, language);
+    if let Some(word) = words
+        .iter()
+        .find(|word| word.start == at)
+        .or_else(|| words.iter().find(|word| word.end == at))
+    {
+        return text::word_segments(&content[word.clone()], language);
+    }
+    if let Some(word) = words.iter().find(|word| word.start < at && at < word.end) {
+        let mut segments = text::word_segments(&content[word.clone()], language);
+        segments.extend(character());
+        return segments;
+    }
+    character()
 }
 
 /// The speech for text a Backspace deleted. A carriage return and line feed
@@ -908,6 +1094,36 @@ fn focus_speech(
     })]
 }
 
+/// Notes a key pressed at `at_ms` (any key that cut speech off, as nearly
+/// every key does): a caret key still watched was pressed before it, so
+/// an answer read from then on is not that key's alone.
+pub(crate) fn later_key(state: &mut SrState, at_ms: u64) {
+    if let Some(pending) = state.pending_caret.as_mut()
+        && pending.later_key_at_ms.is_none()
+        && at_ms != 0
+    {
+        pending.later_key_at_ms = Some(at_ms);
+    }
+}
+
+/// Handles a key that ends or clears the command line being typed (Escape,
+/// Control+C, Control+D, Control+Break): in a terminal, the typing held,
+/// never shown, is forgotten, as NVDA forgets its queued characters on
+/// Enter, Tab, Control+C, Control+D, and Control+Break
+/// (`docs/parity.md`, "Text, documents, terminals"); Escape clears a line
+/// too.
+pub(crate) fn clearing_key(state: &mut SrState) {
+    let terminal = state
+        .focus
+        .as_ref()
+        .is_some_and(|focus| focus.alive && focus.snapshot.role == Role::Terminal);
+    if terminal {
+        state.held_typing.clear();
+        state.typed_word.clear();
+        state.terminal.echoed_typing.clear();
+    }
+}
+
 /// Handles text typed into the focused application: echoes characters and
 /// words by the settings, a protected field's characters as the protected
 /// character only, and holds what is typed into a terminal until the
@@ -915,9 +1131,9 @@ fn focus_speech(
 /// spoken.
 pub(crate) fn character_typed(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<Effect> {
     let mut effects = crate::say_all::stop(state);
-    // The typing supersedes a caret key still watched: the caret the typing
-    // moves is not that key's answer.
-    state.pending_caret = None;
+    // A caret key still watched is not answered by the caret the typing
+    // moves: the typing's key press has marked it (`later_key`), so its
+    // answer only keeps the caret current.
     let Some(focus) = state.focus.as_ref().filter(|focus| focus.alive) else {
         return effects;
     };
@@ -925,8 +1141,10 @@ pub(crate) fn character_typed(state: &mut SrState, trace_id: TraceId, typed: &st
     if terminal && state.settings.speak_terminal_passwords {
         crate::terminal::typed(state, typed);
     } else if terminal {
-        if typed.chars().any(|c| c == '\r' || c == '\n') {
-            // Enter: whatever was held was never shown, a password perhaps.
+        if typed.chars().any(|c| matches!(c, '\r' | '\n' | '\t')) {
+            // Enter or Tab: whatever was held was never shown, a password
+            // perhaps (Escape and the Control keys that clear a line come
+            // as [`clearing_key`]).
             state.held_typing.clear();
             state.typed_word.clear();
         } else if state.held_typing.len() + typed.len() <= MAX_HELD_TYPING {
@@ -1002,4 +1220,133 @@ pub(crate) fn echo(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<E
         }
     }
     effects
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Removal, landing_segments, other_key_segments, removal};
+    use verbatim_model::{SegmentContent, TextAnchor, TextChunk, TextUnit, UtteranceSegment};
+
+    /// The line `text` with the caret at byte `offset`.
+    fn line(text: &str, offset: u32) -> TextChunk {
+        TextChunk {
+            unit: TextUnit::Line,
+            text: text.to_owned(),
+            start: TextAnchor(1),
+            offset,
+            languages: Vec::new(),
+            first: false,
+            last: false,
+            truncated: false,
+            formats: Vec::new(),
+        }
+    }
+
+    /// What the segments say: characters and text as they are, "blank" for
+    /// the blank message.
+    fn said(segments: &[UtteranceSegment]) -> Vec<String> {
+        segments
+            .iter()
+            .map(|segment| match &segment.content {
+                SegmentContent::Character(character) | SegmentContent::Text(character) => {
+                    character.clone()
+                }
+                SegmentContent::Message(verbatim_model::Message::Blank) => "blank".to_owned(),
+                other => panic!("unexpected segment {other:?}"),
+            })
+            .collect()
+    }
+
+    fn removed(text: &str) -> Removal {
+        Removal::Removed(text.to_owned())
+    }
+
+    #[test]
+    fn what_a_backspace_removed_comes_from_the_line_before_and_after() {
+        // A character, and with Control a word.
+        assert_eq!(removal(("abc\n", 3), ("ab\n", 2), false), removed("c"));
+        assert_eq!(
+            removal(("hello world\r\n", 11), ("hello \r\n", 6), false),
+            removed("world")
+        );
+        // The classic edit control's Control+Backspace inserts a DEL
+        // character: nothing was removed.
+        assert_eq!(
+            removal(("hello\r\n", 5), ("hello\u{7f}\r\n", 6), false),
+            Removal::Nothing
+        );
+        // A Hindi vowel sign removed on its own, as edit controls do.
+        assert_eq!(removal(("कि", 6), ("क", 3), false), removed("ि"));
+        // Backspace at a line's start joins it to the line above.
+        assert_eq!(
+            removal(("def\r\n", 0), ("abcdef\r\n", 3), false),
+            Removal::Joined
+        );
+        // Text changed elsewhere is not a removal at the caret.
+        assert_eq!(removal(("abc", 3), ("xb", 2), false), Removal::Nothing);
+    }
+
+    #[test]
+    fn a_terminal_space_hidden_by_padding_is_found() {
+        // A typed space after "echo": the row reads "ready> echo" and padding,
+        // with the caret one past the text; Backspace leaves the caret at
+        // its end.
+        assert_eq!(
+            removal(("ready> echo     ", 12), ("ready> echo     ", 11), true),
+            removed(" ")
+        );
+        assert_eq!(
+            removal(("ready> echo     ", 11), ("ready> ech      ", 10), true),
+            removed("o")
+        );
+    }
+
+    #[test]
+    fn a_key_outside_the_table_speaks_by_where_the_caret_landed() {
+        let text = "ready> echo hello world";
+        let landed = |from: usize, at: u32| said(&landing_segments(from, &line(text, at), true));
+        // To the start or the end of the line: the character there.
+        assert_eq!(landed(12, 0), ["r"]);
+        assert_eq!(landed(12, 23), ["blank"]);
+        // By exactly one character: the character at the caret.
+        assert_eq!(landed(12, 13), ["e"]);
+        // To a word's start, or just after its end: the word.
+        assert_eq!(landed(23, 12), ["hello"]);
+        assert_eq!(landed(7, 17), ["hello"]);
+        // Inside a word: the word, then the character at the caret.
+        assert_eq!(landed(7, 14), ["hello", "l"]);
+    }
+
+    #[test]
+    fn a_key_outside_the_table_speaks_text_it_removed_and_a_new_line() {
+        let before = ("ready> echo hello".to_owned(), 17);
+        // Control+W: the word before the caret.
+        assert_eq!(
+            other_key_segments(Some(&before), &line("ready> echo ", 12), Some(true), true)
+                .map(|segments| said(&segments)),
+            Some(vec!["hello".to_owned()])
+        );
+        // Control+K from "echo": what followed the caret.
+        let at_echo = ("ready> echo hello".to_owned(), 7);
+        assert_eq!(
+            other_key_segments(Some(&at_echo), &line("ready> ", 7), Some(true), true)
+                .map(|segments| said(&segments)),
+            Some(vec!["echo hello".to_owned()])
+        );
+        // Another line: read by the caller, with its formatting.
+        assert_eq!(
+            other_key_segments(Some(&before), &line("other", 0), Some(false), true),
+            None
+        );
+        // Text added (a paste): typing echo or output speak it.
+        assert_eq!(
+            other_key_segments(
+                Some(&before),
+                &line("ready> echo hello!", 18),
+                Some(true),
+                true
+            ),
+            Some(Vec::new())
+        );
+    }
 }

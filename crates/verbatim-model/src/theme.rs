@@ -306,9 +306,11 @@ impl Indication {
             SegmentContent::Level(_) => Self::Level,
             SegmentContent::SpelledCapital(_) => Self::Capital,
             SegmentContent::Message(Message::Blank) => Self::Blank,
-            SegmentContent::Phrase(Phrase::SkippedLines(_) | Phrase::SkippedUncountedLines) => {
-                Self::SkippedLines
-            }
+            SegmentContent::Phrase(
+                Phrase::SkippedLines(_)
+                | Phrase::SkippedUncountedLines
+                | Phrase::SkippedMoreThanLines(_),
+            ) => Self::SkippedLines,
             SegmentContent::Format(format) => match format {
                 TextFormat::SpellingError | TextFormat::NotSpellingError => Self::SpellingError,
                 TextFormat::GrammarError | TextFormat::NotGrammarError => Self::GrammarError,

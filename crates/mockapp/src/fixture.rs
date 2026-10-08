@@ -117,6 +117,8 @@ struct RawNode {
     #[serde(default)]
     window_class: Option<String>,
     #[serde(default)]
+    class_name: Option<String>,
+    #[serde(default)]
     columns: Vec<(String, i32)>,
     #[serde(default)]
     state_images: bool,
@@ -223,6 +225,9 @@ pub(crate) struct FixtureNode {
     /// The window class a real control is registered under, a superclass
     /// of the comctl32 one, as Windows Forms names its controls.
     pub(crate) window_class: Option<String>,
+    /// The UIA class name the node reports (`TermControl` for a terminal
+    /// as Windows Terminal's control is known).
+    pub(crate) class_name: Option<String>,
     /// A real list view's columns, each its header and width in pixels.
     pub(crate) columns: Vec<(String, i32)>,
     /// Whether a real tree view gives its items state images, as
@@ -356,6 +361,7 @@ fn convert(
         backward_moves_positive: raw.backward_moves_positive,
         native: raw.native,
         window_class: raw.window_class,
+        class_name: raw.class_name,
         columns: raw.columns,
         state_images: raw.state_images,
         edit_version_6: raw.edit_version_6,

@@ -233,6 +233,10 @@ pub enum Phrase {
     /// scrollback overflowed past what the reader could track): "skipped
     /// lines". Marked like [`Phrase::SkippedLines`].
     SkippedUncountedLines,
+    /// Terminal output was skipped past what the terminal's history keeps,
+    /// so how many lines is known only to be more than this many: "skipped
+    /// more than 9001 lines". Marked like [`Phrase::SkippedLines`].
+    SkippedMoreThanLines(u32),
     /// The number of items a tree view item holds, said once it has been
     /// expanded: NVDA's "1 item" and "52 items".
     Items(u32),
@@ -300,6 +304,9 @@ pub enum Message {
     /// New terminal output is no longer spoken, after Verbatim+5 — "report
     /// new output off".
     ReportNewOutputOff,
+    /// A terminal line longer than all the output Core keeps waiting was
+    /// cut, and the rest of it is not spoken — "line cut".
+    TerminalLineCut,
 }
 
 /// One segment of an utterance, with an optional language override.

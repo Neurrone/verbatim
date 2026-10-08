@@ -339,7 +339,7 @@ pub struct CaretAnswer {
 pub type CaretReadFn = fn(&CaretQuery<'_>) -> Result<CaretAnswer, Error>;
 
 /// The caret and its line alone, read as part of another program (a
-/// terminal's tail, [`crate::TailQuery::caret`]) or, classically, after it:
+/// terminal's screen, [`crate::ScreenQuery::caret`]) or, classically, after it:
 /// a [`CaretQuery`] with nothing to compare and no unit or formatting.
 #[derive(Clone, Copy)]
 pub struct CaretLineQuery<'a> {
