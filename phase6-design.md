@@ -2189,3 +2189,12 @@ Outcome of the work package (2026-10-08), each recorded in `docs/parity.md` and 
 MSAA selections (Dickson, 2026-10-08): Verbatim keeps speaking MSAA selection changes and a focused list's selected item ("Fruits list Apple" where NVDA says "Fruits list"), the deliberate difference recorded in docs/parity.md since M3.
 
 Start-up speech and budgets (Dickson, 2026-10-08): Verbatim drops its spoken start message and keeps the start sound, as NVDA speaks none, so the first speech is always the foreground's announcement (whether the message was cut off depended on how fast an outpost started). Enforcing response-time budgets is deferred; the harness keeps recording the latency distribution per kind of step.
+
+Decisions of 2026-10-08 (afternoon), Dickson:
+
+- Caret keys become event-driven: the outpost never blocks waiting for a caret move. A key that does not move the caret is silent (a deliberate difference from NVDA, which reads the unit after its 100 ms wait), so no deadline and no "already at destination" logic are needed. Every blocking wait in the outposts is audited and removed.
+- Performance tests check exact counts (calls, instructions) everywhere. Response-time budgets are enforced by default in local runs, and an explicit setting turns enforcement off on GitHub's runners, which record the numbers instead. No self-hosted runner.
+- Every mockapp test that does not need the foreground runs on its own isolated desktop; the rest run only when nothing else uses the desktop.
+- Terminal scenarios add tab switching, closing a tab, two Windows Terminal windows and two console host windows.
+- Parity changes are checked against a live NVDA capture of the same control before merging; every claim about NVDA cites NVDA's source; changes near a recorded deliberate difference are reviewed for interactions with it. A behaviour-based MSAA audit follows: live NVDA captures against a matrix of standard controls, compared exactly with Verbatim.
+- The latency outlier in "mixer and device" (about one utterance in eight spends 40 to 80 ms there) is investigated: the mixer stops the audio device when speech is cut off, and restarting it is the likely cost.
