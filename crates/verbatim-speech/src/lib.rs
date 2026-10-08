@@ -31,6 +31,9 @@ pub use registry::{SynthFactory, SynthRegistry};
 pub use settings::{SettingDescriptor, SettingId, SettingValue, SynthChoice, SynthId};
 pub use theme::{ActiveTheme, Presenter, ThemeHandle, ThemePresenter};
 
+/// Takes the outcome of [`SpeechSettingsHost::switch_synthesizer`].
+pub type SwitchDone = Box<dyn FnOnce(Result<(), SynthError>) + Send>;
+
 /// The live handle the settings GUI uses to inspect and adjust speech.
 ///
 /// Set calls apply immediately to the running synthesizer so slider drags
@@ -44,13 +47,15 @@ pub trait SpeechSettingsHost: Send + Sync {
     /// The active synthesizer.
     fn active_synthesizer(&self) -> SynthChoice;
 
-    /// Switches the active synthesizer, applying its persisted settings.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SynthError::Unavailable`] when the synthesizer cannot be
-    /// initialized; the previous synthesizer stays active.
-    fn set_active_synthesizer(&self, id: &SynthId) -> Result<(), SynthError>;
+    /// Starts switching the active synthesizer to `id`, applying its
+    /// persisted settings, and returns at once: nothing waits for the new
+    /// synthesizer to start. `done` is called with the outcome, on another
+    /// thread, once the switch has finished: `Ok` once the new synthesizer
+    /// is active and this host describes it, or [`SynthError::Unavailable`]
+    /// when it cannot be started, including a synthesizer host that does
+    /// not answer within its time limit, and then the previous synthesizer
+    /// stays active.
+    fn switch_synthesizer(&self, id: &SynthId, done: SwitchDone);
 
     /// Setting descriptors for the active synthesizer, in display order.
     fn setting_descriptors(&self) -> Vec<SettingDescriptor>;

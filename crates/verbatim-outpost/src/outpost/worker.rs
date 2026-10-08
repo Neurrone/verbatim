@@ -29,7 +29,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
@@ -124,12 +124,6 @@ struct WatchState {
     /// When the worker started its entry, and the window the entry concerns
     /// (0 for none), for abandoning it once the user has moved on.
     started: Option<(Instant, isize)>,
-    /// How many messages that carry node ids have been published: the
-    /// position of the last one.
-    position: u64,
-    /// The position of the last message that may have reported each node,
-    /// by node number.
-    reported: HashMap<u64, u64>,
     /// Whether the outpost is shutting down: the watchdog abandons no
     /// worker from then on, since the shutdown waits for the call in
     /// progress to finish, and it ends.
@@ -145,32 +139,6 @@ impl WatchState {
         self.deadline = None;
         self.started = None;
         self.running.take()
-    }
-
-    /// Records a published message: one that carries node ids takes the
-    /// next position, and each of `reported` is recorded at the current one.
-    fn record(&mut self, carries_nodes: bool, reported: impl IntoIterator<Item = u64>) {
-        if carries_nodes {
-            self.position += 1;
-        }
-        for number in reported {
-            self.reported.insert(number, self.position);
-        }
-    }
-
-    /// Takes the nodes to release for a held list acknowledging position
-    /// `acknowledged`: those not held that were reported at or before it.
-    /// A node reported later, or never reported, is kept, since Core may not
-    /// have seen it yet.
-    fn take_releasable(&mut self, held: &HashSet<u64>, acknowledged: u64) -> HashSet<u64> {
-        let released: HashSet<u64> = self
-            .reported
-            .iter()
-            .filter(|&(number, &position)| position <= acknowledged && !held.contains(number))
-            .map(|(&number, _)| number)
-            .collect();
-        self.reported.retain(|number, _| !released.contains(number));
-        released
     }
 }
 
@@ -211,36 +179,37 @@ impl Watch {
         self.changed.notify_one();
     }
 
-    /// Runs `send` under the watch lock if `generation` is still the worker in
-    /// charge, ending its entry first, and says whether it ran. The watchdog
+    /// Claims the right to publish an entry's result for `generation`, if
+    /// it is still the worker in charge, ending its entry and running
+    /// `claim` under the watch lock; `None` if it is not. The watchdog
     /// abandons under the same lock, so an entry is either published or
-    /// abandoned, never both.
-    fn publish(&self, generation: u64, send: impl FnOnce(&mut WatchState)) -> bool {
+    /// abandoned, never both. What is claimed is sent after the lock is
+    /// released, and the entry has no deadline left to pass meanwhile.
+    fn publish<T>(&self, generation: u64, claim: impl FnOnce() -> T) -> Option<T> {
         let mut state = self.lock();
         if state.generation != generation {
-            return false;
+            return None;
         }
         state.deadline = None;
         state.started = None;
         state.running = None;
-        send(&mut state);
-        true
+        Some(claim())
     }
 
-    /// Runs `send`, the answer to query `request_id` given outside that
-    /// query's own entry (a caret key's watch), under the watch lock if
-    /// `generation` is still the worker in charge, without ending the entry
-    /// in hand, and says whether it ran. The query is no longer the one an
-    /// abandonment answers, if it was.
-    fn publish_aside(
+    /// Claims the right to publish the answer to query `request_id` given
+    /// outside that query's own entry (a caret key's watch), as
+    /// [`publish`](Self::publish) does, but without ending the entry in
+    /// hand. The query is no longer the one an abandonment answers, if it
+    /// was, so it gets this answer and no other.
+    fn publish_aside<T>(
         &self,
         generation: u64,
         request_id: u64,
-        send: impl FnOnce(&mut WatchState),
-    ) -> bool {
+        claim: impl FnOnce() -> T,
+    ) -> Option<T> {
         let mut state = self.lock();
         if state.generation != generation {
-            return false;
+            return None;
         }
         if state
             .running
@@ -248,8 +217,7 @@ impl Watch {
         {
             state.running = None;
         }
-        send(&mut state);
-        true
+        Some(claim())
     }
 
     /// Makes `query` the one an abandonment of `generation` answers, while
@@ -342,25 +310,23 @@ impl Tracking {
 }
 
 /// Publishes `message`, an entry's one result, if `generation` is still the
-/// worker in charge. The check, the end of the entry's deadline, and the
-/// send happen under the watch lock, so an abandoned worker can never
-/// publish after its abandonment, and a published entry can no longer be
-/// abandoned: a query never gets a second reply.
+/// worker in charge. The check and the end of the entry's deadline happen
+/// under the watch lock, so an abandoned worker can never publish after its
+/// abandonment, and a published entry can no longer be abandoned: a query
+/// never gets a second reply. The message is queued after the lock is
+/// released, and queuing never waits (`outbound`).
 ///
-/// Under the same lock, a message that carries node ids takes the next
-/// position, and every node issued or looked up since the last publish is
-/// recorded as reported at the current position. That may include nodes the
-/// message does not carry, which are then only kept a little longer.
+/// Every node issued or looked up since the last publish is taken under the
+/// same lock, while no other worker can be touching nodes, and recorded as
+/// reported at the position the message takes in the queue. That may
+/// include nodes the message does not carry, which are then only kept a
+/// little longer.
 fn publish(context: &Context, generation: u64, message: OutpostToSupervisor) -> bool {
-    context.watch.publish(generation, |state| {
-        let touched = context
-            .uia_registry
-            .take_touched()
-            .into_iter()
-            .chain(context.msaa_registry.take_touched());
-        state.record(message.carries_nodes(), touched.map(NodeId::number));
-        context.outbound.send(message);
-    })
+    let Some(touched) = context.watch.publish(generation, || take_touched(context)) else {
+        return false;
+    };
+    context.outbound.publish(message, touched);
+    true
 }
 
 /// Publishes `message`, the answer to query `request_id` given outside
@@ -373,17 +339,25 @@ fn publish_aside(
     request_id: u64,
     message: OutpostToSupervisor,
 ) -> bool {
-    context
+    let Some(touched) = context
         .watch
-        .publish_aside(generation, request_id, |state| {
-            let touched = context
-                .uia_registry
-                .take_touched()
-                .into_iter()
-                .chain(context.msaa_registry.take_touched());
-            state.record(message.carries_nodes(), touched.map(NodeId::number));
-            context.outbound.send(message);
-        })
+        .publish_aside(generation, request_id, || take_touched(context))
+    else {
+        return false;
+    };
+    context.outbound.publish(message, touched);
+    true
+}
+
+/// The numbers of the nodes issued or looked up since the last take.
+fn take_touched(context: &Context) -> Vec<u64> {
+    context
+        .uia_registry
+        .take_touched()
+        .into_iter()
+        .chain(context.msaa_registry.take_touched())
+        .map(NodeId::number)
+        .collect()
 }
 
 /// The cross-process calls this thread has made through either backend
@@ -569,6 +543,10 @@ fn watchdog(context: &Arc<Context>) {
         let running = state.abandon();
         let abandoned = context.watch.abandoned.fetch_add(1, Ordering::Relaxed) + 1;
         let generation = state.generation;
+        // Nothing is sent while the lock is held. The abandoned worker can
+        // no longer publish, and its replacement is not started yet, so the
+        // answer still comes before anything the replacement says.
+        drop(state);
         tracing::warn!(abandoned, reason, "the worker is abandoned and replaced");
         if let Some((request_id, trace_id)) = running {
             context.outbound.send(OutpostToSupervisor::Reply {
@@ -579,6 +557,7 @@ fn watchdog(context: &Arc<Context>) {
             });
         }
         spawn_worker(Arc::clone(context), generation);
+        state = context.watch.lock();
     }
 }
 
@@ -1223,31 +1202,38 @@ impl Worker<'_> {
     /// reported, is kept, since Core may not have seen it yet.
     fn release(&self, held: &[u64], acknowledged: u64) {
         let held: HashSet<u64> = held.iter().copied().collect();
-        // The nodes leave both registries under the watch lock, so a worker
-        // that replaces this one, should it be abandoned while the objects
-        // are dropped, can never report a node that is about to vanish.
+        // Only the worker in charge releases, and the nodes leave both
+        // registries under the watch lock and the queue's, so a worker that
+        // replaces this one, should it be abandoned while the objects are
+        // dropped, can never report a node that is about to vanish, and no
+        // message queued meanwhile can record one.
         let (objects, released) = {
-            let mut state = self.context.watch.lock();
-            let position = state.position;
-            let released = state.take_releasable(&held, acknowledged);
+            let state = self.context.watch.lock();
+            if state.generation != self.generation {
+                return;
+            }
+            let (position, released) =
+                self.context
+                    .outbound
+                    .release(&held, acknowledged, |released| {
+                        let keep = |id: NodeId| !released.contains(&id.number());
+                        (
+                            self.context.uia_registry.retain(keep),
+                            self.context.msaa_registry.retain(keep),
+                        )
+                    });
+            drop(state);
             tracing::debug!(
                 ?held,
                 acknowledged,
                 position,
-                ?released,
+                released = ?released.as_ref().map(|(released, _)| released),
                 "releasing the nodes Core no longer holds"
             );
-            if released.is_empty() {
+            let Some((released, objects)) = released else {
                 return;
-            }
-            let keep = |id: NodeId| !released.contains(&id.number());
-            (
-                (
-                    self.context.uia_registry.retain(keep),
-                    self.context.msaa_registry.retain(keep),
-                ),
-                released,
-            )
+            };
+            (objects, released)
         };
         text_reads::forget(self.context, released);
         // Outside the lock: releasing an object can call into the
@@ -2897,7 +2883,7 @@ mod tests {
             replies.push((request_id, "abandoned"));
         }
         // The old worker's call returns and it tries to publish its answer.
-        let published = watch.publish(0, |_| replies.push((7, "done")));
+        let published = watch.publish(0, || replies.push((7, "done"))).is_some();
 
         assert!(!published, "an abandoned worker publishes nothing");
         assert_eq!(replies, [(7, "abandoned")]);
@@ -2909,7 +2895,7 @@ mod tests {
         let mut replies = Vec::new();
         watch.start(STEP_DEADLINE, Some((7, TraceId::mint())), 0);
 
-        assert!(watch.publish(0, |_| replies.push((7, "done"))));
+        assert!(watch.publish(0, || replies.push((7, "done"))).is_some());
         // A watchdog that wakes just after finds no query to answer.
         if let Some((request_id, _)) = watch.lock().abandon() {
             replies.push((request_id, "abandoned"));
@@ -2974,27 +2960,6 @@ mod tests {
             ),
             deadline,
             "a check never falls after the deadline"
-        );
-    }
-
-    #[test]
-    fn a_held_list_releases_only_nodes_core_has_seen_and_does_not_hold() {
-        let mut state = WatchState::default();
-        state.record(true, [1, 2]);
-        state.record(true, [3]);
-        // A message without node ids takes no position.
-        state.record(false, [4]);
-
-        let held = HashSet::from([2]);
-        assert_eq!(state.take_releasable(&held, 1), HashSet::from([1]));
-        assert_eq!(
-            state.take_releasable(&HashSet::new(), 2),
-            HashSet::from([2, 3, 4])
-        );
-        state.record(true, [5]);
-        assert!(
-            state.take_releasable(&HashSet::new(), 2).is_empty(),
-            "a node reported after the acknowledged position is kept"
         );
     }
 }

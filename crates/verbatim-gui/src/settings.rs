@@ -182,6 +182,28 @@ pub(crate) fn synthesizer_picker(host: &dyn SpeechSettingsHost) -> ffi::Synthesi
             .into_iter()
             .map(|synthesizer| synthesizer.display_name)
             .collect(),
+        switching: messages::select_synth_switching(),
+    }
+}
+
+/// What the dialog is told once the switch to the synthesizer named `name`
+/// has ended with `outcome`: a failure is shown in NVDA's words
+/// (`gui/settingsDialogs.py`, `_synthWarningDialog`).
+pub(crate) fn switch_outcome(
+    name: &str,
+    outcome: &Result<(), verbatim_speech::SynthError>,
+) -> ffi::SynthesizerSwitch {
+    match outcome {
+        Ok(()) => ffi::SynthesizerSwitch {
+            switched: true,
+            error: String::new(),
+            error_title: String::new(),
+        },
+        Err(_) => ffi::SynthesizerSwitch {
+            switched: false,
+            error: messages::synth_error(name),
+            error_title: messages::synth_error_title(),
+        },
     }
 }
 
@@ -241,9 +263,9 @@ mod tests {
                 .find(|synthesizer| synthesizer.id == active)
                 .unwrap()
         }
-        fn set_active_synthesizer(&self, id: &SynthId) -> Result<(), SynthError> {
+        fn switch_synthesizer(&self, id: &SynthId, done: verbatim_speech::SwitchDone) {
             *self.active.lock().unwrap() = id.clone();
-            Ok(())
+            done(Ok(()));
         }
         fn setting_descriptors(&self) -> Vec<SettingDescriptor> {
             vec![
@@ -375,6 +397,25 @@ mod tests {
         let picker = synthesizer_picker(&Host::new());
         assert_eq!(picker.names, ["Windows OneCore", "eSpeak NG"]);
         assert_eq!(picker.active, 1);
+    }
+
+    #[test]
+    fn a_failed_switch_is_reported_in_nvdas_words() {
+        let failed = switch_outcome(
+            "Windows OneCore voices",
+            &Err(SynthError::Unavailable("no answer".to_owned())),
+        );
+        assert!(!failed.switched);
+        assert_eq!(
+            (failed.error.as_str(), failed.error_title.as_str()),
+            (
+                "Could not load the Windows OneCore voices synthesizer.",
+                "Synthesizer Error"
+            )
+        );
+        let switched = switch_outcome("eSpeak NG", &Ok(()));
+        assert!(switched.switched);
+        assert_eq!(switched.error, "");
     }
 
     #[test]

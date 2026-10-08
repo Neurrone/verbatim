@@ -89,6 +89,12 @@ terminal-last-lines = Last lines to s&peak:
 terminal-speak-passwords = Speak passwords typed in &terminals
 select-synth-title = Select Synthesizer
 select-synth-label = &Synthesizer:
+# Shown in the Select Synthesizer dialog while the chosen synthesizer starts.
+select-synth-switching = Switching synthesizer
+# NVDA's wording, when the chosen synthesizer could not start, and the
+# title of the message box that says so.
+synth-error = Could not load the { $name } synthesizer.
+synth-error-title = Synthesizer Error
 
 ## The system tray and taskbar list dialogs (the systrayList replica).
 

@@ -4,12 +4,13 @@
 //! its decisions.
 
 use std::io;
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 use std::path::Path;
 
-use windows::Win32::Foundation::STILL_ACTIVE;
+use windows::Win32::Foundation::{ERROR_INVALID_PARAMETER, HANDLE, STILL_ACTIVE, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{
     GetExitCodeProcess, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-    QueryFullProcessImageNameW,
+    PROCESS_SYNCHRONIZE, QueryFullProcessImageNameW, WaitForSingleObject,
 };
 use windows::core::PWSTR;
 
@@ -93,23 +94,88 @@ pub(super) fn launch(
     ))
 }
 
-/// Whether `pid` names a process that is still running. Pid reuse is a
-/// known, accepted imprecision, the same trade every Win32 API taking a bare
-/// pid makes.
-pub(super) fn process_is_alive(pid: Pid) -> bool {
-    // SAFETY: OpenProcess with a query-only access right fails safely on an
-    // invalid or inaccessible pid; the handle is closed before returning.
-    let Ok(handle) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid.0) })
-    else {
-        return false;
-    };
-    let mut exit_code = 0u32;
-    // SAFETY: `handle` is open with query access; `exit_code` is a local.
-    let alive = unsafe { GetExitCodeProcess(handle, &raw mut exit_code) }.is_ok()
-        && exit_code == STILL_ACTIVE.0.cast_unsigned();
-    // SAFETY: the handle opened above, closed once.
-    let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };
-    alive
+/// A target application's process, held open for as long as the supervisor
+/// has an outpost for it or remembers its crashes. Windows never gives a
+/// process's id to another process while a handle to it is open, so the
+/// pid the supervisor knows the target by, and passes to its outpost, names
+/// this process and no other for as long as this is held.
+#[derive(Debug)]
+pub(super) struct Target {
+    process: OwnedHandle,
+}
+
+/// Why a target was not opened.
+#[derive(Debug)]
+pub(super) enum NotHeld {
+    /// No process has that id, or the one that has it has exited.
+    Exited,
+    /// The process could not be opened, so it cannot be held, and an
+    /// outpost for it could not tell its exit from another process's start.
+    Denied(windows::core::Error),
+}
+
+impl std::fmt::Display for NotHeld {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NotHeld::Exited => f.write_str("the process has exited"),
+            NotHeld::Denied(error) => write!(f, "the process cannot be opened: {error}"),
+        }
+    }
+}
+
+impl Target {
+    /// Opens the process `pid` names now, if it is running. It is opened to
+    /// be waited on, or, when that is refused, for limited queries only;
+    /// either right is enough to hold it and to tell whether it has exited.
+    pub(super) fn open(pid: Pid) -> Result<Self, NotHeld> {
+        let mut opened = Err(NotHeld::Exited);
+        for rights in [
+            PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+            PROCESS_QUERY_LIMITED_INFORMATION,
+        ] {
+            // SAFETY: OpenProcess with these rights fails safely on an
+            // invalid or inaccessible pid; a handle it returns is owned
+            // below.
+            match unsafe { OpenProcess(rights, false, pid.0) } {
+                Ok(handle) => {
+                    opened = Ok(handle);
+                    break;
+                }
+                Err(error) if error.code() == ERROR_INVALID_PARAMETER.to_hresult() => {
+                    return Err(NotHeld::Exited);
+                }
+                Err(error) => opened = Err(NotHeld::Denied(error)),
+            }
+        }
+        let handle = opened?;
+        // SAFETY: the handle was just returned by OpenProcess, is valid,
+        // and is owned by nothing else.
+        let process = unsafe { OwnedHandle::from_raw_handle(handle.0 as RawHandle) };
+        let target = Self { process };
+        if target.has_exited() {
+            return Err(NotHeld::Exited);
+        }
+        Ok(target)
+    }
+
+    /// Whether the process has exited.
+    pub(super) fn has_exited(&self) -> bool {
+        let handle = HANDLE(self.process.as_raw_handle());
+        let mut exit_code = 0u32;
+        // SAFETY: the handle is open with at least limited query access;
+        // `exit_code` is a local.
+        let running = unsafe { GetExitCodeProcess(handle, &raw mut exit_code) }.is_ok()
+            && exit_code == STILL_ACTIVE.0.cast_unsigned();
+        if !running {
+            return true;
+        }
+        // A process can end with STILL_ACTIVE as its exit code; a handle that
+        // can be waited on tells for certain.
+        // SAFETY: a zero-timeout wait on an open handle; one opened without
+        // SYNCHRONIZE fails the wait, and the exit code above stands.
+        let waited = unsafe { WaitForSingleObject(handle, 0) };
+        waited == WAIT_OBJECT_0
+    }
 }
 
 /// Whether any visible top-level window of `pid` is reported hung by the

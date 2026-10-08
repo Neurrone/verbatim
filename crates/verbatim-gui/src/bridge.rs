@@ -130,6 +130,13 @@ impl GuiThread {
         unsafe { ffi::focus_dialog(dialog) }
     }
 
+    /// A synthesizer switch the Select Synthesizer dialog started has
+    /// finished.
+    pub(crate) fn synthesizer_switched(self, outcome: &ffi::SynthesizerSwitch) {
+        // SAFETY: `self` shows this is the GUI thread.
+        unsafe { ffi::synthesizer_switched(outcome) }
+    }
+
     /// Removes the tray icon, destroys the dialogs and the frame, and ends
     /// the event loop.
     pub(crate) fn shut_down(self) {
@@ -487,6 +494,32 @@ pub(crate) mod ffi {
         names: Vec<String>,
         /// The index of the active synthesizer.
         active: usize,
+        /// What the dialog says while the chosen synthesizer starts.
+        switching: String,
+    }
+
+    /// What choosing a synthesizer in the Select Synthesizer dialog did.
+    enum SynthesizerChoice {
+        /// Nothing: the synthesizer chosen is the active one. The dialog
+        /// closes.
+        Unchanged,
+        /// The switch has started; the dialog says so and stays open until
+        /// [`synthesizer_switched`] says how it ended.
+        Switching,
+        /// Nothing: a switch is already under way.
+        Busy,
+    }
+
+    /// How a synthesizer switch ended.
+    struct SynthesizerSwitch {
+        /// The new synthesizer is active: the Speech page is rebuilt for it
+        /// and the Select Synthesizer dialog, if still open, closes.
+        switched: bool,
+        /// When it failed, NVDA's message saying so, and the title of the
+        /// message box that shows it; the previous synthesizer is still
+        /// active and the dialog stays open, as NVDA's does.
+        error: String,
+        error_title: String,
     }
 
     /// A list dialog: a label over a single-selection list, a row of
@@ -598,9 +631,9 @@ pub(crate) mod ffi {
         fn revert_settings(self: &GuiCore);
         /// The Select Synthesizer dialog's contents.
         fn synthesizer_picker(self: &GuiCore) -> SynthesizerPicker;
-        /// The user chose a synthesizer; true when the active one changed,
-        /// so the Speech page's controls must be rebuilt.
-        fn choose_synthesizer(self: &GuiCore, index: usize) -> bool;
+        /// The user chose a synthesizer: switches to it without waiting
+        /// for it to start.
+        fn choose_synthesizer(self: &GuiCore, index: usize) -> SynthesizerChoice;
 
         /// The Theme page, built afresh from the theme panel's state.
         fn theme_page(self: &GuiCore) -> ThemePage;
@@ -724,6 +757,11 @@ pub(crate) mod ffi {
         unsafe fn raise_dialog(dialog: DialogKind);
         /// Gives a dialog the keyboard focus.
         unsafe fn focus_dialog(dialog: DialogKind);
+
+        /// A synthesizer switch has finished: on success the Speech page is
+        /// rebuilt and the Select Synthesizer dialog closes; on failure the
+        /// message box says so.
+        unsafe fn synthesizer_switched(outcome: &SynthesizerSwitch);
 
         /// Removes the tray icon, destroys the dialogs and the frame, and
         /// ends the event loop.

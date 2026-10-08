@@ -84,7 +84,11 @@ Public API:
   told, so audio arriving afterwards is ordered after the pause or
   resume.
 - `SpeechSettingsHost` (trait) and `SettingsHost` (implementation) — the
-  GUI's live handle: list synthesizers, switch the active one, read
+  GUI's live handle: list synthesizers, switch the active one
+  (`switch_synthesizer`, which returns at once and hands the outcome to a
+  `SwitchDone` callback on the synth thread, after the mirror describes
+  the new synthesizer; a synthesizer that cannot start, its host's time
+  limit passed included, fails the switch and the previous one stays), read
   descriptors and values, `set_setting` applying immediately (slider drags
   are audible as they happen), `commit` persisting through an injected
   `PersistFn` so this crate never depends on the config layer (it is

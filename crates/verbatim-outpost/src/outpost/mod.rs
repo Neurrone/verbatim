@@ -13,7 +13,8 @@
 //! 5. The reader ([`Outpost::handle_command`], driven by [`run_pipe`]):
 //!    answers pings itself, so a busy or hung worker never makes the outpost
 //!    look dead.
-//! 6. The writer ([`outbound`]): pongs and `Ready` go first.
+//! 6. The writer ([`outbound`]): pongs and `Ready` go first; queuing never
+//!    waits, and waiting messages are merged by object and kind.
 //!
 //! Workers run in COM's multithreaded apartment; the registries keep agile
 //! references, so a replacement worker can use what an abandoned one minted.
@@ -120,9 +121,6 @@ pub(crate) struct Context {
     /// Each focused terminal's anchor and memory, by node (milestone M4
     /// item 9).
     terminals: Mutex<HashMap<u64, crate::terminal::Terminal>>,
-    /// How many of a change's newest lines a terminal read takes
-    /// ([`SupervisorToOutpost::TerminalLines`]).
-    terminal_lines: std::sync::atomic::AtomicU16,
     /// How the worker reads the element that has the keyboard focus.
     focused_element: FocusedElementReader,
     /// How the worker reads the foreground window when it records the
@@ -230,10 +228,11 @@ impl Context {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// How many of a change's newest lines a terminal read takes.
+    /// How many of a change's newest lines a terminal read takes
+    /// ([`SupervisorToOutpost::TerminalLines`]), which also bounds the
+    /// output combined while it waits to be sent.
     fn terminal_lines(&self) -> u16 {
-        self.terminal_lines
-            .load(std::sync::atomic::Ordering::Relaxed)
+        self.outbound.terminal_lines()
     }
 
     /// The UIA cache request for the details the active theme wants.
@@ -406,9 +405,6 @@ impl Outpost {
             caret_read: Mutex::new(None),
             fetches: Mutex::new(Fetches::default()),
             terminals: Mutex::new(HashMap::new()),
-            terminal_lines: std::sync::atomic::AtomicU16::new(
-                verbatim_model::DEFAULT_TERMINAL_LINES,
-            ),
             focused_element,
             foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
         });
@@ -612,9 +608,9 @@ impl Outpost {
             ),
             SupervisorToOutpost::Cancel { request_id } => {
                 if context.intake.cancel(*request_id) {
-                    // Sent ahead of ordinary messages, so the reader never
-                    // waits on a full queue.
-                    context.outbound.urgent(OutpostToSupervisor::Reply {
+                    // Queuing never waits, so the answer keeps its place
+                    // among the others.
+                    context.outbound.send(OutpostToSupervisor::Reply {
                         trace_id: TraceId::mint(),
                         request_id: *request_id,
                         outcome: QueryOutcome::NotStarted,
@@ -636,10 +632,9 @@ impl Outpost {
                 context.msaa_registry.set_fetches(*fetches);
             }
             SupervisorToOutpost::TerminalLines(lines) => {
-                context.terminal_lines.store(
-                    (*lines).clamp(1, verbatim_model::MAX_TERMINAL_LINES),
-                    std::sync::atomic::Ordering::Relaxed,
-                );
+                context
+                    .outbound
+                    .set_terminal_lines((*lines).clamp(1, verbatim_model::MAX_TERMINAL_LINES));
             }
             // `run_pipe` ends its loop on it and calls `shutdown`, which
             // takes the outpost.

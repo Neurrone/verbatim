@@ -22,7 +22,7 @@ use crate::protocol::{
 use super::policy::{
     CrashHistory, HeldFact, HeldFacts, WedgeReason, retirement_decision, wedge_decision,
 };
-use super::process::{self, Launched, Role};
+use super::process::{self, Launched, Role, Target};
 use super::retire::{Ending, ShutdownSummary, retire};
 use super::writer::{self, Outgoing, WriterHandle};
 use super::{
@@ -132,6 +132,10 @@ struct Owner {
     records: HashMap<Pid, Record>,
     listener: Option<ListenerRecord>,
     crashes: HashMap<Pid, CrashHistory>,
+    /// The target applications' processes, held open while an application
+    /// has a record or a crash history, so the pid each is known by names
+    /// that process and no other ([`Target`]).
+    targets: HashMap<Pid, Target>,
     attention: Option<Pid>,
     holding: BTreeSet<OutpostId>,
     ping_seq: u64,
@@ -173,6 +177,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         records: HashMap::new(),
         listener: None,
         crashes: HashMap::new(),
+        targets: HashMap::new(),
         attention: None,
         holding: BTreeSet::new(),
         ping_seq: 0,
@@ -210,7 +215,7 @@ impl Owner {
                     && !self.records.contains_key(&pid)
                     && !self.respawn_stopped(pid)
                 {
-                    self.start_outpost(pid, None);
+                    let _ = self.start_outpost(pid, None);
                 }
             }
             OwnerEvent::Views { attention, holding } => {
@@ -234,8 +239,7 @@ impl Owner {
             } => self.route_fact(trace_id, observed_at_ms, timing, fact),
             OwnerEvent::TargetExited(outpost) => {
                 if let Some(pid) = self.pid_of(outpost) {
-                    self.crashes.remove(&pid);
-                    self.end(pid, EndReason::TargetExited);
+                    self.target_exited(pid, "target exited");
                 }
             }
             OwnerEvent::MenuOrSwitchEnded { ended_at_ms } => {
@@ -281,8 +285,20 @@ impl Owner {
         OutpostId(self.generation)
     }
 
-    /// Records `pid` as starting and hands its launch to a helper thread.
-    fn start_outpost(&mut self, pid: Pid, first: Option<HeldFact>) {
+    /// Records `pid` as starting and hands its launch to a helper thread,
+    /// once its process is held ([`hold_target`](Self::hold_target)), and
+    /// says whether it did. An application whose process has exited, or
+    /// cannot be held, gets no outpost, and the app is told
+    /// ([`OutpostMessage::NotWatched`]), so nothing waits for one.
+    fn start_outpost(&mut self, pid: Pid, first: Option<HeldFact>) -> bool {
+        if let Err(not_held) = self.hold_target(pid) {
+            tracing::info!(%pid, %not_held, "no outpost is started for an application that is not running");
+            self.release_target(pid);
+            let _ = self
+                .events_tx
+                .send(OutpostMessage::NotWatched { target_pid: pid });
+            return false;
+        }
         let outpost = self.next_outpost_id();
         let now = Instant::now();
         let mut held = HeldFacts::default();
@@ -302,6 +318,47 @@ impl Owner {
             },
         );
         self.launch(outpost, Role::Outpost(pid));
+        true
+    }
+
+    /// Holds `pid`'s process, unless it is held already: the pid then names
+    /// that process for as long as it is held. Fails when the process has
+    /// exited, the one held included, or cannot be opened. A process that
+    /// has exited is let go, with its crash history.
+    fn hold_target(&mut self, pid: Pid) -> Result<(), process::NotHeld> {
+        match self.targets.get(&pid) {
+            Some(target) if target.has_exited() => {
+                self.targets.remove(&pid);
+                self.crashes.remove(&pid);
+                Err(process::NotHeld::Exited)
+            }
+            Some(_) => Ok(()),
+            None => {
+                self.targets.insert(pid, Target::open(pid)?);
+                Ok(())
+            }
+        }
+    }
+
+    /// Whether `pid`'s process has exited, or is not held.
+    fn has_exited(&self, pid: Pid) -> bool {
+        self.targets.get(&pid).is_none_or(Target::has_exited)
+    }
+
+    /// Lets `pid`'s process go once nothing is kept for it: no record and
+    /// no crash history.
+    fn release_target(&mut self, pid: Pid) {
+        if !self.records.contains_key(&pid) && !self.crashes.contains_key(&pid) {
+            self.targets.remove(&pid);
+        }
+    }
+
+    /// `pid`'s application has exited: its outpost is ended, never replaced,
+    /// and everything kept for it is forgotten.
+    fn target_exited(&mut self, pid: Pid, why: &str) {
+        self.crashes.remove(&pid);
+        self.end_because(pid, EndReason::TargetExited, why);
+        self.release_target(pid);
     }
 
     /// Records a new listener as starting and hands its launch to a helper.
@@ -415,6 +472,7 @@ impl Owner {
             Err(error) => {
                 tracing::error!(%error, %pid, "failed to launch an outpost");
                 self.records.remove(&pid);
+                self.release_target(pid);
             }
         }
     }
@@ -489,7 +547,7 @@ impl Owner {
                 } else if self.respawn_stopped(pid) {
                     tracing::debug!(%pid, "fact dropped: respawning is stopped after repeated crashes");
                 } else {
-                    self.start_outpost(pid, Some(held));
+                    let _ = self.start_outpost(pid, Some(held));
                 }
             }
         }
@@ -515,10 +573,22 @@ impl Owner {
                 self.end_quietly(pid, "its pipe closed while Verbatim is exiting");
                 return;
             }
-            self.end(pid, EndReason::Exited);
-            self.after_crash(pid);
+            self.ended_unexpectedly(pid, EndReason::Exited, &EndReason::Exited.to_string());
         }
         // Otherwise the owner already ended it, and the app already heard.
+    }
+
+    /// Ends `pid`'s outpost, which crashed or was ended as wedged, for
+    /// `reason` and `why`, and replaces it if [`after_crash`](Self::after_crash)
+    /// says so; but if its application has exited, the outpost ended
+    /// because its target did, and is not replaced.
+    fn ended_unexpectedly(&mut self, pid: Pid, reason: EndReason, why: &str) {
+        if self.has_exited(pid) {
+            self.target_exited(pid, why);
+            return;
+        }
+        self.end_because(pid, reason, why);
+        self.after_crash(pid);
     }
 
     /// Ends `pid`'s outpost: removes its record and writer, shuts the
@@ -643,15 +713,12 @@ impl Owner {
         true
     }
 
-    /// After a crash or a kill: replace the outpost at once only if its
-    /// application holds attention, and stop replacing it after repeated
-    /// crashes until the next foreground change to it. An application that
-    /// has itself exited is left alone.
+    /// After a crash or a kill of an outpost whose application is still
+    /// running: replace the outpost at once only if its application holds
+    /// attention, and stop replacing it after repeated crashes until the
+    /// next foreground change to it. The application's process stays held
+    /// with its crash history.
     fn after_crash(&mut self, pid: Pid) {
-        if !process::process_is_alive(pid) {
-            self.crashes.remove(&pid);
-            return;
-        }
         let stopped =
             self.crashes
                 .entry(pid)
@@ -662,7 +729,7 @@ impl Owner {
             return;
         }
         if self.attention == Some(pid) {
-            self.start_outpost(pid, None);
+            let _ = self.start_outpost(pid, None);
         }
     }
 
@@ -690,8 +757,14 @@ impl Owner {
         self.ping_seq += 1;
         let ping = SupervisorToOutpost::Ping { seq: self.ping_seq };
         let mut wedged = Vec::new();
+        let mut exited = Vec::new();
         for (&pid, record) in &self.records {
             let Some(child) = &record.child else { continue };
+            // An application whose outpost could not tell it exited.
+            if self.has_exited(pid) {
+                exited.push(pid);
+                continue;
+            }
             let hung =
                 record.abandoned >= ABANDONED_WORKER_LIMIT && process::application_is_hung(pid);
             match wedge_decision(
@@ -709,14 +782,16 @@ impl Owner {
                 }
             }
         }
+        for pid in exited {
+            self.target_exited(pid, "target exited, seen by the supervisor");
+        }
         for (pid, reason) in wedged {
             tracing::warn!(%pid, %reason, "ending a wedged outpost");
-            self.end_because(
+            self.ended_unexpectedly(
                 pid,
                 EndReason::Killed,
                 &format!("ended as wedged: {reason}"),
             );
-            self.after_crash(pid);
         }
 
         match &self.listener {
@@ -770,6 +845,18 @@ impl Owner {
             .collect();
         for pid in retiring {
             self.end(pid, EndReason::Retired);
+            self.release_target(pid);
+        }
+        // Crash histories of applications that have since exited.
+        let gone: Vec<Pid> = self
+            .crashes
+            .keys()
+            .copied()
+            .filter(|pid| !self.records.contains_key(pid) && self.has_exited(*pid))
+            .collect();
+        for pid in gone {
+            self.crashes.remove(&pid);
+            self.release_target(pid);
         }
     }
 }

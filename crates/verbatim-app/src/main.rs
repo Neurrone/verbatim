@@ -943,6 +943,18 @@ impl ReducerThread<'_> {
                 }
             }
             OutpostMessage::MenuOrSwitchEnded { ended_at_ms } => self.fake_focus(ended_at_ms),
+            OutpostMessage::NotWatched { target_pid } => {
+                // The application is not running: no outpost will answer
+                // for it.
+                self.focus_now_wanted.remove(&target_pid);
+                let mut outposts = self.context.outposts.lock().expect("outposts lock");
+                if outposts
+                    .get(&target_pid)
+                    .is_some_and(|status| status.outpost_pid.is_none())
+                {
+                    outposts.remove(&target_pid);
+                }
+            }
         }
     }
 

@@ -384,6 +384,25 @@ pub mod messages {
         fl!(loader(), "select-synth-label")
     }
 
+    /// Shown in the Select Synthesizer dialog while the chosen synthesizer
+    /// starts.
+    #[must_use]
+    pub fn select_synth_switching() -> String {
+        fl!(loader(), "select-synth-switching")
+    }
+
+    /// Said when the synthesizer `name` could not start, in NVDA's words.
+    #[must_use]
+    pub fn synth_error(name: &str) -> String {
+        fl!(loader(), "synth-error", name = name)
+    }
+
+    /// Title of the message box that says a synthesizer could not start.
+    #[must_use]
+    pub fn synth_error_title() -> String {
+        fl!(loader(), "synth-error-title")
+    }
+
     /// Name of the Theme settings category.
     #[must_use]
     pub fn settings_category_theme() -> String {
