@@ -1229,8 +1229,11 @@ finds it.
   holding or live again), and `TextOp::TerminalCancel` (speech was cut
   off: read to the end, answered with the read for typing echo only,
   live again; a read written to meanwhile is still remembered). A read
-  Core asked for that the terminal disturbed is owed, and the next change,
-  which the writing raises, reads again and answers it. A terminal gaining
+  the terminal disturbed (written to while it was read) is read again at
+  once (`Item::TerminalReread`), not on the next text change: the console
+  host can stop raising text changes to a client in the middle of a large
+  write while its WinEvents go on (measured 2026-10-08). A read Core asked
+  for that the terminal disturbed is owed, and the read again answers it. A terminal gaining
   the focus is read as a baseline, which speaks nothing, and reading is
   live.
 - Each read logs its cost at debug (`terminal screen timing`: the path,

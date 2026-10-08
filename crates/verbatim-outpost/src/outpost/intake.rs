@@ -119,6 +119,11 @@ pub(super) enum Item {
     /// whose role says it may, just after it was reported: as `CaretMoved`,
     /// or as `NoText` when there is no caret to report.
     CaretOf { node_id: verbatim_model::NodeId },
+    /// Read the focused terminal `node_id` names again: its last read found
+    /// the screen changing while it was read, which is evidence that it
+    /// changed, whether or not the terminal's provider raises a text change
+    /// for it.
+    TerminalReread { node_id: verbatim_model::NodeId },
     /// A follow-up finding the live element of a focus reported from its
     /// event alone, for the focus-following property subscription.
     ResolveFocus { runtime_id: Vec<i32>, attempt: u32 },
@@ -153,6 +158,7 @@ pub(super) enum Key {
     UiaMenuOpened(Vec<i32>),
     NodesHeld,
     CaretOf(u64),
+    TerminalReread(u64),
 }
 
 impl Key {
@@ -166,7 +172,7 @@ impl Key {
             Key::Uia(_, _, runtime_id)
             | Key::UiaFocus(runtime_id)
             | Key::UiaMenuOpened(runtime_id) => Some(Object::Uia(runtime_id.clone())),
-            Key::Foreground(_) | Key::NodesHeld | Key::CaretOf(_) => None,
+            Key::Foreground(_) | Key::NodesHeld | Key::CaretOf(_) | Key::TerminalReread(_) => None,
         }
     }
 
@@ -776,6 +782,13 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         // Only the newest caret report for a node matters, and it is never
         // limited: the focus's caret.
         Item::CaretOf { node_id } => (Some(Key::CaretOf(node_id.number())), Category::Exempt, 0),
+        // One read again is enough, and it is never limited: the focus's
+        // output.
+        Item::TerminalReread { node_id } => (
+            Some(Key::TerminalReread(node_id.number())),
+            Category::Exempt,
+            0,
+        ),
         Item::Query { .. } | Item::ResolveFocus { .. } | Item::Settle(_) | Item::Wake => {
             (None, Category::Exempt, 0)
         }
