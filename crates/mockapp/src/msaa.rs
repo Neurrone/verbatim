@@ -106,6 +106,23 @@ pub(crate) fn index_from_objid(objid: i32) -> Option<usize> {
         .flatten()
 }
 
+/// Raises a text selection change on the edit control the window hosts,
+/// with its caret where it is (the `caret-event` command).
+fn raise_caret_event(hwnd: HWND) -> Result<(), String> {
+    let edit = crate::edit::find(hwnd).ok_or("the window hosts no edit control")?;
+    // SAFETY: `edit` is the edit control's live handle, a child of this
+    // thread's window, which answers for its client object.
+    unsafe {
+        NotifyWinEvent(
+            EVENT_OBJECT_TEXTSELECTIONCHANGED,
+            edit,
+            OBJID_CLIENT.0,
+            CHILDID_SELF,
+        );
+    }
+    Ok(())
+}
+
 /// Applies a parsed stdin [`Command`] against `tree` and raises the matching
 /// `WinEvent`. Runs on the window thread.
 pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> Result<(), String> {
@@ -189,19 +206,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         // MSAA has no notification event; `notify` is a UIA-backend command
         // (see crate::stdin::Command::Notify).
         Command::Notify(_) => return Err("notify is not supported on the msaa backend".into()),
-        Command::CaretEvent(_) => {
-            let edit = crate::edit::find(hwnd).ok_or("the window hosts no edit control")?;
-            // SAFETY: `edit` is the edit control's live handle, a child of
-            // this thread's window, which answers for its client object.
-            unsafe {
-                NotifyWinEvent(
-                    EVENT_OBJECT_TEXTSELECTIONCHANGED,
-                    edit,
-                    OBJID_CLIENT.0,
-                    CHILDID_SELF,
-                );
-            }
-        }
+        Command::CaretEvent(_) => raise_caret_event(hwnd)?,
         Command::Caret(_, start, end) => {
             // The text is the edit control's, in its own offsets.
             let edit = crate::edit::find(hwnd).ok_or("the window hosts no edit control")?;
