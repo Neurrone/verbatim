@@ -2208,3 +2208,14 @@ Fixes, each with exact tests (reducer, mockapp and end to end in both terminals 
 - A Gone answer for the navigator's node re-seeds the navigator from the focus and announces it; if the dead node is the focus itself, the navigator is cleared and "No navigator object" is said (NVDA's wording).
 - The outpost reports held MSAA nodes it forgets when their window is destroyed, as direct evidence of a death.
 - Verbatim has no "review follows focus" setting where NVDA has one (on by default); recorded in docs/parity.md for the owner.
+
+## Audio start-up latency and scheduling (2026-10-08)
+
+A read-only study refuted the guess that restarting the audio device costs 40 to 80 ms: the slow "mixer and device" figures all come from end-to-end runs with no real device (`VERBATIM_TEST_AUDIO=null`), where stopping and starting cost nothing. They have two causes. Speech that starts while an earcon is playing waits behind the roughly 40 ms of earcon already queued for the device (every start-up's first announcement, and any speech starting during an earcon); and back-to-back utterances are a measurement artefact, the ledger counting the tail of earlier speech as "mixer and device".
+
+Proposed, for Dickson:
+- Speech starting while other audio is queued is mixed in at once (the queue discarded and re-mixed, as a cancel already does), saving about 35 to 40 ms.
+- The audio stream keeps running after speech, writing silence, for an awake period (NVDA keeps the device awake 30 seconds by default, with a setting, because Bluetooth, USB, HDMI and virtual-machine endpoints otherwise clip or delay the next speech); cancel keeps Stop and Reset, as NVDA does, since shared mode has no other way to discard queued audio.
+- Every Verbatim process opts out of Windows' power throttling (EcoQoS), so a background screen reader is not moved to efficiency cores or slowed; the keyboard hook thread runs at high priority; the speech queue and synthesis threads above normal. NVDA sets none of this.
+- The latency ledger counts waiting behind earlier speech until that speech has ended.
+- The end-to-end suite never exercises the real audio device; an audible run, or a scenario on the real device, is needed to measure endpoint wake-up, and IAudioClock or the stream latency would expose the endpoint's own delay.
