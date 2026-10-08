@@ -166,13 +166,14 @@ pub enum Opcode {
     GetTextPattern = 10014,
     GetTextPattern2 = 10024,
     TextPatternGetSelection = (10014 << 10) | 5,
+    TextPatternGetVisibleRanges = (10014 << 10) | 6,
     TextPatternGetDocumentRange = (10014 << 10) | 7,
     TextPattern2GetCaretRange = (10024 << 10) | 0xA,
 }
 
 impl Opcode {
     /// Every opcode in the table.
-    pub const ALL: [Self; 109] = [
+    pub const ALL: [Self; 110] = [
         Self::Nop,
         Self::Set,
         Self::ForkIfTrue,
@@ -280,6 +281,7 @@ impl Opcode {
         Self::GetTextPattern,
         Self::GetTextPattern2,
         Self::TextPatternGetSelection,
+        Self::TextPatternGetVisibleRanges,
         Self::TextPatternGetDocumentRange,
         Self::TextPattern2GetCaretRange,
     ];
@@ -395,14 +397,18 @@ mod tests {
 
     #[test]
     fn text_pattern_opcodes_follow_the_pattern_formulas() {
-        // `IUIAutomationTextPattern`'s vtable: `GetSelection` is 5 and
-        // `DocumentRange` 7; `IUIAutomationTextPattern2` adds
+        // `IUIAutomationTextPattern`'s vtable: `GetSelection` is 5,
+        // `GetVisibleRanges` 6, and `DocumentRange` 7; `IUIAutomationTextPattern2` adds
         // `RangeFromAnnotation` at 9 and `GetCaretRange` at 10.
         assert_eq!(Opcode::GetTextPattern.code(), 10014);
         assert_eq!(Opcode::GetTextPattern2.code(), 10024);
         assert_eq!(
             Opcode::TextPatternGetSelection.code(),
             pattern_method(10014, 5)
+        );
+        assert_eq!(
+            Opcode::TextPatternGetVisibleRanges.code(),
+            pattern_method(10014, 6)
         );
         assert_eq!(
             Opcode::TextPatternGetDocumentRange.code(),

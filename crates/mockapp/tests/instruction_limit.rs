@@ -19,11 +19,11 @@ mod harness;
 use verbatim_uia::text::{Endpoint, TextPatternExt};
 use verbatim_uia::{CACHED_PROPERTIES, ElementExt, Uia, runtime_id};
 use verbatim_uia_rops::{
-    Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, Error, Fingerprint, FocusAncestry,
-    FocusQuery, FormatSpan, Found, Movement, NavigationDirection, Position, RangeEnd, Status,
-    StepQuery, TailQuery, TailStart, TextAttribute, TextFrom, TextTarget, UnitsQuery,
-    caret_read_remote, counting, focus_ancestry_remote, navigation_step_remote,
-    terminal_tail_remote, text_units_remote,
+    Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, Error, FocusAncestry, FocusQuery,
+    FormatSpan, Movement, NavigationDirection, Position, RangeEnd, ScreenAnchor, ScreenQuery,
+    Status, StepQuery, TextAttribute, TextFrom, TextTarget, UnitsQuery, caret_read_remote,
+    counting, focus_ancestry_remote, navigation_step_remote, terminal_screen_remote,
+    text_units_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
@@ -395,30 +395,16 @@ fn say_all_batches_execute_exactly() {
     assert!(languages < LIMIT / 2 && first < LIMIT / 2);
 }
 
-/// A terminal's tail: an anchor whose fingerprint is nowhere, under 80
-/// lines that hold its line before as part of their text, so the search
-/// checks its 64 matches and gives up; and, typically, an anchor in place
-/// under new output.
-fn terminal_tails_execute_exactly() {
+/// A terminal's screen read: an anchor whose top row is nowhere as a row of
+/// its own, under 90 rows that hold its text as part of theirs, so the
+/// search checks its 20 matches and gives up and the text's rows are
+/// counted; and, typically, an anchor found where it was under new output.
+fn terminal_screens_execute_exactly() {
     common::init_com();
     let mut fixture = Fixture::start("terminal.json", "mockapp-instructions-terminal");
     let terminal = fixture.find("Terminal");
     let (pattern, pattern2) = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
-    let lines = numbered(80);
-    common::apply(
-        &mut fixture.app,
-        fixture.hwnd,
-        &format!("set-text term {lines}ready>"),
-    );
-    let document = pattern.document_range().expect("the document range");
-    let fresh = TailQuery {
-        start: TailStart::Document(&document),
-        lines_wanted: 30,
-        caret: None,
-    };
-    let last = terminal_tail_remote(&fixture.uia, &fresh)
-        .expect("the program runs")
-        .last;
+    common::apply(&mut fixture.app, fixture.hwnd, "screen term 30");
     let decoys: String = (0..90).map(|_| r"x ready>\n").collect();
     common::apply(
         &mut fixture.app,
@@ -427,12 +413,19 @@ fn terminal_tails_execute_exactly() {
     );
     // With the caret read in the same program, as the outpost reads a
     // focused terminal on each change of its text.
-    let anchored = |line, previous| TailQuery {
-        start: TailStart::Anchor {
-            range: &last,
-            fingerprint: Fingerprint { line, previous },
-        },
-        lines_wanted: 30,
+    let query = |top, next| ScreenQuery {
+        element: &terminal,
+        pattern: &pattern,
+        anchor: Some(ScreenAnchor {
+            top,
+            next,
+            range: None,
+            first: "",
+            no_history: false,
+        }),
+        matches_padding: false,
+        seen_rows: 30,
+        head_wanted: 30,
         caret: Some(CaretLineQuery {
             element: &terminal,
             pattern: &pattern,
@@ -441,25 +434,26 @@ fn terminal_tails_execute_exactly() {
         }),
     };
     let worst = counted(|| {
-        let tail = terminal_tail_remote(&fixture.uia, &anchored("ready>", "ready>\n"))
+        let screen = terminal_screen_remote(&fixture.uia, &query("ready>\n", "ready>\n"))
             .expect("the program runs");
-        assert_eq!(tail.found, Found::NotFound);
+        assert_eq!(screen.shift, None);
     });
+    let lines = numbered(80);
     common::apply(
         &mut fixture.app,
         fixture.hwnd,
         &format!(r"set-text term {lines}ready> ls\na\nb"),
     );
     let typical = counted(|| {
-        let tail = terminal_tail_remote(&fixture.uia, &anchored("ready>", "line 079\n"))
+        let screen = terminal_screen_remote(&fixture.uia, &query("line 052\n", "line 053\n"))
             .expect("the program runs");
-        assert_eq!(tail.found, Found::AtAnchor);
+        assert_eq!(screen.shift, Some(1));
     });
     fixture.app.quit();
     assert_eq!(
         [worst, typical],
-        [1164, 137],
-        "terminal tail worst and typical"
+        [432, 154],
+        "terminal screen worst and typical"
     );
     assert!(worst < LIMIT / 2);
 }
@@ -496,8 +490,8 @@ fn main() {
             say_all_batches_execute_exactly,
         ),
         (
-            "terminal_tails_execute_exactly",
-            terminal_tails_execute_exactly,
+            "terminal_screens_execute_exactly",
+            terminal_screens_execute_exactly,
         ),
     ]);
 }

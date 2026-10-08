@@ -350,11 +350,28 @@ The groups:
   and both echoes heard together; with `Echo::Typed` ("speak passwords"
   on), each key is echoed as it is typed.
 
+The typing scenarios (`scenarios/terminal_typing.rs`) type a password
+into a script that never shows it and rewrites its prompt's line after
+each key, hearing only the count that changed, never a character typed;
+type a character in the middle of a command and hear it echoed; and press
+Escape on a typed command, hearing the text it removed.
+
 The flood scenarios assert the flood policy exactly within the
 scrollback: 2,000 lines are heard as lines 1 to 30, "skipped 1941 lines"
 after the skipped-lines sound, and lines 1,972 to 2,000 with the prompt.
 The ratio of a reported flood's time to an unreported one's is saved as
-`wall-time-ratio.txt` for trends, never asserted. Outpost logs are collected in chunks, since a flood's
+`wall-time-ratio.txt` for trends, never asserted. The acceptance floods
+(`scenarios/terminal_overflow.rs`, each terminal's its own code) run a
+script that prints 30 lines, waits for a file the scenario writes, and
+then writes its second part in one write: 5,000 lines, within the
+history, or 12,000, past it. Written once the 30 have been heard, the
+second part is a burst of its own (its first 30 lines, then "skipped 4941
+lines" or "skipped more than N lines", and its last 30 with the prompt);
+written while they still play (`_during_group`), it joins their burst,
+and is skipped down to its last 30. N is the terminal's history less the
+30 spoken: 9,001 in Windows Terminal, whose text holds 9,031 rows, and
+8,971 in the console host, whose holds 9,001, both measured on
+2026-10-08. Outpost logs are collected in chunks, since a flood's
 debug log can be larger than one read of the agent's.
 
 ## Other modules

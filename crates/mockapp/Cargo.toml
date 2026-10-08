@@ -37,6 +37,10 @@ harness = false
 name = "caret_watch"
 harness = false
 
+[[test]]
+name = "terminal_reading"
+harness = false
+
 # This one runs itself as a subprocess, which its own `main` recognizes.
 [[test]]
 name = "child_cleanup"

@@ -1035,6 +1035,15 @@ impl Builder {
         })
     }
 
+    /// The ranges of the text now on screen.
+    #[track_caller]
+    pub fn text_pattern_get_visible_ranges(&mut self, pattern: Reg<TextPattern>) -> Reg<Array> {
+        self.produce(|result| Instruction::TextPatternGetVisibleRanges {
+            result,
+            target: pattern.id,
+        })
+    }
+
     /// The range of the whole text.
     #[track_caller]
     pub fn text_pattern_get_document_range(&mut self, pattern: Reg<TextPattern>) -> Reg<TextRange> {

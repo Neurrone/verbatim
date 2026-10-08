@@ -194,6 +194,7 @@ fn message(message: Message) -> UtteranceSegment {
 
 fn caret_reply(moved: bool, line: TextChunk, unit: Option<TextChunk>) -> TextReply {
     TextReply::Caret(Box::new(CaretReply {
+        same_line: None,
         moved,
         read_at_ms: 0,
         caret: CaretReport {
@@ -271,6 +272,7 @@ fn a_caret_key_that_moves_nothing_is_silent() {
     assert_eq!(
         request.op,
         TextOp::AwaitCaret(CaretWatch {
+            landing: false,
             since: Some(TextPosition {
                 anchor: TextAnchor(100),
                 offset: 0
@@ -312,17 +314,51 @@ fn a_caret_keys_watch_ends_with_its_answer_and_with_typing() {
     );
     assert_eq!(effects, [], "the watch had ended");
 
-    // A character typed while a key is watched ends the key's watch: the
-    // caret the typing moves is not the key's answer.
+    // A key pressed while another is watched (here a character typed, its
+    // key cutting speech off first, as every key does): an answer read
+    // from then on may show the later key's effect, so it is not spoken
+    // for the earlier key, and only keeps the caret current.
     let mut state = editing("abc\n", 0);
     let query = request_of(&reduce(&mut state, &key(CaretMotion::StartOfLine, false)));
+    let _ = reduce(&mut state, &Input::SpeechCancelled { at_ms: 50 });
     let effects = reduce(&mut state, &typed("x"));
     assert_eq!(spoken(&effects), vec![character("x")]);
     let effects = reduce(
         &mut state,
-        &completed(query, caret_reply(true, line("xabc\n", 100, 1), None)),
+        &completed(query, caret_reply_at(line("xabc\n", 100, 1), 60)),
     );
-    assert_eq!(effects, [], "the typing superseded the key");
+    assert_eq!(
+        effects,
+        [],
+        "the later key's effect is not the key's answer"
+    );
+    // Its caret is now the newest, so a Backspace deletes what it shows.
+    let query = request_of(&reduce(
+        &mut state,
+        &Input::CaretKey {
+            trace_id: TraceId::mint(),
+            key: CaretKey {
+                motion: CaretMotion::Backspace,
+                select: false,
+            },
+            pressed_at_ms: 70,
+        },
+    ));
+    let effects = reduce(
+        &mut state,
+        &completed(query, caret_reply_at(line("abc\n", 100, 0), 80)),
+    );
+    assert_eq!(spoken(&effects), vec![character("x")]);
+
+    // An answer read before the later key was pressed is the key's own.
+    let mut state = editing("abc\n", 0);
+    let query = request_of(&reduce(&mut state, &key(CaretMotion::NextCharacter, false)));
+    let _ = reduce(&mut state, &Input::SpeechCancelled { at_ms: 50 });
+    let effects = reduce(
+        &mut state,
+        &completed(query, caret_reply_at(line("abc\n", 100, 1), 40)),
+    );
+    assert_eq!(spoken(&effects), vec![character("b")]);
 }
 
 #[test]
@@ -450,6 +486,7 @@ fn shift_movement_speaks_what_was_selected_and_unselected() {
         })
     );
     let reply = TextReply::Caret(Box::new(CaretReply {
+        same_line: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
@@ -493,6 +530,7 @@ fn shift_movement_speaks_what_was_selected_and_unselected() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "one scenario's steps, each asserted")]
 fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() {
     let mut state = editing(
         "hello, world
@@ -510,6 +548,7 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
     // Shift+Home selects "hello".
     let effects = reduce(&mut state, &key(CaretMotion::StartOfLine, true));
     let reply = TextReply::Caret(Box::new(CaretReply {
+        same_line: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
@@ -541,6 +580,7 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
         })
     );
     let reply = TextReply::Caret(Box::new(CaretReply {
+        same_line: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
@@ -578,6 +618,7 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
     );
     let effects = reduce(&mut state, &key(CaretMotion::NextWord, true));
     let reply = TextReply::Caret(Box::new(CaretReply {
+        same_line: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
@@ -636,6 +677,7 @@ fn key_at(motion: CaretMotion, pressed_at_ms: u64) -> Input {
 /// A caret reply the outpost read at `read_at_ms`.
 fn caret_reply_at(line: TextChunk, read_at_ms: u64) -> TextReply {
     TextReply::Caret(Box::new(CaretReply {
+        same_line: None,
         moved: true,
         caret: CaretReport {
             line,
@@ -1713,7 +1755,7 @@ fn say_all_splits_a_paragraph_into_sentences_and_stops_on_a_key() {
     assert_eq!(third[0].1, "Three!");
     assert_eq!(effects.len(), 2, "{effects:?}");
     // A key stops it, dropping what was waiting; a late mark is ignored.
-    let effects = reduce(&mut state, &Input::SpeechCancelled);
+    let effects = reduce(&mut state, &Input::SpeechCancelled { at_ms: 0 });
     assert_eq!(effects, vec![Effect::KeepDisplayOn(false)]);
     assert_eq!(reduce(&mut state, &reached(third[0].0)), vec![]);
 }
@@ -1746,7 +1788,7 @@ fn say_all_from_the_review_cursor_leaves_the_review_cursor_where_it_stopped() {
     );
     let pieces = say_all_pieces(&effects);
     let _ = reduce(&mut state, &reached(pieces[1].0));
-    let _ = reduce(&mut state, &Input::SpeechCancelled);
+    let _ = reduce(&mut state, &Input::SpeechCancelled { at_ms: 0 });
     // The next review command reads the line where reading stopped.
     let effects = reduce(&mut state, &command(ReviewCommand::ReviewCurrentLine, 0));
     assert_eq!(
@@ -1919,7 +1961,7 @@ fn say_all_splits_lines_at_their_last_sentence_end_and_joins_a_sentence_across_l
     // caret stays there, and a key stops say-all with it there.
     let effects = reduce(&mut state, &reached(marks_of(&third[0])[0]));
     assert_eq!(effects, vec![]);
-    let effects = reduce(&mut state, &Input::SpeechCancelled);
+    let effects = reduce(&mut state, &Input::SpeechCancelled { at_ms: 0 });
     assert_eq!(effects, vec![Effect::KeepDisplayOn(false)]);
     assert_eq!(reduce(&mut state, &reached(marks_of(&third[0])[1])), vec![]);
 }

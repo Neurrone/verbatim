@@ -10,8 +10,9 @@ use std::collections::VecDeque;
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
     Backend, Effect, Input, LineChange, Message, NodeDetails, NodeId, NodeSnapshot,
-    NormalizedEvent, OutpostId, Phrase, Pid, ReaderSettings, ReviewCommand, Role, SegmentContent,
-    Skipped, SpeechMark, SpeechPriority, StateSet, TerminalOutput, TraceId,
+    NormalizedEvent, OutpostId, Phrase, Pid, QueryId, ReaderSettings, ReviewCommand, Role,
+    SegmentContent, Skipped, SpeechMark, SpeechPriority, StateSet, TerminalOutput, TextOp,
+    TextReply, TextRequest, TraceId,
 };
 
 const OUTPOST: OutpostId = OutpostId(1);
@@ -73,6 +74,7 @@ fn output_from(
     event(NormalizedEvent::TerminalOutput {
         node_id: id(node),
         output: TerminalOutput {
+            above: Vec::new(),
             changed,
             head: Vec::new(),
             skipped,
@@ -87,6 +89,7 @@ fn appended(text: &str, line: &str) -> LineChange {
         line: line.to_owned(),
         appended: true,
         uncertain: 0,
+        inserted: text.to_owned(),
     }
 }
 
@@ -103,12 +106,17 @@ fn typed(text: &str) -> Input {
 fn words(segments: &[verbatim_model::UtteranceSegment]) -> String {
     segments
         .iter()
+        .filter(|segment| !matches!(segment.content, SegmentContent::Mark(_)))
         .map(|segment| match &segment.content {
             SegmentContent::Text(text) | SegmentContent::Character(text) => text.clone(),
             SegmentContent::Phrase(Phrase::SkippedLines(count)) => format!("skipped {count}"),
             SegmentContent::Phrase(Phrase::SkippedUncountedLines) => "skipped".to_owned(),
+            SegmentContent::Phrase(Phrase::SkippedMoreThanLines(count)) => {
+                format!("skipped more than {count}")
+            }
             SegmentContent::Message(Message::ReportNewOutputOn) => "on".to_owned(),
             SegmentContent::Message(Message::ReportNewOutputOff) => "off".to_owned(),
+            SegmentContent::Message(Message::TerminalLineCut) => "line cut".to_owned(),
             other => panic!("unexpected segment in terminal speech: {other:?}"),
         })
         .collect::<Vec<_>>()
@@ -116,53 +124,159 @@ fn words(segments: &[verbatim_model::UtteranceSegment]) -> String {
 }
 
 /// A speech queue that plays utterances in order, reaching each one's
-/// index mark as it starts.
+/// index mark as it starts, and the terminal's outpost as on-demand reading
+/// drives it: output the terminal writes reaches Core at once while the
+/// outpost reads live, and waits in the outpost while it holds, until Core
+/// asks for it. Requests are answered at once, unless `answer_late` holds
+/// a read request back until the test answers it.
 #[derive(Default)]
 struct Playback {
-    queued: VecDeque<(Option<SpeechMark>, String)>,
+    queued: VecDeque<(Vec<SpeechMark>, String)>,
     heard: Vec<String>,
+    /// Whether the outpost holds.
+    held: bool,
+    /// What the terminal wrote while the outpost held.
+    unread: Vec<TerminalOutput>,
+    /// Every terminal request Core made, in order.
+    requests: Vec<TextOp>,
+    /// Whether read requests wait for [`Playback::answer`].
+    answer_late: bool,
+    /// A read request held back.
+    late: Option<QueryId>,
+    /// Whether the front utterance has started playing.
+    started: bool,
 }
 
 impl Playback {
     /// Takes in a step's effects. Terminal speech is queued, and starts
-    /// with its index mark when it has one; any effect other than speech
-    /// and a stop fails the test, since none of these steps should
-    /// produce one unasserted.
-    fn take(&mut self, effects: Vec<Effect>) {
+    /// with its index mark when it has one; terminal requests are answered
+    /// as the outpost would; any other effect fails the test, since none of
+    /// these steps should produce one unasserted.
+    fn take(&mut self, state: &mut SrState, effects: Vec<Effect>) {
         for effect in effects {
             match effect {
                 Effect::Speak(utterance) => {
                     assert_eq!(utterance.priority, SpeechPriority::Queued, "{utterance:?}");
-                    let (mark, rest) = match utterance.segments.split_first() {
-                        Some((first, rest)) => match first.content {
-                            SegmentContent::Mark(mark) => (Some(mark), rest),
-                            _ => (None, utterance.segments.as_slice()),
-                        },
-                        None => panic!("an utterance with nothing in it: {utterance:?}"),
-                    };
-                    self.queued.push_back((mark, words(rest)));
+                    let marks: Vec<SpeechMark> = utterance
+                        .segments
+                        .iter()
+                        .filter_map(|segment| match segment.content {
+                            SegmentContent::Mark(mark) => Some(mark),
+                            _ => None,
+                        })
+                        .collect();
+                    assert!(
+                        !utterance.segments.is_empty(),
+                        "an utterance with nothing in it: {utterance:?}"
+                    );
+                    self.queued.push_back((marks, words(&utterance.segments)));
                 }
                 Effect::StopSpeech => self.queued.clear(),
+                Effect::Text(TextRequest { query_id, op, .. }) => {
+                    self.requests.push(op.clone());
+                    match op {
+                        TextOp::TerminalHold => {
+                            self.held = true;
+                            self.reply(state, query_id, TextReply::Done);
+                        }
+                        TextOp::TerminalRead { hold } => {
+                            self.held = hold;
+                            if self.answer_late {
+                                self.late = Some(query_id);
+                            } else {
+                                let output = self.take_unread();
+                                self.reply(state, query_id, TextReply::Terminal(Box::new(output)));
+                            }
+                        }
+                        TextOp::TerminalCancel => {
+                            self.held = false;
+                            self.unread.clear();
+                            self.reply(state, query_id, TextReply::Terminal(Box::default()));
+                        }
+                        other => panic!("unexpected text request: {other:?}"),
+                    }
+                }
                 other => panic!("unexpected effect: {other:?}"),
             }
         }
     }
 
-    /// Feeds `input` and takes in its effects.
-    fn feed(&mut self, state: &mut SrState, input: &Input) {
-        self.take(reduce(state, input));
+    /// What the terminal wrote while the outpost held, as one read finds
+    /// it.
+    fn take_unread(&mut self) -> TerminalOutput {
+        let mut all = TerminalOutput::default();
+        for output in self.unread.drain(..) {
+            all.head.extend(output.head);
+            all.lines.extend(output.lines);
+            all.skipped = match (all.skipped, output.skipped) {
+                (Some(a), Some(b)) => Some(a.plus(b)),
+                (a, b) => a.or(b),
+            };
+        }
+        all
     }
 
-    /// Plays one utterance.
+    /// Answers request `query_id` with `reply`.
+    fn reply(&mut self, state: &mut SrState, query_id: QueryId, reply: TextReply) {
+        let effects = reduce(
+            state,
+            &Input::TextCompleted {
+                trace_id: TraceId::mint(),
+                query_id,
+                reply,
+            },
+        );
+        self.take(state, effects);
+    }
+
+    /// Answers the read request held back.
+    fn answer(&mut self, state: &mut SrState) {
+        let query_id = self.late.take().expect("a read request held back");
+        let output = self.take_unread();
+        self.reply(state, query_id, TextReply::Terminal(Box::new(output)));
+    }
+
+    /// Feeds `input` and takes in its effects. Terminal output the outpost
+    /// holds waits in it instead.
+    fn feed(&mut self, state: &mut SrState, input: &Input) {
+        if self.held
+            && let Input::Event {
+                event: NormalizedEvent::TerminalOutput { output, .. },
+                ..
+            } = input
+        {
+            self.unread.push(output.clone());
+            return;
+        }
+        let effects = reduce(state, input);
+        self.take(state, effects);
+    }
+
+    /// Plays one utterance, or the rest of one already started.
     fn play_one(&mut self, state: &mut SrState) -> bool {
-        let Some((mark, text)) = self.queued.pop_front() else {
+        let Some((marks, text)) = self.queued.pop_front() else {
             return false;
         };
-        self.heard.push(text);
-        if let Some(mark) = mark {
+        if self.started {
+            self.started = false;
+        } else {
+            self.heard.push(text);
+        }
+        // Its opening mark as it starts, and its closing mark once heard.
+        for mark in marks {
             self.feed(state, &Input::MarkReached { mark });
         }
         true
+    }
+
+    /// Starts the next utterance, reaching only its opening mark.
+    fn start_one(&mut self, state: &mut SrState) {
+        let (mut marks, text) = self.queued.pop_front().expect("an utterance to start");
+        self.heard.push(text.clone());
+        let opening = marks.remove(0);
+        self.queued.push_front((marks, text));
+        self.started = true;
+        self.feed(state, &Input::MarkReached { mark: opening });
     }
 
     /// Plays everything queued, and whatever that hands to speech.
@@ -206,6 +320,143 @@ fn a_flood_speaks_its_first_lines_in_full_then_skips_to_the_last() {
 }
 
 #[test]
+fn a_burst_whose_first_line_plays_before_its_second_arrives_is_one_burst() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &output(lines(1..=1)));
+    // The first line starts playing with nothing else waiting; the rest of
+    // the flood arrives a moment later.
+    playback.start_one(&mut state);
+    playback.feed(&mut state, &output(lines(2..=100)));
+    let mut expected = lines(1..=30);
+    expected.push("skipped 40".to_owned());
+    expected.extend(lines(71..=100));
+    let mut heard = std::mem::take(&mut playback.heard);
+    heard.extend(playback.play_all(&mut state));
+    assert_eq!(heard, expected);
+}
+
+#[test]
+fn a_held_flood_is_read_when_the_group_s_last_line_is_handed_to_speech() {
+    let mut state = terminal();
+    let mut playback = Playback {
+        answer_late: true,
+        ..Playback::default()
+    };
+    playback.feed(&mut state, &output(lines(1..=30)));
+    // A group's worth waits: the outpost is told to hold, and what the
+    // terminal writes from then on waits in it.
+    assert_eq!(playback.requests, [TextOp::TerminalHold]);
+    playback.feed(
+        &mut state,
+        &output_from(
+            TERMINAL,
+            None,
+            Some(Skipped::Count(1000)),
+            lines(1031..=1060),
+        ),
+    );
+    // Lines 1 to 28 play; handing line 30 to speech asks for what is new.
+    for _ in 0..28 {
+        assert!(playback.play_one(&mut state));
+    }
+    assert_eq!(
+        playback.requests,
+        [TextOp::TerminalHold, TextOp::TerminalRead { hold: true }]
+    );
+    // Lines 29 and 30 are heard before the answer comes: the backlog is
+    // looked at only once it is in.
+    assert!(playback.play_one(&mut state));
+    assert!(playback.play_one(&mut state));
+    assert!(playback.queued.is_empty());
+    playback.answer(&mut state);
+    let mut expected = lines(1..=30);
+    expected.push("skipped 1000".to_owned());
+    expected.extend(lines(1031..=1060));
+    let mut heard = std::mem::take(&mut playback.heard);
+    heard.extend(playback.play_all(&mut state));
+    assert_eq!(heard, expected);
+}
+
+#[test]
+fn lines_skipped_past_the_history_say_more_than_the_history_holds() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &output(lines(1..=40)));
+    playback.feed(
+        &mut state,
+        &output_from(
+            TERMINAL,
+            None,
+            Some(Skipped::MoreThan(9001)),
+            lines(12001..=12030),
+        ),
+    );
+    // Lines 31 to 40 went before the history's overflow, and are part of
+    // it.
+    let mut expected = lines(1..=30);
+    expected.push("skipped more than 9001".to_owned());
+    expected.extend(lines(12001..=12030));
+    assert_eq!(playback.play_all(&mut state), expected);
+}
+
+#[test]
+fn blank_lines_count_when_skipped() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    let mut flood = lines(1..=30);
+    flood.extend((0..10).map(|_| String::new()));
+    flood.extend(lines(41..=70));
+    playback.feed(&mut state, &output(flood));
+    let mut expected = lines(1..=30);
+    expected.push("skipped 10".to_owned());
+    expected.extend(lines(41..=70));
+    assert_eq!(playback.play_all(&mut state), expected);
+}
+
+#[test]
+fn a_cut_while_held_reads_to_the_end_without_speaking() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &output(lines(1..=40)));
+    assert!(playback.play_one(&mut state));
+    playback.feed(&mut state, &output(lines(41..=50)));
+    playback.queued.clear();
+    playback.feed(&mut state, &Input::SpeechCancelled { at_ms: 0 });
+    assert_eq!(
+        playback.requests,
+        [TextOp::TerminalHold, TextOp::TerminalCancel]
+    );
+    assert!(playback.unread.is_empty(), "what the outpost held is gone");
+    // Reading is live again: output after the cut is spoken as it comes.
+    playback.feed(&mut state, &output(lines(51..=51)));
+    assert_eq!(playback.play_all(&mut state), ["line 1", "line 51"]);
+}
+
+#[test]
+fn output_read_before_a_cut_is_not_spoken() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &Input::SpeechCancelled { at_ms: 5_000 });
+    let read_before = Input::Event {
+        trace_id: TraceId::mint(),
+        observed_at_ms: 4_999,
+        source: Pid(1),
+        backend: Backend::Uia,
+        window: None,
+        event: NormalizedEvent::TerminalOutput {
+            node_id: id(TERMINAL),
+            output: TerminalOutput {
+                lines: lines(1..=2),
+                ..TerminalOutput::default()
+            },
+        },
+    };
+    playback.feed(&mut state, &read_before);
+    assert_eq!(playback.play_all(&mut state), Vec::<String>::new());
+}
+
+#[test]
 fn a_flood_read_with_its_start_apart_is_spoken_from_its_start() {
     let mut state = terminal();
     let mut playback = Playback::default();
@@ -216,6 +467,7 @@ fn a_flood_read_with_its_start_apart_is_spoken_from_its_start() {
         &event(NormalizedEvent::TerminalOutput {
             node_id: id(TERMINAL),
             output: TerminalOutput {
+                above: Vec::new(),
                 changed: None,
                 head: lines(1..=30),
                 skipped: Some(Skipped::Count(2940)),
@@ -337,6 +589,7 @@ fn a_line_rewritten_while_waiting_is_spoken_once_as_it_now_is() {
                     line: format!("progress {percent}%"),
                     appended: false,
                     uncertain: 0,
+                    inserted: String::new(),
                 }),
                 None,
                 Vec::new(),
@@ -357,6 +610,7 @@ fn a_line_rewritten_while_waiting_is_spoken_once_as_it_now_is() {
                 line: "progress 100%".to_owned(),
                 appended: false,
                 uncertain: 0,
+                inserted: String::new(),
             }),
             None,
             Vec::new(),
@@ -486,7 +740,7 @@ fn report_new_output_toggles_with_verbatim_5() {
             }))
         );
         assert_eq!(effects.len(), 1, "{effects:?}");
-        playback.take(effects);
+        playback.take(state, effects);
     };
     press(&mut state, &mut playback, false);
     playback.feed(&mut state, &output(lines(1..=3)));
@@ -523,7 +777,7 @@ fn speech_cut_off_drops_the_output_still_waiting() {
     // A key press cuts speech off: what was handed to speech is gone, and
     // so is what was waiting.
     playback.queued.clear();
-    playback.feed(&mut state, &Input::SpeechCancelled);
+    playback.feed(&mut state, &Input::SpeechCancelled { at_ms: 0 });
     assert_eq!(playback.play_all(&mut state), ["line 1"]);
     // Output after it is spoken as usual.
     playback.feed(&mut state, &output(lines(11..=11)));
@@ -536,4 +790,255 @@ fn output_from_a_terminal_without_the_focus_is_not_spoken() {
     let mut playback = Playback::default();
     playback.feed(&mut state, &output_from(99, None, None, lines(1..=2)));
     assert_eq!(playback.play_all(&mut state), Vec::<String>::new());
+}
+
+#[test]
+fn a_line_larger_than_everything_kept_waiting_is_cut_and_says_so() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    // Eleven megabytes of two-byte characters: cut on a character boundary
+    // at ten.
+    let line = "é".repeat(11 * 1024 * 1024 / 2);
+    playback.feed(&mut state, &output(vec![line]));
+    let heard = playback.play_all(&mut state);
+    assert_eq!(heard.len(), 2);
+    assert_eq!(heard[0], "é".repeat(10 * 1024 * 1024 / 2));
+    assert_eq!(heard[1], "line cut");
+}
+
+#[test]
+fn waiting_output_past_ten_megabytes_skips_its_oldest_lines() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &output(lines(1..=3)));
+    // Three lines of four megabytes each behind them: the oldest lines
+    // still waiting join the skipped count until what waits fits ten
+    // megabytes: line 3 (lines 1 and 2 are with speech) and the first big
+    // line.
+    let big = |c: char| c.to_string().repeat(4 * 1024 * 1024);
+    playback.feed(&mut state, &output(vec![big('a'), big('b'), big('c')]));
+    let heard = playback.play_all(&mut state);
+    let mut expected = lines(1..=2);
+    expected.extend(["skipped 2".to_owned(), big('b'), big('c')]);
+    assert_eq!(heard, expected);
+}
+
+#[test]
+fn the_line_a_caret_key_redraws_is_the_keys_and_not_output() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    // Up recalls a command from the shell's history: the key's own answer
+    // speaks the line, so the line's change is not spoken again.
+    let _ = reduce(&mut state, &Input::SpeechCancelled { at_ms: 10 });
+    let _ = reduce(
+        &mut state,
+        &Input::CaretKey {
+            trace_id: TraceId::mint(),
+            key: verbatim_model::CaretKey {
+                motion: verbatim_model::CaretMotion::PreviousLine,
+                select: false,
+            },
+            pressed_at_ms: 10,
+        },
+    );
+    let mut recalled = appended("echo one", "ready> echo one");
+    recalled.uncertain = 0;
+    playback.feed(
+        &mut state,
+        &output_from(TERMINAL, Some(recalled), None, Vec::new()),
+    );
+    assert_eq!(playback.play_all(&mut state), Vec::<String>::new());
+    // Enter, a key of its own, and the command's output is spoken.
+    let _ = reduce(&mut state, &Input::SpeechCancelled { at_ms: 20 });
+    playback.feed(&mut state, &output(vec!["one".to_owned()]));
+    assert_eq!(playback.play_all(&mut state), ["one"]);
+}
+
+#[test]
+fn a_rewrite_that_does_not_show_the_typing_never_echoes_it() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    // A password typed while a clock on the prompt's line ticks: the clock's
+    // rewrite is spoken, the typing held is not.
+    for character in ["s", "e"] {
+        playback.feed(&mut state, &typed(character));
+    }
+    let tick = LineChange {
+        text: "05".to_owned(),
+        line: "Password: 12:00:05".to_owned(),
+        appended: false,
+        uncertain: 0,
+        inserted: "5".to_owned(),
+    };
+    playback.feed(
+        &mut state,
+        &output_from(TERMINAL, Some(tick), None, Vec::new()),
+    );
+    assert_eq!(playback.play_all(&mut state), ["05"]);
+    // A character typed in the middle of a command is echoed when the line
+    // shows it there.
+    playback.feed(&mut state, &typed("\r"));
+    playback.feed(&mut state, &typed("x"));
+    let inserted = LineChange {
+        text: "abxcd".to_owned(),
+        line: "ready> abxcd".to_owned(),
+        appended: false,
+        uncertain: 0,
+        inserted: "x".to_owned(),
+    };
+    playback.feed(
+        &mut state,
+        &output_from(TERMINAL, Some(inserted), None, Vec::new()),
+    );
+    assert_eq!(playback.play_all(&mut state), ["x"]);
+}
+
+#[test]
+fn a_clearing_key_forgets_the_typing_held() {
+    // Escape, Control+C and the others come as one input.
+    {
+        let mut state = terminal();
+        let mut playback = Playback::default();
+        playback.feed(&mut state, &typed("a"));
+        playback.feed(&mut state, &typed("b"));
+        playback.feed(
+            &mut state,
+            &Input::ClearingKey {
+                trace_id: TraceId::mint(),
+            },
+        );
+        // The line then grows by what was typed: it is output, one line,
+        // the typing having been forgotten (echoed, it would be two
+        // characters).
+        playback.feed(
+            &mut state,
+            &output_from(
+                TERMINAL,
+                Some(appended("ab", "ready> ab")),
+                None,
+                Vec::new(),
+            ),
+        );
+        assert_eq!(playback.play_all(&mut state), ["ab"]);
+    }
+}
+
+/// The terminal's caret on `text` at byte `offset`, as the outpost reports
+/// it.
+fn caret_at(text: &str, offset: u32) -> Input {
+    event(NormalizedEvent::CaretMoved {
+        node_id: id(TERMINAL),
+        caret: verbatim_model::CaretReport {
+            line: verbatim_model::TextChunk {
+                unit: verbatim_model::TextUnit::Line,
+                text: text.to_owned(),
+                start: verbatim_model::TextAnchor(1),
+                offset,
+                languages: Vec::new(),
+                first: false,
+                last: false,
+                truncated: false,
+                formats: Vec::new(),
+            },
+            selection: None,
+        },
+    })
+}
+
+#[test]
+fn a_typed_space_padding_hides_is_echoed_when_the_caret_moves_past_it() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    // The focus's first caret report reads its line, as a focus does.
+    playback.feed(&mut state, &caret_at("ready> echo          ", 11));
+    assert_eq!(playback.play_all(&mut state), ["ready> echo"]);
+    playback.feed(&mut state, &typed(" "));
+    // The line's text reads the same, but the caret moved one cell on.
+    playback.feed(&mut state, &caret_at("ready> echo          ", 12));
+    assert_eq!(playback.play_all(&mut state), [" "]);
+    // A caret that moved by something else echoes nothing.
+    playback.feed(&mut state, &typed(" "));
+    playback.feed(&mut state, &caret_at("ready> echo          ", 14));
+    assert_eq!(playback.play_all(&mut state), Vec::<String>::new());
+}
+
+#[test]
+fn typing_a_line_back_to_what_it_said_echoes_the_typing() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &typed("s"));
+    let unsaid = LineChange {
+        text: String::new(),
+        line: "ready> ls".to_owned(),
+        appended: false,
+        uncertain: 0,
+        inserted: "s".to_owned(),
+    };
+    playback.feed(
+        &mut state,
+        &output_from(TERMINAL, Some(unsaid), None, Vec::new()),
+    );
+    assert_eq!(playback.play_all(&mut state), ["s"]);
+}
+
+#[test]
+fn typing_past_the_right_margin_is_echoed_not_spoken_as_output() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    for character in ["a", "b", "c", "d"] {
+        playback.feed(&mut state, &typed(character));
+    }
+    // The row filled with "ab"; "cd" went onto a row of its own, echoed
+    // character by character, not spoken as one line of output.
+    playback.feed(
+        &mut state,
+        &output_from(
+            TERMINAL,
+            Some(appended("ab", "ready> ab")),
+            None,
+            vec!["cd".to_owned()],
+        ),
+    );
+    assert_eq!(playback.play_all(&mut state), ["a", "b", "c", "d"]);
+}
+
+#[test]
+fn typing_over_ghost_text_that_showed_it_already_is_echoed() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &caret_at("ready> git status", 8));
+    assert_eq!(playback.play_all(&mut state), ["ready> git status"]);
+    // The prediction showed "it status"; typing "i" changes no text.
+    playback.feed(&mut state, &typed("i"));
+    playback.feed(&mut state, &caret_at("ready> git status", 9));
+    assert_eq!(playback.play_all(&mut state), ["i"]);
+    // A character the prediction did not show waits for the terminal.
+    playback.feed(&mut state, &typed("x"));
+    playback.feed(&mut state, &caret_at("ready> git status", 10));
+    assert_eq!(playback.play_all(&mut state), Vec::<String>::new());
+}
+
+#[test]
+fn typing_the_caret_shows_before_the_screen_read_is_echoed_once() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &caret_at("ready>          ", 7));
+    assert_eq!(playback.play_all(&mut state), ["ready>"]);
+    playback.feed(&mut state, &typed("."));
+    // The console host's caret reports, read before the screen: the line
+    // already shows the "." and the caret then moves past it.
+    playback.feed(&mut state, &caret_at("ready> .        ", 7));
+    playback.feed(&mut state, &caret_at("ready> .        ", 8));
+    let shown = LineChange {
+        text: " .".to_owned(),
+        line: "ready> .".to_owned(),
+        appended: true,
+        uncertain: 1,
+        inserted: " .".to_owned(),
+    };
+    playback.feed(
+        &mut state,
+        &output_from(TERMINAL, Some(shown), None, Vec::new()),
+    );
+    assert_eq!(playback.play_all(&mut state), ["."]);
 }

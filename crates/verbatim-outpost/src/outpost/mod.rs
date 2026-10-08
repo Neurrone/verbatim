@@ -68,6 +68,46 @@ use worker::{Tracking, Watch};
 
 pub(crate) use window::now_ms;
 
+/// The node whose caret the worker last read, and when that read began, in
+/// microseconds: a caret event observed before then changes nothing the
+/// read did not see, and one observed later (while the read was in flight
+/// included) may.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct CaretRead(Option<(u64, u64)>);
+
+impl CaretRead {
+    /// Notes a read of node `node`'s caret that began at `started_us`.
+    fn note(&mut self, node: u64, started_us: u64) {
+        self.0 = Some((node, started_us));
+    }
+
+    /// Whether the last read of node `node`'s caret began at or after
+    /// `observed_us`, so it saw what an event observed then reports.
+    fn covers(self, node: u64, observed_us: u64) -> bool {
+        self.0
+            .is_some_and(|(read, at)| read == node && at >= observed_us)
+    }
+}
+
+#[cfg(test)]
+mod caret_read_tests {
+    use super::CaretRead;
+
+    #[test]
+    fn an_event_observed_while_a_read_was_in_flight_is_not_covered() {
+        let mut read = CaretRead::default();
+        // A read of node 1 begins at 100 and returns at 200; a caret event
+        // is observed at 150, while it was in flight.
+        read.note(1, 100);
+        assert!(!read.covers(1, 150));
+        // One observed before the read began is covered; another node's
+        // never is.
+        assert!(read.covers(1, 100));
+        assert!(read.covers(1, 90));
+        assert!(!read.covers(2, 90));
+    }
+}
+
 /// What the outpost's threads share.
 pub(crate) struct Context {
     target_pid: u32,
@@ -111,7 +151,7 @@ pub(crate) struct Context {
     /// The node whose caret the worker last read, and when that read began,
     /// in microseconds: a caret event observed before it changes nothing
     /// the read did not see.
-    caret_read: Mutex<Option<(u64, u64)>>,
+    caret_read: Mutex<CaretRead>,
     /// The details the active theme wants read for each node
     /// ([`SupervisorToOutpost::Fetches`]); everything until Core says
     /// otherwise. UIA reads leave the properties of the others out of
@@ -248,10 +288,18 @@ impl Context {
     }
 
     fn caret_read(&self, node: NodeId) {
-        *self
-            .caret_read
+        self.caret_read_from(node, now_us());
+    }
+
+    /// Notes that a read of `node`'s caret began at `started_us`, for a
+    /// read stamped once it has returned: the time it began, never the
+    /// time it ended, since a caret event observed while it was in flight
+    /// may come from a move the read did not see.
+    fn caret_read_from(&self, node: NodeId, started_us: u64) {
+        self.caret_read
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some((node.number(), now_us()));
+            .unwrap_or_else(PoisonError::into_inner)
+            .note(node.number(), started_us);
     }
 
     /// Whether the worker has read `node`'s caret since `observed_us`, so
@@ -260,7 +308,7 @@ impl Context {
         self.caret_read
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .is_some_and(|(read, at)| read == node.number() && at >= observed_us)
+            .covers(node.number(), observed_us)
     }
 
     /// Whether a UIA read for an element of `hwnd` should try a remote
@@ -402,7 +450,7 @@ impl Outpost {
             edit_anchors: Mutex::new(Anchors::sharing(anchor_counter, held_anchors)),
             patterns: Mutex::new(HashMap::new()),
             text_support: Mutex::new(HashMap::new()),
-            caret_read: Mutex::new(None),
+            caret_read: Mutex::new(CaretRead::default()),
             fetches: Mutex::new(Fetches::default()),
             terminals: Mutex::new(HashMap::new()),
             focused_element,

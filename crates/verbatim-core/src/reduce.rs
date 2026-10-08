@@ -40,11 +40,12 @@ const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyResul
 /// parts of the state it does not touch (architecture section 2).
 #[must_use]
 pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    let effects = reduce_input(state, input);
+    let mut effects = reduce_input(state, input);
     // Whatever cuts speech off drops the terminal output handed to it, and
     // with it the output still waiting, as a key press does in NVDA.
     if effects.iter().any(terminal::cuts_speech) {
-        terminal::cut(state);
+        let cut = terminal::cut(state, 0);
+        effects.extend(cut);
     }
     effects
 }
@@ -84,25 +85,38 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         } => reduce_text_completed(state, *trace_id, *query_id, reply.clone()),
         Input::CaretKey {
             key, pressed_at_ms, ..
-        } => editing::caret_key(state, *key, *pressed_at_ms),
+        } => {
+            terminal::caret_key(state);
+            editing::caret_key(state, *key, *pressed_at_ms)
+        }
         Input::CharacterTyped { trace_id, text } => {
             editing::character_typed(state, *trace_id, text)
+        }
+        Input::ClearingKey { .. } => {
+            editing::clearing_key(state);
+            Vec::new()
         }
         Input::MarkReached { mark } => {
             let mut effects = say_all::mark_reached(state, *mark);
             effects.extend(terminal::mark_reached(state, *mark));
             effects
         }
-        Input::SpeechCancelled => {
-            terminal::cut(state);
-            say_all::stop(state)
+        Input::SpeechCancelled { at_ms } => {
+            editing::later_key(state, *at_ms);
+            state.terminal.key_owns_line = false;
+            let mut effects = terminal::cut(state, *at_ms);
+            effects.extend(say_all::stop(state));
+            effects
         }
         Input::Settings(settings) => {
-            if state.settings.report_terminal_output && !settings.report_terminal_output {
-                crate::terminal::drop_waiting(state);
-            }
+            let effects =
+                if state.settings.report_terminal_output && !settings.report_terminal_output {
+                    crate::terminal::drop_waiting(state)
+                } else {
+                    Vec::new()
+                };
             state.settings = *settings;
-            Vec::new()
+            effects
         }
         Input::Fetches(fetches) => {
             state.fetches = *fetches;
@@ -304,6 +318,9 @@ fn reduce_text_completed(
     if say_all::is_pending(state, query_id) {
         return say_all::reply(state, trace_id, reply);
     }
+    if terminal::is_pending(state, query_id) {
+        return terminal::reply(state, trace_id, query_id, reply);
+    }
     Vec::new()
 }
 
@@ -402,15 +419,17 @@ fn reduce_event(
             reduce_value_changed(state, trace_id, *node_id, value.clone())
         }
         NormalizedEvent::CaretMoved { node_id, caret } => {
+            let mut effects = terminal::caret_shows_typing(state, trace_id, *node_id, caret);
             editing::update_caret(state, *node_id, caret.clone(), observed_at_ms);
-            editing::focus_caret(state, trace_id, *node_id)
+            effects.extend(editing::focus_caret(state, trace_id, *node_id));
+            effects
         }
         NormalizedEvent::NoText { node_id } => editing::focus_value(state, trace_id, *node_id),
         NormalizedEvent::TextChanged { node_id } => {
             editing::text_changed(state, trace_id, *node_id)
         }
         NormalizedEvent::TerminalOutput { node_id, output } => {
-            terminal::output(state, trace_id, *node_id, output)
+            terminal::output(state, trace_id, observed_at_ms, *node_id, output)
         }
         NormalizedEvent::PropertyChanged {
             node_id,

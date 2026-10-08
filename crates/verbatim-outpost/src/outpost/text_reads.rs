@@ -26,7 +26,7 @@ use windows::core::AgileReference;
 
 use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::{
-    CallCounts, CaretReport, CaretWatch, NodeId, Role, TerminalOutput, TextOp, TextReply, TraceId,
+    CallCounts, CaretReport, CaretWatch, NodeId, Role, TextOp, TextReply, TraceId,
 };
 use verbatim_uia::ElementExt;
 use verbatim_uia::map::is_terminal_class;
@@ -438,55 +438,58 @@ pub(super) fn report_caret(
 }
 
 /// Reads what is new in the focused terminal `node_id`'s text
-/// (`crate::terminal`), or, for `baseline`, only notes where its text ends
-/// now: a focus arriving, whose earlier output is not new to the user.
-/// `None` when it has no text pattern, is gone, or could not be read.
+/// (`crate::terminal`), as `mode` says. `None` when it has no text pattern,
+/// is gone, or could not be read.
 ///
-/// Except for `baseline`, the caret is read with the text, in the same
+/// Except for a baseline, the caret is read with the text, in the same
 /// round trip, and returned as a caret report: a terminal raises no caret
 /// event for every character typed (the console host's come on a schedule
-/// of their own), so Core's copy of the caret would lag behind typing, and
-/// a Backspace would say the wrong character.
+/// of their own), so Core's copy of the caret would lag behind typing.
 pub(super) fn terminal_output(
     context: &Context,
     uia: &verbatim_uia::Uia,
     node_id: NodeId,
-    baseline: bool,
-) -> Option<(TerminalOutput, Option<CaretReport>)> {
+    mode: crate::terminal::ReadMode,
+) -> Option<(crate::terminal::Found, Option<CaretReport>)> {
     let Ok(mut source) = uia_source(context, node_id) else {
         return None;
     };
     let window = context.tracking().window();
     let remote = context.tries_remote(window);
-    let wanted = u32::from(context.terminal_lines());
+    let head_wanted = u32::from(context.terminal_lines());
+    let caret =
+        (mode != crate::terminal::ReadMode::Baseline).then(|| verbatim_uia_rops::CaretLineQuery {
+            element: source.element(),
+            pattern: source.pattern(),
+            pattern2: source.pattern2(),
+            max_text: i32::try_from(crate::text::MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
+        });
     let mut terminals = context.terminals();
     let terminal = terminals.entry(node_id.number()).or_default();
-    let caret = (!baseline).then(|| verbatim_uia_rops::CaretLineQuery {
-        element: source.element(),
-        pattern: source.pattern(),
-        pattern2: source.pattern2(),
-        max_text: i32::try_from(crate::text::MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
-    });
+    // The console host's `FindText` matches a row's padding, so the
+    // anchor's row is sought with it there.
+    terminal.matches_padding = console_focus(context, node_id);
+    // The caret is stamped as read when the round trip began: a caret event
+    // observed while it was in flight may report a move it did not see.
+    let started_us = crate::protocol::now_us();
     let read = crate::terminal::read(
         uia,
         (source.element(), source.pattern()),
         caret,
         terminal,
-        (wanted, remote, baseline),
+        (head_wanted, remote, mode),
     );
     drop(terminals);
     match read {
-        Ok((output, caret, paths)) => {
-            for path in paths {
-                if let Path::Fallback(error) = &path {
-                    tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
-                    if let (verbatim_uia_rops::Error::Import(_), Some(window)) = (error, window) {
-                        context.read_classically(window);
-                    }
+        Ok(answer) => {
+            if let Some(Path::Fallback(error)) = &answer.path {
+                tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
+                if let (verbatim_uia_rops::Error::Import(_), Some(window)) = (error, window) {
+                    context.read_classically(window);
                 }
             }
-            let caret = caret.and_then(|answer| {
-                context.caret_read(node_id);
+            let caret = answer.caret.and_then(|answer| {
+                context.caret_read_from(node_id, started_us);
                 let read_at_ms = super::now_ms();
                 let read = source.caret_read_from(answer).ok()?;
                 let mut anchors = context.uia_anchors();
@@ -498,7 +501,7 @@ pub(super) fn terminal_output(
                 )
                 .ok()
             });
-            Some((output, caret))
+            Some((answer.found, caret))
         }
         Err(TextError::Gone) => None,
         Err(TextError::Failed(reason)) => {

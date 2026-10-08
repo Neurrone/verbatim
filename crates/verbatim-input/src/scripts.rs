@@ -408,6 +408,30 @@ pub fn caret_bindings() -> Vec<(GestureId, CaretKey)> {
     bindings
 }
 
+/// The keys that end or clear the command line being typed: Escape,
+/// Control+C, Control+D, and Control+Break, both as NVDA names it
+/// (Control+Pause) and as Windows reports it (its own key, `break`). Observed like the caret keys, never bound: the hook
+/// passes each to the application and reports it, and the shell turns it
+/// into `Input::ClearingKey`.
+///
+/// # Panics
+///
+/// Never panics in practice: every identifier is a fixed literal pinned
+/// well-formed by this module's tests.
+#[must_use]
+pub fn clearing_keys() -> Vec<GestureId> {
+    [
+        "kb:escape",
+        "kb:control+c",
+        "kb:control+d",
+        "kb:control+pause",
+        "kb:control+break",
+    ]
+    .into_iter()
+    .map(|identifier| GestureId::parse(identifier).expect("clearing keys are well-formed"))
+    .collect()
+}
+
 /// Builds the hook's bound-gesture set from a binding table, ready to wrap
 /// in a [`crate::SharedGestureMap`] (or store into an existing one).
 ///
@@ -615,6 +639,20 @@ mod tests {
             gesture_of(KeyboardLayout::Laptop, ScriptAction::ReviewNextLine).as_deref(),
             Some("kb:downarrow+verbatim")
         );
+    }
+
+    #[test]
+    fn clearing_keys_are_never_bound_nor_caret_keys() {
+        let clearing = clearing_keys();
+        assert_eq!(clearing.len(), 5);
+        let caret = caret_bindings();
+        for layout in [KeyboardLayout::Desktop, KeyboardLayout::Laptop] {
+            let bindings = bindings_for(layout);
+            for gesture in &clearing {
+                assert!(bindings.iter().all(|(bound, _)| bound != gesture));
+                assert!(caret.iter().all(|(observed, _)| observed != gesture));
+            }
+        }
     }
 
     #[test]

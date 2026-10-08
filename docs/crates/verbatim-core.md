@@ -425,15 +425,32 @@ then speaks, queued:
   line at the caret, "blank" when it has nothing to read.
 - Control with Up or Down Arrow: the provider's paragraph, or the line when
   the provider has no paragraphs.
-- Backspace: the character before the caret before the key, worked out from
-  Core's copy of the caret as the key found it, once the caret moved; Control+Backspace the
-  text from the start of the word before the caret. At the start of a
+- Backspace and Control+Backspace: what the key removed, from evidence
+  (`phase6-design.md`, "What a key did to the text"): the caret's line as
+  the key found it compared with the line the reply read, text that ended
+  at the caret before the key and is gone, with the caret now where it
+  began (`editing::removal`; in a terminal the row reads as spaces up to a
+  caret standing in its padding, so a typed space is found). Nothing is
+  said when nothing was removed, as when the classic edit control's
+  Control+Backspace inserts a DEL character. At the start of a
   line, the line break it deleted, of the kind the text was last seen to
   use (the caret's line's own break, or the one remembered from an
   earlier line), a carriage return and line feed spoken as the line feed,
   as NVDA does. Nothing at the start of the text, or when no break has
   been seen.
 - Delete and Control+Delete: the character or word now at the caret.
+- Any other key passed to the application that types no text
+  (`CaretMotion::Other`, from the hook's `KeyReport::Passed`, and the
+  clearing keys): text it removed at the caret is spoken (Control+W, and
+  Control+K, which removes what follows the caret); a caret now on another
+  line (`CaretReply::same_line`, which the outpost answers for a watch
+  marked `landing`) speaks that line; a caret that moved over an unchanged
+  line speaks by where it landed: the character at the caret when it moved
+  by exactly one character or landed at the line's start or end, the word
+  when it landed at a word's start or just after its end, and inside a
+  word the word and then the character at the caret (bash's Control+A and
+  Control+E, Alt+B and Alt+F). Text a key added says nothing here; typing
+  echo and terminal output speak it.
 - Any of them with Shift, and Control+A: what became selected and
   unselected, NVDA's "hello selected" and "hello unselected", a single
   character by its name, 512 characters or more as their number. A
@@ -580,37 +597,62 @@ the cursor where reading got to.
 ## Terminals (milestone M4 item 9)
 
 The reducer's side of terminal output (`terminal.rs`; `phase6-design.md`,
-"Terminal output: notifications or diffing" and "The flood policy,
-reconsidered"). The focused terminal's outpost diffs its text and sends
-what is new as `NormalizedEvent::TerminalOutput`
-([verbatim-model](verbatim-model.md)); output from anything but the focus
-is ignored.
+"The flood policy, reconsidered", "Terminal decisions", and "Terminal
+reading by diffing the screen"). The focused terminal's outpost diffs its
+screen and sends what is new as `NormalizedEvent::TerminalOutput`
+([verbatim-model](verbatim-model.md)), or as the answer to Core's request
+(`TextReply::Terminal`); output from anything but the focus is ignored.
 
 - Output is spoken queued, in order, one line per utterance, each starting
-  with an index mark; blank lines are dropped. Two utterances are handed to
-  speech ahead of playback (one playing, one ready behind it) and the rest
-  wait in the state (`TerminalSpeech`), so the backlog not yet spoken is
-  known. Each mark reached hands on the next. Newer output never cancels
-  older output still waiting.
+  and ending with an index mark. Every line counts, blank ones included
+  (Dickson, 2026-10-07): a blank line waits and is counted when skipped,
+  but is never spoken. Two utterances are handed to speech ahead of
+  playback (one playing, one ready behind it) and the rest wait in the
+  state (`TerminalSpeech`), so the backlog not yet spoken is known. Each
+  opening mark reached hands on the next. Newer output never cancels older
+  output still waiting. What is new above the last line read (`above`)
+  comes first, then that line's change, the first unread lines (`head`),
+  the count of the rest, and the newest lines.
 - The flood policy, by groups: the first "Lines spoken in full" lines of
   a burst of output are spoken whole, however fast the rest arrives
   (`TerminalSpeech::group` counts the lines the group still hands to
-  speech). An outpost that could not read every new line sends the first
-  ones in `TerminalOutput::head`, before its skipped count and the newest
-  lines, so a flood's start is heard. Only once the group's last line is
-  playing is the backlog looked at: when more lines wait than "Lines
-  spoken in full" (any count already skipped included), everything but
-  the newest "Last lines to speak" becomes one "skipped N lines"
+  speech). Only once the group's last line has been heard (its closing
+  mark) is the backlog looked at: when more lines wait than "Lines spoken
+  in full" (any count already skipped included), everything but the
+  newest "Last lines to speak" becomes one "skipped N lines"
   (`Phrase::SkippedLines`), adding any count the outpost sent; a count the
   outpost could not make (`Skipped::Uncounted`) makes it "skipped lines"
-  (`Phrase::SkippedUncountedLines`). What waits is then the next group,
-  and the decision repeats after it, until the output stops and
-  everything waiting has been heard; the next output starts a burst of its
-  own. Output under the limit is never touched, however many batches it
-  arrives in. Behind the group being spoken, the waiting queue keeps at
-  most as many lines as either limit keeps, older ones folded into the
-  skipped count, each line at most 4 KB, so the state stays bounded and
-  every count stays exact.
+  (`Phrase::SkippedUncountedLines`), and lines that went by past the
+  terminal's history (`Skipped::MoreThan`) make it "skipped more than N
+  lines" (`Phrase::SkippedMoreThanLines`), N being the history's rows left
+  unspoken, which already stands for everything older. What waits is then
+  the next group, and the decision repeats after it, until the output
+  stops and everything waiting has been heard; the next output starts a
+  burst of its own. A burst ends only once its last line has been heard,
+  never when its last line starts playing: a flood's first line can start
+  playing a moment before its second line arrives, and ending the burst
+  then started a new group one line late (the intermittent
+  `conhost_flood` failure of 2026-10-08). Output under the limit is never
+  touched, however many batches it arrives in. Behind the group being
+  spoken, the waiting queue keeps at most as many lines as either limit
+  keeps, older ones folded into the skipped count, and everything waiting
+  at most 10 MB (`MAX_WAITING_BYTES`, Dickson, 2026-10-07), the oldest
+  waiting lines folded into the skipped count beyond it; a single line
+  larger than that is cut on a grapheme boundary and followed by "line
+  cut" (`Message::TerminalLineCut`). So the state stays bounded and every
+  count stays exact.
+- On-demand reading. Once a group's worth of lines waits or is queued for
+  speech, Core tells the outpost to hold (`TextOp::TerminalHold`): it only
+  notes that the terminal changed. When the group's last line is handed
+  to speech, Core asks for what is new (`TextOp::TerminalRead`, holding
+  on), so the answer is in before that line has been heard; the backlog
+  is looked at only once both have happened (`TerminalSpeech::deciding`).
+  When nothing is left waiting, Core asks once more and reading goes live
+  again. A cut while the outpost holds, or with a request out, tells it to
+  read to the end without speaking (`TextOp::TerminalCancel`), as NVDA
+  drops what is pending; output read before a cut
+  (`Input::SpeechCancelled::at_ms` against the event's observed time), or
+  before the cancel's answer, is used only to echo typing.
 - The last line read, changed in place, speaks what changed; while an
   earlier version of that line is still waiting, the whole new line takes
   its place, so a progress bar rewritten quickly is spoken once, as it
@@ -622,11 +664,23 @@ is ignored.
   spoken again as output; what the terminal added beyond them (a tab
   completion) is output. When the line grew by something else (a password
   prompt's asterisks), what was held is dropped unspoken and what the
-  terminal showed is spoken. A line rewritten while typing was held or
-  echoed is taken as the typing showing: the typing is echoed and the
-  rewrite is not spoken. With "speak passwords" on, typing is echoed at
-  once and remembered until the terminal shows it, so it is not spoken
-  twice. Enter forgets both. White space at the start of what the line
+  terminal showed is spoken. A line rewritten shows the typing only when
+  what it gained (`LineChange::inserted`, between what it kept at its
+  start and its end) is exactly the typing held, a character typed in the
+  middle of a command: then the typing is echoed and the rewrite is not
+  spoken. Any other rewrite (a clock ticking on a password prompt's line)
+  is spoken as output and leaves the typing held, so a password never
+  leaks. Typing that wrapped past the right margin onto a row of its own
+  (the first new line is the start of the typing held) is echoed, not
+  spoken as output. Typing whose text the terminal does not change, a
+  space at the end of a line (padding until something follows it) or a
+  character typed over inline prediction that already showed it, is
+  echoed when the caret moves over exactly that text on an unchanged line
+  (`terminal::caret_shows_typing`, on every caret report). With "speak
+  passwords" on, typing is echoed at once and remembered until the
+  terminal shows it, so it is not spoken twice. Enter and Tab forget both,
+  and so does a clearing key (`Input::ClearingKey`: Escape, Control+C,
+  Control+D, Control+Break), as NVDA forgets its queued characters. White space at the start of what the line
   gained that the line may already have had (`LineChange::uncertain`: a
   prompt's trailing space, which the outpost cannot tell from padding) is
   matched only as far as the typing itself starts with white space, so
@@ -640,9 +694,12 @@ is ignored.
   pipeline drops them once the focus leaves.
 - Verbatim+5 (`ReviewCommand::ToggleReportNewOutput`) toggles "Report new
   output", says "report new output on" or "off", and emits
-  `Effect::SettingsChanged`; off drops what is waiting and speaks no
-  output, while held typing is still echoed when the terminal shows it.
+  `Effect::SettingsChanged`; off drops what is waiting (and cancels a hold)
+  and speaks no output, while held typing is still echoed when the
+  terminal shows it.
 
 `tests/terminal.rs` drives these with simulated playback, reaching each
-utterance's mark as it starts; `tests/alloc.rs` checks that a terminal
-line allocates the same whatever the size of the state.
+utterance's opening mark as it starts and its closing mark once heard,
+and a simulated outpost that holds and answers Core's requests as the
+real one does; `tests/alloc.rs` checks that a terminal line allocates the
+same whatever the size of the state.

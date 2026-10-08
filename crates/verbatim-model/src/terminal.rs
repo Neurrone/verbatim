@@ -3,23 +3,29 @@
 //! a terminal's text found since its last read, sent to Core as
 //! [`NormalizedEvent::TerminalOutput`](crate::NormalizedEvent::TerminalOutput).
 //!
-//! The outpost never reads a terminal's whole buffer. It keeps an anchor at
-//! the start of the last line it read, with that line's text and the text
-//! of the line before it, and on each change reads only the lines it will
-//! speak. What it found arrives in the order it is spoken: the anchor's own
-//! line where it changed in place, then the lines that went by unread, then
-//! the newest lines. Lines are sent without their trailing padding; blank
-//! ones are sent as empty strings, and Core drops them.
+//! The outpost never reads a terminal's whole buffer. Each read fetches the
+//! screen and diffs it by line with the screen as last seen
+//! (`phase6-design.md`, "Terminal reading by diffing the screen"), and
+//! finds the last screen's top row again by its text to count the lines
+//! that scrolled by unread. What it found arrives in the order it is
+//! spoken: what is new above the last line read, that line where it
+//! changed in place, the lines that went by unread, then the newest lines.
+//! Lines are sent without their trailing padding; blank ones are sent as
+//! empty strings, which Core counts as lines but does not speak. A line is
+//! sent whole, however long (Dickson, 2026-10-07); Core bounds what it
+//! keeps waiting.
 
 use serde::{Deserialize, Serialize};
-
-/// The most UTF-8 bytes of one terminal line an outpost sends; a longer line
-/// is cut at a character boundary.
-pub const MAX_TERMINAL_LINE_BYTES: usize = 4 * 1024;
 
 /// What a terminal's diff found.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalOutput {
+    /// What is new on the screen above the last line read before: lines
+    /// inserted there, and what changed of lines rewritten in place there
+    /// (a message printed above a prompt, a status block, a selection
+    /// list's marker).
+    #[serde(default)]
+    pub above: Vec<String>,
     /// The last line read before, changed in place since: a prompt that
     /// grew, or a progress bar rewritten. `None` when it is unchanged.
     pub changed: Option<LineChange>,
@@ -33,9 +39,8 @@ pub struct TerminalOutput {
     /// line) and [`Self::lines`]. `None` when every new line is in `head`
     /// and `lines`.
     pub skipped: Option<Skipped>,
-    /// The newest lines, oldest first, each without its trailing padding
-    /// and at most [`MAX_TERMINAL_LINE_BYTES`]; an empty string is a blank
-    /// line. At most `ReaderSettings::terminal_read_lines` of them.
+    /// The newest lines, oldest first, each without its trailing padding;
+    /// an empty string is a blank line. At most `ReaderSettings::terminal_read_lines` of them.
     pub lines: Vec<String>,
 }
 
@@ -44,6 +49,7 @@ impl TerminalOutput {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.changed.is_none()
+            && self.above.is_empty()
             && self.head.is_empty()
             && self.skipped.is_none()
             && self.lines.is_empty()
@@ -73,6 +79,14 @@ pub struct LineChange {
     /// with.
     #[serde(default)]
     pub uncertain: usize,
+    /// What the line gained where it changed, between what it kept at its
+    /// start and at its end: for a line that grew, `text`; for one
+    /// rewritten, the characters inserted (a typed character in the middle
+    /// of a command), which Core matches with typing it holds, so a
+    /// rewrite that does not show the typing (a clock ticking on a password
+    /// prompt's line) never echoes it.
+    #[serde(default)]
+    pub inserted: String,
 }
 
 /// How many lines went by unread.
@@ -80,19 +94,26 @@ pub struct LineChange {
 pub enum Skipped {
     /// Exactly this many.
     Count(u32),
-    /// Some, but how many is not known: the scrollback overflowed past the
-    /// anchor, or the screen changed under it, and the discarded lines are
-    /// gone.
+    /// Some, but how many is not known.
     Uncounted,
+    /// More than this many: the terminal's history overflowed past the
+    /// screen last read, so its oldest lines are gone, and this many are
+    /// the lines the history holds that are not spoken.
+    MoreThan(u32),
 }
 
 impl Skipped {
-    /// The two counts together: exact only when both are.
+    /// This count followed by the `newer` one. Counts add, exact only when
+    /// both are. A newer [`Skipped::MoreThan`] stands for everything before
+    /// it: what went before it has left the history, and its count is the
+    /// history's lines left unspoken. Lines counted after one add to it.
     #[must_use]
-    pub fn plus(self, other: Self) -> Self {
-        match (self, other) {
+    pub fn plus(self, newer: Self) -> Self {
+        match (self, newer) {
             (Self::Count(a), Self::Count(b)) => Self::Count(a.saturating_add(b)),
-            _ => Self::Uncounted,
+            (_, Self::MoreThan(b)) => Self::MoreThan(b),
+            (Self::MoreThan(a), Self::Count(b)) => Self::MoreThan(a.saturating_add(b)),
+            (_, Self::Uncounted) | (Self::Uncounted, Self::Count(_)) => Self::Uncounted,
         }
     }
 }
@@ -110,6 +131,23 @@ mod tests {
         );
         assert_eq!(
             Skipped::Uncounted.plus(Skipped::Count(1)),
+            Skipped::Uncounted
+        );
+        // What went before a history's overflow is part of it.
+        assert_eq!(
+            Skipped::Count(40).plus(Skipped::MoreThan(9001)),
+            Skipped::MoreThan(9001)
+        );
+        assert_eq!(
+            Skipped::Uncounted.plus(Skipped::MoreThan(9001)),
+            Skipped::MoreThan(9001)
+        );
+        assert_eq!(
+            Skipped::MoreThan(9001).plus(Skipped::Count(10)),
+            Skipped::MoreThan(9011)
+        );
+        assert_eq!(
+            Skipped::MoreThan(9001).plus(Skipped::Uncounted),
             Skipped::Uncounted
         );
     }

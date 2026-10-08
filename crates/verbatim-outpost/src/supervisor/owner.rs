@@ -986,7 +986,17 @@ fn read_outpost(
 ) {
     let mut reader = BufReader::new(from_child);
     let mut position = 0u64;
-    while let Ok(Some(mut message)) = read_message::<_, OutpostToSupervisor>(&mut reader) {
+    loop {
+        let mut message = match read_message::<_, OutpostToSupervisor>(&mut reader) {
+            Ok(Some(message)) => message,
+            Ok(None) => break,
+            // A message too large or not a message: the outpost is treated
+            // as failed, as when its pipe closes.
+            Err(error) => {
+                tracing::warn!(%outpost, %error, "an outpost's message could not be read");
+                break;
+            }
+        };
         // Node ids name the incarnation whose pipe they arrived on, never
         // whatever the message body claims.
         message.assign_outpost(outpost);

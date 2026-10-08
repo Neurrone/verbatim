@@ -99,6 +99,11 @@ Public API:
   Delete, and Control with each; and Control+A. They are observed, never
   bound: the shell adds them to the hook's map with `with_observed` and
   turns each reported gesture into `Input::CaretKey`.
+- `clearing_keys()` — the keys that end or clear the command line being
+  typed: Escape, Control+C, Control+D, and Control+Break, both as NVDA
+  binds it (Control+Pause) and as Windows reports it (the `break` key,
+  virtual key 3). Observed like the caret keys; the shell turns each into
+  `Input::ClearingKey`.
 - `harness` — the number an end-to-end test harness puts on each key it
   injects, so Verbatim can say when it has handled that key: evidence for
   "nothing more was said" that is not a period of silence. The agent

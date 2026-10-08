@@ -531,6 +531,16 @@ pub enum Input {
         /// return.
         text: String,
     },
+    /// A key that ends or clears the command line being typed, Escape,
+    /// Control+C, Control+D, or Control+Break, was passed to the focused
+    /// application. A terminal forgets the typing it holds, which it never
+    /// showed (a password perhaps), as NVDA forgets its queued characters
+    /// (`docs/parity.md`, "Text, documents, terminals"). These keys type no
+    /// text, so they never arrive as [`Input::CharacterTyped`].
+    ClearingKey {
+        /// Trace ID minted when the key was observed.
+        trace_id: TraceId,
+    },
     /// Playback reached an index mark the reducer placed in an utterance
     /// ([`crate::SegmentContent::Mark`]), reported by the speech pipeline
     /// when the device has played the audio before it.
@@ -541,7 +551,12 @@ pub enum Input {
     /// Speech was cut off outside the reducer: a key press cancelled it, as
     /// the keyboard hook does for nearly every key. Say-all stops here, as
     /// NVDA's stops on any key.
-    SpeechCancelled,
+    SpeechCancelled {
+        /// When it was cut off, in milliseconds since the Unix epoch, the
+        /// clock outposts stamp events with; 0 when unknown.
+        #[serde(default)]
+        at_ms: u64,
+    },
     /// The reader settings, at startup and whenever the user changes them.
     Settings(ReaderSettings),
     /// The details the active theme wants fetched ([`crate::Fetches`]), at

@@ -165,6 +165,15 @@ pub enum KeyReport {
         /// application handled the key.
         pressed_at_us: u64,
     },
+    /// Any other key passed to the application, typing no text, that is not
+    /// a modifier or a lock key: the source of a caret key judged by where
+    /// the caret landed (`CaretMotion::Other`).
+    Passed {
+        /// Minted when the key was observed.
+        trace_id: TraceId,
+        /// As [`KeyReport::Observed`]'s.
+        pressed_at_us: u64,
+    },
     /// The key types `text` into the focused application: the source of
     /// `Input::CharacterTyped`. A tab is a tab character and Enter a
     /// carriage return; a dead key types nothing until the key after it.
@@ -327,7 +336,11 @@ fn hook_thread(
         return;
     }
 
+    // The console windows' threads, for their keyboard layout (`typed`),
+    // kept while the loop runs.
+    let consoles = typed::ConsoleWatch::start();
     pump_messages();
+    drop(consoles);
 
     // SAFETY: `hook` is the handle installed above and not yet unhooked.
     unsafe {
@@ -398,6 +411,12 @@ fn pump_messages() {
 ///
 /// # Safety
 ///
+/// Whether `vk` is a modifier key, Shift, Control, Alt, or Windows, which
+/// does nothing alone.
+fn is_modifier(vk: u16) -> bool {
+    matches!(vk, 0x10..=0x12 | 0x5B | 0x5C | 0xA0..=0xA5)
+}
+
 /// Called by the operating system with `WH_KEYBOARD_LL` conventions: when
 /// `code == HC_ACTION`, `lparam` points to a valid [`KBDLLHOOKSTRUCT`]. The
 /// function only dereferences it in that case.
@@ -450,6 +469,7 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                 // Never block: drop the gesture if the consumer is backed up.
                 let _ = state.events.try_send(Routed::Gesture(emitted));
             }
+            let was_observed = decision.observed.is_some();
             if let Some(observed) = decision.observed
                 && !own
             {
@@ -459,15 +479,30 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                     pressed_at_us: unix_us(),
                 });
             }
-            if event.pressed
+            let passed = event.pressed
                 && decision.decision == KeyDecision::Pass
                 && !decision.shared_modifier
-                && !own
-                && let Some(text) = state.typing.translate(event.vk, kbd.scanCode)
-            {
+                && !own;
+            if passed {
+                let pressed_at_us = unix_us();
                 let trace_id = TraceId::mint();
-                record_key_origin(trace_id, key_number);
-                (state.reports)(KeyReport::Typed { trace_id, text });
+                match state.typing.translate(event.vk, kbd.scanCode) {
+                    Some(text) => {
+                        record_key_origin(trace_id, key_number);
+                        (state.reports)(KeyReport::Typed { trace_id, text });
+                    }
+                    None if !was_observed
+                        && !is_modifier(event.vk)
+                        && verbatim_input::ToggleKey::from_vk(event.vk).is_none() =>
+                    {
+                        record_key_origin(trace_id, key_number);
+                        (state.reports)(KeyReport::Passed {
+                            trace_id,
+                            pressed_at_us,
+                        });
+                    }
+                    None => {}
+                }
             }
             // A lock key reaching the operating system is reported, for its
             // new state to be announced, as NVDA announces it. The Verbatim

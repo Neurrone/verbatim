@@ -25,10 +25,10 @@ use windows::Win32::UI::Accessibility::{
     UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_PROPERTY_ID, UIA_PaneControlTypeId,
     UIA_RadioButtonControlTypeId, UIA_SelectionItem_ElementSelectedEventId,
     UIA_SliderControlTypeId, UIA_SpinnerControlTypeId, UIA_StatusBarControlTypeId,
-    UIA_TabControlTypeId, UIA_TabItemControlTypeId, UIA_Text_TextSelectionChangedEventId,
-    UIA_TextControlTypeId, UIA_ToolBarControlTypeId, UIA_TreeControlTypeId,
-    UIA_TreeItemControlTypeId, UIA_ValueValuePropertyId, UIA_WindowControlTypeId,
-    UiaRaiseActiveTextPositionChangedEvent, UiaRaiseAutomationEvent,
+    UIA_TabControlTypeId, UIA_TabItemControlTypeId, UIA_Text_TextChangedEventId,
+    UIA_Text_TextSelectionChangedEventId, UIA_TextControlTypeId, UIA_ToolBarControlTypeId,
+    UIA_TreeControlTypeId, UIA_TreeItemControlTypeId, UIA_ValueValuePropertyId,
+    UIA_WindowControlTypeId, UiaRaiseActiveTextPositionChangedEvent, UiaRaiseAutomationEvent,
     UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent,
 };
 use windows_core::Interface;
@@ -95,6 +95,7 @@ pub(crate) fn root_provider(
 
 /// Applies a parsed stdin [`Command`] against `tree` and raises the matching
 /// UIA notification. Runs on the window thread.
+#[expect(clippy::too_many_lines, reason = "one arm per stdin command")]
 pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> Result<(), String> {
     let unknown = |id: &str| format!("no node has the id {id}");
     match command {
@@ -132,6 +133,17 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             }
             raise_active_text_position(tree, hwnd, index, (start, end))?;
         }
+        Command::TextChanged(id) => {
+            let index = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .index_of(&id)
+                .ok_or_else(|| unknown(&id))?;
+            if !text::has_text(tree, index) {
+                return Err(format!("the node {id} has no text"));
+            }
+            raise_text_changed(tree, hwnd, index)?;
+        }
         Command::CaretEvent(id) => {
             let index = tree
                 .lock()
@@ -150,6 +162,13 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
             let length = guard.nodes[index].text.as_ref().map_or(0, Vec::len);
             guard.nodes[index].selection = (start.min(length), end.min(length));
+        }
+        Command::Screen(id, rows) => {
+            let mut guard = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
+            guard.nodes[index].screen_rows = (rows > 0).then_some(rows);
         }
         Command::SetText(id, text) => {
             let mut guard = tree
@@ -271,6 +290,16 @@ pub(crate) fn raise_caret_moved(tree: &SharedTree, hwnd: HWND, index: usize) -> 
     // SAFETY: `provider` is a live COM object for the node.
     unsafe { UiaRaiseAutomationEvent(&provider, UIA_Text_TextSelectionChangedEventId) }
         .map_err(|error| format!("the caret event could not be raised: {error}"))
+}
+
+/// Raises UIA's text changed event from the text node at `index`, as a
+/// terminal raises it when its text changes.
+fn raise_text_changed(tree: &SharedTree, hwnd: HWND, index: usize) -> Result<(), String> {
+    let fragment = props::provider_for(tree.clone(), hwnd, index);
+    let provider = simple(&fragment)?;
+    // SAFETY: `provider` is a live COM object for the node.
+    unsafe { UiaRaiseAutomationEvent(&provider, UIA_Text_TextChangedEventId) }
+        .map_err(|error| format!("the text changed event could not be raised: {error}"))
 }
 
 /// Raises UIA's active text position changed event from the text node at
@@ -399,9 +428,9 @@ mod props {
         NavigateDirection_FirstChild, NavigateDirection_LastChild, NavigateDirection_NextSibling,
         NavigateDirection_Parent, NavigateDirection_PreviousSibling, ToggleState,
         ToggleState_Indeterminate, ToggleState_On, UIA_AccessKeyPropertyId,
-        UIA_ControlTypePropertyId, UIA_ControllerForPropertyId, UIA_E_ELEMENTNOTAVAILABLE,
-        UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_FullDescriptionPropertyId,
-        UIA_HasKeyboardFocusPropertyId, UIA_IsEnabledPropertyId,
+        UIA_ClassNamePropertyId, UIA_ControlTypePropertyId, UIA_ControllerForPropertyId,
+        UIA_E_ELEMENTNOTAVAILABLE, UIA_ExpandCollapseExpandCollapseStatePropertyId,
+        UIA_FullDescriptionPropertyId, UIA_HasKeyboardFocusPropertyId, UIA_IsEnabledPropertyId,
         UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
         UIA_IsOffscreenPropertyId, UIA_IsSelectionItemPatternAvailablePropertyId,
         UIA_IsTogglePatternAvailablePropertyId, UIA_LevelPropertyId, UIA_NamePropertyId,
@@ -637,6 +666,10 @@ mod props {
         let node = &guard.nodes[index];
         if id == UIA_NamePropertyId.0 {
             node.name
+                .as_deref()
+                .map_or_else(empty_variant, bstr_variant)
+        } else if id == UIA_ClassNamePropertyId.0 {
+            node.class_name
                 .as_deref()
                 .map_or_else(empty_variant, bstr_variant)
         } else if id == UIA_ControlTypePropertyId.0 {

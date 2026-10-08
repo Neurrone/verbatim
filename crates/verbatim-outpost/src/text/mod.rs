@@ -1229,14 +1229,44 @@ fn evidence<S: TextSource>(
         return Ok(None);
     }
     polled.caret_moved = true;
+    let same_line = match since.as_ref().filter(|_| watch.landing) {
+        Some(since) => {
+            let (unit, offset) = match polled.line.take() {
+                Some(line) => line,
+                None => caret_line(source, &polled.state)?,
+            };
+            let same = on_line(source, since, &unit)?;
+            polled.line = Some((unit, offset));
+            Some(same)
+        }
+        None => None,
+    };
     answer_caret(
         source,
         anchors,
         polled,
         (request.formats, watch.unit),
         previous.as_ref(),
+        same_line,
     )
     .map(Some)
+}
+
+/// Whether `at` lies on `line`: from its start up to its end, or at its end
+/// when the line has no line break (the text's last line, whose end is the
+/// text's).
+fn on_line<S: TextSource>(source: &mut S, at: &S::Pos, line: &Unit<S::Pos>) -> TextResult<bool> {
+    if source.compare(at, &line.start)? == Ordering::Less {
+        return Ok(false);
+    }
+    Ok(match source.compare(at, &line.end)? {
+        Ordering::Less => true,
+        Ordering::Equal => !line
+            .text
+            .last()
+            .is_some_and(|&unit| unit == u16::from(b'\n') || unit == u16::from(b'\r')),
+        Ordering::Greater => false,
+    })
 }
 
 /// What a caret key's watch compares with: where the caret was, the
@@ -1314,6 +1344,7 @@ fn answer_caret<S: TextSource>(
     polled: Polled<S::Pos>,
     (span, unit): (Option<FormatSpan>, TextUnit),
     previous: Option<&(S::Pos, S::Pos)>,
+    same_line: Option<bool>,
 ) -> TextResult<TextReply> {
     let Polled {
         state,
@@ -1353,6 +1384,7 @@ fn answer_caret<S: TextSource>(
         read_at_ms,
         unit,
         selection_changes,
+        same_line,
     })))
 }
 

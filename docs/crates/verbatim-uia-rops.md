@@ -14,7 +14,7 @@ The design of record is phase 6's "UIA remote operations" section.
 
 The crate has three layers: the instruction set and a typed builder,
 execution, and algorithms. The algorithms are the focus ancestry, for
-milestone M4's terminals `terminal_tail`, for caret reports `caret_read`,
+milestone M4's terminals `terminal_screen`, for caret reports `caret_read`,
 for the text protocol's other requests `text_units`, `text_range`, and
 `text_location`, and for object navigation `navigation_step` (layer 3
 below). Every UIA path in the outpost that makes a sequence of calls to
@@ -276,133 +276,74 @@ Against mockapp, every other cached property reads the same both ways,
 and the snapshots the outpost makes from the two implementations' elements
 are equal.
 
-## Layer 3: a terminal's tail
+## Layer 3: a terminal's screen
 
-`terminal_tail_remote` and `terminal_tail_classic` share one signature
-(`TerminalTailFn`), and `terminal_tail(uia, query, remote)` chooses
-between them as `focus_ancestry` does, answering with a `Path` (milestone
-M4 item 9; `phase6-design.md`, "How the outpost finds new lines"). A
-`TailQuery` starts either from an anchor (`TailStart::Anchor`: a range
-whose start is the start of the last line read, with a `Fingerprint`, the
-text that line and the line before it held) or afresh
-(`TailStart::Document`, the text pattern's document range, or
-`TailStart::Text`, the element and its text pattern, from which the
-program reads the document range itself, so a fresh read is one round
-trip where the other is two), and says how
-many of the last lines to read. With `caret` (a `CaretLineQuery`), the
+`terminal_screen_remote` and `terminal_screen_classic` share one
+signature (`TerminalScreenFn`), and `terminal_screen(uia, query,
+remote)` chooses between them as `focus_ancestry` does, answering with a
+`Path` (milestone M4 item 9; `phase6-design.md`, "Terminal reading by
+diffing the screen"). A `ScreenQuery` names the element and its text
+pattern, the screen's top two rows as last read (`ScreenAnchor`: their
+text as the provider gave it, a range at the start of the top row, the
+text's first row as last read, and whether that screen had history above
+it), whether the provider's `FindText` matches a row's padding
+(`matches_padding`, the console host's does), how many rows of the old
+screen held its text (`seen_rows`), and how many of the rows that went by
+unread to read (`head_wanted`). With `caret` (a `CaretLineQuery`), the
 caret and its line are read too, in the same program or, classically,
-after the text, as `caret_read` reads them with nothing to compare and no
-unit or formatting, and come back as `Tail::caret`, a `CaretAnswer`: a
-terminal raises no caret event for every character typed. The answer, a `Tail`, gives the text as the provider gave it,
-padding and line breaks included, so comparisons are exact and the caller
-trims:
+after the text, and come back as `Screen::caret`: a terminal raises no
+caret event for every character typed. The answer, a `Screen`, gives text
+as the provider gave it, padding and line breaks included, so comparisons
+are exact and the caller trims:
 
-- `found`: `AtAnchor` when the line before the anchor still holds what it
-  held (the anchor's own line may have changed in place, and the caller
-  compares it); `Moved(n)` when the anchor's line was found `n` lines up,
-  the text having scrolled beneath the anchor (a full scrollback discards
-  its oldest lines while a range keeps its row); `NotFound`; or `Afresh`.
-- `line` and `previous`: the anchor's line and the line before it, read at
-  the anchor; `found_line`: the line where the anchor's line was found, as
-  it is now.
-- `count`: the lines after the anchor's line (where it was found) to the
-  end of the text; afresh, every line.
-- `rows`: how many of the last lines were read, up to the number asked
-  for; `lines`: their text, read in one call and split at its line breaks,
-  oldest first, so a line the terminal wrapped across rows is one line;
-  `last_line` and `before_last`: the last line and the one before it, each
-  read as a line, the next fingerprint.
-- `head_rows` and `head`: from an anchor, when more lines follow it than
-  the last ones read, how many of the first of them were read too, up to
-  the number asked for, and their text, read in one call from the start of
-  the line after the anchor's, so a flood's start is heard; zero and empty
-  otherwise.
-- `last`: the last line's range, the next anchor.
-- `settled`: whether the text held still while it was read, and
-  `scrolled`: whether, if not, the line above where it started changed,
-  the text having scrolled beneath the ranges.
+- `text`: the text pattern's first visible range (the screen), read in
+  one call; the whole text when the provider reports no visible range.
+- `top_row`, `next_row`, `top`, `first_row`: the screen's top two rows, a
+  range at the top row's start, and the text's first row, for the next
+  read's anchor.
+- `alternate`: whether the text starts where the screen starts, with no
+  history above it (a full-screen program's alternate screen, or a
+  terminal whose text still fits on its screen).
+- `shift`: how many rows the anchor's top row now lies above the screen's
+  top, how far the text scrolled; `None` with no anchor or when it was not
+  found. The anchor is found first at its range, without a search, when
+  nothing can have been discarded from the text since (the text's first
+  row reads as it did, or the old screen had no history above it): a
+  range stays on its row until a terminal discards its oldest rows,
+  however the rows' text changes (a prompt being edited on the top row).
+  A range that cannot be compared with the text (one from the other
+  screen of a terminal that switched screens) is not found there.
+  Otherwise the anchor is sought by its text: `FindText` backward from the
+  end of the screen's second row to the start of the text, for the more
+  distinctive of the two rows (not blank, then the longer), padded where
+  the provider matches padding (so a longer row starting with the same
+  text does not match) and without its padding otherwise (Windows
+  Terminal's `FindText` throws on padding). A match counts when it starts
+  its row, the row holds exactly the row sought, and the other row of the
+  pair is beside it; at most `SEARCH_MATCHES` (20) matches are checked
+  (Dickson, 2026-10-07), and a search that throws is not found. A needle
+  spanning a line break is never used: measured on 2026-10-08, the
+  console host's `FindText` returns a range for one whose text then
+  cannot be read (`E_FAIL`), and Windows Terminal's matches none. Found,
+  the rows from the anchor to the text's end less those from the screen's
+  top to the end, the second walk made before and after the first, so
+  output written meanwhile is caught.
+- `old_last_row`: with the anchor found, the row the old screen's last
+  line was on (`seen_rows` from the anchor's top row), as it is now.
+- `head` and `head_rows`: the first of the rows past the old screen's
+  `seen_rows` that went by unread, up to `head_wanted`, in one read.
+- `document_rows`: the rows of the whole text, counted (a walk from its
+  start, corrected for providers that stop past the last row's start)
+  when the anchor was sought by its text and not found.
+- `settled`: whether the text held still while it was read: the screen's
+  text starts with its top row as read on its own, that row reads the same
+  at the end, and the two walks to the text's end agree.
 
-The program reads the anchor's line and the one before it. When the one
-before it differs from the fingerprint, it searches the whole text above
-for the fingerprint by its text, with `FindText` backward, nearest first,
-on a range the program made (a copy of a collapsed range with its start
-moved to the text's start: `FindText` on an imported range would move the
-caller's own anchor). There is no bound in lines, decided with Dickson on
-2026-10-07 for a predictable cost (`docs/performance.md`, "A terminal's
-upward search"); only matches are bounded, `SEARCH_MATCHES` (64) of them
-checked before the fingerprint counts as not found. What is sought
-(`Fingerprint::search`), without its trailing white space and line break,
-since Windows Terminal's `FindText` matches neither and threw an exception
-searching for padding:
-
-- When the fingerprint's line before is not blank, that line, above the
-  line before the anchor: a match counts when it starts its line and the
-  line holds exactly the fingerprint's line before, and the line under it
-  is the anchor's line whatever it holds now, as at the anchor itself:
-  the last line read is often the one output was still being written to
-  (the cursor's line, blank or half written), complete by the next read.
-- Otherwise the anchor's line itself, above the anchor: a match counts
-  when it starts its line, the line equals the fingerprint's line (as
-  read, or with the line feed or carriage return and line feed a last
-  line gains once more text follows it), and the line above it holds
-  exactly the fingerprint's blank line before.
-- Two blank lines are not searched for: no text search can find them, and
-  the fingerprint is not found.
-
-The distance up, `Moved(n)`, is counted as a walk line by line would count
-it: the walk to the end of the text from where the fingerprint was found
-less the same walk from the anchor, one more when the anchor is inside its
-line. The strings compare inside the provider (an `Equal` comparison on
-two strings, verified against mockapp). The count is a `Move` by a million lines from the found line,
-and the last line is found from where that walk stopped: the line there,
-or, when the walk stopped past the final line break, the one before; less
-one when the walk ended past the last line's start, as the terminals'
-moves do at the end of the text and mockapp's do not, so both read the
-same. Finding the last line from the walk itself keeps the count and the
-last line in agreement however the text grows meanwhile. The last lines
-are read with one `GetText` from the start of the first of them to the
-end of the last, and the first lines after the anchor, when more follow,
-with one more. Nothing in it reads more than twice the lines asked for, so a
-read's cost does not grow with the scrollback or with the lines written.
-
-A read is settled when the line above where it started reads at the end
-as it did when the start was found (with no anchor, the text's first line,
-read before and after), and the one read of the last lines ends with the
-last line and the one before it as each was read on its own, line breaks
-aside (Windows Terminal ends each line's text with one; the console host
-gives a line without it but separates lines with one in a longer range).
-Live, a flood filling Windows Terminal's or the console host's full
-scrollback moves the text beneath every range between two calls, so lines
-read one call at a time came back twice or out of order; the outpost sets
-an unsettled read aside, and the text change that disturbed it causes the
-next read.
-The classic implementation makes the same calls one at a time, through
-`verbatim-uia`'s text wrappers, so each is counted. Where the provider's
-`FindText` fails, the program fails and the classic implementation
-answers for that call; its `FindText` fails the same way, and it walks up
-from the line before the anchor a line at a time instead, reading each
-line once, up to 256 lines, until it finds a line under a line equal to
-the fingerprint's line before (the anchor's line, under a blank one, must
-also equal the fingerprint's line). Measured against both terminals with a
-full scrollback on 2026-10-07, the search by text costs 6 to 10
-milliseconds classically wherever the fingerprint is, and about 3 more
-remotely for `FindText` on a range the program made (0.2 on an imported
-one, which a program cannot search without changing the caller's own),
-where the walk line by line took 104, 644, and 1,580 calls and up to 170
-milliseconds classically at 10, 100, and 256 lines, and 0.5 to 2.5
-milliseconds remotely up to 256 lines, the bound it then had. A range
-from before
-a terminal switched to or from its alternate screen fails to compare
-with the text; the program then fails, the classic implementation fails
-the same way, and the caller reads afresh.
-
-Against mockapp's text provider (`crates/mockapp/tests/terminal.rs`), the
-two implementations give the same answer afresh, after lines written past
-the anchor, after the oldest lines were discarded beneath it (by 300
-lines, beyond the 256 the search once covered), past matches that are
-part of a longer line or under the wrong line, for an anchor's line under
-a blank line, and after the text was cleared; a provider whose `FindText`
-fails is answered by the walk; and a read that finds new output costs one
+Against mockapp's text provider (`crates/mockapp/tests/terminal.rs`, its
+`screen` command putting only the text's last lines on screen), both
+implementations agree on every field, the anchor is found past rows that
+only contain its text and a row with another partner, a provider whose
+`FindText` fails finds it nowhere, and each read's cost is pinned, one
 round trip remotely (`docs/performance.md`, "A terminal output line").
 
 ## Layer 3: the caret read
@@ -618,7 +559,7 @@ window, for every direction and at an edge.
 
 How the outpost chooses, per UIA focus (`uia_remote_enrichment` in its
 `read.rs`), and the same way for every other named operation (the caret
-read and the text reads through `UiaText`, a terminal's tail, a
+read and the text reads through `UiaText`, a terminal's screen, a
 navigation step):
 
 - A window without a native UIA provider (arbitration's

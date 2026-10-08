@@ -4,6 +4,7 @@
 //! `set-name <id> <text>`, `set-value <id> <text>`,
 //! `set-description <id> <text>`, `set-states <id> <state>...`, `select <id>`,
 //! `caret <id> <start> [<end>]`, `caret-event <id>`, `set-text <id> <text>`,
+//! `text-changed <id>`,
 //! `notify <text>`,
 //! `active-text-position <id> <start> <end>`, `take-runtime-id <id> <from>`,
 //! `stall <ms>`, `slow <ms>`, `hold`, `release`, and `quit`.
@@ -62,6 +63,14 @@ pub(crate) enum Command {
     /// in `text` is a line feed and `\\` a backslash, so one stdin line can
     /// carry many lines. UIA-only.
     SetText(String, String),
+    /// `text-changed <id>`: raises UIA's text changed event from a text
+    /// node, as a terminal reports that its text changed. UIA-only.
+    TextChanged(String),
+    /// `screen <id> <rows>`: only the last `rows` lines of a UIA text
+    /// node's text are on screen (its visible range), as a terminal shows
+    /// the end of its buffer; 0 shows the whole text again. Raises no
+    /// event. UIA-only.
+    Screen(String, usize),
     /// `active-text-position <id> <start> <end>`: raises UIA's active text
     /// position changed event from a text node, with the range of its text
     /// from `start` to `end` (UTF-16 offsets), as an application raises it
@@ -154,6 +163,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "select" if !rest.is_empty() => Some(Command::Select(rest.to_owned())),
         "notify" if !rest.is_empty() => Some(Command::Notify(rest.to_owned())),
         "caret-event" if !rest.is_empty() => Some(Command::CaretEvent(rest.to_owned())),
+        "text-changed" if !rest.is_empty() => Some(Command::TextChanged(rest.to_owned())),
         "stall" => rest.parse().ok().map(Command::Stall),
         "slow" => rest.parse().ok().map(Command::Slow),
         "refuse-text" => match rest {
@@ -190,6 +200,10 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "set-name" => {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
             (!id.is_empty()).then(|| Command::SetName(id.to_owned(), text.trim().to_owned()))
+        }
+        "screen" => {
+            let (id, rows) = rest.split_once(' ')?;
+            Some(Command::Screen(id.to_owned(), rows.trim().parse().ok()?))
         }
         "set-text" => {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
@@ -306,6 +320,24 @@ mod tests {
             }
             _ => panic!("expected SetText"),
         }
+    }
+
+    #[test]
+    fn parses_text_changed() {
+        match parse_command("text-changed term") {
+            Some(Command::TextChanged(id)) => assert_eq!(id, "term"),
+            _ => panic!("expected TextChanged"),
+        }
+        assert!(parse_command("text-changed").is_none());
+    }
+
+    #[test]
+    fn parses_a_screen_of_rows() {
+        match parse_command("screen term 30") {
+            Some(Command::Screen(id, rows)) => assert_eq!((id.as_str(), rows), ("term", 30)),
+            _ => panic!("expected Screen"),
+        }
+        assert!(parse_command("screen term many").is_none());
     }
 
     #[test]

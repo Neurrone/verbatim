@@ -92,6 +92,7 @@ fn focus_notes(
 /// Right Arrow's watch, with the caret Core knew before the key.
 fn right_arrow(before: &CaretReport) -> TextOp {
     TextOp::AwaitCaret(CaretWatch {
+        landing: false,
         since: Some(TextPosition {
             anchor: before.line.start,
             offset: before.line.offset,
@@ -246,6 +247,7 @@ fn a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event() {
     let key = outpost.ask(Query::Text {
         node_id: notes,
         op: TextOp::AwaitCaret(CaretWatch {
+            landing: false,
             since: None,
             pressed_at_ms: 0,
             unit: TextUnit::Character,

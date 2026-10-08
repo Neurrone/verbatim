@@ -109,8 +109,17 @@ impl ITextProvider_Impl for TextProvider_Impl {
     }
     fn GetVisibleRanges(&self) -> WinResult<*mut SAFEARRAY> {
         hits::hit(Method::TextGetVisibleRanges);
-        let length = text_of(&self.tree, self.index).len();
-        Ok(range_array(&self.range(0, length)))
+        let text = text_of(&self.tree, self.index);
+        let rows = {
+            let guard = self
+                .tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard.nodes[self.index].screen_rows
+        };
+        Ok(range_array(
+            &self.range(screen_start(&text, rows), text.len()),
+        ))
     }
     fn RangeFromChild(
         &self,
@@ -167,6 +176,25 @@ fn text_of(tree: &SharedTree, index: usize) -> Vec<u16> {
         .text
         .clone()
         .unwrap_or_default()
+}
+
+/// Where the screen starts in `text`: the start of the line `rows` lines
+/// from the end (a line ends after its line feed, and a text ending in one
+/// has an empty last line), or the text's start when it has no more lines,
+/// or with no screen set.
+fn screen_start(text: &[u16], rows: Option<usize>) -> usize {
+    let Some(rows) = rows else {
+        return 0;
+    };
+    let starts: Vec<usize> = std::iter::once(0)
+        .chain(
+            text.iter()
+                .enumerate()
+                .filter(|&(_, &unit)| unit == u16::from(b'\n'))
+                .map(|(index, _)| index + 1),
+        )
+        .collect();
+    starts[starts.len().saturating_sub(rows)]
 }
 
 /// The node's formatting now.
