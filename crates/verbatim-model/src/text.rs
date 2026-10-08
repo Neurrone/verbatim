@@ -353,33 +353,30 @@ pub struct CaretReport {
     pub selection: Option<Selection>,
 }
 
-/// How long the outpost may wait for evidence that the caret moved.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CaretWait {
-    /// NVDA's default: up to 100 milliseconds.
-    Standard,
-    /// Three times as long, up to 300 milliseconds, for terminals, whose
-    /// caret can move late (Windows Terminal over SSH; `phase6-design.md`,
-    /// "The NVDA update of 2026-10-06").
-    Extended,
-}
-
 /// What Core asks the outpost to do after it has passed a caret key to the
-/// application: wait for evidence of what the key did, then report the
+/// application: watch for evidence of what the key did, then report the
 /// caret (`docs/nvda/editable-text-and-terminals.md`, the wait for
-/// evidence).
+/// evidence; `docs/parity.md`, "Text, documents, terminals").
 ///
-/// The outpost answers as soon as one of these holds, or when the wait
-/// runs out, and in every case answers with the caret as it then is:
+/// The outpost reads the caret once when the request arrives, and again
+/// whenever the application reports something about the node: a caret
+/// event, a text change, or a selection change. It answers with
+/// [`TextReply::Caret`], the caret as it then is, as soon as one of these
+/// holds:
 ///
-/// - a caret event arrives from the application;
+/// - a caret event arrives from the application and `since` is `None`;
 /// - the caret is no longer at `since`;
 /// - the text of `unit` at the caret differs from `compare` (Delete, which
 ///   changes the text without moving the caret);
 /// - the selection is no longer `previous_selection`.
 ///
-/// A newer request for the same node supersedes this one: the outpost may
-/// answer the older one at once, with what it has, or not at all.
+/// It never waits for any of them: the request is a watch the outpost
+/// keeps while it handles everything else. A watch that ends with none of
+/// them holding, because the next caret key's watch replaced it, the focus
+/// moved, or the bound on a watch's age that only frees it passed
+/// (`verbatim-outpost`'s `CARET_WATCH_BOUND`), is answered
+/// [`TextReply::WatchEnded`], and nothing is spoken: a key that does not
+/// move the caret is silent.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CaretWatch {
     /// Where Core last knew the caret to be, before the key; `None` when it
@@ -392,14 +389,9 @@ pub struct CaretWatch {
     /// read at or after it may already show the key's effect, and does not.
     #[serde(default)]
     pub pressed_at_ms: u64,
-    /// The unit to report at the caret once the wait ends, besides the line.
+    /// The unit to report at the caret once evidence arrives, besides the
+    /// line.
     pub unit: TextUnit,
-    /// The key's motion. When the caret is still at `since` and that is
-    /// where the motion takes it (Control+Home at the document's start,
-    /// Home at a line's start, Down Arrow on the last line), the key cannot
-    /// move it, and the outpost answers at once with `moved` false rather
-    /// than waiting the wait out.
-    pub motion: CaretMotion,
     /// The text of `unit` at the caret before the key, when a change of it is
     /// evidence.
     pub compare: Option<String>,
@@ -408,8 +400,6 @@ pub struct CaretWatch {
     /// carries one, the reply's `selection_changes` describe how the
     /// selection changed from it.
     pub previous_selection: Option<PreviousSelection>,
-    /// How long to wait.
-    pub wait: CaretWait,
 }
 
 /// The selection before a selecting key: the selection Core knew, or a
@@ -441,7 +431,9 @@ pub struct PreviousSelection {
 /// Empty changes are left out.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CaretReply {
-    /// Whether evidence arrived before the wait ran out.
+    /// Whether evidence that the key did something arrived. An outpost
+    /// answers a watch only on evidence, so it sends true; Core says
+    /// nothing for a reply without it.
     pub moved: bool,
     /// The caret as it is now.
     pub caret: CaretReport,
@@ -504,8 +496,9 @@ pub struct TextReadAhead {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum TextOp {
-    /// Wait for a passed caret key's evidence, then report the caret:
-    /// answered [`TextReply::Caret`].
+    /// Watch for a passed caret key's evidence, then report the caret:
+    /// answered [`TextReply::Caret`] once evidence arrives, or
+    /// [`TextReply::WatchEnded`] when the watch ends without it.
     AwaitCaret(CaretWatch),
     /// Read one unit: answered [`TextReply::Read`].
     Read(TextRead),
@@ -607,6 +600,11 @@ pub enum TextReply {
     Gone,
     /// The application did not answer in time, or the read failed.
     Unanswered,
+    /// A [`TextOp::AwaitCaret`] whose watch ended before any evidence that
+    /// the key did something arrived: the next caret key's watch replaced
+    /// it, the focus moved, or the bound on its age passed. Core says
+    /// nothing.
+    WatchEnded,
 }
 
 /// What a caret key does, as Core's caret handling knows it: the motion

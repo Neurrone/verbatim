@@ -5,8 +5,13 @@ shared copy-to-clipboard path (NVDA's `api.copyToClip` analog): it owns the
 Win32 clipboard interaction and the localized spoken confirmation (NVDA's
 "Copied to clipboard:" with the text, after reading the clipboard back, or
 "Unable to copy"), and every copying gesture routes through it — the
-report-object triple-press is the first caller. It writes on the reducer
-thread, which runs no message loop, so it opens the clipboard with a
+report-object triple-press is the first caller. It writes on a thread of
+its own (`Clipboard`, since 2026-10-08; it had written on the reducer
+thread), because emptying the clipboard sends the previous owner, a window
+of whichever application copied last, `WM_DESTROYCLIPBOARD` and waits for
+the answer with no bound, which an owner that has stopped answering would
+have turned into a reducer that handles nothing. That thread runs no
+message loop, so it opens the clipboard with a
 message-only window made for that one write and destroyed after it
 (`SetClipboardData` fails on a clipboard opened with no owner window, and
 a window kept on a thread that pumps no messages would leave another
@@ -17,10 +22,11 @@ hook reports it reached the operating system, waiting for its channel
 with a deadline rather than starting a thread per key. The reducer thread selects on both the outpost stream and a
 command channel the gesture router feeds, so a review or object-navigation
 gesture is reduced and its effects executed by the same path as an
-accessibility event; `Effect::Activate` and `Effect::CopyToClipboard` are
-executed there alongside `Speak` and `Fetch`, and so are
+accessibility event; `Effect::Activate` is executed there alongside
+`Speak` and `Fetch`, and so are
 `Effect::StopSpeech` and `Effect::DropExpiredSpeech`, through the speech
-manager's `SpeechControl` (`cancel` and `drop_expired`). The router builds its gesture
+manager's `SpeechControl` (`cancel` and `drop_expired`), while
+`Effect::CopyToClipboard` is handed to the clipboard thread. The router builds its gesture
 map and its gesture-to-script table from `verbatim_input::bindings_for` for
 the configured keyboard layout, so the active review and navigation bindings
 follow `settings.toml`'s `keyboard.layout`.
@@ -89,8 +95,8 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
 - `Effect::KeepDisplayOn` calls `SetThreadExecutionState` on the reducer
   thread, which lives as long as Verbatim: the display and the system
   required while say-all reads, released when it ends.
-- `Effect::CopyToClipboard`, which select-then-copy emits, goes through
-  the shared clipboard helper like every copy.
+- `Effect::CopyToClipboard`, which select-then-copy emits, goes to the
+  clipboard thread like every copy.
 - The held anchors (`SrState::held_anchors`) go to each outpost with its
   held nodes, and a change of either sends the list again.
 

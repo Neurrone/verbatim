@@ -345,13 +345,14 @@ pub enum LatencyStageKind {
     HookToCore,
     /// From the listener observing a focus to its outpost receiving it.
     ListenerToOutpost,
-    /// From the reducer asking an outpost (a caret key's wait, a command's
+    /// From the reducer asking an outpost (a caret key's watch, a command's
     /// query) to the outpost receiving the request.
     CoreToOutpost,
     /// Waiting in the outpost's queue.
     OutpostQueue,
-    /// A caret key's wait for evidence that the key did something, polling
-    /// the caret, until the evidence or the wait's deadline.
+    /// A caret key's watch for evidence that the key did something, open
+    /// while the outpost's worker handled everything else, until the event
+    /// that brought the evidence was taken from the queue.
     CaretWait,
     /// The outpost's worker reading the application: the stage that makes
     /// cross-process calls (after the caret wait, for a caret key).

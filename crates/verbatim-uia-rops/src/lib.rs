@@ -53,7 +53,7 @@ mod text;
 pub use builder::{Builder, Index, Numeric, Ordered, Reg, kind};
 pub use caret::{
     ANNOTATION_GRAMMAR_ERROR, ANNOTATION_SPELLING_ERROR, Attributes, CaretAnswer, CaretLineQuery,
-    CaretQuery, CaretReadFn, EdgeQuery, FormatSpan, MAX_RUNS, RangeEnd, Run, RunAttributes,
+    CaretQuery, CaretReadFn, FormatSpan, MAX_RUNS, RangeEnd, Run, RunAttributes,
     SelectionTextChange, TextAttribute, UnitRead, caret_read, caret_read_classic,
     caret_read_remote,
 };

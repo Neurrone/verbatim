@@ -58,8 +58,8 @@ use crate::protocol::{
     EventTiming, OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost, UiaSnapshotFact,
     now_us, read_message,
 };
-use crate::text::Anchors;
 use crate::text::uia::UiaPos;
+use crate::text::{Anchors, HeldAnchors};
 
 use intake::{Entry, Intake, Item, UiaEvent, UiaKind};
 use outbound::Outbound;
@@ -90,10 +90,15 @@ pub(crate) struct Context {
     /// The focus-following UIA subscription to a text focus's caret and
     /// text changes, which the worker moves (milestone M4).
     text_events: OnceLock<Registration>,
-    /// Caret events as they arrive, for a caret key's wait.
-    caret_events: text_reads::CaretEvents,
+    /// The caret key's watch for evidence the worker keeps open between its
+    /// entries, if one is open.
+    caret_watch: Mutex<Option<text_reads::OpenWatch>>,
+    /// The text anchors Core holds, set by the reader as Core's list
+    /// arrives, under a lock of their own that the worker never holds
+    /// across a call into the application, as it holds the anchor stores'.
+    held_anchors: HeldAnchors,
     /// The text anchors minted in UIA text and in edit controls; both number
-    /// theirs from one counter.
+    /// theirs from one counter and keep the anchors Core holds.
     uia_anchors: Mutex<Anchors<UiaPos>>,
     edit_anchors: Mutex<Anchors<u32>>,
     /// Each UIA node's text patterns, once fetched.
@@ -236,6 +241,13 @@ impl Context {
         uia.cache_request_for(self.fetches())
     }
 
+    /// The caret key's watch the worker keeps open, if any.
+    fn caret_watch(&self) -> MutexGuard<'_, Option<text_reads::OpenWatch>> {
+        self.caret_watch
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
     fn caret_read(&self, node: NodeId) {
         *self
             .caret_read
@@ -343,6 +355,7 @@ impl Outpost {
         let (outbound, writer) = Outbound::start(pipe);
         let id_counter = Arc::new(AtomicU64::new(1));
         let anchor_counter = Arc::new(AtomicU64::new(0));
+        let held_anchors = HeldAnchors::default();
         let context = Arc::new(Context {
             target_pid,
             outbound,
@@ -356,9 +369,13 @@ impl Outpost {
             remote_operations: options.remote_operations,
             classic_windows: Mutex::new(HashMap::new()),
             text_events: OnceLock::new(),
-            caret_events: text_reads::CaretEvents::default(),
-            uia_anchors: Mutex::new(Anchors::new(Arc::clone(&anchor_counter))),
-            edit_anchors: Mutex::new(Anchors::new(anchor_counter)),
+            caret_watch: Mutex::new(None),
+            held_anchors: Arc::clone(&held_anchors),
+            uia_anchors: Mutex::new(Anchors::sharing(
+                Arc::clone(&anchor_counter),
+                Arc::clone(&held_anchors),
+            )),
+            edit_anchors: Mutex::new(Anchors::sharing(anchor_counter, held_anchors)),
             patterns: Mutex::new(HashMap::new()),
             text_support: Mutex::new(HashMap::new()),
             caret_read: Mutex::new(None),
@@ -391,13 +408,6 @@ impl Outpost {
                         || id_child != verbatim_ia2::CHILDID_SELF)
                 {
                     return;
-                }
-                if matches!(
-                    kind,
-                    verbatim_ia2::WinEventKind::Caret
-                        | verbatim_ia2::WinEventKind::TextSelectionChange
-                ) {
-                    context.caret_events.arrived();
                 }
                 context.push(
                     Item::Msaa {
@@ -548,9 +558,12 @@ impl Outpost {
                 anchors,
                 acknowledged,
             } => {
-                let held = anchors.iter().copied();
-                context.uia_anchors().set_held(held.clone());
-                context.edit_anchors().set_held(held);
+                // Never the anchor stores' own locks, which the worker holds
+                // while it reads text: the reader would wait for the read.
+                *context
+                    .held_anchors
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = anchors.iter().copied().collect();
                 context.push(
                     Item::NodesHeld {
                         nodes: nodes.clone(),
@@ -649,13 +662,12 @@ fn register_focus_properties(context: &Arc<Context>) -> Option<Registration> {
 /// Starts the focus-following UIA subscription to a text focus's caret and
 /// text changes (`Text_TextSelectionChanged` and `Text_TextChanged`) and
 /// its active text position changes, one event handler group listening
-/// nowhere until the worker reports a focus with text. A caret change also
-/// counts for a caret key's wait for evidence.
+/// nowhere until the worker reports a focus with text. A caret or text
+/// change also has the worker check a caret key's watch.
 fn register_text_events(context: &Arc<Context>) -> Option<Registration> {
     let callback_context = Arc::clone(context);
     let callback = Arc::new(move |element: &IUIAutomationElement, event_id: i32| {
         let kind = if event_id == UIA_Text_TextSelectionChangedEventId.0 {
-            callback_context.caret_events.arrived();
             UiaKind::TextSelection
         } else {
             UiaKind::TextChanged

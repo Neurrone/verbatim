@@ -5,12 +5,12 @@
 
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
-    Backend, CaretKey, CaretMotion, CaretReply, CaretReport, CaretWait, CaretWatch, Effect, Input,
-    Message, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid,
-    PreviousSelection, QueryId, ReaderSettings, ReviewCommand, Role, SegmentContent, Selection,
-    SelectionChange, SelectionText, SpeechMark, State, StateSet, TextAnchor, TextChunk,
-    TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextRequest,
-    TextUnit, TraceId, TypingEcho, UtteranceSegment,
+    Backend, CaretKey, CaretMotion, CaretReply, CaretReport, CaretWatch, Effect, Input, Message,
+    NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, PreviousSelection,
+    QueryId, ReaderSettings, ReviewCommand, Role, SegmentContent, Selection, SelectionChange,
+    SelectionText, SpeechMark, State, StateSet, TextAnchor, TextChunk, TextMovement, TextOp,
+    TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextRequest, TextUnit, TraceId,
+    TypingEcho, UtteranceSegment,
 };
 use verbatim_model::{BulletStyle, FormatRun, LineStyle, TextAttributes, TextFormat};
 
@@ -206,7 +206,7 @@ fn caret_reply(moved: bool, line: TextChunk, unit: Option<TextChunk>) -> TextRep
 }
 
 #[test]
-fn an_arrow_key_waits_for_evidence_then_speaks_the_character_at_the_caret() {
+fn an_arrow_key_watches_for_evidence_then_speaks_the_character_at_the_caret() {
     let mut state = editing("Hello\r\n", 0);
     let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, false));
     let request = request(&effects);
@@ -225,7 +225,6 @@ fn an_arrow_key_waits_for_evidence_then_speaks_the_character_at_the_caret() {
     // reports came before it.
     assert_eq!(watch.pressed_at_ms, KEY_PRESSED_AT);
     assert_eq!(watch.unit, TextUnit::Character);
-    assert_eq!(watch.wait, CaretWait::Standard);
     assert!(watch.previous_selection.is_none());
 
     let effects = reduce(
@@ -260,11 +259,12 @@ fn an_arrow_key_waits_for_evidence_then_speaks_the_character_at_the_caret() {
 }
 
 #[test]
-fn a_caret_key_tells_the_outpost_its_motion_and_hears_an_unmoved_caret() {
-    // Control+Home at the start of the text: the watch carries the key's
-    // motion, from which the outpost tells that the key cannot move the
-    // caret and answers at once, unmoved; the line is spoken as for any
-    // answer.
+fn a_caret_key_that_moves_nothing_is_silent() {
+    // Control+Home at the start of the text: the application moves nothing
+    // and raises nothing, so the outpost's watch ends without evidence,
+    // when the next key replaces it, the focus moves, or its bound passes,
+    // and is answered `WatchEnded`. Nothing is said, unlike NVDA, which
+    // reads the line after its 100 ms wait.
     let mut state = editing("one two\n", 0);
     let effects = reduce(&mut state, &key(CaretMotion::Top, false));
     let request = request(&effects);
@@ -277,20 +277,52 @@ fn a_caret_key_tells_the_outpost_its_motion_and_hears_an_unmoved_caret() {
             }),
             pressed_at_ms: KEY_PRESSED_AT,
             unit: TextUnit::Line,
-            motion: CaretMotion::Top,
             compare: None,
             previous_selection: None,
-            wait: CaretWait::Standard,
         })
     );
     let effects = reduce(
         &mut state,
+        &completed(request.query_id, TextReply::WatchEnded),
+    );
+    assert_eq!(effects, []);
+    // A reply without evidence says nothing either.
+    let effects = reduce(&mut state, &key(CaretMotion::Top, false));
+    let effects = reduce(
+        &mut state,
         &completed(
-            request.query_id,
+            request_of(&effects),
             caret_reply(false, line("one two\n", 100, 0), None),
         ),
     );
-    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("one two")]);
+    assert_eq!(effects, []);
+}
+
+#[test]
+fn a_caret_keys_watch_ends_with_its_answer_and_with_typing() {
+    // Once a watch is answered, ended or not, the key waits for nothing: a
+    // second answer to the same request says nothing.
+    let mut state = editing("abc\n", 0);
+    let query = request_of(&reduce(&mut state, &key(CaretMotion::NextCharacter, false)));
+    let effects = reduce(&mut state, &completed(query, TextReply::WatchEnded));
+    assert_eq!(effects, []);
+    let effects = reduce(
+        &mut state,
+        &completed(query, caret_reply(true, line("abc\n", 100, 1), None)),
+    );
+    assert_eq!(effects, [], "the watch had ended");
+
+    // A character typed while a key is watched ends the key's watch: the
+    // caret the typing moves is not the key's answer.
+    let mut state = editing("abc\n", 0);
+    let query = request_of(&reduce(&mut state, &key(CaretMotion::StartOfLine, false)));
+    let effects = reduce(&mut state, &typed("x"));
+    assert_eq!(spoken(&effects), vec![character("x")]);
+    let effects = reduce(
+        &mut state,
+        &completed(query, caret_reply(true, line("xabc\n", 100, 1), None)),
+    );
+    assert_eq!(effects, [], "the typing superseded the key");
 }
 
 #[test]
@@ -910,15 +942,14 @@ fn a_newer_key_or_a_focus_change_supersedes_a_waiting_key() {
 }
 
 #[test]
-fn caret_keys_wait_longer_in_a_terminal_and_not_at_all_without_text() {
+fn caret_keys_are_watched_in_a_terminal_and_not_at_all_without_text() {
     let mut state = SrState::new();
     focus(&mut state, node(7, Role::Terminal, StateSet::new()));
     let TextOp::AwaitCaret(watch) =
         request(&reduce(&mut state, &key(CaretMotion::PreviousLine, false))).op
     else {
-        panic!("expected a caret wait");
+        panic!("expected a caret watch");
     };
-    assert_eq!(watch.wait, CaretWait::Extended);
     assert!(watch.since.is_none(), "no caret known yet");
 
     let mut state = SrState::new();

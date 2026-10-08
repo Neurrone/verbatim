@@ -1,12 +1,22 @@
 //! The one shared clipboard-copy path (NVDA's `api.copyToClip` analog).
 //!
-//! Every gesture that copies text routes through [`copy`], so the Win32
-//! clipboard interaction and the spoken confirmation are implemented once
-//! and stay consistent. The report-object triple-press is the first caller;
-//! later copying gestures use this same function rather than rolling their
-//! own.
+//! Every gesture that copies text routes through [`Clipboard::copy`], so
+//! the Win32 clipboard interaction and the spoken confirmation are
+//! implemented once and stay consistent. The report-object triple-press is
+//! the first caller; later copying gestures use this same path rather than
+//! rolling their own.
+//!
+//! The copy runs on a thread of its own, never on the reducer thread that
+//! asks for it: emptying the clipboard sends its previous owner, a window
+//! of whichever application copied last, a message (`WM_DESTROYCLIPBOARD`)
+//! and waits for the answer with no bound, so an owner that has stopped
+//! answering would otherwise hold every event and every command behind the
+//! copy.
 
 use std::sync::Arc;
+use std::thread;
+
+use crossbeam_channel::{Sender, unbounded};
 
 use verbatim_model::{SpeechPriority, TraceId, Utterance, UtteranceSegment};
 use verbatim_speech::SpeechManager;
@@ -21,11 +31,44 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{PCWSTR, w};
 
+/// The clipboard thread: copies handed to it are made in order, each
+/// confirmed in speech, while whoever asked goes on.
+pub struct Clipboard {
+    copies: Sender<String>,
+}
+
+impl Clipboard {
+    /// Starts the clipboard thread, which speaks through `manager`.
+    ///
+    /// # Errors
+    ///
+    /// The error spawning the thread.
+    pub fn start(manager: Arc<SpeechManager>) -> std::io::Result<Self> {
+        let (copies, waiting) = unbounded::<String>();
+        thread::Builder::new()
+            .name("verbatim-clipboard".to_owned())
+            .spawn(move || {
+                while let Ok(text) = waiting.recv() {
+                    copy(&manager, &text);
+                }
+            })?;
+        Ok(Self { copies })
+    }
+
+    /// Copies `text` to the system clipboard on the clipboard thread and
+    /// returns at once; the thread speaks whether it worked.
+    pub fn copy(&self, text: String) {
+        // An unbounded send never waits; it fails only once the thread has
+        // gone, with the process.
+        let _ = self.copies.send(text);
+    }
+}
+
 /// Copies `text` to the system clipboard and speaks a localized
 /// confirmation. A failure to reach the clipboard is logged and announced
 /// as such rather than silently swallowed, so a user who pressed copy
-/// always hears whether it worked.
-pub fn copy(manager: &Arc<SpeechManager>, text: &str) {
+/// always hears whether it worked. Runs on the clipboard thread.
+fn copy(manager: &Arc<SpeechManager>, text: &str) {
     // As NVDA does, the copy is confirmed by reading the clipboard back.
     let copied = set_clipboard_text(text).and_then(|()| match clipboard_text() {
         Some(read) if read == text => Ok(()),
@@ -99,7 +142,7 @@ fn speak(manager: &Arc<SpeechManager>, text: String) {
 /// The owner window is needed because emptying a clipboard opened with no
 /// owner window leaves the clipboard with no owner, and `SetClipboardData`
 /// then fails, as Microsoft's documentation of `OpenClipboard` says. The
-/// caller is the reducer thread, which runs no message loop, so the window
+/// caller is the clipboard thread, which runs no message loop, so the window
 /// is a message-only window made for this write and destroyed after it
 /// ([`OwnerWindow`]).
 fn set_clipboard_text(text: &str) -> Result<(), String> {

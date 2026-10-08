@@ -34,10 +34,11 @@ Public API:
   observed, relayed to the outpost by Core, taken from the outpost's queue,
   and published to Core, and for a WinEvent how long before it was observed
   Windows raised it, and the cross-process calls the worker made for it
-  (`calls`, a `CallCounts`). A caret key's reply also says when its wait
-  for evidence ended (`awaited_at_us`) and how many of its calls the wait
-  made (`awaited_calls`, a part of `calls`), which the worker learns from
-  the wait's `CaretSignal::awaited`; the listener's `FocusFact`, Core's
+  (`calls`, a `CallCounts`). A caret key's reply answered by a later
+  check of its watch also says when the evidence that answered it was
+  taken from the queue (`awaited_at_us`) and how many of its calls the
+  checks before it made (`awaited_calls`, a part of `calls`); the
+  listener's `FocusFact`, Core's
   `DeliverFact`, and the outpost's `Event` and `Reply` carry it, and Core's
   latency ledger reads it.
   `SupervisorToOutpost`: `SetBackendOverride` (forces one backend for every
@@ -159,10 +160,13 @@ Public API:
     Explorer built the window (`docs/performance.md`, "A focus behind other
     objects' events").
   - The worker (`outpost::worker`): one thread takes entries in order and
-    finishes each before the next. It is the only thread that calls into the
-    application, so events and replies leave in the order their entries
-    were planned: the order they joined the queue, but for the events a
-    focus change overtakes. It replaces the announce lane, the query pool, the
+    finishes each before the next. A caret key's evidence is watched for
+    between entries (under "Text" below), not waited on. It is the only
+    thread that calls into the application, so events and replies leave in
+    the order their entries were planned: the order they joined the queue,
+    but for the events a focus change overtakes, the queries that go ahead
+    of a batch held for its foreground change, and a caret key's answer,
+    which leaves when its evidence comes. It replaces the announce lane, the query pool, the
     announce poll, the probe threads, and the late window retry. Being the
     only such thread, it is where the calls are counted: the backend crates
     count each call on the thread that makes it, and the worker takes both
@@ -221,7 +225,8 @@ Public API:
 - `text` (milestone M4) — the outpost's side of the text protocol
   (`docs/crates/verbatim-model.md`, "The text protocol"), public so
   mockapp's tests drive it as the worker does. `perform(source, anchors,
-  op, signal)` answers one `TextOp` over a `TextSource`, a backend's view
+  op)` answers one `TextOp` but a caret key's watch, which `check_caret`
+  checks, over a `TextSource`, a backend's view
   of one node's text in its own positions and UTF-16: `uia::UiaText`, over
   a text pattern, where a position (`UiaPos`) is one end of a text range,
   and `edit::EditText`, over an edit control's messages, where it is an
@@ -237,13 +242,18 @@ Public API:
   the caret's line and the selection, for `CaretMoved`, with the line's
   formatting when asked (the report after a focus), and remembers when
   its read finished. `Anchors` keeps one backend's anchors, by node, numbered
-  from a counter both of an outpost's backends share; `NodeText` is one
+  from a counter both of an outpost's backends share, and never forgets
+  those in its `HeldAnchors`, the anchors Core holds, which both of an
+  outpost's backends share too (`Anchors::sharing`); `NodeText` is one
   node's, and its `position_at` mints a position at a backend position
   without a call, as the worker keeps an active text position change's
-  range (`UiaPos::start_of`). `CaretSignal` is a caret key's wait: whether a caret event
-  arrived, waiting for one, and the clocks (an `Instant` for the wait
-  and Unix milliseconds for when a caret was read), so the unit tests run
-  on fake clocks. Details under "Text" below.
+  range (`UiaPos::start_of`). `check_caret` checks a caret key's watch
+  with one read of the caret and answers `Watched::Answered` with the
+  key's reply once there is evidence, or `Watched::Watching`; it never
+  waits. `CaretSignal` is what a check knows besides the text: whether a
+  caret event prompted it, and the clock for when a caret was read (Unix
+  milliseconds), so the unit tests run on a fake clock. Details under
+  "Text" below.
 - `dialog_text` — a dialog's own text, such as a message box's question,
   gathered from its children by NVDA's rules (`docs/nvda/object-model.md`,
   "A dialog's own text"), public so mockapp's tests gather it as the
@@ -382,11 +392,18 @@ Implementation notes:
   harness fetches these logs alongside the timeline and stderr, so a silent
   outpost is readable after the fact instead of theorized. Best-effort: a
   failed log open leaves the child unredirected, never unspawned.
-- Foreground changes (the worker): before the first entry of a batch that
-  holds a foreground fact, the worker waits up to 250 ms, checking every
-  10 ms with local calls, for that fact's window to become the system's
-  foreground window (`Intake::next` names the window), as NVDA holds back
-  event handling after a foreground event (issue 3831). Then a
+- Foreground changes (the intake and the worker): a batch that holds a
+  foreground fact is held in the intake for up to 250 ms
+  (`intake::FOREGROUND_WAIT`), its window checked with a local call
+  whenever something joins the queue and every 10 ms otherwise, until that
+  fact's window is the system's foreground window, as NVDA holds back
+  event handling after a foreground event (issue 3831); no event says
+  when a window has become the foreground window. `Intake::next` tells
+  the worker, with the batch's first entry, when it was confirmed. While
+  the batch is held, Core's queries and its list of held nodes are handed
+  to the worker ahead of it, so a caret key or a review command never
+  waits for the foreground (since 2026-10-08; the worker had slept in
+  10 ms steps before the batch, and everything waited). Then a
   foreground fact is reported at once, stamped with the time its window
   was confirmed as the foreground rather than the time Windows raised the
   event, which comes before the change completes (`docs/parity.md`,
@@ -685,8 +702,11 @@ Implementation notes:
     the text passed so a provider whose characters are code points or
     grapheme clusters lands right, except a position the outpost itself
     reported (a caret, a selection's end, a read's point), which it
-    remembers. Anchors Core holds (`NodesHeld`'s `anchors`, set as the
-    list arrives, before the worker sees it) are kept; any other is
+    remembers. Anchors Core holds (`NodesHeld`'s `anchors`, set by the
+    reader as the list arrives, before the worker sees it, in a set with a
+    lock of its own, `text::HeldAnchors`, since 2026-10-08: the reader had
+    taken the anchor stores' locks, which the worker holds while it reads
+    text, and so waited for a read, pings included) are kept; any other is
     forgotten once 64 newer ones were minted for the node, and a request
     naming it is answered `AnchorLost`. A released node's anchors and text
     patterns go with it.
@@ -723,62 +743,68 @@ Implementation notes:
     `text/color.rs`, ported from NVDA's `colors.py`), the bullet style as
     a `BulletStyle`, and a link from any value of the link attribute. A
     character's formatting covers the character.
-  - A caret key's wait (`AwaitCaret`) follows NVDA's caret scripts: it
-    reads the caret, then waits for evidence, polling every 10 ms between
-    caret events, for up to 100 or 300 ms, and answers with the caret's
-    line, the watch's unit at the caret (a character cut from the line,
-    any other unit read), and the selection's changes. Through UIA each
-    read of the wait is the whole caret read above, one round trip
-    remotely, so the read that finds the evidence is the answer, with
-    nothing more to read. The evidence is the
-    caret no longer where it was known to be, the characters either side
-    of the caret changed from what was known, the text at the caret
-    changed after a Delete, or the selection changed. Where it was known
-    to be is the newest caret this outpost reported for the node from a
-    read that finished before the key was pressed (the watch's
-    `pressed_at_ms`, stamped by the keyboard hook on the same Unix
-    millisecond clock as `observed_at_ms`), which can be newer than Core's
-    (an earlier key's late caret event, or a paste's), else Core's. A
-    caret read at or after the key's time is never the baseline: the
-    application's caret event for this very key can reach the outpost, and
-    be reported, before Core's request does, and judging against it would
-    find no evidence. The outpost remembers its last eight reports per
-    node for this. The characters matter
-    because a provider's positions follow edits (a deleted character takes
-    the known position with it) and the application may have handled the
-    key before the request arrived; only the caret's neighbors count, since
-    a line can wrap anew with no key at all. A caret event alone only wakes
-    the wait, unless nothing knew the caret: it can be the application's
-    late report of something earlier. The selection's changes are worked
-    out by comparing endpoints, as the contract says; through UIA the
-    caret read works them out and reads their text in the same round trip
-    when the selection moved (`CaretRead::changes`), and the edit controls
-    work them out call by call. A caret event wakes one wait between reads
-    at most: each wait waits for an event the last read did not see.
-  - The wait answers on its first read, unmoved, when it finds no evidence,
-    nothing selected, and the caret where the watch's `motion` takes it,
-    since the key cannot move it then (`WaitEnd::AtDestination`): the
-    start of the text for Control+Home and the previous character and word
-    keys, its end for Control+End and the next ones, the first line for Up
-    Arrow and Page Up, the last line (one with no line break after it) for
-    Down Arrow and Page Down, a line's start before a character that is
-    not white space for Home, and a line's end before its break for End.
-    Each but Control+Home and Control+End also needs the caret found where
-    it was before the key; those two need only the end of the text. Not in
-    a terminal (a watch with `CaretWait::Extended`), whose program gives
-    keys meanings of its own, recalling commands with Up and Down Arrow. Home
-    and End are told from the line the read has. The others need one
-    comparison with an end of the document, which the first read asks for
-    (`CaretRequest::edge`, an `Edge`): through UIA the caret read makes it
-    in the same round trip, or classically with two calls more, and only
-    when the caret and the selection did not move
-    (`verbatim_uia_rops::EdgeQuery`); an edit control's text starts at
-    offset zero and ends at its length, one message read once per
-    request. Later reads skip the comparison: the caret they find is
-    either where the first found it, not the destination, or elsewhere,
-    which is evidence. Why the wait ended, evidence, the destination, or
-    the deadline (`WaitEnd`), goes to the `CaretSignal`'s `awaited`, which
-    the worker logs.
+  - A caret key's watch (`AwaitCaret`) looks for the evidence NVDA's caret
+    scripts wait for, without waiting (since 2026-10-08; it had polled the
+    caret every 10 ms for up to 100 ms, 300 in a terminal, on the worker,
+    and every other event of the application, a focus change among them,
+    waited behind it). When the request arrives the worker ends the watch it
+    replaces, then checks the new one with one read of the caret
+    (`text_reads::check_watch`, `text::check_caret`). When the read finds
+    evidence the key is answered at once with the caret's line, the watch's
+    unit at the caret (a character cut from the line, any other unit read),
+    and the selection's changes. Otherwise the watch stays open
+    (`text_reads::OpenWatch`, the context's `caret_watch`, at most one),
+    the request is released from the watchdog, and the worker returns to
+    its queue. Each later caret event, text change, or text selection change
+    of the watched node checks the watch again with one read, unless the
+    event was observed before the caret was last read, which already saw
+    it; the check that finds evidence answers the key, and the caret event's
+    own report is not sent, the answer carrying the same caret. While a
+    check reads, the watchdog treats the watch's request as the one running,
+    so an abandonment answers it. A watch ends without evidence, answered
+    `TextReply::WatchEnded`, for which Core says nothing, when the next
+    caret key's watch replaces it, when a focus on another node is
+    reported, or when it is `CARET_WATCH_BOUND` (10 seconds) old, which
+    only frees it: the intake wakes the idle worker then (`Item::Wake`,
+    `Intake::wake_at`), and nothing is spoken. So a key that moves nothing
+    is silent (`docs/parity.md`, "Text, documents, terminals"), and a key
+    whose application reports nothing when it moves the caret is silent
+    too. Through UIA each check is the whole caret read above, one round
+    trip remotely, so the check that finds the evidence is the answer, with
+    nothing more to read. The evidence is the caret no longer where it was
+    known to be, the characters either side of the caret changed from what
+    was known, the text at the caret changed after a Delete, or the
+    selection changed. Where it was known to be is the newest caret this
+    outpost reported for the node from a read that finished before the key
+    was pressed (the watch's `pressed_at_ms`, stamped by the keyboard hook
+    on the same Unix millisecond clock as `observed_at_ms`), which can be
+    newer than Core's (an earlier key's late caret event, or a paste's),
+    else Core's. A caret read at or after the key's time is never the
+    baseline: the application's caret event for this very key can reach
+    the outpost, and be reported, before Core's request does, and judging
+    against it would find no evidence. The outpost remembers its last eight
+    reports per node for this. The characters matter because a provider's
+    positions follow edits (a deleted character takes the known position
+    with it) and the application may have handled the key before the
+    request arrived; only the caret's neighbors count, since a line can
+    wrap anew with no key at all. A caret event alone is evidence only when
+    nothing knew the caret: it can be the application's late report of
+    something earlier. The selection's changes are worked out by comparing
+    endpoints, as the contract says; through UIA the caret read works them
+    out and reads their text in the same round trip when the selection
+    moved (`CaretRead::changes`), and the edit controls work them out call
+    by call.
+  - Which applications raise the evidence (measured 2026-10-08 with
+    mockapp's real edit control): a Common Controls version 6 edit
+    control, as a Windows Forms text box is with visual styles, raises
+    `EVENT_OBJECT_TEXTSELECTIONCHANGED` whenever its caret moves, focused
+    or not, which the hooks report; the classic edit control raises
+    nothing for an unfocused caret move and, focused, only the system
+    caret's hide and show (`EVENT_OBJECT_HIDE` and `EVENT_OBJECT_SHOW` on
+    `OBJID_CARET`), which the outpost does not subscribe to, so its caret
+    keys are silent. Windows 11 Notepad, Windows Terminal, and the console
+    host, whose caret events come on their own schedule, need a live
+    check.
   - Reads move first when asked: from the start of the unit containing the
     point, by whole units, never past the text's ends, saying how far they
     went; a document movement goes to the start or the end. A unit the
@@ -790,7 +816,7 @@ Implementation notes:
     read, reads up to its count of units in one request, each the unit
     after the one before, stopping once 32 K UTF-16 code units are read,
     and marks the last chunk as the text's last when no unit follows it.
-  - Through UIA, every request but the caret wait is also one round trip
+  - Through UIA, every request but the caret watch is also one round trip
     where the window's provider runs remote operations, with the same
     choice, fallback, logging, and marking as the caret read: a point
     named as the protocol names it (`PointFrom`: the caret, a selection's
@@ -825,8 +851,13 @@ Implementation notes:
   `TextChanged` without reading the control's whole text as its MSAA value.
   The intake keeps one waiting caret report per node, and a caret event
   observed before the worker last read that node's caret (a caret key's
-  answer reads it after the event) is dropped. Every caret event also
-  counts for a caret key's wait, on the event and callback threads.
+  check reads it after the event) is dropped. A caret event, a text
+  change, and a text selection change of the node a caret key's watch is
+  open on check the watch first. A focus-now answer's control has its caret
+  and text changes followed too (the subscription moved to it, and an
+  edit control's caret events checked against a watch on it), since Core
+  takes it as its focus and its caret keys are answered by those events;
+  it gets no caret report and no property subscription.
 - Queries (the worker): `DumpTree` walks the target's foreground window (or
   its first visible top-level window) through its backend — UIA via
   `Uia::walk_tree` with the base cache request, MSAA via

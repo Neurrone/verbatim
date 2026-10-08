@@ -1,7 +1,7 @@
 //! The worker's text (milestone M4): which nodes have text and through
 //! which backend, Core's text requests answered with [`crate::text`], the
-//! caret reports sent as `CaretMoved`, and the caret events a caret key's
-//! wait for evidence listens for.
+//! caret reports sent as `CaretMoved`, and the checks of a caret key's
+//! watch for evidence, with the watch the worker keeps open between them.
 //!
 //! A UIA node has text when its element has a text pattern, fetched once
 //! per node and kept; an MSAA node has text when it is the client area of a
@@ -11,7 +11,6 @@
 
 #![forbid(unsafe_code)]
 
-use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use windows::Win32::UI::Accessibility::{IUIAutomationTextPattern, IUIAutomationTextPattern2};
@@ -20,17 +19,18 @@ use windows::core::AgileReference;
 
 use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::{
-    CallCounts, CaretReport, NodeId, NodeSnapshot, Role, TerminalOutput, TextOp, TextReply,
+    CallCounts, CaretReport, CaretWatch, NodeId, NodeSnapshot, Role, TerminalOutput, TextOp,
+    TextReply, TraceId,
 };
 use verbatim_uia::ElementExt;
 use verbatim_uia::map::is_terminal_class;
 use verbatim_uia_rops::Path;
 
 use crate::arbitration::{normalize_class_name, window_class_name};
-use crate::protocol::now_us;
+use crate::protocol::EventTiming;
 use crate::text::edit::EditText;
 use crate::text::uia::UiaText;
-use crate::text::{self, CaretSignal, TextError, WaitEnd};
+use crate::text::{self, CaretSignal, TextError, Watched};
 
 use super::Context;
 
@@ -41,111 +41,42 @@ pub(super) type Patterns = Option<(
     Option<AgileReference<IUIAutomationTextPattern2>>,
 )>;
 
-/// Caret events, counted as they arrive on the event and UIA callback
-/// threads, for a caret key's wait to listen for.
-#[derive(Default)]
-pub(crate) struct CaretEvents {
-    count: Mutex<u64>,
-    arrived: Condvar,
+/// The longest a caret key's watch stays open without evidence. It only
+/// frees the watch: ending it this way says nothing, as ending it any other
+/// way does. A key whose application raises its evidence later than this
+/// is not spoken. Ten seconds, the time the worker allows an application
+/// that is busy, or starting up, to answer one event's reads.
+pub(super) const CARET_WATCH_BOUND: Duration = Duration::from_secs(10);
+
+/// A caret key's watch for evidence, open between the worker's entries
+/// (`docs/crates/verbatim-outpost.md`, a caret key's watch under "Text").
+/// There is at most one: the next key's replaces it.
+pub(super) struct OpenWatch {
+    /// The request it answers.
+    pub(super) request_id: u64,
+    pub(super) trace: TraceId,
+    /// The node whose caret the key moves.
+    pub(super) node_id: NodeId,
+    pub(super) watch: CaretWatch,
+    /// When it was opened, for [`CARET_WATCH_BOUND`].
+    pub(super) opened: Instant,
+    /// The request's timing, which its answer carries.
+    pub(super) timing: EventTiming,
+    /// The calls its checks have made so far, none of which found evidence.
+    pub(super) calls: CallCounts,
 }
 
-impl CaretEvents {
-    /// Records a caret event. Called on event threads; it never waits.
-    pub(crate) fn arrived(&self) {
-        *self.count.lock().unwrap_or_else(PoisonError::into_inner) += 1;
-        self.arrived.notify_all();
-    }
-
-    fn count(&self) -> u64 {
-        *self.count.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-}
-
-/// The caret events a caret key's wait listens for: those since the wait
-/// began, which may be evidence, and those since the caret was last read,
-/// which the next read has not seen and which end a wait between reads.
-pub(crate) struct EventWait<'a> {
-    events: &'a CaretEvents,
-    /// The count when the wait began.
-    since: u64,
-    /// The count when the caret was last read.
-    seen: u64,
-}
-
-impl<'a> EventWait<'a> {
-    /// A wait beginning now.
-    pub(crate) fn new(events: &'a CaretEvents) -> Self {
-        let since = events.count();
-        Self {
-            events,
-            since,
-            seen: since,
-        }
-    }
-
-    /// Whether a caret event arrived since the wait began.
-    pub(crate) fn caret_event(&self) -> bool {
-        self.events.count() > self.since
-    }
-
-    /// The caret is about to be read: it will see every caret event that
-    /// arrived before now.
-    pub(crate) fn reading(&mut self) {
-        self.seen = self.events.count();
-    }
-
-    /// Waits until a caret event arrives that the last read of the caret
-    /// did not see, or `timeout` passes; true when an event ended it. Each
-    /// event ends one wait at most, as the read after it sees it, so a
-    /// wait after an earlier event waits its time out rather than
-    /// returning at once.
-    pub(crate) fn wait(&self, timeout: Duration) -> bool {
-        let count = self
-            .events
-            .count
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let seen = self.seen;
-        let (count, result) = self
-            .events
-            .arrived
-            .wait_timeout_while(count, timeout, |count| *count <= seen)
-            .unwrap_or_else(PoisonError::into_inner);
-        drop(count);
-        !result.timed_out()
-    }
-}
-
-/// A caret key's wait, listening for caret events.
+/// A check of a caret key's watch, as the worker makes it.
 struct Signal<'a> {
     context: &'a Context,
     node_id: NodeId,
-    events: EventWait<'a>,
-    awaited: Option<Awaited>,
-}
-
-/// When a caret key's wait for evidence ended, in microseconds since the
-/// Unix epoch, and the cross-process calls it made, taken from the
-/// worker's count; the worker adds them back into the reply's total.
-#[derive(Clone, Copy, Debug)]
-pub(super) struct Awaited {
-    /// When the wait ended.
-    pub(super) at_us: u64,
-    /// The calls the wait made.
-    pub(super) calls: CallCounts,
+    /// Whether a caret event prompted the check.
+    caret_event: bool,
 }
 
 impl CaretSignal for Signal<'_> {
     fn caret_event(&mut self) -> bool {
-        self.events.caret_event()
-    }
-
-    fn wait(&mut self, timeout: Duration) {
-        self.events.wait(timeout);
-    }
-
-    fn now(&mut self) -> Instant {
-        Instant::now()
+        self.caret_event
     }
 
     fn now_ms(&mut self) -> u64 {
@@ -153,16 +84,7 @@ impl CaretSignal for Signal<'_> {
     }
 
     fn reading(&mut self) {
-        self.events.reading();
         self.context.caret_read(self.node_id);
-    }
-
-    fn awaited(&mut self, ended: WaitEnd) {
-        tracing::debug!(?ended, "a caret key's wait for evidence ended");
-        self.awaited = Some(Awaited {
-            at_us: now_us(),
-            calls: super::worker::take_calls(),
-        });
     }
 }
 
@@ -304,33 +226,17 @@ pub(super) fn may_have_text(context: &Context, node: &NodeSnapshot) -> bool {
         .is_some_and(|(hwnd, object, child)| edit_version(hwnd, object, child).is_some())
 }
 
-/// Answers one of Core's text requests.
-/// Also returns when a caret key's wait for evidence ended and the calls
-/// it made, for the latency log.
-pub(super) fn answer(
-    context: &Context,
-    node_id: NodeId,
-    op: &TextOp,
-) -> (TextReply, Option<Awaited>) {
+/// Answers one of Core's text requests other than a caret key's watch,
+/// which [`check_watch`] checks.
+pub(super) fn answer(context: &Context, node_id: NodeId, op: &TextOp) -> TextReply {
     let source = match source(context, node_id) {
         Ok(source) => source,
-        Err(reply) => return (reply, None),
+        Err(reply) => return reply,
     };
-    let mut signal = Signal {
-        context,
-        node_id,
-        events: EventWait::new(&context.caret_events),
-        awaited: None,
-    };
-    let reply = match source {
+    match source {
         Source::Uia(mut source) => {
             let mut anchors = context.uia_anchors();
-            let reply = text::perform(
-                &mut source,
-                &mut anchors.node(node_id.number()),
-                op,
-                &mut signal,
-            );
+            let reply = text::perform(&mut source, &mut anchors.node(node_id.number()), op);
             drop(anchors);
             note_fallback(context, &mut source);
             keep_support(context, node_id, &source);
@@ -338,15 +244,55 @@ pub(super) fn answer(
         }
         Source::Edit(mut source) => {
             let mut anchors = context.edit_anchors();
-            text::perform(
+            text::perform(&mut source, &mut anchors.node(node_id.number()), op)
+        }
+    }
+}
+
+/// Checks a caret key's watch on `node_id` with one read of its caret
+/// ([`text::check_caret`]): the answer once there is evidence, or the reply
+/// that ends the request when the node has no text or is gone; otherwise
+/// the watch stays open. `caret_event` says whether a caret event prompted
+/// the check.
+pub(super) fn check_watch(
+    context: &Context,
+    node_id: NodeId,
+    watch: &CaretWatch,
+    caret_event: bool,
+) -> Watched {
+    let source = match source(context, node_id) {
+        Ok(source) => source,
+        Err(reply) => return Watched::Answered(reply),
+    };
+    let mut signal = Signal {
+        context,
+        node_id,
+        caret_event,
+    };
+    match source {
+        Source::Uia(mut source) => {
+            let mut anchors = context.uia_anchors();
+            let watched = text::check_caret(
                 &mut source,
                 &mut anchors.node(node_id.number()),
-                op,
+                watch,
+                &mut signal,
+            );
+            drop(anchors);
+            note_fallback(context, &mut source);
+            keep_support(context, node_id, &source);
+            watched
+        }
+        Source::Edit(mut source) => {
+            let mut anchors = context.edit_anchors();
+            text::check_caret(
+                &mut source,
+                &mut anchors.node(node_id.number()),
+                watch,
                 &mut signal,
             )
         }
-    };
-    (reply, signal.awaited)
+    }
 }
 
 /// The caret of `node_id`, for a `CaretMoved` event, with the line's

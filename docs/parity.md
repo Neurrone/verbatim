@@ -511,11 +511,12 @@ verified.
   moves attention; its outpost has already dropped it if the window
   was no longer the system's foreground when the outpost handled it.
   Before handling a batch that holds a foreground fact, the outpost
-  waits up to 250 ms for that window to become the foreground window,
-  as NVDA holds back event handling after a foreground event (issue
-  3831); a starting application's focus event, which can come just
-  before its foreground event, is then judged against the real
-  foreground. The bound was measured live on 2026-10-02: over 245 such
+  holds the batch for up to 250 ms for that window to become the
+  foreground window, as NVDA holds back event handling after a foreground
+  event (issue 3831); a starting application's focus event, which can
+  come just before its foreground event, is then judged against the real
+  foreground. Core's queries to that outpost are answered meanwhile,
+  where NVDA's scripts would wait behind the held events. The bound was measured live on 2026-10-02: over 245 such
   events, the window arrived 5 to 100 ms after its event. Without the
   wait, msinfo32 was sometimes never announced. A focus event is
   attended only when its window was in the system's foreground window
@@ -1613,17 +1614,20 @@ verified.
   by what its buffer holds, UTF-16 or ANSI, as NVDA decodes it ("Rich
   edit text" in [Editable text and terminals](nvda/editable-text-and-terminals.md)),
   since 2026-10-08; it had been decoded by the window's flag. Caret keys pass
-  to the application and Core asks the outpost to wait for evidence (a
+  to the application and Core asks the outpost to watch for evidence (a
   caret event, the caret leaving where Core knew it, the text at the caret
-  changing for Delete, or the selection changing), up to 100 milliseconds,
-  300 in a terminal, then speaks NVDA's unit for the key: the character
+  changing for Delete, or the selection changing), which it checks when
+  the request arrives and at each caret, text, or selection change the
+  application reports, never waiting for it, then speaks NVDA's unit for
+  the key: the character
   for Left and Right Arrow, Home, and End; the provider's word for Control
   with Left or Right Arrow, a word of one character (Notepad's full stop)
   by its name, as NVDA spells it; the line for Up and Down Arrow, the page keys,
   and Control with Home or End; the paragraph for Control with Up or Down
   Arrow; what Backspace deleted; what Delete left at the caret. A newer key
-  supersedes a waiting one and a focus change drops it, NVDA's two
-  short-circuits. Shift movement speaks the text followed by "selected" or
+  supersedes a watched one and a focus change drops it, NVDA's two
+  short-circuits; so does a typed character, whose caret move is not the
+  key's answer. Shift movement speaks the text followed by "selected" or
   "unselected", NVDA's word order, a single character by its name, and 512
   characters or more as their number; a movement without Shift that leaves
   a selection speaks its unit and then the text unselected. Both were
@@ -1653,24 +1657,27 @@ verified.
   a caret event alone is not evidence when the caret's position is known,
   since an application's late caret event can belong to an earlier key; the
   position, the characters either side of the caret, or the selection must
-  change, polled every 10 ms. **Different:** NVDA waits its full 100 ms
-  for a key that cannot move the caret, such as Control+Home at the start
-  of the text, and answers that the caret did not move; Verbatim's wait
-  answers on its first read, unmoved, when the caret is still where it was
-  before the key and that is where the key takes it, since the key cannot
-  move it however late the application handles it (since 2026-10-08): the
-  start of the text for Control+Home, Left Arrow, and Control+Left Arrow;
-  its end for Control+End, Right Arrow, and Control+Right Arrow; the first
-  line for Up Arrow and Page Up and the last for Down Arrow and Page Down;
-  a line's start, before a character that is not white space, for Home;
-  and a line's end, before its break, for End. For Control+Home and
-  Control+End the end of the text is enough even when Core did not know
-  where the caret was. With text selected it waits as NVDA does, since the
-  key may collapse the selection, and in a terminal too, whose program
-  gives keys meanings of its own. An application whose Up Arrow on the
-  first line, or Down Arrow on the last, moves the caret to the line's
-  start or end has that move reported by its caret event afterwards
-  rather than as the key's answer. The caret as it was when the key was pressed
+  change. **Different, deliberately (since 2026-10-08):** a key that does
+  not move the caret is silent. NVDA waits 100 ms (300 in Windows
+  Terminal) for evidence and, finding none, speaks the key's unit anyway:
+  Home at the start of a line reads the character after the caret,
+  Control+Home at the start of the text reads the first line, Down Arrow
+  on the last line reads that line. Verbatim's outpost never waits for a
+  caret key, so that nothing else of the application, a focus change
+  above all, waits behind one (the wait had held every event of the
+  application for its 100 ms); it watches for the evidence instead and
+  speaks when it comes, however late. A watch that ends without evidence,
+  because the next key replaced it, the focus moved, or it reached its
+  ten-second bound, says nothing. The same holds for a key whose
+  application moves the caret without reporting it: a classic edit control
+  reports a caret move only by the system caret's hide and show events,
+  which Verbatim does not hear, where NVDA's polling finds the move; a
+  Common Controls version 6 edit control, such as a Windows Forms text box
+  with visual styles, reports it with its text selection event (measured
+  with mockapp, 2026-10-08). An application whose Up Arrow on the first
+  line, or Down Arrow on the last, moves the caret to the line's start or
+  end has that move spoken as the key's answer, as NVDA speaks it.
+  The caret as it was when the key was pressed
   is the baseline: the outpost's own newest report, when the read behind it
   finished before the hook saw the key, else where Core knew it; a report
   read after the key, from the application's caret event for that very key

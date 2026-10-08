@@ -25,9 +25,9 @@ use windows::Win32::UI::Accessibility::{
     UIA_PROPERTY_ID, UIA_PaneControlTypeId, UIA_RadioButtonControlTypeId,
     UIA_SelectionItem_ElementSelectedEventId, UIA_SliderControlTypeId, UIA_SpinnerControlTypeId,
     UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
-    UIA_TextControlTypeId, UIA_ToolBarControlTypeId, UIA_TreeControlTypeId,
-    UIA_TreeItemControlTypeId, UIA_ValueValuePropertyId, UIA_WindowControlTypeId,
-    UiaRaiseActiveTextPositionChangedEvent, UiaRaiseAutomationEvent,
+    UIA_Text_TextSelectionChangedEventId, UIA_TextControlTypeId, UIA_ToolBarControlTypeId,
+    UIA_TreeControlTypeId, UIA_TreeItemControlTypeId, UIA_ValueValuePropertyId,
+    UIA_WindowControlTypeId, UiaRaiseActiveTextPositionChangedEvent, UiaRaiseAutomationEvent,
     UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent,
 };
 use windows_core::Interface;
@@ -39,7 +39,7 @@ pub(crate) use handler::{ChildProvider, RootProvider};
 
 mod text;
 
-pub(crate) use text::caret_key;
+pub(crate) use text::{KeyMoved, caret_key};
 
 /// Builds the root's provider, for answering `WM_GETOBJECT`.
 pub(crate) fn root_provider(tree: SharedTree, hwnd: HWND) -> RootProvider {
@@ -88,6 +88,17 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
                 return Err(format!("the node {id} has no text"));
             }
             raise_active_text_position(tree, hwnd, index, (start, end))?;
+        }
+        Command::CaretEvent(id) => {
+            let index = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .index_of(&id)
+                .ok_or_else(|| unknown(&id))?;
+            if !text::has_text(tree, index) {
+                return Err(format!("the node {id} has no text"));
+            }
+            raise_caret_moved(tree, hwnd, index)?;
         }
         Command::Caret(id, start, end) => {
             let mut guard = tree
@@ -201,6 +212,16 @@ fn simple(
     fragment
         .cast::<IRawElementProviderSimple>()
         .map_err(|error| format!("the node's provider is not a simple provider: {error}"))
+}
+
+/// Raises UIA's text selection changed event from the text node at
+/// `index`, as an editor raises it when its caret moves.
+pub(crate) fn raise_caret_moved(tree: &SharedTree, hwnd: HWND, index: usize) -> Result<(), String> {
+    let fragment = props::provider_for(tree.clone(), hwnd, index);
+    let provider = simple(&fragment)?;
+    // SAFETY: `provider` is a live COM object for the node.
+    unsafe { UiaRaiseAutomationEvent(&provider, UIA_Text_TextSelectionChangedEventId) }
+        .map_err(|error| format!("the caret event could not be raised: {error}"))
 }
 
 /// Raises UIA's active text position changed event from the text node at

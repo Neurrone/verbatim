@@ -255,8 +255,16 @@ unsafe extern "system" fn wnd_proc(
                 let key = VIRTUAL_KEY(wparam.0 as u16);
                 // SAFETY: reads this thread's keyboard state; always sound.
                 let control = unsafe { GetKeyState(i32::from(VK_CONTROL.0)) } < 0;
-                if uia::caret_key(&context.tree, key, control) {
-                    return LRESULT(0);
+                match uia::caret_key(&context.tree, key, control) {
+                    uia::KeyMoved::Ignored => {}
+                    uia::KeyMoved::Kept => return LRESULT(0),
+                    // An editor reports its caret once it has moved it.
+                    uia::KeyMoved::Moved(index) => {
+                        if let Err(error) = uia::raise_caret_moved(&context.tree, hwnd, index) {
+                            eprintln!("mockapp: {error}");
+                        }
+                        return LRESULT(0);
+                    }
                 }
             }
         }

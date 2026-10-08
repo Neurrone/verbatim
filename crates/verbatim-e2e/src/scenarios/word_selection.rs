@@ -67,17 +67,17 @@ pub(crate) fn notepad_setup(scenario: &mut Scenario) -> io::Result<ScenarioState
 pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     super::text_box::expect_announced(scenario, NAME, super::text_box::BOX_NAME, FIRST);
 
-    // Down to the second line and back up: Up Arrow speaks the line too.
-    press(scenario, "control+home", FIRST);
+    // Down to the second line and back up from the top, where the caret
+    // starts: Up Arrow speaks the line too.
     press(scenario, "downarrow", SECOND);
     press(scenario, "uparrow", FIRST);
 
     // Two words selected, the second unselected, then the rest of the line
-    // selected. A word selected takes the space after it in, which is
-    // spoken as the space before the state. Unselecting comes before
-    // Shift+End because Windows 11 Notepad's Shift+End takes the line
-    // break in, which Shift+Control+Left Arrow would then unselect first.
-    press(scenario, "home", "V");
+    // selected, from the line's start, where Up Arrow left the caret. A
+    // word selected takes the space after it in, which is spoken as the
+    // space before the state. Unselecting comes before Shift+End because
+    // Windows 11 Notepad's Shift+End takes the line break in, which
+    // Shift+Control+Left Arrow would then unselect first.
     press(scenario, "shift+control+rightarrow", "Verbatim  selected");
     press(scenario, "shift+control+rightarrow", "reads  selected");
     press(scenario, "shift+control+leftarrow", "reads  unselected");
@@ -88,17 +88,17 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     super::expect_notepad_in_front(scenario, NAME, FIRST);
 
-    // Down to the second line and back up: Up Arrow speaks the line too.
-    press(scenario, "control+home", FIRST);
+    // Down to the second line and back up from the top, where the caret
+    // starts: Up Arrow speaks the line too.
     press(scenario, "downarrow", SECOND);
     press(scenario, "uparrow", FIRST);
 
     // Two words selected, the second unselected, then the rest of the line
-    // selected. A word selected takes the space after it in, which is
-    // spoken as the space before the state. Unselecting comes before
-    // Shift+End because Windows 11 Notepad's Shift+End takes the line
-    // break in, which Shift+Control+Left Arrow would then unselect first.
-    press(scenario, "home", "V");
+    // selected, from the line's start, where Up Arrow left the caret. A
+    // word selected takes the space after it in, which is spoken as the
+    // space before the state. Unselecting comes before Shift+End because
+    // Windows 11 Notepad's Shift+End takes the line break in, which
+    // Shift+Control+Left Arrow would then unselect first.
     press(scenario, "shift+control+rightarrow", "Verbatim  selected");
     press(scenario, "shift+control+rightarrow", "reads  selected");
     press(scenario, "shift+control+leftarrow", "reads  unselected");

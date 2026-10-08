@@ -22,17 +22,17 @@ mod harness;
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use std::time::{Duration, Instant};
-
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
     Backend, CallCounts, CaretKey, CaretMotion, CaretReport, Effect, Input, LineChange,
     NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid, Role, SegmentContent,
-    Skipped, StateSet, TerminalOutput, TraceId,
+    Skipped, StateSet, TerminalOutput, TextOp, TraceId,
 };
 use verbatim_outpost::terminal::{TailText, Terminal, read};
 use verbatim_outpost::text::uia::UiaText;
-use verbatim_outpost::text::{Anchors, CaretSignal, NodeText, caret_report_from, perform};
+use verbatim_outpost::text::{
+    Anchors, CaretSignal, NodeText, Watched, caret_report_from, check_caret, perform,
+};
 use verbatim_uia::{NodeIdRegistry, Uia};
 use verbatim_uia_rops::{
     CaretLineQuery, Fingerprint, Found, Path, TailQuery, TailStart, terminal_tail,
@@ -748,22 +748,14 @@ fn terminal_reads_cost_exactly_classic() {
     terminal_reads_report_new_output_and_cost_exactly(false);
 }
 
-/// A caret key's wait that never needs to wait: the test moves mockapp's
-/// caret before Core's request is answered, so the first read is the
-/// evidence.
+/// A caret key's watch checked once with no caret event: the test moves
+/// mockapp's caret before Core's request is answered, so the first read is
+/// the evidence.
 struct AlreadyMoved;
 
 impl CaretSignal for AlreadyMoved {
     fn caret_event(&mut self) -> bool {
         false
-    }
-
-    fn wait(&mut self, _timeout: Duration) {
-        panic!("the caret had already moved, so nothing should wait");
-    }
-
-    fn now(&mut self) -> Instant {
-        Instant::now()
     }
 
     fn now_ms(&mut self) -> u64 {
@@ -934,7 +926,15 @@ fn backspace_says_what_it_deleted_without_caret_events(remote: bool) {
         for effect in pending {
             match effect {
                 Effect::Text(request) => {
-                    let reply = perform(&mut source, &mut anchors, &request.op, &mut AlreadyMoved);
+                    let reply = match &request.op {
+                        TextOp::AwaitCaret(watch) => {
+                            match check_caret(&mut source, &mut anchors, watch, &mut AlreadyMoved) {
+                                Watched::Answered(reply) => reply,
+                                Watched::Watching => panic!("the check found no evidence"),
+                            }
+                        }
+                        op => perform(&mut source, &mut anchors, op),
+                    };
                     inputs.push(Input::TextCompleted {
                         trace_id: TraceId::mint(),
                         query_id: request.query_id,
