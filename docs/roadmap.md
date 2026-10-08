@@ -97,6 +97,12 @@ continuously alongside every later milestone.
   VNI, the Indic Phonetic keyboards) compose characters the keyboard hook
   cannot see. Until then Verbatim stays silent while such a keyboard is
   active rather than echoing raw keys (decided 2026-10-08).
+- IAccessible2 unique ids as identities: NVDA uses them to recognize an
+  IA2 object again when it is named by an event, so a state change on an
+  IA2 focus ancestor can be spoken. Plain MSAA objects named by events are
+  oleacc wrappers whose COM identity never matches an object reached
+  through `accParent` (found 2026-10-08, `docs/crates/verbatim-ia2.md`,
+  "Identity"), so without such ids neither NVDA nor Verbatim speaks those.
 - Interaction-before-full-render E2E on a very large page.
 - Scan-mode generalization: the same projection over an ordinary app.
 - Start-menu search results: the results are a Chromium (WebView2)
