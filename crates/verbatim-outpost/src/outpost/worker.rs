@@ -1156,7 +1156,8 @@ impl Worker<'_> {
             }
             _ => {}
         }
-        let Some(object) = verbatim_ia2::acquire::event_object(hwnd, id_object, id_child) else {
+        let Some(mut object) = verbatim_ia2::acquire::event_object(hwnd, id_object, id_child)
+        else {
             return;
         };
         let registry = &self.context.msaa_registry;
@@ -1182,16 +1183,33 @@ impl Worker<'_> {
             self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
             return;
         }
-        let focus = self.focus_if_spoken(kind, &object);
+        let spoken = self.focus_if_spoken(kind, &mut object);
         if kind == WinEventKind::ValueChange {
+            let focus = spoken.map(|(focus, _)| focus);
             self.value_change(object, focus, (hwnd, trace, observed_at_ms));
             return;
         }
-        let Some(focus) = focus else {
+        let Some((focus, like)) = spoken else {
             return;
         };
-        let node = object.read(registry, Purpose::Context);
-        let event = match kind {
+        let mut node = object.read(registry, Purpose::Context);
+        node.id = like.unwrap_or(node.id);
+        if let Some(event) = self.property_change(kind, node, focus, (hwnd, id_child)) {
+            self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
+        }
+    }
+
+    /// The report of a name, description, or state change on `node`, read
+    /// for the event of `kind` at `(hwnd, id_child)`, while `focus` is the
+    /// focus; `None` for any other kind.
+    fn property_change(
+        &self,
+        kind: WinEventKind,
+        node: NodeSnapshot,
+        focus: NodeId,
+        (hwnd, id_child): (isize, i32),
+    ) -> Option<NormalizedEvent> {
+        Some(match kind {
             WinEventKind::NameChange => NormalizedEvent::PropertyChanged {
                 node_id: node.id,
                 change: PropertyChange::Name(node.name),
@@ -1207,9 +1225,8 @@ impl Worker<'_> {
                 child_count: self.expanded_child_count(&node, focus, (hwnd, id_child)),
                 change: PropertyChange::States(node.states),
             },
-            _ => return,
-        };
-        self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
+            _ => return None,
+        })
     }
 
     /// The number of children of `node`, a Win32 tree view item at
@@ -1273,11 +1290,14 @@ impl Worker<'_> {
     /// change for the focus or one of its ancestors, as NVDA speaks them.
     /// Any other object is not read: it is told from those by its identity
     /// first, without reading any of its properties.
+    /// With it, the windowless ancestor the object was matched with by its
+    /// properties, whose node the change is reported for: the event's
+    /// object, a new sighting of it, is read as a new node.
     fn focus_if_spoken(
         &self,
         kind: WinEventKind,
-        object: &verbatim_ia2::acquire::EventObject,
-    ) -> Option<NodeId> {
+        object: &mut verbatim_ia2::acquire::EventObject,
+    ) -> Option<(NodeId, Option<NodeId>)> {
         let (focus, mut candidates) = {
             let tracking = self.context.tracking();
             // The ancestors NVDA has are those reached through `accParent`,
@@ -1297,9 +1317,28 @@ impl Worker<'_> {
             (tracking.focus?, ancestors)
         };
         candidates.push(focus);
-        object
-            .which_of(&candidates, &self.context.msaa_registry)
-            .map(|_| focus)
+        let registry = &self.context.msaa_registry;
+        if object.which_of(&candidates, registry).is_some() {
+            return Some((focus, None));
+        }
+        // A windowless ancestor, reached through `accParent`, has no address
+        // of its own the event could name, and no identity two sightings
+        // share: it is compared as NVDA compares it, by window, role, name,
+        // and location, read only when such an ancestor is a candidate.
+        let windowless: Vec<NodeSnapshot> = self
+            .context
+            .tracking()
+            .chain
+            .iter()
+            .filter(|node| {
+                candidates.contains(&node.id) && registry.at_address(node.id) == Some(false)
+            })
+            .cloned()
+            .collect();
+        windowless
+            .iter()
+            .find(|candidate| object.is_like(candidate, registry))
+            .map(|candidate| (focus, Some(candidate.id)))
     }
 
     /// Whether `node`, one of the focus's ancestors, was reached through a

@@ -333,8 +333,8 @@ fn msaa_client_reads_a_lists_selected_child() {
 }
 
 /// A live object seen again at its address is the node already issued:
-/// mockapp answers every request with a new COM object, so each sighting
-/// after the first is matched by address, comparing a fresh read of the kept
+/// oleacc hands the outpost a new wrapper for every request, so each
+/// sighting after the first is matched by address, comparing a fresh read of the kept
 /// object's role and identity with the new one's (`docs/parity.md`, "Held
 /// objects"). A renamed object stays the same node; another object is a
 /// different one.

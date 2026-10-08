@@ -345,9 +345,9 @@ window, `WindowFromAccessibleObject`).
   first for NVDA's checks, are kept for the read, and its `accFocus` is
   asked once), and the walk goes to the root: two ancestors at
   10 each and an `accParent` that finds none. The walk does not stop at the
-  group, because mockapp answers every `accParent` with a new COM object
-  and an object reached through `accParent` is recognized only by its COM
-  identity. mockapp answered 38 provider calls, 14 of them `accParent`,
+  group, because oleacc hands the outpost a new wrapper for every object
+  it reaches through `accParent`, whose COM identity therefore matches no
+  kept node, and such an object has no address of its own. mockapp answered 38 provider calls, 14 of them `accParent`,
   most from `WindowFromAccessibleObject`'s own walk.
 - Target: 19. Recognizing an ancestor by its address and identity string,
   as the registry already does for objects acquired at an address.
@@ -459,6 +459,16 @@ reading any of its properties.
   `get_accRole` once each for it), and the focus's change 11 MSAA calls.
   A progress bar off the focus is then read in full, as NVDA reads one.
   mockapp answers a `WM_GETOBJECT` for each event's acquisition, 2.
+- A state change on an ancestor of the focus reached through `accParent`,
+  with no address of its own (since 2026-10-08): its COM identity matches
+  no kept node, since oleacc hands out a new wrapper for every object, so
+  it is compared with the ancestor as NVDA compares objects, by window,
+  role, name, and location, read only when such an ancestor is among the
+  candidates. The read that follows keeps the role, name, and location,
+  so the comparison costs no call of its own: 11 MSAA calls in all, the
+  ancestor's read in full, the acquisition, and a fresh role read of the
+  object kept at the address the event names (mockapp answers `accName`
+  and `accLocation` once each, and `get_accRole` twice).
 
 The window's verdict of no UIA provider is renewed by time, every half
 second, as NVDA renews it: nothing tells a client that a window has begun
@@ -505,9 +515,9 @@ own text"). mockapp's `tests/fixtures/dialog.json` is that message box.
 - Today: 44 MSAA calls and 1 window message, the cold focus's 30 and the
   text's 14. mockapp answered 56 provider calls. A focus moving within the
   dialog does not read it again, since the dialog is then in the previous
-  focus's chain; mockapp cannot show that, as every `accParent` it answers
-  is a new COM object, so the dialog it reaches from the next button is a
-  new node to the outpost.
+  focus's chain when the dialog has its own window; mockapp's dialog has
+  none, and oleacc hands out a new wrapper for every `accParent`, so the
+  dialog it reaches from the next button is a new node to the outpost.
 - Target: the minimum, met for the text.
 
 ### A dialog's text, UIA

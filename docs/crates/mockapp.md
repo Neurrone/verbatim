@@ -27,7 +27,9 @@ strings, `states` (an array of `State` names in snake case, e.g.
 `read_only`), optional detail properties (`description` and
 `keyboard_shortcut` strings, one-based `position_in_set`, `set_size`, and
 `level` integers — the M3 `NodeDetails` vocabulary; each backend serves
-the subset its API can express), an optional `default_action` (MSAA's
+the subset its API can express), an optional `location` (left, top,
+width, and height, which the MSAA backend's `accLocation` answers, all
+zero when absent), an optional `default_action` (MSAA's
 `accDefaultAction`, which `accDoDefaultAction` then succeeds for), an
 optional `controller_for` (the `id`
 of a node this one controls, served on the UIA backend as the

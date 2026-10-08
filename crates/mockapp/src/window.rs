@@ -323,8 +323,7 @@ fn handle_get_object(
         }
         Backend::Msaa => {
             if obj_id == OBJID_CLIENT.0 {
-                let accessible: IAccessible =
-                    msaa::node_accessible(context.tree.clone(), hwnd, 0).into();
+                let accessible: IAccessible = msaa::node_accessible(&context.tree, hwnd, 0);
                 // SAFETY: `accessible` is a live provider for the root node.
                 return unsafe { LresultFromObject(&IAccessible::IID, wparam, &accessible) };
             }
@@ -337,8 +336,7 @@ fn handle_get_object(
                     .len()
                     > index;
                 if valid {
-                    let accessible: IAccessible =
-                        msaa::node_accessible(context.tree.clone(), hwnd, index).into();
+                    let accessible: IAccessible = msaa::node_accessible(&context.tree, hwnd, index);
                     // SAFETY: `accessible` is a live provider for a validated node.
                     return unsafe { LresultFromObject(&IAccessible::IID, wparam, &accessible) };
                 }

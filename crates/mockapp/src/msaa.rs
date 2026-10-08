@@ -14,7 +14,7 @@
 
 use verbatim_model::{Role, State, StateSet};
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Accessibility::NotifyWinEvent;
+use windows::Win32::UI::Accessibility::{IAccessible, NotifyWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE,
     EVENT_OBJECT_SELECTION, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_VALUECHANGE, OBJID_CLIENT,
@@ -30,9 +30,35 @@ pub(crate) use handler::NodeAccessible;
 /// self-reference is the only child id ever needed at the `WinEvent` boundary.
 const CHILDID_SELF: i32 = 0;
 
-/// Builds the accessible object for `index`.
-pub(crate) fn node_accessible(tree: SharedTree, hwnd: HWND, index: usize) -> NodeAccessible {
-    NodeAccessible { tree, hwnd, index }
+thread_local! {
+    /// Each node's one accessible object, by its window and index, handed
+    /// out by `WM_GETOBJECT`, `accParent`, `accChild`, `accFocus`, and
+    /// `accSelection` alike, as a provider that keeps its objects does. A
+    /// client in another process still meets a new object each time:
+    /// oleacc wraps every object it delivers in a wrapper of its own
+    /// (`docs/crates/verbatim-ia2.md`). Objects live on the window thread
+    /// that made them.
+    static OBJECTS: std::cell::RefCell<std::collections::HashMap<(isize, usize), IAccessible>> =
+        std::cell::RefCell::default();
+}
+
+/// The accessible object for `index` in `hwnd`'s tree, the same one each
+/// time it is asked for ([`OBJECTS`]).
+pub(crate) fn node_accessible(tree: &SharedTree, hwnd: HWND, index: usize) -> IAccessible {
+    OBJECTS.with(|objects| {
+        objects
+            .borrow_mut()
+            .entry((hwnd.0 as isize, index))
+            .or_insert_with(|| {
+                NodeAccessible {
+                    tree: tree.clone(),
+                    hwnd,
+                    index,
+                }
+                .into()
+            })
+            .clone()
+    })
 }
 
 /// The custom `idObject` mockapp answers `WM_GETOBJECT` with for `index`,
@@ -416,12 +442,8 @@ mod handler {
                 .parent;
             match parent {
                 Some(parent_index) => {
-                    let accessible: IAccessible = NodeAccessible {
-                        tree: self.tree.clone(),
-                        hwnd: self.hwnd,
-                        index: parent_index,
-                    }
-                    .into();
+                    let accessible: IAccessible =
+                        super::node_accessible(&self.tree, self.hwnd, parent_index);
                     Ok(accessible.into())
                 }
                 None => Err(Error::from_hresult(S_FALSE)),
@@ -464,12 +486,7 @@ mod handler {
                 // A simple child has no object of its own (`focus-child`).
                 return Err(Error::from_hresult(S_FALSE));
             }
-            let accessible: IAccessible = NodeAccessible {
-                tree: self.tree.clone(),
-                hwnd: self.hwnd,
-                index: target,
-            }
-            .into();
+            let accessible: IAccessible = super::node_accessible(&self.tree, self.hwnd, target);
             Ok(accessible.into())
         }
 
@@ -625,12 +642,7 @@ mod handler {
             if target == self.index {
                 return Ok(self_variant());
             }
-            let accessible: IAccessible = NodeAccessible {
-                tree: self.tree.clone(),
-                hwnd: self.hwnd,
-                index: target,
-            }
-            .into();
+            let accessible: IAccessible = super::node_accessible(&self.tree, self.hwnd, target);
             Ok(dispatch_variant(accessible.into()))
         }
 
@@ -657,12 +669,7 @@ mod handler {
             let Some(index) = selected else {
                 return Ok(VARIANT::default());
             };
-            let accessible: IAccessible = NodeAccessible {
-                tree: self.tree.clone(),
-                hwnd: self.hwnd,
-                index,
-            }
-            .into();
+            let accessible: IAccessible = super::node_accessible(&self.tree, self.hwnd, index);
             Ok(dispatch_variant(accessible.into()))
         }
 
@@ -692,19 +699,27 @@ mod handler {
             pytop: *mut i32,
             pcxwidth: *mut i32,
             pcyheight: *mut i32,
-            _varchild: &VARIANT,
+            varchild: &VARIANT,
         ) -> WinResult<()> {
             hits::hit(hits::Method::AccLocation);
             let outputs = [pxleft, pytop, pcxwidth, pcyheight];
             if outputs.iter().any(|output| output.is_null()) {
                 return Err(E_POINTER.into());
             }
-            // mockapp never lays out real control geometry, so the location
-            // is always zero.
-            for output in outputs {
+            // mockapp lays out no real control geometry: the location is the
+            // fixture's, all zero when it gives none.
+            let target = resolve_child(&self.tree, self.index, varchild)
+                .ok_or_else(|| Error::from_hresult(S_FALSE))?;
+            let location = self
+                .tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .nodes[target]
+                .location;
+            for (output, value) in outputs.into_iter().zip(location) {
                 // SAFETY: a non-null out-parameter (checked above), which an
                 // `accLocation` caller owns and points at an `i32`.
-                unsafe { output.write(0) };
+                unsafe { output.write(value) };
             }
             Ok(())
         }
@@ -737,12 +752,8 @@ mod handler {
             };
             match target {
                 Some(index) => {
-                    let accessible: IAccessible = NodeAccessible {
-                        tree: self.tree.clone(),
-                        hwnd: self.hwnd,
-                        index,
-                    }
-                    .into();
+                    let accessible: IAccessible =
+                        super::node_accessible(&self.tree, self.hwnd, index);
                     Ok(dispatch_variant(accessible.into()))
                 }
                 None => Err(Error::from_hresult(S_FALSE)),

@@ -177,7 +177,29 @@ Public API:
   (`Accessible::address`, `IAccPropServices::DecomposeHwndIdentityString`),
   so a window keeps one node even when its title changes; other objects
   reached through `accParent`, through `accNavigate`, or as child objects
-  are not, and never claim the address made up for them. Two seams
+  are not, and never claim the address made up for them.
+
+  Identity. A COM identity is never shared by two sightings of one object
+  in another process: oleacc delivers every object wrapped in a new
+  wrapper of its own, the Dynamic Annotation wrapper. Measured on
+  2026-10-08 against mockapp, whose provider hands out one cached object
+  per node: three sightings of one list, two through
+  `AccessibleObjectFromEvent` and one as its item's `accParent`, all held
+  at once, had three different `IUnknown` addresses. COM's own proxies
+  could not do that, since unmarshalling one remote object into one
+  apartment yields one proxy. All three objects' `IUnknown` and
+  `IAccessible` tables lie in `oleacc.dll`; each answers
+  `IServiceProvider`, which mockapp does not implement, and none is
+  oleacc's proxy for a standard control (`QueryService` for
+  `IIS_IsOleaccProxy` fails); none answers `IAccIdentity`. So identity
+  matches only an object the outpost already holds, never a new
+  sighting, and the address is what recognizes an object again. An
+  object reached through `accParent` with no address of its own (a
+  windowless ancestor) has neither: an event naming it is compared as
+  NVDA compares objects, by window, role, name, and location
+  (`EventObject::is_like`), whose name and location reads the event's
+  read then keeps; `NodeIdRegistry::at_address` tells the outpost which
+  kept nodes have no address of their own. Two seams
   mirror NVDA where plain MSAA navigation would mislead. A `SysTreeView32`
   item's navigation and ancestor chain route through the tree control's
   own `TVM_GETNEXTITEM` relations (with the accid-to-htreeitem mapping

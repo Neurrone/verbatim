@@ -330,6 +330,7 @@ fn msaa_focus_changes_cost_exactly() {
     );
     let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("item2", ITEM_TWO));
     assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
+    let list = reported.ancestors.last().map(|list| list.id);
     ratchet.check(
         "MSAA arrow to the next list item, the probe kept",
         &cost,
@@ -438,6 +439,49 @@ fn msaa_focus_changes_cost_exactly() {
         ],
     );
 
+    // A state change on the focus's list, an ancestor reached through
+    // `accParent` at an address made up for it, is told from the focus and
+    // its other ancestors by NVDA's comparison: the event's object is a new
+    // oleacc wrapper whose identity no kept node shares, so its window,
+    // role, name, and location are compared with the list's. The read that
+    // follows keeps all three, so the comparison costs no call of its own.
+    // The second role is the fresh read of the object kept at the address
+    // the event names, from the focus that once landed on the list.
+    common::reset_hits(hwnd);
+    app.send("set-states list focusable disabled");
+    let calls_made = match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::PropertyChanged { node_id, .. },
+            timing,
+            ..
+        } => {
+            assert_eq!(Some(node_id), list, "the list's own node");
+            timing.calls
+        }
+        other => panic!("the outpost said {other:?}, not the list's state change"),
+    };
+    outpost.settled();
+    ratchet.check(
+        "MSAA state change on a windowless ancestor",
+        &Cost {
+            calls: calls_made,
+            hits: common::read_hits(hwnd),
+        },
+        calls(0, 11, 0),
+        &[
+            ("WM_GETOBJECT", 1),
+            ("accParent", 1),
+            ("get_accChild", 1),
+            ("get_accName", 1),
+            ("get_accValue", 1),
+            ("get_accDescription", 1),
+            ("get_accRole", 2),
+            ("get_accState", 1),
+            ("get_accKeyboardShortcut", 1),
+            ("accLocation", 1),
+        ],
+    );
+
     ratchet.finish();
     app.quit();
 }
@@ -467,9 +511,10 @@ fn dialog_description(ancestors: &[NodeSnapshot]) -> Option<&str> {
 /// (`verbatim_outpost::dialog_text`): the dialog's children, each child's
 /// role and states, and the question's name, value, and description, on top
 /// of a cold focus's calls. A focus moving within it is not measured:
-/// mockapp answers every `accParent` with a new COM object, so the dialog
-/// reached from the next button is a new node to the outpost, where a real
-/// dialog is the node it reported before and is not read again.
+/// the dialog reached from the next button through `accParent` is a new
+/// oleacc wrapper, with no address of its own the outpost could know it
+/// by, so it is a new node to the outpost, which reads it again, as it
+/// would a real windowless dialog.
 fn msaa_dialog_text_costs_exactly() {
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-dialog");
