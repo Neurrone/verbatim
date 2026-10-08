@@ -29,7 +29,11 @@
 //!   no longer where Core last knew it, the text at the caret changed, or the
 //!   selection changed. It polls the caret every
 //!   [`CARET_POLL`] between caret events, as NVDA polls, until the wait for
-//!   the request's [`CaretWait`] runs out.
+//!   the request's [`CaretWait`] runs out. It answers at once, unlike NVDA,
+//!   when its first read finds the caret where it was before the key and
+//!   that is where the key takes it ([`WaitEnd::AtDestination`]), such as
+//!   Control+Home at the document's start: the key cannot move it however
+//!   late the application handles it.
 //!
 //! Everything here is safe code: the sources call into the application only
 //! through the backend crates' safe wrappers.
@@ -47,10 +51,11 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant};
 
 use verbatim_model::{
-    CaretReply, CaretReport, CaretWait, CaretWatch, FormatRun, LanguageRun, MAX_CHUNK_BYTES,
-    MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT, MAX_SELECTION_TEXT_BYTES,
-    PreviousSelection, Selection, SelectionChange, TextAnchor, TextAttributes, TextChunk,
-    TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextUnit,
+    CaretMotion, CaretReply, CaretReport, CaretWait, CaretWatch, FormatRun, LanguageRun,
+    MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT,
+    MAX_SELECTION_TEXT_BYTES, PreviousSelection, Selection, SelectionChange, TextAnchor,
+    TextAttributes, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead,
+    TextReadAhead, TextReply, TextUnit,
 };
 
 /// How often the caret is read again while a caret key's wait for evidence
@@ -101,6 +106,24 @@ pub struct CaretRequest<'a, P> {
     pub unit: Option<TextUnit>,
     /// Whose formatting to read, with the attributes the theme asks for.
     pub formats: Option<FormatSpan>,
+    /// A comparison with an end of the document, for a caret key whose
+    /// destination is there ([`CaretRead::at_edge`]).
+    pub edge: Option<Edge>,
+}
+
+/// A comparison of the caret, or of its line, with an end of the document,
+/// which a caret read makes for a caret key that cannot take the caret past
+/// that end.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Edge {
+    /// The caret is at the start of the document.
+    CaretAtStart,
+    /// The caret is at the end of the document.
+    CaretAtEnd,
+    /// The caret's line starts where the document starts.
+    LineAtStart,
+    /// The caret's line ends where the document ends.
+    LineAtEnd,
 }
 
 /// The answer to a [`CaretRequest`].
@@ -122,6 +145,9 @@ pub struct CaretRead<P> {
     /// rest; `None` when the source did not read them, which the caller
     /// then does.
     pub changes: Option<Vec<(bool, Vec<u16>)>>,
+    /// Whether the comparison [`CaretRequest::edge`] asked for holds;
+    /// `None` when it asked for none.
+    pub at_edge: Option<bool>,
 }
 
 /// A point as a source is asked to find it: the protocol's [`TextPoint`],
@@ -461,10 +487,23 @@ pub trait CaretSignal {
     /// changed nothing the read will not see.
     fn reading(&mut self) {}
 
-    /// The wait has ended, with evidence or at its deadline, and the reads
-    /// for the reply follow: where the latency log divides the caret wait
-    /// from the read.
-    fn awaited(&mut self) {}
+    /// The wait has ended, for the reason `ended` gives, and the reads for
+    /// the reply follow: where the latency log divides the caret wait from
+    /// the read.
+    fn awaited(&mut self, _ended: WaitEnd) {}
+}
+
+/// Why a caret key's wait for evidence ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WaitEnd {
+    /// Evidence that the key did something arrived.
+    Evidence,
+    /// The caret was where it was before the key, and that is where the
+    /// key takes it, so the key cannot move it: Control+Home at the
+    /// document's start, Home at a line's start, and the like.
+    AtDestination,
+    /// The wait ran out with no evidence.
+    Deadline,
 }
 
 /// An anchor's position and the text of the chunk it started.
@@ -904,6 +943,7 @@ pub fn caret_report<S: TextSource>(
         previous: None,
         unit: None,
         formats: formats.then_some(FormatSpan::Line),
+        edge: None,
     };
     if let Some(read) = source.caret_read(&request)? {
         let read_at_ms = now_ms();
@@ -1101,6 +1141,9 @@ struct Polled<P> {
     formats: Vec<Formatting>,
     /// The selection's changes, when the read found them.
     changes: Option<Vec<(bool, Vec<u16>)>>,
+    /// The request's comparison with an end of the document, when the read
+    /// made it.
+    at_edge: Option<bool>,
 }
 
 /// Reads the caret for a caret key's wait: in one go where the source can
@@ -1122,6 +1165,7 @@ fn poll<S: TextSource>(
             unit: read.unit,
             formats: read.formats,
             changes: read.changes,
+            at_edge: read.at_edge,
         });
     }
     let state = source.caret()?;
@@ -1143,7 +1187,150 @@ fn poll<S: TextSource>(
         unit: None,
         formats: Vec::new(),
         changes: None,
+        at_edge: None,
     })
+}
+
+/// Where a caret key takes the caret, when that can be told from the
+/// caret and its line alone: the place a key that finds the caret already
+/// there cannot move it from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Destination {
+    /// An end of the document (Control+Home and Control+End; the
+    /// character and word keys at the far end), with whether the end alone
+    /// is enough, however little is known of where the caret was.
+    Document(Edge, bool),
+    /// The first or the last line (the line and page keys): the line's
+    /// edge.
+    Line(Edge),
+    /// The start of the caret's line, before a first character that is not
+    /// white space, so that an editor whose Home goes to the first such
+    /// character cannot move it either.
+    LineStart,
+    /// The end of the caret's line, before its line break.
+    LineEnd,
+}
+
+/// Where `motion` takes the caret, for the keys whose destination is told
+/// from the caret and its line; `None` for any other.
+fn destination(motion: CaretMotion) -> Option<Destination> {
+    Some(match motion {
+        CaretMotion::Top => Destination::Document(Edge::CaretAtStart, true),
+        CaretMotion::Bottom => Destination::Document(Edge::CaretAtEnd, true),
+        CaretMotion::PreviousCharacter | CaretMotion::PreviousWord => {
+            Destination::Document(Edge::CaretAtStart, false)
+        }
+        CaretMotion::NextCharacter | CaretMotion::NextWord => {
+            Destination::Document(Edge::CaretAtEnd, false)
+        }
+        CaretMotion::PreviousLine | CaretMotion::PreviousPage => {
+            Destination::Line(Edge::LineAtStart)
+        }
+        CaretMotion::NextLine | CaretMotion::NextPage => Destination::Line(Edge::LineAtEnd),
+        CaretMotion::StartOfLine => Destination::LineStart,
+        CaretMotion::EndOfLine => Destination::LineEnd,
+        _ => return None,
+    })
+}
+
+/// Whether the read `polled`, which found no evidence, found the caret at
+/// `destination` with nothing selected, so the key cannot move it however
+/// late the application handles it. `known` is whether the caret was
+/// compared with where it was before the key, and found there; without
+/// that, only an end of the document, where the key takes the caret
+/// wherever it was, is enough.
+fn at_destination<S: TextSource>(
+    source: &mut S,
+    polled: &mut Polled<S::Pos>,
+    destination: Destination,
+    known: bool,
+) -> TextResult<bool> {
+    if polled.state.selection.is_some() {
+        // A key that does not select collapses a selection.
+        return Ok(false);
+    }
+    let edge = match destination {
+        Destination::Document(edge, alone) if known || alone => edge,
+        Destination::Line(edge) if known => edge,
+        Destination::LineStart | Destination::LineEnd if known => {
+            let (line, offset) = match polled.line.take() {
+                Some(line) => line,
+                None => caret_line(source, &polled.state)?,
+            };
+            let at = if destination == Destination::LineStart {
+                offset == 0
+                    && String::from_utf16_lossy(&line.text)
+                        .chars()
+                        .next()
+                        .is_none_or(|first| !first.is_whitespace() || is_line_break(first))
+            } else {
+                !line.truncated && offset == content_length(&line.text)
+            };
+            polled.line = Some((line, offset));
+            return Ok(at);
+        }
+        _ => return Ok(false),
+    };
+    let reaches = match polled.at_edge {
+        Some(reaches) => reaches,
+        None => edge_of(source, polled, edge)?,
+    };
+    // The last line has no line break after it: a line that ends with one
+    // where the document ends has an empty line after it.
+    let last = edge != Edge::LineAtEnd
+        || polled.line.as_ref().is_some_and(|(line, _)| {
+            !line.truncated && content_length(&line.text) == line.text.len()
+        });
+    Ok(reaches && last)
+}
+
+/// Whether `edge` holds, read call by call for a source that did not read
+/// it with the caret.
+fn edge_of<S: TextSource>(
+    source: &mut S,
+    polled: &mut Polled<S::Pos>,
+    edge: Edge,
+) -> TextResult<bool> {
+    let end = match edge {
+        Edge::CaretAtStart | Edge::LineAtStart => source.start()?,
+        Edge::CaretAtEnd | Edge::LineAtEnd => source.end()?,
+    };
+    let at = match edge {
+        Edge::CaretAtStart | Edge::CaretAtEnd => polled.state.caret.clone(),
+        Edge::LineAtStart | Edge::LineAtEnd => {
+            let (line, offset) = match polled.line.take() {
+                Some(line) => line,
+                None => caret_line(source, &polled.state)?,
+            };
+            let at = if edge == Edge::LineAtStart {
+                line.start.clone()
+            } else {
+                line.end.clone()
+            };
+            polled.line = Some((line, offset));
+            at
+        }
+    };
+    Ok(source.compare(&at, &end)? == Ordering::Equal)
+}
+
+/// Whether a character is part of a line break.
+fn is_line_break(character: char) -> bool {
+    matches!(
+        character,
+        '\r' | '\n' | '\u{0B}' | '\u{0C}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+    )
+}
+
+/// The length of a line's text before its line break, in UTF-16 code
+/// units.
+fn content_length(text: &[u16]) -> usize {
+    let breaks = text
+        .iter()
+        .rev()
+        .take_while(|&&unit| char::from_u32(u32::from(unit)).is_some_and(is_line_break))
+        .count();
+    text.len() - breaks
 }
 
 /// Waits for evidence that a caret key did something, then reports the
@@ -1163,13 +1350,26 @@ fn await_caret<S: TextSource>(
         previous,
         known,
     } = baseline(source, anchors, watch)?;
-    let request = CaretRequest {
+    // A terminal's program gives keys meanings of its own (Up and Down Arrow
+    // recall commands, Right Arrow at the end may accept a suggestion), so
+    // there no key's destination is known.
+    let destination = destination(watch.motion).filter(|_| watch.wait == CaretWait::Standard);
+    // The first read compares the caret with where the key takes it. A
+    // later read need not: the caret it finds is either where the first
+    // found it, which was not there, or somewhere else, which is evidence.
+    let mut request = CaretRequest {
         since: since.as_ref(),
         previous: previous.as_ref(),
         unit: extra_unit(source, watch.unit),
         formats: format_span(watch.unit),
+        edge: destination.and_then(|destination| match destination {
+            Destination::Document(edge, alone) if since.is_some() || alone => Some(edge),
+            Destination::Line(edge) if since.is_some() => Some(edge),
+            _ => None,
+        }),
     };
-    let polled = loop {
+    let mut first = true;
+    let (polled, ended) = loop {
         let mut polled = poll(source, &request, signal)?;
         // A caret event alone is evidence only when Core did not know where
         // the caret was: otherwise it may be the application's late report
@@ -1197,14 +1397,27 @@ fn await_caret<S: TextSource>(
             }
             polled.line = Some((unit, offset));
         }
+        if moved {
+            polled.caret_moved = true;
+            break (polled, WaitEnd::Evidence);
+        }
+        if first
+            && let Some(destination) = destination
+            && at_destination(source, &mut polled, destination, since.is_some())?
+        {
+            polled.caret_moved = false;
+            break (polled, WaitEnd::AtDestination);
+        }
+        first = false;
+        request.edge = None;
         let now = signal.now();
-        if moved || now >= deadline {
-            polled.caret_moved = moved;
-            break polled;
+        if now >= deadline {
+            polled.caret_moved = false;
+            break (polled, WaitEnd::Deadline);
         }
         signal.wait(CARET_POLL.min(deadline - now));
     };
-    signal.awaited();
+    signal.awaited(ended);
     answer_caret(
         source,
         anchors,

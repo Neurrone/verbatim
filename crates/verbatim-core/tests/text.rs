@@ -5,12 +5,12 @@
 
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
-    Backend, CaretKey, CaretMotion, CaretReply, CaretReport, CaretWait, Effect, Input, Message,
-    NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, PreviousSelection,
-    QueryId, ReaderSettings, ReviewCommand, Role, SegmentContent, Selection, SelectionChange,
-    SelectionText, SpeechMark, State, StateSet, TextAnchor, TextChunk, TextMovement, TextOp,
-    TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextRequest, TextUnit, TraceId,
-    TypingEcho, UtteranceSegment,
+    Backend, CaretKey, CaretMotion, CaretReply, CaretReport, CaretWait, CaretWatch, Effect, Input,
+    Message, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid,
+    PreviousSelection, QueryId, ReaderSettings, ReviewCommand, Role, SegmentContent, Selection,
+    SelectionChange, SelectionText, SpeechMark, State, StateSet, TextAnchor, TextChunk,
+    TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextRequest,
+    TextUnit, TraceId, TypingEcho, UtteranceSegment,
 };
 use verbatim_model::{BulletStyle, FormatRun, LineStyle, TextAttributes, TextFormat};
 
@@ -257,6 +257,40 @@ fn an_arrow_key_waits_for_evidence_then_speaks_the_character_at_the_caret() {
         ),
     );
     assert_eq!(spoken(&effects), vec![message(Message::Blank)]);
+}
+
+#[test]
+fn a_caret_key_tells_the_outpost_its_motion_and_hears_an_unmoved_caret() {
+    // Control+Home at the start of the text: the watch carries the key's
+    // motion, from which the outpost tells that the key cannot move the
+    // caret and answers at once, unmoved; the line is spoken as for any
+    // answer.
+    let mut state = editing("one two\n", 0);
+    let effects = reduce(&mut state, &key(CaretMotion::Top, false));
+    let request = request(&effects);
+    assert_eq!(
+        request.op,
+        TextOp::AwaitCaret(CaretWatch {
+            since: Some(TextPosition {
+                anchor: TextAnchor(100),
+                offset: 0
+            }),
+            pressed_at_ms: KEY_PRESSED_AT,
+            unit: TextUnit::Line,
+            motion: CaretMotion::Top,
+            compare: None,
+            previous_selection: None,
+            wait: CaretWait::Standard,
+        })
+    );
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request.query_id,
+            caret_reply(false, line("one two\n", 100, 0), None),
+        ),
+    );
+    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("one two")]);
 }
 
 #[test]

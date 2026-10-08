@@ -736,7 +736,32 @@ Implementation notes:
     out by comparing endpoints, as the contract says; through UIA the
     caret read works them out and reads their text in the same round trip
     when the selection moved (`CaretRead::changes`), and the edit controls
-    work them out call by call.
+    work them out call by call. A caret event wakes one wait between reads
+    at most: each wait waits for an event the last read did not see.
+  - The wait answers on its first read, unmoved, when it finds no evidence,
+    nothing selected, and the caret where the watch's `motion` takes it,
+    since the key cannot move it then (`WaitEnd::AtDestination`): the
+    start of the text for Control+Home and the previous character and word
+    keys, its end for Control+End and the next ones, the first line for Up
+    Arrow and Page Up, the last line (one with no line break after it) for
+    Down Arrow and Page Down, a line's start before a character that is
+    not white space for Home, and a line's end before its break for End.
+    Each but Control+Home and Control+End also needs the caret found where
+    it was before the key; those two need only the end of the text. Not in
+    a terminal (a watch with `CaretWait::Extended`), whose program gives
+    keys meanings of its own, recalling commands with Up and Down Arrow. Home
+    and End are told from the line the read has. The others need one
+    comparison with an end of the document, which the first read asks for
+    (`CaretRequest::edge`, an `Edge`): through UIA the caret read makes it
+    in the same round trip, or classically with two calls more, and only
+    when the caret and the selection did not move
+    (`verbatim_uia_rops::EdgeQuery`); an edit control's text starts at
+    offset zero and ends at its length, one message read once per
+    request. Later reads skip the comparison: the caret they find is
+    either where the first found it, not the destination, or elsewhere,
+    which is evidence. Why the wait ended, evidence, the destination, or
+    the deadline (`WaitEnd`), goes to the `CaretSignal`'s `awaited`, which
+    the worker logs.
   - Reads move first when asked: from the start of the unit containing the
     point, by whole units, never past the text's ends, saying how far they
     went; a document movement goes to the start or the end. A unit the

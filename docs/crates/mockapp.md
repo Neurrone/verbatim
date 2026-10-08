@@ -399,7 +399,13 @@ the sentence running on to the next line as one with that line's mark
 where its words start, and mockapp's caret is moved to each line's start
 as its mark is reached. Its caret wait never waits: every test moves mockapp's caret first, and the
 wait panics if called. `call_counts.rs` pins a caret move and a caret
-report on both stacks this way too (`docs/performance.md`).
+report on both stacks this way too (`docs/performance.md`), and caret
+keys that cannot move the caret (Control+Home at the start, Home at a
+line's start, End at a line's end, Down Arrow on the last line, Right
+Arrow at the end) in the UIA text both ways and in the edit control: each
+is answered on the wait's first read, unmoved, with the wait's own reason
+for ending (`WaitEnd::AtDestination`) asserted and a wait panicking if
+called.
 `slow_application.rs` runs a real
 `verbatim_outpost::Outpost` in the test process against an `msaa`-backend
 mockapp: it captures the address of mockapp's own scripted focus event,

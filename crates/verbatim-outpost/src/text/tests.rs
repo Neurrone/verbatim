@@ -6,6 +6,7 @@ use std::sync::atomic::AtomicU64;
 use verbatim_model::{CaretKey, CaretMotion};
 
 use super::*;
+use crate::outpost::text_reads::{CaretEvents, EventWait};
 
 /// An in-memory text whose positions are UTF-16 offsets. Lines end after
 /// each line feed; a word is a run of letters and digits with the spaces
@@ -195,8 +196,8 @@ struct FakeSignal {
     now: Instant,
     events: bool,
     waits: usize,
-    /// How many waits had passed each time the wait said it ended.
-    awaited: Vec<usize>,
+    /// How many waits had passed each time the wait said it ended, and why.
+    awaited: Vec<(usize, WaitEnd)>,
 }
 
 impl FakeSignal {
@@ -228,8 +229,8 @@ impl CaretSignal for FakeSignal {
         WAITED_AT
     }
 
-    fn awaited(&mut self) {
-        self.awaited.push(self.waits);
+    fn awaited(&mut self, ended: WaitEnd) {
+        self.awaited.push((self.waits, ended));
     }
 }
 
@@ -257,11 +258,25 @@ fn report_at(source: &mut Fake, anchors: &mut Anchors<usize>, read_at_ms: u64) -
         .0
 }
 
+/// The watch of the key that moves forward by `unit`.
 fn watch(since: Option<TextPosition>, unit: TextUnit) -> CaretWatch {
+    let motion = match unit {
+        TextUnit::Character => CaretMotion::NextCharacter,
+        TextUnit::Word => CaretMotion::NextWord,
+        TextUnit::Line => CaretMotion::NextLine,
+        TextUnit::Paragraph => CaretMotion::NextParagraph,
+        other => panic!("no key moves by {other:?}"),
+    };
+    watch_key(since, motion)
+}
+
+/// The watch of the key that makes `motion`.
+fn watch_key(since: Option<TextPosition>, motion: CaretMotion) -> CaretWatch {
     CaretWatch {
         since,
         pressed_at_ms: PRESSED_AT,
-        unit,
+        unit: motion.unit(),
+        motion,
         compare: None,
         previous_selection: None,
         wait: CaretWait::Standard,
@@ -391,14 +406,18 @@ fn a_caret_moved_late_is_found_by_polling() {
     ));
     assert!(reply.moved);
     assert_eq!(signal.waits, 2);
-    assert_eq!(signal.awaited, [2], "the wait ends once, after its polls");
+    assert_eq!(
+        signal.awaited,
+        [(2, WaitEnd::Evidence)],
+        "the wait ends once, after its polls"
+    );
     assert_eq!(reply.caret.line.text, "two");
     assert_eq!(reply.unit, None, "a line is the caret's line");
 }
 
 #[test]
 fn with_no_evidence_the_wait_runs_out_and_reports_the_caret_anyway() {
-    let mut source = Fake::new("only", 4);
+    let mut source = Fake::new("only", 2);
     let mut anchors = store();
     let line = report(&mut source, &mut anchors).line;
     let since = TextPosition {
@@ -414,9 +433,182 @@ fn with_no_evidence_the_wait_runs_out_and_reports_the_caret_anyway() {
     ));
     assert!(!reply.moved);
     assert_eq!(signal.waits, 10, "100 ms in 10 ms polls");
-    assert_eq!(signal.awaited, [10], "the wait ends once, at its deadline");
+    assert_eq!(
+        signal.awaited,
+        [(10, WaitEnd::Deadline)],
+        "the wait ends once, at its deadline"
+    );
     assert_eq!(reply.caret.line.text, "only");
-    assert_eq!(reply.unit.expect("the character").text, "", "the end");
+    assert_eq!(reply.unit.expect("the character").text, "l");
+}
+
+/// A key's answer when the caret is at `caret` in `text`, where it was
+/// reported before the key, and stays there: whether the caret moved, how
+/// many times the wait waited, and why it ended.
+fn unmoved(text: &str, caret: usize, motion: CaretMotion) -> (bool, usize, Vec<(usize, WaitEnd)>) {
+    let mut source = Fake::new(text, caret);
+    let mut anchors = store();
+    let line = report(&mut source, &mut anchors).line;
+    let since = TextPosition {
+        anchor: line.start,
+        offset: line.offset,
+    };
+    let mut signal = FakeSignal::new();
+    let reply = caret_reply(perform(
+        &mut source,
+        &mut anchors.node(1),
+        &TextOp::AwaitCaret(watch_key(Some(since), motion)),
+        &mut signal,
+    ));
+    (reply.moved, signal.waits, signal.awaited)
+}
+
+#[test]
+fn a_key_that_finds_the_caret_at_its_destination_is_answered_at_once() {
+    let at_once = (false, 0, vec![(0, WaitEnd::AtDestination)]);
+    let text = "one two\n  three\nlast";
+    for (caret, motion, why) in [
+        (0, CaretMotion::Top, "Control+Home at the start"),
+        (0, CaretMotion::PreviousCharacter, "Left Arrow at the start"),
+        (
+            0,
+            CaretMotion::PreviousWord,
+            "Control+Left Arrow at the start",
+        ),
+        (20, CaretMotion::Bottom, "Control+End at the end"),
+        (20, CaretMotion::NextCharacter, "Right Arrow at the end"),
+        (20, CaretMotion::NextWord, "Control+Right Arrow at the end"),
+        (3, CaretMotion::PreviousLine, "Up Arrow on the first line"),
+        (3, CaretMotion::PreviousPage, "Page Up on the first line"),
+        (17, CaretMotion::NextLine, "Down Arrow on the last line"),
+        (17, CaretMotion::NextPage, "Page Down on the last line"),
+        (8, CaretMotion::StartOfLine, "Home at an empty line's start"),
+        (
+            16,
+            CaretMotion::StartOfLine,
+            "Home at the last line's start",
+        ),
+        (7, CaretMotion::EndOfLine, "End before the line break"),
+        (20, CaretMotion::EndOfLine, "End at the last line's end"),
+    ] {
+        let text = if caret == 8 { "one two\n\nlast" } else { text };
+        assert_eq!(unmoved(text, caret, motion), at_once, "{why}");
+    }
+}
+
+#[test]
+fn a_key_that_could_still_move_the_caret_waits_the_wait_out() {
+    let waited = (false, 10, vec![(10, WaitEnd::Deadline)]);
+    let text = "one two\n  three\nlast";
+    for (caret, motion, why) in [
+        (1, CaretMotion::Top, "Control+Home away from the start"),
+        (
+            3,
+            CaretMotion::PreviousCharacter,
+            "Left Arrow inside the text",
+        ),
+        (19, CaretMotion::NextCharacter, "Right Arrow before the end"),
+        (
+            9,
+            CaretMotion::PreviousLine,
+            "Up Arrow below the first line",
+        ),
+        (3, CaretMotion::NextLine, "Down Arrow above the last line"),
+        (
+            8,
+            CaretMotion::StartOfLine,
+            "Home before indentation, which an editor may skip",
+        ),
+        (10, CaretMotion::StartOfLine, "Home inside a line"),
+        (8, CaretMotion::EndOfLine, "End before a line's end"),
+        (
+            3,
+            CaretMotion::NextParagraph,
+            "a key with no destination told",
+        ),
+    ] {
+        assert_eq!(unmoved(text, caret, motion), waited, "{why}");
+    }
+}
+
+#[test]
+fn a_terminals_keys_have_no_destination() {
+    // Down Arrow on a terminal's last line recalls a command.
+    let mut source = Fake::new("one\n> ", 6);
+    let mut anchors = store();
+    let line = report(&mut source, &mut anchors).line;
+    let mut watch = watch_key(
+        Some(TextPosition {
+            anchor: line.start,
+            offset: line.offset,
+        }),
+        CaretMotion::NextLine,
+    );
+    watch.wait = CaretWait::Extended;
+    let mut signal = FakeSignal::new();
+    caret_reply(perform(
+        &mut source,
+        &mut anchors.node(1),
+        &TextOp::AwaitCaret(watch),
+        &mut signal,
+    ));
+    assert_eq!(signal.awaited, [(30, WaitEnd::Deadline)]);
+}
+
+#[test]
+fn a_line_ending_with_a_break_at_the_end_is_not_the_last() {
+    // The document ends with a line break, so an empty line follows it.
+    assert_eq!(
+        unmoved("one\ntwo\n", 5, CaretMotion::NextLine),
+        (false, 10, vec![(10, WaitEnd::Deadline)])
+    );
+}
+
+#[test]
+fn an_end_of_the_document_is_enough_for_top_and_bottom_alone() {
+    // Core did not know where the caret was before Control+Home: the caret
+    // at the start is where the key takes it, wherever it was. Left Arrow
+    // there could have moved it from one character on.
+    let answer = |motion| {
+        let mut source = Fake::new("one", 0);
+        let mut signal = FakeSignal::new();
+        let reply = caret_reply(perform(
+            &mut source,
+            &mut store().node(1),
+            &TextOp::AwaitCaret(watch_key(None, motion)),
+            &mut signal,
+        ));
+        (reply.moved, signal.awaited)
+    };
+    assert_eq!(
+        answer(CaretMotion::Top),
+        (false, vec![(0, WaitEnd::AtDestination)])
+    );
+    assert_eq!(
+        answer(CaretMotion::PreviousCharacter),
+        (false, vec![(10, WaitEnd::Deadline)])
+    );
+}
+
+#[test]
+fn a_selection_a_key_would_collapse_is_no_destination() {
+    // Left Arrow at the start with text selected collapses the selection.
+    let mut source = Fake::new("one", 0);
+    source.selection = Some((0, 2));
+    let mut anchors = store();
+    let line = report(&mut source, &mut anchors).line;
+    let since = TextPosition {
+        anchor: line.start,
+        offset: line.offset,
+    };
+    let mut signal = FakeSignal::new();
+    caret_reply(perform(
+        &mut source,
+        &mut anchors.node(1),
+        &TextOp::AwaitCaret(watch_key(Some(since), CaretMotion::PreviousCharacter)),
+        &mut signal,
+    ));
+    assert_eq!(signal.awaited, [(10, WaitEnd::Deadline)]);
 }
 
 #[test]
@@ -548,6 +740,78 @@ fn a_line_that_changed_away_from_the_caret_or_a_late_event_is_no_evidence() {
     assert_eq!(signal.waits, 10, "the wait ran out");
 }
 
+/// The outpost's own caret events (`EventWait`), on a clock that moves on
+/// by each wait's timeout when it runs out and stands still when an event
+/// ends it, counting the caret's reads. The first read meets a caret event:
+/// the application's late report of something earlier.
+struct EventsOnce<'a> {
+    events: &'a CaretEvents,
+    wait: EventWait<'a>,
+    now: Instant,
+    reads: usize,
+}
+
+impl CaretSignal for EventsOnce<'_> {
+    fn caret_event(&mut self) -> bool {
+        self.wait.caret_event()
+    }
+
+    fn wait(&mut self, timeout: Duration) {
+        if !self.wait.wait(timeout) {
+            self.now += timeout;
+        }
+    }
+
+    fn now(&mut self) -> Instant {
+        self.now
+    }
+
+    fn now_ms(&mut self) -> u64 {
+        WAITED_AT
+    }
+
+    fn reading(&mut self) {
+        self.reads += 1;
+        assert!(self.reads <= 12, "the wait read the caret without waiting");
+        self.wait.reading();
+        if self.reads == 1 {
+            self.events.arrived();
+        }
+    }
+}
+
+#[test]
+fn a_caret_event_during_the_wait_ends_one_wait_only() {
+    // Core knew the caret, so the event is no evidence; it ends the wait
+    // after the read it arrived during, and every later wait waits its
+    // time again rather than returning at once.
+    let mut source = Fake::new("only", 2);
+    let mut anchors = store();
+    let line = report(&mut source, &mut anchors).line;
+    let since = TextPosition {
+        anchor: line.start,
+        offset: line.offset,
+    };
+    let events = CaretEvents::default();
+    let mut signal = EventsOnce {
+        events: &events,
+        wait: EventWait::new(&events),
+        now: Instant::now(),
+        reads: 0,
+    };
+    let reply = caret_reply(perform(
+        &mut source,
+        &mut anchors.node(1),
+        &TextOp::AwaitCaret(watch(Some(since), TextUnit::Character)),
+        &mut signal,
+    ));
+    assert!(!reply.moved);
+    assert_eq!(
+        signal.reads, 12,
+        "the read the event met, one again at once, and one every 10 ms for 100 ms"
+    );
+}
+
 #[test]
 fn a_caret_event_is_evidence_when_core_did_not_know_the_caret() {
     let mut source = Fake::new("only", 0);
@@ -574,14 +838,13 @@ fn a_delete_that_changes_the_text_at_the_caret_is_evidence() {
         offset: line.offset,
     };
     source.text = "ac".encode_utf16().collect();
-    let mut watch = watch(
+    let mut watch = watch_key(
         Some(since),
         CaretKey {
             motion: CaretMotion::Delete,
             select: false,
         }
-        .motion
-        .unit(),
+        .motion,
     );
     watch.compare = Some("b".to_owned());
     let mut signal = FakeSignal::new();

@@ -426,8 +426,10 @@ which attributes to read (`attributes`, an `Attributes` set of
 the font's name, size, and weight, italic, the underline and
 strikethrough styles, the foreground and background colors, the bullet
 style, and the link attribute), and which of them are being learned
-(`learning`: those whose support the caller does not know yet). The
-`CaretAnswer`:
+(`learning`: those whose support the caller does not know yet), and a
+comparison with an end of the document to make (`edge`, an `EdgeQuery`:
+the caret or the caret's line, and which end), for a caret key that cannot
+take the caret past that end. The `CaretAnswer`:
 
 - `caret`, a range whose start is the caret, and whether it is known to
   be collapsed; `selection`, the selected range when text is selected.
@@ -453,6 +455,11 @@ style, and the link attribute), and which of them are being learned
   "not supported" for, the rest being supported; `None` when nothing was
   learned, as from a character's read or an empty line's, which say too
   little about the provider.
+- `at_edge`: with an `edge`, whether the caret's start, or the line's end
+  named, is at that end of the document range (`GetDocumentRange` and one
+  `CompareEndpoints`, in a branch of the program, or two calls more
+  classically); false, with no comparison made, when the caret or the
+  selection moved, which is evidence already.
 
 The program imports the element and gets its text pattern with the
 pattern getter instructions (Microsoft's `GetTextPattern`, whose opcode
