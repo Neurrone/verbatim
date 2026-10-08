@@ -1813,7 +1813,10 @@ verified.
   Terminal's `TerminalTextOutput` notifications from a terminal are
   ignored, so nothing is spoken twice (as NVDA's diffing overlay blocks
   them, `winConsoleUIA.py` 474 to 476); a redraw with the same text
-  speaks nothing; blank lines are not spoken but count as lines; newer
+  speaks nothing; blank lines are not spoken but count as lines, except
+  the blank lines a burst of output starts with, which are not output (a
+  cleared screen's rows above a footer drawn on its last row; since
+  2026-10-09); newer
   output never cancels older; a key, or anything else that cuts speech
   off, drops output still waiting, as in NVDA, and output read before
   the key is never spoken after it. **Different:** the backlog is capped
@@ -1900,6 +1903,19 @@ verified.
   screen being as it was (**different, since 2026-10-09**). NVDA echoes
   each key a script reads without showing it ("space"); Verbatim does
   not, as for any typing the terminal does not show.
+
+  The review cursor while output is written, captured live from NVDA on
+  2026-10-09 in both terminals: reviewing a line above the caret, then
+  letting a script print two lines, both follow the caret to the prompt,
+  so the current line is the prompt and the line before it the new
+  output's last (matched). A footer below a scroll region that a flood
+  scrolls above, redrawn unchanged during the flood and changed after it,
+  captured the same day: both say the footer, "status: busy", when it is
+  drawn; for the flood NVDA, with no flood policy, said lines 35 to 38, 98
+  to 100 and "status: done" in the console host, and lines 2 to 100 and
+  "done" in Windows Terminal; Verbatim applies the flood policy (lines 1
+  to 30, "skipped 41 lines", lines 72 to 100) and says the footer only as
+  it changed, "done", in both (**different**: the flood policy).
 
   **Different:** Up and Down Arrow in a selection list a program draws in
   a terminal. Decision (Dickson, 2026-10-09): when the key makes the

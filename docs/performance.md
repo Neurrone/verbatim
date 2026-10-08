@@ -909,19 +909,22 @@ lines on screen.
   history and however many lines changed.
 - Today: 1 UIA call for every read, the baseline when the terminal gains
   the focus included. Classically, with `uia.remote_operations` off or a
-  provider that cannot run programs, one call per provider method: 23 for
-  the baseline, 41 for a read that finds the anchor at its range (a grown
-  prompt, an output line, a redraw), 48 for one that also reads the first
-  rows that went by unread, 41 for one whose anchor has left the history
-  (searched by its text, then the text's rows counted), and 36 for a
+  provider that cannot run programs, one call per provider method: 25 for
+  the baseline, 43 for a read that finds the anchor at its range (a grown
+  prompt, an output line, a redraw), 50 for one that also reads the first
+  rows that went by unread, 43 for one whose anchor has left the history
+  (searched by its text, then the text's rows counted), and 38 for a
   cleared screen. Every one of these is pinned, both ways, and so is the
   provider's own work, which is the same either way but for the remote
   program's import of the element and its text pattern. The screen is
   read in one call however many lines it holds, so the cost does not grow
-  with them. Of these calls, the top row read again at the end and the
-  walk from the screen's top to the text's end made twice tell whether
-  the terminal wrote to the screen while it was read, when the read is
-  not trusted.
+  with them. Of these calls, the top row read again at the end, the
+  walk from the screen's top to the text's end made twice, and the visible
+  range read again at the end tell whether the terminal wrote to the
+  screen, or moved its view, while it was read, when the read is not
+  trusted (the visible range since 2026-10-09: the console host moves its
+  view down a row for each line written into a scroll region above a
+  footer, and a read between the two had the rows above the view).
 - Target: 1.
 
 The read it replaced (an anchor at the last line read, its two-line
@@ -943,8 +946,8 @@ stamped as read when the read began.
   already runs.
 - Today: no call more remotely; from mockapp, the text pattern got from
   the element again, the selection, and the caret's line read.
-  Classically, 8 calls more: 49 for a grown prompt where the read without
-  the caret is 41. Both are pinned (`tests/terminal.rs`,
+  Classically, 8 calls more: 51 for a grown prompt where the read without
+  the caret is 43. Both are pinned (`tests/terminal.rs`,
   `a_read_with_the_caret_costs_exactly`).
 - Target: the minimum, met.
 
@@ -1392,9 +1395,11 @@ share of the limit in brackets:
   for a first batch from the caret in one language. The count does not
   grow with the lines' length.
 - A terminal's screen, with the caret and its line read in the same
-  program as the outpost reads a focused terminal: 432 (4 percent) when
+  program as the outpost reads a focused terminal: 441 (4 percent) when
   its anchor is nowhere and the search checks its 20 matches
   (`SEARCH_MATCHES`), about 15 each, before the text's rows are counted;
-  154 for an anchor found by its text one row up under new output (the
+  163 for an anchor found by its text one row up under new output (the
   tail read it replaced took 1,164 and 137, its search checking 64
-  matches). The count does not grow with the history or the lines read.
+  matches). Nine of each are the visible range read again at the end, to
+  find a view the terminal moved while it was read (2026-10-09). The count
+  does not grow with the history or the lines read.

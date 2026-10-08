@@ -378,6 +378,14 @@ list whose ">" marker moves by two rewritten cells, and one redrawn whole
 on each move with the caret below it: Down, Down and Up say "> banana",
 "> cherry" and "> banana", once each.
 
+The review-output scenarios (`scenarios/terminal_review_output.rs`)
+review a line above the caret, let a script print two lines, and hear the
+review cursor follow the caret to the prompt. The footer-flood scenarios
+(`scenarios/terminal_footer.rs`) write a hundred lines into a scroll
+region above a footer that is redrawn during the flood and changed after
+it: the flood policy's thirty lines, "skipped 41 lines", the last
+twenty-nine, and the footer's change, "done".
+
 The flood scenarios assert the flood policy exactly within the
 scrollback: 2,000 lines are heard as lines 1 to 30, "skipped 1941 lines"
 after the skipped-lines sound, and lines 1,972 to 2,000 with the prompt.

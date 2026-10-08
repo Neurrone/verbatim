@@ -636,3 +636,25 @@ fn a_row_erased_and_written_again_is_new() {
         .collect();
     assert_eq!(spoken, strings(&["row 30"]));
 }
+
+#[test]
+fn a_footer_kept_below_a_scroll_region_is_said_only_as_it_changed() {
+    let mut sim = Sim::new(3, 100, &["ready>", "one", "status: busy"]);
+    let (_, memory) = read(&mut sim, None);
+    // Lines written into a scroll region above the footer, which stays on
+    // the last row as the rows above it scroll into the history, then the
+    // footer redrawn.
+    let footer = sim.rows.pop().expect("the footer");
+    sim.push(&["a", "b", "c", "d", "e"]);
+    sim.rows.push(footer);
+    sim.rewrite(0, "status: done");
+    let (output, _) = read(&mut sim, Some(&memory));
+    let spoken: Vec<String> = output
+        .changed
+        .map(|change| change.text)
+        .into_iter()
+        .chain(output.head)
+        .chain(output.lines)
+        .collect();
+    assert_eq!(spoken, strings(&["a", "b", "c", "d", "e", "done"]));
+}

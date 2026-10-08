@@ -1120,3 +1120,20 @@ fn a_change_since_read_that_is_not_the_typing_is_never_spoken() {
     );
     assert_eq!(playback.play_all(&mut state), ["row 0"]);
 }
+
+#[test]
+fn the_blank_lines_a_burst_starts_with_are_not_counted() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    // A footer drawn on the last row of an empty screen: the rows above it
+    // are blank, and not output.
+    let mut drawn: Vec<String> = (0..28).map(|_| String::new()).collect();
+    drawn.extend(lines(1..=30));
+    drawn.extend((0..10).map(|_| String::new()));
+    drawn.extend(lines(41..=70));
+    playback.feed(&mut state, &output(drawn));
+    let mut expected = lines(1..=30);
+    expected.push("skipped 10".to_owned());
+    expected.extend(lines(41..=70));
+    assert_eq!(playback.play_all(&mut state), expected);
+}

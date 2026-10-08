@@ -5,7 +5,8 @@
 //! `NormalizedEvent::TerminalOutput`. Here it is spoken:
 //!
 //! - In order, queued, as it arrives, one line per utterance; blank lines are
-//!   dropped. Newer output never cancels older output still waiting.
+//!   not spoken, and the blank lines a burst starts with are not counted
+//!   either. Newer output never cancels older output still waiting.
 //! - Lines are handed to speech a few at a time, each starting and ending
 //!   with an index mark, and the rest wait here, so the backlog of output
 //!   not yet spoken is known. Output is spoken in groups (the flood policy):
@@ -96,6 +97,12 @@ pub(crate) struct TerminalSpeech {
     /// Whether the newest waiting item is the terminal's last line read, so
     /// a change to that line replaces it.
     pub(crate) last_line_waiting: bool,
+    /// Whether the burst of output being spoken has had a line that is not
+    /// blank: until it has, its blank lines are rows a program passed over
+    /// (a footer drawn at the bottom of the screen, a screen cleared), not
+    /// lines it printed, and are dropped, not counted.
+    #[serde(default)]
+    pub(crate) burst_written: bool,
     /// Characters typed and echoed at once ("speak passwords" on) that the
     /// terminal has not shown yet; when it shows them, they are not spoken
     /// again as output. At most `MAX_HELD_TYPING` bytes.
@@ -520,8 +527,20 @@ fn queue(state: &mut SrState, changed: Option<&LineChange>, output: &TerminalOut
     let terminal = &mut state.terminal;
     // Every line counts, blank ones included (Dickson, 2026-10-07): a blank
     // line waits like any other and is counted when skipped, but is never
-    // spoken ([`pump`]).
-    for line in &output.above {
+    // spoken ([`pump`]). The blank lines a burst starts with are not lines
+    // of output (`TerminalSpeech::burst_written`).
+    let mut counts = |line: &str| {
+        terminal.burst_written |= !text::is_blank(line);
+        terminal.burst_written
+    };
+    let above: Vec<&String> = output.above.iter().filter(|line| counts(line)).collect();
+    // The changed line comes next, and a blank one is never queued.
+    if let Some(change) = changed {
+        counts(&change.text);
+    }
+    let head: Vec<&String> = output.head.iter().filter(|line| counts(line)).collect();
+    let lines: Vec<&String> = output.lines.iter().filter(|line| counts(line)).collect();
+    for line in above {
         push_line(&mut terminal.waiting, line);
         terminal.last_line_waiting = false;
     }
@@ -541,7 +560,7 @@ fn queue(state: &mut SrState, changed: Option<&LineChange>, output: &TerminalOut
         }
         terminal.last_line_waiting = true;
     }
-    for line in &output.head {
+    for line in head {
         push_line(&mut terminal.waiting, line);
         terminal.last_line_waiting = false;
     }
@@ -549,7 +568,7 @@ fn queue(state: &mut SrState, changed: Option<&LineChange>, output: &TerminalOut
         push_skipped(&mut terminal.waiting, skipped);
         terminal.last_line_waiting = false;
     }
-    for line in &output.lines {
+    for line in lines {
         push_line(&mut terminal.waiting, line);
         terminal.last_line_waiting = !text::is_blank(line);
     }
@@ -694,6 +713,7 @@ fn decide(state: &mut SrState) {
     let terminal = &mut state.terminal;
     if terminal.waiting.is_empty() {
         terminal.group = None;
+        terminal.burst_written = false;
         return;
     }
     let mut lines = 0usize;
@@ -877,6 +897,7 @@ pub(crate) fn cut(state: &mut SrState, at_ms: u64) -> Vec<Effect> {
     terminal.sounding = None;
     terminal.last_line_waiting = false;
     terminal.group = None;
+    terminal.burst_written = false;
     terminal.deciding = false;
     terminal.cut_at_ms = terminal.cut_at_ms.max(at_ms);
     cancel(state)
@@ -920,6 +941,7 @@ pub(crate) fn drop_waiting(state: &mut SrState) -> Vec<Effect> {
     state.terminal.last_line_waiting = false;
     if state.terminal.ahead.is_empty() {
         state.terminal.group = None;
+        state.terminal.burst_written = false;
     }
     state.terminal.deciding = false;
     cancel(state)

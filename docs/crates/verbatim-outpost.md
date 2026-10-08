@@ -1177,8 +1177,8 @@ finds it.
   start is heard. Not found by its text, the rows of the whole text are
   counted. A screen whose top row read differently from its text, or
   changed by the end of the read, or whose walks to the text's end
-  disagree, was written to while it was read, and is not trusted
-  (`settled` false).
+  disagree, or whose view moved, was written to while it was read, and is
+  not trusted (`settled` false).
 - `read_new` turns a read into a `TerminalOutput` with the pure screen
   diff (`terminal::screen`). The old screen's lines that scrolled off its
   top are set aside, and the rest are lined up with the new screen: where
@@ -1221,7 +1221,13 @@ finds it.
   and a line that came back to what it said has nothing else to speak.
   Lines are taken as rewritten in place, first to first, only where at
   least as many new lines replace them; a screen cleared down to its
-  prompt speaks the prompt as new. A row erased whole is drawn again, so
+  prompt speaks the prompt as new. A lone line replaced by several is
+  paired with the one sharing the longest start with it, so a footer
+  redrawn below lines scrolled in above it is its own rewrite. When the
+  screen scrolled away whole and its last line was a footer that stayed on
+  the last row (the row it was on now holds something else, and the new
+  last line shares a start with it), the footer is said only as it
+  changed (`keep_footer`). A row erased whole is drawn again, so
   what it said is not kept for it. A screen replaced whole (none of its
   lines left on the new screen, nor grown or cut short there) is kept as
   the main screen (`Memory::main`): a full-screen program opened its

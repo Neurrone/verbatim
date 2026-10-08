@@ -257,24 +257,25 @@ pub fn read_new<S: ScreenSource>(
             found.changed = with_since_read(found.changed, since_read);
             // The old screen scrolled away whole: its last line, which
             // output may have been written to, is read where it is now.
+            let old_last_row =
+                verbatim_text::trim_padding(screen.old_last_row.trim_end_matches(['\r', '\n']));
             let changed = if shift >= seen {
-                old.screen.last().and_then(|last| {
-                    screen::line_change(
-                        last,
-                        verbatim_text::trim_padding(
-                            screen.old_last_row.trim_end_matches(['\r', '\n']),
-                        ),
-                    )
-                })
+                old.screen
+                    .last()
+                    .and_then(|last| screen::line_change(last, old_last_row))
             } else {
                 found.changed
             };
+            let mut lines = found.below;
+            if shift >= seen {
+                keep_footer(&mut lines, &old.screen, old_last_row);
+            }
             TerminalOutput {
                 above: found.above,
                 changed,
                 head,
                 skipped: (counted > 0).then_some(Skipped::Count(counted)),
-                lines: found.below,
+                lines,
             }
         }
         None => match screen.document_rows {
@@ -861,6 +862,34 @@ fn merged_change(older: Option<LineChange>, newer: Option<LineChange>) -> Option
         )
         .map(Box::new),
     })
+}
+
+/// For a screen whose rows all scrolled away since `old` was read, its
+/// lines `lines`, all new: when the old screen's last line was a footer
+/// that stayed on the screen's last row while the rows above it scrolled
+/// (a scroll region above it), it is said only as it changed. That is so
+/// when the row it was on now holds something else (`old_last_row`, not
+/// that line nor that line grown, as output written to a last line would
+/// be), and the new screen's last line shares a start with it.
+fn keep_footer(lines: &mut Vec<String>, old: &[String], old_last_row: &str) {
+    let Some(footer) = old.last().filter(|line| !line.trim().is_empty()) else {
+        return;
+    };
+    let Some(now) = lines.last() else {
+        return;
+    };
+    let moved_on = !old_last_row.starts_with(footer.as_str());
+    let shares_start = footer
+        .chars()
+        .zip(now.chars())
+        .take_while(|(a, b)| a == b)
+        .next()
+        .is_some();
+    if moved_on && shares_start {
+        let change = screen::line_change(footer, now);
+        lines.pop();
+        lines.extend(change.map(|change| change.text.trim_start().to_owned()));
+    }
 }
 
 /// What a read whose new screen is `new` makes of the main screen

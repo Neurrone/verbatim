@@ -2157,7 +2157,8 @@ Outcome of the terminal package (2026-10-08):
 - The NVDA study's risks: the password leak (a rewrite echoes held typing only when what it gained is the typing), Control+C, Control+D, Control+Break and Escape forgetting held typing (they type no text, so they come as `Input::ClearingKey`), a typed space at a line's end and typing over ghost text (echoed by the caret's move), typing above a status line (the caret's line is the changed line), mid-line edits after `cls`, typing past the right margin, a rewrite read half done ("51%", not "oading 51%"), and the console host's keyboard layout (its own thread, from its `WinEvents`, NVDA's issue 10113). A key press letting lines through is fixed by `SpeechCancelled`'s time. Resizing and a scrollback full of identical lines whose history is full are not fixed: the first needs a live check of how each terminal reflows its rows, and the second cannot be counted from text alone.
 - What a key did: Backspace and Control+Backspace speak the text removed, from evidence, so the classic edit control's Control+Backspace, which inserts DEL, says nothing; any other key that types no text (`CaretMotion::Other`) speaks text it removed at the caret, a new line, or by where the caret landed. A caret key's answer read after a later key was pressed is not spoken for it, and a terminal's line redrawn by a caret key is the key's own, not output.
 - Done since (2026-10-09): NVDA captures for the typing scenarios, the selection-list scripts ("Selection lists in a terminal" below), the full-screen alternate screen and the long-line scenarios, each with NVDA captured first.
-- Not done: tabs and two windows of each terminal, the review cursor test after new output, and the flood above a redrawing footer; each needs desktop time for live checks and NVDA captures first.
+- Done since (2026-10-09): the review cursor after new output and the flood above a redrawing footer, each with NVDA captured first.
+- Not done: tabs and two windows of each terminal (NVDA captured; see "Decisions to confirm with Dickson").
 
 ### Selection lists in a terminal (Dickson, 2026-10-09)
 
@@ -2228,6 +2229,20 @@ Made while Dickson was away (2026-10-09), each to be confirmed:
 - The outpost keeps the screens of the last eight reads of a terminal
   for finding the screen before a key; a key whose request arrives after
   more reads than that is judged by the caret alone.
+- The review cursor after new output: the plan's test read the same
+  line after output written below it, but the review cursor follows the
+  caret by default, as NVDA's does, and both NVDA and Verbatim, captured
+  live, move it to the prompt the output leaves the caret on. The
+  scenarios pin that default; the case of the review cursor staying on
+  its line needs following turned off, which is not tested.
+- The footer flood redraws its footer unchanged during the flood and
+  changed once after it, so its speech is the same however the reads
+  fall: a footer changed during a flood is heard, or not, as the reads
+  happen to find it. NVDA was captured with this script and, first, with
+  a footer changing every twenty lines.
+- The blank lines a burst of output starts with are not counted as lines
+  (a cleared screen's rows above a footer used up the first group of
+  thirty), an exception to "every line counts".
 - The full-screen scenarios use the terminal's own height (30 rows in
   both test windows) rather than the 40 rows the plan named, so the
   alternate screen is exactly the window: the script draws as many rows as
