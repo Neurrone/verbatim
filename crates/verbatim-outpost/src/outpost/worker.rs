@@ -2674,13 +2674,21 @@ impl Worker<'_> {
 
     /// The element of `own_window`, the window of the focus `runtime_id`
     /// names, when it is that element and has the keyboard focus, read
-    /// within [`FOCUS_READ_WAIT`]; `None` otherwise, and for no window.
+    /// within [`FOCUS_READ_WAIT`]; `None` otherwise, for no window, and for
+    /// the console host's window. The console window's element is the
+    /// parent of its text area and reports the keyboard focus whenever the
+    /// text area has it, and its focus events, which come around the text
+    /// area's, are never the focus: NVDA refuses them whatever the element
+    /// reports (`consoleUIAWindow.shouldAllowUIAFocusEvent` is false,
+    /// `NVDAObjects/UIA/winConsoleUIA.py` 356 to 358, given to the element
+    /// whose automation id is "Console Window", 446 and 447; checked in
+    /// `UIAHandler/__init__.py` 948 to 953).
     fn own_element_focused(
         &mut self,
         runtime_id: &[i32],
         own_window: isize,
     ) -> Option<IUIAutomationElement> {
-        if own_window == 0 {
+        if own_window == 0 || window_class_name(own_window) == CONSOLE_WINDOW_CLASS {
             return None;
         }
         let uia = self.client.uia()?;

@@ -1,0 +1,16 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Console Window Fixture",
+  "window_class": "ConsoleWindowClass",
+  "children": [
+    {
+      "id": "text",
+      "role": "editable_text",
+      "name": "Text Area",
+      "automation_id": "Text Area",
+      "states": ["focusable"],
+      "text": "ready>"
+    }
+  ]
+}

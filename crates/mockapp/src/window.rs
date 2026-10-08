@@ -71,15 +71,16 @@ impl From<windows::core::Error> for WindowError {
     }
 }
 
-/// Creates the host window, shown when `show` is set, prints `ready`, and
-/// runs the message loop until a `quit` command (or the window otherwise
-/// closes). `backend` decides how `WM_GETOBJECT` is answered.
+/// Creates the host window, titled `title` and of the window class `class`
+/// (mockapp's own when `None`), shown when `show` is set, prints `ready`,
+/// and runs the message loop until a `quit` command (or the window
+/// otherwise closes). `backend` decides how `WM_GETOBJECT` is answered.
 pub(crate) fn run(
     backend: Backend,
     tree: SharedTree,
     native: &[crate::fixture::FixtureNode],
     edit_version_6: bool,
-    title: &str,
+    (title, class): (&str, Option<&str>),
     show: bool,
 ) -> Result<(), WindowError> {
     // SAFETY: called once, before any window is created on this thread.
@@ -88,15 +89,20 @@ pub(crate) fn run(
     // SAFETY: retrieves this module's own instance handle; always sound.
     let hinstance = unsafe { GetModuleHandleW(None) }?;
 
-    register_class(hinstance.into())?;
+    let class_wide = class.map(to_wide);
+    let class_name = class_wide
+        .as_ref()
+        .map_or(CLASS_NAME, |wide| PCWSTR(wide.as_ptr()));
+    register_class(hinstance.into(), class_name)?;
 
     let title_wide = to_wide(title);
-    // SAFETY: `CLASS_NAME` names a class registered above; `title_wide` is
-    // a live, NUL-terminated buffer for the duration of the call.
+    // SAFETY: `class_name` names a class registered above, its buffer live
+    // until the function returns; `title_wide` is a live, NUL-terminated
+    // buffer for the duration of the call.
     let hwnd = unsafe {
         CreateWindowExW(
             WINDOW_EX_STYLE(0),
-            CLASS_NAME,
+            class_name,
             PCWSTR(title_wide.as_ptr()),
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
@@ -191,12 +197,15 @@ fn wake(hwnd_value: isize) {
     }
 }
 
-fn register_class(hinstance: windows::Win32::Foundation::HINSTANCE) -> windows::core::Result<()> {
+fn register_class(
+    hinstance: windows::Win32::Foundation::HINSTANCE,
+    name: PCWSTR,
+) -> windows::core::Result<()> {
     let class = WNDCLASSEXW {
         cbSize: u32::try_from(size_of::<WNDCLASSEXW>()).unwrap_or(0),
         lpfnWndProc: Some(wnd_proc),
         hInstance: hinstance,
-        lpszClassName: CLASS_NAME,
+        lpszClassName: name,
         ..Default::default()
     };
     // SAFETY: `class` is fully initialized above and outlives the call. A
