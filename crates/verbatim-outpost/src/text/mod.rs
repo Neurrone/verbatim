@@ -44,8 +44,8 @@ pub mod uia;
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use verbatim_model::{
     CaretReply, CaretReport, CaretWatch, FormatRun, LanguageRun, MAX_CHUNK_BYTES, MAX_RANGE_BYTES,
@@ -492,29 +492,44 @@ impl<P> Default for NodeAnchors<P> {
     }
 }
 
+/// The anchors Core holds, which are never forgotten, shared by an
+/// outpost's anchor stores. It has a lock of its own, taken only to set or
+/// look up numbers and never across a call into the application, so the
+/// thread that reads Core's commands sets it as Core's list arrives without
+/// waiting for a read of the text in progress.
+pub type HeldAnchors = Arc<Mutex<HashSet<u64>>>;
+
 /// Every node's anchors in one backend, the anchors Core holds, and the
 /// counter anchors are numbered from, which an outpost's backends share so
 /// no two anchors in an outpost have the same number.
 pub struct Anchors<P> {
     counter: Arc<AtomicU64>,
-    held: HashSet<u64>,
+    held: HeldAnchors,
     nodes: HashMap<u64, NodeAnchors<P>>,
 }
 
 impl<P: Clone> Anchors<P> {
-    /// An empty store numbering anchors from `counter`.
+    /// An empty store numbering anchors from `counter`, with a set of held
+    /// anchors of its own.
     #[must_use]
     pub fn new(counter: Arc<AtomicU64>) -> Self {
+        Self::sharing(counter, HeldAnchors::default())
+    }
+
+    /// An empty store numbering anchors from `counter` and keeping the
+    /// anchors `held` names.
+    #[must_use]
+    pub fn sharing(counter: Arc<AtomicU64>, held: HeldAnchors) -> Self {
         Self {
             counter,
-            held: HashSet::new(),
+            held,
             nodes: HashMap::new(),
         }
     }
 
     /// Records the anchors Core holds; the rest may be forgotten.
-    pub fn set_held(&mut self, held: impl IntoIterator<Item = u64>) {
-        self.held = held.into_iter().collect();
+    pub fn set_held(&self, held: impl IntoIterator<Item = u64>) {
+        *self.held.lock().unwrap_or_else(PoisonError::into_inner) = held.into_iter().collect();
     }
 
     /// Forgets a node's anchors, when the node is released.
@@ -535,7 +550,7 @@ impl<P: Clone> Anchors<P> {
 /// One node's anchors, borrowed from an [`Anchors`] store.
 pub struct NodeText<'a, P> {
     counter: &'a AtomicU64,
-    held: &'a HashSet<u64>,
+    held: &'a Mutex<HashSet<u64>>,
     anchors: &'a mut NodeAnchors<P>,
 }
 
@@ -553,14 +568,16 @@ impl<P: Clone> NodeText<'_, P> {
         );
         let count = self.anchors.anchors.len();
         if count > KEPT_ANCHORS {
+            let held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
             let forgotten: Vec<u64> = self
                 .anchors
                 .anchors
                 .keys()
                 .take(count - KEPT_ANCHORS)
                 .copied()
-                .filter(|number| !self.held.contains(number))
+                .filter(|number| !held.contains(number))
                 .collect();
+            drop(held);
             let NodeAnchors {
                 anchors, reported, ..
             } = &mut *self.anchors;

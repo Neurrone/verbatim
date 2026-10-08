@@ -224,7 +224,9 @@ Public API:
   the caret's line and the selection, for `CaretMoved`, with the line's
   formatting when asked (the report after a focus), and remembers when
   its read finished. `Anchors` keeps one backend's anchors, by node, numbered
-  from a counter both of an outpost's backends share; `NodeText` is one
+  from a counter both of an outpost's backends share, and never forgets
+  those in its `HeldAnchors`, the anchors Core holds, which both of an
+  outpost's backends share too (`Anchors::sharing`); `NodeText` is one
   node's, and its `position_at` mints a position at a backend position
   without a call, as the worker keeps an active text position change's
   range (`UiaPos::start_of`). `check_caret` checks a caret key's watch
@@ -677,8 +679,11 @@ Implementation notes:
     the text passed so a provider whose characters are code points or
     grapheme clusters lands right, except a position the outpost itself
     reported (a caret, a selection's end, a read's point), which it
-    remembers. Anchors Core holds (`NodesHeld`'s `anchors`, set as the
-    list arrives, before the worker sees it) are kept; any other is
+    remembers. Anchors Core holds (`NodesHeld`'s `anchors`, set by the
+    reader as the list arrives, before the worker sees it, in a set with a
+    lock of its own, `text::HeldAnchors`, since 2026-10-08: the reader had
+    taken the anchor stores' locks, which the worker holds while it reads
+    text, and so waited for a read, pings included) are kept; any other is
     forgotten once 64 newer ones were minted for the node, and a request
     naming it is answered `AnchorLost`. A released node's anchors and text
     patterns go with it.
