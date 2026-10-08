@@ -100,6 +100,11 @@ impl LiveOutposts {
         self.outposts.remove(&outpost).is_some()
     }
 
+    /// How many live incarnations have not sent `Ready` yet.
+    pub(crate) fn starting(&self) -> usize {
+        self.outposts.values().filter(|live| !live.ready).count()
+    }
+
     /// `pid`'s newest live incarnation, ready or not.
     pub(crate) fn newest(&self, pid: Pid) -> Option<OutpostId> {
         self.of(pid, false)

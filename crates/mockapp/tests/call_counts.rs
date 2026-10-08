@@ -204,7 +204,7 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA focus, cold",
         &cost,
-        calls(0, 29, 1),
+        calls(0, 30, 1),
         &[
             ("WM_GETOBJECT", 2),
             ("accParent", 14),
@@ -215,6 +215,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accRole", 3),
             ("get_accState", 3),
             ("get_accKeyboardShortcut", 3),
+            ("accFocus", 1),
             ("accLocation", 3),
         ],
     );
@@ -226,7 +227,7 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA focus, steady state",
         &cost,
-        calls(0, 29, 0),
+        calls(0, 30, 0),
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 14),
@@ -237,6 +238,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accRole", 3),
             ("get_accState", 3),
             ("get_accKeyboardShortcut", 3),
+            ("accFocus", 1),
             ("accLocation", 3),
         ],
     );
@@ -282,7 +284,7 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA arrow to the next list item",
         &cost,
-        calls(0, 29, 0),
+        calls(0, 30, 0),
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 14),
@@ -293,6 +295,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accRole", 3),
             ("get_accState", 3),
             ("get_accKeyboardShortcut", 3),
+            ("accFocus", 1),
             ("accLocation", 3),
         ],
     );
@@ -310,7 +313,7 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA arrow to the previous list item, the probe renewed",
         &cost,
-        calls(0, 32, 1),
+        calls(0, 33, 1),
         &[
             ("WM_GETOBJECT", 2),
             ("accParent", 14),
@@ -321,6 +324,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accRole", 4),
             ("get_accState", 3),
             ("get_accKeyboardShortcut", 3),
+            ("accFocus", 1),
             ("accLocation", 3),
         ],
     );
@@ -329,7 +333,7 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA arrow to the next list item, the probe kept",
         &cost,
-        calls(0, 32, 0),
+        calls(0, 33, 0),
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 14),
@@ -340,6 +344,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accRole", 4),
             ("get_accState", 3),
             ("get_accKeyboardShortcut", 3),
+            ("accFocus", 1),
             ("accLocation", 3),
         ],
     );
@@ -363,6 +368,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("accParent", 1),
             ("get_accChild", 1),
             ("get_accRole", 1),
+            ("accFocus", 1),
         ],
     );
 
@@ -386,6 +392,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accChild", 1),
             ("get_accRole", 1),
             ("get_accState", 3),
+            ("accFocus", 1),
         ],
     );
 
@@ -460,9 +467,10 @@ fn dialog_description(ancestors: &[NodeSnapshot]) -> Option<&str> {
 /// (`verbatim_outpost::dialog_text`): the dialog's children, each child's
 /// role and states, and the question's name, value, and description, on top
 /// of a cold focus's calls. A focus moving within it is not measured:
-/// mockapp answers every `accParent` with a new COM object, so the dialog
-/// reached from the next button is a new node to the outpost, where a real
-/// dialog is the node it reported before and is not read again.
+/// the dialog reached from the next button through `accParent` is a new
+/// oleacc wrapper, with no address of its own the outpost could know it
+/// by, so it is a new node to the outpost, which reads it again, as it
+/// would a real windowless dialog.
 fn msaa_dialog_text_costs_exactly() {
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-dialog");
@@ -482,7 +490,7 @@ fn msaa_dialog_text_costs_exactly() {
     ratchet.check(
         "MSAA focus into a message box",
         &cost,
-        calls(0, 43, 1),
+        calls(0, 44, 1),
         &[
             ("WM_GETOBJECT", 2),
             ("accParent", 17),
@@ -494,6 +502,7 @@ fn msaa_dialog_text_costs_exactly() {
             ("get_accRole", 6),
             ("get_accState", 6),
             ("get_accKeyboardShortcut", 3),
+            ("accFocus", 1),
             ("accLocation", 3),
         ],
     );

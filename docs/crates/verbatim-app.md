@@ -25,6 +25,27 @@ map and its gesture-to-script table from `verbatim_input::bindings_for` for
 the configured keyboard layout, so the active review and navigation bindings
 follow `settings.toml`'s `keyboard.layout`.
 
+The end-to-end harness's hooks (private `harness` module):
+
+- Readiness: when launched with `VERBATIM_READY_EVENT` naming an event,
+  Verbatim sets that event once it is ready for input (the GUI up, the
+  focus listener running, its own window's outpost ready, and the focus
+  known), the same condition `StatusInfo::ready` reports, so a test waits
+  on the event rather than asking again and again.
+- The idle barrier: the keyboard hook reports each numbered key stroke
+  handled (`Routed::Handled`), and the router passes it to the reducer
+  thread behind whatever the stroke caused (`ShellCommand::InputHandled`),
+  which records it and broadcasts `Frame::InputHandled`. A control-plane
+  `AwaitIdle` travels the same way, as `Routed::Barrier` through the
+  router, so it is answered only after every key before it; on the
+  reducer thread it waits (`IdleWaiter`) until the input it names has been
+  handled, both of the thread's queues are empty, no outpost request is
+  outstanding, no outpost is still starting, and no focus is wanted from
+  an outpost being started (a crashed outpost's replacement), and then
+  until everything queued so far has reached the speech manager. A wait
+  that runs out answers with what was still outstanding.
+- `DumpFocus` answers with `SrState::focus_report`, within five seconds.
+
 Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
 "The text protocol"):
 
@@ -139,17 +160,24 @@ knowing for review:
   it on `OutpostMessage::Ended`, and a message from an outpost not in the
   set is dropped, so nothing from an ended outpost reaches the reducer, even
   when the supervisor killed it with messages still in flight. The status
-  mirror follows the same notices. After each input the thread sends the
-  supervisor the derived views (`note_views`) when they change: the
+  mirror follows the same notices. Once each outpost message or command
+  has been handled whole, never between the inputs one message produces,
+  the thread sends the
+  supervisor the derived views (`send_views`) when they change: the
   application holding attention and the outposts in which the reducer holds
   nodes. It also tells each live outpost which of its nodes the reducer
   holds (`send_nodes_held`), with the position of the last of that
   outpost's messages it has handled, whenever that set changes and every
   256 messages besides, so the outpost can release everything else
-  ([verbatim-outpost](verbatim-outpost.md), "Held objects"). On an end the
-  reducer
+  ([verbatim-outpost](verbatim-outpost.md), "Held objects"). A focus-now
+  answer is a foreground change and then a focus: held nodes sent after
+  the first alone, with the answer's position as acknowledged, had the
+  outpost release the focus it reported in that same answer before Core
+  took it, so the focus came back as a new node and was announced twice at
+  startup. On an end the reducer
   gets `Input::OutpostEnded`, then a "gone" outcome for each of that
-  outpost's outstanding queries. There is no foreground pid gate: which
+  outpost's outstanding queries, and the control plane's event subscribers
+  get `Frame::OutpostEnded`. There is no foreground pid gate: which
   events are spoken is the reducer's attention model. Events go to the
   reducer, the latency ledger, and the control plane's event subscribers
   (copied for the control plane only while one is subscribed);
@@ -281,7 +309,11 @@ knowing for review:
   is sent, as a key press does, since its keys never pass the hook),
   the keyboard hook last among input paths (given a callback that maps
   each `KeySpeechEffect` to the speech manager's `SpeechControl`: `Cancel`
-  to `cancel`, `TogglePause` to `toggle_pause`), the startup announcement, and
+  to `cancel_through` with the press's key sequence number, `TogglePause`
+  to `toggle_pause`; the reducer thread speaks each `Effect::Speak` with
+  `speak_for_key`, under the key press that caused its input or its
+  utterance's trace, if one did, and a gesture the control plane injects
+  is numbered as a key press is), the startup announcement, and
   finally the GUI loop on the main thread. The gesture router handles
   Verbatim+V, which pops the menu, the lock keys, whose new state it
   announces, and every gesture in the active layout's bindings table:

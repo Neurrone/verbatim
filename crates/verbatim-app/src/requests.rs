@@ -168,6 +168,12 @@ impl RequestTable {
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }
+
+    /// How many requests are outstanding, for the end-to-end harness's
+    /// idle barrier.
+    pub(crate) fn outstanding(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 /// A short description of an outcome other than success, for logs and

@@ -33,7 +33,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GET_WINDOW_CMD, GW_HWNDNEXT, GW_HWNDPREV, OBJID_CLIENT, OBJID_WINDOW,
 };
 
-use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, TreeNode};
+use verbatim_model::{
+    Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, State, TreeNode,
+};
 
 use crate::accessible::{Accessible, Related};
 use crate::class::normalized_class_of;
@@ -281,9 +283,11 @@ pub struct FocusCandidate {
 /// item is focused. When the event names a list on its own object (child id 0
 /// and MSAA role `ROLE_SYSTEM_LIST`) or the client of a `SysListView32` window,
 /// NVDA reads `accFocus` and redirects the focus object to the named child if
-/// it is a real, different child. This mirrors that condition exactly — no
-/// broader — so a focus event on such a container announces the focused item,
-/// not the container, and the navigator lands on the item.
+/// it is a real, different child. This mirrors that condition, so a focus
+/// event on such a container announces the focused item, not the container,
+/// and the navigator lands on the item. Beyond it, any focus on an object's
+/// own child id 0 is redirected to the child `accFocus` names when that
+/// child has the focused state ([`redirect_focus_to_child`]).
 #[must_use]
 pub fn focus_candidate(hwnd: isize, id_object: i32, id_child: i32) -> Option<FocusCandidate> {
     let acc = Accessible::from_event(hwnd, id_object, id_child)?;
@@ -296,14 +300,15 @@ pub fn focus_candidate(hwnd: isize, id_object: i32, id_child: i32) -> Option<Foc
         Prefetched::Read(role) => role,
         Prefetched::Unread => None,
     };
-    if let Some((focus_acc, key)) =
+    if let Some((focus_acc, key, state)) =
         redirect_focus_to_child(&acc, (hwnd, id_object, id_child), read_role)
     {
+        // A redirect for a focused child read its state word already.
         return Some(FocusCandidate {
             acc: focus_acc,
             key,
             role: Prefetched::Unread,
-            state: Prefetched::Unread,
+            state,
         });
     }
     Some(FocusCandidate {
@@ -379,9 +384,20 @@ impl FocusCandidate {
 /// container on child id 0 (MSAA role `ROLE_SYSTEM_LIST`, from `role`, read
 /// for a child id 0) or the client of a `SysListView32` window, and
 /// `accFocus` names a real, different child *by id*, return that child's
-/// accessible and [`MsaaKey`]. `None` when the condition does not hold or
+/// accessible and [`MsaaKey`], and the child's state word when it was read.
+/// `None` when the condition does not hold or
 /// `accFocus` names no distinct child, so the caller keeps the event's own
 /// object.
+///
+/// Any other focus on an object's own child id 0 is redirected the same way
+/// when the child `accFocus` names has the focused state. A control taking
+/// the focus, such as a Win32 tree view or tab control, raises focus on
+/// itself and then on its focused child within the one `SetFocus` call;
+/// NVDA handles both together and tries the newest first, so it announces
+/// the child, with the control as its new ancestor. The outpost can read
+/// the control before the child's event reaches it, so it asks the control
+/// directly and reaches NVDA's result by another route (`docs/parity.md`,
+/// "A control's own focus with a focused child").
 ///
 /// The child-object (`VT_DISPATCH`) form of `accFocus` deliberately does not
 /// redirect: NVDA's guard is `isinstance(realChildID, int) and realChildID > 0
@@ -395,16 +411,32 @@ fn redirect_focus_to_child(
     acc: &Accessible,
     (hwnd, id_object, id_child): MsaaKey,
     role: Option<i32>,
-) -> Option<(Accessible, MsaaKey)> {
-    if !focus_event_names_list((hwnd, id_object, id_child), role) {
+) -> Option<(Accessible, MsaaKey, Prefetched)> {
+    let list = focus_event_names_list((hwnd, id_object, id_child), role);
+    if !list && id_child != CHILDID_SELF {
         return None;
     }
     match read_acc_focus(acc) {
+        FocusTarget::ChildId(real_child) if !list && real_child > 0 => {
+            let child = acc.with_child(real_child);
+            let state = child.state();
+            state
+                .is_some_and(|state| {
+                    states_from_msaa(state.cast_unsigned()).contains(State::Focused)
+                })
+                .then_some((
+                    child,
+                    (hwnd, id_object, real_child),
+                    Prefetched::Read(state),
+                ))
+        }
         // A child by id: redirect only when it is a real child (greater than
         // zero) and not the one the event already named — NVDA's exact guard.
-        FocusTarget::ChildId(real_child) if real_child > 0 && real_child != id_child => {
-            Some((acc.with_child(real_child), (hwnd, id_object, real_child)))
-        }
+        FocusTarget::ChildId(real_child) if real_child > 0 && real_child != id_child => Some((
+            acc.with_child(real_child),
+            (hwnd, id_object, real_child),
+            Prefetched::Unread,
+        )),
         // A `VT_DISPATCH` child object, `None`, or a self/zero child id: keep
         // the container (see this function's doc for why the dispatch form is
         // deliberately not redirected).

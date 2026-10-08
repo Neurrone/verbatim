@@ -108,7 +108,12 @@ Public API:
   `ROLE_SYSTEM_LIST` — or the client of a `SysListView32` window, it reads
   `accFocus` and redirects to the named child when that child is real and
   different, so a container that fires focus on itself, like the wxWidgets
-  generic list, announces the focused item rather than the container; the
+  generic list, announces the focused item rather than the container; a
+  focus on any other object's own child id 0 is redirected to the child
+  `accFocus` names by id when that child has the focused state, which is
+  how a tree view or tab control raising focus on itself and then on its
+  item announces the item, as NVDA does (`docs/parity.md`, "A control's
+  own focus with a focused child"); the
   `accFocus` VARIANT is parsed in one shared place, `read_acc_focus`, which
   `focused_snapshot` also uses, so the child-id and child-object forms are
   handled once), `focus_candidate` (the same acquisition and redirect,
@@ -172,7 +177,26 @@ Public API:
   (`Accessible::address`, `IAccPropServices::DecomposeHwndIdentityString`),
   so a window keeps one node even when its title changes; other objects
   reached through `accParent`, through `accNavigate`, or as child objects
-  are not, and never claim the address made up for them. Two seams
+  are not, and never claim the address made up for them.
+
+  Identity. A COM identity is never shared by two sightings of one object
+  in another process: oleacc delivers every object wrapped in a new
+  wrapper of its own, the Dynamic Annotation wrapper. Measured on
+  2026-10-08 against mockapp, whose provider hands out one cached object
+  per node: three sightings of one list, two through
+  `AccessibleObjectFromEvent` and one as its item's `accParent`, all held
+  at once, had three different `IUnknown` addresses. COM's own proxies
+  could not do that, since unmarshalling one remote object into one
+  apartment yields one proxy. All three objects' `IUnknown` and
+  `IAccessible` tables lie in `oleacc.dll`; each answers
+  `IServiceProvider`, which mockapp does not implement, and none is
+  oleacc's proxy for a standard control (`QueryService` for
+  `IIS_IsOleaccProxy` fails); none answers `IAccIdentity`. So identity
+  matches only an object the outpost already holds, never a new
+  sighting, and the address is what recognizes an object again. An
+  object reached through `accParent` with no address of its own (a
+  windowless ancestor) has neither, so an event naming it is never
+  matched to it, as NVDA never matches it (`docs/parity.md`). Two seams
   mirror NVDA where plain MSAA navigation would mislead. A `SysTreeView32`
   item's navigation and ancestor chain route through the tree control's
   own `TVM_GETNEXTITEM` relations (with the accid-to-htreeitem mapping

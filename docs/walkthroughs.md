@@ -56,7 +56,7 @@ releases Alt. Notepad has no outpost yet.
    ([verbatim-input](crates/verbatim-input.md)). Alt and Tab are not bound,
    so they pass to Windows, but each key-down's decision carries
    `KeySpeechEffect::Cancel`, and the hook calls the speech manager's
-   `SpeechControl::cancel` (a non-blocking channel send) before anything
+   `SpeechControl::cancel_through` (a non-blocking channel send) before anything
    else. Whatever was being spoken stops. See walkthrough 3.
 2. **Windows raises events.** When Alt is released, Windows raises
    `EVENT_SYSTEM_SWITCHEND`, `EVENT_SYSTEM_FOREGROUND` for Notepad's
@@ -444,7 +444,9 @@ the device comes back in another format.
 When speech is cut off (`docs/parity.md`, "When speech is cut off"):
 
 - **A key press.** Every key-down except the volume keys cancels
-  everything (`SpeechControl::cancel`): waiting utterances end cancelled,
+  everything (`SpeechControl::cancel_through`, with the press's key
+  sequence number, so speech an earlier press caused that arrives after it
+  ends cancelled too): waiting utterances end cancelled,
   the in-flight job's flag is set, and `Source::cancel_all` ends every
   utterance the mixer holds and discards its unplayed audio at once. The
   synth thread's next write returns `Break`, and `HostedSynth` sends the
@@ -657,7 +659,8 @@ handle could inherit a held node's identity.
 
 ## 6. The life of an end-to-end run
 
-`cargo test -p verbatim-e2e -- --test-threads=1` on this machine, or the
+`cargo test -p verbatim-e2e -- --ignored --skip demo_ --test-threads=1`
+on this machine, or the
 same suite on GitHub's runner or against a Hyper-V guest
 ([verbatim-e2e](crates/verbatim-e2e.md),
 [verbatim-agent](crates/verbatim-agent.md), [Tooling](tooling.md)).
@@ -665,74 +668,83 @@ same suite on GitHub's runner or against a Hyper-V guest
 1. **Preparing this machine (runner-direct).** The agent runs in the
    signed-in user's session: `target\debug\verbatim-agent.exe
    --bind-address 127.0.0.1 --port 44001`. It refuses to start in a
-   non-interactive session. The desktop must be unlocked with a real
-   foreground window: on the development VM, `cargo xtask park` moves the
+   non-interactive session. The desktop must be unlocked: on the
+   development VM, `cargo xtask park` moves the
    Remote Desktop session onto the console, still signed in and unlocked,
    so a run works with no RDP client connected (it disconnects any client,
    so only when Dickson is away or has agreed). NVDA in the same session
    must be closed, since the run injects real keys; an NVDA in another
    Windows session cannot see them and can stay.
-   `VERBATIM_E2E_ENDPOINT=127.0.0.1:44001` points the suite at the agent;
-   without it every scenario prints a skip notice, which keeps
-   `cargo xtask ci` green.
+   `VERBATIM_E2E_ENDPOINT=127.0.0.1:44001` points the suite at the agent.
+   Every live test is `#[ignore]`d, so `cargo xtask ci` lists them as
+   ignored; run with `--ignored` and no endpoint, each fails.
 2. **One scenario at a time.** Each `#[test]` wrapper calls
    `registry::run_named`. `--test-threads=1` is required: each scenario
    launches a real Verbatim on the real desktop, and a second
    `verbatim.exe` would replace the first.
 3. **Launch.** `Scenario::launch` builds `verbatim-app`,
-   `verbatim-outpost`, and `verbatim-synth-host` once per test binary,
-   copies them, `espeak-ng-data`, and `sounds` into `target/e2e-stage`, and writes a
+   `verbatim-outpost`, `verbatim-synth-host`, and `mockapp` once per test
+   binary, copies them, `espeak-ng-data`, and `sounds` into
+   `target/e2e-stage`, and writes a
    fixed `settings.toml` (`Settings::for_e2e`, eSpeak NG). A run is silent
    by default: `VERBATIM_TEST_AUDIO=null` makes Verbatim play through the
    silent real-time device, so every utterance still takes its real
    duration; `VERBATIM_E2E_AUDIBLE=1` uses the real device instead. It
-   sweeps leftover processes, starts the recording (step 7), launches
-   `verbatim.exe` through the agent with its output sent to a file, waits
-   for Verbatim's control plane to answer through the agent's tunnel (the
-   agent relays bytes between its TCP connection and Verbatim's named
-   pipe), and opens a second tunnel used only for speech.
-   Once `launch` returns, `registry::run` makes sure an uncloaked window
-   holds the foreground (`establish_baseline`) before the scenario's
-   setup.
-4. **Setup and body.** The scenario opens its applications through the
-   agent (`launch_target`, or `open_document` for Notepad on a uniquely
-   named file, closed by title afterwards) and drives Verbatim with
-   control-plane `SendKeys`, which injects real keys through `SendInput`
-   and so passes through Verbatim's hook like a user's, and `SendGesture`.
-   Every injected key cancels speech, as a real one does.
-5. **Waiting for speech.** `SpeechCollector` reads the speech tunnel and
-   never sends on it. Each `expect_*` assertion matches text against
-   queue-time `Speech` frames only, then waits up to 30 seconds for that
-   utterance's own `SpeechEnded` and fails unless it completed. So a
-   passing assertion means the speech was heard in full, and the next
-   injected key cannot cut it off. Speech queued while an assertion waits
-   is kept for the next one. Failure messages print the timeline:
-   every injected key and gesture interleaved with every utterance's
-   queue time, audio start, and ending.
-6. **Teardown and artifacts.** After the body, the registry waits until
-   speech is quiet (`wait_until_quiet`, 30 s), then runs teardown. Body
-   and teardown each run under `catch_unwind`, so a failed body still
-   tears down. A clean quit is asserted only when both passed. Pass or
-   fail, the run's directory under `target/e2e-artifacts/<scenario>/`
-   receives the timeline, `foreground.txt`, Verbatim's stderr, every log
-   in the launch's `logs\<Verbatim's pid>` directory (listener, each
-   outpost, each synthesizer host), the flight-recorder dump taken before
-   the quit, and `summary.txt` (`ScenarioSummary`). Each run is also
-   copied into `history/` (the newest 100 per scenario, without video).
-   `Scenario`'s `Drop` kills everything it launched, even after a panic.
+   sweeps what an earlier run left (processes the agent launched, by their
+   own handles; harness windows and Notepad tabs; harness files),
+   minimizes every window and brings the desktop forward, starts the
+   recording (step 7), and launches `verbatim.exe` through the agent with
+   its output sent to a file and `RUST_LOG` set to
+   `info,verbatim_outpost=debug`. Verbatim sets a named event the agent
+   created once it is ready for input; the harness then opens the command
+   tunnel and a second tunnel used only for speech (the agent relays bytes
+   between its TCP connection and Verbatim's named pipe).
+4. **Setup and body.** `registry::run` first asserts the startup speech
+   and the desktop's announcement exactly. The scenario opens its
+   applications through the agent, each window its own, and drives
+   Verbatim with keys the agent injects through `SendInput`, each numbered
+   in its `dwExtraInfo`, which pass through Verbatim's hook like a user's,
+   and with `SendGesture`. Every injected key cancels speech, as a real
+   one does.
+5. **Asserting speech.** `SpeechCollector` reads the speech tunnel, which
+   first replays what Verbatim said before it subscribed. Each assertion
+   says the next utterances are exactly these, in order, each ending as
+   expected, nothing in between; before every injected input, any
+   utterance no assertion matched is a harness error. The body ends with
+   `expect_nothing_more`: an `AwaitIdle` request on the speech tunnel,
+   answered once Core has handled the last numbered key and is idle, after
+   every utterance it queued. Failure messages print the expected and
+   actual sequences, where they first differ, and the timeline: every
+   injected key and gesture interleaved with every utterance's queue time,
+   audio start, and ending.
+6. **Teardown and artifacts.** After the body, the run saves the latency
+   timelines, Core's focus (`focus.txt`), and the flight recorder, checks
+   that none of Verbatim's processes exited unexpectedly, quits Verbatim
+   (exit code 0), runs teardown, and closes everything the scenario
+   opened, by process id or window, failing on anything that will not
+   close. Pass or fail, the run's directory under
+   `target/e2e-artifacts/<scenario>/` receives the timeline,
+   `latency.csv`, `foreground.txt`, Verbatim's stderr, every log in the
+   launch's `logs\<Verbatim's pid>` directory (listener, each outpost, each
+   synthesizer host), `verbatim-audio.wav`, any crash dump, and
+   `summary.txt` (`ScenarioSummary`); losing one fails the run. Each run is
+   also copied into `history/` (the newest 100 per scenario, without
+   video).
 7. **Recording.** Before Verbatim starts, ffmpeg is launched through the
-   agent to capture the desktop (`gdigrab`, fragmented MP4), and
+   agent to capture the desktop (`gdigrab`, fragmented MP4).
    `VERBATIM_RECORD_AUDIO` makes Verbatim's mixer tap write everything it
-   plays to a WAV file with its start time. At the end,
+   plays to a WAV file with its start time, in every run. At the end,
    `Scenario::finish_recording` ends ffmpeg, lines the audio up with the
    video by their start times, muxes them on the agent's machine, and
-   copies `<scenario>.mp4` back. No ffmpeg means a warning and no video,
-   never a failure.
+   copies `<scenario>.mp4` back. A recording that cannot start or finish
+   fails the run; `VERBATIM_E2E_RECORD=0` turns recording off.
 8. **On CI.** The `e2e` job in `.github/workflows/ci.yml` builds on
    `windows-latest`, whose jobs run in an interactive session, installs
    ffmpeg, starts the agent in the same step as the suite (the runner ends
-   a step's processes when the step finishes), runs every scenario, and
-   uploads the artifacts and videos for passing and failing runs alike.
+   a step's processes when the step finishes), runs every scenario but the
+   demonstrations and the local-only Windows 11 Notepad ones
+   (`--ignored --skip demo_ --skip notepad_`), and uploads the artifacts
+   and videos for passing and failing runs alike.
 9. **Against a Hyper-V guest.** `cargo xtask vm test` builds first,
    copies changed binaries into the guest (`xtask/src/vm/deploy.rs`),
    restores the golden checkpoint only when `--restore` is given, runs
@@ -746,12 +758,16 @@ The nine scenarios: `menu_and_settings_dialog`,
 `start_menu_search` (shell); `object_navigation_in_settings` and
 `system_information_tree` (navigation). On 2026-10-05 the full suite, with
 `lock_key_announcements` added, passed 4 of 4 runs on this machine with the session parked and NVDA
-closed, and CI's job passed on every push.
+closed, and CI's job passed on every push. (Since 2026-10-07,
+`notepad_and_verbatim_menu` is `second_application_and_verbatim_menu`,
+against the harness's Windows Forms text box, and `start_menu_search` is
+gone; `docs/crates/verbatim-e2e.md` lists the scenarios as they are.)
 
 Not yet, or known limitations: the Hyper-V path has not been run since
 phase 4 (its golden image still needs rebuilding without VB-CABLE); a
 Verbatim whose launch fails before its control plane answers leaves no
-video; `switch_to_onecore` assumes OneCore voices are installed, and
-`synth_host_crash_recovery` kills synthesizer hosts machine-wide. On a
+video; and `switch_to_onecore` assumes OneCore voices are installed.
+(`synth_host_crash_recovery` then killed synthesizer hosts machine-wide;
+it now ends Verbatim's own host by its process id.) On a
 locked desktop injected input goes nowhere and scenarios fail or hang,
 which is why parking matters.

@@ -16,19 +16,20 @@
 //! selects by name or group ([`registry::select`]) and invokes once per
 //! scenario (one `cargo test` subprocess per scenario). [`recording`]
 //! records each scenario's video, with Verbatim's audio. [`artifacts`] is the host-side
-//! artifacts (a summary, and on failure the timeline, Verbatim's stderr
-//! log, and a flight-recorder dump) both sides of that process boundary
-//! agree on without any argument passing between them.
+//! artifacts (a summary, the timeline, Verbatim's logs, Core's focus, and
+//! a flight-recorder dump, kept for every run) both sides of that process
+//! boundary agree on without any argument passing between them.
 //!
 //! Every live scenario needs an already-running agent to connect to. None
 //! of them start one: `cargo test` and `cargo xtask ci` must stay green
-//! with no agent and no Verbatim anywhere, so [`registry::run_named`]
-//! checks [`endpoint`] first and prints a one-line skip notice instead of
-//! running when it is unset. `session_info`
-//! (`crates/verbatim-e2e/tests/session_info.rs`) is not a scenario — a
-//! precondition check every scenario depends on, not a setup/body/teardown
-//! walk — so it stays a plain `#[test]` outside the registry, checking
-//! [`endpoint`] itself the same way.
+//! with no agent and no Verbatim anywhere, so every live `#[test]` wrapper
+//! is `#[ignore]`d, listed as ignored by a workspace test run, and the
+//! end-to-end job runs them with `--ignored`. Run that way without
+//! [`endpoint`] set, [`registry::run_named`] fails rather than reporting a
+//! pass. `session_info` (`crates/verbatim-e2e/tests/session_info.rs`) is
+//! not a scenario, a precondition check every scenario depends on, so it
+//! stays a plain ignored `#[test]` outside the registry, failing the same
+//! way without [`endpoint`].
 //!
 //! Local verification: build `verbatim-app` and `verbatim-agent` (debug),
 //! start the agent with `--bind-address 127.0.0.1` (loopback avoids a
@@ -36,7 +37,7 @@
 //! `verbatim_agent::protocol::DEFAULT_PORT`, is deliberately not in the
 //! 47000s — see that constant's doc comment for why), export
 //! `VERBATIM_E2E_ENDPOINT=127.0.0.1:44001`, and run
-//! `cargo test -p verbatim-e2e -- --test-threads=1`. Tests run strictly
+//! `cargo test -p verbatim-e2e -- --ignored --skip demo_ --test-threads=1`. Tests run strictly
 //! serially by design (documented on [`scenario::Scenario`]): this suite
 //! launches a real Verbatim on the developer's live desktop, and
 //! `--test-threads=1` is how both a local run and CI honor that.
@@ -60,12 +61,11 @@ pub use timeline::Timeline;
 
 /// Environment variable naming the endpoint (`host:port`) of an already
 /// running `verbatim-agent`. Every live test in this crate checks
-/// [`endpoint`] first and skips instead of failing when it is unset.
+/// [`endpoint`] first and fails when it is unset.
 pub const ENDPOINT_ENV: &str = "VERBATIM_E2E_ENDPOINT";
 
-/// Reads [`ENDPOINT_ENV`], the live-suite skip guard every test in this
-/// crate checks first. `None` means "no agent is reachable"; callers print
-/// a one-line skip notice and return rather than failing.
+/// Reads [`ENDPOINT_ENV`], which every live test in this crate checks
+/// first. `None` means "no agent is reachable", and the live test fails.
 #[must_use]
 pub fn endpoint() -> Option<String> {
     std::env::var(ENDPOINT_ENV)

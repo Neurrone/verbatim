@@ -4,13 +4,72 @@
 //! that lay out a test's own files and folders and remove them again.
 
 use std::io;
+use std::path::Path;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use windows::Win32::Foundation::WAIT_OBJECT_0;
+use windows::Win32::Storage::FileSystem::{
+    FILE_NOTIFY_CHANGE_FILE_NAME, FILE_NOTIFY_CHANGE_LAST_WRITE, FindCloseChangeNotification,
+    FindFirstChangeNotificationW, FindNextChangeNotification,
+};
+use windows::Win32::System::Threading::WaitForSingleObject;
+use windows::core::HSTRING;
 
 /// Files larger than this are refused outright: this request is for logs
 /// and small dumps a test wants to assert on, not bulk transfer.
 pub const MAX_READ_FILE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Waits up to `timeout` for `path` to exist, checking again each time
+/// Windows reports a file in its folder created, renamed, or written
+/// (`FindFirstChangeNotificationW`): evidence, never a poll. Returns whether
+/// it exists when the wait ends.
+///
+/// # Errors
+///
+/// Returns an error if `path` has no folder, or the folder cannot be
+/// watched.
+pub fn wait_for(path: &str, timeout: Duration) -> io::Result<bool> {
+    let file = Path::new(path);
+    if file.exists() {
+        return Ok(true);
+    }
+    let folder = file
+        .parent()
+        .ok_or_else(|| io::Error::other(format!("{path} has no folder to watch")))?;
+    // SAFETY: a change notification on a folder path; closed below.
+    let change = unsafe {
+        FindFirstChangeNotificationW(
+            &HSTRING::from(folder.as_os_str()),
+            false,
+            FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE,
+        )
+    }
+    .map_err(io::Error::other)?;
+    let deadline = Instant::now() + timeout;
+    let exists = loop {
+        // Checked once the folder is watched, so a file created between the
+        // first check and the watch is seen.
+        if file.exists() {
+            break true;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let milliseconds = u32::try_from(remaining.as_millis()).unwrap_or(u32::MAX - 1);
+        // SAFETY: `change` is an open notification handle.
+        let waited = unsafe { WaitForSingleObject(change, milliseconds) };
+        if waited != WAIT_OBJECT_0 {
+            break file.exists();
+        }
+        // SAFETY: as above; re-arms the notification.
+        if unsafe { FindNextChangeNotification(change) }.is_err() {
+            break file.exists();
+        }
+    };
+    // SAFETY: closes the notification handle opened above, once.
+    let _ = unsafe { FindCloseChangeNotification(change) };
+    Ok(exists)
+}
 
 /// Reads `path` and returns its contents, base64 encoded.
 ///

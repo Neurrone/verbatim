@@ -541,6 +541,27 @@ impl SrState {
             .map(|focus| (focus.source, &focus.snapshot))
     }
 
+    /// The focused node as last announced, its ancestors outermost first,
+    /// and the navigator object, as the reducer knows them, whether or not
+    /// the focus's outpost is still running: what a failed end-to-end test
+    /// saves to show where Verbatim thought it was.
+    #[must_use]
+    pub fn focus_report(
+        &self,
+    ) -> (
+        Option<&NodeSnapshot>,
+        &[NodeSnapshot],
+        Option<&NodeSnapshot>,
+    ) {
+        (
+            self.focus.as_ref().map(|focus| &focus.snapshot),
+            self.focus
+                .as_ref()
+                .map_or(&[][..], |focus| &focus.ancestors[..]),
+            self.navigator.as_ref().map(|navigator| &navigator.object),
+        )
+    }
+
     /// The application holding attention, if any foreground change has been
     /// seen yet. The shell derives the supervisor's view of attention from this.
     #[must_use]

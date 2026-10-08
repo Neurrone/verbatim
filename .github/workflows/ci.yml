@@ -142,9 +142,15 @@ jobs:
             exit 1
           }
           Add-Content -Path $env:GITHUB_PATH -Value $aliases
-      # The runner's Windows Server has classic Notepad, without Windows 11
-      # Notepad's spell checker, so the scenarios the registry marks
-      # local-only are skipped here, and only here (docs/tooling.md).
+      # Every live test is #[ignore]d, so a plain `cargo test` lists it as
+      # ignored rather than reporting a pass it never ran; this step runs
+      # them with --ignored, and a missing agent fails them. The runner's
+      # Windows Server has classic Notepad, not Windows 11 Notepad, so the
+      # local-only scenarios, all named notepad_, are deselected by name
+      # (libtest counts them as filtered out, never as passed), and
+      # VERBATIM_E2E_SKIP_LOCAL_ONLY makes one that ran anyway fail. The
+      # demonstrations, named demo_, are recorded by `cargo xtask demo`
+      # and are not part of the suite (docs/tooling.md).
       # The agent is started in the same step as the suite: GitHub's Windows
       # runner ends the processes a step started when that step finishes, so
       # an agent started in a step of its own was gone (connection refused)
@@ -174,7 +180,7 @@ jobs:
             Write-Error "verbatim-agent never started listening on 127.0.0.1:44001"
             exit 1
           }
-          cargo test -p verbatim-e2e --no-fail-fast -- --test-threads=1 2>&1 | Tee-Object -FilePath verbatim-e2e-test-output.log
+          cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip notepad_ --test-threads=1 2>&1 | Tee-Object -FilePath verbatim-e2e-test-output.log
           $status = $LASTEXITCODE
           Stop-Process -Id $agent.Id -ErrorAction SilentlyContinue
           exit $status

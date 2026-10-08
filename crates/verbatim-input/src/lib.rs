@@ -16,6 +16,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod harness;
 pub mod keys;
 pub mod map;
 pub mod scripts;

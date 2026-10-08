@@ -235,8 +235,17 @@ When speech is cut off (`docs/parity.md`, "When speech is cut off, and
 cancellation of expired focus speech"). Besides an `Interrupt` utterance,
 three things end speech early, all carried to the queue thread as events:
 
-- `SpeechControl::cancel`, which every key press calls, cancels everything
-  as above.
+- `SpeechControl::cancel_through`, which every key press calls with its
+  key sequence number, cancels everything as above, at once, and fences
+  off speech an earlier key press caused that reaches the queue thread
+  after it: `SpeechManager::speak_for_key`, given that earlier press's
+  number, ends such an utterance cancelled, announced as queued and ended
+  together, unspoken, exactly as if it had come before the cancel. A
+  press cancels from the hook thread while the press before it may still
+  be on its way to the reducer; NVDA runs a key's cancel in order behind
+  the earlier keys' scripts, and the fence keeps that order without making
+  the cancel wait. `SpeechControl::cancel` cancels the same way with no
+  fence, for the reducer's own stops.
 - `SpeechControl::drop_expired`, which every focus change calls, drops
   expired focus speech, judged as NVDA judges it. The queue thread
   remembers the validity of every utterance it has handed on whose ending

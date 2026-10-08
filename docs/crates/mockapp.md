@@ -85,7 +85,17 @@ and `set-value <id> <text>` (update the tree and raise the matching
 property-change or name/value-change notification), `set-description <id>
 <text>` and `set-states <id> <state>...` (MSAA only: replace the
 description, or the whole state set, named as in fixtures, and raise
-`EVENT_OBJECT_DESCRIPTIONCHANGE` or `EVENT_OBJECT_STATECHANGE`), `select <id>` (marks
+`EVENT_OBJECT_DESCRIPTIONCHANGE` or `EVENT_OBJECT_STATECHANGE`), `focus-child
+<container> <child>` (addresses the container's children as numbered
+simple children from then on, as a Win32 tree view's items are, so its
+`accFocus` names the focused child by child id and its `accChild` has no
+object for them; moves the focus to the child and raises focus on the
+container and then on the child by its child id in one turn of the window
+thread; MSAA-only), `client-name <text>`
+(names the window's client area, the root node, `text`, leaving the
+window's text alone, and raises `EVENT_OBJECT_NAMECHANGE` on the client
+area, as Windows 11 Notepad renames its window as it is first activated;
+unsupported on the UIA backend), `select <id>` (marks
 the node selected, moving the state off any previous selection, and raises
 `SelectionItem_ElementSelected` for UIA or `EVENT_OBJECT_SELECTION` for
 MSAA), `notify <text>` (raises a UIA `AutomationNotification` from the

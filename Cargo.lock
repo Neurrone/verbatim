@@ -1619,6 +1619,7 @@ dependencies = [
  "serde_json",
  "tracing",
  "verbatim-control",
+ "verbatim-input",
  "verbatim-model",
  "verbatim-process",
  "windows",

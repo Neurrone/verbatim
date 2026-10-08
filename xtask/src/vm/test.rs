@@ -398,7 +398,7 @@ fn format_optional_u64(value: Option<u64>) -> String {
 
 /// Runs one scenario (or, for [`SESSION_INFO_TEST_NAME`], the `session_info`
 /// precondition) as its own `cargo test -p verbatim-e2e <test_name> --
-/// --exact --test-threads=1` subprocess against the guest, with the
+/// --exact --ignored --test-threads=1` subprocess against the guest, with the
 /// environment `verbatim_e2e::Scenario::launch` needs for a remote, audible,
 /// recorded run. See this module's own doc comment for why one subprocess per
 /// scenario is the scenario-boundary design this harness uses.
@@ -423,6 +423,9 @@ fn run_scenario_subprocess(
             test_name,
             "--",
             "--exact",
+            // Every live test is ignored, so a plain `cargo test` lists it as
+            // ignored rather than running it; the suite runs it explicitly.
+            "--ignored",
             "--test-threads=1",
         ])
         .env("VERBATIM_E2E_ENDPOINT", endpoint)

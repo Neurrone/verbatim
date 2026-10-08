@@ -357,6 +357,96 @@ pub struct CaretAnswer {
 /// The signature both implementations share.
 pub type CaretReadFn = fn(&CaretQuery<'_>) -> Result<CaretAnswer, Error>;
 
+/// The caret and its line alone, read as part of another program (a
+/// terminal's tail, [`crate::TailQuery::caret`]) or, classically, after it:
+/// a [`CaretQuery`] with nothing to compare and no unit or formatting.
+#[derive(Clone, Copy)]
+pub struct CaretLineQuery<'a> {
+    /// The element with the text.
+    pub element: &'a IUIAutomationElement,
+    /// Its text pattern, which the classic implementation reads.
+    pub pattern: &'a IUIAutomationTextPattern,
+    /// Its `TextPattern2`, when the provider has one.
+    pub pattern2: Option<&'a IUIAutomationTextPattern2>,
+    /// The most UTF-16 code units of text read for the line.
+    pub max_text: i32,
+}
+
+/// The registers of a caret and its line emitted into another program.
+pub(crate) struct CaretLineRegisters {
+    caret: CaretRegisters,
+    line: UnitRegisters,
+}
+
+impl CaretLineRegisters {
+    /// The answer, as [`caret_read_remote`] gives it for a query with
+    /// nothing to compare and no unit or formatting.
+    pub(crate) fn read(&self, outcome: &Outcome) -> Result<CaretAnswer, Error> {
+        let caret = outcome
+            .get(self.caret.caret)?
+            .ok_or(Error::MissingResult(self.caret.caret.id()))?;
+        let selection = if outcome.get(self.caret.has_selection)? {
+            outcome.get(self.caret.selection)?
+        } else {
+            None
+        };
+        Ok(CaretAnswer {
+            caret,
+            collapsed: outcome.get(self.caret.collapsed)?,
+            selection,
+            moved: false,
+            selection_moved: false,
+            line: self.line.read(outcome)?,
+            unit: None,
+            runs: Vec::new(),
+            changes: None,
+            unsupported: None,
+            at_edge: None,
+        })
+    }
+}
+
+/// Emits the caret and its line into `b`, as [`caret_read_remote`] reads
+/// them.
+pub(crate) fn emit_caret_line(b: &mut Builder, query: &CaretLineQuery<'_>) -> CaretLineRegisters {
+    let c = Constants {
+        start: b.int(endpoint_number(Endpoint::Start)),
+        end: b.int(endpoint_number(Endpoint::End)),
+        zero: b.int(0),
+        one: b.int(1),
+        max_text: b.int(query.max_text),
+    };
+    let element = b.import_element(query.element);
+    let caret = emit_caret(b, &c, element, query.pattern2.is_some());
+    let point = c.collapsed(b, caret.caret);
+    let line_unit = b.int(TextUnit_Line.0);
+    let line = c.unit_at(b, point, line_unit);
+    CaretLineRegisters { caret, line }
+}
+
+/// The caret and its line the classic way, as [`caret_read_classic`] reads
+/// them.
+///
+/// # Errors
+///
+/// [`Error::Uia`] when a call fails.
+pub(crate) fn caret_line_classic(query: &CaretLineQuery<'_>) -> Result<CaretAnswer, Error> {
+    caret_read_classic(&CaretQuery {
+        element: query.element,
+        pattern: query.pattern,
+        pattern2: query.pattern2,
+        since: None,
+        previous_selection: None,
+        unit: None,
+        formats: None,
+        attributes: Attributes::NONE,
+        learning: Attributes::NONE,
+        max_text: query.max_text,
+        max_change_text: 0,
+        edge: None,
+    })
+}
+
 /// The caret read, the one function call sites use: the remote program when
 /// `remote` is true, falling back to the classic implementation for this
 /// call when the program fails, and the classic implementation alone when

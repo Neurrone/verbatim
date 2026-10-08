@@ -21,17 +21,14 @@
 //! GitHub's runner skips.
 //!
 //! The errors are there from the start, so every step presses a key and
-//! waits for its speech to be heard in full before the next, as a
-//! listening user would, and there is no other wait.
+//! asserts exactly what it says, heard in full, before the next.
 
 use std::io;
-use std::time::Duration;
 
 use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, harness_marker};
 
-/// How long each step's speech is given to arrive.
-const STEP_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) use super::no_teardown as teardown;
 
 /// The window's name in the run ([`harness_marker`]).
 const NAME: &str = "spelling";
@@ -49,11 +46,11 @@ const TEXT_AREA: &str = "Text edit";
 const FIRST_LINE: &str = "sound: spelling-error spelling error Ths line has a sound: spelling-error spelling error tset .";
 
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    let directory = scenario.run_directory()?;
+    let directory = scenario.run_directory().to_owned();
     let title = harness_marker(NAME);
     // Deleted when the scenario ends, and by the next launch's sweep after
     // an aborted run.
-    let fixture = scenario.harness_file(NAME, "json")?;
+    let fixture = scenario.harness_file(NAME, "json");
     let contents = format!(
         r#"{{
   "id": "root",
@@ -83,29 +80,21 @@ pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
         "--show",
     ]
     .map(str::to_owned);
-    let pid = scenario.launch_titled(&format!(r"{directory}\mockapp.exe"), &args, &title, true)?;
-    scenario.bring_titled_window_forward(&title, STEP_TIMEOUT)?;
-    Ok(ScenarioState::TargetPid(pid))
+    scenario.launch_titled(&format!(r"{directory}\mockapp.exe"), &args, &title, true)?;
+    Ok(ScenarioState::None)
 }
 
-/// Presses `keys` and waits for exactly `heard`.
+/// Presses `keys` and asserts exactly `heard`.
 fn press(scenario: &mut Scenario, keys: &str, heard: &str) {
     scenario.send_keys(&[keys]).expect("sends the key");
-    scenario.speech().expect_exactly(&[heard], STEP_TIMEOUT);
+    scenario.speech().expect(&[heard]);
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // The window, then its text area, then the caret's line, the first,
     // with its errors.
-    let title = harness_marker(NAME);
-    let text_area = scenario
-        .speech()
-        .expect_in_order_capturing(&[&title, "Text "], STEP_TIMEOUT);
-    assert_eq!(text_area, TEXT_AREA, "the text area's announcement");
-    let line = scenario
-        .speech()
-        .expect_change_capturing(&text_area, STEP_TIMEOUT);
-    assert_eq!(line, FIRST_LINE, "the caret's line on focus");
+    let window = format!("{} window", harness_marker(NAME));
+    scenario.speech().expect(&[&window, TEXT_AREA, FIRST_LINE]);
 
     // The line ended out of the error, after its full stop, so the next
     // character, inside the misspelt "Ths", enters it again; the one after
@@ -132,16 +121,4 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // the first, read again, says its errors again.
     press(scenario, "downarrow", "All fine here.");
     press(scenario, "uparrow", FIRST_LINE);
-}
-
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "must match ScenarioDef::teardown's fn-pointer signature"
-)]
-pub(crate) fn teardown(scenario: &mut Scenario, state: ScenarioState) {
-    if let ScenarioState::TargetPid(pid) = state {
-        scenario
-            .kill_target(pid)
-            .expect("kills mockapp through the agent");
-    }
 }

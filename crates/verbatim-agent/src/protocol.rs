@@ -25,9 +25,15 @@ use serde::{Deserialize, Serialize};
 /// [`Request::ReadFileChunk`]; version 5 added [`Request::SendKeys`];
 /// version 6 added [`Request::TypeText`]; version 7 added
 /// [`Request::DeleteFile`]; version 8 added [`Request::ListFolders`] and
-/// [`Request::DeleteFolder`]. A test run against an older agent is refused
-/// at `Hello` instead of losing its connection mid-run.
-pub const AGENT_PROTOCOL_VERSION: u32 = 8;
+/// [`Request::DeleteFolder`]; version 9 removed killing by image name and
+/// forcing a window to the foreground, and added the evidence waits
+/// ([`Request::WaitForWindow`], [`Request::WaitForExit`],
+/// [`Request::WaitForFile`], [`Request::WaitForEvent`]),
+/// [`Request::SetForeground`], [`Request::ChildProcesses`],
+/// [`Request::EndLaunched`], and [`Request::CreateEvent`]. A test run
+/// against an older agent is refused at `Hello` instead of losing its
+/// connection mid-run.
+pub const AGENT_PROTOCOL_VERSION: u32 = 9;
 
 /// The default TCP port the agent listens on.
 ///
@@ -87,6 +93,15 @@ pub enum Request {
         /// the agent's own stdio exactly as before.
         #[serde(default)]
         stderr_to: Option<String>,
+        /// When set, the title of the console window a console program
+        /// opens, from its first frame: a console host started directly
+        /// otherwise shows its own path until the shell sets a title.
+        #[serde(default)]
+        console_title: Option<String>,
+        /// Whether the program's first window opens minimized and
+        /// inactive, for a caller that brings it forward once it is ready.
+        #[serde(default)]
+        minimized: bool,
     },
     /// Terminates a process by pid.
     KillProcess {
@@ -94,36 +109,115 @@ pub enum Request {
         /// [`ReplyPayload::Launched`].
         pid: u32,
     },
-    /// Terminates every currently running process whose image (executable
-    /// file) matches `name`, case-insensitively: a bare file name, for
-    /// example `"notepad.exe"`, matches that file name wherever it runs
-    /// from, and a full path matches only processes running that very file.
-    /// Exists because Windows 11 Notepad hands off to an already-running
-    /// instance rather than spawning a new one, so the pid a `LaunchProcess`
-    /// reply names can outlive the window it actually opened — a name sweep
-    /// catches whatever pid ended up owning it. Zero matches is a normal,
-    /// successful outcome, not an error.
-    KillProcessesByName {
-        /// The image file name, or full path, to match.
+    /// Terminates every process this agent launched that is still running,
+    /// with everything each one started (its job object), and reports how
+    /// many were running: the pre-launch sweep a test runs, so a process an
+    /// aborted earlier run left behind is ended by its own handle, never by
+    /// its image name. Answered by [`ReplyPayload::EndedLaunched`].
+    EndLaunched,
+    /// Lists the processes whose parent is `pid`, such as the synthesizer
+    /// host a Verbatim started, so a test can act on one process of its own
+    /// rather than every process of that name. Answered by
+    /// [`ReplyPayload::Processes`].
+    ChildProcesses {
+        /// The parent's OS process id.
+        pid: u32,
+    },
+    /// Brings the window `window` names to the foreground with
+    /// `SetForegroundWindow`, injecting no input: it succeeds when Windows
+    /// lets the agent set the foreground, as it does for the program that
+    /// injected the last input. Answered by [`ReplyPayload::Foreground`].
+    SetForeground {
+        /// The window's handle, as [`WindowInfo::window`] reports it.
+        window: u64,
+    },
+    /// Waits up to `timeout_ms` for `condition` to hold, checking it again
+    /// each time Windows reports a top-level window shown, hidden, created,
+    /// destroyed, renamed, cloaked, or brought to the foreground: evidence,
+    /// never a poll. Answered by [`ReplyPayload::WindowState`].
+    WaitForWindow {
+        /// What to wait for.
+        condition: WindowCondition,
+        /// How long to wait, in milliseconds.
+        timeout_ms: u64,
+    },
+    /// Minimizes every window as the taskbar's Show Desktop command does,
+    /// the state every end-to-end scenario starts from, and waits up to
+    /// `timeout_ms` for every window that can be minimized to be. Answered
+    /// by [`ReplyPayload::WindowState`].
+    MinimizeAll {
+        /// How long to wait, in milliseconds.
+        timeout_ms: u64,
+    },
+    /// Reports the focused element as UI Automation sees it, read
+    /// independently of any screen reader: state a test fixes its
+    /// expectation from, such as the desktop's focused item. Answered by
+    /// [`ReplyPayload::Focused`].
+    FocusedElement,
+    /// Focuses the first element of the foreground window whose UI
+    /// Automation identifier is `automation_id`, with UI Automation's
+    /// `SetFocus`, injecting no input, as a script would, and reports how
+    /// many children it has. Answered by [`ReplyPayload::Children`].
+    FocusByAutomationId {
+        /// The element's UI Automation identifier.
+        automation_id: String,
+    },
+    /// Reports the words of the focused element's text that its
+    /// application marks as misspelt, with UI Automation's spelling-error
+    /// annotation, in order, read independently of any screen reader.
+    /// Answered by [`ReplyPayload::Words`].
+    MisspeltWords,
+    /// Reports whether the lock key `key` (a key name of the control
+    /// plane's vocabulary, such as `scrolllock`) is on, read independently
+    /// of any screen reader. Answered by [`ReplyPayload::KeyToggled`].
+    KeyToggled {
+        /// The key's name.
+        key: String,
+    },
+    /// Lists the processes that have exited in the job of the process `pid`
+    /// the agent launched (every process it started, and they started), in
+    /// the order they exited: how a test finds that one of Verbatim's own
+    /// processes ended while it ran. Answered by [`ReplyPayload::Exits`].
+    JobExits {
+        /// The launched process's OS pid.
+        pid: u32,
+    },
+    /// Waits up to `timeout_ms` for process `pid` to exit, on its process
+    /// handle. Answered by [`ReplyPayload::ProcessStatus`]: still running
+    /// when the wait ran out.
+    WaitForExit {
+        /// The OS process id.
+        pid: u32,
+        /// How long to wait, in milliseconds.
+        timeout_ms: u64,
+    },
+    /// Waits up to `timeout_ms` for a file to exist, checking again each
+    /// time Windows reports a change in its folder. Answered by
+    /// [`ReplyPayload::FileExists`].
+    WaitForFile {
+        /// Path to the file, agent-local.
+        path: String,
+        /// How long to wait, in milliseconds.
+        timeout_ms: u64,
+    },
+    /// Creates a named, manual-reset event, not yet set, which a process
+    /// the agent launches later can open by name and set when it has
+    /// reached a point a test waits for, such as Verbatim being ready for
+    /// input. The agent keeps it until [`Request::WaitForEvent`] has waited
+    /// on it. Answered by [`ReplyPayload::EventCreated`].
+    CreateEvent {
+        /// The event's name, such as `Local\verbatim-e2e-ready-1`.
         name: String,
     },
-    /// Waits up to `timeout_ms` for a visible top-level window of a process
-    /// whose image name is `image_name` (matched like
-    /// [`Request::KillProcessesByName`], so a Notepad hand-off to another
-    /// pid is still found), and brings it to the foreground. Windows keeps a
-    /// newly launched application behind the current foreground window for
-    /// 200 seconds after the last input, injected keystrokes included; a
-    /// user's own launch would put it in front. Answered by
-    /// [`ReplyPayload::Foreground`].
-    BringToForeground {
-        /// The image file name to match.
-        image_name: String,
-        /// When set, only a window whose title contains this text matches,
-        /// so a test brings its own window forward, never another window of
-        /// the same program.
-        #[serde(default)]
-        title_contains: Option<String>,
-        /// How long to wait for the window, in milliseconds.
+    /// Waits up to `timeout_ms` for the event [`Request::CreateEvent`]
+    /// made to be set, or for process `pid` to exit first, and then
+    /// forgets the event. Answered by [`ReplyPayload::EventWait`].
+    WaitForEvent {
+        /// The event's name.
+        name: String,
+        /// The process expected to set it.
+        pid: u32,
+        /// How long to wait, in milliseconds.
         timeout_ms: u64,
     },
     /// Reports the foreground window and the visible top-level windows, so
@@ -268,22 +362,71 @@ pub enum ReplyPayload {
     Launched {
         /// The spawned process's OS pid.
         pid: u32,
+        /// Whether Windows let the agent allow the process to take the
+        /// foreground with its first window, as a program a user starts
+        /// may (`AllowSetForegroundWindow`). It does when the agent may set
+        /// the foreground itself, such as when it injected the last input.
+        foreground_allowed: bool,
     },
     /// Answer to [`Request::KillProcess`].
     Killed(KillOutcome),
-    /// Answer to [`Request::KillProcessesByName`]: how many matching
-    /// processes were found and terminated. Zero is a normal outcome, not
-    /// an error.
-    KilledByName {
-        /// Count of processes terminated.
-        terminated: u32,
+    /// Answer to [`Request::EndLaunched`]: how many launched processes were
+    /// still running and were ended.
+    EndedLaunched {
+        /// Count of processes ended.
+        ended: u32,
     },
+    /// Answer to [`Request::ChildProcesses`].
+    Processes {
+        /// The processes, in the order Windows lists them.
+        processes: Vec<ProcessInfo>,
+    },
+    /// Answer to [`Request::WaitForWindow`]: whether the condition held when
+    /// the wait ended, and the desktop as it was then.
+    WindowState {
+        /// Whether the condition held.
+        met: bool,
+        /// The foreground window and the visible windows.
+        desktop: ForegroundInfo,
+    },
+    /// Answer to [`Request::WaitForFile`]: whether the file exists.
+    FileExists {
+        /// Whether the file existed when the wait ended.
+        exists: bool,
+    },
+    /// Answer to [`Request::CreateEvent`].
+    EventCreated,
+    /// Answer to [`Request::FocusedElement`].
+    Focused(FocusedElement),
+    /// Answer to [`Request::FocusByAutomationId`].
+    Children {
+        /// How many children the focused element has.
+        count: u32,
+    },
+    /// Answer to [`Request::KeyToggled`].
+    KeyToggled {
+        /// Whether the key is on.
+        on: bool,
+    },
+    /// Answer to [`Request::MisspeltWords`].
+    Words {
+        /// The words, as the text range of each reads, white space after
+        /// it trimmed.
+        words: Vec<String>,
+    },
+    /// Answer to [`Request::JobExits`].
+    Exits {
+        /// The processes that exited, oldest first.
+        exits: Vec<ProcessExit>,
+    },
+    /// Answer to [`Request::WaitForEvent`].
+    EventWait(EventOutcome),
     /// Answer to [`Request::ProcessStatus`].
     ProcessStatus(ProcessState),
-    /// Answer to [`Request::BringToForeground`]: whether a matching window
-    /// is the foreground window.
+    /// Answer to [`Request::SetForeground`]: whether the window is the
+    /// foreground window.
     Foreground {
-        /// `false` if no matching window appeared in time or Windows refused.
+        /// `false` when Windows refused.
         taken: bool,
     },
     /// Answer to [`Request::SessionInfo`].
@@ -321,9 +464,17 @@ pub enum ReplyPayload {
         names: Vec<String>,
     },
     /// Answer to [`Request::SendKeys`]: every key was injected.
-    KeysSent,
+    KeysSent {
+        /// The number the last key stroke carried
+        /// (`verbatim_input::harness`), which Verbatim reports once it has
+        /// handled it.
+        input: u64,
+    },
     /// Answer to [`Request::TypeText`]: every character was typed.
-    TextTyped,
+    TextTyped {
+        /// The number the last character's key events carried.
+        input: u64,
+    },
     /// Answer to [`Request::OpenControlTunnel`]: the agent successfully
     /// opened Verbatim's control-plane pipe and is ready to relay bytes.
     /// A failure to open that pipe is reported as a [`Frame::Error`]
@@ -375,6 +526,10 @@ pub struct SessionInfo {
 /// A top-level window, as [`ForegroundInfo`] reports it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WindowInfo {
+    /// The window's handle, for [`Request::SetForeground`].
+    pub window: u64,
+    /// The OS process id of the process that owns it.
+    pub pid: u32,
     /// The window's title.
     pub title: String,
     /// The window's class name.
@@ -384,6 +539,95 @@ pub struct WindowInfo {
     /// Whether the window is cloaked (DWM hides it although it may hold the
     /// foreground, as the Start menu's search window can after it closes).
     pub cloaked: bool,
+    /// Whether the window is minimized.
+    pub minimized: bool,
+}
+
+/// What [`Request::WaitForWindow`] waits for. Titles are matched as
+/// containing the given text, the way a test names its own windows with a
+/// marker of its run.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WindowCondition {
+    /// The foreground window is titled with `title_contains`, is not
+    /// cloaked, and, when `unsaved` is set, marks unsaved changes (a title
+    /// starting with `*`) or not, as it says.
+    Foreground {
+        /// Text the title contains.
+        title_contains: String,
+        /// Whether the title must mark unsaved changes, or must not.
+        unsaved: Option<bool>,
+    },
+    /// The foreground window is not titled with `title_contains`, such as
+    /// once a dialog has closed.
+    NotForeground {
+        /// Text the title contains.
+        title_contains: String,
+    },
+    /// A visible top-level window, minimized or not, is titled with
+    /// `title_contains`.
+    Present {
+        /// Text the title contains.
+        title_contains: String,
+    },
+    /// No visible top-level window is titled with `title_contains`.
+    Absent {
+        /// Text the title contains.
+        title_contains: String,
+    },
+    /// Every visible top-level window that can be minimized is, or is
+    /// cloaked, kept by the window manager but not shown.
+    AllMinimized,
+}
+
+/// The focused element as UI Automation reports it, for
+/// [`Request::FocusedElement`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FocusedElement {
+    /// Its name.
+    pub name: String,
+    /// Its position among its siblings and how many there are, counting
+    /// from one, when UI Automation reports both.
+    pub position: Option<(i32, i32)>,
+    /// Whether it is selected, when it can be.
+    pub selected: Option<bool>,
+}
+
+/// A process, as [`Request::ChildProcesses`] reports it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessInfo {
+    /// The OS process id.
+    pub pid: u32,
+    /// The executable file name, such as `verbatim-synth-host.exe`.
+    pub image: String,
+}
+
+/// A process that exited in a launched process's job, as
+/// [`Request::JobExits`] reports it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessExit {
+    /// The OS process id it had.
+    pub pid: u32,
+    /// Its executable file name.
+    pub image: String,
+    /// Its exit code, when it could be read.
+    pub exit_code: Option<i32>,
+    /// Whether Windows reported the exit as abnormal: the process ended on
+    /// an unhandled exception, as a crash does.
+    pub abnormal: bool,
+}
+
+/// How a [`Request::WaitForEvent`] ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EventOutcome {
+    /// The event was set.
+    Signalled,
+    /// The process exited first, with its exit code when it could be read.
+    Exited {
+        /// The exit code.
+        exit_code: Option<i32>,
+    },
+    /// Neither happened within the timeout.
+    TimedOut,
 }
 
 /// The answer to [`Request::ForegroundInfo`].
@@ -410,11 +654,16 @@ mod tests {
                 working_dir: None,
                 env: vec![("VERBATIM_TEST_AUDIO".to_owned(), "null".to_owned())],
                 stderr_to: Some(r"C:\VerbatimLab\verbatim\stderr-e2e.log".to_owned()),
+                console_title: Some("A console".to_owned()),
+                minimized: true,
             },
         };
         let frame = Frame::Reply {
             to: 7,
-            payload: ReplyPayload::Launched { pid: 4242 },
+            payload: ReplyPayload::Launched {
+                pid: 4242,
+                foreground_allowed: true,
+            },
         };
 
         let mut buffer = Vec::new();
@@ -496,7 +745,7 @@ mod tests {
         };
         let frame = Frame::Reply {
             to: 11,
-            payload: ReplyPayload::TextTyped,
+            payload: ReplyPayload::TextTyped { input: 4 },
         };
 
         let mut buffer = Vec::new();
@@ -515,16 +764,26 @@ mod tests {
     }
 
     #[test]
-    fn kill_processes_by_name_round_trips() {
+    fn a_window_wait_round_trips() {
         let request = RequestEnvelope {
             id: 9,
-            request: Request::KillProcessesByName {
-                name: "notepad.exe".to_owned(),
+            request: Request::WaitForWindow {
+                condition: WindowCondition::Foreground {
+                    title_contains: "verbatim-e2e-notes".to_owned(),
+                    unsaved: Some(false),
+                },
+                timeout_ms: 15_000,
             },
         };
         let frame = Frame::Reply {
             to: 9,
-            payload: ReplyPayload::KilledByName { terminated: 2 },
+            payload: ReplyPayload::WindowState {
+                met: true,
+                desktop: ForegroundInfo {
+                    foreground: None,
+                    windows: Vec::new(),
+                },
+            },
         };
 
         let mut buffer = Vec::new();

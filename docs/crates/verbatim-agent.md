@@ -18,73 +18,78 @@ it when the suite is done.
 Public API:
 
 - `protocol` — the agent's own wire vocabulary, versioned separately from
-  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 6) and framed
+  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 9) and framed
   with the same newline-JSON helpers the control plane uses
-  (`verbatim_control::protocol::write_message`/`read_message`), reused
-  rather than reinvented. Deliberately a distinct vocabulary from
-  `verbatim_control::protocol`: this crate's pids are raw OS process ids
-  naming a process a test is driving (Notepad, `verbatim.exe` itself), not
-  `verbatim_model::Pid`, which names an application Verbatim is
-  *observing*. `Request`: `Hello` (must be first, refused outright on any
-  version mismatch), `LaunchProcess`, `KillProcess`,
-  `KillProcessesByName` (every process with a given image name, for
-  sweeping target applications that hand off to another process; given a
-  full path instead, only processes running that very file),
-  `BringToForeground` (wait for a visible top-level window of a given
-  image name and bring it to the foreground past Windows' foreground lock:
-  a Control tap and `SetForegroundWindow`, then the call attached to the
-  foreground thread's input queue, then one injected Alt+Tab when a cloaked
-  window such as the Start search host holds the foreground; protocol
-  version 1), `ProcessStatus`, `SessionInfo`, `ReadFile`, `ListFiles`
-  (the names of the files directly inside a directory, so a test can fetch
-  logs it cannot name in advance; protocol version 2), `ForegroundInfo`
-  (the foreground window and the visible top-level windows, each with its
-  title, class, program, and whether it is cloaked), `CloseWindows` (an
-  ordinary close request to every visible window whose title contains some
-  text, then a wait for them to go), `WriteFile` (a small file, creating any missing parent directories,
-  such as the
-  document a test opens Notepad on), and `BringToForeground`'s optional
-  title filter (protocol version 3; all from the `desktop` and `files`
-  modules), `ReadFileChunk` (up to 8 MiB of a file of any size from a
-  given offset, answered like `ReadFile` and empty past the end, so a
-  client can copy a file too large for `ReadFile`, such as a scenario's
-  video; protocol version 4), `SendKeys` (real OS key strokes through
-  `verbatim_control::send_keys`, every name validated before any key is
-  sent, so NVDA can be driven with no Verbatim running, for
-  [the NVDA transcript](../nvda-transcript.md); protocol version 5),
-  `TypeText` (a string typed as real key presses: each character mapped
-  to its virtual key and Shift, Control, and Alt state in the keyboard
-  layout of the foreground window's thread with `VkKeyScanEx`, and pressed
-  with `SendInput`, modifiers down, key down and up, modifiers up, each
-  event carrying the key's scan code in that layout, so a keyboard hook
-  sees ordinary typing, which typed-character echo needs; a control
-  character, such as a line break, or a character the layout cannot type
-  fails the request before any key is sent, and named keys stay with
-  `SendKeys`; from the private `typing` module; protocol version 6),
-  `DeleteFile` (removes a file a test wrote, such as a harness document
-  once its window has closed, a file already gone counting as success;
-  protocol version 7), `ListFolders` and `DeleteFolder` (the names of the
-  folders directly inside a directory, answered with `FileNames`, and
-  removing a folder a test laid out with everything in it, a folder
-  already gone counting as success; protocol version 8),
-  `OpenControlTunnel`. `KillOutcome` makes
-  "the process was already gone" a first-class non-error reply
-  (`AlreadyExited`) distinct from `Terminated`, rather than an error.
-  `LaunchProcess` gives the launched child no standard handles by
-  default, as a program a user starts has none; its `stderr_to` field, an `Option<String>` defaulted via
-  `serde(default)` so an older client that omits it on the wire still
-  deserializes, names a path the agent creates (truncating any existing
-  content) and redirects both the child's stdout and stderr into, so a
-  Verbatim that panics at launch leaves its message somewhere a host-side
-  test or `cargo xtask vm logs` can actually read, instead of vanishing
-  with the process.
-- `server::serve(listener, pipe_name, nudge)` — the TCP accept loop, one thread
+  (`verbatim_control::protocol::write_message`/`read_message`). Its pids
+  are raw OS process ids naming a process a test is driving, not
+  `verbatim_model::Pid`, which names an application Verbatim observes.
+  `Hello` must come first and is refused on any version mismatch. The
+  requests, by what they are for:
+  - Processes: `LaunchProcess` (see below), `KillProcess` (a launched
+    child with everything in its job), `EndLaunched` (every process the
+    agent launched that still runs, ended by its own handle: the
+    pre-launch sweep, never by image name), `ChildProcesses` (the
+    processes whose parent is a given pid, such as Verbatim's synthesizer
+    host), `JobExits` (the processes that exited in a launched child's job,
+    in order, with exit codes and whether the exit was abnormal: how a test
+    finds that one of Verbatim's own processes ended while it ran),
+    `WaitForExit` (on the process handle), and `ProcessStatus`.
+  - The desktop: `ForegroundInfo` (the foreground window and the visible
+    top-level windows, each with its handle, owning pid, title, class,
+    program, and whether it is cloaked or minimized), `SetForeground`
+    (`SetForegroundWindow` on a window, injecting no input),
+    `WaitForWindow` with a `WindowCondition` (`Foreground`, optionally
+    requiring the title to mark unsaved changes or not; `NotForeground`;
+    `Absent`; `AllMinimized`, where a cloaked window, kept but not shown,
+    counts as not shown), `MinimizeAll` (the taskbar's Show Desktop command,
+    a wait until every window that can be minimized is, then the desktop
+    brought to the foreground), and `CloseWindows` (an ordinary close
+    request to every visible window whose title contains some text, then a
+    wait for them to go).
+  - State a test fixes its expectations from, read independently of any
+    screen reader: `FocusedElement` (UI Automation's focused element: its
+    name, its position and the size of its set, counted among its parent's
+    children when UI Automation reports none, as for a Win32 list view's
+    items, and whether it is selected), `FocusByAutomationId` (focuses the
+    foreground window's element with that identifier with UI Automation's
+    `SetFocus`, injecting no input, and answers how many children it has),
+    `MisspeltWords` (the words of the focused text marked with UI
+    Automation's spelling-error annotation, read word by word), and
+    `KeyToggled` (whether a lock key is on).
+  - Evidence: `WaitForFile` (a file appearing, checked again on each change
+    notification for its folder), `CreateEvent` and `WaitForEvent` (a named
+    manual-reset event a launched process sets when it reaches a point a
+    test waits for, such as Verbatim being ready; the wait ends early if a
+    given process exits first).
+  - Files: `ReadFile`, `ReadFileChunk` (up to 8 MiB from an offset, for a
+    file too large for `ReadFile`, such as a video), `WriteFile` (creating
+    missing parent folders), `DeleteFile`, `ListFiles`, `ListFolders`, and
+    `DeleteFolder` (a file or folder already gone counting as success).
+  - Input: `SendKeys` (real key strokes through
+    `verbatim_control::send_keys`, every name validated before any key is
+    sent) and `TypeText` (each character mapped to its key and modifier
+    state in the foreground window's keyboard layout with `VkKeyScanEx`
+    and pressed with `SendInput`, with its scan code, so a keyboard hook
+    sees ordinary typing). The agent numbers every key event it injects in
+    its `dwExtraInfo` (`verbatim_input::harness`), the last of each key or
+    character marked last, and `KeysSent` and `TextTyped` answer with the
+    last number, which Verbatim reports once it has handled that input.
+  - `SessionInfo` and `OpenControlTunnel`.
+
+  `KillProcessesByName`, `BringToForeground`, and the Control tap and
+  Alt+Tab it injected are gone: nothing is ended by its image name, and the
+  agent never injects input a test did not ask for. `KillOutcome` makes
+  "the process was already gone" a non-error reply (`AlreadyExited`).
+  `LaunchProcess` gives the child no standard handles by default, as a
+  program a user starts has none; `stderr_to` names a file the child's
+  standard output and error go to, so a Verbatim that panics at launch
+  leaves its message; `console_title` titles the console window a console
+  program opens from its first frame (`STARTUPINFO`'s title), since the
+  console host started directly otherwise shows its own path until the
+  shell sets a title. Both fields default when omitted on the wire.
+- `server::serve(listener, pipe_name)` — the TCP accept loop, one thread
   per connection; blocking, so callers needing to do other work run it on
-  a background thread. `nudge`, a `ForegroundNudge`, says whether a
-  launch may tap Control to let its program take the foreground: the
-  binary passes `Allowed`, and this crate's tests pass `Never`, so running
-  them never presses a key into a Verbatim that an end-to-end run is
-  driving on the same desktop (such a tap cancels its speech).
+  a background thread.
 - `session::current()` — session id, whether the process's window station
   is interactive, and the input desktop's name when it can be opened, read
   by `verbatim_process::session` (Verbatim makes the same check at its own
@@ -103,14 +108,26 @@ host, started explicitly as `conhost.exe`, take them as a pseudoconsole's
 input and output, open no window, and exit. The command line is quoted
 by the C runtime's rules, and an environment override is set over the
 agent's own environment. Before the child runs, it is allowed to take the
-foreground (`AllowSetForegroundWindow`, after the Control tap that lets
-the agent set the foreground itself when the foreground lock is in
-force, unless the server was told never to inject it), as a program a
-user starts may: a console window opened under
-the lock raised its focus events while refused the foreground, and when
-the harness then brought it forward no new event said so, so Verbatim,
-which dropped the refused window's events as NVDA does, never announced
-it.
+foreground (`AllowSetForegroundWindow`), as a program a user starts may,
+and the reply says whether Windows let the agent allow it: it does while
+the agent injected the last input, which every end-to-end scenario's keys
+make so. The agent never injects a key to become eligible; a launch whose
+window does not take the foreground fails the test. A console window
+opened under the foreground lock raised its focus events while refused
+the foreground, and Verbatim, which drops a refused window's events as
+NVDA does, never announced it.
+
+Every wait is event-driven and ends before the client's read timeout,
+which the client sets ten seconds past the wait it asked for. Window
+waits (private `wait` module) check their condition once, then install
+out-of-context WinEvent hooks for the events that can change it (a
+top-level window created, destroyed, shown, hidden, renamed, cloaked or
+uncloaked, minimized or restored, or brought to the foreground) and check
+again on each, blocking in `GetMessageW` between them, with a thread timer
+bounding the wait. Process exits are recorded from each launched child's
+job object completion port (private `jobs` module), file waits use
+`FindFirstChangeNotification`, and event waits use the event's handle.
+Nothing polls or sleeps.
 Lookup and termination act on raw pids via `OpenProcess`,
 `TerminateProcess`, and `GetExitCodeProcess`, so a test can manage a
 process it did not itself spawn. The agent also keeps the handle of every

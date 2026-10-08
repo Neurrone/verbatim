@@ -332,37 +332,41 @@ description, keyboard shortcut, and location), and reaching a parent is 3
 more (`accParent`, the `QueryInterface` for its `IAccessible`, and its
 window, `WindowFromAccessibleObject`).
 
-- Minimum: 18 MSAA calls. Acquiring the focused object from the event's
-  address (1) and reading it (7), then one ancestor hop (10) that reads the
-  first ancestor and recognizes it as the previous focus's container.
+- Minimum: 19 MSAA calls. Acquiring the focused object from the event's
+  address (1), asking its `accFocus` whether a focused child of it should
+  be reported instead (1, `docs/parity.md`, "A control's own focus with a
+  focused child"), and reading it (7), then one ancestor hop (10) that
+  reads the first ancestor and recognizes it as the previous focus's
+  container.
 - Before the MSAA work package (2026-10-07): 30 MSAA calls, the focus's
   role read twice, once for NVDA's check whether a focus event names a
   list and once with the rest of its properties.
-- Today: 29 MSAA calls. The focus costs 8 (its role and state, read
-  first for NVDA's checks, are kept for the read), and the walk goes to
-  the root: two ancestors at
+- Today: 30 MSAA calls. The focus costs 9 (its role and state, read
+  first for NVDA's checks, are kept for the read, and its `accFocus` is
+  asked once), and the walk goes to the root: two ancestors at
   10 each and an `accParent` that finds none. The walk does not stop at the
-  group, because mockapp answers every `accParent` with a new COM object
-  and an object reached through `accParent` is recognized only by its COM
-  identity. mockapp answered 37 provider calls, 14 of them `accParent`,
+  group, because oleacc hands the outpost a new wrapper for every object
+  it reaches through `accParent`, whose COM identity therefore matches no
+  kept node, and such an object has no address of its own. mockapp answered 38 provider calls, 14 of them `accParent`,
   most from `WindowFromAccessibleObject`'s own walk.
-- Target: 18. Recognizing an ancestor by its address and identity string,
+- Target: 19. Recognizing an ancestor by its address and identity string,
   as the registry already does for objects acquired at an address.
 
 ### A focus change, MSAA, cold
 
-- Minimum: 1 window message and 29 MSAA calls: the probe, the focus (8),
+- Minimum: 1 window message and 30 MSAA calls: the probe, the focus (9),
   each of the two ancestors (10 each), and the `accParent` that ends the
   walk at the root.
-- Today: 29 MSAA calls and 1 window message (30 before the MSAA work
-  package, the role read twice): the steady-state count
+- Today: 30 MSAA calls and 1 window message (30 before the MSAA work
+  package, the role read twice, and 29 after it, before the `accFocus`
+  probe): the steady-state count
   (nothing is recognized either way) plus the probe of mockapp's window.
   `WindowFromAccessibleObject` answers no window for mockapp's ancestors,
   whose root object has no parent; until 2026-10-07 their addresses carried
   window 0 and the walk probed it as a second window, which it no longer
   does, since no window is now read as none and the walk keeps the window
-  it is in. mockapp answered 38 provider calls.
-- Target: 29 MSAA calls and 1 window message, met.
+  it is in. mockapp answered 39 provider calls.
+- Target: 30 MSAA calls and 1 window message, met.
 
 ### A focus change into a list, MSAA
 
@@ -377,11 +381,10 @@ window, `WindowFromAccessibleObject`).
 
 ### Arrowing through a list, MSAA
 
-- Minimum: 18 MSAA calls, as for any steady-state focus change.
-- Today: 29 MSAA calls (30 before the MSAA work package), the same as a
-  steady-state focus change and for the same reasons; mockapp answered 37
-  provider calls.
-- Target: 18.
+- Minimum: 19 MSAA calls, as for any steady-state focus change.
+- Today: 30 MSAA calls, the same as a steady-state focus change and for
+  the same reasons; mockapp answered 38 provider calls.
+- Target: 19.
 
 ### A focus on a tree view item, MSAA
 
@@ -465,8 +468,8 @@ it pins a renewal, so no count depends on how long the test took. A
 steady-state focus whose window's verdict has run out costs the probe
 again, 1 window message and 1 `WM_GETOBJECT` more than the next focus,
 which finds the verdict renewed. (Both are arrows between list items whose
-previous focus was itself reached by an arrow, 32 MSAA calls each: one
-`accRole` more than the arrow above, whose previous focus was reached from
+previous focus was itself reached by an arrow, 33 MSAA calls each, the
+`accFocus` probe included: one `accRole` more than the arrow above, whose previous focus was reached from
 the list. Why is not yet known.)
 
 ### A repeated or unfocused focus event, MSAA
@@ -476,14 +479,15 @@ the list. Why is not yet known.)
   change since: NVDA drops it as a duplicate. Before the MSAA work
   package (2026-10-07) it was read in full with its ancestors and the
   reducer found it the focus already, 29 MSAA calls; today only its role
-  is read, for NVDA's list redirect, and mockapp answers 3 provider calls
+  is read, for NVDA's list redirect, and its `accFocus` asked, for a
+  focused child to report instead, and mockapp answers 4 provider calls
   and the acquisition's `WM_GETOBJECT`.
 - A focus event on an object that neither has the focused state nor is
   inside one that has: NVDA reads the states first. Before, it was read
-  in full with its ancestors, then dropped; today its role and state and
-  each ancestor's state are read, and mockapp answers 11 provider calls
-  and the acquisition's `WM_GETOBJECT`, for an object two levels below its
-  root.
+  in full with its ancestors, then dropped; today its role, its
+  `accFocus`, and its state and each ancestor's state are read, and
+  mockapp answers 12 provider calls and the acquisition's `WM_GETOBJECT`,
+  for an object two levels below its root.
 
 ### Entering a dialog, MSAA
 
@@ -492,19 +496,18 @@ text and two buttons, from outside it, so the dialog's own text is gathered
 and reported as its description (`docs/nvda/object-model.md`, "A dialog's
 own text"). mockapp's `tests/fixtures/dialog.json` is that message box.
 
-- Minimum: a cold focus's 29 MSAA calls and 1 window message, and 14 for
+- Minimum: a cold focus's 30 MSAA calls and 1 window message, and 14 for
   the text: the dialog's child count and children (2), each of the three
   children's `IAccessible` and role (6) and states (3), and the question's
   name, value, and description (3). The buttons give no text, so nothing
   else of them is read, and the question's neighbor is a button, which is
   never labelled, so its name is not read either.
-- Today: 43 MSAA calls and 1 window message, the cold focus's 29 and the
-  text's 14 (44 before the MSAA work package). mockapp answered 55
-  provider calls. A focus moving within the
+- Today: 44 MSAA calls and 1 window message, the cold focus's 30 and the
+  text's 14. mockapp answered 56 provider calls. A focus moving within the
   dialog does not read it again, since the dialog is then in the previous
-  focus's chain; mockapp cannot show that, as every `accParent` it answers
-  is a new COM object, so the dialog it reaches from the next button is a
-  new node to the outpost.
+  focus's chain when the dialog has its own window; mockapp's dialog has
+  none, and oleacc hands out a new wrapper for every `accParent`, so the
+  dialog it reaches from the next button is a new node to the outpost.
 - Target: the minimum, met for the text.
 
 ### A dialog's text, UIA
@@ -914,8 +917,9 @@ provider (`tests/fixtures/terminal.json`, `tests/terminal.rs`), whose
   the focus, the baseline (1 call, 2 before). Classically, with
   `uia.remote_operations` off or a provider that cannot run programs, one
   call per provider method: 31 for the baseline of a six-line text, 27 for
-  a grown prompt, 39 for an output line and a new prompt, 39 for more
-  lines than a read takes, 58 for a read that finds nothing new and reads
+  a grown prompt, 39 for an output line and a new prompt, 46 for more
+  lines than a read takes (39 before the first of them were read too, on
+  2026-10-07), 58 for a read that finds nothing new and reads
   afresh, and 61 for a cleared screen (34, 30, 43, 43, 64, and 67 before
   the text range audit of 2026-10-07, which reads a line's text from a
   copy expanded to its line without collapsing the copy first, since
@@ -933,10 +937,31 @@ provider (`tests/fixtures/terminal.json`, `tests/terminal.rs`), whose
   ranges during a flood), when the read is set aside for the next.
 - Target: 1.
 
+### A terminal's caret
+
+A terminal raises no caret event for every character typed: the console
+host raises its caret events on a schedule of its own, so a character
+echoed between two of them leaves Core's copy of the caret behind, and a
+Backspace then says the character the caret was last heard after. So each
+read of a focused terminal's changed text reads the caret and its line
+too (`verbatim_uia_rops::TailQuery::caret`), and the outpost reports it
+after the output (`docs/crates/verbatim-outpost.md`, "Terminals").
+
+- Minimum: no call more, since it goes in the program the text's read
+  already runs.
+- Today: no call more remotely, for 27 more instructions and, from
+  mockapp, the text pattern got from the element (5 provider calls), the
+  selection, and the caret's line read (1 selection, 3 clones, 1
+  comparison, 1 expansion, 2 reads, and 2 other range calls). Classically,
+  8 calls more: 35 for a grown prompt where the read without the caret
+  is 27. Both are pinned (`tests/terminal.rs`,
+  `a_read_with_the_caret_costs_exactly`).
+- Target: the minimum, met.
+
 ### A terminal flood
 
 What Verbatim costs a terminal while ten thousand lines are written as
-fast as PowerShell can write them (`terminal_flood`'s script) into a full
+fast as PowerShell can write them (the flood scenarios' script) into a full
 scrollback of 9,001 lines, measured on 2026-10-07 on a 12-thread x64
 desktop with a debug build. Each time is one flood's own stopwatch; the
 probes that split the cost apart registered and read exactly as the
@@ -986,7 +1011,7 @@ Windows Terminal:
   a line at a time), busy for 6 to 10 percent of the flood.
 - Read back to back with no events, it would take 1.6 to 1.8 seconds.
 
-The wall-time ratio `terminal_flood` checks compares a flood with output
+The wall-time ratio the flood scenarios record compares a flood with output
 reported against one with it turned off, and the outpost reads the
 terminal either way (turning reporting off is Core's), so the ratio is
 about 1 by construction and does not measure the reads' cost; the
@@ -1034,9 +1059,9 @@ made, about 4 in all, wherever the fingerprint is, where its walk took
 
 Against mockapp (`a_fingerprint_far_up_is_found_and_costs_exactly` in
 `crates/mockapp/tests/terminal.rs`), a fingerprint 300 lines up, which
-the bound of 256 missed, is found in 1 call remotely and 58 classically,
-with one `FindText` either way, and the provider calls of both are
-pinned.
+the bound of 256 missed, is found in 1 call remotely and 65 classically
+(58 before the first of the lines after it were read too), with one
+`FindText` either way, and the provider calls of both are pinned.
 
 In a console
 host whose scrollback is not yet full the text does not move beneath the
@@ -1377,7 +1402,11 @@ share of the limit in brackets:
   position with its lines in three languages, each line's then read; 647
   for a first batch from the caret in one language. The count does not
   grow with the lines' length.
-- A terminal's tail: 1,128 (11 percent) when its fingerprint is nowhere
-  and the search checks its 64 matches (`SEARCH_MATCHES`), about 16 each;
-  101 for an anchor in place under new output. The count does not grow
-  with the scrollback or the lines read.
+- A terminal's tail, with the caret and its line read in the same
+  program as the outpost reads a focused terminal: 1,164 (12 percent)
+  when its fingerprint is nowhere and the search checks its 64 matches
+  (`SEARCH_MATCHES`), about 16 each; 137 for an anchor in place under new
+  output, 9 of them deciding whether to read the first of the new lines
+  too, when more follow than the last lines read (the start of a flood),
+  and 27 the caret's (1,137 and 110 before 2026-10-08, without it). The count does not grow with the
+  scrollback or the lines read.

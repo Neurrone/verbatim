@@ -50,8 +50,8 @@ use verbatim_model::{
 };
 use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt, caret_range, uia_text_unit};
 use verbatim_uia_rops::{
-    Attributes, CaretQuery, EdgeQuery, FoundPoint, LocationQuery, Movement, Path, Position,
-    RangeEnd, RangeQuery, RunAttributes, TextAttribute, TextFrom, TextTarget, UnitsQuery,
+    Attributes, CaretAnswer, CaretQuery, EdgeQuery, FoundPoint, LocationQuery, Movement, Path,
+    Position, RangeEnd, RangeQuery, RunAttributes, TextAttribute, TextFrom, TextTarget, UnitsQuery,
 };
 
 use super::{
@@ -286,6 +286,41 @@ impl UiaText {
     #[must_use]
     pub fn pattern(&self) -> &IUIAutomationTextPattern {
         &self.pattern
+    }
+
+    /// The `TextPattern2`, when the provider has one, for reads outside the
+    /// text protocol (a terminal's caret, read with its new output).
+    #[must_use]
+    pub fn pattern2(&self) -> Option<&IUIAutomationTextPattern2> {
+        self.pattern2.as_ref()
+    }
+
+    /// The caret read another program made (a terminal's, read with its new
+    /// output, `crate::terminal`), as [`TextSource::caret_read`] gives it:
+    /// the caret, the selection, and the caret's line.
+    ///
+    /// # Errors
+    ///
+    /// [`TextError`] when a position cannot be made of the answer's ranges.
+    pub fn caret_read_from(&self, answer: CaretAnswer) -> TextResult<CaretRead<UiaPos>> {
+        let caret = UiaPos::new(&answer.caret, Endpoint::Start, answer.collapsed)?;
+        let selection = match &answer.selection {
+            Some(range) => Some((
+                UiaPos::new(range, Endpoint::Start, false)?,
+                UiaPos::new(range, Endpoint::End, false)?,
+            )),
+            None => None,
+        };
+        Ok(CaretRead {
+            state: CaretState { caret, selection },
+            moved: answer.moved,
+            selection_moved: answer.selection_moved,
+            line: unit_read(answer.line)?,
+            unit: None,
+            formats: Vec::new(),
+            changes: None,
+            at_edge: answer.at_edge,
+        })
     }
 
     /// The text, as remote operations take it.

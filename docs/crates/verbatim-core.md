@@ -9,7 +9,9 @@ Public API:
   advances the state in place, without copying it, and returns the
   effects to execute.
 - `SrState` — `new()`; `focused()`, the live focus and its application;
-  `attention()`, the application holding attention; `held_nodes()`,
+  `focus_report()`, the focus's snapshot, its ancestors, and the navigator
+  object, which the control plane's `DumpFocus` answers with for a test's
+  artifacts; `attention()`, the application holding attention; `held_nodes()`,
   every node id the state refers to grouped by the outpost that issued it;
   and `held_anchors()` (milestone M4), every text anchor the state refers
   to, grouped the same way: the caret's line and selection, the review
@@ -586,14 +588,25 @@ is ignored.
   wait in the state (`TerminalSpeech`), so the backlog not yet spoken is
   known. Each mark reached hands on the next. Newer output never cancels
   older output still waiting.
-- The flood policy ("30 and 30"): when the lines waiting, with those
-  handed to speech, are more than "Lines spoken in full", everything
-  before the newest "Last lines to speak" becomes one "skipped N lines"
+- The flood policy, by groups: the first "Lines spoken in full" lines of
+  a burst of output are spoken whole, however fast the rest arrives
+  (`TerminalSpeech::group` counts the lines the group still hands to
+  speech). An outpost that could not read every new line sends the first
+  ones in `TerminalOutput::head`, before its skipped count and the newest
+  lines, so a flood's start is heard. Only once the group's last line is
+  playing is the backlog looked at: when more lines wait than "Lines
+  spoken in full" (any count already skipped included), everything but
+  the newest "Last lines to speak" becomes one "skipped N lines"
   (`Phrase::SkippedLines`), adding any count the outpost sent; a count the
   outpost could not make (`Skipped::Uncounted`) makes it "skipped lines"
-  (`Phrase::SkippedUncountedLines`). Output under the limit is never
-  touched, however many batches it arrives in. The waiting queue holds at
-  most the limit's lines, each at most 4 KB, so the state stays bounded.
+  (`Phrase::SkippedUncountedLines`). What waits is then the next group,
+  and the decision repeats after it, until the output stops and
+  everything waiting has been heard; the next output starts a burst of its
+  own. Output under the limit is never touched, however many batches it
+  arrives in. Behind the group being spoken, the waiting queue keeps at
+  most as many lines as either limit keeps, older ones folded into the
+  skipped count, each line at most 4 KB, so the state stays bounded and
+  every count stays exact.
 - The last line read, changed in place, speaks what changed; while an
   earlier version of that line is still waiting, the whole new line takes
   its place, so a progress bar rewritten quickly is spoken once, as it

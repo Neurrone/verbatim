@@ -1,128 +1,115 @@
 //! [`Scenario`]: the lifecycle owner for one live, agent-driven Verbatim run.
 //!
-//! A scenario is a guard struct, not a checklist of manual cleanup calls: it
-//! launches Verbatim (and, on request, target applications) through the M2
-//! agent, and its [`Drop`] impl kills everything it launched, unconditionally,
-//! even if the test that created it panicked partway through. This matters
-//! because every live test in this suite runs against the developer's real
-//! desktop, launching a real `verbatim.exe` that injects real keystrokes.
+//! A scenario launches Verbatim (and, on request, target applications)
+//! through the M2 agent, drives it, and cleans up what it opened. Every
+//! scenario starts from the same desktop: every window minimized, as the
+//! taskbar's Show Desktop leaves it, whether or not the run is recorded.
+//! Cleanup ([`Scenario::clean_up`]) closes each window the scenario opened
+//! by its title (a Windows 11 Notepad document by closing its tab, never
+//! its window, since Notepad keeps the tabs of a closed window for its next
+//! session), checks that the process that owned it has exited when the
+//! scenario started that program, ends anything else it launched by its
+//! process id, and fails the scenario when anything will not close.
+//! Nothing is ever ended by its image name.
 //!
 //! Configuration is always fixed and isolated, never the developer's own
 //! live state. In runner-direct mode (the default; see [`REMOTE_ENV`]),
-//! [`Scenario::launch`] copies `verbatim.exe` and `verbatim-outpost.exe`
-//! into `target/e2e-stage` under the workspace root and writes
+//! [`Scenario::launch`] copies Verbatim's executables into
+//! `target/e2e-stage` under the workspace root and writes
 //! [`verbatim_config::Settings::for_e2e`]'s fixed settings there, then
-//! launches that staged copy — never the developer's own
-//! `target/debug/verbatim.exe` and its `settings.toml`, which a runner-direct
-//! suite would otherwise read, mutate, and leave dirty. In remote mode,
-//! `cargo xtask vm deploy` stages the guest side equivalently (its own
-//! `write_synth_settings`, kept in lockstep with the same fixed-settings
-//! shape — see `Settings::for_e2e`'s doc comment).
+//! launches that staged copy. In remote mode, `cargo xtask vm deploy`
+//! stages the guest side equivalently.
+//!
+//! The harness waits for evidence, never for time: Verbatim sets an event
+//! the agent created when it is ready for input, windows are waited for on
+//! window events, processes on their handles, files on folder changes, and
+//! speech on the speech connection, each with a timeout that bounds only a
+//! hang.
 
+use std::fmt::Write as _;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use verbatim_agent::protocol::{ForegroundInfo, KillOutcome, ProcessState, WindowInfo};
+use verbatim_agent::protocol::{
+    EventOutcome, ForegroundInfo, ProcessExit, ProcessInfo, ProcessState, WindowCondition,
+    WindowInfo,
+};
 use verbatim_config::{ConfigStore, Settings};
 use verbatim_control::client::{Client as ControlClient, ok_or_error};
-use verbatim_control::protocol::{Frame, LatencyRecord, ReplyPayload, Request};
+use verbatim_control::protocol::{Frame, LatencyRecord, ReplyPayload, Request, StatusInfo};
 
-use crate::agent_client::AgentClient;
+use crate::agent_client::{AgentClient, Launched as AgentLaunch};
 use crate::recording::Recording;
 use crate::speech::SpeechCollector;
 use crate::timeline::Timeline;
 use crate::{ENDPOINT_ENV, endpoint};
 
 /// File names the artifact collectors write under, inside the directory
-/// [`crate::artifacts::scenario_dir`] names. The timeline and stderr log are
-/// written for every run by [`Scenario::collect_run_artifacts`] (so a passing
-/// run leaves its announcement timings and outpost-ready timestamps
-/// behind, not only a failing one); the flight-recorder dump is written for
-/// every run too by [`Scenario::collect_flight_recorder`], taken before the
-/// clean quit since it needs Verbatim still up to answer `DumpRecorder`.
+/// [`crate::artifacts::scenario_dir`] names.
 const TIMELINE_FILE_NAME: &str = "timeline.txt";
 const STDERR_FILE_NAME: &str = "stderr.log";
-
-/// How long [`Scenario::launch_target`] waits for the launched application's
-/// window before bringing it to the foreground.
-const LAUNCH_FOREGROUND_TIMEOUT: Duration = Duration::from_secs(10);
+const FLIGHT_RECORDER_FILE_NAME: &str = "flight-recorder.jsonl";
+const FOCUS_FILE_NAME: &str = "focus.txt";
+const LATENCY_FILE_NAME: &str = "latency.csv";
+const AUDIO_FILE_NAME: &str = "verbatim-audio.wav";
 
 /// Text in the title of every window the harness opens on purpose: the
-/// document [`Scenario::open_document`] writes is named with it, so its
-/// window can be told from the user's own windows of the same application,
-/// found by title, and closed by title, as NVDA's system tests name their
-/// Notepad documents.
+/// document a [`Document`] names is named with it, so
+/// its window can be told from the user's own windows of the same
+/// application, found by title, and closed by title (a Notepad harness tab
+/// as a tab), as NVDA's system tests name their Notepad documents.
 pub const DOCUMENT_MARKER: &str = "verbatim-e2e-";
 
-/// How long a window the harness asks to close is given to go.
-const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long a window the harness waits for is given to appear and take the
+/// foreground, or to go: a bound on a hang.
+pub const WINDOW_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// How often [`Scenario::save_document`] checks whether the document's
-/// title still marks unsaved changes.
-const SAVE_POLL: Duration = Duration::from_millis(50);
+/// How long a window the harness asks to close, or the process that owned
+/// it, is given to go.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// How long minimizing every window may take.
+const MINIMIZE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// How long [`Scenario::launch`] waits for Verbatim to say it is ready.
+const READY_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long [`Scenario::quit_verbatim`] waits for the process to exit.
+const QUIT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// The folder Windows Error Reporting writes crash dumps of Verbatim's
+/// processes into, once `vm\scripts\Enable-VerbatimCrashDumps.ps1` has
+/// configured it (an elevated, one-time change). Without it there are no
+/// dumps to collect, and a crash still fails the scenario.
+pub const CRASH_DUMP_FOLDER: &str = r"C:\ProgramData\Verbatim\CrashDumps";
+
+/// The images whose crash dumps the harness collects.
+const VERBATIM_IMAGES: [&str; 3] = [
+    "verbatim.exe",
+    "verbatim-outpost.exe",
+    "verbatim-synth-host.exe",
+];
 
 /// The extensions of the harness files the pre-launch sweep deletes: the
-/// documents [`Scenario::open_document_with`] writes, and the fixtures
-/// written at [`Scenario::harness_file`] paths, such as the spelling errors
-/// scenario's `mockapp` fixture.
+/// documents a [`Document`] names, and the fixtures
+/// written at [`Scenario::harness_file`] paths.
 const HARNESS_FILE_EXTENSIONS: [&str; 2] = ["txt", "json"];
 
-/// One application a scenario launched, for cleanup.
-struct Launched {
-    pid: u32,
-    image: String,
-    /// The title marker of the harness document it opened, when it opened
-    /// one: such an application is closed by that title, never swept by
-    /// image name, so the user's own windows of it are left alone.
-    marker: Option<String>,
-    /// Whether the launch is terminated by pid when its window does not
-    /// close. Not for a launcher that may hand its window to a process the
-    /// user's own windows share, such as Windows Terminal's `wt.exe`:
-    /// terminating its job could end that process.
-    kill_if_open: bool,
-    /// The harness document it opened, deleted once its window has gone.
-    document: Option<String>,
-    /// Whether no window of the application was open before the harness
-    /// opened its document, so the window left behind once the document's
-    /// tab has closed, holding only tabs Notepad restored from its last
-    /// session, is closed too.
-    close_application: bool,
-}
-const FLIGHT_RECORDER_FILE_NAME: &str = "flight-recorder.jsonl";
-
 /// Environment variable overriding the path to `verbatim.exe`. Defaults to
-/// `target/debug/verbatim.exe` under the workspace root — the ordinary
-/// local debug build, which a runner-direct run builds itself before
-/// staging it (see [`build_default_source_binaries`]). Setting this skips
-/// that build: the named binaries are staged as they are.
-///
-/// This names where [`Scenario::launch`] finds the *source* binaries to
-/// stage from in runner-direct mode, not where it launches from: setting it
-/// chooses the source build, never the fixed configuration regime — the
-/// staged copy under `target/e2e-stage` is still what actually runs, with
-/// [`verbatim_config::Settings::for_e2e`]'s settings next to it.
+/// `target/debug/verbatim.exe` under the workspace root, which a
+/// runner-direct run builds itself before staging it (see
+/// [`build_default_source_binaries`]). Setting this skips that build: the
+/// named binaries are staged as they are.
 pub const VERBATIM_EXE_ENV: &str = "VERBATIM_E2E_VERBATIM_EXE";
 
 /// Environment variable marking a *remote* run: the agent, Verbatim, and
 /// its configuration live on another machine (the Hyper-V guest), so
 /// [`VERBATIM_EXE_ENV`] names a path in that machine's filesystem, not this
 /// one's. `cargo xtask vm test` sets it.
-///
-/// The distinction matters because [`Scenario::launch`]'s runner-direct
-/// staging step — checking the source `verbatim.exe` exists, copying it and
-/// `verbatim-outpost.exe` into `target/e2e-stage`, and writing the fixed
-/// `settings.toml` there — is an ordinary host filesystem operation. In the
-/// default runner-direct mode the suite and Verbatim share a filesystem, so
-/// it is correct. Against a VM it is not: the guest path does not exist
-/// here, and `cargo xtask vm deploy` has already staged the equivalent
-/// inside the guest. Set this and the staging step is skipped, since the
-/// deploy owns it; only `settings.toml` is written afresh, through the
-/// agent, so a scenario's own settings ([`Scenario::launch_with_settings`])
-/// apply in the guest too and never outlive the scenario.
 pub const REMOTE_ENV: &str = "VERBATIM_E2E_REMOTE";
 
 /// Whether this is a remote (in-guest) run; see [`REMOTE_ENV`].
@@ -134,10 +121,7 @@ fn is_remote() -> bool {
 /// does not set `VERBATIM_TEST_AUDIO=null`, so Verbatim speaks through the
 /// real audio device instead of the silent real-time device a default run
 /// uses. Both speak through eSpeak NG and take the same time, so every
-/// assertion is the same either way. `cargo xtask vm test` always sets it,
-/// since every VM run is audible; set it by hand for an audible
-/// runner-direct run, which then speaks over any other screen reader
-/// running on the desktop.
+/// assertion is the same either way.
 pub const AUDIBLE_ENV: &str = "VERBATIM_E2E_AUDIBLE";
 
 /// Whether this is an audible run; see [`AUDIBLE_ENV`].
@@ -150,177 +134,135 @@ pub fn is_audible() -> bool {
 /// scenario launches, in `RUST_LOG`'s syntax: [`Scenario::launch`] passes
 /// it to Verbatim as `RUST_LOG`, which its outposts inherit, so a run can
 /// log what it does not by default (the terminal reads' timings, at debug
-/// on `verbatim_outpost`). Unset or empty, Verbatim logs as configured.
+/// on `verbatim_outpost`). Unset, Verbatim logs with
+/// [`DEFAULT_RUST_LOG`]; set but empty, as its own configuration says.
 pub const RUST_LOG_ENV: &str = "VERBATIM_E2E_RUST_LOG";
 
-/// The environment Verbatim is launched with: `VERBATIM_TEST_AUDIO=null`
-/// unless the run is `audible` (so verbatim-app plays through the real
-/// device rather than the silent one; see [`AUDIBLE_ENV`]), and `RUST_LOG`
-/// from [`RUST_LOG_ENV`] when that is set.
-fn launch_env(audible: bool) -> Vec<(String, String)> {
-    let mut env = if audible {
-        Vec::new()
-    } else {
-        vec![("VERBATIM_TEST_AUDIO".to_owned(), "null".to_owned())]
-    };
-    if let Some(filter) = std::env::var(RUST_LOG_ENV)
-        .ok()
-        .filter(|filter| !filter.is_empty())
-    {
-        env.push(("RUST_LOG".to_owned(), filter));
-    }
-    env
-}
+/// The tracing filter every scenario's Verbatim logs with unless
+/// [`RUST_LOG_ENV`] says otherwise: everything at info, and the outposts'
+/// and the focus listener's debug lines, so a failed run's artifacts say
+/// what each outpost read and when, what it released, and what the listener
+/// reported, not only what the flight recorder kept.
+pub const DEFAULT_RUST_LOG: &str = "info,verbatim_outpost=debug";
 
-/// How long [`Scenario::launch`] waits for Verbatim's control plane to come
-/// up before giving up.
-const LAUNCH_TIMEOUT: Duration = Duration::from_secs(20);
-
-/// Interval between control-tunnel readiness polls.
-const POLL_INTERVAL: Duration = Duration::from_millis(20);
-
-/// How long [`Scenario::quit_verbatim`] waits for the process to actually
-/// exit after `Quit` is acknowledged (or the connection closed in its
-/// place).
-const QUIT_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// How long [`Scenario::launch`] waits for Verbatim to report itself
-/// ready after the control plane answers.
-///
-/// The control server starts, and so the tunnel answers, before
-/// `verbatim-app` hands the gesture router its `GuiHandle`, and before the
-/// focus listener and the outpost reading Verbatim's own windows are
-/// ready; a gesture or key sent before then can go unheard. Verbatim
-/// reports when all three are ready in its status (`StatusInfo::ready`),
-/// which launch waits for; this only bounds a failure.
-const GUI_READY_TIMEOUT: Duration = Duration::from_secs(20);
-
-/// How often launch asks whether the GUI is ready.
-const GUI_READY_POLL: Duration = Duration::from_millis(10);
-
-/// Enforces one live Verbatim instance at a time within this process.
-///
-/// This is a same-process guard, not a cross-process one: tests must also
-/// run with `--test-threads=1` (documented on this type and in every test
-/// file), since Windows itself has no notion of "only one verbatim.exe" —
-/// that discipline is `single_instance::acquire_replacing` inside
-/// `verbatim.exe`, which *replaces* a running instance rather than
-/// refusing to start, so two scenarios racing each other would each think
-/// they own a instance that the other just killed out from under it.
+/// Enforces one live Verbatim instance at a time within this process; the
+/// tests also run with `--test-threads=1`.
 fn live_instance_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+/// One application a scenario launched, for cleanup.
+struct Launched {
+    pid: u32,
+    /// The title of its window, which names it: it is closed by this title.
+    /// `None` for a program with no window of the scenario's own, which is
+    /// ended by its process id.
+    title: Option<String>,
+    /// The processes that owned its windows, recorded as each was waited
+    /// for: they must exit once the windows close, when `owners_exit`.
+    owners: Vec<u32>,
+    /// Whether the programs owning its windows exit when they close: the
+    /// scenario started the program, which had no window open before.
+    /// Not for a window a shared process owns, such as File Explorer's.
+    owners_exit: bool,
+    /// The harness document it opened, deleted once its window has gone.
+    document: Option<String>,
+    /// Whether it is Windows 11 Notepad, whose harness tab is closed as a
+    /// tab, so Notepad does not keep it for its next session.
+    notepad: bool,
+    /// Other processes that must exit once its windows close, such as the
+    /// shell a terminal ran ([`Scenario::expect_exit_at_cleanup`]).
+    also_exit: Vec<u32>,
+}
+
 /// Owns the lifecycle of one live Verbatim instance driven through the M2
-/// agent: launching it with a capture-synth, audio-free configuration,
-/// waiting for its control plane to answer, and exposing the connections a
-/// test drives it with. Dropping a `Scenario` kills Verbatim and every
-/// process it separately launched (via [`Scenario::launch_target`]),
-/// unconditionally.
+/// agent.
 pub struct Scenario {
     _lock: MutexGuard<'static, ()>,
-    process_agent: AgentClient,
+    agent: AgentClient,
     verbatim_pid: u32,
     control: ControlClient,
     speech: SpeechCollector,
-    /// The shared action-and-speech log this scenario's gesture and key
-    /// injection writes to; [`speech`](Self::speech)'s collector holds a
-    /// clone of the same handle and writes utterances to it, so a failure
-    /// can print both interleaved in time order. See [`crate::timeline`].
     timeline: Timeline,
-    /// Extra processes launched via [`Scenario::launch_target`] or
-    /// [`Scenario::open_document`], cleaned up on drop unless already
-    /// removed by [`Scenario::kill_target`].
     launched: Vec<Launched>,
-    /// Harness folders named by [`Scenario::harness_folder`], deleted on
-    /// drop once every launched application has ended.
     folders: Vec<String>,
-    /// Harness files named by [`Scenario::harness_file`], deleted on drop
-    /// once every launched application has ended.
     files: Vec<String>,
-    /// Whether [`Scenario::open_document_with`] had Verbatim report the
-    /// focus, because a window of the application was already open (see
-    /// [`Scenario::take_focus_reported`]).
-    focus_reported: bool,
-    /// The path this launch's Verbatim has its stdout and stderr captured
-    /// into (see [`verbatim_stderr_log_path`]), readable back through
-    /// [`process_agent`](Self::process_agent)'s `read_file` — what
-    /// [`Scenario::collect_run_artifacts`] pulls on every run.
     stderr_log_path: String,
-    /// The video of this run, while it is being captured (see
-    /// [`crate::recording`]).
+    run_dir: String,
     recording: Option<Recording>,
+    /// The number of the last key or character the scenario injected.
+    last_input: Option<u64>,
+    /// Processes of Verbatim's own that the scenario expects to exit, such
+    /// as a synthesizer host it ends on purpose.
+    expected_exits: Vec<u32>,
+    /// The crash dumps that were already there when the scenario started.
+    dumps_before: Option<Vec<String>>,
+    /// Whether [`Scenario::clean_up`] has run.
+    cleaned_up: bool,
+    /// Whether Verbatim has been asked to quit.
+    quit: bool,
 }
 
 impl Scenario {
     /// Launches a fresh Verbatim through the agent named by
-    /// [`crate::ENDPOINT_ENV`].
-    ///
-    /// In runner-direct mode (the default — see [`REMOTE_ENV`]), first
-    /// builds the default source binaries unless [`VERBATIM_EXE_ENV`]
-    /// overrides them (see [`build_default_source_binaries`]), then
-    /// stages `verbatim.exe`, `verbatim-outpost.exe`,
-    /// `verbatim-synth-host.exe`, and `mockapp.exe` into
-    /// `target/e2e-stage` under the workspace root (see [`stage_binaries`]),
-    /// then writes [`verbatim_config::Settings::for_e2e`]'s fixed
-    /// settings.toml there selecting eSpeak NG, and launches *that* staged
-    /// copy with `VERBATIM_TEST_AUDIO=null` (the silent real-time device,
-    /// still measuring complete latency timelines). The developer's own
-    /// `target/debug/verbatim.exe` and its `settings.toml` are never read or
-    /// written by this. In remote mode `cargo xtask vm deploy` already
-    /// staged the guest side equivalently, so this launches
-    /// [`VERBATIM_EXE_ENV`]'s path directly instead.
-    ///
-    /// Either way, before any of that, this first sweeps
-    /// [`crate::registry::swept_target_image_names`] on the agent's guest,
-    /// so every scenario begins from as clean a state as possible even after
-    /// a prior run aborted before its own [`Drop`] cleanup ran. Once
-    /// Verbatim itself is
-    /// launched, this waits for its control plane to answer over the
-    /// agent's tunnel and opens a second, dedicated tunnel connection for
-    /// speech collection (see [`crate::speech::SpeechCollector`] for why it
-    /// must not share the command connection).
-    ///
-    /// Under [`AUDIBLE_ENV`], `VERBATIM_TEST_AUDIO=null` is not passed, so
-    /// Verbatim speaks through the real audio device.
+    /// [`crate::ENDPOINT_ENV`], with the fixed e2e settings.
     ///
     /// # Errors
     ///
-    /// Returns an error if [`crate::ENDPOINT_ENV`] is unset, building the
-    /// default source binaries fails, the source `verbatim.exe` (or, in
-    /// runner-direct mode, `verbatim-outpost.exe` next to it) cannot be
-    /// found, staging fails, the agent cannot be
-    /// reached, or Verbatim's control plane never comes up within the
-    /// launch timeout.
+    /// As [`Scenario::launch_with`].
     pub fn launch() -> io::Result<Self> {
-        Self::launch_with_settings(None)
+        Self::launch_with(None, None)
     }
 
-    /// [`Scenario::launch`] with `configure` applied to the fixed settings
-    /// before they are written, for a scenario that needs a reader setting
-    /// other than its default (see
-    /// [`crate::registry::ScenarioDef::settings`]). The settings are written
-    /// afresh for every launch, in a remote run too, through the agent, so
-    /// one scenario's settings never reach the next.
+    /// Launches a fresh Verbatim with `configure` applied to the fixed
+    /// settings, from the desktop every scenario starts from, with
+    /// `document` open in Windows 11 Notepad when there is one.
+    ///
+    /// In order: ends every process the agent launched for an earlier run
+    /// that is still running, by its own handle; stages the binaries and
+    /// writes the settings (runner-direct mode); closes any window an
+    /// earlier run left open by its harness title (a Notepad harness tab as
+    /// a tab) and deletes the harness files it left; opens `document`
+    /// ([`Document`]); minimizes every
+    /// window, as Show Desktop does, and waits until they are and the
+    /// desktop is in front; starts the recording, when recording; creates the
+    /// event Verbatim sets when it is ready, launches it, and waits for the
+    /// event; then opens the command connection and the speech connection.
+    /// The first speech subscription receives the speech Verbatim queued
+    /// before it, so its startup speech is asserted like any other.
     ///
     /// # Errors
     ///
-    /// As [`Scenario::launch`], and if the settings cannot be written.
-    pub fn launch_with_settings(configure: Option<fn(&mut Settings)>) -> io::Result<Self> {
+    /// Returns an error if the endpoint is unset, building or staging
+    /// fails, the agent cannot be reached, the desktop cannot be brought to
+    /// its starting state, an earlier run's leftovers cannot be cleaned up,
+    /// the recording cannot start, or Verbatim does not become ready.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the launch's steps in order, each one's failure cleaned up where it happens"
+    )]
+    pub fn launch_with(
+        configure: Option<fn(&mut Settings)>,
+        document: Option<Document>,
+    ) -> io::Result<Self> {
         let agent_addr =
             endpoint().ok_or_else(|| io::Error::other(format!("{ENDPOINT_ENV} is not set")))?;
         let lock = live_instance_lock()
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
 
+        // An earlier run that ended without its cleanup can have left its
+        // Verbatim running from the stage, which staging would then fail to
+        // overwrite: everything the agent launched is ended first.
+        let mut agent = AgentClient::connect(&agent_addr)?;
+        let ended = agent.end_launched()?;
+        if ended > 0 {
+            println!("ended {ended} process(es) an earlier run left running");
+        }
+
         let verbatim_exe = verbatim_exe_path();
         let remote = is_remote();
-        let audible = is_audible();
-        // A runner-direct run of the default source build builds it first, so
-        // it can never stage a binary older than the source under test (see
-        // build_default_source_binaries). An override names a build the
-        // caller chose, and a remote run's binaries were deployed by xtask.
         if !remote && std::env::var_os(VERBATIM_EXE_ENV).is_none() {
             build_default_source_binaries()?;
         }
@@ -330,13 +272,6 @@ impl Scenario {
                 verbatim_exe.display()
             )));
         }
-
-        // In a remote run the path above names a location in the guest, so
-        // staging cannot happen here; `cargo xtask vm deploy` staged the
-        // binaries inside the guest already, and the settings are written
-        // through the agent below. In
-        // runner-direct mode, stage a private copy so this suite never
-        // reads or writes the developer's own build output directory.
         let (launch_exe, launch_dir) = if remote {
             let exe_dir = verbatim_exe
                 .parent()
@@ -348,102 +283,129 @@ impl Scenario {
                 .parent()
                 .ok_or_else(|| io::Error::other("verbatim.exe path has no parent directory"))?;
             let stage_dir = stage_binaries(source_dir)?;
-            // eSpeak NG, the default synthesizer, in every run; a silent
-            // run differs only in playing through the silent device.
             write_settings(&stage_dir, run_settings(configure))?;
-            let staged_exe = stage_dir.join("verbatim.exe");
-            (staged_exe, stage_dir)
+            (stage_dir.join("verbatim.exe"), stage_dir)
         };
-
         let exe_str = launch_exe
             .to_str()
-            .ok_or_else(|| io::Error::other("verbatim.exe path is not valid UTF-8"))?;
-        let exe_dir_str = launch_dir
+            .ok_or_else(|| io::Error::other("verbatim.exe path is not valid UTF-8"))?
+            .to_owned();
+        let run_dir = launch_dir
             .to_str()
-            .ok_or_else(|| io::Error::other("verbatim.exe directory is not valid UTF-8"))?;
+            .ok_or_else(|| io::Error::other("verbatim.exe directory is not valid UTF-8"))?
+            .to_owned();
         let stderr_path = verbatim_stderr_log_path(&launch_dir, remote)?;
 
-        let mut launch_env = launch_env(audible);
-
-        let mut process_agent = AgentClient::connect(&agent_addr)?;
         if remote {
-            write_remote_settings(&mut process_agent, exe_dir_str, run_settings(configure))?;
+            write_remote_settings(&mut agent, &run_dir, run_settings(configure))?;
         }
-        sweep_leftovers(&mut process_agent, exe_dir_str);
-        // The capture starts before Verbatim, so the video shows it start.
-        let mut recording = start_recording(&mut process_agent, exe_dir_str);
-        if let Some(recording) = &recording {
-            launch_env.push(recording.audio_env());
+        // Leftovers are closed first, while a window of theirs is still where
+        // it was, not minimized.
+        sweep_leftovers(&mut agent, &run_dir)?;
+        let mut opened = Vec::new();
+        if let Some(document) = document {
+            opened.push(open_document(&mut agent, &run_dir, &document)?);
         }
-        let started = process_agent
-            .launch_process(
-                exe_str,
-                &[],
-                Some(exe_dir_str),
-                &launch_env,
-                Some(&stderr_path),
-            )
-            .and_then(|pid| {
-                connect(&agent_addr)
-                    .map(|connected| (pid, connected))
-                    .inspect_err(|_| {
-                        let _ = process_agent.kill_process(pid);
-                    })
-            });
-        let (verbatim_pid, (control, speech, timeline)) = match started {
-            Ok(started) => started,
+        let (minimized, desktop) = agent.minimize_all(MINIMIZE_TIMEOUT)?;
+        if !minimized {
+            return Err(io::Error::other(format!(
+                "not every window was minimized within {MINIMIZE_TIMEOUT:?}: {}",
+                describe_foreground(&desktop)
+            )));
+        }
+        let dumps_before = crash_dumps(&mut agent);
+
+        let mut recording = if crate::recording::enabled() {
+            Some(Recording::start(&mut agent, &run_dir).map_err(|error| {
+                io::Error::other(format!("the recording could not start: {error}"))
+            })?)
+        } else {
+            None
+        };
+
+        let ready_event = ready_event_name();
+        agent.create_event(&ready_event)?;
+        let mut env: Vec<(String, String)> = vec![
+            (READY_EVENT_ENV.to_owned(), ready_event.clone()),
+            crate::recording::audio_env(&run_dir),
+        ];
+        if !is_audible() {
+            env.push(("VERBATIM_TEST_AUDIO".to_owned(), "null".to_owned()));
+        }
+        let filter = std::env::var(RUST_LOG_ENV).unwrap_or_else(|_| DEFAULT_RUST_LOG.to_owned());
+        if !filter.is_empty() {
+            env.push(("RUST_LOG".to_owned(), filter));
+        }
+        let launched =
+            agent.launch_process(&exe_str, &[], Some(&run_dir), &env, Some(&stderr_path));
+        let verbatim_pid = match launched {
+            Ok(launched) => launched.pid,
             Err(error) => {
                 if let Some(recording) = &mut recording {
-                    recording.stop(&mut process_agent);
+                    recording.stop(&mut agent)?;
                 }
                 return Err(error);
             }
         };
-
-        // The control plane answering does not yet mean Verbatim can act on
-        // input; wait until it says it can.
-        let mut control = control;
-        if let Err(error) = wait_for_gui(&mut control) {
-            let _ = process_agent.kill_process(verbatim_pid);
-            if let Some(recording) = &mut recording {
-                recording.stop(&mut process_agent);
+        let ready = agent.wait_for_event(&ready_event, verbatim_pid, READY_TIMEOUT);
+        let connected = match ready {
+            Ok(EventOutcome::Signalled) => connect(&agent_addr),
+            Ok(EventOutcome::Exited { exit_code }) => Err(io::Error::other(format!(
+                "Verbatim exited ({exit_code:?}) before it was ready; see {stderr_path}"
+            ))),
+            Ok(EventOutcome::TimedOut) => Err(io::Error::other(format!(
+                "Verbatim did not say it was ready within {READY_TIMEOUT:?}"
+            ))),
+            Err(error) => Err(error),
+        };
+        let (mut control, speech, timeline) = match connected {
+            Ok(connected) => connected,
+            Err(error) => {
+                agent.kill_process(verbatim_pid)?;
+                if let Some(recording) = &mut recording {
+                    recording.stop(&mut agent)?;
+                }
+                return Err(error);
             }
-            return Err(error);
+        };
+        let status = ok_or_error(control.request(Request::Status)?)?;
+        if !matches!(
+            status,
+            Frame::Reply {
+                payload: ReplyPayload::Status(ref info),
+                ..
+            } if info.ready
+        ) {
+            return Err(io::Error::other(format!(
+                "Verbatim set its readiness event but its status is not ready: {status:?}"
+            )));
         }
 
         Ok(Self {
             _lock: lock,
-            process_agent,
+            agent,
             verbatim_pid,
             control,
             speech,
             timeline,
-            launched: Vec::new(),
+            launched: opened,
             folders: Vec::new(),
             files: Vec::new(),
-            focus_reported: false,
             stderr_log_path: stderr_path,
+            run_dir,
             recording,
+            last_input: None,
+            expected_exits: Vec::new(),
+            dumps_before,
+            cleaned_up: false,
+            quit: false,
         })
     }
 
-    /// Ends this run's video and saves it, with Verbatim's audio, to `to`.
-    /// Best-effort: a failure is printed as a warning, never failing the
-    /// scenario. Does nothing when this run is not recording.
-    pub fn finish_recording(&mut self, to: &Path) {
-        let Some(mut recording) = self.recording.take() else {
-            return;
-        };
-        match recording.finish(&mut self.process_agent, to) {
-            Ok(()) => println!("recording saved to {}", to.display()),
-            Err(error) => eprintln!("WARNING: could not save the recording: {error}"),
-        }
-    }
-
     /// Opens one more connection to Verbatim's control plane, subscribed to
-    /// the normalized events Core receives: for a scenario that waits for
-    /// evidence no speech shows, such as a terminal's caret reaching its
-    /// prompt. Events from before the call are not on it.
+    /// the normalized events Core receives and to the inputs it has
+    /// handled: for a scenario that waits for an application event no
+    /// speech shows. Events from before the call are not on it.
     ///
     /// # Errors
     ///
@@ -458,10 +420,28 @@ impl Scenario {
         Ok(events)
     }
 
-    /// The primary control-plane connection: status, gestures, keys,
-    /// latency, tree dumps, and quit.
+    /// The primary control-plane connection: status, gestures, latency,
+    /// tree dumps, and quit.
     pub fn control(&mut self) -> &mut ControlClient {
         &mut self.control
+    }
+
+    /// Verbatim's status: its synthesizer, its outposts, and whether it is
+    /// ready.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails or is answered otherwise.
+    pub fn status(&mut self) -> io::Result<StatusInfo> {
+        match ok_or_error(self.control.request(Request::Status)?)? {
+            Frame::Reply {
+                payload: ReplyPayload::Status(status),
+                ..
+            } => Ok(status),
+            other => Err(io::Error::other(format!(
+                "unexpected reply to Status: {other:?}"
+            ))),
+        }
     }
 
     /// The dedicated speech-collector connection.
@@ -469,13 +449,26 @@ impl Scenario {
         &mut self.speech
     }
 
+    /// Verbatim's process id.
+    #[must_use]
+    pub fn verbatim_pid(&self) -> u32 {
+        self.verbatim_pid
+    }
+
     /// Routes a gesture identifier through Verbatim's gesture router, as if
-    /// the keys had been pressed (`Request::SendGesture`).
+    /// the keys had been pressed (`Request::SendGesture`), once every
+    /// utterance heard so far has been asserted.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an utterance no assertion matched is waiting.
     pub fn send_gesture(&mut self, identifier: &str) -> io::Result<()> {
+        self.speech
+            .require_all_asserted(&format!("before the gesture {identifier}"));
         self.timeline.push_gesture(identifier);
         ok_or_error(self.control.request(Request::SendGesture {
             identifier: identifier.to_owned(),
@@ -483,90 +476,99 @@ impl Scenario {
         Ok(())
     }
 
-    /// Synthesizes real OS keyboard input reaching whatever has focus
-    /// (`Request::SendKeys`), each entry a plus-joined combination such as
-    /// `shift+tab`.
+    /// Injects real key strokes through the agent, which numbers each one,
+    /// so Verbatim can say when it has handled it; each entry is a
+    /// plus-joined combination such as `shift+tab`. Every utterance heard
+    /// so far must have been asserted first.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an utterance no assertion matched is waiting.
     pub fn send_keys(&mut self, keys: &[&str]) -> io::Result<()> {
+        self.speech
+            .require_all_asserted(&format!("before the keys {keys:?}"));
         self.timeline.push_keys(keys);
-        ok_or_error(self.control.request(Request::SendKeys {
-            keys: keys.iter().map(|key| (*key).to_owned()).collect(),
-        })?)?;
+        let keys: Vec<String> = keys.iter().map(|key| (*key).to_owned()).collect();
+        self.last_input = Some(self.agent.send_keys(&keys)?);
         Ok(())
     }
 
-    /// Types `text` as real key presses through the agent's `TypeText`, each
-    /// character mapped to its key and shift state in the foreground
-    /// window's keyboard layout, so Verbatim's keyboard hook sees ordinary
-    /// typing. Named keys such as Enter go through
-    /// [`Scenario::send_keys`].
+    /// Types `text` as real key presses through the agent's `TypeText`,
+    /// each character mapped to its key and shift state in the foreground
+    /// window's keyboard layout, and numbered like a key stroke. Every
+    /// utterance heard so far must have been asserted first.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails, including when a character
     /// cannot be typed, in which case nothing was typed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an utterance no assertion matched is waiting.
     pub fn type_text(&mut self, text: &str) -> io::Result<()> {
+        self.speech
+            .require_all_asserted(&format!("before typing {text:?}"));
         self.timeline.push_text(text);
-        self.process_agent.type_text(text)
+        self.last_input = Some(self.agent.type_text(text)?);
+        Ok(())
+    }
+
+    /// Asserts that nothing more was said: once Verbatim has handled the
+    /// scenario's last injected input and is idle, every utterance it
+    /// queued has been matched by an assertion
+    /// ([`SpeechCollector::expect_nothing_more`]). Every scenario ends with
+    /// this.
+    ///
+    /// # Panics
+    ///
+    /// Panics if anything unasserted was said, or Verbatim does not become
+    /// idle.
+    pub fn expect_nothing_more(&mut self) {
+        self.speech.expect_nothing_more(self.last_input);
+    }
+
+    /// Every utterance not yet matched that was queued before Verbatim
+    /// has handled the scenario's last input and is idle
+    /// ([`SpeechCollector::take_until_idle`]), for the caller to assert on.
+    ///
+    /// # Panics
+    ///
+    /// Panics if Verbatim does not become idle.
+    pub fn take_until_idle(&mut self) -> Vec<crate::speech::Heard> {
+        self.speech.take_until_idle(self.last_input)
     }
 
     /// The directory, on the agent's machine, that this run's harness
-    /// files go in: the one holding Verbatim's executable and its captured
-    /// log.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the log path has no parent directory.
-    pub fn run_directory(&self) -> io::Result<String> {
-        Path::new(&self.stderr_log_path)
-            .parent()
-            .and_then(Path::to_str)
-            .map(str::to_owned)
-            .ok_or_else(|| io::Error::other("no directory for the run's harness files"))
+    /// files go in: the one holding Verbatim's executable.
+    #[must_use]
+    pub fn run_directory(&self) -> &str {
+        &self.run_dir
     }
 
     /// The path, on the agent's machine, of the harness folder `name` of
-    /// this run: named with [`harness_marker`], in
-    /// [`Scenario::run_directory`]. The folder is made by the first file
-    /// written into it ([`Scenario::write_agent_file`]), and deleted with
-    /// everything in it when the scenario is dropped, after the
-    /// applications it launched have ended; one an aborted run left behind
-    /// is deleted by the next launch's sweep.
-    ///
-    /// # Errors
-    ///
-    /// As [`Scenario::run_directory`].
-    pub fn harness_folder(&mut self, name: &str) -> io::Result<String> {
-        let folder = format!(r"{}\{}", self.run_directory()?, harness_marker(name));
+    /// this run, deleted with everything in it at cleanup, after the
+    /// applications the scenario launched have ended.
+    pub fn harness_folder(&mut self, name: &str) -> String {
+        let folder = format!(r"{}\{}", self.run_dir, harness_marker(name));
         if !self.folders.contains(&folder) {
             self.folders.push(folder.clone());
         }
-        Ok(folder)
+        folder
     }
 
     /// The path, on the agent's machine, of the harness file `name` of this
-    /// run with `extension`: named with [`harness_marker`], in
-    /// [`Scenario::run_directory`], such as a fixture an application reads.
-    /// Write it with [`Scenario::write_agent_file`]. It is deleted when the
-    /// scenario is dropped, after the applications it launched have ended;
-    /// one an aborted run left behind is deleted by the next launch's sweep.
-    ///
-    /// # Errors
-    ///
-    /// As [`Scenario::run_directory`].
-    pub fn harness_file(&mut self, name: &str, extension: &str) -> io::Result<String> {
-        let file = format!(
-            r"{}\{}.{extension}",
-            self.run_directory()?,
-            harness_marker(name)
-        );
+    /// run with `extension`, deleted at cleanup.
+    pub fn harness_file(&mut self, name: &str, extension: &str) -> String {
+        let file = format!(r"{}\{}.{extension}", self.run_dir, harness_marker(name));
         if !self.files.contains(&file) {
             self.files.push(file.clone());
         }
-        Ok(file)
+        file
     }
 
     /// Writes a file on the agent's machine, creating or replacing it and
@@ -576,246 +578,169 @@ impl Scenario {
     ///
     /// Returns an error if the request fails.
     pub fn write_agent_file(&mut self, path: &str, contents: &[u8]) -> io::Result<()> {
-        self.process_agent.write_file(path, contents)
+        self.agent.write_file(path, contents)
     }
 
-    /// Waits up to `timeout` for a file to exist on the agent's machine and
-    /// returns its contents: the evidence a script the scenario started has
-    /// reached the point that writes it.
+    /// The names of the folders directly inside `path` on the agent's
+    /// machine.
     ///
     /// # Errors
     ///
-    /// Returns the last read error if the file cannot be read within
-    /// `timeout`.
+    /// Returns an error if the request fails.
+    pub fn list_agent_folders(&mut self, path: &str) -> io::Result<Vec<String>> {
+        self.agent.list_folders(path)
+    }
+
+    /// Deletes the folder `path` on the agent's machine, with everything in
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn delete_agent_folder(&mut self, path: &str) -> io::Result<()> {
+        self.agent.delete_folder(path)
+    }
+
+    /// Waits up to `timeout`, on changes in its folder, for a file to exist
+    /// on the agent's machine, and returns its contents: the evidence a
+    /// script the scenario started has reached the point that writes it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file does not appear within `timeout` or
+    /// cannot be read.
     pub fn wait_for_agent_file(&mut self, path: &str, timeout: Duration) -> io::Result<Vec<u8>> {
-        let deadline = Instant::now() + timeout;
-        loop {
-            match self.process_agent.read_file(path) {
-                Ok(contents) => return Ok(contents),
-                Err(error) if Instant::now() >= deadline => {
-                    return Err(io::Error::other(format!(
-                        "{path} was not written within {timeout:?}: {error}"
-                    )));
-                }
-                Err(_) => thread::sleep(SAVE_POLL),
-            }
+        if !self.agent.wait_for_file(path, timeout)? {
+            return Err(io::Error::other(format!(
+                "{path} was not written within {timeout:?}"
+            )));
         }
+        self.agent.read_file(path)
     }
 
     /// Launches `command`, which opens a window titled with `title`, a
-    /// title of this run's own ([`harness_marker`]), and tracks it to be
-    /// closed by that title at cleanup, so the user's own windows of the
-    /// same program are never touched. The window is not waited for; see
-    /// [`Scenario::bring_titled_window_forward`]. With `kill_if_open`
-    /// false, a window that will not close is reported and left open rather
-    /// than its launch terminated, for a launcher whose window may belong
-    /// to a process the user's own windows share, such as `wt.exe`'s.
+    /// title of this run's own ([`harness_marker`]), and waits for that
+    /// window to take the foreground, as a program a user starts does.
+    /// The window is closed by its title at cleanup, and when
+    /// `owner_exits`, the process that owned it must exit then.
     ///
     /// # Errors
     ///
-    /// Returns an error if the agent cannot start `command`, for example
-    /// because no such program is installed.
+    /// Returns an error if the agent cannot start `command`, or the window
+    /// does not take the foreground.
     pub fn launch_titled(
         &mut self,
         command: &str,
         args: &[String],
         title: &str,
-        kill_if_open: bool,
-    ) -> io::Result<u32> {
-        let pid = self
-            .process_agent
-            .launch_process(command, args, None, &[], None)?;
-        self.launched.push(Launched {
-            pid,
-            image: image_name(command),
-            marker: Some(title.to_owned()),
-            kill_if_open,
-            document: None,
-            close_application: false,
-        });
-        Ok(pid)
+        owner_exits: bool,
+    ) -> io::Result<WindowInfo> {
+        let launch = self.agent.launch_process(command, args, None, &[], None)?;
+        self.require_launched_in_front(launch, title, owner_exits)
     }
 
-    /// Waits up to `timeout` for a visible top-level window whose title
-    /// contains `title`, finds which program owns it (a console's window,
-    /// for example, belongs to the console host rather than the shell it
-    /// runs), and brings it to the foreground. Returns that program's image
-    /// name.
+    /// Launches the console program `command` with `args`, its console
+    /// window titled `title` from its first frame, and waits for that
+    /// window to take the foreground, as [`Scenario::launch_titled`] does.
     ///
     /// # Errors
     ///
-    /// Returns an error, with the foreground report, if no such window
-    /// appears or it does not take the foreground.
-    pub fn bring_titled_window_forward(
+    /// Returns an error if the agent cannot start `command`, or the window
+    /// does not take the foreground.
+    pub fn launch_console(
         &mut self,
+        command: &str,
+        args: &[String],
         title: &str,
-        timeout: Duration,
-    ) -> io::Result<String> {
-        let deadline = Instant::now() + timeout;
-        let image = loop {
-            let info = self.process_agent.foreground_info()?;
-            if let Some(window) = info
-                .windows
-                .iter()
-                .find(|window| window.title.contains(title))
-            {
-                break window.image.clone();
-            }
-            if Instant::now() >= deadline {
-                return Err(io::Error::other(format!(
-                    "no window titled {title:?} appeared within {timeout:?}: {}",
-                    describe_foreground(&info)
-                )));
-            }
-            thread::sleep(POLL_INTERVAL);
-        };
-        self.require_window_in_front(&image, Some(title))?;
-        Ok(image)
+    ) -> io::Result<WindowInfo> {
+        let launch = self.agent.launch_console(command, args, title)?;
+        self.require_launched_in_front(launch, title, true)
     }
 
-    /// Launches an extra target application (for example `msinfo32.exe`)
-    /// through the agent and brings its window to the foreground, as a
-    /// user's launch would put it in front, tracking it for cleanup on drop
-    /// unless [`Scenario::kill_target`] removes it first. An application
-    /// whose window does not take the foreground fails the launch, naming
-    /// what held the foreground instead, so a scenario never goes on to
-    /// assert speech for a window that is not in front.
-    ///
-    /// The image name is recorded for cleanup as well as the pid: an
-    /// application can hand its window off to another process of the same
-    /// image. For an application the user may also have open, such as
-    /// Notepad, use [`Scenario::open_document`] instead, which never sweeps
-    /// by image name.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if a request fails or the window does not take the
-    /// foreground.
-    pub fn launch_target(&mut self, command: &str, args: &[&str]) -> io::Result<u32> {
-        let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
-        let pid = self
-            .process_agent
-            .launch_process(command, &args, None, &[], None)?;
-        let image = image_name(command);
-        self.launched.push(Launched {
-            pid,
-            image: image.clone(),
-            marker: None,
-            kill_if_open: true,
-            document: None,
-            close_application: false,
-        });
-        self.require_window_in_front(&image, None)?;
-        Ok(pid)
-    }
-
-    /// Opens a harness document in `application` (for example
-    /// `notepad.exe`): writes an empty text file named with
-    /// [`DOCUMENT_MARKER`] next to Verbatim's executable, launches the
-    /// application on it, and brings the window whose title names it to the
-    /// foreground, as NVDA's system tests open Notepad on a uniquely named
-    /// file and wait for that window. The application is closed by that
-    /// title at cleanup, so the user's own windows of it are never touched;
-    /// in Notepad, the document's tab is closed rather than its window, so
-    /// Notepad does not keep it for its next session, and the window too
-    /// only when the harness opened it. The document is then deleted. When
-    /// a window of the application was already open, Verbatim is asked to
-    /// report the focus once the window holds the document (see
-    /// `report_focus`), so a scenario hears the focus in full whether or
-    /// not one was; [`Scenario::take_focus_reported`] tells which it hears.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if a request fails or the window does not take the
-    /// foreground.
-    pub fn open_document(&mut self, application: &str) -> io::Result<u32> {
-        self.open_document_with(application, "notes", "")
-    }
-
-    /// [`Scenario::open_document`] on a document holding `contents`, named
-    /// with [`DOCUMENT_MARKER`] and `name`, for a scenario that reads or
-    /// edits text.
-    ///
-    /// # Errors
-    ///
-    /// As [`Scenario::open_document`].
-    pub fn open_document_with(
+    /// Records `launch` for cleanup, its window titled `title`, and waits
+    /// for that window to take the foreground.
+    fn require_launched_in_front(
         &mut self,
-        application: &str,
-        name: &str,
-        contents: &str,
-    ) -> io::Result<u32> {
+        launch: AgentLaunch,
+        title: &str,
+        owner_exits: bool,
+    ) -> io::Result<WindowInfo> {
+        self.launched.push(Launched {
+            pid: launch.pid,
+            title: Some(title.to_owned()),
+            owners: Vec::new(),
+            owners_exit: owner_exits,
+            document: None,
+            notepad: false,
+            also_exit: Vec::new(),
+        });
+        self.require_in_front(title, launch)
+    }
+
+    /// Launches `command` with `args`, which opens a window whose title
+    /// contains `title`, and waits for it to take the foreground. The
+    /// window is closed by that title at cleanup and its owner must exit;
+    /// no window of the program may be open before, so the window is the
+    /// scenario's own.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a window so titled is already open, the agent
+    /// cannot start the program, or its window does not take the
+    /// foreground.
+    pub fn launch_target(
+        &mut self,
+        command: &str,
+        args: &[&str],
+        title: &str,
+    ) -> io::Result<WindowInfo> {
+        self.require_absent(title)?;
+        let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+        self.launch_titled(command, &args, title, true)
+    }
+
+    /// Brings the harness document `name`, which Notepad opened before
+    /// Verbatim started ([`Document`]) and the starting state minimized, to
+    /// the foreground, as clicking its taskbar button does, and waits on
+    /// window events until it is in front.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a request fails, no window is titled with the
+    /// document, or it does not take the foreground in time.
+    pub fn bring_document_forward(&mut self, name: &str) -> io::Result<()> {
         let marker = harness_marker(name);
-        let directory = Path::new(&self.stderr_log_path)
-            .parent()
-            .and_then(Path::to_str)
-            .ok_or_else(|| io::Error::other("no directory for the harness document"))?;
-        let path = format!("{directory}\\{marker}.txt");
-        self.process_agent.write_file(&path, contents.as_bytes())?;
-        let image = image_name(application);
-        let already_open = self
-            .process_agent
-            .foreground_info()?
+        let desktop = self.agent.foreground_info()?;
+        let window = desktop
             .windows
             .iter()
-            .any(|window| window.image.eq_ignore_ascii_case(&image));
-        let pid = self.process_agent.launch_process(
-            application,
-            std::slice::from_ref(&path),
-            None,
-            &[],
-            None,
-        )?;
-        self.launched.push(Launched {
-            pid,
-            image: image.clone(),
-            marker: Some(marker.clone()),
-            kill_if_open: true,
-            document: Some(path),
-            close_application: !already_open,
-        });
-        self.require_window_in_front(&image, Some(&marker))?;
-        self.focus_reported = already_open;
-        if already_open {
-            self.report_focus()?;
+            .find(|window| window.title.contains(&marker))
+            .ok_or_else(|| {
+                io::Error::other(format!(
+                    "no window is titled {marker:?}: {}",
+                    describe_foreground(&desktop)
+                ))
+            })?;
+        if !self.agent.set_foreground(window.window)? {
+            return Err(io::Error::other(format!(
+                "Notepad's window {:?} could not be brought to the foreground: {}",
+                window.title,
+                describe_foreground(&desktop)
+            )));
         }
-        Ok(pid)
+        self.wait_for(
+            WindowCondition::Foreground {
+                title_contains: marker.clone(),
+                unsaved: None,
+            },
+            WINDOW_TIMEOUT,
+            &format!("{marker} to be in front"),
+        )
     }
 
-    /// Whether [`Scenario::open_document_with`] found a window of the
-    /// application already open, and so had Verbatim report the focus with
-    /// Verbatim+Tab: the scenario then hears the focus reported, the
-    /// harness tab's text area and the line at its caret, rather than the
-    /// window coming to the foreground and its text area taking the focus.
-    /// It concerns only what is heard first after opening, so it is cleared
-    /// as it is read: a later return to the window is heard as the window
-    /// coming to the foreground again, whichever way it was opened.
-    pub fn take_focus_reported(&mut self) -> bool {
-        std::mem::take(&mut self.focus_reported)
-    }
-
-    /// Has Verbatim report the focus, once the harness document's window
-    /// is in front holding the document. Windows 11 Notepad opens a
-    /// document in a window already open as a new tab: the window comes to
-    /// the foreground still showing the tab it had, whose text area takes
-    /// the focus and is announced, and only then switches to the new tab,
-    /// whose text area takes the focus again and cuts that announcement
-    /// off. The window's title naming the harness document, which the
-    /// caller has waited for, is the evidence the switch has happened; once
-    /// everything said up to then has ended, Verbatim+Tab reports the
-    /// focus, as a user would ask where they are, and the scenario hears
-    /// the harness tab's text area reported once, in full.
-    fn report_focus(&mut self) -> io::Result<()> {
-        self.speech.wait_until_quiet(LAUNCH_FOREGROUND_TIMEOUT);
-        self.send_gesture("kb:verbatim+tab")
-    }
-
-    /// Saves the harness document `name` ([`Scenario::open_document_with`])
-    /// when its window is in front with unsaved changes, and waits until its
-    /// title no longer marks them. An edited document left unsaved would be
-    /// restored by Windows 11 Notepad the next time it opens, which then
-    /// asks whether to keep the changes when the harness writes the file
-    /// afresh. Nothing is sent when another window is in front.
+    /// Saves the harness document `name` with Control+S, as its window is
+    /// in front with unsaved changes, and waits, on its title changing,
+    /// until the title no longer marks them.
     ///
     /// # Errors
     ///
@@ -823,25 +748,15 @@ impl Scenario {
     /// changes after `timeout`.
     pub fn save_document(&mut self, name: &str, timeout: Duration) -> io::Result<()> {
         let marker = harness_marker(name);
-        let unsaved_in_front = |agent: &mut AgentClient| -> io::Result<bool> {
-            Ok(agent.foreground_info()?.foreground.is_some_and(|window| {
-                window.title.contains(&marker) && window.title.starts_with('*')
-            }))
-        };
-        if !unsaved_in_front(&mut self.process_agent)? {
-            return Ok(());
-        }
         self.send_keys(&["control+s"])?;
-        let deadline = Instant::now() + timeout;
-        while unsaved_in_front(&mut self.process_agent)? {
-            if Instant::now() >= deadline {
-                return Err(io::Error::other(format!(
-                    "{marker} still had unsaved changes after {timeout:?}"
-                )));
-            }
-            thread::sleep(SAVE_POLL);
-        }
-        Ok(())
+        self.wait_for(
+            WindowCondition::Foreground {
+                title_contains: marker.clone(),
+                unsaved: Some(false),
+            },
+            timeout,
+            &format!("{marker} to be saved"),
+        )
     }
 
     /// Waits until the harness document `name`'s window, in front, marks
@@ -854,35 +769,23 @@ impl Scenario {
     /// unsaved changes within `timeout`.
     pub fn expect_unsaved(&mut self, name: &str, timeout: Duration) -> io::Result<()> {
         let marker = harness_marker(name);
-        let deadline = Instant::now() + timeout;
-        loop {
-            let unsaved = self
-                .process_agent
-                .foreground_info()?
-                .foreground
-                .is_some_and(|window| {
-                    window.title.contains(&marker) && window.title.starts_with('*')
-                });
-            if unsaved {
-                return Ok(());
-            }
-            if Instant::now() >= deadline {
-                return Err(io::Error::other(format!(
-                    "{marker} did not show unsaved changes within {timeout:?}"
-                )));
-            }
-            thread::sleep(SAVE_POLL);
-        }
+        self.wait_for(
+            WindowCondition::Foreground {
+                title_contains: marker.clone(),
+                unsaved: Some(true),
+            },
+            timeout,
+            &format!("{marker} to show unsaved changes"),
+        )
     }
 
     /// Opens a harness folder in File Explorer: writes `files` (paths
     /// relative to the folder, empty contents) into a folder named
-    /// [`DOCUMENT_MARKER`] plus `name` next to Verbatim's executable
-    /// ([`Scenario::harness_folder`]), opens it, and brings the window
-    /// titled with that name to the foreground. The window is closed by its
-    /// title at cleanup, never by image name, since `explorer.exe` is also
-    /// the shell, and the folder is then deleted. Returns the folder's name,
-    /// which is the window's title.
+    /// [`DOCUMENT_MARKER`] plus `name` ([`Scenario::harness_folder`]),
+    /// opens it, and waits for the window titled with that name to take
+    /// the foreground. The window is closed by its title at cleanup;
+    /// `explorer.exe` is the shell, so its process stays. Returns the
+    /// folder's name, which is the window's title.
     ///
     /// # Errors
     ///
@@ -890,12 +793,11 @@ impl Scenario {
     /// foreground.
     pub fn open_folder(&mut self, name: &str, files: &[&str]) -> io::Result<String> {
         let marker = harness_marker(name);
-        let folder = self.harness_folder(name)?;
+        let folder = self.harness_folder(name);
         for file in files {
-            self.process_agent
-                .write_file(&format!("{folder}\\{file}"), b"")?;
+            self.agent.write_file(&format!(r"{folder}\{file}"), b"")?;
         }
-        let pid = self.process_agent.launch_process(
+        let launch = self.agent.launch_process(
             "explorer.exe",
             std::slice::from_ref(&folder),
             None,
@@ -903,289 +805,230 @@ impl Scenario {
             None,
         )?;
         self.launched.push(Launched {
-            pid,
-            image: "explorer.exe".to_owned(),
-            marker: Some(marker.clone()),
-            kill_if_open: true,
+            pid: launch.pid,
+            title: Some(marker.clone()),
+            owners: Vec::new(),
+            owners_exit: false,
             document: None,
-            close_application: false,
+            notepad: false,
+            also_exit: Vec::new(),
         });
-        self.require_window_in_front("explorer.exe", Some(&marker))?;
+        self.require_in_front(&marker, launch)?;
         Ok(marker)
     }
 
-    /// Opens a page of the Settings app by its `ms-settings:` URI and brings
-    /// the Settings window to the foreground. The Settings app is a single
-    /// instance, so the scenario lists `SystemSettings.exe` among its target
-    /// images and it is ended by image name at cleanup.
+    /// Opens a page of the Settings app by its `ms-settings:` URI and waits
+    /// for the Settings window to take the foreground. No Settings window
+    /// may be open before, so the window is the scenario's own; it is
+    /// closed by its title at cleanup. The Settings app's process may stay,
+    /// suspended, with its window cloaked, as it does after a user closes
+    /// it.
     ///
     /// # Errors
     ///
-    /// Returns an error if a request fails or the window does not take the
-    /// foreground.
-    pub fn open_settings_page(&mut self, uri: &str) -> io::Result<()> {
-        let pid = self.process_agent.launch_process(
-            "explorer.exe",
-            &[uri.to_owned()],
-            None,
-            &[],
-            None,
-        )?;
-        // The launching explorer.exe hands the URI to the Settings app and
-        // exits; only SystemSettings.exe is swept at cleanup.
+    /// Returns an error if a Settings window is already open, a request
+    /// fails, or the window does not take the foreground.
+    pub fn open_settings_page(&mut self, uri: &str) -> io::Result<WindowInfo> {
+        self.require_absent(SETTINGS_TITLE)?;
+        let launch =
+            self.agent
+                .launch_process("explorer.exe", &[uri.to_owned()], None, &[], None)?;
         self.launched.push(Launched {
-            pid,
-            image: "SystemSettings.exe".to_owned(),
-            marker: None,
-            kill_if_open: true,
+            pid: launch.pid,
+            title: Some(SETTINGS_TITLE.to_owned()),
+            owners: Vec::new(),
+            owners_exit: false,
             document: None,
-            close_application: false,
+            notepad: false,
+            also_exit: Vec::new(),
         });
-        self.require_window_in_front("ApplicationFrameHost.exe", Some("Settings"))
+        self.require_in_front(SETTINGS_TITLE, launch)
     }
 
-    /// Brings `image`'s window, titled with `title_contains` when given, to
-    /// the foreground, failing with the foreground report when it does not
-    /// get there.
-    fn require_window_in_front(
-        &mut self,
-        image: &str,
-        title_contains: Option<&str>,
-    ) -> io::Result<()> {
-        if self.process_agent.bring_to_foreground(
-            image,
-            title_contains,
-            LAUNCH_FOREGROUND_TIMEOUT,
-        )? {
-            return Ok(());
+    /// Has cleanup wait, once the window titled `title` that the scenario
+    /// opened has closed, for process `pid` to exit too, failing the
+    /// scenario if it does not: for a process the window ran, such as a
+    /// terminal's shell, which holds the harness folder open until it exits.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the scenario opened no window so titled.
+    pub fn expect_exit_at_cleanup(&mut self, title: &str, pid: u32) {
+        let launched = self
+            .launched
+            .iter_mut()
+            .find(|launched| launched.title.as_deref() == Some(title))
+            .unwrap_or_else(|| panic!("the scenario opened no window titled {title:?}"));
+        launched.also_exit.push(pid);
+    }
+
+    /// Fails unless no visible window, cloaked ones aside, is titled with
+    /// `title`.
+    fn require_absent(&mut self, title: &str) -> io::Result<()> {
+        let info = self.agent.foreground_info()?;
+        // A cloaked window is not shown: a suspended app keeps its window
+        // so, as the Settings app does once its window is closed.
+        if info
+            .windows
+            .iter()
+            .any(|window| !window.cloaked && window.title.contains(title))
+        {
+            return Err(io::Error::other(format!(
+                "a window titled {title:?} is already open, so the scenario's would not be its own: {}",
+                describe_foreground(&info)
+            )));
         }
-        let window =
-            title_contains.map_or_else(String::new, |title| format!(" (window titled {title:?})"));
-        Err(io::Error::other(format!(
-            "{image}{window} did not take the foreground: {}",
-            self.foreground_report()
-        )))
+        Ok(())
     }
 
-    /// Waits until no window titled with `title_contains` is in the
-    /// foreground: evidence that a dialog closed, for a step that must not
-    /// race the close. A key sent right after the one that closes a dialog
-    /// can otherwise reach the dialog's thread first, since Windows hands a
-    /// thread its posted messages before its pending input. `timeout` only
-    /// bounds failure.
+    /// Waits for the window titled with `title`, which `launch` opened, to
+    /// take the foreground, and records the process that owns it.
+    fn require_in_front(&mut self, title: &str, launch: AgentLaunch) -> io::Result<WindowInfo> {
+        let (met, desktop) = self.agent.wait_for_window(
+            WindowCondition::Foreground {
+                title_contains: title.to_owned(),
+                unsaved: None,
+            },
+            WINDOW_TIMEOUT,
+        )?;
+        let window = desktop.foreground.clone().filter(|_| met).ok_or_else(|| {
+            io::Error::other(format!(
+                "the window titled {title:?} did not take the foreground within {WINDOW_TIMEOUT:?}{}: {}",
+                if launch.foreground_allowed {
+                    ""
+                } else {
+                    " (Windows did not let the agent allow its launch to take the foreground)"
+                },
+                describe_foreground(&desktop)
+            ))
+        })?;
+        if let Some(launched) = self
+            .launched
+            .iter_mut()
+            .find(|launched| launched.pid == launch.pid)
+            && !launched.owners.contains(&window.pid)
+        {
+            launched.owners.push(window.pid);
+        }
+        Ok(window)
+    }
+
+    /// Waits up to `timeout`, on window events, for `condition`, failing
+    /// with the desktop's state and `what` when it does not hold.
+    fn wait_for(
+        &mut self,
+        condition: WindowCondition,
+        timeout: Duration,
+        what: &str,
+    ) -> io::Result<()> {
+        let (met, desktop) = self.agent.wait_for_window(condition, timeout)?;
+        if met {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!(
+                "waited {timeout:?} for {what}: {}",
+                describe_foreground(&desktop)
+            )))
+        }
+    }
+
+    /// Waits, on window events, until no window titled with
+    /// `title_contains` is in the foreground: evidence that a dialog
+    /// closed, for a step that must not race the close.
     ///
     /// # Errors
     ///
     /// Returns an error, with the foreground report, if the window is still
-    /// in front when `timeout` runs out, or if the foreground cannot be read.
+    /// in front when `timeout` runs out.
     pub fn wait_for_window_to_close(
         &mut self,
         title_contains: &str,
         timeout: Duration,
     ) -> io::Result<()> {
-        let deadline = Instant::now() + timeout;
-        loop {
-            let info = self.process_agent.foreground_info()?;
-            let open = info
-                .foreground
-                .as_ref()
-                .is_some_and(|window| window.title.contains(title_contains));
-            if !open {
-                return Ok(());
-            }
-            if Instant::now() >= deadline {
-                return Err(io::Error::other(format!(
-                    "the window titled {title_contains:?} stayed in front: {}",
-                    describe_foreground(&info)
-                )));
-            }
-            thread::sleep(POLL_INTERVAL);
-        }
+        self.wait_for(
+            WindowCondition::NotForeground {
+                title_contains: title_contains.to_owned(),
+            },
+            timeout,
+            &format!("the window titled {title_contains:?} to leave the foreground"),
+        )
+    }
+
+    /// Waits, on window events, until a window titled with
+    /// `title_contains` is in the foreground, and returns it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error, with the foreground report, if it is not in front
+    /// within `timeout`.
+    pub fn wait_for_window_in_front(
+        &mut self,
+        title_contains: &str,
+        timeout: Duration,
+    ) -> io::Result<WindowInfo> {
+        let (met, desktop) = self.agent.wait_for_window(
+            WindowCondition::Foreground {
+                title_contains: title_contains.to_owned(),
+                unsaved: None,
+            },
+            timeout,
+        )?;
+        desktop.foreground.clone().filter(|_| met).ok_or_else(|| {
+            io::Error::other(format!(
+                "waited {timeout:?} for the window titled {title_contains:?} to take the foreground: {}",
+                describe_foreground(&desktop)
+            ))
+        })
     }
 
     /// One line describing the foreground window and the visible windows,
     /// for failure messages and the run's artifacts.
     pub fn foreground_report(&mut self) -> String {
-        match self.process_agent.foreground_info() {
+        match self.agent.foreground_info() {
             Ok(info) => describe_foreground(&info),
             Err(error) => format!("the foreground could not be read: {error}"),
         }
     }
 
-    /// Establishes the state every scenario starts from: a real, uncloaked
-    /// window in the foreground. The Start menu's search window can be left
-    /// holding the foreground, cloaked, after it closes; the desktop is then
-    /// brought to the foreground instead. Fails, with the foreground report,
-    /// when that state cannot be reached, as NVDA's system tests fail with
-    /// the foreground window's title.
+    /// What Verbatim says as the desktop takes the focus, the state every
+    /// scenario starts from: the desktop's window, its list of icons, and
+    /// the icon that has the focus, whose name, position, and selection the
+    /// agent reads through UI Automation, independently of Verbatim, since
+    /// they belong to the machine. The window must be the desktop's.
     ///
     /// # Errors
     ///
-    /// Returns an error if a request fails or the state cannot be reached.
-    pub fn establish_baseline(&mut self) -> io::Result<()> {
-        if usable_foreground(&self.process_agent.foreground_info()?) {
-            return Ok(());
-        }
-        let _ = self.process_agent.bring_to_foreground(
-            "explorer.exe",
-            Some("Program Manager"),
-            LAUNCH_FOREGROUND_TIMEOUT,
-        )?;
-        let info = self.process_agent.foreground_info()?;
-        if usable_foreground(&info) {
-            return Ok(());
-        }
-        Err(io::Error::other(format!(
-            "no usable foreground window to start from: {}",
-            describe_foreground(&info)
-        )))
-    }
-
-    /// Ends every process named `image` (for example
-    /// `verbatim-synth-host.exe`), returning how many were ended.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the request fails.
-    pub fn kill_processes_by_name(&mut self, image: &str) -> io::Result<u32> {
-        self.process_agent.kill_processes_by_name(image)
-    }
-
-    /// Ends an application a scenario launched and stops tracking it: one
-    /// that opened a harness document is closed by its title, and
-    /// terminated by pid only if it does not close; any other is
-    /// terminated by pid and then swept by image name, since its window
-    /// may belong to a process it handed off to.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if a request fails.
-    pub fn kill_target(&mut self, pid: u32) -> io::Result<KillOutcome> {
-        let Some(index) = self
-            .launched
-            .iter()
-            .position(|launched| launched.pid == pid)
-        else {
-            return self.process_agent.kill_process(pid);
-        };
-        let launched = self.launched.remove(index);
-        self.end(&launched)
-    }
-
-    fn end(&mut self, launched: &Launched) -> io::Result<KillOutcome> {
-        if let Some(marker) = &launched.marker {
-            let outcome = self.close_marked(launched, marker);
-            if let Some(path) = &launched.document
-                && let Err(error) = self.process_agent.delete_file(path)
-            {
-                tracing::warn!(path, %error, "failed to delete a harness document");
-            }
-            return outcome;
-        }
-        let outcome = self.process_agent.kill_process(launched.pid)?;
-        if let Err(error) = self.process_agent.kill_processes_by_name(&launched.image) {
-            tracing::warn!(
-                pid = launched.pid,
-                image = launched.image,
-                %error,
-                "failed to sweep by image name"
-            );
-        }
-        Ok(outcome)
-    }
-
-    /// Closes an application opened on a harness document or window, by
-    /// its title: Notepad's harness tab first (see [`close_notepad_tabs`]),
-    /// then, when the harness opened Notepad's window, the window it leaves.
-    fn close_marked(&mut self, launched: &Launched, marker: &str) -> io::Result<KillOutcome> {
-        if is_notepad(&launched.image) {
-            if let Err(error) = close_notepad_tabs(&mut self.process_agent, marker) {
-                tracing::warn!(marker, %error, "a harness tab did not close; closing its window");
-            }
-            if launched.close_application {
-                close_notepad_windows(&mut self.process_agent)?;
-            }
-        }
-        let remaining = self.process_agent.close_windows(marker, CLOSE_TIMEOUT)?;
-        if remaining == 0 {
-            return Ok(KillOutcome::AlreadyExited);
-        }
-        if !launched.kill_if_open {
+    /// Returns an error if the foreground is not the desktop, or the agent
+    /// cannot read the focus.
+    pub fn desktop_speech(&mut self) -> io::Result<Vec<String>> {
+        let info = self.agent.foreground_info()?;
+        if info
+            .foreground
+            .as_ref()
+            .is_none_or(|window| window.title != DESKTOP_TITLE)
+        {
             return Err(io::Error::other(format!(
-                "{remaining} window(s) titled {marker:?} did not close, and are left open"
+                "the desktop is not in the foreground: {}",
+                describe_foreground(&info)
             )));
         }
-        tracing::warn!(marker, remaining, "a harness document window did not close");
-        self.process_agent.kill_process(launched.pid)
-    }
-
-    /// Asks the agent whether `pid` is still running.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the request fails.
-    pub fn process_status(&mut self, pid: u32) -> io::Result<ProcessState> {
-        self.process_agent.process_status(pid)
-    }
-
-    /// Asks Verbatim to exit cleanly through the control plane
-    /// (`Request::Quit`), then confirms through the agent that the process
-    /// actually exited.
-    ///
-    /// The reply to `Quit` races Verbatim's own teardown: the control server
-    /// is dropped as the process exits, and the connection can close before
-    /// the queued `Ok` frame is written or relayed through the tunnel. A
-    /// closed connection after sending `Quit` is therefore treated as
-    /// success, not an error — the request's entire purpose is that the
-    /// process goes away — and the authoritative confirmation is the agent
-    /// reporting the pid as exited, which this polls for.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the request cannot be sent, an explicit error
-    /// frame comes back, or the process is still running after the exit
-    /// deadline.
-    pub fn quit_verbatim(&mut self) -> io::Result<()> {
-        match self.control.request(Request::Quit) {
-            Ok(frame) => {
-                ok_or_error(frame)?;
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::UnexpectedEof
-                        | io::ErrorKind::TimedOut
-                        | io::ErrorKind::WouldBlock
-                ) =>
-            {
-                // Verbatim tore down before the reply arrived (end of file),
-                // or the reply outlasted the socket's fixed read timeout on a
-                // slow teardown — both observed live. Either way the reply is
-                // not the authority on whether the quit worked; the process
-                // poll below is, so a lost reply is tolerated and a process
-                // that will not die still fails.
-            }
-            Err(error) => return Err(error),
+        let focus = self.agent.focused_element()?;
+        let mut speech = vec![DESKTOP_TITLE.to_owned(), "Desktop list".to_owned()];
+        if let Some((position, size)) = focus.position {
+            let state = match focus.selected {
+                Some(false) => " not selected",
+                _ => "",
+            };
+            speech.push(format!("{}{state} {position} of {size}", focus.name));
         }
-
-        let deadline = Instant::now() + QUIT_TIMEOUT;
-        loop {
-            match self.process_agent.process_status(self.verbatim_pid)? {
-                ProcessState::Exited { .. } => return Ok(()),
-                ProcessState::Running if Instant::now() >= deadline => {
-                    return Err(io::Error::other(format!(
-                        "Verbatim (pid {}) is still running {} seconds after Quit",
-                        self.verbatim_pid,
-                        QUIT_TIMEOUT.as_secs()
-                    )));
-                }
-                ProcessState::Running => thread::sleep(POLL_INTERVAL),
-            }
-        }
+        Ok(speech)
     }
 
-    /// Fetches, asserts, and prints the scenario's recent latency
-    /// timelines; see [`crate::latency::report`].
+    /// Has the agent focus the foreground window's element whose UI
+    /// Automation identifier is `automation_id`, injecting no input, once
+    /// every utterance heard so far has been asserted; returns how many
+    /// children it has, read through UI Automation, independently of
+    /// Verbatim.
     ///
     /// # Errors
     ///
@@ -1193,16 +1036,132 @@ impl Scenario {
     ///
     /// # Panics
     ///
-    /// Panics if any returned record has no audio-start timestamp.
-    pub fn report_latency(&mut self, last_n: u32) -> io::Result<Vec<LatencyRecord>> {
-        crate::latency::report(&mut self.control, last_n)
+    /// Panics if an utterance no assertion matched is waiting.
+    pub fn focus_by_automation_id(&mut self, automation_id: &str) -> io::Result<u32> {
+        self.speech
+            .require_all_asserted(&format!("before focusing {automation_id:?}"));
+        self.agent.focus_by_automation_id(automation_id)
     }
 
-    /// Fetches the scenario's recent latency timelines with no printing and
-    /// no assertion; see [`crate::latency::fetch`]. Used by
-    /// [`crate::registry::run`] to fill in every scenario's run summary
-    /// (`docs/roadmap.md`'s M3 Track B item), regardless of whether that
-    /// scenario itself calls [`report_latency`](Self::report_latency).
+    /// The words of the focused text that its application marks as
+    /// misspelt, read by the agent independently of Verbatim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn misspelt_words(&mut self) -> io::Result<Vec<String>> {
+        self.agent.misspelt_words()
+    }
+
+    /// Whether the lock key `key` (such as `scrolllock`) is on, read by the
+    /// agent independently of Verbatim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn key_toggled(&mut self, key: &str) -> io::Result<bool> {
+        self.agent.key_toggled(key)
+    }
+
+    /// The process id of the program the scenario launched last, and the
+    /// processes it started that are still running.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the scenario has launched nothing, or the agent
+    /// cannot list them.
+    pub fn launched_children(&mut self) -> io::Result<(u32, Vec<ProcessInfo>)> {
+        let pid = self
+            .launched
+            .last()
+            .map(|launched| launched.pid)
+            .ok_or_else(|| io::Error::other("the scenario has launched no program"))?;
+        Ok((pid, self.agent.child_processes(pid)?))
+    }
+
+    /// The processes Verbatim started, such as its synthesizer host.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn verbatim_children(&mut self) -> io::Result<Vec<ProcessInfo>> {
+        self.agent.child_processes(self.verbatim_pid)
+    }
+
+    /// Ends one of Verbatim's own processes, which the scenario then
+    /// expects to have exited, and waits for it to go.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the process cannot be ended or does not exit
+    /// within `timeout`.
+    pub fn end_verbatim_process(&mut self, pid: u32, timeout: Duration) -> io::Result<()> {
+        self.expected_exits.push(pid);
+        self.agent.kill_process(pid)?;
+        match self.agent.wait_for_exit(pid, timeout)? {
+            ProcessState::Exited { .. } => Ok(()),
+            ProcessState::Running => Err(io::Error::other(format!(
+                "process {pid} did not exit within {timeout:?}"
+            ))),
+        }
+    }
+
+    /// The processes in Verbatim's job that exited and that the scenario
+    /// did not end on purpose, other than those that exited cleanly with
+    /// code 0: a crash, a kill by Verbatim's own supervisor, or any other
+    /// unexpected end of one of Verbatim's processes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn unexpected_exits(&mut self) -> io::Result<Vec<ProcessExit>> {
+        let expected = self.expected_exits.clone();
+        let verbatim = self.verbatim_pid;
+        Ok(self
+            .agent
+            .job_exits(self.verbatim_pid)?
+            .into_iter()
+            .filter(|exit| {
+                exit.pid != verbatim
+                    && !expected.contains(&exit.pid)
+                    && (exit.abnormal || exit.exit_code != Some(0))
+            })
+            .collect())
+    }
+
+    /// Asks Verbatim to exit cleanly (`Request::Quit`), and waits on its
+    /// process handle for it to exit with code 0.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, Verbatim does not exit within
+    /// the timeout, or it exits with any other code.
+    pub fn quit_verbatim(&mut self) -> io::Result<()> {
+        self.quit = true;
+        // The reply races Verbatim's own teardown: the connection can close
+        // before it is written. The exit code, read below, is the
+        // authority on whether the quit worked.
+        match self.control.request(Request::Quit) {
+            Ok(frame) => {
+                ok_or_error(frame)?;
+            }
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {}
+            Err(error) => return Err(error),
+        }
+        match self.agent.wait_for_exit(self.verbatim_pid, QUIT_TIMEOUT)? {
+            ProcessState::Exited { exit_code: Some(0) } => Ok(()),
+            ProcessState::Exited { exit_code } => Err(io::Error::other(format!(
+                "Verbatim (pid {}) exited with {exit_code:?} after Quit",
+                self.verbatim_pid
+            ))),
+            ProcessState::Running => Err(io::Error::other(format!(
+                "Verbatim (pid {}) is still running {QUIT_TIMEOUT:?} after Quit",
+                self.verbatim_pid
+            ))),
+        }
+    }
+
+    /// Fetches the scenario's recent latency timelines.
     ///
     /// # Errors
     ///
@@ -1211,293 +1170,502 @@ impl Scenario {
         crate::latency::fetch(&mut self.control, last_n)
     }
 
-    /// Collects the always-on run artifacts into `dir` (created if missing):
-    /// the interleaved [`crate::timeline::Timeline`] (`timeline.txt`, also
-    /// printed on an `expect_*` panic — this additionally writes it to a file)
-    /// and Verbatim's captured stderr log (`stderr.log`, via the agent's
-    /// `read_file` from the path this launch already told the agent to capture
-    /// into). Written for every run, pass or fail, so a passing run
-    /// still leaves enough to read announcement timings (the timeline's
-    /// millisecond offsets) and outpost-ready timestamps (Verbatim's stderr).
+    /// Saves Core's focus, its ancestors, and the navigator object into
+    /// `dir` as `focus.txt`, while Verbatim is up.
     ///
-    /// Reads only the agent and this scenario's own in-memory timeline, never
-    /// Verbatim's control connection, so it is correct to call after
-    /// [`Scenario::quit_verbatim`] has already torn Verbatim down — indeed the
-    /// stderr log is most complete once the process has exited and flushed.
+    /// # Errors
     ///
-    /// Best-effort: each piece is attempted independently and a failure on one
-    /// is logged to stderr rather than aborting the other or the run.
-    pub fn collect_run_artifacts(&mut self, dir: &Path) {
+    /// Returns an error if the request fails or the file cannot be written.
+    pub fn collect_focus(&mut self, dir: &Path) -> io::Result<()> {
+        let report = match ok_or_error(self.control.request(Request::DumpFocus)?)? {
+            Frame::Reply {
+                payload: ReplyPayload::Focus(report),
+                ..
+            } => report,
+            other => {
+                return Err(io::Error::other(format!(
+                    "unexpected reply to DumpFocus: {other:?}"
+                )));
+            }
+        };
+        let mut text = String::new();
+        let describe = |node: &verbatim_model::NodeSnapshot| format!("{node:?}");
+        text.push_str("focus:\n");
+        text.push_str(
+            &report
+                .focus
+                .as_ref()
+                .map_or_else(|| "(none)".to_owned(), describe),
+        );
+        text.push_str("\n\nancestors, outermost first:\n");
+        for ancestor in &report.ancestors {
+            text.push_str(&describe(ancestor));
+            text.push('\n');
+        }
+        text.push_str("\nnavigator:\n");
+        text.push_str(
+            &report
+                .navigator
+                .as_ref()
+                .map_or_else(|| "(none)".to_owned(), describe),
+        );
+        text.push('\n');
+        fs::create_dir_all(dir)?;
+        fs::write(dir.join(FOCUS_FILE_NAME), text)
+    }
+
+    /// Dumps the reducer flight recorder into `dir`, while Verbatim is up.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the dump cannot be made, read, or written.
+    pub fn collect_flight_recorder(&mut self, dir: &Path) -> io::Result<()> {
+        fs::create_dir_all(dir)?;
+        let path = match ok_or_error(self.control.request(Request::DumpRecorder)?)? {
+            Frame::Reply {
+                payload: ReplyPayload::DumpRecorder { path },
+                ..
+            } => path,
+            other => {
+                return Err(io::Error::other(format!(
+                    "unexpected reply to DumpRecorder: {other:?}"
+                )));
+            }
+        };
+        let bytes = self.agent.read_file(&path)?;
+        fs::write(dir.join(FLIGHT_RECORDER_FILE_NAME), bytes)
+    }
+
+    /// Collects the run's artifacts into `dir`, once Verbatim has exited:
+    /// the timeline, the latency report, Verbatim's stderr log and every
+    /// outpost and listener log of this launch, Verbatim's audio, and the
+    /// crash dumps of Verbatim's processes written during the run. Returns
+    /// every artifact that could not be collected, and every crash dump,
+    /// each a failure of the run.
+    pub fn collect_run_artifacts(&mut self, dir: &Path) -> Vec<String> {
+        let mut problems = Vec::new();
         if let Err(error) = fs::create_dir_all(dir) {
-            eprintln!(
-                "could not create run-artifacts directory {}: {error}",
-                dir.display()
-            );
-            return;
+            return vec![format!("could not create {}: {error}", dir.display())];
         }
-
         if let Err(error) = fs::write(dir.join(TIMELINE_FILE_NAME), self.timeline.render()) {
-            eprintln!("could not write the run timeline: {error}");
+            problems.push(format!("could not write the timeline: {error}"));
         }
-
-        match self.process_agent.read_file(&self.stderr_log_path) {
+        if let Err(error) = fs::write(dir.join(LATENCY_FILE_NAME), self.latency_csv()) {
+            problems.push(format!("could not write the latency report: {error}"));
+        }
+        match self.agent.read_file(&self.stderr_log_path) {
             Ok(bytes) => {
                 if let Err(error) = fs::write(dir.join(STDERR_FILE_NAME), bytes) {
-                    eprintln!("could not write Verbatim's fetched stderr log: {error}");
+                    problems.push(format!("could not write Verbatim's stderr log: {error}"));
                 }
             }
-            Err(error) => {
-                eprintln!(
-                    "could not read Verbatim's stderr log at {} back through the agent: {error}",
-                    self.stderr_log_path
-                );
-            }
+            Err(error) => problems.push(format!(
+                "could not read Verbatim's stderr log at {}: {error}",
+                self.stderr_log_path
+            )),
         }
+        let audio = crate::recording::audio_path(&self.run_dir);
+        if let Err(error) = self.agent.copy_file(&audio, &dir.join(AUDIO_FILE_NAME)) {
+            problems.push(format!("could not copy Verbatim's audio {audio}: {error}"));
+        }
+        problems.extend(self.collect_outpost_logs(dir));
+        problems.extend(self.collect_crash_dumps(dir));
+        problems
+    }
 
-        self.collect_outpost_logs(dir);
+    /// The latency report: one line per utterance that carries the time of
+    /// the event behind it, with the step it answered.
+    fn latency_csv(&self) -> String {
+        let mut csv = String::from("step,utterance,event_to_queue_ms,event_to_audio_ms\n");
+        for row in self.speech.latency_rows() {
+            let quote = |text: &str| format!("\"{}\"", text.replace('"', "\"\""));
+            let _ = writeln!(
+                csv,
+                "{},{},{},{}",
+                quote(row.step.as_deref().unwrap_or("")),
+                quote(&row.text),
+                row.event_to_queue_ms,
+                row.event_to_audio_ms
+                    .map_or_else(String::new, |ms| ms.to_string())
+            );
+        }
+        csv
     }
 
     /// Fetches every outpost and listener log this Verbatim launch wrote,
-    /// from its own directory under `logs` next to Verbatim's executable
-    /// (`logs\<Verbatim's pid>`, one per launch, so nothing from another run
-    /// is mixed in), into `dir` under the names the supervisor gave them:
-    /// `listener.log` and `outpost-<image>-<pid>.log` per application, Core's
-    /// own as `outpost-verbatim-<pid>.log`. Listing the directory finds the
-    /// application that actually held the window even when a launch handed
-    /// off to another process, as Windows 11 Notepad does.
-    fn collect_outpost_logs(&mut self, dir: &Path) {
-        let Some(logs_dir) = self.outpost_logs_dir() else {
-            eprintln!("could not derive the outpost logs directory from the stderr log path");
-            return;
-        };
-        let names = match self.process_agent.list_files(&logs_dir) {
+    /// from `logs\<Verbatim's pid>` next to its executable.
+    fn collect_outpost_logs(&mut self, dir: &Path) -> Vec<String> {
+        let logs_dir = format!(r"{}\logs\{}", self.run_dir, self.verbatim_pid);
+        let names = match self.agent.list_files(&logs_dir) {
             Ok(names) => names,
-            Err(error) => {
-                eprintln!("could not list {logs_dir} through the agent: {error}");
-                return;
-            }
+            Err(error) => return vec![format!("could not list {logs_dir}: {error}")],
         };
+        let mut problems = Vec::new();
         if !names.iter().any(|name| name == "listener.log") {
-            eprintln!("{logs_dir} holds no listener.log; the focus listener never started");
+            problems.push(format!(
+                "{logs_dir} holds no listener.log; the focus listener never started"
+            ));
         }
         for name in names {
             let remote_path = format!(r"{logs_dir}\{name}");
-            match self.process_agent.read_file(&remote_path) {
-                Ok(bytes) => {
-                    if let Err(error) = fs::write(dir.join(&name), bytes) {
-                        eprintln!("could not write the fetched {name}: {error}");
-                    }
+            // In chunks: an outpost's debug log over a long flood is larger
+            // than one read may be.
+            if let Err(error) = self.agent.copy_file(&remote_path, &dir.join(&name)) {
+                problems.push(format!("could not collect {remote_path}: {error}"));
+            }
+        }
+        // Deleted once collected, so a later launch that Windows gives the
+        // same process id starts with a folder of its own.
+        if let Err(error) = self.agent.delete_folder(&logs_dir) {
+            problems.push(format!("could not delete {logs_dir}: {error}"));
+        }
+        problems
+    }
+
+    /// Copies the crash dumps of Verbatim's processes written during the
+    /// run into `dir`, each reported as a failure; nothing when crash dumps
+    /// are not configured on the agent's machine.
+    fn collect_crash_dumps(&mut self, dir: &Path) -> Vec<String> {
+        let Some(before) = self.dumps_before.clone() else {
+            return Vec::new();
+        };
+        let Some(after) = crash_dumps(&mut self.agent) else {
+            return vec![format!(
+                "could not list {CRASH_DUMP_FOLDER} at the end of the run"
+            )];
+        };
+        let mut problems = Vec::new();
+        for name in after.into_iter().filter(|name| !before.contains(name)) {
+            let remote = format!(r"{CRASH_DUMP_FOLDER}\{name}");
+            match self.agent.copy_file(&remote, &dir.join(&name)) {
+                Ok(()) => problems.push(format!("a Verbatim process crashed: its dump is {name}")),
+                Err(error) => problems.push(format!(
+                    "a Verbatim process crashed, and its dump {remote} could not be copied: {error}"
+                )),
+            }
+        }
+        problems
+    }
+
+    /// Finishes this run's video and saves it, with Verbatim's audio, to
+    /// `to`. Does nothing when the run is not recording.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the video cannot be finished or saved.
+    pub fn finish_recording(&mut self, to: &Path) -> io::Result<()> {
+        let Some(mut recording) = self.recording.take() else {
+            return Ok(());
+        };
+        recording.finish(&mut self.agent, to)?;
+        println!("recording saved to {}", to.display());
+        Ok(())
+    }
+
+    /// Closes what the scenario opened, last opened first: each window by
+    /// its title (a Notepad harness tab as a tab), waiting for it to go and,
+    /// when the scenario started its program, for the process that owned
+    /// it to exit; anything launched without a window of its own by its
+    /// process id; then the harness documents, folders, and files. Returns
+    /// everything that could not be closed or deleted, each a failure.
+    pub fn clean_up(&mut self) -> Vec<String> {
+        self.cleaned_up = true;
+        let mut problems = Vec::new();
+        for launched in std::mem::take(&mut self.launched).into_iter().rev() {
+            problems.extend(self.close(&launched));
+        }
+        for folder in std::mem::take(&mut self.folders) {
+            if let Err(error) = self.agent.delete_folder(&folder) {
+                problems.push(format!(
+                    "could not delete the harness folder {folder}: {error}"
+                ));
+            }
+        }
+        for file in std::mem::take(&mut self.files) {
+            if let Err(error) = self.agent.delete_file(&file) {
+                problems.push(format!("could not delete the harness file {file}: {error}"));
+            }
+        }
+        problems
+    }
+
+    /// Closes one launched application, as [`Scenario::clean_up`] says.
+    fn close(&mut self, launched: &Launched) -> Vec<String> {
+        let mut problems = Vec::new();
+        if let Some(title) = &launched.title {
+            if launched.notepad {
+                // Every harness tab, the scenario's and any Notepad restored
+                // from an earlier run's session, so Notepad can exit. Never
+                // its window: Notepad keeps the tabs of a window that closes
+                // for its next session.
+                if let Err(error) = close_notepad_tabs(&mut self.agent, DOCUMENT_MARKER) {
+                    problems.push(error.to_string());
                 }
+            } else {
+                match self.agent.close_windows(title, CLOSE_TIMEOUT) {
+                    Ok(0) => {}
+                    Ok(remaining) => problems.push(format!(
+                        "{remaining} window(s) titled {title:?} did not close within {CLOSE_TIMEOUT:?}"
+                    )),
+                    Err(error) => problems.push(format!("could not close {title:?}: {error}")),
+                }
+            }
+            let owners: &[u32] = if launched.owners_exit {
+                &launched.owners
+            } else {
+                &[]
+            };
+            for &owner in owners.iter().chain(&launched.also_exit) {
+                match self.agent.wait_for_exit(owner, CLOSE_TIMEOUT) {
+                    Ok(ProcessState::Exited { .. }) => {}
+                    Ok(ProcessState::Running) => problems.push(format!(
+                        "process {owner}, which owned or ran in the window titled {title:?}, did not exit within {CLOSE_TIMEOUT:?} of the window closing{}",
+                        if launched.notepad {
+                            format!(
+                                " (Windows 11 Notepad keeps running while it has tabs open, \
+                                 such as tabs it restored from its previous session, which \
+                                 must be closed before the Notepad scenarios run): {}",
+                                self.foreground_report()
+                            )
+                        } else {
+                            String::new()
+                        }
+                    )),
+                    Err(error) => problems.push(format!(
+                        "could not wait for process {owner} to exit: {error}"
+                    )),
+                }
+            }
+        } else {
+            let ended = self
+                .agent
+                .kill_process(launched.pid)
+                .and_then(|_| self.agent.wait_for_exit(launched.pid, CLOSE_TIMEOUT));
+            match ended {
+                Ok(ProcessState::Exited { .. }) => {}
+                Ok(ProcessState::Running) => problems.push(format!(
+                    "process {} did not exit within {CLOSE_TIMEOUT:?} of being ended",
+                    launched.pid
+                )),
                 Err(error) => {
-                    eprintln!("could not read {remote_path} back through the agent: {error}");
+                    problems.push(format!("could not end process {}: {error}", launched.pid));
                 }
             }
         }
-    }
-
-    /// This launch's log directory, `logs\<Verbatim's pid>` next to
-    /// Verbatim's executable, derived from the captured stderr log path's
-    /// parent (both live in the same directory — see
-    /// [`verbatim_stderr_log_path`]).
-    fn outpost_logs_dir(&self) -> Option<String> {
-        Path::new(&self.stderr_log_path)
-            .parent()?
-            .join("logs")
-            .join(self.verbatim_pid.to_string())
-            .to_str()
-            .map(str::to_owned)
-    }
-
-    /// Dumps the reducer flight recorder into `dir` (created if missing): a
-    /// flight-recorder dump (`Request::DumpRecorder` returns the path Core
-    /// wrote it to — same machine as [`stderr_log_path`](Self::stderr_log_path)
-    /// in either mode, since Core and Verbatim's own stderr capture are the
-    /// same process — read back through the agent). The always-on timeline and
-    /// stderr log are written separately by [`Scenario::collect_run_artifacts`].
-    ///
-    /// Requires Verbatim to still be answering its control plane, so
-    /// [`crate::registry::run`] calls this on every run *before* the clean quit
-    /// (and, on a failing run, while Verbatim is still up because the quit was
-    /// skipped): the reducer inputs it captures are wanted for a passing run
-    /// too, to chase symptoms the pass/fail verdict alone does not explain.
-    /// Best-effort, deliberately never itself a source of test failure — the
-    /// control connection or the agent may be in a degraded state (Verbatim
-    /// crashed, the tunnel dropped) — so a failure is logged, not propagated.
-    pub fn collect_flight_recorder(&mut self, dir: &Path) {
-        if let Err(error) = fs::create_dir_all(dir) {
-            eprintln!(
-                "could not create failure-artifacts directory {}: {error}",
-                dir.display()
-            );
-            return;
+        if let Some(document) = &launched.document
+            && let Err(error) = self.agent.delete_file(document)
+        {
+            problems.push(format!(
+                "could not delete the harness document {document}: {error}"
+            ));
         }
-
-        match self.control.request(Request::DumpRecorder) {
-            Ok(frame) => match ok_or_error(frame) {
-                Ok(Frame::Reply {
-                    payload: ReplyPayload::DumpRecorder { path },
-                    ..
-                }) => match self.process_agent.read_file(&path) {
-                    Ok(bytes) => {
-                        if let Err(error) = fs::write(dir.join(FLIGHT_RECORDER_FILE_NAME), bytes) {
-                            eprintln!("could not write the fetched flight-recorder dump: {error}");
-                        }
-                    }
-                    Err(error) => {
-                        eprintln!(
-                            "could not read the flight-recorder dump at {path} back through the agent: {error}"
-                        );
-                    }
-                },
-                Ok(other) => {
-                    eprintln!(
-                        "unexpected reply to DumpRecorder while collecting failure artifacts: {other:?}"
-                    );
-                }
-                Err(error) => eprintln!("DumpRecorder was refused: {error}"),
-            },
-            Err(error) => eprintln!("could not request a flight-recorder dump: {error}"),
-        }
+        problems
     }
 }
 
 impl Drop for Scenario {
+    /// A scenario dropped without its cleanup having run, which happens
+    /// only when the run panicked before reaching it: Verbatim is ended by
+    /// its process id and what the scenario opened is closed. Anything
+    /// that will not close is printed; the run has already failed.
     fn drop(&mut self) {
-        // End every launched application (see `kill_target`). Best-effort:
-        // a failure is logged, not propagated, since this runs even when
-        // the test itself already failed or panicked.
-        for launched in std::mem::take(&mut self.launched) {
-            if let Err(error) = self.end(&launched) {
-                tracing::warn!(
-                    pid = launched.pid,
-                    %error,
-                    "failed to end a scenario-launched application during cleanup"
-                );
+        if !self.quit {
+            let _ = self.control.request(Request::Quit);
+            match self.agent.wait_for_exit(self.verbatim_pid, QUIT_TIMEOUT) {
+                Ok(ProcessState::Exited { .. }) => {}
+                _ => {
+                    if let Err(error) = self.agent.kill_process(self.verbatim_pid) {
+                        eprintln!(
+                            "could not end Verbatim (pid {}): {error}",
+                            self.verbatim_pid
+                        );
+                    }
+                }
             }
         }
-        for folder in std::mem::take(&mut self.folders) {
-            if let Err(error) = delete_harness_folder(
-                &mut self.process_agent,
-                &folder,
-                Instant::now() + CLOSE_TIMEOUT,
-            ) {
-                tracing::warn!(folder, %error, "failed to delete a harness folder");
+        if !self.cleaned_up {
+            for problem in self.clean_up() {
+                eprintln!("cleanup after a failed run: {problem}");
             }
         }
-        for file in std::mem::take(&mut self.files) {
-            if let Err(error) = self.process_agent.delete_file(&file) {
-                tracing::warn!(file, %error, "failed to delete a harness file");
-            }
-        }
-        // Best-effort clean quit first (a no-op if the connection is
-        // already gone), then guarantee Verbatim is actually gone via the
-        // agent regardless of whether Quit landed — the guard's whole
-        // point is that this happens even if the test panicked before
-        // reaching its own quit step.
-        let _ = self.control.request(Request::Quit);
-        if let Err(error) = self.process_agent.kill_process(self.verbatim_pid) {
-            tracing::warn!(
-                pid = self.verbatim_pid,
-                %error,
-                "failed to kill Verbatim during scenario cleanup"
-            );
-        }
-        if let Some(recording) = &mut self.recording {
-            recording.stop(&mut self.process_agent);
+        if let Some(recording) = &mut self.recording
+            && let Err(error) = recording.stop(&mut self.agent)
+        {
+            eprintln!("could not stop the recording: {error}");
         }
     }
 }
 
-/// Sweeps known target-application image names, and closes by title the
-/// harness documents and windows a prior run left open (so the user's own
-/// windows of the same application are left alone), so a scenario starts
-/// from as clean a state as possible even after a prior run aborted without
-/// running its own Drop cleanup (a killed test process, a Ctrl+C, a panic
-/// that unwound past Scenario somehow). A harness tab left in Notepad is
-/// closed as a tab ([`close_notepad_tabs`]), and the harness documents,
-/// files ([`HARNESS_FILE_EXTENSIONS`]), and folders left in `directory`,
-/// Verbatim's launch directory, are deleted. Best-effort: a failure is
-/// logged, not fatal to the launch.
-fn sweep_leftovers(agent: &mut AgentClient, directory: &str) {
-    for name in crate::registry::swept_target_image_names() {
-        // A program the harness stages beside Verbatim is swept only where
-        // it was staged: the same program run from elsewhere, such as the
-        // `mockapp` a concurrent `cargo test` drives, is not the harness's
-        // to end.
-        let target = if STAGED_BINARIES.contains(&name) {
-            format!(r"{directory}\{name}")
-        } else {
-            name.to_owned()
-        };
-        if let Err(error) = agent.kill_processes_by_name(&target) {
-            tracing::warn!(name, %error, "failed to pre-launch sweep a target image name");
-        }
-    }
-    if let Err(error) = close_notepad_tabs(agent, DOCUMENT_MARKER) {
-        tracing::warn!(%error, "failed to close leftover harness tabs in Notepad");
-    }
-    if let Err(error) = agent.close_windows(DOCUMENT_MARKER, CLOSE_TIMEOUT) {
-        tracing::warn!(%error, "failed to close leftover harness documents");
-    }
-    match agent.list_files(directory) {
-        Ok(names) => {
-            for name in names.iter().filter(|name| {
-                name.starts_with(DOCUMENT_MARKER)
-                    && Path::new(name).extension().is_some_and(|extension| {
-                        HARNESS_FILE_EXTENSIONS
-                            .iter()
-                            .any(|harness| extension.eq_ignore_ascii_case(harness))
-                    })
-            }) {
-                if let Err(error) = agent.delete_file(&format!("{directory}\\{name}")) {
-                    tracing::warn!(name, %error, "failed to delete a leftover harness file");
-                }
-            }
-        }
-        Err(error) => tracing::warn!(%error, "failed to list leftover harness documents"),
-    }
-    match agent.list_folders(directory) {
-        Ok(names) => {
-            for name in names
-                .iter()
-                .filter(|name| name.starts_with(DOCUMENT_MARKER))
-            {
-                let folder = format!(r"{directory}\{name}");
-                if let Err(error) = delete_harness_folder(agent, &folder, Instant::now()) {
-                    tracing::warn!(name, %error, "failed to delete a leftover harness folder");
-                }
-            }
-        }
-        Err(error) => tracing::warn!(%error, "failed to list leftover harness folders"),
-    }
+/// The desktop window's title.
+pub(crate) const DESKTOP_TITLE: &str = "Program Manager";
+
+/// The title the Settings app's window has.
+const SETTINGS_TITLE: &str = "Settings";
+
+/// The variable naming the event Verbatim sets once it is ready for input;
+/// read by `verbatim-app`.
+const READY_EVENT_ENV: &str = "VERBATIM_READY_EVENT";
+
+/// A name for this launch's readiness event, unique to this test process
+/// and launch.
+fn ready_event_name() -> String {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    format!(
+        r"Local\verbatim-e2e-ready-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
-/// Deletes the harness folder at `path` with everything in it, refusing
-/// any folder whose name does not start with [`DOCUMENT_MARKER`]. A program
-/// whose window has just closed can still have the folder open while it
-/// exits, such as the shell a terminal ran in it, so a failed delete is
-/// tried again until the folder is gone or `deadline` passes.
-fn delete_harness_folder(agent: &mut AgentClient, path: &str, deadline: Instant) -> io::Result<()> {
-    if !is_harness_name(path) {
+/// The crash dumps in [`CRASH_DUMP_FOLDER`] of Verbatim's processes, or
+/// `None` when the folder does not exist, which is when crash dumps are
+/// not configured.
+fn crash_dumps(agent: &mut AgentClient) -> Option<Vec<String>> {
+    agent.list_files(CRASH_DUMP_FOLDER).ok().map(|names| {
+        names
+            .into_iter()
+            .filter(|name| {
+                VERBATIM_IMAGES
+                    .iter()
+                    .any(|image| name.to_ascii_lowercase().starts_with(image))
+            })
+            .collect()
+    })
+}
+
+/// Cleans up what an earlier run that ended without its own cleanup left
+/// behind: every process the agent launched that is still running is ended
+/// by its own handle; every window titled with [`DOCUMENT_MARKER`] is
+/// closed (a Notepad harness tab as a tab); and the harness documents,
+/// files, and folders left in `directory` are deleted.
+///
+/// # Errors
+///
+/// Returns an error naming anything that could not be cleaned up.
+fn sweep_leftovers(agent: &mut AgentClient, directory: &str) -> io::Result<()> {
+    let ended = agent.end_launched()?;
+    if ended > 0 {
+        println!("ended {ended} process(es) an earlier run left running");
+    }
+    close_notepad_tabs(agent, DOCUMENT_MARKER)?;
+    let remaining = agent.close_windows(DOCUMENT_MARKER, CLOSE_TIMEOUT)?;
+    if remaining > 0 {
         return Err(io::Error::other(format!(
-            "{path} is not a harness folder, so it is not deleted"
+            "{remaining} window(s) an earlier run left open, titled with {DOCUMENT_MARKER:?}, did not close"
         )));
     }
-    loop {
-        match agent.delete_folder(path) {
-            Ok(()) => return Ok(()),
-            Err(error) if Instant::now() >= deadline => return Err(error),
-            Err(_) => thread::sleep(SAVE_POLL),
-        }
+    for name in agent.list_files(directory)?.iter().filter(|name| {
+        name.starts_with(DOCUMENT_MARKER)
+            && Path::new(name).extension().is_some_and(|extension| {
+                HARNESS_FILE_EXTENSIONS
+                    .iter()
+                    .any(|harness| extension.eq_ignore_ascii_case(harness))
+            })
+    }) {
+        agent.delete_file(&format!(r"{directory}\{name}"))?;
     }
+    for name in agent
+        .list_folders(directory)?
+        .iter()
+        .filter(|name| name.starts_with(DOCUMENT_MARKER))
+    {
+        agent.delete_folder(&format!(r"{directory}\{name}"))?;
+    }
+    Ok(())
 }
 
-/// Whether the last component of `path`, a path on the agent's machine,
-/// is named with [`DOCUMENT_MARKER`].
-fn is_harness_name(path: &str) -> bool {
-    path.rsplit(['\\', '/'])
-        .next()
-        .is_some_and(|name| name.starts_with(DOCUMENT_MARKER))
+/// A harness document a scenario edits in Windows 11 Notepad, opened
+/// before Verbatim starts ([`Scenario::launch_with`]): the starting state
+/// minimizes it with every other window, and the scenario brings it
+/// forward ([`Scenario::bring_document_forward`]), so what Verbatim says of
+/// it is what it says of a window coming back to the foreground. A window
+/// Windows 11 Notepad opens is titled "Notepad" alone for a moment as it
+/// first takes the foreground, and then renamed with the document; opened
+/// while Verbatim runs, whether Verbatim announces it before or after the
+/// rename is a race.
+#[derive(Clone, Debug)]
+pub struct Document {
+    /// The document's name, after [`DOCUMENT_MARKER`].
+    pub name: &'static str,
+    /// The document's text, its caret at the start.
+    pub contents: String,
+}
+
+/// Opens `document` in Windows 11 Notepad and waits on window events until
+/// it is in the foreground titled with the document. Notepad opens
+/// minimized and inactive and is brought forward once its window is
+/// titled with the document. No Notepad window may be open before, so the
+/// window is the scenario's own and Notepad's process exits once it
+/// closes; at cleanup the harness tab is closed as a tab, so Notepad does
+/// not keep it for its next session, and the document is deleted.
+fn open_document(
+    agent: &mut AgentClient,
+    run_dir: &str,
+    document: &Document,
+) -> io::Result<Launched> {
+    let marker = harness_marker(document.name);
+    let open: Vec<String> = agent
+        .foreground_info()?
+        .windows
+        .into_iter()
+        .filter(|window| is_notepad(&window.image))
+        .map(|window| window.title)
+        .collect();
+    if !open.is_empty() {
+        return Err(io::Error::other(format!(
+            "Notepad must not be open when a scenario starts, so its window is the scenario's own; close these first: {open:?}"
+        )));
+    }
+    let path = format!(r"{run_dir}\{marker}.txt");
+    agent.write_file(&path, document.contents.as_bytes())?;
+    let launch = agent.launch_minimized("notepad.exe", std::slice::from_ref(&path))?;
+    let mut launched = Launched {
+        pid: launch.pid,
+        title: Some(marker.clone()),
+        owners: Vec::new(),
+        owners_exit: true,
+        document: Some(path),
+        notepad: true,
+        also_exit: Vec::new(),
+    };
+    let (present, desktop) = agent.wait_for_window(
+        WindowCondition::Present {
+            title_contains: marker.clone(),
+        },
+        WINDOW_TIMEOUT,
+    )?;
+    let window = desktop
+        .windows
+        .iter()
+        .find(|window| present && window.title.contains(&marker))
+        .ok_or_else(|| {
+            io::Error::other(format!(
+                "no window titled {marker:?} opened within {WINDOW_TIMEOUT:?}: {}",
+                describe_foreground(&desktop)
+            ))
+        })?;
+    if !agent.set_foreground(window.window)? {
+        return Err(io::Error::other(format!(
+            "Notepad's window {:?} could not be brought to the foreground: {}",
+            window.title,
+            describe_foreground(&desktop)
+        )));
+    }
+    let (met, desktop) = agent.wait_for_window(
+        WindowCondition::Foreground {
+            title_contains: marker.clone(),
+            unsaved: None,
+        },
+        WINDOW_TIMEOUT,
+    )?;
+    let window = desktop.foreground.clone().filter(|_| met).ok_or_else(|| {
+        io::Error::other(format!(
+            "the window titled {marker:?} did not take the foreground within {WINDOW_TIMEOUT:?}: {}",
+            describe_foreground(&desktop)
+        ))
+    })?;
+    launched.owners.push(window.pid);
+    Ok(launched)
 }
 
 /// Whether `image` is Windows 11 Notepad's.
@@ -1505,18 +1673,15 @@ fn is_notepad(image: &str) -> bool {
     image.eq_ignore_ascii_case("notepad.exe")
 }
 
-/// Closes every Notepad tab whose title holds `marker`, one at a time, by
-/// bringing its window to the foreground and pressing Control+W, saving it
-/// first when its title marks unsaved changes. Windows 11 Notepad keeps
-/// every tab of a window that closes for its next session, so closing the
-/// harness document's window would leave its tab behind for good, while a
-/// closed tab is forgotten; a window whose last tab closes closes with it.
-/// The window's title names its selected tab, so only a harness tab ever
-/// gets the key, and the user's own tabs in the same window are left as
-/// they were. Each step waits for its evidence, the title the window had
-/// going away, within [`CLOSE_TIMEOUT`] in all.
+/// Closes every Notepad tab whose title holds `marker`, one at a time:
+/// brings its window to the foreground, which the agent may do without
+/// input as the program that injected the last input, and presses
+/// Control+W, saving first when the title marks unsaved changes. Windows
+/// 11 Notepad keeps every tab of a window that closes for its next
+/// session, while a closed tab is forgotten; a window whose last tab
+/// closes closes with it. Each step waits, on window events, for its
+/// evidence: the title the window had going away.
 fn close_notepad_tabs(agent: &mut AgentClient, marker: &str) -> io::Result<()> {
-    let deadline = Instant::now() + CLOSE_TIMEOUT;
     loop {
         let Some(window) = agent
             .foreground_info()?
@@ -1526,122 +1691,43 @@ fn close_notepad_tabs(agent: &mut AgentClient, marker: &str) -> io::Result<()> {
         else {
             return Ok(());
         };
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
+        if !agent.set_foreground(window.window)? {
             return Err(io::Error::other(format!(
-                "Notepad's tab {:?} did not close within {CLOSE_TIMEOUT:?}",
+                "Notepad's tab {:?} could not be brought to the foreground to close it",
                 window.title
             )));
         }
-        agent.bring_to_foreground(&window.image, Some(marker), remaining)?;
-        // Checked again just before the key: Control+W closes whichever tab
-        // the window in front has selected.
-        let Some(front) = agent
-            .foreground_info()?
-            .foreground
-            .filter(|front| is_notepad(&front.image) && front.title.contains(marker))
-        else {
-            return Err(io::Error::other(format!(
-                "Notepad's tab {:?} could not be brought to the foreground",
-                window.title
-            )));
-        };
-        let key = if front.title.starts_with('*') {
+        let key = if window.title.starts_with('*') {
             "control+s"
         } else {
             "control+w"
         };
         agent.send_keys(&[key.to_owned()])?;
-        wait_for_title_gone(agent, &front.title, deadline)?;
-    }
-}
-
-/// Waits until no visible top-level window is titled exactly `title`.
-fn wait_for_title_gone(agent: &mut AgentClient, title: &str, deadline: Instant) -> io::Result<()> {
-    loop {
-        let present = agent
-            .foreground_info()?
-            .windows
-            .iter()
-            .any(|window| window.title == title);
-        if !present {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
+        let (gone, desktop) = agent.wait_for_window(
+            WindowCondition::Absent {
+                title_contains: window.title.clone(),
+            },
+            CLOSE_TIMEOUT,
+        )?;
+        if !gone {
             return Err(io::Error::other(format!(
-                "the window titled {title:?} was still there after {CLOSE_TIMEOUT:?}"
+                "Notepad's tab {:?} did not close within {CLOSE_TIMEOUT:?}: {}",
+                window.title,
+                describe_foreground(&desktop)
             )));
         }
-        thread::sleep(SAVE_POLL);
     }
 }
 
-/// Closes every Notepad window, each by its own title, once the harness's
-/// tab has closed in a window the harness opened: what is left holds only
-/// the tabs Notepad restored from its last session, which it keeps again.
-fn close_notepad_windows(agent: &mut AgentClient) -> io::Result<()> {
-    let titles: Vec<String> = agent
-        .foreground_info()?
-        .windows
-        .into_iter()
-        .filter(|window| is_notepad(&window.image))
-        .map(|window| window.title)
-        .collect();
-    for title in titles {
-        let remaining = agent.close_windows(&title, CLOSE_TIMEOUT)?;
-        if remaining > 0 {
-            tracing::warn!(title, remaining, "a Notepad window did not close");
-        }
-    }
-    Ok(())
-}
-
-/// Starts this run's video, when recording (see [`crate::recording`]).
-fn start_recording(agent: &mut AgentClient, dir: &str) -> Option<Recording> {
-    if !crate::recording::enabled() {
-        return None;
-    }
-    Recording::start(agent, dir)
-        .inspect_err(|error| {
-            eprintln!("not recording a video: ffmpeg could not be started: {error}");
-        })
-        .ok()
-}
-
-/// Connects to a just-launched Verbatim: the command connection, then a
-/// second one subscribed to its speech.
+/// Connects to a just-launched, ready Verbatim: the command connection,
+/// then a second one subscribed to its speech.
 fn connect(agent_addr: &str) -> io::Result<(ControlClient, SpeechCollector, Timeline)> {
-    let deadline = Instant::now() + LAUNCH_TIMEOUT;
-    let control = wait_for_control_tunnel(agent_addr, deadline).map_err(|error| {
-        io::Error::other(format!("Verbatim's control plane never came up: {error}"))
-    })?;
-    let speech_tunnel = wait_for_control_tunnel(agent_addr, deadline).map_err(|error| {
-        io::Error::other(format!(
-            "could not open a second control-plane tunnel for speech: {error}"
-        ))
-    })?;
+    let control = AgentClient::connect(agent_addr)?.open_control_tunnel()?;
+    let speech_tunnel = AgentClient::connect(agent_addr)?.open_control_tunnel()?;
     let timeline = Timeline::new();
     let speech = SpeechCollector::subscribe(speech_tunnel, timeline.clone())
         .map_err(|error| io::Error::other(format!("could not subscribe to speech: {error}")))?;
     Ok((control, speech, timeline))
-}
-
-/// Repeatedly connects a fresh [`AgentClient`] and attempts
-/// [`AgentClient::open_control_tunnel`] until it succeeds or `deadline`
-/// passes. A fresh connection per attempt is deliberate and simple: the
-/// agent happily serves many connections (one thread each), and an
-/// `OpenControlTunnel` that fails because Verbatim has not created its pipe
-/// yet leaves nothing worth reusing.
-fn wait_for_control_tunnel(agent_addr: &str, deadline: Instant) -> io::Result<ControlClient> {
-    let mut last_error = io::Error::other("launch timeout elapsed before any attempt");
-    while Instant::now() < deadline {
-        match AgentClient::connect(agent_addr).and_then(AgentClient::open_control_tunnel) {
-            Ok(client) => return Ok(client),
-            Err(error) => last_error = error,
-        }
-        thread::sleep(POLL_INTERVAL);
-    }
-    Err(last_error)
 }
 
 /// The workspace root, computed from this crate's own manifest directory
@@ -1883,7 +1969,7 @@ fn write_remote_settings(
     fs::create_dir_all(&local)?;
     write_settings(&local, settings)?;
     let contents = fs::read(local.join(ConfigStore::SETTINGS_FILE))?;
-    let _ = fs::remove_dir_all(&local);
+    fs::remove_dir_all(&local)?;
     agent.write_file(
         &format!(r"{exe_dir}\{}", ConfigStore::SETTINGS_FILE),
         &contents,
@@ -1920,66 +2006,17 @@ fn config_error(error: &verbatim_config::ConfigError) -> io::Error {
 /// The synthesizer every run selects.
 const ESPEAK_ID: &str = "espeak";
 
-/// Waits until Verbatim reports itself ready
-/// ([`GUI_READY_TIMEOUT`]).
-fn wait_for_gui(control: &mut ControlClient) -> io::Result<()> {
-    let deadline = Instant::now() + GUI_READY_TIMEOUT;
-    loop {
-        if let Frame::Reply {
-            payload: ReplyPayload::Status(status),
-            ..
-        } = control.request(Request::Status)?
-            && status.ready
-        {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            return Err(io::Error::other(format!(
-                "Verbatim did not report itself ready within {GUI_READY_TIMEOUT:?}"
-            )));
-        }
-        thread::sleep(GUI_READY_POLL);
-    }
-}
-
-/// The image (executable file) name [`Scenario::launch_target`] records
-/// for later cleanup: just the file name component of `command`, matching
-/// what Windows itself reports as a process's image name (what
-/// `verbatim_agent::protocol::Request::KillProcessesByName` compares
-/// against) — never a full path. Falls back to `command` verbatim on the
-/// rare path that has no file name component at all, so this never fails
-/// outright over what is only ever used as a best-effort cleanup key.
-fn image_name(command: &str) -> String {
-    Path::new(command)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map_or_else(|| command.to_owned(), str::to_owned)
-}
-
-/// Unit coverage for the runner-direct staging pieces that a live agent
-/// connection is not needed to exercise: fixed-settings generation, the
-/// hash-skip copy behavior, and [`VERBATIM_EXE_ENV`]'s override resolution.
-/// [`Scenario::launch`] itself, and therefore the end-to-end staging flow
-/// these pieces compose into, is only exercised live — by
-/// `.github/workflows/ci.yml`'s `e2e` job (runner-direct) and
-/// `cargo xtask vm test` (remote) — since it needs a running agent.
-/// Whether `info` names a real foreground window to start a scenario from:
-/// one exists and it is not cloaked.
-fn usable_foreground(info: &ForegroundInfo) -> bool {
-    info.foreground
-        .as_ref()
-        .is_some_and(|window| !window.cloaked)
-}
-
 /// `info` as one line: the foreground window, then the visible windows.
 fn describe_foreground(info: &ForegroundInfo) -> String {
     let describe = |window: &WindowInfo| {
         format!(
-            "{:?} ({}, class {}{})",
+            "{:?} ({} pid {}, class {}{}{})",
             window.title,
             window.image,
+            window.pid,
             window.class,
-            if window.cloaked { ", cloaked" } else { "" }
+            if window.cloaked { ", cloaked" } else { "" },
+            if window.minimized { ", minimized" } else { "" }
         )
     };
     let foreground = info
@@ -2059,13 +2096,6 @@ mod tests {
                 .join("debug")
                 .join("verbatim.exe")
         );
-    }
-
-    #[test]
-    fn only_a_folder_named_with_the_marker_is_a_harness_folder() {
-        assert!(is_harness_name(r"C:\stage\verbatim-e2e-folder-abc"));
-        assert!(!is_harness_name(r"C:\stage\logs"));
-        assert!(!is_harness_name(r"C:\verbatim-e2e-folder-abc\logs"));
     }
 
     #[test]

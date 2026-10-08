@@ -1,8 +1,8 @@
 //! The review cursor down a column of a text table in a terminal
 //! (milestone M4 item 9; `phase6-design.md`, "Terminal end-to-end
-//! scenarios"), in Windows Terminal, or the console host where Windows
-//! Terminal is not installed. The shared setup is described in the
-//! `terminal` module.
+//! scenarios"), as `windows_terminal_review_grid` in Windows Terminal and
+//! `conhost_review_grid` in the console host. The shared setup is
+//! described in the `terminal` module.
 //!
 //! A written script prints a table whose second column starts at column 10
 //! on every row long enough to have one; two rows, "Fig" and "Kiwi", are
@@ -31,7 +31,7 @@
 
 use std::io;
 
-use super::terminal::{self, PROMPT, STEP_TIMEOUT, Terminal};
+use super::terminal::{self, PROMPT};
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
@@ -50,67 +50,89 @@ const TABLE: [(&str, &str); 6] = [
 const SCRIPT: &str =
     "'Fruit    Count'\r\n'Apple    3'\r\n'Fig'\r\n'Banana   12'\r\n'Kiwi'\r\n'Cherry   7'\r\n";
 
-pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    terminal::open(
-        scenario,
-        "review-grid",
-        Terminal::WindowsTerminal,
-        &[("grid.ps1", SCRIPT)],
-    )
+pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    terminal::open_windows_terminal(scenario, "review-grid", &[("grid.ps1", SCRIPT)])
 }
 
-/// Sends the review gesture `gesture` and waits for a line reading `line`,
-/// trailing whitespace aside.
-fn review_line(scenario: &mut Scenario, gesture: &str, line: &str) {
-    scenario.send_gesture(gesture).expect("sends the gesture");
-    let heard = scenario
-        .speech()
-        .expect_in_order_capturing(&[line], STEP_TIMEOUT);
-    assert_eq!(
-        heard.trim_end(),
-        line,
-        "{gesture} read {heard:?}, not the line {line:?}"
-    );
+pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    terminal::open_console_host(scenario, "review-grid", &[("grid.ps1", SCRIPT)])
 }
 
-/// Sends the review gesture `gesture` and waits for exactly `heard`.
+/// Sends the review gesture `gesture` and asserts that exactly `heard` is
+/// read.
 fn review(scenario: &mut Scenario, gesture: &str, heard: &str) {
     scenario.send_gesture(gesture).expect("sends the gesture");
-    scenario.speech().expect_exactly(&[heard], STEP_TIMEOUT);
+    scenario.speech().expect(&[heard]);
 }
 
-pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
-    terminal::expect_prompt_read(scenario, state);
-    terminal::run_command(scenario, r".\grid.ps1");
+/// `windows_terminal_review_grid`.
+pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
+    let title = terminal::title(state).to_owned();
+    terminal::expect_prompt_read(
+        scenario,
+        state,
+        &[
+            &format!("{title} window"),
+            &format!("{title} terminal"),
+            "blank",
+        ],
+    );
+    terminal::type_with_echo(scenario, r".\grid.ps1", terminal::Echo::Shown);
     let mut printed: Vec<&str> = TABLE.iter().map(|(row, _)| *row).collect();
     printed.push(PROMPT);
-    scenario.speech().expect_exactly(&printed, STEP_TIMEOUT);
+    scenario.speech().expect(&printed);
 
     // Up from the prompt line to the first row, each row on the way.
     for (row, _) in TABLE.iter().rev() {
-        review_line(scenario, "kb:numpad7", row);
+        review(scenario, "kb:numpad7", row);
     }
 
     // Onto column 10 of the first row: the start of the line, then the
     // next word, which starts the second column.
     review(scenario, "kb:shift+numpad1", "F");
-    review_line(scenario, "kb:numpad6", "Count");
+    review(scenario, "kb:numpad6", "Count");
     review(scenario, "kb:numpad2", TABLE[0].1);
 
     // Down the table, column 10 kept on every row.
     for (row, cell) in &TABLE[1..] {
-        review_line(scenario, "kb:numpad9", row);
+        review(scenario, "kb:numpad9", row);
         review(scenario, "kb:numpad2", cell);
     }
 }
 
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "must match ScenarioDef::teardown's fn-pointer signature"
-)]
-pub(crate) fn teardown(scenario: &mut Scenario, state: ScenarioState) {
-    terminal::close(scenario, &state);
+/// `conhost_review_grid`.
+pub(crate) fn body_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
+    let title = terminal::title(state).to_owned();
+    // The console host's text area has no name.
+    terminal::expect_prompt_read(
+        scenario,
+        state,
+        &[&format!("{title} window"), "terminal", "blank"],
+    );
+    terminal::type_with_echo(scenario, r".\grid.ps1", terminal::Echo::Shown);
+    let mut printed: Vec<&str> = TABLE.iter().map(|(row, _)| *row).collect();
+    printed.push(PROMPT);
+    scenario.speech().expect(&printed);
+
+    // Up from the prompt line to the first row, each row on the way.
+    for (row, _) in TABLE.iter().rev() {
+        review(scenario, "kb:numpad7", row);
+    }
+
+    // Onto column 10 of the first row: the start of the line, then the
+    // next word, which starts the second column.
+    review(scenario, "kb:shift+numpad1", "F");
+    review(scenario, "kb:numpad6", "Count");
+    review(scenario, "kb:numpad2", TABLE[0].1);
+
+    // Down the table, column 10 kept on every row.
+    for (row, cell) in &TABLE[1..] {
+        review(scenario, "kb:numpad9", row);
+        review(scenario, "kb:numpad2", cell);
+    }
 }
+
+pub(crate) use super::no_teardown as teardown;
 
 #[cfg(test)]
 mod tests {

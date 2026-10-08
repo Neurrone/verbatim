@@ -190,6 +190,51 @@ fn a_focus_reports_the_states_read_when_it_is_handled() {
     app.quit();
 }
 
+/// A Win32 tree view taking the focus raises focus on itself and then on
+/// its focused item, within its one `SetFocus` call. NVDA handles both
+/// together, newest first, and announces the item with the tree as its new
+/// ancestor; the outpost may read the tree's event before the item's
+/// reaches it, so it asks the tree's `accFocus` and reports the item it
+/// names (`docs/parity.md`, "A control's own focus with a focused child").
+/// The tree's event is handed to the outpost alone, as when it is read
+/// before the item's arrives, and the item's then reports nothing more.
+fn a_controls_own_focus_reports_its_focused_child() {
+    let title = common::unique_title("mockapp-focus-child");
+    let mut app = common::spawn("focus_child.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(app.pid());
+    // The tree is node 1, after the root, so its object id is 2; General
+    // is its first child.
+    let tree = 2;
+
+    common::apply(&mut app, hwnd, "focus-child categories general");
+    let reported = outpost.focus(DeliveredFact::MsaaFocus {
+        hwnd: hwnd.0 as isize,
+        id_object: tree,
+        id_child: 0,
+    });
+    assert_eq!(
+        (reported.node.role, reported.node.name.as_deref()),
+        (Role::TreeItem, Some("General"))
+    );
+    assert_eq!(
+        reported
+            .ancestors
+            .last()
+            .map(|tree| (tree.role, tree.name.as_deref())),
+        Some((Role::Tree, Some("Categories")))
+    );
+    outpost.deliver(DeliveredFact::MsaaFocus {
+        hwnd: hwnd.0 as isize,
+        id_object: tree,
+        id_child: 1,
+    });
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
 /// How long each of mockapp's provider calls waits in the busy test: an
 /// application building a window, as File Explorer was when the first focus
 /// in a new window waited 2.6 seconds behind reads queued before it.
@@ -326,6 +371,10 @@ fn main() {
         (
             "a_focus_is_handled_before_slow_reads_queued_ahead_of_it",
             a_focus_is_handled_before_slow_reads_queued_ahead_of_it,
+        ),
+        (
+            "a_controls_own_focus_reports_its_focused_child",
+            a_controls_own_focus_reports_its_focused_child,
         ),
     ]);
 }

@@ -10,105 +10,62 @@
 //! then snap the navigator back to focus. Last, it tabs to the rate slider,
 //! whose MSAA object answers next and previous with itself, and checks that
 //! object navigation reports the edge ("No next", "No previous") rather than
-//! landing on the slider again. Assertions are substring matches,
-//! tolerant of the platform controls' own wording, matching the M1
-//! regression's style.
+//! landing on the slider again. Every step asserts exactly what is said.
 //!
 //! Gestures use the desktop layout's bindings (the default), addressed by
 //! their stable identifiers rather than raw numpad keystrokes, so `NumLock`
 //! state cannot affect the run.
 
-use std::io;
-use std::time::Duration;
-
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
-/// Per-step speech timeout, matching the M1 regression's generous budget for
-/// a loaded VM.
-const STEP_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) use super::{no_setup as setup, no_teardown as teardown};
 
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "must match ScenarioDef::setup's fn-pointer signature"
-)]
-pub(crate) fn setup(_scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    // Nothing external: the walk drives Verbatim's own settings dialog.
-    Ok(ScenarioState::None)
+/// Sends `gesture` and asserts exactly `heard`.
+fn navigate(scenario: &mut Scenario, gesture: &str, heard: &str) {
+    scenario.send_gesture(gesture).expect("sends the gesture");
+    scenario.speech().expect(&[heard]);
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    super::open_speech_settings(scenario, STEP_TIMEOUT);
+    super::open_speech_settings(scenario);
 
     // Report the current navigator object: the navigator follows focus, so
-    // this re-announces the focused list item.
-    scenario
-        .send_gesture("kb:verbatim+numpad5")
-        .expect("sends report-current-object");
-    scenario
-        .speech()
-        .expect_in_order(&["Speech", "list item"], STEP_TIMEOUT);
-
-    // Move the navigator to the item's parent — the category list — proving
-    // an object-navigation query round-trips through the outpost and moves
-    // the navigator.
-    scenario
-        .send_gesture("kb:verbatim+numpad8")
-        .expect("sends move-to-parent");
-    scenario
-        .speech()
-        .expect_in_order(&["Categories", "list"], STEP_TIMEOUT);
-
-    // Move to the list's first child: back to the "Speech" item.
-    scenario
-        .send_gesture("kb:verbatim+numpad2")
-        .expect("sends move-to-first-child");
-    // Object navigation speaks the item as NVDA speaks a focus: its name,
-    // without the "list item" role a report keeps.
-    scenario.speech().expect_in_order(&["Speech"], STEP_TIMEOUT);
-
-    // Wander to the parent again, then snap the navigator back to focus with
-    // the to-focus command: the focused item.
-    scenario
-        .send_gesture("kb:verbatim+numpad8")
-        .expect("sends move-to-parent");
-    scenario
-        .speech()
-        .expect_in_order(&["Categories", "list"], STEP_TIMEOUT);
-    scenario
-        .send_gesture("kb:verbatim+numpadminus")
-        .expect("sends move-review-to-focus");
-    scenario.speech().expect_in_order(&["Speech"], STEP_TIMEOUT);
+    // this reports the focused list item, with its role and states, as a
+    // report does. Then to its parent, the category list, and back to its
+    // first child, the item, which object navigation speaks as a focus
+    // speaks it, without the role. To the parent again, then back to the
+    // focus.
+    navigate(
+        scenario,
+        "kb:verbatim+numpad5",
+        "Speech list item focused selected 1 of 3",
+    );
+    navigate(scenario, "kb:verbatim+numpad8", "Categories: list Alt+c");
+    navigate(scenario, "kb:verbatim+numpad2", "Speech 1 of 3");
+    navigate(scenario, "kb:verbatim+numpad8", "Categories: list Alt+c");
+    navigate(
+        scenario,
+        "kb:verbatim+numpadminus",
+        "Move to focus Speech 1 of 3",
+    );
 
     // The rate slider's MSAA object answers next and previous with itself,
     // since its window is its whole world: object navigation must report
     // the edge rather than land on the slider again. Tab reaches it after
     // the Change button and the voice and variant boxes.
-    scenario
-        .send_keys(&["tab", "tab", "tab", "tab"])
-        .expect("sends four tabs");
-    scenario
-        .speech()
-        .expect_in_order(&["Rate", "slider"], STEP_TIMEOUT);
-    scenario
-        .send_gesture("kb:verbatim+numpad6")
-        .expect("sends move-to-next");
-    scenario
-        .speech()
-        .expect_in_order(&["No next"], STEP_TIMEOUT);
-    scenario
-        .send_gesture("kb:verbatim+numpad4")
-        .expect("sends move-to-previous");
-    scenario
-        .speech()
-        .expect_in_order(&["No previous"], STEP_TIMEOUT);
-}
-
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "must match ScenarioDef::teardown's fn-pointer signature"
-)]
-pub(crate) fn teardown(_scenario: &mut Scenario, _state: ScenarioState) {
-    // Nothing to restore: the dialog closes when Verbatim quits at the end
-    // of the run, and no external application was launched.
+    // The Change button is spoken after the "Synthesizer" group box it
+    // sits in, entered from the category list.
+    for heard in [
+        &["Synthesizer grouping", "Change... button Alt+h"][..],
+        &["Voice combo box English (Great Britain) collapsed Alt+v"],
+        &["Variant combo box Max collapsed Alt+a"],
+        &["Rate slider 80 Alt+r"],
+    ] {
+        scenario.send_keys(&["tab"]).expect("sends tab");
+        scenario.speech().expect(heard);
+    }
+    navigate(scenario, "kb:verbatim+numpad6", "No next");
+    navigate(scenario, "kb:verbatim+numpad4", "No previous");
+    super::close_settings_to_desktop(scenario);
 }

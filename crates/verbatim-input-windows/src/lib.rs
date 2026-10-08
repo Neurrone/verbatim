@@ -30,12 +30,27 @@
 //! observed gesture (a caret key) and the text a key types
 //! ([`KeyReport`]). Before each key it tells the decision machine whether
 //! Num Lock is on.
+//!
+//! # Key sequence numbers
+//!
+//! Every key press gets the next key sequence number ([`next_key`]), and
+//! everything the press causes is recorded under it by its trace id
+//! ([`key_of`]): its gesture, its observed caret key, the text it types. A
+//! press cancels speech at once, from this thread, while the previous
+//! press's gesture may still be on its way to the reducer; the cancel
+//! therefore names its press's number, and the speech manager drops speech
+//! caused by an earlier press that reaches it after the cancel, as NVDA,
+//! which queues a key's cancel in order behind the earlier keys' scripts,
+//! never speaks it (`docs/nvda/input.md`, "What a key press does to
+//! speech").
 
 mod typed;
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::io;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -61,11 +76,67 @@ use verbatim_input::state::{DecisionConfig, DecisionMachine, EmittedGesture, Key
 /// tag and cancel speech like typed ones.
 pub const OWN_INPUT_TAG: usize = 0x5642_544D;
 
-/// Carries out a key press's effect on speech; called on the hook thread,
-/// so it must not block, nor make a call that dispatches sent messages (a
-/// cross-apartment COM call, `SendMessage`), which would deliver the next
-/// key to the hook while this one is still being handled.
-pub type SpeechEffectFn = Box<dyn Fn(KeySpeechEffect) + Send>;
+/// What the hook sends the gesture router, in the order the keys came.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Routed {
+    /// A gesture fired.
+    Gesture(EmittedGesture),
+    /// An end-to-end harness's numbered key stroke has been handled by the
+    /// hook (`verbatim_input::harness`): everything it caused was sent on
+    /// before this. The router passes it on behind whatever the stroke's
+    /// gestures caused, so the reducer can say when it has handled it.
+    Handled(u64),
+    /// A control-plane request waiting for Verbatim to be idle, named by its
+    /// token: it is answered only after everything sent here before it.
+    /// Never sent by the hook itself.
+    Barrier(u64),
+}
+
+/// Carries out a key press's effect on speech, given the press's key
+/// sequence number ([`next_key`]); called on the hook thread, so it must not
+/// block, nor make a call that dispatches sent messages (a cross-apartment
+/// COM call, `SendMessage`), which would deliver the next key to the hook
+/// while this one is still being handled.
+pub type SpeechEffectFn = Box<dyn Fn(KeySpeechEffect, u64) + Send>;
+
+/// The last key sequence number given out.
+static KEY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// How many traces' key sequence numbers are kept: far more than a key's
+/// speech can be in flight behind.
+const KEY_ORIGINS_KEPT: usize = 1024;
+
+/// The key sequence number of what recent key presses caused, by trace id,
+/// oldest first.
+static KEY_ORIGINS: Mutex<VecDeque<(TraceId, u64)>> = Mutex::new(VecDeque::new());
+
+/// Gives out the next key sequence number, for a key press or a gesture
+/// the control plane injects.
+pub fn next_key() -> u64 {
+    KEY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1
+}
+
+/// Records that what carries `trace` was caused by key press `key`.
+pub fn record_key_origin(trace: TraceId, key: u64) {
+    let mut origins = KEY_ORIGINS.lock().unwrap_or_else(PoisonError::into_inner);
+    if origins.len() == KEY_ORIGINS_KEPT {
+        origins.pop_front();
+    }
+    origins.push_back((trace, key));
+}
+
+/// The key sequence number of the key press that caused what carries
+/// `trace`, if a recent key press did.
+#[must_use]
+pub fn key_of(trace: TraceId) -> Option<u64> {
+    KEY_ORIGINS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .iter()
+        .rev()
+        .find(|(recorded, _)| *recorded == trace)
+        .map(|&(_, key)| key)
+}
 
 /// Receives what a key passed to the application did; called on the hook
 /// thread, so it must not block, nor dispatch sent messages, as
@@ -113,7 +184,7 @@ pub enum KeyReport {
 /// exactly the right scope and needs no synchronization.
 struct HookState {
     machine: DecisionMachine,
-    events: Sender<EmittedGesture>,
+    events: Sender<Routed>,
     speech: SpeechEffectFn,
     reports: KeyReportFn,
     typing: typed::Typing,
@@ -150,7 +221,7 @@ impl InputHook {
     pub fn start(
         config: DecisionConfig,
         map: SharedGestureMap,
-        events: Sender<EmittedGesture>,
+        events: Sender<Routed>,
         speech: SpeechEffectFn,
         reports: KeyReportFn,
     ) -> io::Result<Self> {
@@ -200,7 +271,7 @@ impl Drop for InputHook {
 fn hook_thread(
     config: DecisionConfig,
     map: SharedGestureMap,
-    events: Sender<EmittedGesture>,
+    events: Sender<Routed>,
     (speech, reports): (SpeechEffectFn, KeyReportFn),
     ready_tx: &mpsc::Sender<io::Result<u32>>,
 ) {
@@ -364,18 +435,25 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
             state.machine.set_num_lock(num_lock);
             let decision = state.machine.on_key(event, Instant::now());
             let own = kbd.dwExtraInfo == OWN_INPUT_TAG;
+            let key_number = if event.pressed {
+                next_key()
+            } else {
+                KEY_SEQUENCE.load(Ordering::Relaxed)
+            };
             if let Some(effect) = decision.speech
                 && !own
             {
-                (state.speech)(effect);
+                (state.speech)(effect, key_number);
             }
             if let Some(emitted) = decision.emitted {
+                record_key_origin(emitted.trace_id, key_number);
                 // Never block: drop the gesture if the consumer is backed up.
-                let _ = state.events.try_send(emitted);
+                let _ = state.events.try_send(Routed::Gesture(emitted));
             }
             if let Some(observed) = decision.observed
                 && !own
             {
+                record_key_origin(observed.trace_id, key_number);
                 (state.reports)(KeyReport::Observed {
                     gesture: observed,
                     pressed_at_us: unix_us(),
@@ -387,10 +465,9 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                 && !own
                 && let Some(text) = state.typing.translate(event.vk, kbd.scanCode)
             {
-                (state.reports)(KeyReport::Typed {
-                    trace_id: TraceId::mint(),
-                    text,
-                });
+                let trace_id = TraceId::mint();
+                record_key_origin(trace_id, key_number);
+                (state.reports)(KeyReport::Typed { trace_id, text });
             }
             // A lock key reaching the operating system is reported, for its
             // new state to be announced, as NVDA announces it. The Verbatim
@@ -402,11 +479,26 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                 && !decision.shared_modifier
                 && let Some(key) = verbatim_input::ToggleKey::from_vk(event.vk)
             {
-                let _ = state.events.try_send(verbatim_input::EmittedGesture {
-                    trace_id: verbatim_model::TraceId::mint(),
-                    gesture: key.gesture(),
-                    repeat: 0,
-                });
+                let trace_id = TraceId::mint();
+                record_key_origin(trace_id, key_number);
+                let _ = state
+                    .events
+                    .try_send(Routed::Gesture(verbatim_input::EmittedGesture {
+                        trace_id,
+                        gesture: key.gesture(),
+                        repeat: 0,
+                    }));
+            }
+            // A harness's stroke is complete with its last key event: say
+            // so behind everything the stroke caused. Never blocking, as
+            // for a gesture; a dropped mark leaves the harness's barrier
+            // waiting, which fails its test with a named timeout.
+            if let Some(numbered) = u64::try_from(kbd.dwExtraInfo)
+                .ok()
+                .and_then(verbatim_input::harness::decode)
+                && numbered.last
+            {
+                let _ = state.events.try_send(Routed::Handled(numbered.number));
             }
             decision.decision
         });
@@ -419,4 +511,22 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     // SAFETY: passing the transition to the next hook in the chain with the
     // parameters we received is always sound; a null handle is accepted.
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn what_a_key_caused_is_found_by_its_trace_until_newer_keys_push_it_out() {
+        let first = TraceId::mint();
+        let key = next_key();
+        record_key_origin(first, key);
+        assert_eq!(key_of(first), Some(key));
+        assert_eq!(key_of(TraceId::mint()), None);
+        for _ in 0..KEY_ORIGINS_KEPT {
+            record_key_origin(TraceId::mint(), next_key());
+        }
+        assert_eq!(key_of(first), None);
+    }
 }

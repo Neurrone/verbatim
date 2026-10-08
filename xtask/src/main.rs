@@ -29,6 +29,7 @@ mod demo;
 mod nvda;
 mod park;
 mod vm;
+mod waits;
 
 /// The crates `CLAUDE.md`'s "NVDA provenance" section lists as
 /// platform-neutral. None of them may depend, directly or through another
@@ -86,6 +87,15 @@ fn ci() -> ExitCode {
     println!("xtask ci: platform-neutral dependency check");
     if let Err(error) = check_platform_neutral_deps() {
         eprintln!("xtask ci: step failed: platform-neutral dependency check\n{error}");
+        return ExitCode::FAILURE;
+    }
+
+    println!("xtask ci: waits in test code");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask lives in the workspace root");
+    if let Err(error) = waits::check(root) {
+        eprintln!("xtask ci: step failed: waits in test code\n{error}");
         return ExitCode::FAILURE;
     }
 

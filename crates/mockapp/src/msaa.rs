@@ -14,10 +14,10 @@
 
 use verbatim_model::{Role, State, StateSet};
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Accessibility::NotifyWinEvent;
+use windows::Win32::UI::Accessibility::{IAccessible, NotifyWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE,
-    EVENT_OBJECT_SELECTION, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_VALUECHANGE,
+    EVENT_OBJECT_SELECTION, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_VALUECHANGE, OBJID_CLIENT,
 };
 
 use crate::stdin::Command;
@@ -30,9 +30,35 @@ pub(crate) use handler::NodeAccessible;
 /// self-reference is the only child id ever needed at the `WinEvent` boundary.
 const CHILDID_SELF: i32 = 0;
 
-/// Builds the accessible object for `index`.
-pub(crate) fn node_accessible(tree: SharedTree, hwnd: HWND, index: usize) -> NodeAccessible {
-    NodeAccessible { tree, hwnd, index }
+thread_local! {
+    /// Each node's one accessible object, by its window and index, handed
+    /// out by `WM_GETOBJECT`, `accParent`, `accChild`, `accFocus`, and
+    /// `accSelection` alike, as a provider that keeps its objects does. A
+    /// client in another process still meets a new object each time:
+    /// oleacc wraps every object it delivers in a wrapper of its own
+    /// (`docs/crates/verbatim-ia2.md`). Objects live on the window thread
+    /// that made them.
+    static OBJECTS: std::cell::RefCell<std::collections::HashMap<(isize, usize), IAccessible>> =
+        std::cell::RefCell::default();
+}
+
+/// The accessible object for `index` in `hwnd`'s tree, the same one each
+/// time it is asked for ([`OBJECTS`]).
+pub(crate) fn node_accessible(tree: &SharedTree, hwnd: HWND, index: usize) -> IAccessible {
+    OBJECTS.with(|objects| {
+        objects
+            .borrow_mut()
+            .entry((hwnd.0 as isize, index))
+            .or_insert_with(|| {
+                NodeAccessible {
+                    tree: tree.clone(),
+                    hwnd,
+                    index,
+                }
+                .into()
+            })
+            .clone()
+    })
 }
 
 /// The custom `idObject` mockapp answers `WM_GETOBJECT` with for `index`,
@@ -69,6 +95,48 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::SetValue(id, text) => {
             let index = set_value(tree, &id, text).ok_or_else(|| unknown(&id))?;
             notify(hwnd, EVENT_OBJECT_VALUECHANGE, index);
+        }
+        Command::ClientName(text) => {
+            tree.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .nodes[0]
+                .name = (!text.is_empty()).then_some(text);
+            // SAFETY: `hwnd` is the mockapp window's own live handle, whose
+            // client area its `WM_GETOBJECT` handler answers.
+            unsafe {
+                NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, hwnd, OBJID_CLIENT.0, CHILDID_SELF);
+            }
+        }
+        Command::FocusChild(container, child) => {
+            let parent = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .index_of(&container)
+                .ok_or_else(|| unknown(&container))?;
+            let index = focus_node(tree, &child).ok_or_else(|| unknown(&child))?;
+            let child_id = {
+                let mut guard = tree
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                guard.simple_children = Some(parent);
+                guard.nodes[parent]
+                    .children
+                    .iter()
+                    .position(|&node| node == index)
+                    .ok_or_else(|| format!("{child} is not a child of {container}"))?
+                    + 1
+            };
+            notify(hwnd, EVENT_OBJECT_FOCUS, parent);
+            // SAFETY: `hwnd` is the mockapp window's own live handle, and
+            // the container's object answers the child id as a simple child.
+            unsafe {
+                NotifyWinEvent(
+                    EVENT_OBJECT_FOCUS,
+                    hwnd,
+                    objid_for(parent),
+                    i32::try_from(child_id).unwrap_or(i32::MAX),
+                );
+            }
         }
         Command::Select(id) => {
             let index = select_node(tree, &id).ok_or_else(|| unknown(&id))?;
@@ -374,12 +442,8 @@ mod handler {
                 .parent;
             match parent {
                 Some(parent_index) => {
-                    let accessible: IAccessible = NodeAccessible {
-                        tree: self.tree.clone(),
-                        hwnd: self.hwnd,
-                        index: parent_index,
-                    }
-                    .into();
+                    let accessible: IAccessible =
+                        super::node_accessible(&self.tree, self.hwnd, parent_index);
                     Ok(accessible.into())
                 }
                 None => Err(Error::from_hresult(S_FALSE)),
@@ -412,12 +476,17 @@ mod handler {
             }
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(windows::Win32::Foundation::E_INVALIDARG))?;
-            let accessible: IAccessible = NodeAccessible {
-                tree: self.tree.clone(),
-                hwnd: self.hwnd,
-                index: target,
+            if self
+                .tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .simple_children
+                == Some(self.index)
+            {
+                // A simple child has no object of its own (`focus-child`).
+                return Err(Error::from_hresult(S_FALSE));
             }
-            .into();
+            let accessible: IAccessible = super::node_accessible(&self.tree, self.hwnd, target);
             Ok(accessible.into())
         }
 
@@ -544,11 +613,28 @@ mod handler {
 
         fn accFocus(&self) -> WinResult<VARIANT> {
             hits::hit(hits::Method::AccFocus);
-            let focused = self
-                .tree
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .focused;
+            let (focused, simple_child) = {
+                let guard = self
+                    .tree
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let simple_child = (guard.simple_children == Some(self.index))
+                    .then(|| {
+                        let focused = guard.focused?;
+                        guard.nodes[self.index]
+                            .children
+                            .iter()
+                            .position(|&node| node == focused)
+                    })
+                    .flatten();
+                (guard.focused, simple_child)
+            };
+            // A simple child is named by its child id (`focus-child`).
+            if let Some(position) = simple_child {
+                return Ok(VARIANT::from(
+                    i32::try_from(position + 1).unwrap_or(i32::MAX),
+                ));
+            }
             // No node focused yet defaults to the root, matching MSAA
             // convention: a container with no focused descendant reports
             // itself.
@@ -556,12 +642,7 @@ mod handler {
             if target == self.index {
                 return Ok(self_variant());
             }
-            let accessible: IAccessible = NodeAccessible {
-                tree: self.tree.clone(),
-                hwnd: self.hwnd,
-                index: target,
-            }
-            .into();
+            let accessible: IAccessible = super::node_accessible(&self.tree, self.hwnd, target);
             Ok(dispatch_variant(accessible.into()))
         }
 
@@ -588,12 +669,7 @@ mod handler {
             let Some(index) = selected else {
                 return Ok(VARIANT::default());
             };
-            let accessible: IAccessible = NodeAccessible {
-                tree: self.tree.clone(),
-                hwnd: self.hwnd,
-                index,
-            }
-            .into();
+            let accessible: IAccessible = super::node_accessible(&self.tree, self.hwnd, index);
             Ok(dispatch_variant(accessible.into()))
         }
 
@@ -668,12 +744,8 @@ mod handler {
             };
             match target {
                 Some(index) => {
-                    let accessible: IAccessible = NodeAccessible {
-                        tree: self.tree.clone(),
-                        hwnd: self.hwnd,
-                        index,
-                    }
-                    .into();
+                    let accessible: IAccessible =
+                        super::node_accessible(&self.tree, self.hwnd, index);
                     Ok(dispatch_variant(accessible.into()))
                 }
                 None => Err(Error::from_hresult(S_FALSE)),

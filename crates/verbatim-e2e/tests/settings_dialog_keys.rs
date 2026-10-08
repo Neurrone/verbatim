@@ -3,6 +3,7 @@
 //! `crates/verbatim-e2e/src/scenarios/settings_dialog_keys.rs`.
 
 #[test]
+#[ignore = "live: drives a real Verbatim through a running agent; the end-to-end job runs it with --ignored (docs/tooling.md)"]
 fn settings_dialog_keys() {
     verbatim_e2e::registry::run_named("settings_dialog_keys");
 }

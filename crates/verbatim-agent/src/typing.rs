@@ -41,15 +41,26 @@ struct Stroke {
 /// character is a control character or the layout cannot type it, and an
 /// error when `SendInput` injects fewer events than it was given (another
 /// desktop, such as the secure desktop, has the input).
-pub fn type_text(text: &str) -> io::Result<()> {
+///
+/// Each character's key events carry its number for the end-to-end harness
+/// (`verbatim_input::harness`): the first character is `first`, the next
+/// `first + 1`, and so on. Returns the last character's number.
+pub fn type_text(text: &str, first: u64) -> io::Result<u64> {
     let layout = foreground_layout();
-    let strokes = strokes_for(text, |unit| {
+    let scan = |unit| {
         // SAFETY: a plain lookup taking a UTF-16 code unit and a layout
         // handle; an unknown layout makes it report no key.
         unsafe { VkKeyScanExW(unit, layout) }
-    })
-    .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
-    send(&strokes, layout)
+    };
+    let mut characters = Vec::new();
+    for character in text.chars() {
+        characters.push(
+            strokes_for(&character.to_string(), scan)
+                .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?,
+        );
+    }
+    send(&characters, first, layout)?;
+    Ok(first + characters.len() as u64 - 1)
 }
 
 /// The keyboard layout of the foreground window's thread, which is the
@@ -119,15 +130,19 @@ fn strokes_for(text: &str, scan: impl Fn(u16) -> i16) -> Result<Vec<Stroke>, Str
     Ok(strokes)
 }
 
-/// Injects `strokes` in one `SendInput` call, each with its scan code in
-/// `layout`.
-fn send(strokes: &[Stroke], layout: HKL) -> io::Result<()> {
-    if strokes.is_empty() {
-        return Ok(());
-    }
-    let inputs: Vec<INPUT> = strokes
-        .iter()
-        .map(|stroke| {
+/// Injects every character's strokes in one `SendInput` call, each with
+/// its scan code in `layout`, and with the character's number, counting
+/// from `first`, as its extra information, its last stroke marked.
+fn send(characters: &[Vec<Stroke>], first: u64, layout: HKL) -> io::Result<()> {
+    let numbered = characters.iter().enumerate().flat_map(|(index, strokes)| {
+        let number = first + index as u64;
+        strokes.iter().enumerate().map(move |(position, stroke)| {
+            let last = position + 1 == strokes.len();
+            (stroke, verbatim_input::harness::encode(number, last))
+        })
+    });
+    let inputs: Vec<INPUT> = numbered
+        .map(|(stroke, extra)| {
             // SAFETY: a plain lookup taking a virtual key and a layout
             // handle; it returns 0 when there is no scan code.
             let scan =
@@ -144,12 +159,15 @@ fn send(strokes: &[Stroke], layout: HKL) -> io::Result<()> {
                             KEYBD_EVENT_FLAGS(0)
                         },
                         time: 0,
-                        dwExtraInfo: 0,
+                        dwExtraInfo: usize::try_from(extra).unwrap_or(0),
                     },
                 },
             }
         })
         .collect();
+    if inputs.is_empty() {
+        return Ok(());
+    }
     let input_size = i32::try_from(size_of::<INPUT>()).unwrap_or(i32::MAX);
     // SAFETY: `inputs` is a fully initialized slice of INPUT structures,
     // which SendInput copies and does not retain.

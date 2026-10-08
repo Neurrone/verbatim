@@ -5,6 +5,7 @@
 //! -- --exact` discovers and runs it by name.
 
 #[test]
+#[ignore = "live: drives a real Verbatim through a running agent; the end-to-end job runs it with --ignored (docs/tooling.md)"]
 fn rapid_tabbing_in_settings() {
     verbatim_e2e::registry::run_named("rapid_tabbing_in_settings");
 }

@@ -12,7 +12,7 @@
 
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use verbatim_model::UtteranceEnding;
 
@@ -40,10 +40,13 @@ enum TimelineKind {
     Ended(String, UtteranceEnding),
 }
 
-/// One [`TimelineKind`] paired with the [`Instant`] it was recorded at.
+/// One [`TimelineKind`] paired with the [`Instant`] it was recorded at,
+/// and the same moment as milliseconds since the Unix epoch, the clock
+/// Verbatim stamps its speech frames with.
 #[derive(Debug, Clone)]
 struct TimelineEntry {
     at: Instant,
+    unix_ms: u64,
     kind: TimelineKind,
 }
 
@@ -111,8 +114,28 @@ impl Timeline {
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
         entries.push(TimelineEntry {
             at: Instant::now(),
+            unix_ms: unix_ms(),
             kind,
         });
+    }
+
+    /// The last gesture, keys, or typed text injected at or before
+    /// `unix_ms` (milliseconds since the Unix epoch), described as the
+    /// rendered timeline describes it: the step an utterance observed at
+    /// that time answers, for the latency report.
+    #[must_use]
+    pub fn step_at(&self, unix_ms: u64) -> Option<String> {
+        let entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        entries
+            .iter()
+            .rev()
+            .filter(|entry| entry.unix_ms <= unix_ms)
+            .find_map(|entry| match &entry.kind {
+                TimelineKind::Gesture(identifier) => Some(format!("gesture {identifier}")),
+                TimelineKind::Keys(keys) => Some(format!("keys {}", keys.join(" "))),
+                TimelineKind::Text(text) => Some(format!("text {text:?}")),
+                _ => None,
+            })
     }
 
     /// Every utterance recorded so far, in arrival order — the substring of
@@ -183,6 +206,15 @@ impl Timeline {
         out.pop();
         out
     }
+}
+
+/// Milliseconds since the Unix epoch, now.
+pub(crate) fn unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 impl Default for Timeline {
