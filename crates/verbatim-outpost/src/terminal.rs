@@ -308,6 +308,9 @@ pub struct Terminal {
     /// ([`ScreenQuery::matches_padding`]), set by the worker from the
     /// terminal's window.
     pub matches_padding: bool,
+    /// When the last read began, in milliseconds since the Unix epoch: a
+    /// text change observed before it is covered by that read.
+    pub read_started_ms: u64,
     /// A range at the start of the screen's top row as last read, tried
     /// before a search ([`ScreenAnchor::range`]).
     top: Option<AgileReference<IUIAutomationTextRange>>,

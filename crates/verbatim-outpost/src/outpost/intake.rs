@@ -119,11 +119,6 @@ pub(super) enum Item {
     /// whose role says it may, just after it was reported: as `CaretMoved`,
     /// or as `NoText` when there is no caret to report.
     CaretOf { node_id: verbatim_model::NodeId },
-    /// Read the focused terminal `node_id` names again: its last read found
-    /// the screen changing while it was read, which is evidence that it
-    /// changed, whether or not the terminal's provider raises a text change
-    /// for it.
-    TerminalReread { node_id: verbatim_model::NodeId },
     /// A follow-up finding the live element of a focus reported from its
     /// event alone, for the focus-following property subscription.
     ResolveFocus { runtime_id: Vec<i32>, attempt: u32 },
@@ -158,7 +153,6 @@ pub(super) enum Key {
     UiaMenuOpened(Vec<i32>),
     NodesHeld,
     CaretOf(u64),
-    TerminalReread(u64),
 }
 
 impl Key {
@@ -172,7 +166,7 @@ impl Key {
             Key::Uia(_, _, runtime_id)
             | Key::UiaFocus(runtime_id)
             | Key::UiaMenuOpened(runtime_id) => Some(Object::Uia(runtime_id.clone())),
-            Key::Foreground(_) | Key::NodesHeld | Key::CaretOf(_) | Key::TerminalReread(_) => None,
+            Key::Foreground(_) | Key::NodesHeld | Key::CaretOf(_) => None,
         }
     }
 
@@ -697,6 +691,14 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
             id_child,
         } => match kind {
             WinEventKind::Destroy => (None, Category::Exempt, *hwnd),
+            // Each console update names the cells it changed; only that the
+            // window's text changed matters, so they merge into one per
+            // window while they wait.
+            WinEventKind::ConsoleUpdate => (
+                Some(Key::Msaa(*kind as u8, *hwnd, 0, 0)),
+                Category::Other,
+                *hwnd,
+            ),
             _ => (
                 Some(Key::Msaa(*kind as u8, *hwnd, *id_object, *id_child)),
                 Category::Other,
@@ -782,13 +784,6 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         // Only the newest caret report for a node matters, and it is never
         // limited: the focus's caret.
         Item::CaretOf { node_id } => (Some(Key::CaretOf(node_id.number())), Category::Exempt, 0),
-        // One read again is enough, and it is never limited: the focus's
-        // output.
-        Item::TerminalReread { node_id } => (
-            Some(Key::TerminalReread(node_id.number())),
-            Category::Exempt,
-            0,
-        ),
         Item::Query { .. } | Item::ResolveFocus { .. } | Item::Settle(_) | Item::Wake => {
             (None, Category::Exempt, 0)
         }
@@ -1062,6 +1057,29 @@ mod tests {
 
     fn never_hung(_: isize) -> bool {
         false
+    }
+
+    #[test]
+    fn a_windows_console_updates_merge_into_one_while_they_wait() {
+        let key = |kind, object, child| {
+            classify(&Item::Msaa {
+                kind,
+                hwnd: 7,
+                id_object: object,
+                id_child: child,
+            })
+            .0
+        };
+        // Console updates name the cells they changed; one per window waits.
+        assert_eq!(
+            key(WinEventKind::ConsoleUpdate, 3, 65),
+            key(WinEventKind::ConsoleUpdate, 9, 66)
+        );
+        // Other events keep their objects apart.
+        assert_ne!(
+            key(WinEventKind::ValueChange, 3, 0),
+            key(WinEventKind::ValueChange, 9, 0)
+        );
     }
 
     #[test]

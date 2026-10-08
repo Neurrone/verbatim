@@ -739,7 +739,6 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
         | Item::Uia(_)
         | Item::ResolveFocus { .. }
         | Item::CaretOf { .. }
-        | Item::TerminalReread { .. }
         | Item::Settle(_)
         | Item::Wake => (HANDLING_DEADLINE, None),
         // Releasing thousands of objects after a tree dump takes a while.
@@ -763,7 +762,6 @@ fn describe(item: &Item) -> String {
         Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
         Item::ResolveFocus { attempt, .. } => format!("resolve focus (attempt {attempt})"),
         Item::CaretOf { node_id } => format!("caret of {node_id:?}"),
-        Item::TerminalReread { node_id } => format!("terminal reread {node_id:?}"),
         Item::Settle(_) => "settle".to_owned(),
         Item::Wake => "wake".to_owned(),
     }
@@ -856,11 +854,6 @@ impl Worker<'_> {
                 attempt,
             } => self.resolve_focus(&runtime_id, trace, attempt),
             Item::CaretOf { node_id } => self.caret_of(node_id, trace, observed_at_ms, true),
-            Item::TerminalReread { node_id } => {
-                if self.focused_terminal(node_id) {
-                    self.terminal_output(node_id, trace, observed_at_ms);
-                }
-            }
             Item::Settle(done) => self.settle(done, trace),
             Item::Wake => self.wake(),
         }
@@ -1263,31 +1256,17 @@ impl Worker<'_> {
                     );
                 }
             }
-            Found::Unsettled => {
-                if owed.is_some() {
-                    let mut terminals = self.context.terminals();
-                    let terminal = terminals.entry(node_id.number()).or_default();
-                    terminal.reading = terminal.reading.next(Event::ReplyUnsettled).0;
-                    terminal.owed = owed;
-                }
-                // The screen changed while it was read: it is read again,
-                // and that read reports, or answers what is owed. The
-                // console host can stop raising text changes to a client
-                // in the middle of a large write (measured 2026-10-08:
-                // after three reads of 0.1 seconds each during a write of
-                // 12,000 lines, no text change came for the rest of the
-                // write, while its WinEvents did), so the read again does
-                // not wait for one.
-                self.context.intake.push(Entry {
-                    item: Item::TerminalReread { node_id },
-                    trace,
-                    observed_at_ms: now_ms(),
-                    timing: EventTiming {
-                        observed_at_us: now_us(),
-                        ..EventTiming::default()
-                    },
-                });
+            Found::Unsettled if owed.is_some() => {
+                // The writing that disturbed it raises a change, which
+                // reads again and answers.
+                let mut terminals = self.context.terminals();
+                let terminal = terminals.entry(node_id.number()).or_default();
+                terminal.reading = terminal.reading.next(Event::ReplyUnsettled).0;
+                terminal.owed = owed;
             }
+            // A report the terminal wrote to while it was read: the change
+            // that disturbed it raises another.
+            Found::Unsettled => {}
         }
     }
 
@@ -1302,7 +1281,19 @@ impl Worker<'_> {
 
     /// A focused terminal's text changed: read at once or noted, as its
     /// on-demand reading stands.
+    /// A change observed before the last read began is covered by that read
+    /// and changes nothing (a console terminal's text change comes by UIA
+    /// and as a console update both).
     fn terminal_output(&mut self, node_id: NodeId, trace: TraceId, observed_at_ms: u64) {
+        let covered = observed_at_ms != 0
+            && self
+                .context
+                .terminals()
+                .get(&node_id.number())
+                .is_some_and(|terminal| observed_at_ms < terminal.read_started_ms);
+        if covered {
+            return;
+        }
         self.terminal_event(node_id, Event::TextChanged, None, (trace, observed_at_ms));
     }
 
@@ -1561,6 +1552,23 @@ impl Worker<'_> {
         trace: TraceId,
         observed_at_ms: u64,
     ) {
+        if kind == WinEventKind::ConsoleUpdate {
+            // The console host's text changed. Its UIA text changes stop
+            // reaching a client now and then in the middle of a large write,
+            // while these go on, so they are the focused console terminal's
+            // text changes too (`docs/crates/verbatim-outpost.md`,
+            // "Terminals").
+            let (focus, window) = {
+                let tracking = self.context.tracking();
+                (tracking.focus, tracking.window)
+            };
+            if let Some(node_id) = focus.filter(|_| window == Some(hwnd))
+                && self.focused_terminal(node_id)
+            {
+                self.terminal_output(node_id, trace, observed_at_ms);
+            }
+            return;
+        }
         if kind == WinEventKind::Destroy {
             if id_object == OBJID_WINDOW.0 && id_child == CHILDID_SELF {
                 self.context.arbitrator().forget(hwnd);

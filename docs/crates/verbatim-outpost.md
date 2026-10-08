@@ -1229,11 +1229,21 @@ finds it.
   holding or live again), and `TextOp::TerminalCancel` (speech was cut
   off: read to the end, answered with the read for typing echo only,
   live again; a read written to meanwhile is still remembered). A read
-  the terminal disturbed (written to while it was read) is read again at
-  once (`Item::TerminalReread`), not on the next text change: the console
-  host can stop raising text changes to a client in the middle of a large
-  write while its WinEvents go on (measured 2026-10-08). A read Core asked
-  for that the terminal disturbed is owed, and the read again answers it. A terminal gaining
+  Core asked for that the terminal disturbed is owed, and the next change,
+  which the writing raises, reads again and answers it. In the console
+  host, the console's own `WinEvents` (`EVENT_CONSOLE_UPDATE_REGION`,
+  `_SIMPLE`, `_SCROLL` and `EVENT_CONSOLE_LAYOUT`, merged into one per
+  window while they wait) are its terminal's text changes as well as UIA's:
+  in 2 of 14 runs of a 12,000-line write, UIA's text changes stopped
+  reaching the outpost after a few reads of about 0.12 seconds, for the
+  rest of the write, while its value and text selection `WinEvents` (about
+  27,500) went on (measured 2026-10-08); why UIA's stopped is not known.
+  NVDA's console support for UIA listens to UIA's text changes alone
+  (`UIAHandler/__init__.py` 145 to 147 and 674 to 679, the "Text Area"
+  automation id given them at 713 to 721); its `WinEvent` handling of the
+  console (`winConsoleHandler.py` 84 to 87) is for the legacy console. A
+  change observed before the last read began is covered by it and reads
+  nothing (`Terminal::read_started_ms`). A terminal gaining
   the focus is read as a baseline, which speaks nothing, and reading is
   live.
 - Each read logs its cost at debug (`terminal screen timing`: the path,
