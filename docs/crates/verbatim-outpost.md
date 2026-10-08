@@ -208,7 +208,8 @@ Public API:
 - `text` (milestone M4) — the outpost's side of the text protocol
   (`docs/crates/verbatim-model.md`, "The text protocol"), public so
   mockapp's tests drive it as the worker does. `perform(source, anchors,
-  op, signal)` answers one `TextOp` over a `TextSource`, a backend's view
+  op)` answers one `TextOp` but a caret key's watch, which `check_caret`
+  checks, over a `TextSource`, a backend's view
   of one node's text in its own positions and UTF-16: `uia::UiaText`, over
   a text pattern, where a position (`UiaPos`) is one end of a text range,
   and `edit::EditText`, over an edit control's messages, where it is an
