@@ -748,6 +748,22 @@ verified.
   - An alert-role object's alert event, as above.
 - Live regions (browsers). NVDA: in-process IA2 machinery
   ([IA2 usage](nvda/ia2.md)). Verbatim: **not yet (M6)**.
+- A window and its content in two processes. A console window, which
+  Windows names as its shell's, holds the console host's text area, and
+  the Settings app's frame, `ApplicationFrameHost`'s, holds
+  `SystemSettings`'s page. NVDA handles the frame's foreground event and
+  the content's focus event in one queue, in the order they were raised,
+  so it announces the window and then the focus. Verbatim's two outposts,
+  one for each process, report them with nothing ordering them, and the
+  reducer says nothing for a window reported after a focus inside it, so
+  the window went unannounced whenever the content's outpost was
+  quicker. **Matched since 2026-10-08, by another route**: an outpost
+  reporting a focus whose top-level window belongs to another process
+  and is the foreground window reports that window first, read as a
+  foreground report reads it, so the window reaches Core before the focus
+  whichever outpost is quicker, and its second report says nothing
+  (reducer tests feeding both orders, for a console window and for a
+  Settings page).
 - A control's own focus with a focused child. A Win32 control taking
   the focus, such as a tree view (`SysTreeView32`) or a tab control
   (`SysTabControl32`), raises a focus event on itself (child id 0) and

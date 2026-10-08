@@ -60,7 +60,8 @@ use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CONSOLE_WINDOW_CLASS};
 use super::window::{
     focus_window_of, foreground_window_handle, front_is_another_thread_of_its_application, now_ms,
-    window_belongs_to_hidden_frame, window_facts, window_is_foreground, window_is_hidden_frame,
+    top_level_of, window_belongs_to_hidden_frame, window_facts, window_is_foreground,
+    window_is_hidden_frame, window_owner,
 };
 use crate::arbitration::window_class_name;
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
@@ -996,6 +997,9 @@ impl Worker<'_> {
         object: Option<Object>,
         (ancestors, selected_child): read::Enrichment,
     ) {
+        if !foreground && let Some(hwnd) = window {
+            self.report_foreign_window(trace, observed_at_ms, hwnd);
+        }
         let mut node = node;
         let mut ancestors = ancestors;
         // The console host's text area is a terminal, known by its window
@@ -1684,6 +1688,45 @@ impl Worker<'_> {
             observed_at_ms.max(confirmed_at_ms),
             backend,
             Some(hwnd),
+            node,
+            true,
+            None,
+            (Some(Vec::new()), None),
+        );
+    }
+
+    /// Reports the top-level window of `hwnd`, a focus's window, as the
+    /// foreground, read as a foreground report reads it, when another
+    /// process owns that window and it is the foreground window: a console
+    /// window, which Windows names as its shell's, around the console
+    /// host's text area, or the Settings app's frame, `ApplicationFrameHost`'s,
+    /// around its content. The window's own outpost reports it on the
+    /// foreground change, but nothing orders the two outposts, and a window
+    /// reported after a focus inside it is not announced: reported here,
+    /// just before the focus, it reaches Core first whichever outpost is
+    /// quicker, and the reducer announces it once (`reduce_focus_changed`,
+    /// a foreground report for the window already holding the focus says
+    /// nothing).
+    fn report_foreign_window(&mut self, trace: TraceId, observed_at_ms: u64, hwnd: isize) {
+        let top = top_level_of(hwnd);
+        if top == 0
+            || window_owner(top).1 == self.context.target_pid
+            || window_belongs_to_hidden_frame(top)
+            || !window_is_foreground(top)
+        {
+            return;
+        }
+        let (backend, node) = read::foreground_window(self.context, self.client, top);
+        tracing::debug!(
+            hwnd = top,
+            name = ?node.name,
+            "the foreground window of another process reported before its focus"
+        );
+        self.emit_focus(
+            trace,
+            observed_at_ms,
+            backend,
+            Some(top),
             node,
             true,
             None,
