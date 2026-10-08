@@ -665,7 +665,8 @@ screen and sends what is new as `NormalizedEvent::TerminalOutput`
   completion) is output. When the line grew by something else (a password
   prompt's asterisks), what was held is dropped unspoken and what the
   terminal showed is spoken. A line rewritten shows the typing only when
-  what it gained (`LineChange::inserted`, between what it kept at its
+  what it gained (while typing is held, the line's change since it was
+  read, `LineChange::since_read`, stands for the change; `LineChange::inserted`, between what it kept at its
   start and its end) is exactly the typing held, a character typed in the
   middle of a command: then the typing is echoed and the rewrite is not
   spoken. Any other rewrite (a clock ticking on a password prompt's line)

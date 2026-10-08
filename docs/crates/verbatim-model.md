@@ -288,7 +288,10 @@ the contract the Windows side implements.
   characters added, and, for a line that grew, how many `uncertain` bytes
   of white space at the start of `text` the line may already have had,
   its padding or its own trailing spaces, and what the line gained where
-  it changed, `inserted`, which Core matches with typing held;
+  it changed, `inserted`, which Core matches with typing held; and,
+  where it differs, its change from the line as last read rather than
+  from what it last said, `since_read`, which Core matches typing with
+  while it holds typing;
   `serde(default)`); `head`, when lines went by
   unread, the first new lines before them, so a flood's start is spoken in
   full, empty otherwise (`serde(default)`); `skipped`, lines that went by

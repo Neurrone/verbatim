@@ -426,6 +426,7 @@ fn two_changes_of_the_same_line_become_one() {
                 appended: true,
                 uncertain: first.uncertain,
                 inserted: " ls".to_owned(),
+                since_read: None,
             }),
             &[],
             None,
@@ -447,6 +448,7 @@ fn two_changes_of_the_same_line_become_one() {
             appended: false,
             uncertain: 0,
             inserted: "#  ] 4 done".to_owned(),
+            since_read: None,
         }),
         "a rewrite then growth says the line from the word where it first differed"
     );
@@ -522,7 +524,7 @@ fn a_rewrite_read_half_done_speaks_the_word_that_changed_once_done() {
 }
 
 #[test]
-fn a_line_typed_back_to_what_it_said_reports_the_typing_unsaid() {
+fn a_line_typed_back_to_what_it_said_says_nothing_but_shows_the_typing() {
     let mut sim = Sim::new(3, 100, &["one", "two", "ready>", "ready> ls"]);
     let (_, memory) = read(&mut sim, None);
     // Backspace, then the same letter typed again.
@@ -531,9 +533,31 @@ fn a_line_typed_back_to_what_it_said_reports_the_typing_unsaid() {
     assert!(output.is_empty());
     sim.rewrite(0, "ready> ls");
     let (output, _) = read(&mut sim, Some(&memory));
+    let change = output.changed.expect("a change");
+    assert_eq!(change.text, "");
     assert_eq!(
-        output.changed.map(|change| (change.text, change.inserted)),
-        Some((String::new(), "s".to_owned()))
+        change.since_read.map(|since| (since.text, since.appended)),
+        Some(("s".to_owned(), true))
+    );
+}
+
+#[test]
+fn a_line_cleared_and_typed_again_shows_the_typing_since_it_was_read() {
+    // "echo hi" cleared with Escape, then " o" typed after "echo": from
+    // what the line said, a rewrite of its last word; since it was read,
+    // " o" added.
+    let mut sim = Sim::new(3, 100, &["one", "two", "ready>", "ready> echo hi"]);
+    let (_, memory) = read(&mut sim, None);
+    sim.rewrite(0, "ready> echo");
+    let (output, memory) = read(&mut sim, Some(&memory));
+    assert!(output.is_empty());
+    sim.rewrite(0, "ready> echo o");
+    let (output, _) = read(&mut sim, Some(&memory));
+    let change = output.changed.expect("a change");
+    assert_eq!((change.text.as_str(), change.appended), ("o", false));
+    assert_eq!(
+        change.since_read.map(|since| (since.text, since.appended)),
+        Some((" o".to_owned(), true))
     );
 }
 
@@ -553,4 +577,16 @@ fn a_character_typed_mid_line_after_a_cleared_screen_is_the_insertion() {
         Some(("abcd".to_owned(), false, "c".to_owned()))
     );
     assert!(output.above.is_empty() && output.lines.is_empty());
+}
+
+#[test]
+fn a_screen_cleared_down_to_its_prompt_speaks_the_prompt() {
+    use super::screen::{Shift, diff};
+    // `cls`: the old screen's lines give way to the prompt alone, which
+    // starts as the old last line did; it is new, not that line shortened.
+    let old = strings(&["ready> echo hi", "hi", "ready> cls"]);
+    let new = strings(&["ready>"]);
+    let found = diff(&old, &new, Shift::Unknown, None);
+    assert_eq!(found.changed, None);
+    assert_eq!([found.above, found.below].concat(), strings(&["ready>"]));
 }

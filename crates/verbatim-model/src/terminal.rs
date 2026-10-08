@@ -87,6 +87,17 @@ pub struct LineChange {
     /// prompt's line) never echoes it.
     #[serde(default)]
     pub inserted: String,
+    /// The line's change from the line as last read, when it differs from
+    /// this one, which is from what the line last said: a line that only
+    /// got shorter is remembered as it was said, so a progress line read
+    /// half rewritten says "51%", not "oading 51%"; but a line the user
+    /// cut short (Backspace, Escape) and is typing again shows that typing
+    /// only in its change since it was read. Core matches typing with this
+    /// change while it holds typing, and otherwise speaks this one. A
+    /// change with no text, and this set, is a line that came back to what
+    /// it said.
+    #[serde(default)]
+    pub since_read: Option<Box<LineChange>>,
 }
 
 /// How many lines went by unread.

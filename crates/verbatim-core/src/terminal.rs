@@ -278,6 +278,13 @@ fn take(
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
     let mut changed = output.changed.clone();
+    // While typing is held or echoed, the line's change since it was read
+    // is the one that shows it (`LineChange::since_read`).
+    let typing = !state.held_typing.is_empty() || !state.terminal.echoed_typing.is_empty();
+    if typing && let Some(since_read) = changed.as_mut().and_then(|change| change.since_read.take())
+    {
+        changed = Some(*since_read);
+    }
     if let Some(change) = changed.as_mut() {
         effects.extend(typing_shown(state, trace_id, change));
     }
@@ -301,7 +308,8 @@ fn take(
     } else {
         output
     };
-    // The line a caret key redrew is the key's own (`key_owns_line`).
+    // The line a caret key redrew is the key's own (`key_owns_line`), and
+    // a line that came back to what it said says nothing more.
     if state.terminal.key_owns_line {
         changed = None;
     }

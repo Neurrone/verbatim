@@ -151,7 +151,15 @@ fn diff_lines(
     });
     let mut result = ScreenDiff::default();
     for hunk in hunks {
-        let paired = hunk.old.len().min(hunk.new.len());
+        // Lines are taken as rewritten in place, first to first, where at
+        // least as many replace them (a line rewritten and the prompt after
+        // it); where fewer do, as when a screen is cleared down to its
+        // prompt, the new lines are spoken whole.
+        let paired = if hunk.new.len() >= hunk.old.len() {
+            hunk.old.len()
+        } else {
+            0
+        };
         for (offset, new_index) in hunk.new.clone().enumerate() {
             let old_index = hunk.old.start + offset;
             let spoken = if offset < paired {
@@ -256,6 +264,7 @@ pub fn line_change(old: &str, new: &str) -> Option<LineChange> {
             appended: true,
             uncertain: added.len() - added.trim_start().len(),
             inserted: added.to_owned(),
+            since_read: None,
         });
     }
     let old_graphemes = verbatim_text::graphemes(old);
@@ -311,6 +320,7 @@ pub fn line_change(old: &str, new: &str) -> Option<LineChange> {
         appended: false,
         uncertain: 0,
         inserted: new[at..gained_end.max(at)].to_owned(),
+        since_read: None,
     })
 }
 
@@ -364,6 +374,7 @@ mod tests {
             } else {
                 String::new()
             },
+            since_read: None,
         })
     }
 
@@ -390,6 +401,7 @@ mod tests {
             appended: false,
             uncertain: 0,
             inserted: inserted.to_owned(),
+            since_read: None,
         })
     }
 

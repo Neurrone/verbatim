@@ -223,19 +223,8 @@ pub fn read_new<S: ScreenSource>(
             let counted = unread.saturating_sub(screen.head_rows);
             let shift_rows = Shift::Known(shift as usize);
             let mut found = diff(&old.said, &new, shift_rows, cursor);
-            if found.changed.is_none() {
-                // The line went back to what it said: typed again after
-                // Backspace, or a progress line written again the same.
-                // Nothing is said, but the typing it shows is known.
-                found.changed = diff(&old.screen, &new, shift_rows, cursor)
-                    .changed
-                    .map(|change| LineChange {
-                        text: String::new(),
-                        appended: false,
-                        uncertain: 0,
-                        ..change
-                    });
-            }
+            let since_read = diff(&old.screen, &new, shift_rows, cursor).changed;
+            found.changed = with_since_read(found.changed, since_read);
             // The old screen scrolled away whole: its last line, which
             // output may have been written to, is read where it is now.
             let changed = if shift >= seen {
@@ -718,6 +707,7 @@ fn merged_change(older: Option<LineChange>, newer: Option<LineChange>) -> Option
             appended: false,
             uncertain: 0,
             inserted: String::new(),
+            since_read: None,
         });
     };
     let from = older_start.min(newer_start);
@@ -733,7 +723,35 @@ fn merged_change(older: Option<LineChange>, newer: Option<LineChange>) -> Option
         appended,
         uncertain: if appended { older.uncertain } else { 0 },
         inserted,
+        since_read: merged_change(
+            older.since_read.map(|change| *change),
+            newer.since_read.map(|change| *change),
+        )
+        .map(Box::new),
     })
+}
+
+/// The changed line's change from what it said, `said`, with its change
+/// since it was read, `since_read`, kept beside it where the two differ
+/// ([`LineChange::since_read`]); a line whose change since it was read
+/// brought it back to what it said is a change with nothing to speak.
+fn with_since_read(said: Option<LineChange>, since_read: Option<LineChange>) -> Option<LineChange> {
+    match (said, since_read) {
+        (said, None) => said,
+        (Some(said), Some(since_read)) if said == since_read => Some(said),
+        (Some(said), Some(since_read)) => Some(LineChange {
+            since_read: Some(Box::new(since_read)),
+            ..said
+        }),
+        (None, Some(since_read)) => Some(LineChange {
+            text: String::new(),
+            line: since_read.line.clone(),
+            appended: false,
+            uncertain: 0,
+            inserted: String::new(),
+            since_read: Some(Box::new(since_read)),
+        }),
+    }
 }
 
 #[cfg(test)]

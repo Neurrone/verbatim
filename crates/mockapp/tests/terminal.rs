@@ -292,6 +292,7 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
                 appended: true,
                 uncertain: 1,
                 inserted: " ls".to_owned(),
+                since_read: None,
             }),
             ..TerminalOutput::default()
         }
@@ -330,6 +331,7 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
                 appended: true,
                 uncertain: 1,
                 inserted: " dir".to_owned(),
+                since_read: None,
             }),
             head: texts(&["1", "2", "3"]),
             skipped: Some(Skipped::Count(2)),

@@ -90,6 +90,7 @@ fn appended(text: &str, line: &str) -> LineChange {
         appended: true,
         uncertain: 0,
         inserted: text.to_owned(),
+        since_read: None,
     }
 }
 
@@ -590,6 +591,7 @@ fn a_line_rewritten_while_waiting_is_spoken_once_as_it_now_is() {
                     appended: false,
                     uncertain: 0,
                     inserted: String::new(),
+                    since_read: None,
                 }),
                 None,
                 Vec::new(),
@@ -611,6 +613,7 @@ fn a_line_rewritten_while_waiting_is_spoken_once_as_it_now_is() {
                 appended: false,
                 uncertain: 0,
                 inserted: String::new(),
+                since_read: None,
             }),
             None,
             Vec::new(),
@@ -869,6 +872,7 @@ fn a_rewrite_that_does_not_show_the_typing_never_echoes_it() {
         appended: false,
         uncertain: 0,
         inserted: "5".to_owned(),
+        since_read: None,
     };
     playback.feed(
         &mut state,
@@ -885,6 +889,7 @@ fn a_rewrite_that_does_not_show_the_typing_never_echoes_it() {
         appended: false,
         uncertain: 0,
         inserted: "x".to_owned(),
+        since_read: None,
     };
     playback.feed(
         &mut state,
@@ -963,22 +968,56 @@ fn a_typed_space_padding_hides_is_echoed_when_the_caret_moves_past_it() {
 }
 
 #[test]
-fn typing_a_line_back_to_what_it_said_echoes_the_typing() {
+fn typing_is_matched_with_the_lines_change_since_it_was_read() {
     let mut state = terminal();
     let mut playback = Playback::default();
-    playback.feed(&mut state, &typed("s"));
-    let unsaid = LineChange {
+    let appended = |text: &str, line: &str| LineChange {
+        text: text.to_owned(),
+        line: line.to_owned(),
+        appended: true,
+        uncertain: text.len() - text.trim_start().len(),
+        inserted: text.to_owned(),
+        since_read: None,
+    };
+    // A letter typed again after Backspace: nothing to say from what the
+    // line said, the letter since it was read.
+    let back = LineChange {
         text: String::new(),
         line: "ready> ls".to_owned(),
         appended: false,
         uncertain: 0,
-        inserted: "s".to_owned(),
+        inserted: String::new(),
+        since_read: Some(Box::new(appended("s", "ready> ls"))),
     };
+    playback.feed(&mut state, &typed("s"));
     playback.feed(
         &mut state,
-        &output_from(TERMINAL, Some(unsaid), None, Vec::new()),
+        &output_from(TERMINAL, Some(back.clone()), None, Vec::new()),
     );
     assert_eq!(playback.play_all(&mut state), ["s"]);
+    // " o" typed on a line Escape cleared: a rewrite of what it said, " o"
+    // added since it was read.
+    let retyped = LineChange {
+        text: "o".to_owned(),
+        line: "ready> echo o".to_owned(),
+        appended: false,
+        uncertain: 0,
+        inserted: "o".to_owned(),
+        since_read: Some(Box::new(appended(" o", "ready> echo o"))),
+    };
+    playback.feed(&mut state, &typed(" "));
+    playback.feed(&mut state, &typed("o"));
+    playback.feed(
+        &mut state,
+        &output_from(TERMINAL, Some(retyped), None, Vec::new()),
+    );
+    assert_eq!(playback.play_all(&mut state), [" ", "o"]);
+    // With no typing, a line that came back to what it said is silent.
+    playback.feed(
+        &mut state,
+        &output_from(TERMINAL, Some(back), None, Vec::new()),
+    );
+    assert_eq!(playback.play_all(&mut state), Vec::<String>::new());
 }
 
 #[test]
@@ -1035,6 +1074,7 @@ fn typing_the_caret_shows_before_the_screen_read_is_echoed_once() {
         appended: true,
         uncertain: 1,
         inserted: " .".to_owned(),
+        since_read: None,
     };
     playback.feed(
         &mut state,

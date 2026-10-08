@@ -19,6 +19,10 @@
 //!    prompt.
 //! 3. Escape clears the command line being typed and says what it
 //!    removed: `echo hi` is typed and echoed, and Escape says "echo hi".
+//!    `echo ok`, typed on the cleared line, is echoed as typed (the line
+//!    starts as the one cleared did), and Enter gives "ok" and the prompt.
+//! 4. `cls` clears the screen down to the prompt, which is spoken as new
+//!    (NVDA, captured live on 2026-10-09, says it too).
 //!
 //! Commands are typed with the agent's `TypeText` a character at a time,
 //! and keys pressed with `SendKeys`.
@@ -93,6 +97,14 @@ pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut Scenari
     terminal::type_hearing(scenario, "echo hi", terminal::Echo::Shown);
     scenario.send_keys(&["escape"]).expect("presses escape");
     scenario.speech().expect(&["echo hi"]);
+
+    // The line it cleared, typed again, is echoed as typed.
+    terminal::type_with_echo(scenario, "echo ok", terminal::Echo::Shown);
+    scenario.speech().expect(&["ok", PROMPT]);
+
+    // `cls` clears the screen down to the prompt, which is new.
+    terminal::type_with_echo(scenario, "cls", terminal::Echo::Shown);
+    scenario.speech().expect(&[PROMPT]);
 }
 
 /// `conhost_typing`.
@@ -123,4 +135,12 @@ pub(crate) fn body_console_host(scenario: &mut Scenario, state: &mut ScenarioSta
     terminal::type_hearing(scenario, "echo hi", terminal::Echo::Shown);
     scenario.send_keys(&["escape"]).expect("presses escape");
     scenario.speech().expect(&["echo hi"]);
+
+    // The line it cleared, typed again, is echoed as typed.
+    terminal::type_with_echo(scenario, "echo ok", terminal::Echo::Shown);
+    scenario.speech().expect(&["ok", PROMPT]);
+
+    // `cls` clears the screen down to the prompt, which is new.
+    terminal::type_with_echo(scenario, "cls", terminal::Echo::Shown);
+    scenario.speech().expect(&[PROMPT]);
 }

@@ -1215,9 +1215,13 @@ finds it.
   (`Memory::said`), where a line that has only got shorter since keeps
   what it said before. A progress line cleared and written again, read
   half written, is so compared with what it said ("51%", not "oading
-  51%"). A line that returns to what it said (a letter deleted and typed
-  again) reports a change with nothing to speak whose `inserted` is the
-  change from the line as read, so the typing is still echoed.
+  51%"). Where the line's change since it was read differs, it goes
+  with the change as `LineChange::since_read`: a line cut short by the
+  user (Backspace, Escape) and typed again shows the typing only there,
+  and a line that came back to what it said has nothing else to speak.
+  Lines are taken as rewritten in place, first to first, only where at
+  least as many new lines replace them; a screen cleared down to its
+  prompt speaks the prompt as new.
 - On-demand reading (`terminal::reading`, `phase6-design.md`, "Terminal
   decisions"), a pure transition function the worker drives. Live, the
   default, a text change of the focused terminal (`Text_TextChanged`) is
