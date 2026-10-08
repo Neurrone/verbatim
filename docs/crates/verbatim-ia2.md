@@ -195,11 +195,8 @@ Public API:
   matches only an object the outpost already holds, never a new
   sighting, and the address is what recognizes an object again. An
   object reached through `accParent` with no address of its own (a
-  windowless ancestor) has neither: an event naming it is compared as
-  NVDA compares objects, by window, role, name, and location
-  (`EventObject::is_like`), whose name and location reads the event's
-  read then keeps; `NodeIdRegistry::at_address` tells the outpost which
-  kept nodes have no address of their own. Two seams
+  windowless ancestor) has neither, so an event naming it is never
+  matched to it, as NVDA never matches it (`docs/parity.md`). Two seams
   mirror NVDA where plain MSAA navigation would mislead. A `SysTreeView32`
   item's navigation and ancestor chain route through the tree control's
   own `TVM_GETNEXTITEM` relations (with the accid-to-htreeitem mapping

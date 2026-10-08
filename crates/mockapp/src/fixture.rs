@@ -89,8 +89,6 @@ struct RawNode {
     #[serde(default)]
     level: Option<u32>,
     #[serde(default)]
-    location: Option<[i32; 4]>,
-    #[serde(default)]
     controller_for: Option<String>,
     #[serde(default)]
     text: Option<String>,
@@ -176,10 +174,6 @@ pub(crate) struct FixtureNode {
     pub(crate) position_in_set: Option<u32>,
     pub(crate) set_size: Option<u32>,
     pub(crate) level: Option<u32>,
-    /// Where the node is on the screen, left, top, width, and height, which
-    /// the MSAA backend's `accLocation` answers; all zero when the fixture
-    /// gives none.
-    pub(crate) location: [i32; 4],
     /// The `id` of the node this one controls (UIA `ControllerFor`).
     pub(crate) controller_for: Option<String>,
     /// The node's text, served through UIA's text pattern, or for the MSAA
@@ -273,20 +267,8 @@ impl FixtureNode {
 /// the fixture shape, or names an unknown role, unknown state, or a
 /// duplicate node id.
 pub(crate) fn load(path: &Path) -> Result<FixtureNode, FixtureError> {
-    /// The parse's stack: parsing recurses once per level of nesting, each
-    /// level a node's whole field set in an unoptimized build, which a
-    /// fixture nested sixty deep (`deep.json`) needs more than the main
-    /// thread's megabyte for.
-    const PARSE_STACK: usize = 16 << 20;
     let text = std::fs::read_to_string(path).map_err(FixtureError::Io)?;
-    let raw: RawNode = std::thread::Builder::new()
-        .name("fixture parse".to_owned())
-        .stack_size(PARSE_STACK)
-        .spawn(move || serde_json::from_str(&text))
-        .map_err(FixtureError::Io)?
-        .join()
-        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-        .map_err(FixtureError::Json)?;
+    let raw: RawNode = serde_json::from_str(&text).map_err(FixtureError::Json)?;
     let mut seen_ids = std::collections::HashSet::new();
     let root = convert(raw, &mut seen_ids)?;
     check_controlled(&root, &seen_ids)?;
@@ -345,7 +327,6 @@ fn convert(
         position_in_set: raw.position_in_set,
         set_size: raw.set_size,
         level: raw.level,
-        location: raw.location.unwrap_or_default(),
         controller_for: raw.controller_for,
         text: raw.text,
         spelling_errors: raw.spelling_errors,

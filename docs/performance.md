@@ -459,16 +459,6 @@ reading any of its properties.
   `get_accRole` once each for it), and the focus's change 11 MSAA calls.
   A progress bar off the focus is then read in full, as NVDA reads one.
   mockapp answers a `WM_GETOBJECT` for each event's acquisition, 2.
-- A state change on an ancestor of the focus reached through `accParent`,
-  with no address of its own (since 2026-10-08): its COM identity matches
-  no kept node, since oleacc hands out a new wrapper for every object, so
-  it is compared with the ancestor as NVDA compares objects, by window,
-  role, name, and location, read only when such an ancestor is among the
-  candidates. The read that follows keeps the role, name, and location,
-  so the comparison costs no call of its own: 11 MSAA calls in all, the
-  ancestor's read in full, the acquisition, and a fresh role read of the
-  object kept at the address the event names (mockapp answers `accName`
-  and `accLocation` once each, and `get_accRole` twice).
 
 The window's verdict of no UIA provider is renewed by time, every half
 second, as NVDA renews it: nothing tells a client that a window has begun

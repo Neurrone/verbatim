@@ -261,15 +261,22 @@ verified.
     **matched since 2026-10-07** (reducer tests; the `msaa_events`
     mockapp test pins that a real tree view item's logical parent is not
     such an ancestor). An ancestor is recognized by the address it was
-    reported at, and a windowless ancestor reached through `accParent`,
-    at an address made up for it, as NVDA recognizes it, by its window,
-    role, name, and location, all four equal (since 2026-10-08; the
-    `msaa_events` mockapp tests pin a match and a list differing only in
-    location that is not one). Its COM identity cannot serve: oleacc
-    hands every object to another process in a new wrapper of its own,
-    so two sightings of one object never share an `IUnknown`, as measured
-    against mockapp, whose provider keeps one object per node
-    (`docs/crates/verbatim-ia2.md`, "Identity"). UIA delivers no ancestor's events to the
+    reported at, as NVDA recognizes it: NVDA meets an event's object
+    again only through its table of live objects, keyed by the address
+    an object was created for or its identity string names, and its
+    state-change gate asks whether the event's object is the very
+    ancestor it holds, by Python identity, not whether it is equal by
+    window, role, name, and location (that comparison redirects only an
+    event on the focus). A windowless ancestor reached through
+    `accParent`, with no identity string and no `IAccessible2` unique id,
+    has no such address, so neither NVDA nor Verbatim speaks its state
+    change (the `msaa_events` mockapp test pins it, since 2026-10-08).
+    Its COM identity cannot serve either: oleacc hands every object to
+    another process in a new wrapper of its own, so two sightings of one
+    object never share an `IUnknown`, as measured against mockapp, whose
+    provider keeps one object per node (`docs/crates/verbatim-ia2.md`,
+    "Identity"). Verbatim does not read `IAccessible2` unique ids yet, by
+    which NVDA keys an `IAccessible2` object's address. UIA delivers no ancestor's events to the
     focus-following registration ("UIA event registration"), so a UIA
     ancestor's state change is still not spoken. The ancestors are NVDA's, those
     reached through `accParent`: a tree view item's logical parents,

@@ -33,8 +33,6 @@ pub(crate) struct NodeData {
     pub(crate) set_size: Option<u32>,
     /// One-based nesting level (UIA `Level`).
     pub(crate) level: Option<u32>,
-    /// Where the node is on the screen, left, top, width, and height.
-    pub(crate) location: [i32; 4],
     /// The node this one controls (UIA `ControllerFor`).
     pub(crate) controller_for: Option<usize>,
     /// The node's text as UTF-16, served through UIA's text pattern.
@@ -184,7 +182,6 @@ fn insert(
         position_in_set: node.position_in_set,
         set_size: node.set_size,
         level: node.level,
-        location: node.location,
         controller_for: None,
         text: node.text.map(|text| text.encode_utf16().collect()),
         selection: (0, 0),
@@ -238,7 +235,6 @@ mod tests {
             position_in_set: None,
             set_size: None,
             level: None,
-            location: [0; 4],
             controller_for: None,
             text: None,
             spelling_errors: Vec::new(),

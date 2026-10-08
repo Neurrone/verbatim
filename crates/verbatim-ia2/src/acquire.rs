@@ -109,16 +109,14 @@ pub enum Purpose {
 }
 
 /// How [`read_snapshot_with`] reads an object: whether it was acquired at
-/// its address, why it is read, and the role and state words, name, and
-/// location already read for it, which are not read again.
-#[derive(Clone, Debug, Default)]
+/// its address, why it is read, and the role and state words already read
+/// for it, which are not read again.
+#[derive(Clone, Copy, Debug, Default)]
 struct Reading {
     at_address: bool,
     purpose: Purpose,
     role: Prefetched,
     state: Prefetched,
-    name: Kept<Option<String>>,
-    location: Kept<Option<verbatim_model::Rect>>,
 }
 
 /// A role or state word that may have been read already.
@@ -172,40 +170,6 @@ pub struct EventObject {
     acc: Accessible,
     key: MsaaKey,
     role: Prefetched,
-    /// The name, once [`EventObject::is_like`] has read it.
-    name: Kept<Option<String>>,
-    /// The location, once [`EventObject::is_like`] has read it.
-    location: Kept<Option<verbatim_model::Rect>>,
-}
-
-/// A property that may have been read already.
-#[derive(Clone, Debug, Default)]
-enum Kept<T> {
-    /// Not read yet.
-    #[default]
-    Unread,
-    /// Read, with what the read answered.
-    Read(T),
-}
-
-impl<T: Clone> Kept<T> {
-    /// The property, read by `read` if it was not read yet.
-    fn or_read(self, read: impl FnOnce() -> T) -> T {
-        match self {
-            Self::Unread => read(),
-            Self::Read(value) => value,
-        }
-    }
-
-    /// The property, read by `read` the first time and kept.
-    fn get(&mut self, read: impl FnOnce() -> T) -> T {
-        if let Self::Read(value) = self {
-            return value.clone();
-        }
-        let value = read();
-        *self = Self::Read(value.clone());
-        value
-    }
 }
 
 /// Acquires the object a `WinEvent` names, reading nothing of it. `None`
@@ -216,8 +180,6 @@ pub fn event_object(hwnd: isize, id_object: i32, id_child: i32) -> Option<EventO
         acc: Accessible::from_event(hwnd, id_object, id_child)?,
         key: (hwnd, id_object, id_child),
         role: Prefetched::Unread,
-        name: Kept::Unread,
-        location: Kept::Unread,
     })
 }
 
@@ -239,31 +201,6 @@ impl EventObject {
             Found::Object(node, _) if nodes.contains(&node) => Some(node),
             _ => None,
         }
-    }
-
-    /// Whether the object is `candidate`, an object reached through
-    /// `accParent` with no address of its own (a windowless ancestor), by
-    /// NVDA's comparison when neither address nor identity settles it: the
-    /// same window, role, name, and location. Neither the address nor the
-    /// identity can: the candidate is keyed at an address made up from its
-    /// window, and oleacc hands out a new wrapper of its own for every
-    /// object it returns, `IUnknown` included, so two sightings of one
-    /// object never share an identity (`docs/crates/verbatim-ia2.md`,
-    /// "Identity"). The role is kept; the name and location are read the
-    /// first time a candidate needs them, two calls, and kept for the next.
-    pub fn is_like(&mut self, candidate: &NodeSnapshot, registry: &NodeIdRegistry) -> bool {
-        if registry.key_of(candidate.id).map(|key| key.0) != Some(self.key.0)
-            || self.role() != candidate.role
-        {
-            return false;
-        }
-        let acc = &self.acc;
-        let name = self.name.get(|| acc.name());
-        if non_empty(name) != candidate.name.clone().and_then(|n| non_empty(Some(n))) {
-            return false;
-        }
-        let location = self.location.get(|| acc.location());
-        location.is_some() && location == candidate.details.rect
     }
 
     /// The object's role, one call, kept for the read that may follow.
@@ -299,8 +236,6 @@ impl EventObject {
                 purpose,
                 role: self.role,
                 state: Prefetched::Read(state),
-                name: self.name,
-                location: self.location,
             },
             registry,
         );
@@ -439,7 +374,6 @@ impl FocusCandidate {
                 purpose: Purpose::Announce,
                 role: self.role,
                 state: self.state,
-                ..Reading::default()
             },
             registry,
         )
@@ -1468,7 +1402,7 @@ fn read_snapshot(
 }
 
 /// [`read_snapshot`] as `reading` says: for its purpose, and without
-/// reading again the role and state words, name, and location already read.
+/// reading again the role and state words already read.
 fn read_snapshot_with(
     acc: &Accessible,
     key: MsaaKey,
@@ -1478,7 +1412,7 @@ fn read_snapshot_with(
     let at_address = reading.at_address;
     // Each read tolerates an unsupported property by failing, mapped to a
     // neutral default.
-    let name = visible_text(reading.name.or_read(|| acc.name()));
+    let name = visible_text(acc.name());
     let raw_value = visible_text(acc.value());
     let role = reading
         .role
@@ -1519,7 +1453,7 @@ fn read_snapshot_with(
         .shortcut
         .then(|| non_empty(acc.keyboard_shortcut()))
         .flatten();
-    let rect = reading.location.or_read(|| acc.location());
+    let rect = acc.location();
     // See this function's doc comment: a tree item's accValue is really
     // its 0-based level, not a value.
     // The edit field of a combo box takes the combo box's label, so it
@@ -1744,8 +1678,7 @@ fn position_of(
 /// compared, since other objects in the same window share it.
 ///
 /// NVDA also compares `IAccessible2` unique ids, which Verbatim does not read
-/// yet, and the location and name, which are compared only for an event's
-/// object against a windowless ancestor ([`EventObject::is_like`]).
+/// yet, and the location and name, which are not compared here yet either.
 fn node_for(
     registry: &NodeIdRegistry,
     key: MsaaKey,

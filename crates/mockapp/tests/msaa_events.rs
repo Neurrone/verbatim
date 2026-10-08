@@ -4,10 +4,9 @@
 //! and that a change on any other object says nothing (`docs/nvda/events.md`,
 //! "The focus gate"), a tree view item's logical parent included: NVDA's
 //! ancestors are those reached through `accParent`. A state change on
-//! such an ancestor is spoken: having no address of its own and no COM
-//! identity two sightings share (oleacc wraps every object anew), it is
-//! recognized by NVDA's comparison of window, role, name, and location,
-//! and an object that differs in location alone is not it.
+//! such an ancestor with no address of its own is not spoken either, as
+//! NVDA does not speak it: nothing NVDA does meets that ancestor again
+//! from an event.
 //!
 //! mockapp's focus moves with `set-focus`, which raises no event; the
 //! test hands the outpost the focus itself, as `call_counts.rs` does.
@@ -128,14 +127,17 @@ fn a_description_change_on_the_focus_is_spoken() {
     app.quit();
 }
 
-/// A state change on an ancestor of the focus reached through `accParent`,
-/// NVDA's ancestry, is spoken: the focused list item's list becomes
-/// unavailable, and says so. The list has no address of its own the
-/// outpost reached it at, and oleacc wraps every object it hands out anew,
-/// so neither address nor identity can tell the event's object is that
-/// ancestor: they are compared as NVDA compares them, by window, role,
-/// name, and location.
-fn a_state_change_on_an_acc_parent_ancestor_is_spoken() {
+/// A state change on a windowless ancestor of the focus, one reached
+/// through `accParent` with no address of its own, is not spoken, as NVDA
+/// does not speak it: NVDA meets an event's object again only at an
+/// address an earlier object was created for, which such an ancestor never
+/// had, and its speech gate asks whether the object is the very ancestor it
+/// holds, never whether it is like it (`docs/parity.md`). The focused
+/// list item's list becomes unavailable and is not even reported, as the
+/// description change on the focus after it is the next thing the outpost
+/// says. mockapp hands out one object per node, so no change of identity on
+/// mockapp's side makes this so.
+fn a_state_change_on_a_windowless_ancestor_is_not_spoken() {
     common::init_com();
     let title = common::unique_title("mockapp-msaa-acc-parent-state");
     let mut app = common::spawn("counts.json", "msaa", &title);
@@ -148,49 +150,15 @@ fn a_state_change_on_an_acc_parent_ancestor_is_spoken() {
     assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
     let _ = spoken(&mut state, focus_event(&reported));
     app.send("set-states list focusable disabled");
-    let changed = next_event(&outpost);
+    app.send("set-description item2 Second choice");
+    let event = next_event(&outpost);
     outpost.settled();
     assert_eq!(
-        spoken(&mut state, changed),
-        [vec![SegmentContent::State(State::Disabled)]]
-    );
-    app.quit();
-}
-
-/// An object like the focus's windowless ancestor in all but its location
-/// is not that ancestor: two lists named "Options" side by side, and the
-/// focus in the left one. The right list's state change is not reported;
-/// the left list's, raised after it from the same hook, is the first thing
-/// the outpost says.
-fn the_same_name_in_another_location_is_not_the_ancestor() {
-    /// The left list's item, by its index in mockapp's tree.
-    const LEFT_ONE: usize = 2;
-    common::init_com();
-    let title = common::unique_title("mockapp-msaa-twin-lists");
-    let mut app = common::spawn("twin_lists.json", "msaa", &title);
-    let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(app.pid());
-    let mut state = SrState::new();
-
-    app.send("set-focus left_one");
-    let reported = outpost.msaa_focus(hwnd, LEFT_ONE);
-    assert_eq!(reported.chain(), [Some("Options"), Some("One")]);
-    let _ = spoken(&mut state, focus_event(&reported));
-    app.send("set-states right focusable disabled");
-    app.send("set-states left focusable disabled");
-    let changed = next_event(&outpost);
-    let NormalizedEvent::PropertyChanged { node_id, .. } = &changed else {
-        panic!("the outpost said {changed:?}, not a state change");
-    };
-    assert_eq!(
-        Some(*node_id),
-        reported.ancestors.last().map(|list| list.id),
-        "the left list's change, not the right one's"
-    );
-    outpost.settled();
-    assert_eq!(
-        spoken(&mut state, changed),
-        [vec![SegmentContent::State(State::Disabled)]]
+        spoken(&mut state, event),
+        [vec![SegmentContent::Description(
+            "Second choice".to_owned()
+        )]],
+        "the list's change was not reported"
     );
     app.quit();
 }
@@ -328,12 +296,8 @@ fn main() {
             a_description_change_on_the_focus_is_spoken,
         ),
         (
-            "a_state_change_on_an_acc_parent_ancestor_is_spoken",
-            a_state_change_on_an_acc_parent_ancestor_is_spoken,
-        ),
-        (
-            "the_same_name_in_another_location_is_not_the_ancestor",
-            the_same_name_in_another_location_is_not_the_ancestor,
+            "a_state_change_on_a_windowless_ancestor_is_not_spoken",
+            a_state_change_on_a_windowless_ancestor_is_not_spoken,
         ),
         (
             "collapsing_a_tree_items_parent_says_nothing_until_its_focus",

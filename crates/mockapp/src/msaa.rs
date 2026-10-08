@@ -699,27 +699,19 @@ mod handler {
             pytop: *mut i32,
             pcxwidth: *mut i32,
             pcyheight: *mut i32,
-            varchild: &VARIANT,
+            _varchild: &VARIANT,
         ) -> WinResult<()> {
             hits::hit(hits::Method::AccLocation);
             let outputs = [pxleft, pytop, pcxwidth, pcyheight];
             if outputs.iter().any(|output| output.is_null()) {
                 return Err(E_POINTER.into());
             }
-            // mockapp lays out no real control geometry: the location is the
-            // fixture's, all zero when it gives none.
-            let target = resolve_child(&self.tree, self.index, varchild)
-                .ok_or_else(|| Error::from_hresult(S_FALSE))?;
-            let location = self
-                .tree
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .nodes[target]
-                .location;
-            for (output, value) in outputs.into_iter().zip(location) {
+            // mockapp never lays out real control geometry, so the location
+            // is always zero.
+            for output in outputs {
                 // SAFETY: a non-null out-parameter (checked above), which an
                 // `accLocation` caller owns and points at an `i32`.
-                unsafe { output.write(value) };
+                unsafe { output.write(0) };
             }
             Ok(())
         }
