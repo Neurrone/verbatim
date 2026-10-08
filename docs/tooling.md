@@ -539,15 +539,40 @@ terminals are left alone, and runs its shell in a folder of the same name
 in `target/e2e-stage`, deleted once the window has closed. Each names its
 terminal, Windows Terminal or the console host, and fails when it cannot
 open it, with no fallback; it asserts the program that owns the window.
-The agent starts `wt.exe` by searching
-`PATH`, so Windows Terminal's execution alias folder,
-`%LOCALAPPDATA%\Microsoft\WindowsApps`, must be on the agent's `PATH`, as
-it is on Windows 11 by default. GitHub's Windows Server runner image ships
-Windows Terminal already, registered and running (installing it again
-fails with 0x80073D02, the app being in use), so the terminal scenarios
-use it there too: before the suite, CI's `e2e` job checks that the package
-is registered and its `wt.exe` alias exists, fails if not, and puts the
-alias folder on `PATH` for the later steps. They type through the agent's `TypeText`,
+
+**The Windows Terminal scenarios never use your own Windows Terminal.**
+Windows Terminal runs every window of one installation in one process,
+so a scenario that opened its window through `wt.exe` ran inside the
+same process as your own terminals, and on 2026-10-08 that process
+crashed in UI Automation, ending every session in it. The
+scenarios instead drive a copy of their own: the official portable
+release, pinned to the version this machine runs (1.24.12741.0, in
+`crates/verbatim-e2e/src/windows_terminal.rs`), downloaded from GitHub
+with Windows' `curl.exe`, checked against its pinned SHA-256, for x64 or
+ARM64 as the machine is, and unpacked into
+`target/e2e-stage/windows-terminal-1.24.12741.0` with a `.portable` file
+next to its executable. Portable mode keeps its settings in that folder,
+under `settings`, which each scenario deletes first, so every run starts
+from the release's defaults. An unpackaged Windows Terminal names the
+window class and mutex it finds a running instance by with a hash of its
+own executable's path, so the copy never hands its command line to your
+installed Windows Terminal, nor yours to it. A runner-direct run
+downloads it the first time anything is staged; `cargo xtask
+windows-terminal` does the same on its own, and `cargo xtask vm deploy`
+ships it to the guest next to Verbatim.
+
+Each Windows Terminal scenario starts that copy's `WindowsTerminal.exe`
+directly, never `wt.exe` from `PATH`, with `-w new --size 120,30 new-tab
+--title <title> --suppressApplicationTitle` and the shell. Before it
+drives the window, it asserts that the process the agent launched owns
+the window, and that no other Windows Terminal process opened a window
+meanwhile. At cleanup it closes that window by its title, and the copy's
+process, which had no other window, must exit; nothing else is closed.
+CI's `e2e` job runs `cargo xtask windows-terminal` as a step of its own
+before the suite, so GitHub's runner tests the same release, not the
+Windows Terminal its image ships.
+
+The terminal scenarios type through the agent's `TypeText`,
 which maps each character with the foreground window's keyboard layout, so
 any layout that can type the commands works. `crates/verbatim-e2e/src/
 scenarios/` documents exactly what each asserts, at the top of its module.
@@ -583,8 +608,8 @@ no `--scenario` or `--group` is given; and `cargo xtask vm test` refuses
 them by name or group. They follow the suite's rules otherwise: the same
 fixed settings and speech rate, no fixed waits, and assertions on what
 they show, so a broken feature fails the recording rather than producing a
-misleading video. `demo_terminal_session` needs Windows Terminal and fails
-saying so when `wt.exe` cannot be started. `cargo xtask demo <scenario>
+misleading video. `demo_terminal_session` runs in the harness's portable
+Windows Terminal and fails saying so when it cannot be started. `cargo xtask demo <scenario>
 [--name <name>]` records one scenario on this machine: it builds and
 starts an agent of its own, from `CARGO_TARGET_DIR` when that is set, runs the scenario with `--include-ignored` and
 the recording's demo quality, and copies the video to `videos/demos` for

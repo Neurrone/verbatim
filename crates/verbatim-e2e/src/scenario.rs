@@ -639,6 +639,48 @@ impl Scenario {
         self.require_launched_in_front(launch, title, owner_exits)
     }
 
+    /// Launches `command`, which opens a window titled with `title`, a
+    /// title of this run's own ([`harness_marker`]), waits for that window
+    /// to take the foreground, and fails unless the process the agent
+    /// launched owns it: for a program that could otherwise hand its
+    /// command line to an instance already running, such as Windows
+    /// Terminal. The window is closed by its title at cleanup, and the
+    /// process must exit then.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the agent cannot start `command`, the window
+    /// does not take the foreground, or another process owns it.
+    pub fn launch_owning_window(
+        &mut self,
+        command: &str,
+        args: &[String],
+        title: &str,
+    ) -> io::Result<WindowInfo> {
+        let launch = self.agent.launch_process(command, args, None, &[], None)?;
+        let launched = launch.pid;
+        let window = self.require_launched_in_front(launch, title, true)?;
+        if window.pid != launched {
+            return Err(io::Error::other(format!(
+                "the window titled {title:?} belongs to {} (pid {}), not to the process the harness launched, pid {launched}: {}",
+                window.image,
+                window.pid,
+                self.foreground_report()
+            )));
+        }
+        Ok(window)
+    }
+
+    /// Every visible, titled, unowned top-level window, minimized and
+    /// cloaked ones included.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn top_level_windows(&mut self) -> io::Result<Vec<WindowInfo>> {
+        Ok(self.agent.foreground_info()?.windows)
+    }
+
     /// Launches the console program `command` with `args`, its console
     /// window titled `title` from its first frame, and waits for that
     /// window to take the foreground, as [`Scenario::launch_titled`] does.
@@ -1857,13 +1899,27 @@ fn build_default_source_binaries() -> io::Result<()> {
 /// re-copied (see [`files_match`]) — the common case in a tight edit-test
 /// loop where nothing changed since the last run.
 ///
+/// The terminal scenarios' portable Windows Terminal is unpacked there too
+/// ([`crate::windows_terminal::prepare`]), downloaded only when it is
+/// missing.
+///
 /// # Errors
 ///
-/// Returns an error if a required source binary is missing or a copy fails.
+/// Returns an error if a required source binary is missing, a copy fails,
+/// or Windows Terminal cannot be downloaded or unpacked.
 fn stage_binaries(source_dir: &Path) -> io::Result<PathBuf> {
-    let stage_dir = workspace_root().join("target").join("e2e-stage");
+    let stage_dir = stage_directory();
     copy_into_stage(source_dir, &stage_dir)?;
+    crate::windows_terminal::prepare(&stage_dir)?;
     Ok(stage_dir)
+}
+
+/// The stage of a runner-direct run, `target/e2e-stage` under the
+/// workspace root, from which Verbatim and the terminal scenarios' Windows
+/// Terminal run.
+#[must_use]
+pub fn stage_directory() -> PathBuf {
+    workspace_root().join("target").join("e2e-stage")
 }
 
 /// The executables a run needs side by side: the app finds the outpost and

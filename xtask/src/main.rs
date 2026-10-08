@@ -17,6 +17,9 @@
 //! `nvda` builds the NVDA transcript add-on and captures what NVDA speaks
 //! (`docs/nvda-transcript.md`). See `xtask/src/nvda.rs`.
 //!
+//! `windows-terminal` downloads and unpacks the pinned portable Windows
+//! Terminal the terminal scenarios drive (`verbatim_e2e::windows_terminal`).
+//!
 //! `park` moves this Remote Desktop session onto the machine's console, so a
 //! local end-to-end run keeps working with no RDP client connected. See
 //! `xtask/src/park.rs`.
@@ -62,6 +65,7 @@ fn main() -> ExitCode {
         Some("park") => park::run(),
         Some("demo") => demo::run(&args[1..]),
         Some("nvda") => nvda::run(&args[1..]),
+        Some("windows-terminal") => windows_terminal(),
         _ => {
             eprintln!("usage: cargo xtask <command>");
             eprintln!("commands:");
@@ -78,7 +82,35 @@ fn main() -> ExitCode {
             eprintln!(
                 "  park  move this Remote Desktop session to the console, unlocked, for unattended local runs"
             );
+            eprintln!(
+                "  windows-terminal  download and unpack the terminal scenarios' pinned portable Windows Terminal into target/e2e-stage"
+            );
             ExitCode::from(2)
+        }
+    }
+}
+
+/// Downloads, checks, and unpacks the pinned portable Windows Terminal the
+/// terminal scenarios drive into the runner-direct stage, as the suite's
+/// first launch would: CI runs it as a step of its own, so a failed
+/// download is reported before the suite starts.
+fn windows_terminal() -> ExitCode {
+    let stage = verbatim_e2e::scenario::stage_directory();
+    match verbatim_e2e::windows_terminal::prepare(&stage) {
+        Ok(folder) => {
+            println!(
+                "Windows Terminal {} is ready, in portable mode, in {}",
+                verbatim_e2e::windows_terminal::VERSION,
+                folder.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!(
+                "could not prepare Windows Terminal {}: {error}",
+                verbatim_e2e::windows_terminal::VERSION
+            );
+            ExitCode::FAILURE
         }
     }
 }

@@ -1716,6 +1716,7 @@ name = "verbatim-e2e"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "sha2",
  "tracing",
  "verbatim-agent",
  "verbatim-config",

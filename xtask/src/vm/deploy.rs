@@ -84,7 +84,9 @@ pub(crate) fn build(repo_root: &Path) -> VmResult<BuiltArtifacts> {
 }
 
 /// Stages a `settings.toml` selecting eSpeak NG, hashes it, `built`'s four
-/// binaries, and the vendored `ffmpeg.exe` against the guest's copies, and
+/// binaries, the vendored `ffmpeg.exe`, eSpeak NG's data, the sounds, and
+/// the terminal scenarios' pinned portable Windows Terminal (downloaded
+/// once) against the guest's copies, and
 /// copies only the ones that differ. Stops the guest's `VerbatimAgent`
 /// scheduled task and any running Verbatim first, but only when at least
 /// one executable actually needs copying (a live process can hold an
@@ -193,6 +195,25 @@ pub(crate) fn stage_and_copy(
         SOUNDS_ARCHIVE,
     )?);
 
+    // The terminal scenarios' portable Windows Terminal, at its pinned
+    // release (`verbatim_e2e::windows_terminal`), unpacked on the host and
+    // shipped the same way, next to Verbatim in the guest, where the
+    // scenarios start it. Marked executable because a running copy holds
+    // its files open.
+    let terminal_staging = repo_root.join("target").join("xtask-vm-staging");
+    let terminal = verbatim_e2e::windows_terminal::prepare(&terminal_staging).map_err(|error| {
+        format!(
+            "could not prepare Windows Terminal {}: {error}",
+            verbatim_e2e::windows_terminal::VERSION
+        )
+    })?;
+    artifacts.push(directory_archive(
+        repo_root,
+        &terminal,
+        verbatim_e2e::windows_terminal::FOLDER,
+        WINDOWS_TERMINAL_ARCHIVE,
+    )?);
+
     let needs_copy = artifacts_needing_copy(host, credentials, &artifacts)?;
     if needs_copy.is_empty() {
         println!("xtask vm deploy: all artifacts up to date; guest left untouched");
@@ -213,6 +234,9 @@ const SOUNDS: &str = "sounds";
 
 /// The archive the sounds are shipped to the guest as.
 const SOUNDS_ARCHIVE: &str = "sounds.tar";
+
+/// The archive the portable Windows Terminal is shipped to the guest as.
+const WINDOWS_TERMINAL_ARCHIVE: &str = "windows-terminal.tar";
 
 /// The artifact shipping the directory `dir`, named `name` next to the
 /// built executables, to the same place in the guest: archived as

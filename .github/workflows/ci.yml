@@ -116,32 +116,16 @@ jobs:
             choco install ffmpeg --no-progress -y
           }
           ffmpeg -version | Select-Object -First 1
-      # The runner must have Windows Terminal, so the terminal scenarios
-      # that prefer it use it here as they do on Windows 11, rather than falling back to the
-      # console host (docs/tooling.md). GitHub's Windows Server image ships
-      # it already, registered and running, so installing it again fails
-      # (0x80073D02, the app is in use); the step checks it is there
-      # instead. The scenarios start wt.exe by searching PATH, so the
-      # folder holding its execution alias goes on PATH for later steps,
-      # and the step fails unless the package and the alias are there.
-      # Windows PowerShell runs it, since PowerShell 7's Appx module is not
-      # reliable.
-      - name: Check Windows Terminal
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-          $package = Get-AppxPackage Microsoft.WindowsTerminal
-          if (-not $package) {
-            Write-Error "Windows Terminal is not installed on this runner"
-            exit 1
-          }
-          $package | Format-List Name, Version, Architecture
-          $aliases = Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps"
-          if (-not (Test-Path (Join-Path $aliases "wt.exe"))) {
-            Write-Error "Windows Terminal is installed, but its wt.exe alias is not in $aliases"
-            exit 1
-          }
-          Add-Content -Path $env:GITHUB_PATH -Value $aliases
+      # The Windows Terminal scenarios drive the harness's own portable copy
+      # of Windows Terminal, at the release pinned in
+      # crates/verbatim-e2e/src/windows_terminal.rs, never the runner's
+      # installed one (docs/tooling.md). This step downloads it, checks its
+      # pinned SHA-256, and unpacks it into target/e2e-stage, exactly as
+      # the suite's first launch would, so the runner tests the same
+      # version as a developer's machine and a failed download is reported
+      # before the suite starts.
+      - name: Download the pinned Windows Terminal
+        run: cargo xtask windows-terminal
       # Every live test is #[ignore]d, so a plain `cargo test` lists it as
       # ignored rather than reporting a pass it never ran; this step runs
       # them with --ignored, and a missing agent fails them. The runner's

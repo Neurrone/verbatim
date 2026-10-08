@@ -11,11 +11,15 @@
 //! the run ([`harness_marker`]), waits for it to take the foreground, and
 //! closes it by that title at cleanup, never by class or program, so the
 //! user's own terminals are never touched. Each scenario names its
-//! terminal, and gets that one or fails: Windows Terminal opens with
-//! `wt.exe -w new --size 120,30 new-tab --title <title>
-//! --suppressApplicationTitle`, and its window belongs to
-//! `WindowsTerminal.exe`, which the user's own windows may share, so only
-//! the window must close; the console host opens with `conhost.exe`, its
+//! terminal, and gets that one or fails. Windows Terminal is the harness's
+//! own portable copy ([`crate::windows_terminal`]), never the installed
+//! one or `wt.exe`: its settings folder is deleted, so it starts from the
+//! release's defaults, and its `WindowsTerminal.exe` is started directly
+//! with `-w new --size 120,30 new-tab --title <title>
+//! --suppressApplicationTitle`. The process the harness launched must own
+//! the window, no other Windows Terminal process may have opened a window
+//! meanwhile, and the process must exit once the window closes. The
+//! console host opens with `conhost.exe`, its
 //! window titled from its first frame (the launch's console title, without
 //! which it shows its own path until the shell sets one), owns its window,
 //! and must exit, and the shell sets its size with `mode con cols=120
@@ -48,12 +52,14 @@
 use std::io;
 use std::time::{Duration, Instant};
 
+use verbatim_agent::protocol::WindowInfo;
 use verbatim_control::client::Client as ControlClient;
 use verbatim_control::protocol::Frame;
 use verbatim_model::NormalizedEvent;
 
 use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, harness_marker};
+use crate::windows_terminal;
 
 /// The prompt line as Verbatim speaks it, without its trailing space.
 pub(crate) const PROMPT: &str = "ready>";
@@ -161,6 +167,11 @@ fn open(
     )?;
     let window = match terminal {
         Terminal::WindowsTerminal => {
+            let folder = format!(r"{}\{}", scenario.run_directory(), windows_terminal::FOLDER);
+            // Every run starts from the release's default settings.
+            scenario
+                .delete_agent_folder(&format!(r"{folder}\{}", windows_terminal::SETTINGS_FOLDER))?;
+            let others_before = other_terminal_windows(scenario, None)?;
             let mut args: Vec<String> = [
                 "-w",
                 "new",
@@ -175,7 +186,24 @@ fn open(
             .map(str::to_owned)
             .collect();
             args.extend(shell_command(&start, terminal));
-            scenario.launch_titled("wt.exe", &args, &title, false)?
+            let executable = format!(r"{folder}\{}", windows_terminal::EXECUTABLE);
+            let window = scenario.launch_owning_window(&executable, &args, &title)?;
+            let others_after = other_terminal_windows(scenario, Some(window.pid))?;
+            let opened: Vec<&WindowInfo> = others_after
+                .iter()
+                .filter(|after| {
+                    !others_before
+                        .iter()
+                        .any(|before| before.window == after.window)
+                })
+                .collect();
+            if !opened.is_empty() {
+                return Err(io::Error::other(format!(
+                    "starting the harness's Windows Terminal (pid {}) opened windows in another Windows Terminal process: {opened:?}",
+                    window.pid
+                )));
+            }
+            window
         }
         Terminal::ConsoleHost => {
             let args = shell_command(&start, terminal);
@@ -252,6 +280,25 @@ pub(crate) fn wait_for_caret_on(
             )));
         }
     }
+}
+
+/// The windows of every Windows Terminal process other than `own`, the
+/// harness's: compared before and after the harness's starts, they show
+/// that no other Windows Terminal process was asked to open a window.
+fn other_terminal_windows(
+    scenario: &mut Scenario,
+    own: Option<u32>,
+) -> io::Result<Vec<WindowInfo>> {
+    Ok(scenario
+        .top_level_windows()?
+        .into_iter()
+        .filter(|window| {
+            window
+                .image
+                .eq_ignore_ascii_case(Terminal::WindowsTerminal.owner())
+                && Some(window.pid) != own
+        })
+        .collect())
 }
 
 /// The shell's command line, running the start script.

@@ -295,10 +295,16 @@ The groups:
   them.
 - `scenarios/terminal.rs`: each terminal scenario opens its terminal,
   `open_windows_terminal` or `open_console_host`, and gets that one or
-  fails, with no fallback. Windows Terminal opens with
-  `wt.exe -w new --size 120,30 new-tab --title <title>
-  --suppressApplicationTitle`, and its window must belong to
-  `WindowsTerminal.exe`. The console host opens with `launch_console`, its
+  fails, with no fallback. Windows Terminal is the harness's portable
+  copy (`windows_terminal`, below): its settings folder is deleted, and
+  its `WindowsTerminal.exe` is started directly, never `wt.exe`, with
+  `-w new --size 120,30 new-tab --title <title>
+  --suppressApplicationTitle`, through `Scenario::launch_owning_window`,
+  which fails unless the launched process owns the window. The scenario
+  also fails if any other Windows Terminal process opened a window
+  meanwhile (`Scenario::top_level_windows`, before and after), and the
+  copy's process must exit once its window closes at cleanup. The
+  console host opens with `launch_console`, its
   window titled from its first frame; Windows reports a console window as
   its first client's, the shell, so the scenario asserts the window's
   class is `ConsoleWindowClass` and the shell is the launched console
@@ -335,6 +341,21 @@ debug log can be larger than one read of the agent's.
 - `latency`: `fetch` and `report` read the control plane's latency
   timelines; budgets are reported, not enforced.
 - `recording`: described above.
+- `windows_terminal`: the Windows Terminal the terminal scenarios drive,
+  kept apart from the machine's own, which runs every window in one
+  process. `prepare(stage_dir)` makes sure the official portable release,
+  pinned to `VERSION` (1.24.12741.0), is unpacked in `FOLDER` under the
+  stage with a `.portable` file next to `EXECUTABLE`, downloading it with
+  Windows' `curl.exe` from GitHub for the host's architecture (x64 or
+  ARM64), checking its pinned SHA-256, and unpacking it with Windows'
+  `tar.exe` only when the folder's stamp does not name that hash. Portable
+  mode keeps settings in `SETTINGS_FOLDER` inside it, and an unpackaged
+  Windows Terminal finds a running instance by a window class and mutex
+  named with a hash of its executable's path, so the copy never joins the
+  installed one. Runner-direct staging (`scenario::stage_directory`, the
+  stage) calls it, as do `cargo xtask windows-terminal`, which CI runs
+  before the suite, and `cargo xtask vm deploy`, which ships the folder
+  to the guest.
 
 Implementation notes: a same-process `Mutex` enforces one live Verbatim
 per test process, and `--test-threads=1` makes that sufficient.

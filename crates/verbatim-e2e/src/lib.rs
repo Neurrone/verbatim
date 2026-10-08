@@ -53,6 +53,7 @@ pub mod scenario;
 mod scenarios;
 pub mod speech;
 pub mod timeline;
+pub mod windows_terminal;
 
 pub use agent_client::AgentClient;
 pub use scenario::Scenario;

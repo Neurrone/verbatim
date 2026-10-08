@@ -39,7 +39,11 @@ arguments for the full verb list printed from the source of truth.
   which the build puts next to the executables, archived with Windows'
   own `tar` into one `espeak-ng-data.tar`, copied beside them and
   unpacked there when it changed; the default theme's `sounds` directory,
-  shipped the same way as `sounds.tar`; a staged
+  shipped the same way as `sounds.tar`; the terminal scenarios' pinned
+  portable Windows Terminal, downloaded and checked on the host into
+  `target/xtask-vm-staging/windows-terminal-<version>` and shipped the
+  same way as `windows-terminal.tar`, unpacked beside the executables
+  where the scenarios start it (`docs/tooling.md`); a staged
   `settings.toml` beside the executables selecting eSpeak NG, the default
   synthesizer; `verbatim-agent.exe` in `C:\VerbatimLab\agent`; and the
   vendored `ffmpeg.exe` in `C:\VerbatimLab\tools`, which each scenario's
