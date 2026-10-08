@@ -2198,3 +2198,13 @@ Decisions of 2026-10-08 (afternoon), Dickson:
 - Terminal scenarios add tab switching, closing a tab, two Windows Terminal windows and two console host windows.
 - Parity changes are checked against a live NVDA capture of the same control before merging; every claim about NVDA cites NVDA's source; changes near a recorded deliberate difference are reviewed for interactions with it. A behaviour-based MSAA audit follows: live NVDA captures against a matrix of standard controls, compared exactly with Verbatim.
 - The latency outlier in "mixer and device" (about one utterance in eight spends 40 to 80 ms there) is investigated: the mixer stops the audio device when speech is cut off, and restarting it is the likely cost.
+
+## The review cursor on objects that no longer exist (2026-10-08)
+
+A read-only study found that Verbatim's review commands can speak stale content. Most current-unit review commands (current line, word and character, line ends, moves within the line, Top and Bottom) answer from Core's cached line without asking the application; flat review (objects without a text pattern), report object, say-all from review and copy answer from the node's snapshot; and a Gone answer from the outpost is dropped silently, leaving the navigator on the dead node. Nothing reports an element's removal. In the common case a focus change moves the navigator off a closed tab or dialog, but when the navigator was object-navigated away from the focus, or a key comes between the close and the focus event, the dead object's old text is read. NVDA reads live on every review command, so a dead object gives silence or "blank", never stale text.
+
+Fixes, each with exact tests (reducer, mockapp and end to end in both terminals and Windows 11 Notepad):
+- Review commands read live from the application, as NVDA's do: the current unit re-reads at the review position, and flat review and report object re-read the node first (a new fetch of the node itself). This also fixes a stored line going stale in a live terminal whose line was rewritten.
+- A Gone answer for the navigator's node re-seeds the navigator from the focus and announces it; if the dead node is the focus itself, the navigator is cleared and "No navigator object" is said (NVDA's wording).
+- The outpost reports held MSAA nodes it forgets when their window is destroyed, as direct evidence of a death.
+- Verbatim has no "review follows focus" setting where NVDA has one (on by default); recorded in docs/parity.md for the owner.
