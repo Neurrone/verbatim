@@ -2699,7 +2699,9 @@ fn caret_moves_cost_exactly() {
     let mut source = EditText::new(edit.0 as isize, 0);
     let (answer, report) =
         measure_caret_move(&mut app, hwnd, &mut source, verbatim_ia2::calls::take);
-    ratchet.check("Edit control caret move", &answer, calls(0, 0, 5), &[]);
+    // The answer reads the selection again (`EM_GETSEL`), so a caret read
+    // before the key's effect is never paired with a line read after it.
+    ratchet.check("Edit control caret move", &answer, calls(0, 0, 6), &[]);
     ratchet.check("Edit control caret report", &report, calls(0, 0, 5), &[]);
     // A caret move's messages for each check; 55 for the wait that found
     // nothing before 2026-10-08.
@@ -2713,7 +2715,7 @@ fn caret_moves_cost_exactly() {
     ratchet.check(
         "Edit control caret watch answered by a later caret event",
         &later,
-        calls(0, 0, 5),
+        calls(0, 0, 6),
         &[],
     );
     app.quit();

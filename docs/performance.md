@@ -597,7 +597,9 @@ and in its edit control.
 - Minimum: one round trip for each check; nothing for waiting.
 - Today: 1 remotely for each check, the whole caret read above, so the
   check that finds the evidence is the answer; classically 12 for each,
-  the caret move's reads; in the edit control 5 window messages for each.
+  the caret move's reads; in the edit control 5 window messages for a
+  check that finds nothing and 6 for one that answers (the selection read
+  again, as for a caret move).
   Before 2026-10-08 the outpost waited for the evidence on its worker,
   reading the caret every 10 milliseconds until its 100 ran out (300 in a
   terminal): a key that moved nothing cost 11 round trips remotely, 134
@@ -872,8 +874,14 @@ The same caret key in a standard edit control, read through its messages.
   `EM_LINEINDEX`), and its text (`EM_GETLINE`). A rich edit control from
   version 2.0 takes the same number, with `EM_EXGETSEL`,
   `EM_EXLINEFROMCHAR`, and `EM_GETTEXTRANGE`.
-- Today: 5.
-- Target: 5.
+- Today: 6: the selection is read again before the key is answered
+  (since 2026-10-09). Read by parts, the caret can be read before the
+  control handles the key and its line after (a Backspace's character
+  message comes after the key's own), which paired a caret from before a
+  deletion with the text after it, and the Backspace said nothing; when
+  the second read differs, the control's caret event answers instead.
+- Target: 5, with the caret and its line read in one message, which no
+  edit control message offers.
 
 ### A caret report, Win32 edit control
 

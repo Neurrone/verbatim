@@ -1109,6 +1109,9 @@ struct Polled<P> {
     formats: Vec<Formatting>,
     /// The selection's changes, when the read found them.
     changes: Option<Vec<(bool, Vec<u16>)>>,
+    /// Whether the caret and its line were read in one go
+    /// ([`TextSource::caret_read`]), rather than by parts.
+    in_one_go: bool,
 }
 
 /// Reads the caret for a caret key's watch: in one go where the source can
@@ -1130,6 +1133,7 @@ fn read_watched<S: TextSource>(
             unit: read.unit,
             formats: read.formats,
             changes: read.changes,
+            in_one_go: true,
         });
     }
     let state = source.caret()?;
@@ -1151,6 +1155,7 @@ fn read_watched<S: TextSource>(
         unit: None,
         formats: Vec::new(),
         changes: None,
+        in_one_go: false,
     })
 }
 
@@ -1227,6 +1232,19 @@ fn evidence<S: TextSource>(
     }
     if !moved {
         return Ok(None);
+    }
+    // Read by parts, the caret may be from before the key and the line from
+    // after it: an edit control can handle the key between the two reads
+    // (a Backspace's character message comes after the key's own), so the
+    // line has lost a character and the caret has not moved yet. The
+    // caret read again tells; when it moved, nothing is answered now, and
+    // the control's caret event checks again.
+    if !polled.in_one_go {
+        let again = source.caret()?.caret;
+        if source.compare(&again, &polled.state.caret)? != Ordering::Equal {
+            tracing::debug!("the caret moved while it was read; the watch waits for its event");
+            return Ok(None);
+        }
     }
     polled.caret_moved = true;
     let same_line = match since.as_ref().filter(|_| watch.landing) {

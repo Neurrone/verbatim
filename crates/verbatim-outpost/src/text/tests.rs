@@ -877,3 +877,30 @@ fn a_landing_watch_says_whether_the_caret_stayed_on_its_line() {
         assert_eq!(reply.same_line, Some(same_line), "moved to {moved_to}");
     }
 }
+
+#[test]
+fn a_caret_read_before_the_key_with_its_line_after_is_no_answer() {
+    // A Backspace handled between the caret's read and its line's: the line
+    // has lost "y", the caret read first has not moved yet, and moves by
+    // the time it is read again. Nothing is answered until the next check.
+    let mut source = Fake::new("abcxy", 5);
+    let mut anchors = store();
+    let line = report(&mut source, &mut anchors).line;
+    let since = TextPosition {
+        anchor: line.start,
+        offset: line.offset,
+    };
+    source.text = "abcx".encode_utf16().collect();
+    source.moves_on_read = Some((source.caret_reads + 2, 4));
+    let key = watch(Some(since), TextUnit::Character);
+    let first = check(&mut source, &mut anchors, &key, &mut FakeSignal::new());
+    assert!(matches!(first, Watched::Watching));
+    let reply = answered(check(
+        &mut source,
+        &mut anchors,
+        &key,
+        &mut FakeSignal::new(),
+    ));
+    assert_eq!(reply.caret.line.text, "abcx");
+    assert_eq!(reply.caret.line.offset, 4);
+}
