@@ -119,9 +119,9 @@ pub(super) enum Item {
     /// whose role says it may, just after it was reported: as `CaretMoved`,
     /// or as `NoText` when there is no caret to report.
     CaretOf { node_id: verbatim_model::NodeId },
-    /// A follow-up finding the live element of a focus reported from its
-    /// event alone, for the focus-following property subscription.
-    ResolveFocus { runtime_id: Vec<i32>, attempt: u32 },
+    /// The one follow-up read finding the live element of a focus reported
+    /// from its event alone, for the focus-following property subscription.
+    ResolveFocus { runtime_id: Vec<i32> },
     /// [`Outpost::settle`](super::Outpost::settle): answered once nothing
     /// else is waiting, the focus-following subscriptions have made every
     /// move asked of them, and every message published has been written.

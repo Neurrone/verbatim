@@ -159,9 +159,10 @@ releases Alt. Notepad has no outpost yet.
      timed out, or answered with another element of Notepad (a starting
      application can answer with a stand-in), and the focus is reported
      from the fact alone with its ancestors unknown, while an
-     `Item::ResolveFocus` follow-up (up to three tries, while the focus is
-     unchanged) finds the element later for navigation and property
-     changes.
+     `Item::ResolveFocus` follow-up, while the focus is unchanged, reads
+     once more for the element, for navigation and property changes. When
+     that read does not find it, the focus's own next focus or selection
+     event supplies it.
    - The window it is reported with is the event's own window, else the
      live element's nearest window, else the listener's `focus_window`.
    - Arbitration decides which backend owns that window

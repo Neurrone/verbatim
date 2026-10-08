@@ -89,10 +89,6 @@ const HANDLING_DEADLINE: Duration = Duration::from_secs(10);
 /// normally answers in 10 to 100 ms.
 const FOCUS_READ_WAIT: Duration = Duration::from_secs(1);
 
-/// How many times a follow-up looks for the live element of a focus reported
-/// from its event alone.
-const FOCUS_RESOLVE_ATTEMPTS: u32 = 3;
-
 /// How long the watchdog waits on an entry before abandoning it because the
 /// user has moved on to a window of the same application on another UI
 /// thread: NVDA's `MIN_CORE_ALIVE_TIMEOUT`, after which NVDA cancels a slow
@@ -762,7 +758,7 @@ fn describe(item: &Item) -> String {
         Item::Fact(fact) => format!("fact {:?}", fact.key()),
         Item::Query { query, .. } => format!("query {query:?}"),
         Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
-        Item::ResolveFocus { attempt, .. } => format!("resolve focus (attempt {attempt})"),
+        Item::ResolveFocus { .. } => "resolve focus".to_owned(),
         Item::CaretOf { node_id } => format!("caret of {node_id:?}"),
         Item::Settle(_) => "settle".to_owned(),
         Item::Wake => "wake".to_owned(),
@@ -851,10 +847,7 @@ impl Worker<'_> {
                 nodes,
                 acknowledged,
             } => self.release(&nodes, acknowledged),
-            Item::ResolveFocus {
-                runtime_id,
-                attempt,
-            } => self.resolve_focus(&runtime_id, trace, attempt),
+            Item::ResolveFocus { runtime_id } => self.resolve_focus(&runtime_id, trace),
             Item::CaretOf { node_id } => self.caret_of(node_id, trace, observed_at_ms, true),
             Item::Settle(done) => self.settle(done, trace),
             Item::Wake => self.wake(),
@@ -2135,6 +2128,9 @@ impl Worker<'_> {
         {
             return; // The diff of the terminal's text reports it.
         }
+        if matches!(event.kind, UiaKind::Selection) && of_focus && element.is_none() {
+            self.element_from_selection(&event.parts.runtime_id, trace);
+        }
         if matches!(event.kind, UiaKind::Selection)
             && let Some(selection) = self.controlled_selection(&event.parts.runtime_id)
         {
@@ -2746,7 +2742,7 @@ impl Worker<'_> {
                 object,
                 (None, None),
             );
-            self.resolve_focus_later(&fact.runtime_id, trace, 1);
+            self.resolve_focus_later(&fact.runtime_id, trace);
             return;
         };
         if let Some(held) = held {
@@ -2972,18 +2968,13 @@ impl Worker<'_> {
         Some(element)
     }
 
-    /// Queues a follow-up that finds the live element of the focus
-    /// `runtime_id` names, reported from its event alone, for the
+    /// Queues the follow-up that reads once more for the live element of
+    /// the focus `runtime_id` names, reported from its event alone, for the
     /// focus-following property subscription.
-    fn resolve_focus_later(&self, runtime_id: &[i32], trace: TraceId, attempt: u32) {
-        if attempt > FOCUS_RESOLVE_ATTEMPTS {
-            tracing::debug!("the focus's element was not found; its changes are not followed");
-            return;
-        }
+    fn resolve_focus_later(&self, runtime_id: &[i32], trace: TraceId) {
         self.context.intake.push(Entry {
             item: Item::ResolveFocus {
                 runtime_id: runtime_id.to_vec(),
-                attempt,
             },
             trace,
             observed_at_ms: 0,
@@ -2993,9 +2984,17 @@ impl Worker<'_> {
 
     /// The follow-up [`resolve_focus_later`](Self::resolve_focus_later)
     /// queued: while the focus is still the one it names, reads the focused
-    /// element with the full wait and, when it is that focus, keeps it for
-    /// navigation and follows its changes; otherwise tries again later.
-    fn resolve_focus(&mut self, runtime_id: &[i32], trace: TraceId, attempt: u32) {
+    /// element once, with the full wait, and when it is that focus, keeps
+    /// it for navigation and follows its changes. When the read answers
+    /// nothing, or another element (an application still starting can
+    /// answer with a stand-in for its window), nothing reads again: the
+    /// focus's element comes from its own next event, keyed by its runtime
+    /// id. A focus event reads the focused element afresh
+    /// ([`uia_focus`](Self::uia_focus)), and so does a selection event
+    /// ([`element_from_selection`](Self::element_from_selection)); the
+    /// caret, text, and property subscriptions listen nowhere while the
+    /// focus has no element, so none of their events comes before then.
+    fn resolve_focus(&mut self, runtime_id: &[i32], trace: TraceId) {
         let context = self.context;
         if context.intake.focused() != Some(Object::Uia(runtime_id.to_vec())) {
             return; // Focus has moved on.
@@ -3004,14 +3003,64 @@ impl Worker<'_> {
             let cache = self.context.uia_cache(uia).ok()?;
             (self.context.focused_element)(uia, &cache).ok()
         });
-        let Some(element) = element.filter(|element| {
+        if let Some(element) = element.filter(|element| {
             // Built with the base cache request.
             snapshot_parts_from_cached_element(element).runtime_id == runtime_id
-        }) else {
-            self.resolve_focus_later(runtime_id, trace, attempt + 1);
+        }) {
+            self.follow_focus_element(runtime_id, &element, trace);
+        } else {
+            tracing::debug!(
+                "the focus's element was not found; it comes from the focus's next event"
+            );
+        }
+    }
+
+    /// A selection event of the focus `runtime_id` names, which was reported
+    /// from its event alone and whose element has not been found since: the
+    /// event is evidence that the application answers for the element, so
+    /// the focused element is read once, within [`FOCUS_READ_WAIT`], and
+    /// kept and followed when it is that focus. Nothing is read for a focus
+    /// whose element is known.
+    fn element_from_selection(&mut self, runtime_id: &[i32], trace: TraceId) {
+        let context = self.context;
+        if context.intake.focused() != Some(Object::Uia(runtime_id.to_vec())) {
+            return;
+        }
+        let registry = &context.uia_registry;
+        if registry
+            .existing_id(runtime_id)
+            .and_then(|id| registry.element_of(id))
+            .is_some()
+        {
+            return;
+        }
+        let Some(uia) = self.client.uia() else {
             return;
         };
-        let id = context.uia_registry.id_for_element(runtime_id, &element);
+        let Ok(cache) = context.uia_cache(uia) else {
+            return;
+        };
+        let read = &context.focused_element;
+        let Ok(Ok(element)) = uia.within(FOCUS_READ_WAIT, |uia| read(uia, &cache)) else {
+            return;
+        };
+        // Built with the base cache request.
+        if snapshot_parts_from_cached_element(&element).runtime_id == runtime_id {
+            self.follow_focus_element(runtime_id, &element, trace);
+        }
+    }
+
+    /// Keeps `element`, found for the focus `runtime_id` names, which was
+    /// reported from its event alone, under the focus's node, and follows
+    /// its changes.
+    fn follow_focus_element(
+        &mut self,
+        runtime_id: &[i32],
+        element: &IUIAutomationElement,
+        trace: TraceId,
+    ) {
+        let context = self.context;
+        let id = context.uia_registry.id_for_element(runtime_id, element);
         if let Some(subscription) = context.focus_properties.get() {
             subscription.retarget(following(context.uia_registry.element_of(id)));
         }
