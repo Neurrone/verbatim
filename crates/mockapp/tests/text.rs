@@ -1459,7 +1459,7 @@ fn a_backward_move_is_counted_backward_both_ways() {
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
-    harness::run(&[
+    harness::run_isolated(&[
         (
             "every_attribute_is_read_both_ways",
             every_attribute_is_read_both_ways,

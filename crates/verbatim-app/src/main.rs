@@ -1392,6 +1392,7 @@ impl ReducerThread<'_> {
     fn execute(&mut self, trace_id: TraceId, effect: Effect) {
         match effect {
             Effect::Speak(utterance) => {
+                self.context.ledger.speech_requested(utterance.trace_id);
                 // Speech a key press caused is fenced off by a later key
                 // press's cancel (`SpeechControl::cancel_through`).
                 let key = verbatim_input_windows::key_of(trace_id)

@@ -130,7 +130,7 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
-    harness::run(&[(
+    harness::run_isolated(&[(
         "a_selected_result_is_found_only_inside_the_list_the_search_box_controls",
         a_selected_result_is_found_only_inside_the_list_the_search_box_controls,
     )]);

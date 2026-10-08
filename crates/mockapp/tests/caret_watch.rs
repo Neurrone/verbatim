@@ -12,10 +12,12 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
+use verbatim_ia2::WinEventKind;
 use verbatim_model::{
     CaretReply, CaretReport, CaretWatch, NodeId, NormalizedEvent, TextOp, TextPosition, TextReply,
     TextUnit,
 };
+use verbatim_outpost::Heard;
 use verbatim_outpost::listener::uia_focus_fact;
 use verbatim_outpost::protocol::{
     ListenerFact, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
@@ -123,6 +125,18 @@ fn caret_reply(reply: TextReply) -> CaretReply {
     }
 }
 
+/// Waits for the outpost to hear the caret event mockapp raised last, by
+/// both routes it takes: UIA's own event, and the `WinEvent` UIA raises for
+/// MSAA clients alongside it. Until then the event may still be on its way,
+/// and a step that moved on would have it answer, or be reported after,
+/// the next step's key (`docs/crates/mockapp.md`).
+fn heard_caret_event(outpost: &OutpostUnderTest) {
+    outpost.heard(&[
+        Heard::UiaTextSelection,
+        Heard::Msaa(WinEventKind::TextSelectionChange),
+    ]);
+}
+
 /// mockapp's "caret watch" fixture in its UIA backend, with an outpost
 /// watching it.
 fn start(name: &str) -> (common::MockApp, HWND, OutpostUnderTest) {
@@ -180,6 +194,7 @@ fn a_caret_move_raised_later_answers_the_watch() {
     assert_eq!(reply.caret.line.offset, 1);
     assert_eq!(reply.unit.expect("the character").text, "l");
     assert_eq!(reply.selection_changes, []);
+    heard_caret_event(&outpost);
     outpost.settled();
     drop(outpost);
     app.quit();
@@ -197,8 +212,10 @@ fn a_key_that_moves_nothing_is_answered_with_nothing() {
         op: right_arrow(&before),
     });
     outpost.settled();
-    // The application's late report of a caret that has not moved.
+    // The application's late report of a caret that has not moved, handled
+    // before the next key is asked: the outpost has heard it and settled.
     app.send("caret-event doc");
+    heard_caret_event(&outpost);
     outpost.settled();
     let second = outpost.ask(Query::Text {
         node_id: notes,
@@ -210,6 +227,7 @@ fn a_key_that_moves_nothing_is_answered_with_nothing() {
     app.send("caret doc 1");
     app.send("caret-event doc");
     assert!(caret_reply(answer_to(&outpost, second)).moved);
+    heard_caret_event(&outpost);
     outpost.settled();
     drop(outpost);
     app.quit();
@@ -266,6 +284,7 @@ fn a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event() {
         ("alpha beta\n", 1)
     );
     assert_eq!(reply.unit.expect("the character").text, "l");
+    heard_caret_event(&outpost);
     outpost.settled();
     drop(outpost);
     app.quit();

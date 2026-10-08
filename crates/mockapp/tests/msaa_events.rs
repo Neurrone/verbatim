@@ -497,7 +497,7 @@ fn a_help_balloon_shown_is_spoken() {
 }
 
 fn main() {
-    harness::run(&[
+    harness::run_isolated(&[
         (
             "a_help_balloon_shown_is_spoken",
             a_help_balloon_shown_is_spoken,

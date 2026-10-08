@@ -1,8 +1,9 @@
 //! How a real outpost reports a UIA focus from mockapp's provider: under
 //! which node, when the provider reuses a dead element's runtime id, and
 //! with which states, when they changed after the focus event, how soon,
-//! when the application is slow to answer the reads queued before it, and
-//! when the focused element read answers a stand-in for a windowed focus.
+//! when the application is slow to answer the reads queued before it, when
+//! the focused element read answers a stand-in for a windowed focus, and
+//! when a windowless focus's element no longer has the keyboard focus.
 //!
 //! The outpost runs in this process and reads the focused element from the
 //! test (`common::outpost`), as `call_counts.rs` describes; mockapp's focus
@@ -386,8 +387,48 @@ fn a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_
     app.quit();
 }
 
+/// A UIA focus event whose element has no window of its own and no longer
+/// has the keyboard focus when the outpost reads it is dropped, as NVDA
+/// ignores a focus event whose element no longer has the keyboard focus
+/// (`shouldAllowUIAFocusEvent`). Nothing reads it again: the application's
+/// next focus event is the evidence of where the focus is, and reports it.
+/// The event repeats the focus the outpost reported last, the one case in
+/// which the outpost held such a focus back and read the focused element
+/// up to three times more.
+fn a_windowless_focus_that_lost_the_keyboard_focus_waits_for_the_next_focus_event() {
+    let title = common::unique_title("mockapp-lost-focus");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(app.pid());
+
+    app.send("set-focus btn1");
+    let button = client.focused();
+    let reported = outpost.uia_focus(&button);
+    assert_eq!(reported.node.name.as_deref(), Some("Original Name"));
+
+    app.send("set-focus slider1");
+    let slider = client.focused();
+    outpost.read_focus_as(&slider);
+    let reads = outpost.focus_reads();
+    let ListenerFact { fact, .. } =
+        uia_focus_fact(&button).expect("mockapp's element has its process");
+    outpost.deliver(fact);
+    outpost.settled();
+    assert_eq!(
+        outpost.focus_reads() - reads,
+        1,
+        "the focused element was read once, for the event"
+    );
+
+    let reported = outpost.uia_focus(&slider);
+    assert_eq!(reported.node.name.as_deref(), Some("Level"));
+
+    drop(outpost);
+    app.quit();
+}
+
 fn main() {
-    harness::run(&[
+    harness::run_isolated(&[
         (
             "a_reused_runtime_id_names_a_new_node_remote",
             a_reused_runtime_id_names_a_new_node_remote,
@@ -411,6 +452,10 @@ fn main() {
         (
             "a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_in",
             a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_in,
+        ),
+        (
+            "a_windowless_focus_that_lost_the_keyboard_focus_waits_for_the_next_focus_event",
+            a_windowless_focus_that_lost_the_keyboard_focus_waits_for_the_next_focus_event,
         ),
     ]);
 }

@@ -1133,11 +1133,14 @@ verified.
     a stale cached value let intermediate focus events through ([The UIA
     client](nvda/uia.md)) (**matched since 2026-10-06**). Verbatim first
     requires the delivered properties to say so; the outpost then reads
-    the focused element live and holds back a fact whose element is not
-    the one focused, reporting it only if a follow-up finds it focused
-    after all; and the remote operation that reads the ancestors reads
-    `HasKeyboardFocus` live again in the same round trip, holding the fact
-    back the same way when it is false. With remote operations off, the
+    the focused element live and drops a fact whose element is not the
+    one focused, as NVDA's handler returns without queuing the focus
+    (`UIAHandler/__init__.py`, lines 948 to 953), leaving the next focus
+    event to report the focus; and the remote operation that reads the
+    ancestors reads `HasKeyboardFocus` live again in the same round trip,
+    dropping the fact the same way when it is false. Until 2026-10-08 the
+    outpost held such a fact back and read the focused element again, up
+    to three times. With remote operations off, the
     focused-element read is the live check. Since 2026-10-08, when the
     focused-element read names another element of the application and the
     event's element is a window of its own, the outpost reads that
@@ -1146,8 +1149,13 @@ verified.
     NVDA's check (**matched since 2026-10-08**); before, such a focus was
     held back and read again (mockapp's
     `a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_in`).
-    A windowless element is still held back as above, since only its own
-    window's element can be read without NVDA's event element.
+    A windowless element is dropped as above, since only its own window's
+    element can be read without NVDA's event element: where the focused
+    element read answers a stand-in for such an element's window while
+    the element has the focus, NVDA, which reads the event's own element,
+    accepts the focus, and Verbatim waits for the application's next focus
+    event (mockapp's
+    `a_windowless_focus_that_lost_the_keyboard_focus_waits_for_the_next_focus_event`).
     Until 2026-10-03 Verbatim's outpost read the focused element live,
     took the focus from that read, and dropped the focus when the read
     failed; under a busy application the read blocked

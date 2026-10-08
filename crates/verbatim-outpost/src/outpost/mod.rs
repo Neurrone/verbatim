@@ -126,7 +126,31 @@ pub(crate) struct Context {
     /// How the worker reads the foreground window when it records the
     /// window a focus was reported in ([`Outpost::set_foreground_reader`]).
     foreground: Mutex<ForegroundReader>,
+    /// Who is told of each event the outpost's own handlers take in
+    /// ([`Outpost::observe_heard`]), if anyone.
+    heard: OnceLock<HeardObserver>,
 }
+
+/// An event the outpost's own UIA handlers or `WinEvent` hooks took in from
+/// its application ([`Outpost::observe_heard`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Heard {
+    /// A property change on the focus or one of its ancestors, by property
+    /// id.
+    UiaProperty(i32),
+    /// A text focus's text selection changed event: its caret moved, or
+    /// the application reported it.
+    UiaTextSelection,
+    /// A text focus's text changed event.
+    UiaTextChanged,
+    /// A text focus's active text position changed event.
+    UiaActiveTextPosition,
+    /// A `WinEvent` of one of the kinds the outpost hooks.
+    Msaa(verbatim_ia2::WinEventKind),
+}
+
+/// Told of each event an outpost takes in ([`Outpost::observe_heard`]).
+pub type HeardObserver = Arc<dyn Fn(Heard) + Send + Sync>;
 
 /// Reads the foreground window's handle. An outpost reads the system's
 /// (`GetForegroundWindow`); a test whose application cannot take the
@@ -318,6 +342,15 @@ impl Context {
             timing,
         });
     }
+
+    /// Queues an event one of the outpost's own handlers took in, observed
+    /// now, then tells the observer, if there is one, that it was heard.
+    fn take_in(&self, item: Item, heard: Heard, timing: EventTiming) {
+        self.push(item, TraceId::mint(), now_ms(), timing);
+        if let Some(observer) = self.heard.get() {
+            observer(heard);
+        }
+    }
 }
 
 /// The outpost: owns the context and the event thread for one target
@@ -407,6 +440,7 @@ impl Outpost {
             terminals: Mutex::new(HashMap::new()),
             focused_element,
             foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
+            heard: OnceLock::new(),
         });
         if let Some(registration) = register_focus_properties(&context) {
             let _ = context.focus_properties.set(registration);
@@ -430,15 +464,14 @@ impl Outpost {
                 {
                     return;
                 }
-                context.push(
+                context.take_in(
                     Item::Msaa {
                         kind,
                         hwnd,
                         id_object,
                         id_child,
                     },
-                    TraceId::mint(),
-                    now_ms(),
+                    Heard::Msaa(kind),
                     EventTiming {
                         raised_ms_ago: Some(raised_ms_ago),
                         observed_at_us: now_us(),
@@ -563,6 +596,17 @@ impl Outpost {
             .foreground
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = reader;
+    }
+
+    /// Tells `observer` of every event the outpost's own UIA handlers and
+    /// `WinEvent` hooks take in from the application, once it is queued for
+    /// the worker. Events reach a client asynchronously, after the
+    /// application's call that raised them has returned, so a test that has
+    /// its application raise an event waits to hear it before it waits on
+    /// [`Outpost::settle`], which then covers its handling. Only the first
+    /// observer counts; later calls change nothing.
+    pub fn observe_heard(&self, observer: HeardObserver) {
+        let _ = self.context.heard.set(observer);
     }
 
     /// Handles one command from Core, on the reader thread. Pings are
@@ -719,10 +763,9 @@ fn register_focus_properties(context: &Arc<Context>) -> Option<Registration> {
     let callback = Arc::new(move |element: &IUIAutomationElement, property_id: i32| {
         // The property element carries cached values.
         let event = capture(element, UiaKind::Property(property_id));
-        callback_context.push(
+        callback_context.take_in(
             Item::Uia(event),
-            TraceId::mint(),
-            now_ms(),
+            Heard::UiaProperty(property_id),
             EventTiming {
                 observed_at_us: now_us(),
                 ..EventTiming::default()
@@ -753,15 +796,14 @@ fn register_focus_properties(context: &Arc<Context>) -> Option<Registration> {
 fn register_text_events(context: &Arc<Context>) -> Option<Registration> {
     let callback_context = Arc::clone(context);
     let callback = Arc::new(move |element: &IUIAutomationElement, event_id: i32| {
-        let kind = if event_id == UIA_Text_TextSelectionChangedEventId.0 {
-            UiaKind::TextSelection
+        let (kind, heard) = if event_id == UIA_Text_TextSelectionChangedEventId.0 {
+            (UiaKind::TextSelection, Heard::UiaTextSelection)
         } else {
-            UiaKind::TextChanged
+            (UiaKind::TextChanged, Heard::UiaTextChanged)
         };
-        callback_context.push(
+        callback_context.take_in(
             Item::Uia(capture(element, kind)),
-            TraceId::mint(),
-            now_ms(),
+            heard,
             EventTiming {
                 observed_at_us: now_us(),
                 ..EventTiming::default()
@@ -782,10 +824,9 @@ fn register_text_events(context: &Arc<Context>) -> Option<Registration> {
                 let range = range
                     .and_then(|range| AgileReference::new(range).ok())
                     .map(intake::ActiveRange);
-                position_context.push(
+                position_context.take_in(
                     Item::Uia(capture(element, UiaKind::ActiveTextPosition(range))),
-                    TraceId::mint(),
-                    now_ms(),
+                    Heard::UiaActiveTextPosition,
                     EventTiming {
                         observed_at_us: now_us(),
                         ..EventTiming::default()

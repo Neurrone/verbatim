@@ -59,9 +59,7 @@ use crate::protocol::{
 };
 
 use super::Context;
-use super::intake::{
-    Entry, Foreground, HeldFocus, Item, Object, Planned, UiaEvent, UiaKind, window_of,
-};
+use super::intake::{Entry, Foreground, Item, Object, Planned, UiaEvent, UiaKind, window_of};
 use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, CONSOLE_WINDOW_CLASS, OpenWatch};
 use super::window::{
@@ -841,8 +839,7 @@ impl Worker<'_> {
             Item::ResolveFocus {
                 runtime_id,
                 attempt,
-                held,
-            } => self.resolve_focus(&runtime_id, trace, attempt, held),
+            } => self.resolve_focus(&runtime_id, trace, attempt),
             Item::CaretOf { node_id } => self.caret_of(node_id, trace, observed_at_ms, true),
             Item::Settle(done) => self.settle(done, trace),
             Item::Wake => self.wake(),
@@ -2295,16 +2292,13 @@ impl Worker<'_> {
             }
             LiveFocus::Elsewhere => {
                 // Focus has moved on within the application since the event
-                // was raised, and the newer focus's own event follows: NVDA
-                // drops such an event once its element no longer has the
+                // was raised, and the newer focus's own event reports it:
+                // NVDA ignores a focus event whose element no longer has the
                 // keyboard focus (`shouldAllowUIAFocusEvent`, since 2027.1),
                 // or a container is announced after the item a key moved
-                // into. An application still starting can answer with a
-                // stand-in for its window instead, so the event is held, and
-                // reported if the follow-up finds its element focused after
-                // all.
-                tracing::debug!("UIA focus held: another element has the keyboard focus");
-                self.hold_focus((fact_hwnd, focus_window), fact, trace, observed_at_ms);
+                // into. Nothing reads it again: the application's next focus
+                // event is the evidence of where the focus is.
+                tracing::debug!("UIA focus dropped: another element has the keyboard focus");
                 return;
             }
             LiveFocus::Unresolved => None,
@@ -2333,8 +2327,7 @@ impl Worker<'_> {
                 Some(read::RemoteEnrichment::NotFocused) => {
                     // Read live in the same round trip: the focus moved on after
                     // the focused element was read, as for `LiveFocus::Elsewhere`.
-                    tracing::debug!("UIA focus held: the element lost the keyboard focus");
-                    self.hold_focus((fact_hwnd, focus_window), fact, trace, observed_at_ms);
+                    tracing::debug!("UIA focus dropped: the element lost the keyboard focus");
                     return;
                 }
                 Some(read::RemoteEnrichment::Read {
@@ -2521,28 +2514,6 @@ impl Worker<'_> {
         })
     }
 
-    /// Holds back a UIA focus fact whose element does not have the keyboard
-    /// focus now, for a follow-up that reports it if its element is found
-    /// focused after all.
-    fn hold_focus(
-        &self,
-        windows: (isize, isize),
-        fact: &UiaSnapshotFact,
-        trace: TraceId,
-        observed_at_ms: u64,
-    ) {
-        self.resolve_focus_later_held(
-            &fact.runtime_id,
-            trace,
-            1,
-            Some(Box::new(HeldFocus {
-                windows,
-                fact: fact.clone(),
-                observed_at_ms,
-            })),
-        );
-    }
-
     /// The live element for the focus `runtime_id` names, read as the
     /// focused element within [`FOCUS_READ_WAIT`]. When the focused element
     /// read is another element of this application and the focus's element
@@ -2608,23 +2579,7 @@ impl Worker<'_> {
     /// `runtime_id` names, reported from its event alone, for the
     /// focus-following property subscription.
     fn resolve_focus_later(&self, runtime_id: &[i32], trace: TraceId, attempt: u32) {
-        self.resolve_focus_later_held(runtime_id, trace, attempt, None);
-    }
-
-    /// [`resolve_focus_later`](Self::resolve_focus_later), carrying a focus
-    /// held back until its element is found focused.
-    fn resolve_focus_later_held(
-        &self,
-        runtime_id: &[i32],
-        trace: TraceId,
-        attempt: u32,
-        held: Option<Box<HeldFocus>>,
-    ) {
         if attempt > FOCUS_RESOLVE_ATTEMPTS {
-            if held.is_some() {
-                tracing::debug!("a held focus never had the keyboard focus; it is dropped");
-                return;
-            }
             tracing::debug!("the focus's element was not found; its changes are not followed");
             return;
         }
@@ -2632,7 +2587,6 @@ impl Worker<'_> {
             item: Item::ResolveFocus {
                 runtime_id: runtime_id.to_vec(),
                 attempt,
-                held,
             },
             trace,
             observed_at_ms: 0,
@@ -2644,30 +2598,10 @@ impl Worker<'_> {
     /// queued: while the focus is still the one it names, reads the focused
     /// element with the full wait and, when it is that focus, keeps it for
     /// navigation and follows its changes; otherwise tries again later.
-    fn resolve_focus(
-        &mut self,
-        runtime_id: &[i32],
-        trace: TraceId,
-        attempt: u32,
-        held: Option<Box<HeldFocus>>,
-    ) {
+    fn resolve_focus(&mut self, runtime_id: &[i32], trace: TraceId, attempt: u32) {
         let context = self.context;
         if context.intake.focused() != Some(Object::Uia(runtime_id.to_vec())) {
             return; // Focus has moved on.
-        }
-        if let Some(held) = held {
-            // Reported now if its element has the keyboard focus after all,
-            // read afresh as the event would have been.
-            match self.live_focus_element(runtime_id, held.windows.0) {
-                LiveFocus::Found(_) => {
-                    self.uia_focus(held.windows, &held.fact, trace, held.observed_at_ms);
-                }
-                LiveFocus::InAnotherApplication => {}
-                LiveFocus::Elsewhere | LiveFocus::Unresolved => {
-                    self.resolve_focus_later_held(runtime_id, trace, attempt + 1, Some(held));
-                }
-            }
-            return;
         }
         let element = self.client.uia().and_then(|uia| {
             let cache = self.context.uia_cache(uia).ok()?;

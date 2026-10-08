@@ -213,7 +213,7 @@ fn uia_client_reads_the_scripted_tree() {
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
-    harness::run(&[(
+    harness::run_isolated(&[(
         "uia_client_reads_the_scripted_tree",
         uia_client_reads_the_scripted_tree,
     )]);

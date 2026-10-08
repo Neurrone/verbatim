@@ -9,6 +9,8 @@
 //! node's children in order, equals the fixture's.
 
 mod common;
+#[path = "common/harness.rs"]
+mod harness;
 
 use std::ffi::c_void;
 use std::mem::ManuallyDrop;
@@ -234,7 +236,6 @@ fn walk(acc: &IAccessible) -> Node {
     }
 }
 
-#[test]
 fn msaa_client_reads_the_scripted_tree() {
     common::init_com();
     let title = common::unique_title("mockapp-msaa-tree");
@@ -269,7 +270,6 @@ fn default_actions(hwnd: windows::Win32::Foundation::HWND) -> u32 {
 /// refusal is a failure, not a node gone, so the outpost tries its parents.
 /// The failure's text carries Windows' own description of the error, in
 /// the machine's language, so only its kind is asserted.
-#[test]
 fn msaa_activation_answers_the_default_actions_name() {
     common::init_com();
     let title = common::unique_title("mockapp-msaa-activate");
@@ -305,7 +305,6 @@ fn msaa_activation_answers_the_default_actions_name() {
 /// The selected child of a list, read through `verbatim-ia2`'s own
 /// `selected_child` from the list object kept when the tree was walked, after
 /// a scripted selection (audit item 21: `accSelection` used to be stubbed).
-#[test]
 fn msaa_client_reads_a_lists_selected_child() {
     common::init_com();
     let title = common::unique_title("mockapp-msaa-selection");
@@ -338,7 +337,6 @@ fn msaa_client_reads_a_lists_selected_child() {
 /// object's role and identity with the new one's (`docs/parity.md`, "Held
 /// objects"). A renamed object stays the same node; another object is a
 /// different one.
-#[test]
 fn msaa_sightings_of_one_live_object_are_one_node() {
     common::init_com();
     let title = common::unique_title("mockapp-msaa-identity");
@@ -371,4 +369,26 @@ fn msaa_sightings_of_one_live_object_are_one_node() {
     assert_ne!(sight(2).id, first.id, "another object is another node");
 
     app.quit();
+}
+
+/// Runs each test on a desktop of its own (`common/harness.rs`).
+fn main() {
+    harness::run_isolated(&[
+        (
+            "msaa_client_reads_the_scripted_tree",
+            msaa_client_reads_the_scripted_tree,
+        ),
+        (
+            "msaa_activation_answers_the_default_actions_name",
+            msaa_activation_answers_the_default_actions_name,
+        ),
+        (
+            "msaa_client_reads_a_lists_selected_child",
+            msaa_client_reads_a_lists_selected_child,
+        ),
+        (
+            "msaa_sightings_of_one_live_object_are_one_node",
+            msaa_sightings_of_one_live_object_are_one_node,
+        ),
+    ]);
 }

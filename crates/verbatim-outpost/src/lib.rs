@@ -31,6 +31,7 @@ pub mod text;
 
 pub use listener::run_listener;
 pub use outpost::{
-    FocusedElementReader, ForegroundReader, Outpost, OutpostOptions, run_attach, run_pipe,
+    FocusedElementReader, ForegroundReader, Heard, HeardObserver, Outpost, OutpostOptions,
+    run_attach, run_pipe,
 };
 pub use supervisor::{OutpostMessage, Supervisor};

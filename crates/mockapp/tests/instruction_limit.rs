@@ -477,7 +477,7 @@ fn numbered(count: u32) -> String {
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
-    harness::run(&[
+    harness::run_isolated(&[
         (
             "the_instruction_limit_is_measured",
             the_instruction_limit_is_measured,

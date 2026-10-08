@@ -327,6 +327,25 @@ at the `mockapp` process's own stdin and watch the notification arrive on
 the client side. This is exactly what `crates/mockapp/tests/events.rs`
 automates, minus the automation.
 
+### Which tests use the desktop
+
+Every `mockapp` test runs on a desktop of its own, made for it and
+closed once it ends (`tests/common/harness.rs`, `run_isolated`), so
+`cargo test -p mockapp` and `cargo xtask ci` put no window on the
+interactive desktop and can run while an end-to-end run has it. A window
+and its events are seen only from its own desktop, so nothing an
+end-to-end run's Verbatim, NVDA, or another test does reaches mockapp
+either. None of these tests needs the foreground or the keyboard focus,
+which no window on such a desktop can have; a test that needs a window to
+be the foreground or an element to be focused tells the outpost under
+test which (`tests/common/outpost.rs`). Checked on 2026-10-08 with an
+out-of-context `WinEvent` hook on the desktop the run started from,
+logging every top-level window created or shown by a process whose
+executable is under `target` or is `mockapp.exe`: `cargo test -p mockapp`
+and `cargo xtask ci` logged none. The end-to-end suite (`#[ignore]`d,
+run only with `--ignored`) is the one set of tests that takes the
+interactive desktop, by design.
+
 ## Running the E2E suite runner-direct
 
 "Runner-direct" means the agent and the tests it drives share one machine —
@@ -946,6 +965,17 @@ allow it. Run a scenario that sends keys first, such as
 `lock_key_announcements`. Never tap keys by hand, or have a script send
 keys, to fix it, and note that the harness itself never injects a key to
 take the foreground: a window that refuses the foreground fails the test.
+The same happens when anything else injects input, or anyone types,
+between the agent's last key and a launch: another agent's or a test's
+`SendInput` takes the right away from the agent just as a person's typing
+does. Of Windows' other grounds for setting the foreground, none applies
+to the agent at a scenario's start (it is not the foreground process, nor
+started by it, and there is a foreground window, the desktop's), and the
+foreground lock never expires on this machine
+(`SPI_GETFOREGROUNDLOCKTIMEOUT` reads 2147483647 ms, where Windows'
+default is 200000). So a local run is reliable only while nothing else
+injects input on the desktop; `phase6-design.md`, "Test isolation and the
+foreground lock (2026-10-08)", has the evidence and the options.
 
 **Windows 11 Notepad restores tabs from its previous session.** Notepad
 keeps the tabs of a window that was closed, rather than whose tabs were

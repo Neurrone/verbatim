@@ -103,7 +103,12 @@ worker thread, the only thread that calls into the application, so the
 worker's count is exactly the calls its current entry has made. The worker
 takes the count when it publishes an event or a query reply and sends it
 in the message's timing; Core's latency ledger keeps it with the trace, and
-`verbatim-inspect latency` prints it with the outpost read stage. For a
+`verbatim-inspect latency` prints it with the outpost read stage. Every
+stage and count of a trace's line is one message's own: the message whose
+reduction first asked for speech on the trace. A later message on the same
+trace, such as the caret report that speaks a text focus's line, changes
+none of them; until 2026-10-08 the ledger kept the last message's outpost
+stages and calls, so a text focus's line showed its caret report's. For a
 caret key whose watch stayed open, the calls of the checks that found no
 evidence are kept with the watch and printed with the caret wait stage;
 the reply's total holds them and the answering check's, so the counts

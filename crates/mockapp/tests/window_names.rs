@@ -52,7 +52,7 @@ fn a_window_renamed_after_activation_is_not_reported() {
 }
 
 fn main() {
-    harness::run(&[(
+    harness::run_isolated(&[(
         "a_window_renamed_after_activation_is_not_reported",
         a_window_renamed_after_activation_is_not_reported,
     )]);

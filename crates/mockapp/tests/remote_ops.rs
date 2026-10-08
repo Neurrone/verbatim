@@ -721,7 +721,7 @@ fn a_provider_that_has_exited_fails_at_once() {
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
-    harness::run(&[
+    harness::run_isolated(&[
         (
             "a_navigation_step_reads_the_same_both_ways",
             a_navigation_step_reads_the_same_both_ways,

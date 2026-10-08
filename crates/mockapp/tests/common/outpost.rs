@@ -16,7 +16,7 @@
 //! test says, however long the test takes.
 
 use std::io::Write;
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -30,7 +30,7 @@ use verbatim_outpost::protocol::{
     DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, Query, QueryOutcome,
     QueryResult, SupervisorToOutpost, read_message,
 };
-use verbatim_outpost::{Outpost, OutpostOptions};
+use verbatim_outpost::{Heard, Outpost, OutpostOptions};
 use windows::Win32::Foundation::{E_FAIL, HWND};
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
 use windows::core::AgileReference;
@@ -91,8 +91,13 @@ impl Reported {
 pub struct OutpostUnderTest {
     pub outpost: Outpost,
     pub messages: Receiver<OutpostToSupervisor>,
+    /// Every event the outpost's own handlers took in from mockapp, in the
+    /// order they were queued ([`Outpost::observe_heard`]).
+    heard: Receiver<Heard>,
     next_request: u64,
     pub focus: FocusSlot,
+    /// How many times the outpost has read the focused element.
+    focus_reads: Arc<AtomicU32>,
     /// The time the outpost's arbitration reads.
     time: Arc<Mutex<Instant>>,
     /// The window the outpost reads as the foreground.
@@ -115,10 +120,13 @@ impl OutpostUnderTest {
         };
         let focus = FocusSlot::default();
         let slot = Arc::clone(&focus);
+        let focus_reads = Arc::new(AtomicU32::new(0));
+        let reads = Arc::clone(&focus_reads);
         // Stands in for `GetFocusedElementBuildCache`: one UIA call, as the
         // system read counts.
         let read_focus: verbatim_outpost::FocusedElementReader = Arc::new(move |_, _| {
             verbatim_uia::calls::count(CallKind::Uia);
+            reads.fetch_add(1, Ordering::Relaxed);
             slot.lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .as_ref()
@@ -137,11 +145,18 @@ impl OutpostUnderTest {
         let foreground = Arc::new(AtomicIsize::new(0));
         let reader = Arc::clone(&foreground);
         outpost.set_foreground_reader(Arc::new(move || reader.load(Ordering::Relaxed)));
+        let (heard_tx, heard) = mpsc::channel();
+        outpost.observe_heard(Arc::new(move |event| {
+            // The test may have finished with what the outpost hears.
+            let _ = heard_tx.send(event);
+        }));
         let under_test = Self {
             outpost,
             messages,
+            heard,
             next_request: 1,
             focus,
+            focus_reads,
             time,
             foreground,
         };
@@ -161,6 +176,11 @@ impl OutpostUnderTest {
         self.foreground.store(hwnd.0 as isize, Ordering::Relaxed);
     }
 
+    /// How many times the outpost has read the focused element so far.
+    pub fn focus_reads(&self) -> u32 {
+        self.focus_reads.load(Ordering::Relaxed)
+    }
+
     /// Moves the time the outpost's arbitration reads on by `by`.
     pub fn pass_time(&self, by: Duration) {
         *self.time.lock().unwrap_or_else(PoisonError::into_inner) += by;
@@ -171,6 +191,34 @@ impl OutpostUnderTest {
         self.messages
             .recv_timeout(super::WAIT_TIMEOUT)
             .expect("the outpost says something before the wait times out")
+    }
+
+    /// Waits for the outpost to take in mockapp's next events, which must
+    /// be exactly `expected`, in any order: the evidence that the events
+    /// mockapp raised have reached the outpost, whose handling
+    /// [`settled`](Self::settled) then covers. mockapp acknowledges a
+    /// command once its call that raised the event has returned, but a
+    /// client receives the event later, on threads of its own. One UIA
+    /// event can reach the outpost twice, by two routes in no fixed order:
+    /// UIA's own, and the `WinEvent` UIA raises for MSAA clients alongside
+    /// it.
+    pub fn heard(&self, expected: &[Heard]) {
+        let mut waiting = expected.to_vec();
+        while !waiting.is_empty() {
+            let heard = self
+                .heard
+                .recv_timeout(super::WAIT_TIMEOUT)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "the outpost did not hear {waiting:?} within {:?}",
+                        super::WAIT_TIMEOUT
+                    )
+                });
+            let Some(at) = waiting.iter().position(|&event| event == heard) else {
+                panic!("the outpost heard {heard:?} while it waited for {waiting:?}");
+            };
+            waiting.swap_remove(at);
+        }
     }
 
     /// Waits for the outpost to settle and asserts it said nothing more.

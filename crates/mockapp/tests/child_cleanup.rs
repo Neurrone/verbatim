@@ -107,7 +107,7 @@ fn main() {
     if std::env::args().nth(1).as_deref() == Some(SUBPROCESS) {
         panic_holding_mockapp();
     }
-    harness::run(&[(
+    harness::run_isolated(&[(
         "a_test_process_that_aborts_ends_its_mockapp",
         a_test_process_that_aborts_ends_its_mockapp,
     )]);

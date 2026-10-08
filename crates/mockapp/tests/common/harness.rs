@@ -1,7 +1,8 @@
-//! The test runner for the test binaries that use UIA as a client (their
-//! `Cargo.toml` entries set `harness = false`). It runs the tests as
-//! libtest would, in parallel, printing libtest's lines, and then ends the
-//! process without running any DLL's process-detach code.
+//! The test runner for every mockapp test binary (their `Cargo.toml`
+//! entries set `harness = false`). It runs each test in a process of its own
+//! on a desktop of its own ([`run_isolated`]), in parallel, printing
+//! libtest's lines, and then ends the process without running any DLL's
+//! process-detach code.
 //!
 //! Why the process is not allowed to exit normally: a process that has
 //! connected to UIA providers sometimes hangs at full CPU, or crashes with
@@ -29,9 +30,13 @@
 //! do not need, since nothing they leave behind is flushed at exit. Remove
 //! it if the fault is fixed or found to be ours.
 //!
-//! [`run_isolated`] runs each test in a process of its own on a desktop of
-//! its own instead, for the tests that count the calls mockapp's providers
-//! answer, which no other client may make.
+//! Each test runs on a desktop of its own so that nothing it does reaches
+//! the desktop the run was started from, which may be in use: no mockapp
+//! window, and no event, appears there, and no other client on it, a
+//! screen reader or another test, calls mockapp. No mockapp test needs the
+//! foreground or the keyboard focus; those that need a window to be the
+//! foreground, or an element to be focused, say so to the outpost under test
+//! instead (`common/outpost.rs`).
 
 use std::io::Write;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -46,23 +51,12 @@ const FAILED: u32 = 101;
 
 /// Runs `tests` (name and function) with libtest's command-line filtering
 /// (name substrings, `--skip`, `--exact`, `--ignored`, `--test-threads`,
-/// `--list`) and output, then
-/// ends the process with libtest's exit code, as explained in the module
-/// documentation.
-#[allow(
-    dead_code,
-    reason = "a binary runs its tests with this or run_isolated"
-)]
-pub fn run(tests: &[(&'static str, fn())]) -> ! {
-    run_with(&Options::parse(), tests, |_, test| {
-        catch_unwind(AssertUnwindSafe(test)).is_ok()
-    })
-}
-
-/// [`run`], with each test run in a process of its own on a desktop of its
-/// own, which no other process uses: for the tests that count the calls
-/// `mockapp`'s providers answer.
+/// `--list`) and output, each in a process of its own on a desktop of its
+/// own, which no other process uses, then ends the process with libtest's
+/// exit code, as explained in the module documentation.
 ///
+/// The desktop also keeps the counts of the calls `mockapp`'s providers
+/// answer exact.
 /// A provider cannot tell which client a call came from. UIA calls arrive
 /// from UI Automation's own threads inside `mockapp`, carrying none of
 /// the client's identity, so the counts would include every other client's
@@ -75,7 +69,6 @@ pub fn run(tests: &[(&'static str, fn())]) -> ! {
 /// there. So each test runs as this binary again, started on a new desktop
 /// with `--isolated-test` and the test's name, and is the only client
 /// there; this process prints its result as libtest does.
-#[allow(dead_code, reason = "a binary runs its tests with this or run")]
 pub fn run_isolated(tests: &[(&'static str, fn())]) -> ! {
     let options = Options::parse();
     if let Some(name) = &options.isolated {
