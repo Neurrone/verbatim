@@ -1884,6 +1884,20 @@ verified.
     cleared down to its prompt paired the prompt with an old line as a
     rewrite; new lines fewer than the old ones they replace are now new).
 
+  Long lines and a full-screen program, captured live from NVDA on
+  2026-10-09 in both terminals: a line of forty words is spoken whole by
+  both, and a line growing by ten words a key speaks each key's words in
+  both; opening the alternate screen, NVDA spoke all thirty rows in
+  Windows Terminal but only the last six in the console host, where
+  Verbatim speaks all thirty in both (within the flood limit); a row
+  changed says "changed" in both, and the rows scrolled down and up say
+  "row 0" and "row 30" in both; closing the alternate screen, NVDA spoke
+  the whole main screen again (PowerShell's notice, the command, then
+  "closed"), where Verbatim speaks only "closed" and the prompt, the main
+  screen being as it was (**different, since 2026-10-09**). NVDA echoes
+  each key a script reads without showing it ("space"); Verbatim does
+  not, as for any typing the terminal does not show.
+
   **Different:** a line the
   terminal rewrites in place speaks from the start of the word where it
   first differs (Unicode's word rules with ICU's dictionaries, whole

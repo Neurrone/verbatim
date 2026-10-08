@@ -1221,7 +1221,14 @@ finds it.
   and a line that came back to what it said has nothing else to speak.
   Lines are taken as rewritten in place, first to first, only where at
   least as many new lines replace them; a screen cleared down to its
-  prompt speaks the prompt as new.
+  prompt speaks the prompt as new. A row erased whole is drawn again, so
+  what it said is not kept for it. A screen replaced whole (none of its
+  lines left on the new screen, nor grown or cut short there) is kept as
+  the main screen (`Memory::main`): a full-screen program opened its
+  alternate screen over it. When a later screen replaces the alternate
+  one whole and starts with the main screen's lines (after as many of them
+  as scrolled away, the last allowed to have grown), the main screen is
+  back, and only what follows it is new.
 - On-demand reading (`terminal::reading`, `phase6-design.md`, "Terminal
   decisions"), a pure transition function the worker drives. Live, the
   default, a text change of the focused terminal (`Text_TextChanged`) is

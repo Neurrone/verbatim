@@ -279,11 +279,16 @@ fn take(
     let mut effects = Vec::new();
     let mut changed = output.changed.clone();
     // While typing is held or echoed, the line's change since it was read
-    // is the one that shows it (`LineChange::since_read`).
+    // is the one that shows it (`LineChange::since_read`): when that change
+    // is all typing, it is echoed and nothing else of the line is said;
+    // otherwise the line's change from what it said is spoken as usual.
     let typing = !state.held_typing.is_empty() || !state.terminal.echoed_typing.is_empty();
-    if typing && let Some(since_read) = changed.as_mut().and_then(|change| change.since_read.take())
-    {
-        changed = Some(*since_read);
+    let since_read = changed.as_mut().and_then(|change| change.since_read.take());
+    if typing && let Some(mut since_read) = since_read {
+        effects.extend(typing_shown(state, trace_id, &mut since_read));
+        if since_read.text.is_empty() {
+            changed = None;
+        }
     }
     if let Some(change) = changed.as_mut() {
         effects.extend(typing_shown(state, trace_id, change));

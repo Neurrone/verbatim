@@ -58,6 +58,12 @@ pub struct Memory {
     /// The text's first row as it was read, as the provider gave it: while
     /// it reads the same, the terminal has discarded nothing.
     pub first_row: String,
+    /// The lines of the screen this one replaced whole, sharing no line
+    /// with it: the main screen a full-screen program's alternate screen
+    /// covers, which the terminal shows again as it was when the program
+    /// closes the alternate screen. `None` once a screen shares lines with
+    /// the one before it is replaced whole again.
+    pub main: Option<Vec<String>>,
 }
 
 /// A read of a terminal's screen, as text: [`Screen`] without its caret,
@@ -207,10 +213,16 @@ pub fn read_new<S: ScreenSource>(
         next_row: screen.next_row.clone(),
         alternate: screen.alternate,
         first_row: screen.first_row.clone(),
+        main: None,
     };
     let Some(old) = earlier.filter(|_| !unsettled) else {
         return Ok(Found::Output(TerminalOutput::default(), remembered));
     };
+    let (main, restored) = main_screen(old, &new);
+    remembered.main = main;
+    if let Some(output) = restored {
+        return Ok(Found::Output(output, remembered));
+    }
     // The caret's line on the new screen, the last that reads as it does.
     let cursor = screen.caret_line.as_deref().and_then(|line| {
         let line = verbatim_text::trim_padding(line.trim_end_matches(['\r', '\n']));
@@ -274,7 +286,9 @@ pub fn read_new<S: ScreenSource>(
     if let Some(shift) = screen.shift {
         let kept = old.said.get(shift as usize..).unwrap_or_default();
         for (row, was) in remembered.said.iter_mut().zip(kept) {
-            if was.starts_with(row.as_str()) && was != row {
+            // A row erased whole is drawn again, not rewritten: what is
+            // written to it next is new.
+            if !row.trim().is_empty() && was.starts_with(row.as_str()) && was != row {
                 row.clone_from(was);
             }
         }
@@ -728,6 +742,65 @@ fn merged_change(older: Option<LineChange>, newer: Option<LineChange>) -> Option
             newer.since_read.map(|change| *change),
         )
         .map(Box::new),
+    })
+}
+
+/// What a read whose new screen is `new` makes of the main screen
+/// (`Memory::main`), after the screen `old`: the main screen to remember
+/// from now on, and, when `new` is the main screen shown again as it was
+/// after a full-screen program closed its alternate screen, what is new on
+/// it since, which is then the read's output. A screen replaced whole is
+/// remembered as the main screen: a full-screen program opened its
+/// alternate screen over it.
+fn main_screen(old: &Memory, new: &[String]) -> (Option<Vec<String>>, Option<TerminalOutput>) {
+    if !replaces_whole(&old.screen, new) {
+        return (old.main.clone(), None);
+    }
+    let restored = old
+        .main
+        .as_ref()
+        .and_then(|main| main_shift(main, new).map(|shift| (main, shift)));
+    match restored {
+        Some((main, shift)) => {
+            let found = diff(main, new, Shift::Known(shift), None);
+            let output = TerminalOutput {
+                above: found.above,
+                changed: found.changed,
+                lines: found.below,
+                ..TerminalOutput::default()
+            };
+            (None, Some(output))
+        }
+        None => (Some(old.screen.clone()), None),
+    }
+}
+
+/// Whether `new` replaced `old` whole: `old` has lines that are not blank,
+/// and none of them is on `new`, nor grown there or cut short, as a line
+/// being typed on is. A screen cleared on its way to being drawn again
+/// (the alternate screen cleared before a program draws it) counts.
+fn replaces_whole(old: &[String], new: &[String]) -> bool {
+    let written = |line: &&String| !line.trim().is_empty();
+    let related = |old: &String| {
+        new.iter()
+            .filter(written)
+            .any(|new| new.starts_with(old.as_str()) || old.starts_with(new.as_str()))
+    };
+    old.iter().any(|line| written(&line)) && !old.iter().filter(written).any(related)
+}
+
+/// How many of the main screen's first lines, `main`, have scrolled away
+/// on the screen shown again after an alternate screen, `new`: the fewest
+/// whose removal leaves lines that start `new` as they were, the last
+/// allowed to have grown (output written to it). `None` when no part of
+/// the main screen starts `new`, as after the screen was cleared.
+fn main_shift(main: &[String], new: &[String]) -> Option<usize> {
+    (0..main.len()).find(|&first| {
+        let kept = &main[first..];
+        let (last, earlier) = kept.split_last().expect("kept is not empty");
+        new.len() >= kept.len()
+            && new[..earlier.len()] == *earlier
+            && new[earlier.len()].starts_with(last.as_str())
     })
 }
 
