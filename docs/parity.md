@@ -1692,8 +1692,13 @@ verified.
   Escape clearing a line) is spoken by its evidence: text it removed at
   the caret, the new line when the caret left its line, and otherwise by
   where the caret landed (the character, the word, or the word then the
-  character); NVDA says nothing for such keys. Not yet checked against a
-  live NVDA capture; a backspace over a line break
+  character); NVDA says nothing for such keys (captured live on
+  2026-10-09 in both terminals: Escape after `echo hi` is silent in NVDA,
+  "echo hi" in Verbatim; Escape after inline prediction showed `git
+  status` is silent in NVDA, "git" in Verbatim, the text typed). In a
+  terminal, Backspace and Control+Backspace now say what NVDA says ("o"
+  and "tw" after `echo one two`, both terminals, captured live); a
+  backspace over a line break
   names the kind of break the text was last seen to use, which is what
   NVDA reads, since a text uses one kind throughout, and says nothing
   when Core has seen no line break in it yet. A line break a unit lands on
@@ -1837,12 +1842,49 @@ verified.
   a new line. Held typing is forgotten on Enter and Tab, and on Escape,
   Control+C, Control+D, and Control+Break; NVDA forgets its queued
   characters on Enter, Tab, Control+C, Control+D, and Control+Pause
-  (`behaviors.py` 595 to 613), and Escape, which clears the line, is
-  Verbatim's addition. The console host's keys are translated with the
+  (`behaviors.py` 595 to 613). **Different, proposed (2026-10-09):**
+  Escape forgetting held typing is Verbatim's addition: captured live,
+  NVDA spoke the two characters typed at a prompt that showed nothing
+  ("a", "b") when Escape then changed the line, before the line's new
+  text, since it dispatches its queued characters on any text change
+  (`behaviors.py` 591 to 593 and 615 to 619); Verbatim speaks only the
+  new text. The console host's keys are translated with the
   console host's own keyboard layout, its thread learned from the console
   window's `WinEvents`, as NVDA does (`IAccessibleHandler/internalWinEventHandler.py`
   151 to 153 and 266 to 273, `NVDAObjects/UIA/winConsoleUIA.py` 378 to
-  388, issue 10113). Not yet checked against a live NVDA capture. **Different:** a line the
+  388, issue 10113).
+
+  Checked against NVDA captured live on 2026-10-09 (NVDA alpha-57645, both
+  terminals, the keys of `conhost_typing` and `windows_terminal_typing`
+  and of the NVDA study's cases, each typed a character at a time):
+
+  - The same: every character typed is echoed as typed; a space typed at
+    a line's end is echoed at once ("space"); characters typed past the
+    right margin are echoed one by one; a character typed in the middle
+    of a command after `cls` is echoed; Left Arrow says the character
+    ("o"); Backspace and Control+Backspace say "o" and "tw"; `cls` says
+    the prompt; typing over inline prediction echoes each character.
+  - **Different, recorded:** at a prompt that rewrites its line on each
+    key and shows nothing typed (a ticking clock), NVDA spoke the
+    characters typed ("a", "b", "c": the password) and not the count,
+    which as a one-line change shorter than three characters it drops as
+    probably typed (`behaviors.py` 559 to 566); Verbatim speaks the count
+    ("1", "2", "3") and never the characters. Escape and other keys
+    outside the caret table, as above.
+  - **Not Verbatim's terminal handling:** NVDA says the prompt `ready>` as
+    "ready greater", and Verbatim as "ready>" until symbol processing
+    (M8); NVDA also says "Oscar" after "o" for Left Arrow, its delayed
+    character description, a setting this NVDA has on, which Verbatim
+    does not have yet (the settings package).
+  - Found and fixed by the comparison: a line cleared with Escape and
+    typed again was not echoed (it was compared with what the line had
+    said, which still held the cleared text; typing is now matched with
+    the line's change since it was read, `LineChange::since_read`); `cls`
+    in Windows Terminal was silent where NVDA says the prompt (a screen
+    cleared down to its prompt paired the prompt with an old line as a
+    rewrite; new lines fewer than the old ones they replace are now new).
+
+  **Different:** a line the
   terminal rewrites in place speaks from the start of the word where it
   first differs (Unicode's word rules with ICU's dictionaries, whole
   graphemes), where NVDA's character diff speaks the inserted characters;
