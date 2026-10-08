@@ -33,6 +33,14 @@ follow `settings.toml`'s `keyboard.layout`.
 
 The end-to-end harness's hooks (private `harness` module):
 
+- Ignored processes: when launched with `VERBATIM_IGNORE_PIDS` naming
+  pids, separated by commas, Verbatim holds those processes open and
+  ignores them entirely (`verbatim_outpost::supervisor::IgnoredProcesses`,
+  handed to `Supervisor::new`): no outpost is started for one, the focus
+  listener drops their facts, the shell never asks one for its focus (a
+  foreground read naming one is passed over), and a focus reported in one
+  of their top-level windows is dropped before the reducer. The harness
+  names the owner's own Windows Terminal (`docs/tooling.md`).
 - Readiness: when launched with `VERBATIM_READY_EVENT` naming an event,
   Verbatim sets that event once it is ready for input (the GUI up, the
   focus listener running, its own window's outpost ready, and the focus

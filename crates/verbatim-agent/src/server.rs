@@ -17,7 +17,9 @@ use verbatim_control::protocol::{read_message, write_message};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use crate::protocol::{AGENT_PROTOCOL_VERSION, Frame, ReplyPayload, Request, RequestEnvelope};
+use crate::protocol::{
+    AGENT_PROTOCOL_VERSION, Frame, IGNORE_PIDS_ENV, ReplyPayload, Request, RequestEnvelope,
+};
 use crate::{
     desktop, events, files, focus, jobs, keys, process, session, terminals, tunnel, typing,
 };
@@ -182,32 +184,7 @@ fn dispatch(id: u64, request: Request) -> Frame {
                 protocol_version: AGENT_PROTOCOL_VERSION,
             },
         },
-        Request::LaunchProcess {
-            command,
-            args,
-            working_dir,
-            env,
-            stderr_to,
-            console_title,
-            minimized,
-        } => match process::launch(
-            &command,
-            &args,
-            working_dir.as_deref(),
-            &env,
-            stderr_to.as_deref(),
-            console_title.as_deref(),
-            minimized,
-        ) {
-            Ok((pid, foreground_allowed)) => Frame::Reply {
-                to: id,
-                payload: ReplyPayload::Launched {
-                    pid,
-                    foreground_allowed,
-                },
-            },
-            Err(error) => error_frame(id, &error),
-        },
+        request @ Request::LaunchProcess { .. } => launch(id, request),
         Request::KillProcess { pid } => match process::kill(pid) {
             Ok(outcome) => Frame::Reply {
                 to: id,
@@ -271,6 +248,61 @@ fn dispatch(id: u64, request: Request) -> Frame {
         Request::OpenControlTunnel => {
             unreachable!("OpenControlTunnel is handled in handle_connection before dispatch")
         }
+    }
+}
+
+/// Answers [`Request::LaunchProcess`]: launches the program, and for a
+/// launch of Verbatim names the processes it is to ignore, held open with
+/// the launch.
+fn launch(id: u64, request: Request) -> Frame {
+    let Request::LaunchProcess {
+        command,
+        args,
+        working_dir,
+        env,
+        stderr_to,
+        console_title,
+        minimized,
+        ignore_foreign_terminals,
+    } = request
+    else {
+        return error_frame(id, &io::Error::other("not a launch request"));
+    };
+    let mut env = env;
+    let held = if ignore_foreign_terminals {
+        match process::foreign_terminal_processes() {
+            Ok(terminals) => {
+                let pids: Vec<String> = terminals.iter().map(|(pid, _)| pid.to_string()).collect();
+                env.push((IGNORE_PIDS_ENV.to_owned(), pids.join(",")));
+                terminals
+            }
+            Err(error) => return error_frame(id, &error),
+        }
+    } else {
+        Vec::new()
+    };
+    let ignored: Vec<u32> = held.iter().map(|(pid, _)| *pid).collect();
+    match process::launch(
+        &command,
+        &args,
+        working_dir.as_deref(),
+        &env,
+        stderr_to.as_deref(),
+        console_title.as_deref(),
+        minimized,
+    ) {
+        Ok((pid, foreground_allowed)) => {
+            process::keep_with_launch(pid, held.into_iter().map(|(_, handle)| handle));
+            Frame::Reply {
+                to: id,
+                payload: ReplyPayload::Launched {
+                    pid,
+                    foreground_allowed,
+                    ignored,
+                },
+            }
+        }
+        Err(error) => error_frame(id, &error),
     }
 }
 
@@ -690,6 +722,7 @@ mod tests {
             stderr_to: None,
             console_title: None,
             minimized: false,
+            ignore_foreign_terminals: false,
         });
         let Frame::Reply {
             payload: ReplyPayload::Launched { pid, .. },

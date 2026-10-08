@@ -30,9 +30,16 @@
 //! moving to the back, so a flood from one busy process cannot pass through
 //! the listener and Core unthrottled. Pongs and `Ready` go ahead of facts.
 //!
+//! The processes Verbatim ignores entirely (`IgnoredProcesses`, which the
+//! end-to-end harness names) are held open here too, and every fact from one
+//! of them is dropped before it is queued, so it is never routed and never
+//! starts an outpost. Their events still reach the listener: UIA and
+//! `WinEvent` delivery cannot be scoped to leave a process out.
+//!
 //! Run as `verbatim-outpost.exe --listener --pipe-in <handle> --pipe-out
-//! <handle>` — the same binary as a per-application outpost, with no target
-//! pid, supervised by the same machinery.
+//! <handle> [--ignore-pids <pid,pid>]` — the same binary as a
+//! per-application outpost, with no target pid, supervised by the same
+//! machinery.
 
 use std::collections::VecDeque;
 use std::io::{self, BufReader, Write};
@@ -59,6 +66,7 @@ use crate::protocol::{
     DeliveredFact, EventTiming, FactKey, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
     UiaSnapshotFact, now_us, read_message, write_message,
 };
+use crate::supervisor::IgnoredProcesses;
 
 /// How long after a menu or the Alt+Tab switcher closes the listener waits
 /// before telling Core, so a focus event the end causes can arrive first:
@@ -71,6 +79,8 @@ const MENU_END_GRACE: Duration = Duration::from_millis(50);
 struct Outgoing {
     state: Mutex<OutgoingState>,
     ready: Condvar,
+    /// The processes whose facts are dropped.
+    ignored: IgnoredProcesses,
 }
 
 #[derive(Default)]
@@ -99,6 +109,9 @@ impl Outgoing {
     /// kind. `raised_ms_ago` is how long before now Windows raised the event,
     /// when it says.
     fn fact(&self, pid: Pid, fact: DeliveredFact, raised_ms_ago: Option<u32>) {
+        if self.ignored.contains(pid) {
+            return;
+        }
         let key = fact.key().map(|key| (pid, key));
         let message = OutpostToSupervisor::FocusFact {
             trace_id: TraceId::mint(),
@@ -201,8 +214,11 @@ impl Listener {
     ///
     /// Panics if the writer thread cannot be spawned, which means the
     /// process is out of OS thread resources.
-    fn new(mut pipe: Box<dyn Write + Send>) -> Self {
-        let outgoing = Arc::new(Outgoing::default());
+    fn new(mut pipe: Box<dyn Write + Send>, ignored: IgnoredProcesses) -> Self {
+        let outgoing = Arc::new(Outgoing {
+            ignored,
+            ..Outgoing::default()
+        });
         let writer_outgoing = Arc::clone(&outgoing);
         let writer = thread::Builder::new()
             .name("verbatim-listener-outbound".to_owned())
@@ -483,7 +499,8 @@ fn window_pid(hwnd: isize) -> u32 {
 /// Runs the focus listener driven by the Core pipes: reads commands from
 /// `pipe_in` and writes facts and replies to `pipe_out` until Core asks it
 /// to shut down ([`SupervisorToOutpost::Shutdown`]) or the command stream
-/// ends, then shuts it down cleanly and returns.
+/// ends, then shuts it down cleanly and returns. Facts from the processes
+/// `ignored` holds are dropped.
 ///
 /// # Errors
 ///
@@ -491,8 +508,9 @@ fn window_pid(hwnd: isize) -> u32 {
 pub fn run_listener(
     pipe_in: Box<dyn io::Read + Send>,
     pipe_out: Box<dyn Write + Send>,
+    ignored: IgnoredProcesses,
 ) -> io::Result<()> {
-    let listener = Listener::new(pipe_out);
+    let listener = Listener::new(pipe_out, ignored);
     let mut reader = BufReader::new(pipe_in);
     let ended = loop {
         match read_message::<_, SupervisorToOutpost>(&mut reader) {
@@ -539,6 +557,28 @@ mod tests {
             id_object: -4,
             id_child: 0,
         }
+    }
+
+    #[test]
+    fn a_fact_from_an_ignored_process_is_never_queued() {
+        // This process stands for the owner's Windows Terminal.
+        let own = Pid(std::process::id());
+        let outgoing = Outgoing {
+            ignored: IgnoredProcesses::hold([own]),
+            ..Outgoing::default()
+        };
+        outgoing.fact(own, DeliveredFact::Foreground { hwnd: 1 }, None);
+        outgoing.fact(own, msaa_focus(), None);
+        outgoing.fact(Pid(5), msaa_focus(), None);
+        outgoing.close();
+        let mut sent = Vec::new();
+        while let Some(message) = outgoing.next() {
+            sent.push(message);
+        }
+        let [OutpostToSupervisor::FocusFact { fact, .. }] = sent.as_slice() else {
+            panic!("one fact is sent, the other process's: {sent:?}");
+        };
+        assert_eq!(fact.pid, Pid(5));
     }
 
     #[test]

@@ -214,7 +214,12 @@ explicitly, and the Windows Terminal scenarios start the harness's
 portable copy. The agent watches for Windows Terminal windows from the
 start of each run (`TakeForeignTerminalWindows`), and any window of a
 Windows Terminal process the agent did not launch that appears during the
-run fails it (`Scenario::foreign_terminal_windows`).
+run fails it (`Scenario::foreign_terminal_windows`). Verbatim is launched
+with `AgentClient::launch_verbatim`, which has the agent name every such
+Windows Terminal, and the console hosts it runs, for Verbatim to ignore
+entirely (`VERBATIM_IGNORE_PIDS`, `docs/tooling.md`); the run fails if
+Verbatim's log folder holds an outpost log named for one of them
+(`Scenario::collect_run_artifacts`).
 
 ## The run
 

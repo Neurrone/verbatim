@@ -95,9 +95,14 @@ fn next(events: &Receiver<OutpostMessage>) -> OutpostMessage {
 fn an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited() {
     let (events_tx, events) = unbounded();
     let exe = std::env::current_exe().expect("this test binary's path");
-    let supervisor =
-        Supervisor::with_executable(events_tx, OutpostOptions::default(), exe.clone(), LIMIT)
-            .expect("the supervisor starts");
+    let supervisor = Supervisor::with_executable(
+        events_tx,
+        OutpostOptions::default(),
+        exe.clone(),
+        LIMIT,
+        std::sync::Arc::default(),
+    )
+    .expect("the supervisor starts");
     match next(&events) {
         OutpostMessage::ListenerReady { replacement: false } => {}
         other => panic!("the supervisor said {other:?} before the listener was ready"),

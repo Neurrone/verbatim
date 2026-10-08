@@ -46,12 +46,19 @@ pub(super) struct Launched {
 /// a kill-on-close job with the memory cap (see `verbatim-process`). An
 /// outpost is told `options` on its command line (`--classic-uia` when
 /// remote operations are off); the listener reads no application and takes
-/// none.
+/// none, but is told `ignored`, the pids of the processes ignored entirely,
+/// separated by commas, when there are any.
 pub(super) fn launch(
     exe_path: &Path,
     role: Role,
     options: crate::OutpostOptions,
+    ignored: &str,
 ) -> io::Result<(Launched, ChildPipes)> {
+    let ignore = if ignored.is_empty() {
+        String::new()
+    } else {
+        format!(" {} {ignored}", super::ignored::IGNORE_PIDS_ARG)
+    };
     let classic_uia = if options.remote_operations {
         ""
     } else {
@@ -72,8 +79,8 @@ pub(super) fn launch(
         ),
         Role::Listener => (
             "listener".to_owned(),
-            Box::new(|pipe_in, pipe_out| {
-                format!("--listener --pipe-in {pipe_in} --pipe-out {pipe_out}")
+            Box::new(move |pipe_in, pipe_out| {
+                format!("--listener --pipe-in {pipe_in} --pipe-out {pipe_out}{ignore}")
             }),
         ),
     };

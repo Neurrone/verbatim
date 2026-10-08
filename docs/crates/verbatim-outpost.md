@@ -274,6 +274,18 @@ Public API:
   `is_dialog(role)` says which nodes have such text: a dialog, an alert,
   or a property page. A gathering looks at no more than `MAX_OBJECTS`
   objects; a dialog with more says nothing rather than part of its text.
+- `supervisor::IgnoredProcesses` — processes Verbatim ignores entirely,
+  named by the end-to-end harness in `VERBATIM_IGNORE_PIDS`
+  (`IGNORE_PIDS_ENV`; `from_env`, `hold`, `contains`, `parse_pids`): the
+  owner's own Windows Terminal. Each is held open as a `Target` is, so its
+  pid names that process and no other for as long as Verbatim runs.
+  `Supervisor::new` and `with_executable` take them; the owner starts no
+  outpost for one (`ensure_spawned` answers `NotWatched`) and routes none
+  of its facts, and passes their pids to the focus listener as
+  `--ignore-pids`, which holds them open too and drops every fact from
+  them before it is queued. `Supervisor::is_ignored` lets the app pass
+  them over (`crates/verbatim-outpost/tests/ignored_process.rs`, and the
+  listener's `a_fact_from_an_ignored_process_is_never_queued`).
 - `run_listener` — the focus-listener runtime (decisions D13 and D14;
   outpost redesign, "The focus listener"): sets up the writer, installs
   the desktop-global `FocusRegistration`, the global

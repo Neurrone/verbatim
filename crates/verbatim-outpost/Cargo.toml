@@ -24,6 +24,12 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 [lints]
 workspace = true
 
+# Runs itself as stand-in applications, listener, and outpost, which its
+# own `main` recognizes.
+[[test]]
+name = "ignored_process"
+harness = false
+
 # Runs itself as a stand-in child, which its own `main` recognizes.
 [[test]]
 name = "shutdown_fallback"

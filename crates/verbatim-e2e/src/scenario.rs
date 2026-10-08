@@ -192,6 +192,10 @@ pub struct Scenario {
     _lock: MutexGuard<'static, ()>,
     agent: AgentClient,
     verbatim_pid: u32,
+    /// The processes Verbatim was told to ignore entirely: the owner's own
+    /// Windows Terminal and its console hosts. No outpost may be started
+    /// for one ([`Scenario::collect_run_artifacts`]).
+    ignored: Vec<u32>,
     control: ControlClient,
     speech: SpeechCollector,
     timeline: Timeline,
@@ -349,10 +353,9 @@ impl Scenario {
         if !filter.is_empty() {
             env.push(("RUST_LOG".to_owned(), filter));
         }
-        let launched =
-            agent.launch_process(&exe_str, &[], Some(&run_dir), &env, Some(&stderr_path));
-        let verbatim_pid = match launched {
-            Ok(launched) => launched.pid,
+        let launched = agent.launch_verbatim(&exe_str, &run_dir, &env, &stderr_path);
+        let (verbatim_pid, ignored) = match launched {
+            Ok((launched, ignored)) => (launched.pid, ignored),
             Err(error) => {
                 if let Some(recording) = &mut recording {
                     recording.stop(&mut agent)?;
@@ -398,6 +401,7 @@ impl Scenario {
             _lock: lock,
             agent,
             verbatim_pid,
+            ignored,
             control,
             speech,
             timeline,
@@ -1371,8 +1375,9 @@ impl Scenario {
     /// the timeline, the latency report, Verbatim's stderr log and every
     /// outpost and listener log of this launch, Verbatim's audio, and the
     /// crash dumps of Verbatim's processes written during the run. Returns
-    /// every artifact that could not be collected, and every crash dump,
-    /// each a failure of the run.
+    /// every artifact that could not be collected, every crash dump, and
+    /// every outpost started for a process Verbatim was told to ignore, its
+    /// log named for that process, each a failure of the run.
     pub fn collect_run_artifacts(&mut self, dir: &Path) -> Vec<String> {
         let mut problems = Vec::new();
         if let Err(error) = fs::create_dir_all(dir) {
@@ -1436,6 +1441,13 @@ impl Scenario {
             problems.push(format!(
                 "{logs_dir} holds no listener.log; the focus listener never started"
             ));
+        }
+        for pid in &self.ignored {
+            if let Some(name) = names.iter().find(|name| outpost_log_names(name, *pid)) {
+                problems.push(format!(
+                    "an outpost was started for process {pid}, which Verbatim was told to ignore (the owner's Windows Terminal): {name}"
+                ));
+            }
         }
         for name in names {
             let remote_path = format!(r"{logs_dir}\{name}");
@@ -2212,9 +2224,38 @@ fn document_token() -> String {
     digits.iter().rev().collect()
 }
 
+/// Whether `name` is the log of an outpost watching process `pid`, as the
+/// supervisor names it: `outpost-<image>-<pid>.log`, or `outpost-<pid>.log`
+/// when the image could not be read.
+fn outpost_log_names(name: &str, pid: u32) -> bool {
+    let Some(stem) = name
+        .strip_prefix("outpost-")
+        .and_then(|rest| rest.strip_suffix(".log"))
+    else {
+        return false;
+    };
+    let pid_part = stem.rsplit('-').next().unwrap_or(stem);
+    pid_part == pid.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_outpost_log_is_told_by_the_pid_it_ends_with() {
+        assert!(outpost_log_names(
+            "outpost-windowsterminal-29864.log",
+            29864
+        ));
+        assert!(outpost_log_names("outpost-29864.log", 29864));
+        assert!(!outpost_log_names(
+            "outpost-windowsterminal-129864.log",
+            29864
+        ));
+        assert!(!outpost_log_names("listener.log", 29864));
+        assert!(!outpost_log_names("synth-espeak.log", 29864));
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir()
