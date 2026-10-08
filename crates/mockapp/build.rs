@@ -16,6 +16,12 @@ fn main() {
     // the tree view alone is created in an activation context made from
     // this manifest.
     println!("cargo:rustc-link-arg-bins=/MANIFEST:EMBED,ID=2");
+    // An 8 MB main thread stack, where Windows gives 1 MB: a fixture is
+    // parsed, converted and built into the tree recursively, a frame per
+    // level, and `deep.json` nests sixty levels, which every field a node
+    // gains makes deeper in a debug build (a node's UIA class name and
+    // automation id overflowed it on 2026-10-08).
+    println!("cargo:rustc-link-arg-bins=/STACK:8388608");
     println!(
         "cargo:rustc-link-arg-bins=/MANIFESTINPUT:{}",
         manifest.display()
