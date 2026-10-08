@@ -19,7 +19,7 @@ use verbatim_core::SrState;
 use verbatim_model::{
     Backend, Earcon, Effect, Input, NormalizedEvent, OutpostId, Pid, SegmentContent, State, TraceId,
 };
-use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor};
+use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, Query};
 
 use common::outpost::{OutpostUnderTest, Reported};
 
@@ -192,6 +192,154 @@ fn disabling_a_window_not_in_the_foreground_is_spoken() {
         [vec![SegmentContent::State(State::Disabled)]]
     );
     app.quit();
+}
+
+/// What Core does with an event: each utterance's content, and where it
+/// stops speech.
+#[derive(Debug, PartialEq)]
+enum Said {
+    Speech(Vec<SegmentContent>),
+    Stop,
+}
+
+/// Gives Core `event` from mockapp, as [`spoken`] does, and returns what
+/// it says and where it stops speech, in order.
+fn said(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Said> {
+    event.assign_outpost(OutpostId(1));
+    verbatim_core::reduce(
+        state,
+        &Input::Event {
+            trace_id: TraceId::mint(),
+            observed_at_ms: 0,
+            source: Pid(1),
+            backend: Backend::Msaa,
+            window: None,
+            event,
+        },
+    )
+    .into_iter()
+    .filter_map(|effect| match effect {
+        Effect::Speak(utterance) => Some(Said::Speech(
+            utterance
+                .segments
+                .into_iter()
+                .map(|segment| segment.content)
+                .collect(),
+        )),
+        Effect::StopSpeech => Some(Said::Stop),
+        _ => None,
+    })
+    .collect()
+}
+
+/// How the window's state change and the focus change after it reach the
+/// outpost: one handled before the other arrives, or both waiting for one
+/// batch, the state change first.
+#[derive(Clone, Copy, Debug)]
+enum Batching {
+    Separate,
+    Together,
+}
+
+/// The focus on the settings window's Remove button; the window, the
+/// focus's ancestor at its own address, is disabled, and then the focus
+/// moves to node `to` (its fixture id and index), the two reaching the
+/// outpost as `batching` says. Returns what Core does with the state
+/// change and the focus change, in the order the outpost reports them.
+fn disable_then_move(batching: Batching, (to_id, to_index): (&str, usize)) -> Vec<Said> {
+    /// The Remove button, by its index in mockapp's tree.
+    const REMOVE: usize = 1;
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-change-before-focus");
+    let mut app = common::spawn("modal_owner.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let mut outpost = OutpostUnderTest::new(app.pid());
+    let mut state = SrState::new();
+
+    app.send("client-identity");
+    app.send("set-focus remove");
+    let reported = outpost.msaa_focus(hwnd, REMOVE);
+    assert_eq!(reported.chain(), [Some("Settings"), Some("Remove")]);
+    let _ = said(&mut state, focus_event(&reported));
+    let focus_fact = DeliveredFact::MsaaFocus {
+        hwnd: hwnd.0 as isize,
+        id_object: i32::try_from(to_index + 1).expect("a small index"),
+        id_child: 0,
+    };
+    let events = match batching {
+        Batching::Separate => {
+            app.send("disable-client");
+            let changed = next_event(&outpost);
+            outpost.settled();
+            app.send(&format!("set-focus {to_id}"));
+            outpost.deliver_observed_now(focus_fact);
+            vec![changed, next_event(&outpost)]
+        }
+        Batching::Together => {
+            // The worker reads the Remove button's next sibling slowly
+            // meanwhile, so the change and the focus wait for the same
+            // batch.
+            app.send("slow 100");
+            let request = outpost.ask(Query::Navigate {
+                node_id: reported.node.id,
+                kind: verbatim_model::QueryKind::NextSibling,
+            });
+            app.send("disable-client");
+            app.send(&format!("set-focus {to_id}"));
+            outpost.deliver_observed_now(focus_fact);
+            app.send("slow 0");
+            match outpost.next() {
+                OutpostToSupervisor::Reply { request_id, .. } => assert_eq!(request_id, request),
+                other => panic!("the outpost said {other:?}, not the ancestors"),
+            }
+            vec![next_event(&outpost), next_event(&outpost)]
+        }
+    };
+    outpost.settled();
+    app.quit();
+    events
+        .into_iter()
+        .flat_map(|event| said(&mut state, event))
+        .collect()
+}
+
+/// The window the focus is in disabled, and the focus moving within it:
+/// NVDA handles the state change first, judged against the focus it was
+/// observed under, and speaks "unavailable", which the focus change
+/// within the window does not cut off, and then the new focus. The same
+/// whether the two reach the outpost in one batch or two.
+fn a_change_before_a_focus_within_the_window_is_heard_first() {
+    for batching in [Batching::Separate, Batching::Together] {
+        assert_eq!(
+            disable_then_move(batching, ("close", 2)),
+            [
+                Said::Speech(vec![SegmentContent::State(State::Disabled)]),
+                Said::Speech(vec![
+                    SegmentContent::Label("Close".to_owned()),
+                    SegmentContent::Role(verbatim_model::Role::Button),
+                ]),
+            ],
+            "{batching:?}"
+        );
+    }
+}
+
+/// The window the focus is in disabled, and the focus moving into a menu:
+/// "unavailable" is spoken and then cut off as the menu is entered, as
+/// NVDA's entering a menu cancels speech. The same whether the two reach
+/// the outpost in one batch or two.
+fn a_change_before_a_focus_into_a_menu_is_cut_off() {
+    for batching in [Batching::Separate, Batching::Together] {
+        assert_eq!(
+            disable_then_move(batching, ("copy", 4)),
+            [
+                Said::Speech(vec![SegmentContent::State(State::Disabled)]),
+                Said::Stop,
+                Said::Speech(vec![SegmentContent::Label("Copy".to_owned())]),
+            ],
+            "{batching:?}"
+        );
+    }
 }
 
 /// A state change on a windowless ancestor of the focus, one reached
@@ -369,6 +517,14 @@ fn main() {
         (
             "disabling_the_focus_window_is_not_spoken",
             disabling_the_focus_window_is_not_spoken,
+        ),
+        (
+            "a_change_before_a_focus_within_the_window_is_heard_first",
+            a_change_before_a_focus_within_the_window_is_heard_first,
+        ),
+        (
+            "a_change_before_a_focus_into_a_menu_is_cut_off",
+            a_change_before_a_focus_into_a_menu_is_cut_off,
         ),
         (
             "disabling_a_window_not_in_the_foreground_is_spoken",

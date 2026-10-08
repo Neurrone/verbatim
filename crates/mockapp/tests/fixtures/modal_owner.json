@@ -3,6 +3,15 @@
   "role": "dialog",
   "name": "Settings",
   "children": [
-    { "id": "remove", "role": "button", "name": "Remove", "states": ["focusable"] }
+    { "id": "remove", "role": "button", "name": "Remove", "states": ["focusable"] },
+    { "id": "close", "role": "button", "name": "Close", "states": ["focusable"] },
+    {
+      "id": "menu",
+      "role": "menu",
+      "name": "Context",
+      "children": [
+        { "id": "copy", "role": "menu_item", "name": "Copy", "states": ["focusable"] }
+      ]
+    }
   ]
 }

@@ -195,6 +195,26 @@ impl OutpostUnderTest {
             });
     }
 
+    /// Hands the outpost `fact`, as the listener would, stamped with the
+    /// time it is handed over as the time it was observed, and returns at
+    /// once.
+    pub fn deliver_observed_now(&self, fact: DeliveredFact) {
+        let observed_at_ms = u64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis(),
+        )
+        .unwrap_or(u64::MAX);
+        self.outpost
+            .handle_command(&SupervisorToOutpost::DeliverFact {
+                trace_id: TraceId::mint(),
+                observed_at_ms,
+                timing: EventTiming::default(),
+                fact,
+            });
+    }
+
     /// Asks the outpost `query`, as Core would, and returns its request id
     /// at once.
     pub fn ask(&mut self, query: Query) -> u64 {

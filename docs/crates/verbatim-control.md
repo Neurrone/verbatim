@@ -58,7 +58,9 @@ Public API:
   `AwaitIdle { after_input, timeout_ms }` is answered once Core has
   handled the injected input numbered `after_input` (see the
   [verbatim-input guide](verbatim-input.md)) and everything before it, and
-  is idle: its queues empty, no outpost request outstanding, no outpost
+  is idle: its queues empty, no outpost request outstanding (an open caret
+  watch, which only waits for the application and which a key that moved
+  nothing leaves open until its bound, does not count), no outpost
   starting, and no focus wanted from an outpost still starting; the answer
   is sent once everything Core queued before it has been queued for
   speech, so on a speech connection every utterance Core queued first

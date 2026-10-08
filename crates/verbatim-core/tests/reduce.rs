@@ -622,6 +622,55 @@ fn states_changed_with_children(
     }
 }
 
+/// An ancestor's state change spoken just before the focus moves into
+/// another top-level window is cut off by that move, as NVDA's foreground
+/// change cancels speech (`docs/parity.md`, "When speech is cut off"):
+/// the outpost reports the change ahead of the focus change it was
+/// observed before, so this is the outcome however the two were batched.
+#[test]
+fn an_ancestors_change_before_a_focus_in_another_window_is_cut_off() {
+    let source = Pid(1);
+    let dialog = node(31, Role::Dialog, Some("Settings"), None, StateSet::new());
+    let remove = node(
+        32,
+        Role::Button,
+        Some("Remove"),
+        None,
+        states(&[State::Focusable, State::Focused]),
+    );
+    let (reader, _) = reduce(
+        &SrState::new(),
+        &focus_in(source, window(10), remove, vec![dialog]),
+    );
+    let (reader, effects) = reduce(
+        &reader,
+        &states_changed_input(
+            TraceId::mint(),
+            source,
+            NodeId::new(31),
+            states(&[State::Disabled]),
+        ),
+    );
+    assert_eq!(heard(&effects), vec![queued(vec![state(State::Disabled)])]);
+    let no = node(
+        42,
+        Role::Button,
+        Some("No"),
+        None,
+        states(&[State::Focusable, State::Focused]),
+    );
+    let (_, effects) = reduce(&reader, &focus_in(source, window(20), no, vec![]));
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(1), 42, &[], None)),
+            Heard::Stop,
+            queued(vec![UtteranceSegment::label("No"), role(Role::Button)]),
+        ],
+        "speech stops before the new window's focus is spoken"
+    );
+}
+
 /// A state change on an ancestor of the focus is spoken, as NVDA's base
 /// state change handler speaks one (a focused button that changes the
 /// state of the container above it), diffed against the ancestor's states

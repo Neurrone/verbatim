@@ -25,6 +25,11 @@
 //!   their own order; and a focus change that arrives while the worker is
 //!   in the middle of a batch takes such events of that batch that have not
 //!   started back into the queue, where the next batch puts them after it.
+//!   A state change on one of the focus's ancestors, which NVDA would judge
+//!   against the focus it was observed under, is not overtaken: observed
+//!   before a batch's focus change, it is handled before it, whether it
+//!   came first in the batch, in an earlier batch, or was pushed after the
+//!   change though observed before it ([`State::judged`]).
 //! - A batch that holds a foreground change is held until that change's
 //!   window is the foreground window, for 250 ms at most, as NVDA holds
 //!   back event handling after a foreground event; Core's queries and its
@@ -300,6 +305,15 @@ struct State {
     /// reported within the batch a menu opening belongs to.
     batch_number: u64,
     focused: Option<Object>,
+    /// The focus's ancestors, by their own addresses, whose state changes
+    /// are judged against the focus and may be spoken. NVDA handles events
+    /// in the order they came, so such a change observed before a focus
+    /// change is spoken, or not, by the focus it was observed under, and is
+    /// then cut off by the focus change's own cancelling, or not: a change
+    /// observed before the focus change is handled before it, so Core,
+    /// whose cancelling is NVDA's, gives NVDA's outcome however the events
+    /// were batched.
+    judged: Vec<Object>,
     /// Whether [`State::focused`] was reached by redirecting a control's
     /// own focus event to its focused child, whose own event is still to
     /// come.
@@ -366,6 +380,7 @@ impl State {
     /// object and kind already replaces is dropped.
     fn take_back_overtaken(&mut self) {
         let focused = self.focused.clone();
+        let judged = self.judged.clone();
         let mut kept = VecDeque::with_capacity(self.batch.len());
         let mut taken = Vec::new();
         for planned in self.batch.drain(..) {
@@ -374,7 +389,7 @@ impl State {
                 continue;
             };
             let (key, category, hwnd) = classify(&entry.item);
-            if overtaken(key.as_ref(), category, focused.as_ref(), &[]) {
+            if overtaken(key.as_ref(), category, (focused.as_ref(), &judged), &[]) {
                 taken.push(Waiting {
                     key,
                     category,
@@ -403,7 +418,9 @@ impl State {
 
 /// Whether an entry is an event a focus change overtakes: an event, not a
 /// notification or an alert, of an object that is neither the focus
-/// (`focused`) nor one the change moves to (`moving_to`).
+/// (`focused`) nor one the change moves to (`moving_to`), and not a state
+/// change on one of the focus's ancestors that is judged against it
+/// (`judged`, [`State::judged`]).
 ///
 /// NVDA queues a UIA focus event the moment its UIA thread receives it,
 /// and reads an MSAA event of another object with one call (the object
@@ -418,9 +435,12 @@ impl State {
 fn overtaken(
     key: Option<&Key>,
     category: Category,
-    focused: Option<&Object>,
+    (focused, judged): (Option<&Object>, &[Object]),
     moving_to: &[Object],
 ) -> bool {
+    if key.is_some_and(|key| is_judged(key, judged)) {
+        return false;
+    }
     let event = match key {
         Some(Key::Msaa(kind, ..)) => *kind != WinEventKind::Alert as u8,
         Some(Key::Uia(..)) => true,
@@ -431,6 +451,13 @@ fn overtaken(
         && key
             .and_then(Key::object)
             .is_some_and(|object| Some(&object) != focused && !moving_to.contains(&object))
+}
+
+/// Whether `key` is a state change on one of the focus's ancestors judged
+/// against the focus ([`State::judged`]).
+fn is_judged(key: &Key, judged: &[Object]) -> bool {
+    matches!(key, Key::Msaa(kind, ..) if *kind == WinEventKind::StateChange as u8)
+        && key.object().is_some_and(|object| judged.contains(&object))
 }
 
 impl Intake {
@@ -518,7 +545,12 @@ impl Intake {
             if !state.waiting.is_empty() {
                 let waiting: Vec<Waiting> = state.waiting.drain(..).collect();
                 let focused = state.focused.clone();
-                let batch = plan(waiting, focused.as_ref(), super::window::window_is_hung);
+                let judged = state.judged.clone();
+                let batch = plan(
+                    waiting,
+                    (focused.as_ref(), &judged),
+                    super::window::window_is_hung,
+                );
                 state.hold = foreground_of(&batch).map(|hwnd| Hold {
                     hwnd,
                     until: Instant::now() + foreground_wait,
@@ -590,6 +622,12 @@ impl Intake {
         let mut state = self.lock();
         state.focused = object;
         state.focus_redirected = false;
+    }
+
+    /// Records the focus's ancestors whose state changes are judged against
+    /// it ([`State::judged`]), by their own addresses.
+    pub(super) fn set_judged(&self, ancestors: Vec<Object>) {
+        self.lock().judged = ancestors;
     }
 
     /// Records that the focus last reported was reached by redirecting a
@@ -776,10 +814,13 @@ fn admit(
 /// events from hung windows, applies the batch limits, keeps only the newest
 /// foreground change and the newest focus from each backend, moves the
 /// newest menu opening after them, and, when the batch changes the focus,
-/// the events it overtakes after all of those ([`overtaken`]).
+/// the events it overtakes after all of those ([`overtaken`]). A state
+/// change on an ancestor judged against the focus (`judged`) that was
+/// observed before the batch's first focus change, or in the same
+/// millisecond, goes before that change even when it was pushed after it.
 fn plan(
     waiting: Vec<Waiting>,
-    focused: Option<&Object>,
+    (focused, judged): (Option<&Object>, &[Object]),
     window_is_hung: impl Fn(isize) -> bool,
 ) -> Vec<Planned> {
     let kept = admit(waiting, focused, window_is_hung);
@@ -813,6 +854,14 @@ fn plan(
         .collect();
     let moving_to: Vec<Object> = changes.iter().flat_map(|key| key.moves_to()).collect();
     let focus_changes = !changes.is_empty();
+    // When the batch's first focus change was observed, where known (a
+    // fact relayed without its time has 0).
+    let change_observed = kept
+        .iter()
+        .filter(|item| item.key.as_ref().is_some_and(Key::is_focus_change))
+        .map(|item| item.entry.observed_at_ms)
+        .filter(|&observed| observed != 0)
+        .min();
 
     let mut planned = Vec::with_capacity(kept.len());
     let mut deferred = Vec::new();
@@ -838,6 +887,13 @@ fn plan(
     let uia_group = take_group(&uia_candidates);
     let mut groups = vec![(msaa_focus, msaa_group), (uia_focus, uia_group)];
     for (index, item) in rest {
+        let observed_before = change_observed
+            .is_some_and(|change| item.entry.observed_at_ms <= change)
+            && item.key.as_ref().is_some_and(|key| is_judged(key, judged));
+        if focus_changes && observed_before {
+            planned.push(Planned::Run(item.entry));
+            continue;
+        }
         for (newest, group) in &mut groups {
             if newest.is_some_and(|newest| newest < index) && !group.is_empty() {
                 planned.push(Planned::Focus(std::mem::take(group)));
@@ -856,7 +912,12 @@ fn plan(
                 }
             }
             _ if focus_changes
-                && overtaken(item.key.as_ref(), item.category, focused, &moving_to) =>
+                && overtaken(
+                    item.key.as_ref(),
+                    item.category,
+                    (focused, judged),
+                    &moving_to,
+                ) =>
             {
                 after_focus.push(item.entry);
             }
@@ -978,7 +1039,7 @@ mod tests {
             .map(|child| msaa(WinEventKind::ValueChange, 7, child))
             .collect();
         waiting.push(msaa(WinEventKind::ValueChange, 8, 50));
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, (None, &[]), never_hung);
         assert_eq!(
             observed(&planned),
             vec![3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 50]
@@ -990,7 +1051,7 @@ mod tests {
         let mut waiting = vec![msaa(WinEventKind::NameChange, 7, 1), query(1)];
         waiting.extend((2..=12).map(|child| msaa(WinEventKind::ValueChange, 7, child)));
         let focused = Object::Msaa(7, -4, 1);
-        let planned = plan(waiting, Some(&focused), never_hung);
+        let planned = plan(waiting, (Some(&focused), &[]), never_hung);
         // The focused object's event and the query survive the limit and
         // do not count toward it: the newest ten other events are kept, and
         // only the oldest, observed at 2, is dropped.
@@ -1003,7 +1064,7 @@ mod tests {
     #[test]
     fn events_from_a_hung_window_are_dropped_but_queries_are_not() {
         let waiting = vec![msaa(WinEventKind::ValueChange, 9, 1), query(1)];
-        let planned = plan(waiting, None, |hwnd| hwnd == 9);
+        let planned = plan(waiting, (None, &[]), |hwnd| hwnd == 9);
         assert_eq!(observed(&planned), vec![0]);
     }
 
@@ -1044,7 +1105,7 @@ mod tests {
             },
             5,
         ));
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, (None, &[]), never_hung);
         assert_eq!(
             observed(&planned),
             vec![2, 4, 5, 1],
@@ -1263,7 +1324,7 @@ mod tests {
         ];
         // The focus's own event keeps its place; the other is overtaken.
         let focused = Object::Msaa(3, -4, 30);
-        let planned = plan(waiting, Some(&focused), never_hung);
+        let planned = plan(waiting, (Some(&focused), &[]), never_hung);
         let focus_groups: Vec<Vec<u64>> = planned
             .iter()
             .filter_map(|planned| match planned {
@@ -1317,11 +1378,95 @@ mod tests {
             msaa(WinEventKind::NameChange, 7, 5),
         ];
         let focused = Object::Msaa(8, -4, 2);
-        let planned = plan(waiting, Some(&focused), never_hung);
+        let planned = plan(waiting, (Some(&focused), &[]), never_hung);
         assert_eq!(
             observed(&planned),
             vec![2, 3, 4, 1, 5],
             "the focus's event and the event of the object focus moves to keep their place; the other objects' events follow the focus, in their order"
+        );
+    }
+
+    #[test]
+    fn an_ancestors_state_change_observed_before_a_focus_change_goes_before_it() {
+        // The focus's ancestor at (7, -4, 1) is judged; (7, -4, 2) is not.
+        let judged = [Object::Msaa(7, -4, 1)];
+        let focus = |observed_at_ms| {
+            fact(
+                DeliveredFact::MsaaFocus {
+                    hwnd: 9,
+                    id_object: -4,
+                    id_child: 9,
+                },
+                observed_at_ms,
+            )
+        };
+        let in_order = vec![
+            msaa(WinEventKind::StateChange, 7, 1),
+            msaa(WinEventKind::StateChange, 7, 2),
+            focus(3),
+        ];
+        let planned = plan(in_order, (None, &judged), never_hung);
+        assert_eq!(
+            observed(&planned),
+            vec![1, 3, 2],
+            "the ancestor's change keeps its place ahead of the focus; the other object's follows it"
+        );
+        // Pushed after the focus change, though observed before it: the
+        // listener relays a focus from another process.
+        let pushed_late = vec![
+            msaa(WinEventKind::StateChange, 7, 2),
+            focus(5),
+            msaa(WinEventKind::StateChange, 7, 1),
+        ];
+        let planned = plan(pushed_late, (None, &judged), never_hung);
+        assert_eq!(observed(&planned), vec![1, 5, 2]);
+        // Observed after the focus change, it is judged against the new
+        // focus, after it.
+        let observed_after = vec![focus(0), msaa(WinEventKind::StateChange, 7, 1)];
+        let planned = plan(observed_after, (None, &judged), never_hung);
+        assert_eq!(observed(&planned), vec![0, 1]);
+    }
+
+    #[test]
+    fn a_focus_change_leaves_an_ancestors_unstarted_state_change_in_the_batch() {
+        let intake = Intake::default();
+        intake.set_judged(vec![Object::Msaa(0, -4, 2)]);
+        let push = |item: Item, observed_at_ms: u64| {
+            intake.push(Entry {
+                item,
+                trace: TraceId::mint(),
+                observed_at_ms,
+                timing: crate::protocol::EventTiming::default(),
+            });
+        };
+        let state_change = |child: i32| Item::Msaa {
+            kind: WinEventKind::StateChange,
+            hwnd: 0,
+            id_object: -4,
+            id_child: child,
+        };
+        push(state_change(1), 1);
+        push(state_change(2), 2);
+        push(state_change(3), 3);
+        let mut order = Vec::new();
+        let (first, _, _) = intake.next().expect("an entry");
+        order.extend(first.entries().iter().map(|entry| entry.observed_at_ms));
+        push(
+            Item::Fact(DeliveredFact::MsaaFocus {
+                hwnd: 0,
+                id_object: -4,
+                id_child: 4,
+            }),
+            4,
+        );
+        while intake.busy() {
+            let (planned, _, _) = intake.next().expect("an entry");
+            order.extend(planned.entries().iter().map(|entry| entry.observed_at_ms));
+        }
+        assert_eq!(
+            order,
+            vec![1, 2, 4, 3],
+            "the ancestor's change stays ahead of the focus; the other object's waits for it"
         );
     }
 

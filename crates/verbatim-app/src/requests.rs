@@ -92,6 +92,10 @@ pub(crate) enum Asker {
 struct Entry {
     outpost: OutpostId,
     asker: Asker,
+    /// Whether the request only waits for the application to act, as a
+    /// caret watch waits for a caret key's evidence: it does not keep
+    /// Verbatim from being idle ([`RequestTable::outstanding`]).
+    passive: bool,
 }
 
 /// Outstanding queries, keyed by request id. Owned by the reducer thread.
@@ -104,9 +108,30 @@ pub(crate) struct RequestTable {
 impl RequestTable {
     /// Records a query about to be sent to `outpost` and returns its id.
     pub(crate) fn begin(&mut self, outpost: OutpostId, asker: Asker) -> RequestId {
+        self.insert(outpost, asker, false)
+    }
+
+    /// Records a passive request about to be sent to `outpost`, one that
+    /// only waits for the application to act, as a caret watch does, and
+    /// returns its id: it gets its one outcome as any other does, but is not
+    /// counted [`outstanding`](Self::outstanding), so an open watch, which a
+    /// key that moved nothing leaves open until its bound, does not keep
+    /// Verbatim from being idle.
+    pub(crate) fn begin_passive(&mut self, outpost: OutpostId, asker: Asker) -> RequestId {
+        self.insert(outpost, asker, true)
+    }
+
+    fn insert(&mut self, outpost: OutpostId, asker: Asker, passive: bool) -> RequestId {
         self.next += 1;
         let id = RequestId(self.next);
-        self.entries.insert(id, Entry { outpost, asker });
+        self.entries.insert(
+            id,
+            Entry {
+                outpost,
+                asker,
+                passive,
+            },
+        );
         id
     }
 
@@ -170,9 +195,10 @@ impl RequestTable {
     }
 
     /// How many requests are outstanding, for the end-to-end harness's
-    /// idle barrier.
+    /// idle barrier: passive ones ([`begin_passive`](Self::begin_passive))
+    /// are not counted.
     pub(crate) fn outstanding(&self) -> usize {
-        self.entries.len()
+        self.entries.values().filter(|entry| !entry.passive).count()
     }
 }
 
@@ -469,6 +495,28 @@ mod tests {
             0,
             "the abandoned outcome is still its one outcome"
         );
+    }
+
+    #[test]
+    fn a_passive_request_is_not_outstanding_but_gets_its_outcome() {
+        let mut table = RequestTable::default();
+        let text = || Asker::Text {
+            query_id: QueryId(4),
+            trace_id: TraceId::mint(),
+        };
+        let watch = table.begin_passive(OutpostId(1), text());
+        let read = table.begin(OutpostId(1), text());
+        assert_eq!(table.outstanding(), 1, "the watch is not outstanding");
+        assert_eq!(
+            table.finish(watch, OutpostId(1), QueryOutcome::Gone).len(),
+            1
+        );
+        assert_eq!(table.outstanding(), 1);
+        assert_eq!(
+            table.finish(read, OutpostId(1), QueryOutcome::Gone).len(),
+            1
+        );
+        assert_eq!(table.outstanding(), 0);
     }
 
     #[test]

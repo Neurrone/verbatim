@@ -1338,6 +1338,9 @@ impl Worker<'_> {
                 }
             }
             drop(tracking);
+            if !foreground {
+                self.context.intake.set_judged(self.judged_ancestors());
+            }
             if let Some(node) = text_node {
                 self.follow_text(&node, trace);
             }
@@ -1622,6 +1625,29 @@ impl Worker<'_> {
                         && (id_object == OBJID_CLIENT.0 || id_object == OBJID_WINDOW.0)
                 })
         })
+    }
+
+    /// The focus's ancestors whose state changes [`Self::focus_if_spoken`]
+    /// judges against it and may report, by their own addresses, for the
+    /// intake to keep ahead of a focus change they were observed before
+    /// (`intake::State::judged`): those known at their own address, which
+    /// an event can name, and neither logical nor the foreground window.
+    fn judged_ancestors(&self) -> Vec<Object> {
+        let tracking = self.context.tracking();
+        let registry = &self.context.msaa_registry;
+        let Some((_, ancestors)) = tracking.chain.split_last() else {
+            return Vec::new();
+        };
+        ancestors
+            .iter()
+            .filter(|node| {
+                registry.at_address(node.id) == Some(true)
+                    && !self.is_logical_ancestor(node.id)
+                    && !self.is_foreground_window(node.id, tracking.foreground_window)
+            })
+            .filter_map(|node| registry.key_of(node.id))
+            .map(|(hwnd, id_object, id_child)| Object::Msaa(hwnd, id_object, id_child))
+            .collect()
     }
 
     /// The focus's logical ancestors ([`Self::is_logical_ancestor`]).
