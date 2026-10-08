@@ -70,7 +70,9 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
 
     // The caret is at the start of the line speech stopped in, and the
     // review cursor follows it there.
-    scenario.send_keys(&["rightarrow"]).expect("sends rightarrow");
+    scenario
+        .send_keys(&["rightarrow"])
+        .expect("sends rightarrow");
     scenario.speech().expect(&["o"]);
     scenario.send_gesture("kb:numpad8").expect("sends numpad 8");
     scenario.speech().expect(&[SECOND_FIRST_PART]);

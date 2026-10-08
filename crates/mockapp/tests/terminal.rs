@@ -928,8 +928,7 @@ fn backspace_says_what_it_deleted_without_caret_events(remote: bool) {
                 Effect::Text(request) => {
                     let reply = match &request.op {
                         TextOp::AwaitCaret(watch) => {
-                            match check_caret(&mut source, &mut anchors, watch, &mut AlreadyMoved)
-                            {
+                            match check_caret(&mut source, &mut anchors, watch, &mut AlreadyMoved) {
                                 Watched::Answered(reply) => reply,
                                 Watched::Watching => panic!("the check found no evidence"),
                             }
