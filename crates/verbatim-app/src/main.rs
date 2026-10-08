@@ -1372,9 +1372,15 @@ impl ReducerThread<'_> {
             op,
         } = request;
         let outpost = node_id.outpost();
-        let id = self
-            .requests
-            .begin(outpost, Asker::Text { query_id, trace_id });
+        let asker = Asker::Text { query_id, trace_id };
+        // A caret watch waits for the application, possibly until its bound
+        // when the key moved nothing: it does not keep Verbatim from being
+        // idle.
+        let id = if matches!(op, verbatim_model::TextOp::AwaitCaret(_)) {
+            self.requests.begin_passive(outpost, asker)
+        } else {
+            self.requests.begin(outpost, asker)
+        };
         let command = SupervisorToOutpost::Query {
             trace_id,
             request_id: id.0,
