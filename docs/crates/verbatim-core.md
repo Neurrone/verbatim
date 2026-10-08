@@ -606,7 +606,11 @@ screen and sends what is new as `NormalizedEvent::TerminalOutput`
 - Output is spoken queued, in order, one line per utterance, each starting
   and ending with an index mark. Every line counts, blank ones included
   (Dickson, 2026-10-07): a blank line waits and is counted when skipped,
-  but is never spoken. Two utterances are handed to speech ahead of
+  but is never spoken. The blank lines a burst starts with, before its
+  first line with text, are dropped and not counted
+  (`TerminalSpeech::burst_written`): they are rows a program passed over,
+  as a footer drawn at the bottom of an empty screen leaves, not lines it
+  printed. Two utterances are handed to speech ahead of
   playback (one playing, one ready behind it) and the rest wait in the
   state (`TerminalSpeech`), so the backlog not yet spoken is known. Each
   opening mark reached hands on the next. Newer output never cancels older

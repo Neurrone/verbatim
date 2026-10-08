@@ -365,6 +365,27 @@ each key, hearing only the count that changed, never a character typed;
 type a character in the middle of a command and hear it echoed; and press
 Escape on a typed command, hearing the text it removed.
 
+The screen scenarios (`scenarios/terminal_screens.rs`) print a line of
+forty words, far wider than the terminal, heard whole; grow one line by
+ten words a key, hearing each key's ten words; and run a full-screen
+program on the alternate screen: its thirty rows heard in full, a row near
+the top and one near the bottom changed ("changed"), the rows scrolled down
+and back up ("row 0", "row 30"), and the alternate screen closed, after
+which only "closed" and the prompt are new.
+
+The selection-list scenarios (`scenarios/terminal_lists.rs`) run a
+list whose ">" marker moves by two rewritten cells, and one redrawn whole
+on each move with the caret below it: Down, Down and Up say "> banana",
+"> cherry" and "> banana", once each.
+
+The review-output scenarios (`scenarios/terminal_review_output.rs`)
+review a line above the caret, let a script print two lines, and hear the
+review cursor follow the caret to the prompt. The footer-flood scenarios
+(`scenarios/terminal_footer.rs`) write a hundred lines into a scroll
+region above a footer that is redrawn during the flood and changed after
+it: the flood policy's thirty lines, "skipped 41 lines", the last
+twenty-nine, and the footer's change, "done".
+
 The flood scenarios assert the flood policy exactly within the
 scrollback: 2,000 lines are heard as lines 1 to 30, "skipped 1941 lines"
 after the skipped-lines sound, and lines 1,972 to 2,000 with the prompt.

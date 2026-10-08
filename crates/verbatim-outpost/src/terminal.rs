@@ -19,6 +19,7 @@
 //!
 //! When to read is decided by on-demand reading ([`reading`]).
 
+pub mod keys;
 pub mod reading;
 pub mod screen;
 
@@ -58,6 +59,19 @@ pub struct Memory {
     /// The text's first row as it was read, as the provider gave it: while
     /// it reads the same, the terminal has discarded nothing.
     pub first_row: String,
+    /// The lines of the screen this one replaced whole, sharing no line
+    /// with it: the main screen a full-screen program's alternate screen
+    /// covers, which the terminal shows again as it was when the program
+    /// closes the alternate screen. `None` once a screen shares lines with
+    /// the one before it is replaced whole again.
+    pub main: Option<Vec<String>>,
+    /// The line of `screen` the caret was on, when it was read with it and
+    /// found there: the last line that reads as the caret's row does, or,
+    /// for a line that wrapped onto more rows, the last that holds it.
+    pub caret: Option<usize>,
+    /// How far up the screen before had scrolled when this one was read,
+    /// when that was found: 0 when the two line up row for row.
+    pub scrolled: Option<u32>,
 }
 
 /// A read of a terminal's screen, as text: [`Screen`] without its caret,
@@ -207,14 +221,30 @@ pub fn read_new<S: ScreenSource>(
         next_row: screen.next_row.clone(),
         alternate: screen.alternate,
         first_row: screen.first_row.clone(),
+        main: None,
+        caret: None,
+        scrolled: screen.shift,
     };
     let Some(old) = earlier.filter(|_| !unsettled) else {
         return Ok(Found::Output(TerminalOutput::default(), remembered));
     };
+    let (main, restored) = main_screen(old, &new);
+    remembered.main = main;
+    if let Some(output) = restored {
+        return Ok(Found::Output(output, remembered));
+    }
     // The caret's line on the new screen, the last that reads as it does.
-    let cursor = screen.caret_line.as_deref().and_then(|line| {
-        let line = verbatim_text::trim_padding(line.trim_end_matches(['\r', '\n']));
-        new.iter().rposition(|row| row == line)
+    let caret_row = screen
+        .caret_line
+        .as_deref()
+        .map(|line| verbatim_text::trim_padding(line.trim_end_matches(['\r', '\n'])));
+    let cursor = caret_row.and_then(|line| new.iter().rposition(|row| row == line));
+    // The caret's row is one row of a line that wrapped onto more, which
+    // the screen's text gives whole: the last line holding that row.
+    remembered.caret = cursor.or_else(|| {
+        caret_row
+            .filter(|row| !row.is_empty())
+            .and_then(|row| new.iter().rposition(|line| line.contains(row)))
     });
     let output = match screen.shift {
         Some(shift) => {
@@ -227,24 +257,25 @@ pub fn read_new<S: ScreenSource>(
             found.changed = with_since_read(found.changed, since_read);
             // The old screen scrolled away whole: its last line, which
             // output may have been written to, is read where it is now.
+            let old_last_row =
+                verbatim_text::trim_padding(screen.old_last_row.trim_end_matches(['\r', '\n']));
             let changed = if shift >= seen {
-                old.screen.last().and_then(|last| {
-                    screen::line_change(
-                        last,
-                        verbatim_text::trim_padding(
-                            screen.old_last_row.trim_end_matches(['\r', '\n']),
-                        ),
-                    )
-                })
+                old.screen
+                    .last()
+                    .and_then(|last| screen::line_change(last, old_last_row))
             } else {
                 found.changed
             };
+            let mut lines = found.below;
+            if shift >= seen {
+                keep_footer(&mut lines, &old.screen, old_last_row);
+            }
             TerminalOutput {
                 above: found.above,
                 changed,
                 head,
                 skipped: (counted > 0).then_some(Skipped::Count(counted)),
-                lines: found.below,
+                lines,
             }
         }
         None => match screen.document_rows {
@@ -274,7 +305,9 @@ pub fn read_new<S: ScreenSource>(
     if let Some(shift) = screen.shift {
         let kept = old.said.get(shift as usize..).unwrap_or_default();
         for (row, was) in remembered.said.iter_mut().zip(kept) {
-            if was.starts_with(row.as_str()) && was != row {
+            // A row erased whole is drawn again, not rewritten: what is
+            // written to it next is new.
+            if !row.trim().is_empty() && was.starts_with(row.as_str()) && was != row {
                 row.clone_from(was);
             }
         }
@@ -303,6 +336,103 @@ pub struct Terminal {
     /// A range at the start of the screen's top row as last read, tried
     /// before a search ([`ScreenAnchor::range`]).
     top: Option<AgileReference<IUIAutomationTextRange>>,
+    /// When the read that `memory` holds ended: a key pressed after that
+    /// cannot show in it, where one pressed while it was under way can.
+    memory_read_ms: u64,
+    /// What was remembered before the last read, from up to [`KEPT_READS`]
+    /// reads before it, oldest first, each with when its read ended, for a
+    /// key pressed before the last read ([`Terminal::screen_before`]): a
+    /// program's answer to a key can be read several times before the
+    /// key's request reaches the outpost.
+    previous: std::collections::VecDeque<Kept>,
+    /// While a line key's watch is open (`keys`), reads do not advance the
+    /// memory: each compares with the screen before the key, so a redraw
+    /// read half done is never taken as new output, and what the key
+    /// redrew is said once, by its answer.
+    pub frozen: bool,
+}
+
+/// How many earlier reads [`Terminal`] keeps.
+const KEPT_READS: usize = 8;
+
+/// A memory kept from an earlier read.
+struct Kept {
+    read_ms: u64,
+    memory: Memory,
+    top: Option<AgileReference<IUIAutomationTextRange>>,
+}
+
+impl Terminal {
+    /// Makes the memory the screen as it was before a key pressed at
+    /// `pressed_at_ms` (Unix milliseconds): the memory itself when its read
+    /// ended before then, else the newest kept from a read that did, the
+    /// reads after it forgotten. Returns that screen, or `None` when no
+    /// read kept ended before the key.
+    pub fn screen_before(&mut self, pressed_at_ms: u64) -> Option<Memory> {
+        let memory = self.memory.as_ref()?;
+        if self.memory_read_ms < pressed_at_ms {
+            return Some(memory.clone());
+        }
+        let at = self
+            .previous
+            .iter()
+            .rposition(|kept| kept.read_ms < pressed_at_ms)?;
+        tracing::debug!(
+            later = self.previous.len() - at,
+            "a line key's screen before it is from a read before the last"
+        );
+        self.previous.truncate(at + 1);
+        let kept = self.previous.pop_back()?;
+        self.memory = Some(kept.memory.clone());
+        self.memory_read_ms = kept.read_ms;
+        self.top = kept.top;
+        Some(kept.memory)
+    }
+
+    /// Keeps the memory as an earlier read's, with `top` as its range,
+    /// before `memory` takes its place.
+    fn keep(&mut self, memory: Memory, top: Option<AgileReference<IUIAutomationTextRange>>) {
+        if let Some(kept) = self.memory.replace(memory) {
+            if self.previous.len() == KEPT_READS {
+                self.previous.pop_front();
+            }
+            self.previous.push_back(Kept {
+                read_ms: self.memory_read_ms,
+                memory: kept,
+                top,
+            });
+        }
+        self.memory_read_ms = crate::protocol::now_us() / 1_000;
+    }
+
+    /// The screen as it was before a key pressed at `pressed_at_ms`, as
+    /// [`Terminal::screen_before`] finds it, without changing what is
+    /// remembered.
+    #[must_use]
+    pub fn screen_at(&self, pressed_at_ms: u64) -> Option<&Memory> {
+        let memory = self.memory.as_ref()?;
+        if self.memory_read_ms < pressed_at_ms {
+            return Some(memory);
+        }
+        self.previous
+            .iter()
+            .rev()
+            .find(|kept| kept.read_ms < pressed_at_ms)
+            .map(|kept| &kept.memory)
+    }
+
+    /// Ends a line key's watch (`frozen`) with `memory`, the screen read
+    /// that answered it, as what is remembered from now on; or, with none,
+    /// keeps the screen before the key, so the next read finds what the
+    /// key did as new.
+    pub fn thaw(&mut self, memory: Option<Memory>) {
+        self.frozen = false;
+        let Some(memory) = memory else {
+            return;
+        };
+        let top = self.top.take();
+        self.keep(memory, top);
+    }
 }
 
 impl Terminal {
@@ -442,12 +572,15 @@ pub fn read<'a>(
         path: None,
     };
     let found = read_new(&mut source, terminal.memory.as_ref(), mode, head_wanted)?;
-    if let Found::Output(_, memory) = &found {
-        terminal.memory = Some(memory.clone());
-        terminal.top = source
+    if let Found::Output(_, memory) = &found
+        && !terminal.frozen
+    {
+        let top = source
             .top_found
             .as_ref()
             .and_then(|range| AgileReference::new(range).ok());
+        let kept_top = std::mem::replace(&mut terminal.top, top);
+        terminal.keep(memory.clone(), kept_top);
     }
     Ok(ReadAnswer {
         found,
@@ -728,6 +861,93 @@ fn merged_change(older: Option<LineChange>, newer: Option<LineChange>) -> Option
             newer.since_read.map(|change| *change),
         )
         .map(Box::new),
+    })
+}
+
+/// For a screen whose rows all scrolled away since `old` was read, its
+/// lines `lines`, all new: when the old screen's last line was a footer
+/// that stayed on the screen's last row while the rows above it scrolled
+/// (a scroll region above it), it is said only as it changed. That is so
+/// when the row it was on now holds something else (`old_last_row`, not
+/// that line nor that line grown, as output written to a last line would
+/// be), and the new screen's last line shares a start with it.
+fn keep_footer(lines: &mut Vec<String>, old: &[String], old_last_row: &str) {
+    let Some(footer) = old.last().filter(|line| !line.trim().is_empty()) else {
+        return;
+    };
+    let Some(now) = lines.last() else {
+        return;
+    };
+    let moved_on = !old_last_row.starts_with(footer.as_str());
+    let shares_start = footer
+        .chars()
+        .zip(now.chars())
+        .take_while(|(a, b)| a == b)
+        .next()
+        .is_some();
+    if moved_on && shares_start {
+        let change = screen::line_change(footer, now);
+        lines.pop();
+        lines.extend(change.map(|change| change.text.trim_start().to_owned()));
+    }
+}
+
+/// What a read whose new screen is `new` makes of the main screen
+/// (`Memory::main`), after the screen `old`: the main screen to remember
+/// from now on, and, when `new` is the main screen shown again as it was
+/// after a full-screen program closed its alternate screen, what is new on
+/// it since, which is then the read's output. A screen replaced whole is
+/// remembered as the main screen: a full-screen program opened its
+/// alternate screen over it.
+fn main_screen(old: &Memory, new: &[String]) -> (Option<Vec<String>>, Option<TerminalOutput>) {
+    if !replaces_whole(&old.screen, new) {
+        return (old.main.clone(), None);
+    }
+    let restored = old
+        .main
+        .as_ref()
+        .and_then(|main| main_shift(main, new).map(|shift| (main, shift)));
+    match restored {
+        Some((main, shift)) => {
+            let found = diff(main, new, Shift::Known(shift), None);
+            let output = TerminalOutput {
+                above: found.above,
+                changed: found.changed,
+                lines: found.below,
+                ..TerminalOutput::default()
+            };
+            (None, Some(output))
+        }
+        None => (Some(old.screen.clone()), None),
+    }
+}
+
+/// Whether `new` replaced `old` whole: `old` has lines that are not blank,
+/// and none of them is on `new`, nor grown there or cut short, as a line
+/// being typed on is. A screen cleared on its way to being drawn again
+/// (the alternate screen cleared before a program draws it) counts.
+fn replaces_whole(old: &[String], new: &[String]) -> bool {
+    let written = |line: &&String| !line.trim().is_empty();
+    let related = |old: &String| {
+        new.iter()
+            .filter(written)
+            .any(|new| new.starts_with(old.as_str()) || old.starts_with(new.as_str()))
+    };
+    old.iter().any(|line| written(&line)) && !old.iter().filter(written).any(related)
+}
+
+/// How many of the main screen's first lines, `main`, have scrolled away
+/// on the screen shown again after an alternate screen, `new`: the fewest
+/// whose removal leaves lines that start `new` as they were, the last
+/// allowed to have grown (output written to it). `None` when no part of
+/// the main screen starts `new`, as after the screen was cleared.
+fn main_shift(main: &[String], new: &[String]) -> Option<usize> {
+    (0..main.len()).find(|&first| {
+        let kept = &main[first..];
+        let (last, earlier) = kept.split_last().expect("kept is not empty");
+        new.len() >= kept.len()
+            && new[..earlier.len()] == *earlier
+            && new[earlier.len()].starts_with(last.as_str())
     })
 }
 

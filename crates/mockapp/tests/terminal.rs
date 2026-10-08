@@ -501,32 +501,33 @@ fn read_output_and_caret(
 }
 /// The classic baseline's calls: the document and visible ranges, the
 /// screen's text, its top two rows, whether history lies above it, and the
-/// top row again at the end (the guard against text that moved).
-const BASELINE_CALLS: u32 = 23;
+/// top row and the visible range again at the end (the guards against text
+/// and a view that moved).
+const BASELINE_CALLS: u32 = 25;
 
 /// The classic calls of a read that finds the anchor where its range is:
 /// the baseline's, the rows at the range checked, the rows to the end
 /// counted from the anchor and from the screen, and the old screen's last
 /// row read where it is now.
-const FOUND_CALLS: u32 = 41;
+const FOUND_CALLS: u32 = 43;
 
 /// [`FOUND_CALLS`] and the first rows that went by unread.
-const FLOOD_CALLS: u32 = 48;
+const FLOOD_CALLS: u32 = 50;
 
 /// The classic calls of a read whose anchor is gone: its range's rows read
 /// otherwise, the search finds it nowhere, and the rows of the whole text
 /// are counted.
-const OVERFLOW_CALLS: u32 = 41;
+const OVERFLOW_CALLS: u32 = 43;
 
 /// The classic calls of a read of a cleared screen: the search finds
 /// nothing, and the rows are counted.
-const CLEARED_CALLS: u32 = 36;
+const CLEARED_CALLS: u32 = 38;
 
 const BASELINE_HITS: Hits = &[
-    ("GetVisibleRanges", 1),
+    ("GetVisibleRanges", 2),
     ("DocumentRange", 1),
     ("Clone", 7),
-    ("CompareEndpoints", 1),
+    ("CompareEndpoints", 2),
     ("ExpandToEnclosingUnit", 4),
     ("GetText", 5),
     ("Move", 1),
@@ -542,10 +543,10 @@ const REMOTE_BASELINE_HITS: Hits = &[
     ("GetPropertyValue", 1),
     ("HostRawElementProvider", 1),
     ("Navigate", 1),
-    ("GetVisibleRanges", 1),
+    ("GetVisibleRanges", 2),
     ("DocumentRange", 1),
     ("Clone", 9),
-    ("CompareEndpoints", 1),
+    ("CompareEndpoints", 2),
     ("ExpandToEnclosingUnit", 4),
     ("GetText", 5),
     ("Move", 1),
@@ -553,10 +554,10 @@ const REMOTE_BASELINE_HITS: Hits = &[
 ];
 
 const FOUND_HITS: Hits = &[
-    ("GetVisibleRanges", 1),
+    ("GetVisibleRanges", 2),
     ("DocumentRange", 1),
     ("Clone", 13),
-    ("CompareEndpoints", 2),
+    ("CompareEndpoints", 3),
     ("ExpandToEnclosingUnit", 5),
     ("GetText", 6),
     ("Move", 5),
@@ -569,10 +570,10 @@ const REMOTE_FOUND_HITS: Hits = &[
     ("GetPropertyValue", 1),
     ("HostRawElementProvider", 1),
     ("Navigate", 1),
-    ("GetVisibleRanges", 1),
+    ("GetVisibleRanges", 2),
     ("DocumentRange", 1),
     ("Clone", 17),
-    ("CompareEndpoints", 2),
+    ("CompareEndpoints", 3),
     ("ExpandToEnclosingUnit", 5),
     ("GetText", 6),
     ("Move", 5),
@@ -580,10 +581,10 @@ const REMOTE_FOUND_HITS: Hits = &[
 ];
 
 const FLOOD_HITS: Hits = &[
-    ("GetVisibleRanges", 1),
+    ("GetVisibleRanges", 2),
     ("DocumentRange", 1),
     ("Clone", 15),
-    ("CompareEndpoints", 2),
+    ("CompareEndpoints", 3),
     ("ExpandToEnclosingUnit", 5),
     ("GetText", 7),
     ("Move", 7),
@@ -596,10 +597,10 @@ const REMOTE_FLOOD_HITS: Hits = &[
     ("GetPropertyValue", 1),
     ("HostRawElementProvider", 1),
     ("Navigate", 1),
-    ("GetVisibleRanges", 1),
+    ("GetVisibleRanges", 2),
     ("DocumentRange", 1),
     ("Clone", 19),
-    ("CompareEndpoints", 2),
+    ("CompareEndpoints", 3),
     ("ExpandToEnclosingUnit", 5),
     ("GetText", 7),
     ("Move", 7),
@@ -607,10 +608,10 @@ const REMOTE_FLOOD_HITS: Hits = &[
 ];
 
 const OVERFLOW_HITS: Hits = &[
-    ("GetVisibleRanges", 1),
+    ("GetVisibleRanges", 2),
     ("DocumentRange", 1),
     ("Clone", 12),
-    ("CompareEndpoints", 5),
+    ("CompareEndpoints", 6),
     ("ExpandToEnclosingUnit", 6),
     ("FindText", 2),
     ("GetText", 5),
@@ -624,10 +625,10 @@ const REMOTE_OVERFLOW_HITS: Hits = &[
     ("GetPropertyValue", 1),
     ("HostRawElementProvider", 1),
     ("Navigate", 1),
-    ("GetVisibleRanges", 1),
+    ("GetVisibleRanges", 2),
     ("DocumentRange", 1),
     ("Clone", 15),
-    ("CompareEndpoints", 5),
+    ("CompareEndpoints", 6),
     ("ExpandToEnclosingUnit", 6),
     ("FindText", 2),
     ("GetText", 6),
@@ -636,10 +637,10 @@ const REMOTE_OVERFLOW_HITS: Hits = &[
 ];
 
 const CLEARED_HITS: Hits = &[
-    ("GetVisibleRanges", 1),
+    ("GetVisibleRanges", 2),
     ("DocumentRange", 1),
     ("Clone", 11),
-    ("CompareEndpoints", 4),
+    ("CompareEndpoints", 5),
     ("ExpandToEnclosingUnit", 5),
     ("FindText", 1),
     ("GetText", 5),
@@ -653,10 +654,10 @@ const REMOTE_CLEARED_HITS: Hits = &[
     ("GetPropertyValue", 1),
     ("HostRawElementProvider", 1),
     ("Navigate", 1),
-    ("GetVisibleRanges", 1),
+    ("GetVisibleRanges", 2),
     ("DocumentRange", 1),
     ("Clone", 14),
-    ("CompareEndpoints", 4),
+    ("CompareEndpoints", 5),
     ("ExpandToEnclosingUnit", 5),
     ("FindText", 1),
     ("GetText", 5),
@@ -666,14 +667,14 @@ const REMOTE_CLEARED_HITS: Hits = &[
 
 /// The classic calls of the typed read with the caret and its line read
 /// too.
-const TYPED_WITH_CARET_CALLS: u32 = 49;
+const TYPED_WITH_CARET_CALLS: u32 = 51;
 
 const TYPED_WITH_CARET_HITS: Hits = &[
     ("ITextProvider::GetSelection", 1),
-    ("GetVisibleRanges", 1),
+    ("GetVisibleRanges", 2),
     ("DocumentRange", 1),
     ("Clone", 15),
-    ("CompareEndpoints", 3),
+    ("CompareEndpoints", 4),
     ("ExpandToEnclosingUnit", 6),
     ("GetText", 8),
     ("Move", 5),
@@ -689,10 +690,10 @@ const REMOTE_TYPED_WITH_CARET_HITS: Hits = &[
     ("HostRawElementProvider", 2),
     ("Navigate", 2),
     ("ITextProvider::GetSelection", 1),
-    ("GetVisibleRanges", 1),
+    ("GetVisibleRanges", 2),
     ("DocumentRange", 1),
     ("Clone", 20),
-    ("CompareEndpoints", 3),
+    ("CompareEndpoints", 4),
     ("ExpandToEnclosingUnit", 6),
     ("GetText", 8),
     ("Move", 5),

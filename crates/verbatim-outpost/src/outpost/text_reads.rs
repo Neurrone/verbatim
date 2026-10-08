@@ -70,6 +70,10 @@ pub(super) struct OpenWatch {
     pub(super) timing: EventTiming,
     /// The calls its checks have made so far, none of which found evidence.
     pub(super) calls: CallCounts,
+    /// For a line key in a terminal, the screen before the key: the watch
+    /// is checked by the terminal's reads, not by the caret
+    /// (`crate::terminal::keys`).
+    pub(super) terminal_before: Option<crate::terminal::Memory>,
 }
 
 /// A check of a caret key's watch, as the worker makes it.

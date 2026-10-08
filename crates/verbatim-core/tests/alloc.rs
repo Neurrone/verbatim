@@ -259,6 +259,8 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
         query_id: request.query_id,
         reply: TextReply::Caret(Box::new(CaretReply {
             same_line: None,
+            redrawn: None,
+            removed: None,
             moved: true,
             read_at_ms: 101,
             caret: CaretReport {

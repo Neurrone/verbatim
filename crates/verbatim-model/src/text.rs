@@ -460,6 +460,18 @@ pub struct CaretReply {
     /// it was before the key; `None` when not asked or not known.
     #[serde(default)]
     pub same_line: Option<bool>,
+    /// In a terminal, the line a program redrew to show a line key's
+    /// effect when the caret is not on it: a selection list's line that
+    /// gained the marker. Spoken in place of the caret's line; `None`
+    /// otherwise.
+    #[serde(default)]
+    pub redrawn: Option<String>,
+    /// In a terminal, the text a key judged by where the caret landed
+    /// removed from a typed line that had wrapped onto more rows, which
+    /// the caret's line alone does not show. Spoken as removed text;
+    /// `None` otherwise.
+    #[serde(default)]
+    pub removed: Option<String>,
 }
 
 /// A movement by whole units, positive forward and negative back.

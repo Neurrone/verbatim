@@ -23,7 +23,7 @@
 //!
 //! A screen read while the terminal wrote to it is marked unsettled: its
 //! top row read on its own differs from the screen's text, or changed by
-//! the end of the read.
+//! the end of the read, or the terminal's view moved while it was read.
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, TextUnit_Character,
@@ -545,6 +545,23 @@ pub fn terminal_screen_remote(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Scr
     let after = c.row(&mut b, top);
     let top_after = b.text_range_get_text(after, c.all);
     let top_after = b.add_to_results(top_after);
+    // The screen still where the terminal shows it: a terminal that moved
+    // its view while it was read (the console host moves its view down a
+    // row for each line written into a scroll region above a footer) gave
+    // the text of rows it no longer shows.
+    let view_moved = b.new_bool(false);
+    let view_moved = b.add_to_results(view_moved);
+    let ranges_after = b.text_pattern_get_visible_ranges(pattern);
+    let size_after = b.array_size(ranges_after);
+    let some_after = b.compare(size_after, none, Comparison::GreaterThan);
+    b.if_(some_after, |b| {
+        let first = b
+            .array_get_at(ranges_after, none)
+            .assume::<kind::TextRange>();
+        let order = b.text_range_compare_endpoints(first, c.start, screen, c.start);
+        let moved = b.not_equal(order, c.zero);
+        b.set(view_moved, moved);
+    });
     let caret = query.caret.map(|caret| emit_caret_line(&mut b, &caret));
     let outcome = b.finish().execute()?;
 
@@ -554,7 +571,9 @@ pub fn terminal_screen_remote(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Scr
     let shift = outcome.get(shift)?;
     let document_rows = outcome.get(document_rows)?;
     Ok(Screen {
-        settled: is_settled(&text, &top_row, &top_after) && outcome.get(walks_agree)?,
+        settled: is_settled(&text, &top_row, &top_after)
+            && outcome.get(walks_agree)?
+            && !outcome.get(view_moved)?,
         text,
         top_row,
         next_row: string_of(&outcome, next_text)?,
@@ -753,7 +772,13 @@ pub fn terminal_screen_classic(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Sc
         }
     }
     let top_after = text_of(&row(&top)?)?;
-    answer.settled = is_settled(&answer.text, &answer.top_row, &top_after) && walks_agree;
+    // The screen still where the terminal shows it, as the program checks.
+    let view_moved = match query.pattern.visible_ranges()?.into_iter().next() {
+        Some(first) => first.compare_endpoints(Endpoint::Start, &screen, Endpoint::Start)? != 0,
+        None => false,
+    };
+    answer.settled =
+        is_settled(&answer.text, &answer.top_row, &top_after) && walks_agree && !view_moved;
     if let Some(caret) = &query.caret {
         answer.caret = Some(caret_line_classic(caret)?);
     }

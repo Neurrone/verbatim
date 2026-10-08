@@ -1082,3 +1082,58 @@ fn typing_the_caret_shows_before_the_screen_read_is_echoed_once() {
     );
     assert_eq!(playback.play_all(&mut state), ["."]);
 }
+
+#[test]
+fn a_change_since_read_that_is_not_the_typing_is_never_spoken() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    // A key a full-screen program reads without showing it, then a row it
+    // scrolled in: from what the line said, nothing; since it was read,
+    // "row 0", which is output already reported above it, not typing.
+    playback.feed(&mut state, &typed("n"));
+    let scrolled = LineChange {
+        text: String::new(),
+        line: "row 0".to_owned(),
+        appended: false,
+        uncertain: 0,
+        inserted: String::new(),
+        since_read: Some(Box::new(LineChange {
+            text: "row 0".to_owned(),
+            line: "row 0".to_owned(),
+            appended: true,
+            uncertain: 0,
+            inserted: "row 0".to_owned(),
+            since_read: None,
+        })),
+    };
+    let output = TerminalOutput {
+        above: vec!["row 0".to_owned()],
+        changed: Some(scrolled),
+        ..TerminalOutput::default()
+    };
+    playback.feed(
+        &mut state,
+        &event(NormalizedEvent::TerminalOutput {
+            node_id: id(TERMINAL),
+            output,
+        }),
+    );
+    assert_eq!(playback.play_all(&mut state), ["row 0"]);
+}
+
+#[test]
+fn the_blank_lines_a_burst_starts_with_are_not_counted() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    // A footer drawn on the last row of an empty screen: the rows above it
+    // are blank, and not output.
+    let mut drawn: Vec<String> = (0..28).map(|_| String::new()).collect();
+    drawn.extend(lines(1..=30));
+    drawn.extend((0..10).map(|_| String::new()));
+    drawn.extend(lines(41..=70));
+    playback.feed(&mut state, &output(drawn));
+    let mut expected = lines(1..=30);
+    expected.push("skipped 10".to_owned());
+    expected.extend(lines(41..=70));
+    assert_eq!(playback.play_all(&mut state), expected);
+}

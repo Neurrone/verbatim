@@ -1177,8 +1177,8 @@ finds it.
   start is heard. Not found by its text, the rows of the whole text are
   counted. A screen whose top row read differently from its text, or
   changed by the end of the read, or whose walks to the text's end
-  disagree, was written to while it was read, and is not trusted
-  (`settled` false).
+  disagree, or whose view moved, was written to while it was read, and is
+  not trusted (`settled` false).
 - `read_new` turns a read into a `TerminalOutput` with the pure screen
   diff (`terminal::screen`). The old screen's lines that scrolled off its
   top are set aside, and the rest are lined up with the new screen: where
@@ -1221,7 +1221,45 @@ finds it.
   and a line that came back to what it said has nothing else to speak.
   Lines are taken as rewritten in place, first to first, only where at
   least as many new lines replace them; a screen cleared down to its
-  prompt speaks the prompt as new.
+  prompt speaks the prompt as new. A lone line replaced by several is
+  paired with the one sharing the longest start with it, so a footer
+  redrawn below lines scrolled in above it is its own rewrite. When the
+  screen scrolled away whole and its last line was a footer that stayed on
+  the last row (the row it was on now holds something else, and the new
+  last line shares a start with it), the footer is said only as it
+  changed (`keep_footer`). A row erased whole is drawn again, so
+  what it said is not kept for it. A screen replaced whole (none of its
+  lines left on the new screen, nor grown or cut short there) is kept as
+  the main screen (`Memory::main`): a full-screen program opened its
+  alternate screen over it. When a later screen replaces the alternate
+  one whole and starts with the main screen's lines (after as many of them
+  as scrolled away, the last allowed to have grown), the main screen is
+  back, and only what follows it is new.
+
+- `terminal::keys` judges a line key (Up or Down Arrow) in a terminal
+  from the screen before the key and the screen as read now, since a
+  program answers it by redrawing and a read can find the redraw half
+  done. A line that gained text another line lost is the marker moved
+  (`KeyEffect::Redrawn`, or the caret's line when it is that one); the
+  caret's line gaining text, being cut short with nothing else changed,
+  or the caret moving to the next or previous line with no line only
+  losing text, is the caret's line (`KeyEffect::CaretLine`); anything
+  else is a redraw under way, and the key waits for the next read. The
+  worker opens such a key's watch with the terminal's memory frozen at
+  the screen before the key (`Terminal::screen_before`, `frozen`), checks
+  it on every read of the terminal's text and caret changes instead of by
+  the caret, answers it with `CaretReply::redrawn` for another line, and
+  then remembers the answering read (`Terminal::thaw`), whose output
+  leaves out the line the answer speaks. `keys::wrapped_removal` judges a
+  key answered by where the caret landed (Escape) whose caret left its
+  row: the screen's text gives a line that wrapped whole, so when the
+  caret is on the same line of the screen and that line was cut short,
+  the rest of it is the answer's `CaretReply::removed`; the next line
+  still showing that rest is a redraw under way, and the watch stays open.
+  The screen before a key is the newest of the last eight reads
+  (`Terminal::screen_at`, `Terminal::screen_before`) that ended before
+  the key was pressed, a read under way when it was pressed possibly
+  showing part of what it did.
 - On-demand reading (`terminal::reading`, `phase6-design.md`, "Terminal
   decisions"), a pure transition function the worker drives. Live, the
   default, a text change of the focused terminal (`Text_TextChanged`) is

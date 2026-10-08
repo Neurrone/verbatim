@@ -337,7 +337,10 @@ are exact and the caller trims:
   when the anchor was sought by its text and not found.
 - `settled`: whether the text held still while it was read: the screen's
   text starts with its top row as read on its own, that row reads the same
-  at the end, and the two walks to the text's end agree.
+  at the end, the two walks to the text's end agree, and the first visible
+  range starts at the end where it did at the start (the console host
+  moves its view down a row for each line written into a scroll region
+  above a footer).
 
 Against mockapp's text provider (`crates/mockapp/tests/terminal.rs`, its
 `screen` command putting only the text's last lines on screen), both

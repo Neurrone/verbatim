@@ -389,6 +389,8 @@ pub(crate) fn caret_reply(
         unit,
         selection_changes,
         same_line,
+        redrawn,
+        removed,
     } = *reply;
     let segments = if pending.key.select || pending.key.motion == CaretMotion::SelectAll {
         selection_segments(&selection_changes)
@@ -417,6 +419,11 @@ pub(crate) fn caret_reply(
                     _ => Vec::new(),
                 }
             }
+            // A typed line that had wrapped onto more rows, removed.
+            CaretMotion::Other if removed.is_some() => removed_segments(
+                removed.as_deref().unwrap_or_default(),
+                caret.line.language_at(0),
+            ),
             CaretMotion::Other => {
                 let mut reported = reported_format(state, pending.node);
                 let segments =
@@ -424,6 +431,12 @@ pub(crate) fn caret_reply(
                         .unwrap_or_else(|| line_segments(&caret.line, grid, &mut reported));
                 state.reported_format = Some((pending.node, reported));
                 segments
+            }
+            // A terminal program redrew another line to show the key's
+            // effect (a selection list's marker), which is spoken.
+            _ if redrawn.is_some() => {
+                let line = redrawn.as_deref().unwrap_or_default();
+                text::text_segments(text::line_content(line, grid), None)
             }
             motion => {
                 let mut reported = reported_format(state, pending.node);
@@ -475,13 +488,7 @@ fn other_key_segments(
         grid,
     );
     if let Removal::Removed(removed) = removed {
-        let language = after.language_at(0);
-        let single = text::graphemes_count(&removed) == 1;
-        return Some(if single {
-            text::character_segments(Some(&removed), language)
-        } else {
-            text::text_segments(removed.trim(), language)
-        });
+        return Some(removed_segments(&removed, after.language_at(0)));
     }
     if same_line == Some(false) {
         return None;
@@ -490,6 +497,16 @@ fn other_key_segments(
         return Some(landing_segments(*offset as usize, after, grid));
     }
     Some(Vec::new())
+}
+
+/// The speech for text a key outside the caret table removed: a single
+/// character by its name, otherwise the text.
+fn removed_segments(removed: &str, language: Option<&str>) -> Vec<UtteranceSegment> {
+    if text::graphemes_count(removed) == 1 {
+        text::character_segments(Some(removed), language)
+    } else {
+        text::text_segments(removed.trim(), language)
+    }
 }
 
 /// The landing rule (`phase6-design.md`, "What a key did to the text"): a

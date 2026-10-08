@@ -590,3 +590,71 @@ fn a_screen_cleared_down_to_its_prompt_speaks_the_prompt() {
     assert_eq!(found.changed, None);
     assert_eq!([found.above, found.below].concat(), strings(&["ready>"]));
 }
+
+#[test]
+fn closing_an_alternate_screen_speaks_only_what_followed_on_the_main_screen() {
+    let main = ["one", "two", "ready>", "ready> .\\alt.ps1"];
+    let mut sim = Sim::new(3, 100, &main);
+    let (_, memory) = read(&mut sim, None);
+    // The program opens its alternate screen, which is read cleared before
+    // it is drawn.
+    sim.replace(&[""], true);
+    let (output, memory) = read(&mut sim, Some(&memory));
+    assert!(output.is_empty());
+    sim.replace(&["row 1", "row 2", "status: ready"], true);
+    let (output, memory) = read(&mut sim, Some(&memory));
+    assert_eq!(output.changed, None);
+    assert_eq!(
+        [output.above, output.lines].concat(),
+        strings(&["row 1", "row 2", "status: ready"])
+    );
+    // And closes it: the main screen is back, scrolled by the program's
+    // last line and the prompt.
+    sim.replace(&main, false);
+    sim.push(&["closed", "ready>"]);
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert_eq!(
+        [output.above, output.lines].concat(),
+        strings(&["closed", "ready>"])
+    );
+    assert_eq!(output.changed, None);
+}
+
+#[test]
+fn a_row_erased_and_written_again_is_new() {
+    let mut sim = Sim::new(4, 100, &["one", "two", "three", "row 28", "status"]);
+    let (_, memory) = read(&mut sim, None);
+    sim.rewrite(1, "");
+    let (_, memory) = read(&mut sim, Some(&memory));
+    sim.rewrite(1, "row 30");
+    let (output, _) = read(&mut sim, Some(&memory));
+    let spoken: Vec<String> = output
+        .above
+        .into_iter()
+        .chain(output.changed.map(|change| change.text))
+        .chain(output.lines)
+        .collect();
+    assert_eq!(spoken, strings(&["row 30"]));
+}
+
+#[test]
+fn a_footer_kept_below_a_scroll_region_is_said_only_as_it_changed() {
+    let mut sim = Sim::new(3, 100, &["ready>", "one", "status: busy"]);
+    let (_, memory) = read(&mut sim, None);
+    // Lines written into a scroll region above the footer, which stays on
+    // the last row as the rows above it scroll into the history, then the
+    // footer redrawn.
+    let footer = sim.rows.pop().expect("the footer");
+    sim.push(&["a", "b", "c", "d", "e"]);
+    sim.rows.push(footer);
+    sim.rewrite(0, "status: done");
+    let (output, _) = read(&mut sim, Some(&memory));
+    let spoken: Vec<String> = output
+        .changed
+        .map(|change| change.text)
+        .into_iter()
+        .chain(output.head)
+        .chain(output.lines)
+        .collect();
+    assert_eq!(spoken, strings(&["a", "b", "c", "d", "e", "done"]));
+}

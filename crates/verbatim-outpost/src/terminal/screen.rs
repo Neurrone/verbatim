@@ -141,6 +141,9 @@ fn diff_lines(
         let mut shift: isize = 0;
         for hunk in &hunks {
             if hunk.old.contains(&last) {
+                if let Some(at) = lone_rewrite(old, new, hunk) {
+                    return at;
+                }
                 return hunk.new.start + (last - hunk.old.start).min(hunk.new.len());
             }
             if hunk.old.end <= last {
@@ -155,14 +158,21 @@ fn diff_lines(
         // least as many replace them (a line rewritten and the prompt after
         // it); where fewer do, as when a screen is cleared down to its
         // prompt, the new lines are spoken whole.
+        // A lone line rewritten among new ones is the one most like it
+        // (`lone_rewrite`): a footer redrawn below output scrolled in
+        // above it.
+        let lone = lone_rewrite(old, new, &hunk);
         let paired = if hunk.new.len() >= hunk.old.len() {
             hunk.old.len()
         } else {
             0
         };
         for (offset, new_index) in hunk.new.clone().enumerate() {
-            let old_index = hunk.old.start + offset;
-            let spoken = if offset < paired {
+            let (old_index, is_pair) = match lone {
+                Some(at) => (hunk.old.start, new_index == at),
+                None => (hunk.old.start + offset, offset < paired),
+            };
+            let spoken = if is_pair {
                 let change = line_change(&old[old_index], &new[new_index]);
                 let is_changed = match cursor {
                     Some(cursor) => new_index == cursor,
@@ -186,6 +196,34 @@ fn diff_lines(
         }
     }
     result
+}
+
+/// Where `hunk` replaces a single old line with more than one new line, the
+/// new line that rewrote it: the one sharing the longest start with it
+/// (the first, on a tie), when that is longer than nothing. A line
+/// rewritten in place and output written after it (a progress line and
+/// the prompt) pair first to first by this as by position; a footer
+/// redrawn below lines scrolled in above it pairs with its new version,
+/// not with the first of those lines. `None` for any other hunk.
+fn lone_rewrite(old: &[String], new: &[String], hunk: &Hunk) -> Option<usize> {
+    if hunk.old.len() != 1 || hunk.new.len() < 2 {
+        return None;
+    }
+    let was = &old[hunk.old.start];
+    let common = |line: &String| {
+        was.chars()
+            .zip(line.chars())
+            .take_while(|(a, b)| a == b)
+            .count()
+    };
+    let (at, longest) = hunk
+        .new
+        .clone()
+        .map(|index| (index, common(&new[index])))
+        .fold((hunk.new.start, 0), |best, next| {
+            if next.1 > best.1 { next } else { best }
+        });
+    (longest > 0).then_some(at)
 }
 
 /// A run of old lines replaced by a run of new ones, either possibly empty.
@@ -449,6 +487,18 @@ mod tests {
                 ScreenDiff {
                     above: lines(&["three"]),
                     ..ScreenDiff::default()
+                },
+            ),
+            // Lines scrolled in above a footer that was redrawn: the footer
+            // is rewritten, not the first of the new lines.
+            (
+                &["one", "two", "status: busy"],
+                &["two", "three", "four", "status: done"],
+                Shift::Known(1),
+                ScreenDiff {
+                    above: lines(&["three", "four"]),
+                    changed: rewrite("done", "status: done", "done"),
+                    below: Vec::new(),
                 },
             ),
             // A message printed above the prompt while typing.
