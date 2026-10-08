@@ -985,10 +985,15 @@ default is 200000). So the harness no longer relies on the right for its
 own windows: `Scenario::launch_titled`, which launches mockapp and the
 Windows Forms text box, opens the window minimized and inactive and then
 restores it and sets it as the foreground, as Notepad's documents have
-always been brought forward, which works whatever input came last. Only
-`system_information_tree`'s msinfo32 still opens in front
-(`Scenario::launch_target`), and the console host and Windows Terminal
-scenarios, so those still need the agent's input to have come last;
+always been brought forward, which works whatever input came last. The
+console host and Windows Terminal scenarios open theirs the same way
+(`Scenario::launch_console` and `Scenario::launch_owning_window`): both
+honor the launch's `SW_SHOWMINNOACTIVE`, the console host for the console
+window it creates and Windows Terminal for its first window, which the
+harness found minimized when it appeared, so Windows Terminal needs no
+option of its own. Only `system_information_tree`'s msinfo32 still opens
+in front (`Scenario::launch_target`), so it still needs the agent's input
+to have come last;
 `phase6-design.md`, "Test isolation and the foreground lock (2026-10-08)",
 has the evidence.
 

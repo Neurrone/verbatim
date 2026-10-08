@@ -156,7 +156,8 @@ and the input methods above:
   `launch_titled` did before 2026-10-08;
   `launch_console(command, args, title)` starts a console program with its
   console window titled from its first frame (the launch's console title),
-  which the console host scenarios use; `launch_target` refuses to run when
+  which the console host scenarios use, opened minimized and inactive and
+  brought forward as `launch_titled` does; `launch_target` refuses to run when
   a window so titled is already open; `launched_children` lists what the
   last launched program started.
 - `bring_document_forward(name)` brings the Notepad document opened
@@ -338,7 +339,9 @@ The groups:
   its `WindowsTerminal.exe` is started directly, never `wt.exe`, with
   `-w new --size 120,30 new-tab --title <title>
   --suppressApplicationTitle`, through `Scenario::launch_owning_window`,
-  which fails unless the launched process owns the window. The scenario
+  which opens it minimized and inactive and brings it forward as
+  `launch_titled` does, and fails unless the launched process owns the
+  window. The scenario
   also fails if any other Windows Terminal process opened a window
   meanwhile (`Scenario::top_level_windows`, before and after), and the
   copy's process must exit once its window closes at cleanup. The

@@ -676,6 +676,20 @@ impl Scenario {
         owner_exits: bool,
     ) -> io::Result<WindowInfo> {
         let launch = self.agent.launch_minimized(command, args)?;
+        self.bring_forward(launch, title, owner_exits)
+    }
+
+    /// Records `launch` for cleanup, its window titled with `title` and its
+    /// owner exiting at cleanup when `owner_exits`, waits for that window,
+    /// opened minimized and inactive, to appear, restores it and sets it as
+    /// the foreground, injecting nothing, and waits for it to take the
+    /// foreground ([`Scenario::launch_titled`]).
+    fn bring_forward(
+        &mut self,
+        launch: AgentLaunch,
+        title: &str,
+        owner_exits: bool,
+    ) -> io::Result<WindowInfo> {
         self.launched.push(Launched {
             pid: launch.pid,
             title: Some(title.to_owned()),
@@ -711,12 +725,12 @@ impl Scenario {
     }
 
     /// Launches `command`, which opens a window titled with `title`, a
-    /// title of this run's own ([`harness_marker`]), waits for that window
-    /// to take the foreground, and fails unless the process the agent
-    /// launched owns it: for a program that could otherwise hand its
-    /// command line to an instance already running, such as Windows
-    /// Terminal. The window is closed by its title at cleanup, and the
-    /// process must exit then.
+    /// title of this run's own ([`harness_marker`]), minimized and inactive,
+    /// brings it forward as [`Scenario::launch_titled`] does, and fails
+    /// unless the process the agent launched owns it: for a program that
+    /// could otherwise hand its command line to an instance already
+    /// running, such as Windows Terminal. The window is closed by its title
+    /// at cleanup, and the process must exit then.
     ///
     /// # Errors
     ///
@@ -728,9 +742,9 @@ impl Scenario {
         args: &[String],
         title: &str,
     ) -> io::Result<WindowInfo> {
-        let launch = self.agent.launch_process(command, args, None, &[], None)?;
+        let launch = self.agent.launch_minimized(command, args)?;
         let launched = launch.pid;
-        let window = self.require_launched_in_front(launch, title, true)?;
+        let window = self.bring_forward(launch, title, true)?;
         if window.pid != launched {
             return Err(io::Error::other(format!(
                 "the window titled {title:?} belongs to {} (pid {}), not to the process the harness launched, pid {launched}: {}",
@@ -753,8 +767,9 @@ impl Scenario {
     }
 
     /// Launches the console program `command` with `args`, its console
-    /// window titled `title` from its first frame, and waits for that
-    /// window to take the foreground, as [`Scenario::launch_titled`] does.
+    /// window titled `title` from its first frame and opened minimized and
+    /// inactive, and brings it forward as [`Scenario::launch_titled`]
+    /// does.
     ///
     /// # Errors
     ///
@@ -767,7 +782,7 @@ impl Scenario {
         title: &str,
     ) -> io::Result<WindowInfo> {
         let launch = self.agent.launch_console(command, args, title)?;
-        self.require_launched_in_front(launch, title, true)
+        self.bring_forward(launch, title, true)
     }
 
     /// Records `launch` for cleanup, its window titled `title`, and waits
