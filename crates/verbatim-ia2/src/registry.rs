@@ -246,6 +246,15 @@ impl NodeIdRegistry {
         ))
     }
 
+    /// Whether `node` was acquired at its own address, so the address names
+    /// it; `false` for one reached through `accParent` or as a child object,
+    /// keyed at an address made up from its window, and `None` for a node
+    /// not kept.
+    #[must_use]
+    pub fn at_address(&self, node: NodeId) -> Option<bool> {
+        self.lock().nodes.get(&node).map(|node| node.at_address)
+    }
+
     /// Every kept node.
     #[must_use]
     pub fn ids(&self) -> Vec<NodeId> {

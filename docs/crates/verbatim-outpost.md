@@ -143,7 +143,16 @@ Public API:
     such events that have not started back into the queue, where the next
     batch puts them after it, the limits they already passed not applied
     again. Notifications, alerts, queries, and the events of the focus and
-    of the object it moves to keep their place. NVDA reads another
+    of the object it moves to keep their place, and so does a state change
+    on one of the focus's ancestors known at its own address whose changes
+    are spoken (`Intake::set_judged`, since 2026-10-08): observed before
+    the batch's first focus change, or in the same millisecond, it is
+    handled before it, judged against the focus it was observed under,
+    even when it was pushed after it, as a hook event can be after a focus
+    the listener relays. The outcome then does not depend on batching:
+    Core speaks it and then the new focus, or cuts it off when the focus
+    moves into another top-level window or a menu, as NVDA, which handles
+    events in order, does. NVDA reads another
     object's event with one call and judges it against the focus when it
     runs; the outpost reads a whole snapshot, and the first focus in a new
     File Explorer window waited 2.6 seconds behind such reads while

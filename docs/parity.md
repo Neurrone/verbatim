@@ -286,6 +286,29 @@ verified.
     selections are not spoken (since 2026-10-08, after Left Arrow to a
     tree item's parent said "selected" before the parent; the
     `native_controls` mockapp test, on a real tree view).
+  - An ancestor's state change observed just before a focus change. NVDA
+    handles events in the order they came (`orderedWinEventLimiter`'s
+    `flushEvents` keeps one heap ordered by arrival), so it judges the
+    change against the focus it was observed under and speaks it
+    (`event_stateChange`, reason CHANGE). The focus change does not cancel
+    that speech within a window: only speech spoken for the focus carries
+    the `FocusLossCancellableSpeechCommand` that `doPreGainFocus`'s
+    `removeCancelledSpeechCommands` culls
+    (`eventHandler._getFocusLossCancellableSpeechCommand` returns none for
+    any other reason), and `event_gainFocus` cancels nothing. A focus
+    change into another top-level window does: `doPreGainFocus` runs the
+    foreground event, whose `event_foreground` calls `cancelSpeech`, and
+    entering a menu does too (`event_focusEntered`). So NVDA says
+    "unavailable" and then the new focus within a window, and effectively
+    nothing of it when the focus leaves the window or enters a menu.
+    Verbatim: **matched since 2026-10-08**. Its intake moves the events of
+    objects other than the focus behind a focus change for latency, which
+    had made the outcome depend on whether the change shared a batch with
+    the focus; such a state change on a spoken ancestor now keeps its place
+    ahead of a focus change it was observed before, and Core's cancelling,
+    NVDA's, does the rest (the `msaa_events` mockapp tests, each in both
+    batchings, a move within the window and one into a menu, and a reducer
+    test for a move into another window).
   - A top-level window's state change. Opening a modal dialog disables
     its owner, raising a state change on the owner's client area while
     the focus is still inside it, on an ancestor NVDA holds. NVDA says
