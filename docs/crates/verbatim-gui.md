@@ -103,9 +103,9 @@ The private modules:
   from the host's descriptors through `plan`, `SpeechControls`, which turns
   a change reported by control index into a setting value (changes from a
   replaced set of controls, identified by a generation number, are
-  ignored), and the Select Synthesizer choice, which switches only to a
-  different synthesizer and only then asks for the controls to be
-  rebuilt.
+  ignored), the Select Synthesizer choice, which switches only to a
+  different synthesizer, and `switch_outcome`, what the dialog is told
+  when the switch ends, a failure in NVDA's words.
 - `keys` — what a key does in the settings dialog (`route_key`, from the
   key and the focused control, with tests).
 - `theme_panel` — the Theme page's model (`ThemePanel`), described below,
@@ -185,8 +185,22 @@ button, so Enter on Cancel cancels and Enter on Apply applies; Enter on
 the synthesizer's name opens Change; Enter elsewhere is OK; Control+Tab and
 Control+Shift+Tab change category and Control+S applies, from any control.
 Other keys go on to the focused control. The Change button runs the modal
-Select Synthesizer dialog; when the active synthesizer changed, the
-generated controls are destroyed and rebuilt from a fresh page. The
+Select Synthesizer dialog. Its OK starts the switch to the chosen
+synthesizer and returns at once (`GuiCore::choose_synthesizer`): the GUI
+thread never waits for a synthesizer, and the time limit is where the
+synthesizer host is waited for ([verbatim-synth-hosted](verbatim-synth-hosted.md)).
+The dialog then says "Switching synthesizer" under the list, and stays
+open; a second OK meanwhile does nothing. The outcome comes back through
+the GUI's channel (`GuiMessage::SynthesizerSwitched`) to
+`synthesizer_switched` in the C++ layer: on success the generated controls
+are destroyed and rebuilt from a fresh page and the dialog closes, so focus
+returns to the Change button only once the new synthesizer is active; on
+failure NVDA's message box says "Could not load the ... synthesizer.",
+titled "Synthesizer Error" (NVDA's `_synthWarningDialog` in
+`gui/settingsDialogs.py`), the previous synthesizer stays, and the dialog
+stays open, as NVDA's does. Cancel closes the dialog without waiting; a
+switch still under way then ends the same way, the message box parented
+to the settings dialog. The
 dialog has no check list box; one added later needs its own accessible,
 and must not notify on toggle itself, since wxWidgets 3.3.2 and later
 already do.

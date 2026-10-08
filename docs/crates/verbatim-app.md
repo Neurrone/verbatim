@@ -213,6 +213,10 @@ knowing for review:
   would), and when the supervisor reports
   `OutpostMessage::ListenerReplaced`; each waits for the outpost's `Ready`
   if it is still starting. When the supervisor reports
+  `OutpostMessage::NotWatched` (the application has exited, so no outpost
+  was started for it), the wish for its focus is dropped, along with a
+  status entry that was only waiting for its outpost, so nothing, the idle
+  barrier included, waits for an outpost that will never come. When the supervisor reports
   `OutpostMessage::MenuOrSwitchEnded` (a menu or the Alt+Tab switcher
   closed, told 50 ms later with the time it ended), the reducer thread,
   unless the reducer has applied a focus observed since that time

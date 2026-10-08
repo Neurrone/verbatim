@@ -15,6 +15,7 @@ struct ShellText;
 struct ScreenPoint;
 struct SettingsDialog;
 struct ListDialog;
+struct SynthesizerSwitch;
 enum class DialogKind : std::uint8_t;
 
 std::int32_t run_event_loop(const GuiCore& core, const ShellText& text);
@@ -31,6 +32,7 @@ void open_list_dialog(const ListDialog& dialog);
 std::size_t dialog_handle(DialogKind dialog);
 void raise_dialog(DialogKind dialog);
 void focus_dialog(DialogKind dialog);
+void synthesizer_switched(const SynthesizerSwitch& outcome);
 
 void shut_down();
 

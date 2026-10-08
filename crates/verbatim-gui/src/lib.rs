@@ -89,6 +89,9 @@ enum GuiMessage {
     /// A shell item enumeration finished: `None` when it failed or ran out
     /// of time (already logged).
     ShellItems(ShellItemKind, Option<Vec<shell_items::ShellItem>>),
+    /// The switch to the synthesizer with this display name, started from
+    /// the Select Synthesizer dialog, has ended.
+    SynthesizerSwitched(String, Result<(), verbatim_speech::SynthError>),
 }
 
 /// A thread-safe handle for posting [`GuiCommand`]s to the GUI thread.
@@ -177,6 +180,7 @@ pub fn run_gui(
         on_ready: RefCell::new(Some(Box::new(on_ready))),
         lifecycle: RefCell::new(Lifecycle::new()),
         speech: RefCell::new(SpeechControls::default()),
+        switching: std::cell::Cell::new(false),
         list_buttons: RefCell::new(None),
     };
     // The hidden main frame doubles as the dialog parent and the
@@ -228,6 +232,8 @@ pub(crate) struct GuiCore {
     lifecycle: RefCell<Lifecycle>,
     /// The Speech page's current controls.
     speech: RefCell<SpeechControls>,
+    /// Whether a synthesizer switch is under way.
+    switching: std::cell::Cell<bool>,
     /// The open list dialog's button callbacks.
     list_buttons: RefCell<Option<ListDialogButtons>>,
 }
@@ -253,6 +259,9 @@ impl GuiCore {
             match message {
                 GuiMessage::Command(command) => self.dispatch(command),
                 GuiMessage::ShellItems(kind, items) => self.present_shell_items(kind, items),
+                GuiMessage::SynthesizerSwitched(name, outcome) => {
+                    self.synthesizer_switched(&name, &outcome);
+                }
             }
         }
     }
@@ -625,19 +634,46 @@ impl GuiCore {
         settings::synthesizer_picker(self.host.as_ref())
     }
 
-    fn choose_synthesizer(&self, index: usize) -> bool {
+    /// Starts the switch to the synthesizer at `index`, without waiting
+    /// for it: the GUI thread never waits on a synthesizer. Its outcome
+    /// comes back through the channel ([`GuiMessage::SynthesizerSwitched`]).
+    fn choose_synthesizer(&self, index: usize) -> ffi::SynthesizerChoice {
+        if self.switching.get() {
+            return ffi::SynthesizerChoice::Busy;
+        }
         let synthesizers = self.host.synthesizers();
         let active = self.host.active_synthesizer().id;
         let Some(chosen) = settings::synthesizer_to_switch_to(&synthesizers, &active, index) else {
-            return false;
+            return ffi::SynthesizerChoice::Unchanged;
         };
-        match self.host.set_active_synthesizer(&chosen) {
-            Ok(()) => true,
-            Err(error) => {
-                tracing::warn!(%error, "failed to switch synthesizer; keeping the current one");
-                false
-            }
+        let name = synthesizers
+            .iter()
+            .find(|synthesizer| synthesizer.id == chosen)
+            .map_or_else(
+                || chosen.0.clone(),
+                |synthesizer| synthesizer.display_name.clone(),
+            );
+        self.switching.set(true);
+        let handle = self.handle.clone();
+        self.host.switch_synthesizer(
+            &chosen,
+            Box::new(move |outcome| {
+                handle.post(GuiMessage::SynthesizerSwitched(name, outcome));
+            }),
+        );
+        ffi::SynthesizerChoice::Switching
+    }
+
+    /// A synthesizer switch has ended: the C++ layer rebuilds the Speech
+    /// page and closes the Select Synthesizer dialog, or shows why it
+    /// failed.
+    fn synthesizer_switched(&self, name: &str, outcome: &Result<(), verbatim_speech::SynthError>) {
+        self.switching.set(false);
+        if let Err(error) = outcome {
+            tracing::warn!(%error, synthesizer = name, "failed to switch synthesizer; keeping the current one");
         }
+        let outcome = settings::switch_outcome(name, outcome);
+        self.gui.synthesizer_switched(&outcome);
     }
 
     fn list_button(&self, button: usize, item: usize) -> bool {

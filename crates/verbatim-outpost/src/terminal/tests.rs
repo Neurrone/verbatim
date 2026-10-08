@@ -572,3 +572,104 @@ fn line_changes_are_worked_out_character_by_character() {
         ("[####  ] 40%", false)
     );
 }
+
+fn output(
+    changed: Option<LineChange>,
+    head: &[&str],
+    skipped: Option<Skipped>,
+    new: &[&str],
+) -> TerminalOutput {
+    TerminalOutput {
+        changed,
+        head: lines(head),
+        skipped,
+        lines: lines(new),
+    }
+}
+
+#[test]
+fn combined_output_keeps_every_line_in_order_within_the_limit() {
+    let older = output(None, &[], None, &["one", "two"]);
+    let newer = output(None, &[], None, &["three", "ready>"]);
+    assert_eq!(
+        combine(older, newer, 5),
+        output(None, &[], None, &["one", "two", "three", "ready>"])
+    );
+}
+
+#[test]
+fn combined_output_past_the_limit_keeps_its_first_and_last_lines_and_counts_the_rest() {
+    let older = output(None, &["a", "b"], Some(Skipped::Count(4)), &["c", "d"]);
+    let newer = output(None, &[], Some(Skipped::Count(2)), &["e", "f", "g"]);
+    assert_eq!(
+        combine(older, newer, 2),
+        output(None, &["a", "b"], Some(Skipped::Count(9)), &["f", "g"]),
+        "c, d and e are counted with the six skipped"
+    );
+    let older = output(None, &[], Some(Skipped::Uncounted), &["a"]);
+    let newer = output(None, &[], None, &["b"]);
+    assert_eq!(
+        combine(older, newer, 2),
+        output(None, &[], Some(Skipped::Uncounted), &["a", "b"])
+    );
+}
+
+#[test]
+fn a_change_to_a_line_still_waiting_puts_the_whole_line_in_its_place() {
+    let grew = line_change("ready> l", "ready> ls").expect("a change");
+    let older = output(None, &[], None, &["done", "ready> l"]);
+    let newer = output(Some(grew.clone()), &[], None, &["file"]);
+    assert_eq!(
+        combine(older, newer, 5),
+        output(None, &[], None, &["done", "ready> ls", "file"])
+    );
+    let after_blank = output(None, &[], None, &["done", ""]);
+    let newer = output(Some(grew), &[], None, &[]);
+    assert_eq!(
+        combine(after_blank, newer, 5),
+        output(None, &[], None, &["done", "", "s"]),
+        "after a blank line the change is spoken as Core speaks it"
+    );
+}
+
+#[test]
+fn two_changes_of_the_same_line_become_one() {
+    let first = line_change("ready>", "ready> l").expect("a change");
+    let second = line_change("ready> l", "ready> ls").expect("a change");
+    let combined = combine(
+        output(Some(first.clone()), &[], None, &[]),
+        output(Some(second), &[], None, &["out"]),
+        5,
+    );
+    assert_eq!(
+        combined,
+        output(
+            Some(LineChange {
+                text: " ls".to_owned(),
+                line: "ready> ls".to_owned(),
+                appended: true,
+                uncertain: first.uncertain,
+            }),
+            &[],
+            None,
+            &["out"]
+        )
+    );
+    let rewritten = line_change("[###   ] 30%", "[####  ] 40%").expect("a change");
+    let grew = line_change("[####  ] 40%", "[####  ] 40% done").expect("a change");
+    assert_eq!(
+        combine(
+            output(Some(rewritten), &[], None, &[]),
+            output(Some(grew), &[], None, &[]),
+            5
+        )
+        .changed,
+        Some(LineChange {
+            text: "[####  ] 40% done".to_owned(),
+            line: "[####  ] 40% done".to_owned(),
+            appended: false,
+            uncertain: 0,
+        }),
+        "a rewrite then growth says the line from where it first differed"
+    );
+}

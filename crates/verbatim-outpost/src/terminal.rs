@@ -659,5 +659,161 @@ pub fn read<'a>(
     Ok((output, source.caret_found, source.paths))
 }
 
+/// One piece of new output, in the order it is spoken.
+enum Piece {
+    Line(String),
+    Skipped(Skipped),
+}
+
+/// The new lines of `output`, in the order they are spoken, without its
+/// changed line.
+fn pieces(output: TerminalOutput) -> Vec<Piece> {
+    let mut pieces: Vec<Piece> = output.head.into_iter().map(Piece::Line).collect();
+    pieces.extend(output.skipped.map(Piece::Skipped));
+    pieces.extend(output.lines.into_iter().map(Piece::Line));
+    pieces
+}
+
+/// Whether `line` holds nothing but white space, which Core does not speak.
+fn is_blank(line: &str) -> bool {
+    line.chars().all(verbatim_text::is_space)
+}
+
+/// One output that says what `older` and then `newer` say, for the same
+/// terminal, when `newer` was found before `older` could be sent: the
+/// outpost's messages to Core are merged while they wait
+/// (`docs/crates/verbatim-outpost.md`, "Messages to Core"). It keeps the
+/// flood policy's limits: at most `wanted` lines in its head and as many
+/// in its lines, the rest counted as skipped, which Core then treats as it
+/// treats any output.
+///
+/// `newer`'s changed line is the last line `older` read. When `older` has
+/// new lines, that line is among them and not yet spoken, so the whole line
+/// as it is now takes its place, as Core puts a changed line in place of an
+/// earlier version still waiting; when the last of them is blank, Core
+/// would speak the change after it, and so does the combined output. When
+/// `older` has none, the two changes of the same line become one
+/// ([`merged_change`]).
+#[must_use]
+pub fn combine(older: TerminalOutput, newer: TerminalOutput, wanted: usize) -> TerminalOutput {
+    let wanted = wanted.max(1);
+    let older_changed = older.changed.clone();
+    let mut stream = pieces(older);
+    let TerminalOutput {
+        changed: newer_changed,
+        head,
+        skipped,
+        lines,
+    } = newer;
+    let changed = if stream.is_empty() {
+        merged_change(older_changed, newer_changed)
+    } else {
+        if let Some(change) = newer_changed {
+            match stream.last_mut() {
+                Some(Piece::Line(line)) if !is_blank(line) => *line = change.line,
+                _ => stream.push(Piece::Line(change.text)),
+            }
+        }
+        older_changed
+    };
+    stream.extend(pieces(TerminalOutput {
+        changed: None,
+        head,
+        skipped,
+        lines,
+    }));
+    let (head, skipped, lines) = fit(stream, wanted);
+    TerminalOutput {
+        changed,
+        head,
+        skipped,
+        lines,
+    }
+}
+
+/// Fits new output into a head, a skipped count, and the newest lines, at
+/// most `wanted` lines each: everything when it is no more than `wanted`
+/// lines with nothing skipped; otherwise the lines before the first skipped
+/// count (the start of the flood) as the head, the lines after the last
+/// one as the newest lines, and everything between them counted.
+fn fit(stream: Vec<Piece>, wanted: usize) -> (Vec<String>, Option<Skipped>, Vec<String>) {
+    let any_skipped = stream
+        .iter()
+        .any(|piece| matches!(piece, Piece::Skipped(_)));
+    if !any_skipped && stream.len() <= wanted {
+        let lines = stream
+            .into_iter()
+            .filter_map(|piece| match piece {
+                Piece::Line(line) => Some(line),
+                Piece::Skipped(_) => None,
+            })
+            .collect();
+        return (Vec::new(), None, lines);
+    }
+    let mut rest = std::collections::VecDeque::from(stream);
+    let mut head = Vec::new();
+    while head.len() < wanted
+        && let Some(Piece::Line(_)) = rest.front()
+    {
+        if let Some(Piece::Line(line)) = rest.pop_front() {
+            head.push(line);
+        }
+    }
+    let mut lines = Vec::new();
+    while lines.len() < wanted
+        && let Some(Piece::Line(_)) = rest.back()
+    {
+        if let Some(Piece::Line(line)) = rest.pop_back() {
+            lines.push(line);
+        }
+    }
+    lines.reverse();
+    let skipped = rest
+        .into_iter()
+        .map(|piece| match piece {
+            Piece::Line(_) => Skipped::Count(1),
+            Piece::Skipped(count) => count,
+        })
+        .reduce(Skipped::plus);
+    (head, skipped, lines)
+}
+
+/// Two changes of the same line, `older` and then `newer`, as one: what
+/// changed from the line as it was before `older` to the line as it is
+/// after `newer`. Each change's text is the end of its line, from where it
+/// differs, so the line is unchanged up to the earlier of the two starts.
+/// It only grew when both only grew.
+fn merged_change(older: Option<LineChange>, newer: Option<LineChange>) -> Option<LineChange> {
+    let (older, newer) = match (older, newer) {
+        (older, None) => return older,
+        (None, newer) => return newer,
+        (Some(older), Some(newer)) => (older, newer),
+    };
+    let start = |change: &LineChange| {
+        change
+            .line
+            .len()
+            .checked_sub(change.text.len())
+            .filter(|&start| change.line.get(start..) == Some(change.text.as_str()))
+    };
+    let (Some(older_start), Some(newer_start)) = (start(&older), start(&newer)) else {
+        // Not a change this outpost made; say the whole line.
+        return Some(LineChange {
+            text: newer.line.clone(),
+            line: newer.line,
+            appended: false,
+            uncertain: 0,
+        });
+    };
+    let from = older_start.min(newer_start);
+    let appended = older.appended && newer.appended;
+    Some(LineChange {
+        text: newer.line[from..].to_owned(),
+        line: newer.line,
+        appended,
+        uncertain: if appended { older.uncertain } else { 0 },
+    })
+}
+
 #[cfg(test)]
 mod tests;

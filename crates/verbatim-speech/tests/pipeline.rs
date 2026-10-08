@@ -1032,6 +1032,35 @@ fn startup_falls_back_in_registration_order_when_the_configured_synth_cannot_sta
     ));
 }
 
+/// Switches `host` to synthesizer `id` and waits for the outcome, which the
+/// switch hands over once the synthesizer has started or failed to.
+fn switch(host: &verbatim_speech::SettingsHost, id: &str) -> Result<(), SynthError> {
+    let (done_tx, done) = crossbeam_channel::bounded(1);
+    host.switch_synthesizer(
+        &SynthId::new(id),
+        Box::new(move |outcome| {
+            let _ = done_tx.send(outcome);
+        }),
+    );
+    done.recv().expect("the switch reports its outcome")
+}
+
+#[test]
+fn a_synth_that_cannot_start_fails_the_switch_and_the_previous_one_stays() {
+    let saved: SavedStore = Arc::new(Mutex::new(Vec::new()));
+    let mut registry = SynthRegistry::new();
+    registry.register(SynthId::new("one"), "One", SettingsSynth::factory("one"));
+    registry.register(SynthId::new("broken"), "Broken", broken_factory());
+    let manager = settings_manager(registry, "one", &saved).expect("pipeline starts");
+    let host = manager.settings_host(Box::new(|_, _, _| Ok(())));
+
+    assert!(matches!(
+        switch(&host, "broken"),
+        Err(SynthError::Unavailable(_))
+    ));
+    assert_eq!(host.active_synthesizer().id, SynthId::new("one"));
+}
+
 #[test]
 fn switching_synth_starts_it_with_its_saved_settings() {
     let saved: SavedStore = Arc::new(Mutex::new(Vec::new()));
@@ -1046,7 +1075,7 @@ fn switching_synth_starts_it_with_its_saved_settings() {
         .lock()
         .unwrap()
         .push((SynthId::new("two"), voice_and_rate("not-installed", 20)));
-    host.set_active_synthesizer(&SynthId::new("two")).unwrap();
+    switch(&host, "two").expect("switches");
 
     assert_eq!(host.active_synthesizer().id, SynthId::new("two"));
     assert_eq!(
@@ -1256,8 +1285,7 @@ fn a_fallback_synth_is_not_saved_as_the_users_choice() {
     }));
 
     host.commit().expect("commits");
-    host.set_active_synthesizer(&SynthId::new("spare"))
-        .expect("switches");
+    switch(&host, "spare").expect("switches");
     host.commit().expect("commits");
     assert_eq!(
         *commits.lock().unwrap(),

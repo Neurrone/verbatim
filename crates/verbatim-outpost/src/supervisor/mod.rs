@@ -147,6 +147,13 @@ pub enum OutpostMessage {
         /// Why it ended.
         reason: EndReason,
     },
+    /// An outpost was wanted for `target_pid`, asked for or to replace one
+    /// that crashed, and none was started: the application's process has
+    /// exited, or cannot be opened to be held. Nothing should wait for one.
+    NotWatched {
+        /// The application.
+        target_pid: Pid,
+    },
 }
 
 /// The live writers, by outpost id, so the reducer thread can queue a
@@ -218,7 +225,9 @@ impl Supervisor {
     /// Starts an outpost for `target_pid` if none exists, without asking it
     /// to report anything. Used once at startup for Core's own process, so
     /// its outpost is warm before the first gesture: a cold spawn races a
-    /// real keypress sent right after Verbatim's menu opens.
+    /// real keypress sent right after Verbatim's menu opens. An application
+    /// whose process has exited gets none, and the app hears
+    /// [`OutpostMessage::NotWatched`].
     pub fn ensure_spawned(&self, target_pid: Pid) {
         let _ = self
             .owner

@@ -406,7 +406,12 @@ event), retired when the app exits, and may be retired early when idle to
 bound memory use; state rebuilds from live queries on demand.
 
 Inside, an outpost follows NVDA's model of one thread doing all the work
-for an application (the outpost redesign, 2026-10-01). Intake callbacks
+for an application (the outpost redesign, 2026-10-01). What it says to
+Core waits in one queue, written by a thread of its own; queuing never
+waits, nothing is queued while a lock the watchdog takes is held, and
+waiting messages are merged by object and kind, a terminal's output
+combined under the flood policy, while answers to Core's requests keep
+their order. Intake callbacks
 only add entries to one queue, which applies NVDA's limiter rules (one
 waiting entry per object and event kind, and per batch the newest four
 focus events and ten other events per UI thread). One worker thread takes
@@ -434,8 +439,13 @@ Recovery is a ladder, cheapest rung first:
 3. **Kill and respawn.** If an outpost accumulates eight abandoned workers
    (unless its application's windows are reported hung), stops answering
    pings for nine seconds, or crashes, the supervisor ends it and, if its
-   application holds attention, starts a fresh one and asks it for the
-   current focus; Core's references to the old outpost's nodes are dead.
+   application holds attention and is still running, starts a fresh one
+   and asks it for the current focus; Core's references to the old
+   outpost's nodes are dead. The supervisor knows each application by a
+   process handle it holds for as long as it has an outpost or a crash
+   history for it, so the application's pid cannot name another process
+   meanwhile, and no outpost is ever started or replaced for an
+   application that has exited.
    This is the uniform hard-recovery path — and, because abandoned threads
    are only truly freed by process exit, the only one that reclaims
    everything.

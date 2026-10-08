@@ -33,3 +33,9 @@ harness = false
 [[test]]
 name = "target_exit"
 harness = false
+
+# Runs itself as a stand-in application, outpost, and listener, which its own
+# `main` recognizes.
+[[test]]
+name = "target_gone"
+harness = false

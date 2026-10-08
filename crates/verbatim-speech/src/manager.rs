@@ -144,7 +144,7 @@ pub(crate) enum QueueEvent {
     RestoreSettings(Vec<(SettingId, SettingValue)>),
     SwitchSynth {
         id: SynthId,
-        reply: Sender<Result<DriverState, SynthError>>,
+        reply: SwitchReply,
     },
     SynthFinished,
     /// Cancel everything, as a key press does; the key press's number, when
@@ -216,17 +216,15 @@ struct StartupInfo {
 /// Commands the synth thread accepts from the queue thread.
 enum SynthCommand {
     Job(Job),
-    SetSetting {
-        id: SettingId,
-        value: SettingValue,
-    },
+    SetSetting { id: SettingId, value: SettingValue },
     RestoreSettings(Vec<(SettingId, SettingValue)>),
-    Switch {
-        id: SynthId,
-        reply: Sender<Result<DriverState, SynthError>>,
-    },
+    Switch { id: SynthId, reply: SwitchReply },
     Shutdown,
 }
+
+/// Takes a synthesizer switch's outcome, on the synth thread, once the new
+/// synthesizer has started or failed to.
+pub(crate) type SwitchReply = Box<dyn FnOnce(Result<DriverState, SynthError>) + Send>;
 
 /// One sequence handed to the synth thread, with its own cancellation flag.
 struct Job {
@@ -818,9 +816,8 @@ impl QueueThread {
                     let _ = self.synth_tx.send(SynthCommand::RestoreSettings(values));
                 }
                 QueueEvent::SwitchSynth { id, reply } => {
-                    // Silence current speech so the switch, and the caller
-                    // waiting on its reply, are not blocked behind a long
-                    // utterance.
+                    // Silence current speech so the switch, and its reply,
+                    // do not wait behind a long utterance.
                     self.cancel_everything();
                     let _ = self.synth_tx.send(SynthCommand::Switch { id, reply });
                 }
@@ -1057,11 +1054,12 @@ fn synth_thread(
                 match start_synth(registry, &id, saved_settings) {
                     Ok(new_driver) => {
                         driver = new_driver;
-                        let _ = reply.send(Ok(driver_state(driver.as_ref())));
+                        reply(Ok(driver_state(driver.as_ref())));
                     }
-                    Err(error) => {
-                        let _ = reply.send(Err(error));
-                    }
+                    // The previous synthesizer stays: a synthesizer that
+                    // cannot start, or whose host does not answer within
+                    // its time limit, fails here.
+                    Err(error) => reply(Err(error)),
                 }
             }
             SynthCommand::Shutdown => break,

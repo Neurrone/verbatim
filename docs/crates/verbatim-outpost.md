@@ -187,12 +187,15 @@ Public API:
     `Abandoned`, and starts a replacement that continues with the queue. An
     abandoned worker that returns publishes nothing, since publishing checks
     under the watchdog's lock that the worker is still in charge, lowers the
-    abandoned count, and exits.
+    abandoned count, and exits. Nothing is sent while that lock is held:
+    publishing claims the entry's result under the lock and queues the
+    message after releasing it, and the watchdog releases it before it
+    queues an `Abandoned` answer, so the watchdog never waits on the
+    writer.
   - The reader (`Outpost::handle_command`, driven by `run_pipe`) answers
     pings itself, withdraws a cancelled query that has not started with a
     `NotStarted` reply, and queues everything else.
-  - The writer (`outpost::outbound`) sends pongs and `Ready` ahead of
-    ordinary messages, which wait in a bounded queue.
+  - The writer (`outpost::outbound`), under "Messages to Core" below.
   `run_pipe` is the production mode over inherited pipe handles, which
   reads Core's commands until Core asks it to shut down, or the command
   pipe ends, and then shuts the outpost down cleanly (`Outpost::shutdown`,
@@ -342,25 +345,44 @@ Public API:
     order, a newer fact for the same object and kind replacing the older one
     and moving to the back (NVDA's limiter rule), and released in that order
     on `Ready` (the pure `HeldFacts`).
-  - Crash: when an outpost's pipe closes, the owner ends it (`Ended`,
-    exited) after the reader has forwarded everything it wrote. It is
-    replaced at once only if its application holds attention; otherwise the
-    next fact for the application starts one. After three crashes within a
+  - Targets: the owner identifies each application by a process it holds
+    open (`process::Target`), opened when the application's first outpost
+    is started and kept while the application has an outpost or a crash
+    history. Windows never gives a process's id to another process while a
+    handle to it is open, so the pid the owner knows, and passes to the
+    outpost, names that application and no other for as long as it is
+    held. No outpost is started or replaced for an application whose
+    process has exited, or that cannot be opened to be held; the app hears
+    `OutpostMessage::NotWatched`, so nothing waits for one. Until an
+    application is held, the pid in a routed fact, or in the app's request,
+    is trusted to name the process that raised the fact or holds the
+    foreground, which was observed moments before it is opened.
+  - Crash: when an outpost's pipe closes, the owner ends it after the
+    reader has forwarded everything it wrote. If its application has
+    exited, it ended with its target (`Ended`, target exited), is not
+    replaced, and the application's process and crash history are let go.
+    Otherwise it ended unexpectedly (`Ended`, exited), and it is replaced
+    at once only if its application holds attention; otherwise the next
+    fact for the application starts one. After three crashes within a
     minute (`CRASH_LIMIT`, `CRASH_WINDOW`, the pure `CrashHistory`) it is
-    not replaced until the next foreground change to that application. An
-    application that has itself exited is left alone.
+    not replaced until the next foreground change to that application. The
+    sweep lets go of crash histories of applications that have since
+    exited.
   - Hang: every child is pinged every three seconds; nine seconds without a
     pong ends it (`Ended`, killed). Eight abandoned workers end an outpost
     too, except while its application's windows are reported hung
     (`IsHungAppWindow`), when a replacement would hang the same way (the
-    pure `wedge_decision`). A kill is followed by the crash rules.
+    pure `wedge_decision`). A kill is followed by the crash rules, an
+    application that has exited included.
   - Retirement: an outpost whose application has not held attention for two
     minutes, which is not Core's own, and in which the reducer holds no
     nodes, is ended (`Ended`, retired) by the sweep every 30 seconds (the
     pure `retirement_decision`).
   - Target exit: an outpost whose application has exited says so
     (`TargetExited`), and the owner ends it (`Ended`, target exited); it is
-    not replaced.
+    not replaced. The heartbeat also checks every held application, and
+    ends the outpost of one that has exited the same way, for an outpost
+    that could not wait on its application's process.
   - Every ending shuts the child down cleanly (`retire`, on a thread of
     its own, under "Shutting down" below): unless it has already exited,
     the child is sent `Shutdown`, its command pipe is closed once that is
@@ -652,8 +674,10 @@ Implementation notes:
   behind it where it has one.
   Each message that carries node ids (an event, or a reply with a result:
   `OutpostToSupervisor::carries_nodes`) takes the next position when the
-  worker publishes it, and every node issued or looked up since the last
-  publish is recorded as reported at that position. Core's reader counts
+  worker queues it to be written, and every node issued or looked up since
+  the last publish is recorded as reported at that position; a message
+  merged away while it waits gives up its position, so the positions stay
+  those Core counts (under "Messages to Core" below). Core's reader counts
   the same messages and hands the app each message's position. The app
   sends `SupervisorToOutpost::NodesHeld` with the node numbers the reducer
   holds in that outpost, the text anchors it holds there (milestone M4),
@@ -662,10 +686,11 @@ Implementation notes:
   outpost whose held set stays the same still releases what it reported
   meanwhile. The worker then releases every node not held that was
   reported at or before the acknowledged position; a node reported later,
-  or not yet reported, is kept, since Core may not have seen it. The
-  released nodes leave both registries under the watch lock, and their
-  objects are dropped after it is released, so a worker that replaces an
-  abandoned one can never report a node that is about to vanish. A query
+  or not yet reported, is kept, since Core may not have seen it. Only the
+  worker in charge releases, and the released nodes leave both registries
+  under the watch lock and the writer's queue lock, and their objects are
+  dropped after both are released, so a worker that replaces an abandoned
+  one can never report a node that is about to vanish. A query
   for a released node answers `Gone`. Core's writer replaces a waiting
   list with a newer one and lets it past a full queue; the intake queue
   likewise keeps only the newest and never limits it.
@@ -900,6 +925,50 @@ Implementation notes:
   replies grew the message enum well past the lifecycle notices, and boxing
   keeps every channel send small. `Supervisor::send_nodes_held` queues a
   `NodesHeld` list for one incarnation.
+
+## Messages to Core
+
+The outpost writes everything it says to Core from one thread
+(`outpost::outbound`), from one queue, and nothing that queues a message
+ever waits: the worker, the watchdog, the reader, and the thread watching
+the target application only add to the queue and return. A watchdog that
+waited behind a full queue, as it did when queuing waited for room under
+the watch lock, could not abandon a hung worker.
+
+- Pongs, `Ready`, and `TargetExited` go ahead of everything else, so a
+  busy outpost is never mistaken for a dead one.
+- While messages wait, they are merged by object and kind, as the intake
+  and the supervisor merge what reaches the outpost and as NVDA's limiters
+  do. An event replaces a waiting event of the same kind for the same node
+  (for a property change, the same property; for a focus, the same kind of
+  focus) and goes to the back. A terminal's new output is combined with
+  its output still waiting (`terminal::combine`): every line in order, a
+  change to a line still waiting putting the whole line in its place as
+  Core does, two changes of the same line made one, and the flood
+  policy's limits kept, at most the read limit in the head and as many in
+  the newest lines, with the rest counted as skipped. Core then treats the
+  combined output as any other.
+- Answers to Core's requests are never merged and keep their order, and
+  so do notifications, each of which says something of its own, and
+  faults. A cancelled query's `NotStarted` answer takes its place among
+  them too.
+- Nothing is merged across a flush (`Outpost::settle`'s), so everything
+  published before it has been written when it is answered.
+- What waits is bounded by the nodes and kinds there are, by Core's
+  requests (the supervisor's queue to the outpost holds at most 64), and
+  by the intake's limits, without a bound of its own.
+- The queue numbers the messages that carry node ids as Core counts them,
+  in the order they are written, and records which nodes each may have
+  reported. A message merged away gives up its position, so the messages
+  after it come one place earlier than their recorded positions say,
+  which only keeps their nodes a little longer.
+
+The supervisor's side already never waits: each child's writer queue
+fails or replaces a command when it is full (the `Supervisor` entry above),
+the reader threads forward to unbounded channels, and the map of writers
+is locked only to look one up, never across a push or a write. The focus
+listener's own queue merges its facts by element and kind and never
+waits either.
 
 ## Shutting down
 

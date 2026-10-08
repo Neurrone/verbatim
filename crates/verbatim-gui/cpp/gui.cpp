@@ -88,6 +88,9 @@ struct Shell {
     ListDialogWindow* list = nullptr;
     // The Select Synthesizer dialog while it runs modally.
     wxDialog* modal = nullptr;
+    // The Select Synthesizer dialog's line saying a switch is under way,
+    // while that dialog is open.
+    wxStaticText* picker_status = nullptr;
     bool shutting_down = false;
 };
 
@@ -170,6 +173,20 @@ public:
     wxButton* change() const { return change_; }
     wxTextCtrl* name() const { return name_; }
 
+    // The active synthesizer changed: rebuilds the generated controls for
+    // it and names it.
+    void Rebuild() {
+        const SpeechPage page = g_shell->core.speech_page();
+        // Hidden first so the old controls give up their share of the
+        // sizer at once; destroying a child window detaches it.
+        controls_->Hide();
+        controls_->Destroy();
+        controls_ = BuildControls(page);
+        sizer_->Add(controls_, 1, wxEXPAND | wxALL, 5);
+        name_->SetValue(Text(page.synthesizer_name));
+        Layout();
+    }
+
 private:
     wxPanel* BuildControls(const SpeechPage& page) {
         auto* panel = new wxPanel(this);
@@ -229,11 +246,13 @@ private:
         return panel;
     }
 
-    // Runs the modal Select Synthesizer dialog and, when the active
-    // synthesizer changed, rebuilds the generated controls for it.
+    // Runs the modal Select Synthesizer dialog. OK starts the switch to the
+    // chosen synthesizer without waiting for it, and the dialog says the
+    // switch is under way; synthesizer_switched rebuilds the generated
+    // controls and closes the dialog once it succeeds, or says it failed
+    // and leaves the dialog open, as NVDA's does.
     void ChangeSynthesizer() {
         const SynthesizerPicker picker = g_shell->core.synthesizer_picker();
-        bool changed = false;
         {
             wxDialog dialog(dialog_, wxID_ANY, Text(picker.title), wxDefaultPosition,
                             wxDefaultSize, wxDEFAULT_DIALOG_STYLE);
@@ -248,6 +267,10 @@ private:
             }
             outer->Add(label, 0, wxALL, 8);
             outer->Add(choice, 0, wxEXPAND | wxALL, 8);
+            // Empty, and so not read as the dialog's text, until a switch
+            // starts.
+            auto* status = new wxStaticText(&dialog, wxID_ANY, wxEmptyString);
+            outer->Add(status, 0, wxLEFT | wxRIGHT, 8);
 
             auto* buttons = new wxStdDialogButtonSizer();
             auto* ok = new wxButton(&dialog, wxID_OK, Text(picker.ok));
@@ -261,32 +284,37 @@ private:
             dialog.SetAffirmativeId(wxID_OK);
             dialog.SetEscapeId(wxID_CANCEL);
             ok->SetDefault();
+            // Handled here and not passed on, so OK does not close the
+            // dialog by itself.
+            const wxString switching = Text(picker.switching);
+            ok->Bind(wxEVT_BUTTON, [&dialog, choice, status, switching](wxCommandEvent&) {
+                const int selection = choice->GetSelection();
+                if (selection == wxNOT_FOUND) {
+                    dialog.EndModal(wxID_OK);
+                    return;
+                }
+                switch (g_shell->core.choose_synthesizer(static_cast<std::size_t>(selection))) {
+                case SynthesizerChoice::Unchanged:
+                    dialog.EndModal(wxID_OK);
+                    break;
+                case SynthesizerChoice::Switching:
+                    status->SetLabel(switching);
+                    dialog.Fit();
+                    break;
+                default:
+                    break;
+                }
+            });
             dialog.Fit();
             dialog.Centre();
 
             g_shell->modal = &dialog;
-            const int result = dialog.ShowModal();
-            g_shell->modal = nullptr;
+            g_shell->picker_status = status;
+            dialog.ShowModal();
             // Shutdown can arrive during the modal loop; it ends the loop
             // and destroys the settings dialog, so nothing more is done.
-            if (g_shell->shutting_down) {
-                return;
-            }
-            const int selection = choice->GetSelection();
-            if (result == wxID_OK && selection != wxNOT_FOUND) {
-                changed = g_shell->core.choose_synthesizer(static_cast<std::size_t>(selection));
-            }
-        }
-        if (changed) {
-            const SpeechPage page = g_shell->core.speech_page();
-            // Hidden first so the old controls give up their share of the
-            // sizer at once; destroying a child window detaches it.
-            controls_->Hide();
-            controls_->Destroy();
-            controls_ = BuildControls(page);
-            sizer_->Add(controls_, 1, wxEXPAND | wxALL, 5);
-            name_->SetValue(Text(page.synthesizer_name));
-            Layout();
+            g_shell->modal = nullptr;
+            g_shell->picker_status = nullptr;
         }
     }
 
@@ -1081,6 +1109,14 @@ private:
     wxButton* apply_ = nullptr;
     SpeechPanel* speech_ = nullptr;
     ThemePanel* theme_ = nullptr;
+
+public:
+    // The active synthesizer changed: the Speech page, if built, follows.
+    void SynthesizerChanged() {
+        if (speech_ != nullptr) {
+            speech_->Rebuild();
+        }
+    }
 };
 
 // A list dialog: a label over a single-selection list, a row of buttons,
@@ -1367,6 +1403,31 @@ void focus_dialog(DialogKind dialog) {
     if (wxDialog* window = DialogOf(dialog)) {
         window->SetFocus();
     }
+}
+
+void synthesizer_switched(const SynthesizerSwitch& outcome) {
+    if (g_shell == nullptr || g_shell->shutting_down) {
+        return;
+    }
+    wxDialog* picker = g_shell->picker_status != nullptr ? g_shell->modal : nullptr;
+    if (picker != nullptr) {
+        g_shell->picker_status->SetLabel(wxEmptyString);
+    }
+    if (outcome.switched) {
+        if (g_shell->settings != nullptr) {
+            g_shell->settings->SynthesizerChanged();
+        }
+        if (picker != nullptr) {
+            picker->EndModal(wxID_OK);
+        }
+        return;
+    }
+    wxWindow* parent = picker;
+    if (parent == nullptr) {
+        parent = g_shell->settings != nullptr ? static_cast<wxWindow*>(g_shell->settings)
+                                              : static_cast<wxWindow*>(g_shell->frame);
+    }
+    wxMessageBox(Text(outcome.error), Text(outcome.error_title), wxOK | wxICON_WARNING, parent);
 }
 
 void shut_down() {

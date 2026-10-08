@@ -10,12 +10,12 @@
 
 use std::sync::{Arc, Mutex};
 
-use crossbeam_channel::{Sender, bounded};
+use crossbeam_channel::Sender;
 
-use crate::SpeechSettingsHost;
 use crate::driver::SynthError;
 use crate::manager::{DriverState, QueueEvent};
 use crate::settings::{SettingDescriptor, SettingId, SettingValue, SynthChoice, SynthId};
+use crate::{SpeechSettingsHost, SwitchDone};
 
 /// Persists the active synthesizer's settings.
 ///
@@ -139,25 +139,30 @@ impl SpeechSettingsHost for SettingsHost {
         self.with_state(|state| state.active.clone())
     }
 
-    fn set_active_synthesizer(&self, id: &SynthId) -> Result<(), SynthError> {
-        let (reply_tx, reply_rx) = bounded::<Result<DriverState, SynthError>>(1);
-        self.queue_tx
-            .send(QueueEvent::SwitchSynth {
+    fn switch_synthesizer(&self, id: &SynthId, done: SwitchDone) {
+        let shared = Arc::clone(&self.shared);
+        // Runs on the synth thread once the switch has finished; the mirror
+        // describes the new synthesizer before `done` hears of it.
+        let reply = Box::new(move |outcome: Result<DriverState, SynthError>| {
+            done(outcome.map(|state| {
+                let mut guard = shared.lock().expect("settings mirror poisoned");
+                guard.active = state.choice;
+                guard.chosen = true;
+                guard.descriptors = state.descriptors;
+                guard.current.clone_from(&state.values);
+                guard.committed = state.values;
+            }));
+        });
+        if let Err(crossbeam_channel::SendError(QueueEvent::SwitchSynth { reply, .. })) =
+            self.queue_tx.send(QueueEvent::SwitchSynth {
                 id: id.clone(),
-                reply: reply_tx,
+                reply,
             })
-            .map_err(|_| SynthError::Unavailable("speech pipeline stopped".to_owned()))?;
-        let state = reply_rx
-            .recv()
-            .map_err(|_| SynthError::Unavailable("speech pipeline stopped".to_owned()))??;
-
-        let mut guard = self.shared.lock().expect("settings mirror poisoned");
-        guard.active = state.choice;
-        guard.chosen = true;
-        guard.descriptors = state.descriptors;
-        guard.current.clone_from(&state.values);
-        guard.committed = state.values;
-        Ok(())
+        {
+            reply(Err(SynthError::Unavailable(
+                "speech pipeline stopped".to_owned(),
+            )));
+        }
     }
 
     fn setting_descriptors(&self) -> Vec<SettingDescriptor> {

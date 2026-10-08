@@ -77,9 +77,9 @@ impl SpeechSettingsHost for MockHost {
             .unwrap()
     }
 
-    fn set_active_synthesizer(&self, id: &SynthId) -> Result<(), SynthError> {
+    fn switch_synthesizer(&self, id: &SynthId, done: verbatim_speech::SwitchDone) {
         self.inner.lock().unwrap().active = id.clone();
-        Ok(())
+        done(Ok(()));
     }
 
     fn setting_descriptors(&self) -> Vec<SettingDescriptor> {
