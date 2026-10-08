@@ -95,7 +95,15 @@ Public API:
   told whether the active synthesizer is the user's choice: one started
   in place of the configured one is not, until one is chosen in the
   dialog), and `revert`
-  restoring the last committed values.
+  restoring the last committed values. Because a switch does not block,
+  the settings dialog can be closed while one is under way, which NVDA's
+  blocking switch never allows: a `commit` then persists the synthesizer
+  still active at once and, once the switch has started the new one,
+  persists that too, so the saved configuration is the switch's outcome;
+  a `revert` then restores nothing until the switch ends, and only if it
+  fails, since a synthesizer that starts has its own saved values and the
+  previous one's must not reach it (`docs/parity.md`, "Settings dialog
+  during a synthesizer switch").
 - `SpeechEvents` — the observability seam, one call per milestone of each
   utterance: `utterance_queued` (with its rendered text), `audio_started`
   (its first frame has played), `mark_reached` (playback reached an index

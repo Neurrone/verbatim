@@ -7,7 +7,14 @@
 //! per node and kept; an MSAA node has text when it is the client area of a
 //! standard edit or rich edit control's window, read through the window's
 //! messages. Any other node answers `NoText`, as MSAA has no text interface:
-//! Core then reviews its value or name.
+//! Core then reviews its value or name. A fetch that fails, rather than
+//! answering that the element has no text pattern, is not kept: the read
+//! answers `Unanswered`, and the next one fetches again, as NVDA keeps no
+//! failed fetch. An answer of no text pattern, which is also how UIA reports
+//! a provider that fails the request, is kept only until the node is next
+//! reported as the focus, which NVDA reads as a new object, or raises a
+//! caret or text event, which only an element with text does
+//! (`docs/parity.md`, "A text pattern missing at the focus").
 
 #![forbid(unsafe_code)]
 
@@ -19,8 +26,7 @@ use windows::core::AgileReference;
 
 use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::{
-    CallCounts, CaretReport, CaretWatch, NodeId, NodeSnapshot, Role, TerminalOutput, TextOp,
-    TextReply, TraceId,
+    CallCounts, CaretReport, CaretWatch, NodeId, Role, TerminalOutput, TextOp, TextReply, TraceId,
 };
 use verbatim_uia::ElementExt;
 use verbatim_uia::map::is_terminal_class;
@@ -143,7 +149,15 @@ fn uia_source(context: &Context, node_id: NodeId) -> Result<UiaText, TextReply> 
                 Err(error) if verbatim_uia::element_is_gone(&error) => {
                     return Err(TextReply::Gone);
                 }
-                Err(_) => None,
+                // An answer with no pattern: the element has none.
+                Err(error) if error.code().is_ok() => None,
+                // The provider did not answer, as one that is not ready yet
+                // while its application starts: nothing is kept, so the
+                // next read fetches again.
+                Err(error) => {
+                    tracing::debug!(%error, "the text pattern could not be fetched");
+                    return Err(TextReply::Unanswered);
+                }
             };
             context.patterns().insert(node_id.number(), fetched.clone());
             fetched
@@ -167,6 +181,19 @@ fn uia_source(context: &Context, node_id: NodeId) -> Result<UiaText, TextReply> 
         .remote(remote)
         .fetches(context.fetches())
         .support(support))
+}
+
+/// Forgets that `node_id`'s element answered it has no text pattern, as it
+/// is reported as the focus again, or raises a caret or text event, which
+/// only an element with text does: NVDA fetches the pattern afresh for every
+/// focus, and an application whose provider was not ready when it was
+/// fetched (it then answers no pattern) has its text read once it says it
+/// has text. A pattern found is kept.
+pub(super) fn forget_no_text(context: &Context, node_id: NodeId) {
+    let mut patterns = context.patterns();
+    if patterns.get(&node_id.number()).is_some_and(Option::is_none) {
+        patterns.remove(&node_id.number());
+    }
 }
 
 /// Keeps what `source`, `node_id`'s text, is now known to support, for the
@@ -213,16 +240,13 @@ pub(super) const CONSOLE_WINDOW_CLASS: &str = "ConsoleWindowClass";
 /// Whether a focused node may have text, and so gets a caret report:
 /// through UIA, an edit field, a document, or a terminal (whose text
 /// pattern is then asked for); through MSAA, an edit control's client area.
-pub(super) fn may_have_text(context: &Context, node: &NodeSnapshot) -> bool {
-    if context.uia_registry.runtime_id_of(node.id).is_some() {
-        return matches!(
-            node.role,
-            Role::EditableText | Role::Document | Role::Terminal
-        );
+pub(super) fn may_have_text(context: &Context, node_id: NodeId, role: Role) -> bool {
+    if context.uia_registry.runtime_id_of(node_id).is_some() {
+        return matches!(role, Role::EditableText | Role::Document | Role::Terminal);
     }
     context
         .msaa_registry
-        .key_of(node.id)
+        .key_of(node_id)
         .is_some_and(|(hwnd, object, child)| edit_version(hwnd, object, child).is_some())
 }
 
@@ -262,6 +286,15 @@ pub(super) fn check_watch(
 ) -> Watched {
     let source = match source(context, node_id) {
         Ok(source) => source,
+        // A UIA element that answered no text pattern, or did not answer:
+        // an application still starting answers so for an element that has
+        // text, and raises a caret event once the key moves its caret, which
+        // only an element with text does; the watch stays open for it.
+        Err(TextReply::NoText | TextReply::Unanswered)
+            if context.uia_registry.runtime_id_of(node_id).is_some() =>
+        {
+            return Watched::Watching;
+        }
         Err(reply) => return Watched::Answered(reply),
     };
     let mut signal = Signal {
@@ -295,15 +328,29 @@ pub(super) fn check_watch(
     }
 }
 
+/// Why there is no caret to report.
+pub(super) enum NoCaret {
+    /// The node has no text to read: no text pattern, or an MSAA object
+    /// that is not an edit control.
+    NoText,
+    /// The node has text, or may have, but it could not be read now: its
+    /// provider did not answer, or its element is not known yet.
+    NotRead,
+}
+
 /// The caret of `node_id`, for a `CaretMoved` event, with the line's
 /// formatting when `formats` (the report after a focus, whose line is
-/// spoken); `None` when the node has no text or the read failed.
+/// spoken); otherwise why there is none.
 pub(super) fn report_caret(
     context: &Context,
     node_id: NodeId,
     formats: bool,
-) -> Option<CaretReport> {
-    let source = source(context, node_id).ok()?;
+) -> Result<CaretReport, NoCaret> {
+    let source = match source(context, node_id) {
+        Ok(source) => source,
+        Err(TextReply::NoText) => return Err(NoCaret::NoText),
+        Err(_) => return Err(NoCaret::NotRead),
+    };
     context.caret_read(node_id);
     let report = match source {
         Source::Uia(mut source) => {
@@ -332,11 +379,11 @@ pub(super) fn report_caret(
         }
     };
     match report {
-        Ok(report) => Some(report),
-        Err(TextError::Gone) => None,
+        Ok(report) => Ok(report),
+        Err(TextError::Gone) => Err(NoCaret::NotRead),
         Err(TextError::Failed(reason)) => {
             tracing::debug!(reason, "the caret could not be read");
-            None
+            Err(NoCaret::NotRead)
         }
     }
 }

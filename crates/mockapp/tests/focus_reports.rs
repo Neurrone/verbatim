@@ -1,7 +1,8 @@
 //! How a real outpost reports a UIA focus from mockapp's provider: under
 //! which node, when the provider reuses a dead element's runtime id, and
-//! with which states, when they changed after the focus event, and how soon,
-//! when the application is slow to answer the reads queued before it.
+//! with which states, when they changed after the focus event, how soon,
+//! when the application is slow to answer the reads queued before it, and
+//! when the focused element read answers a stand-in for a windowed focus.
 //!
 //! The outpost runs in this process and reads the focused element from the
 //! test (`common::outpost`), as `call_counts.rs` describes; mockapp's focus
@@ -354,6 +355,38 @@ fn a_focus_is_handled_before_slow_reads_queued_ahead_of_it() {
     app.quit();
 }
 
+/// Windows 11 Notepad, starting up, raised a UIA focus event on its text
+/// area, a window of its own, while the focused element read still
+/// answered a stand-in for a while: the focus was held back, and announced
+/// one to three seconds late (`phase6-design.md`, "Live caret event
+/// checks"). NVDA accepts a UIA focus whose own element has the keyboard
+/// focus, read live; so the outpost reads the event's own window's element
+/// and reports the focus at once, though the focused element read answers
+/// another element of the application.
+fn a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_in() {
+    let title = common::unique_title("mockapp-stand-in");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(app.pid());
+
+    let stand_in = client.named("Original Name");
+    app.send("set-focus root");
+    let cache = client.uia.base_cache_request().expect("a cache request");
+    let window = client
+        .uia
+        .element_from_handle(hwnd.0 as isize, &cache)
+        .expect("mockapp's root element");
+    let reported = outpost.uia_focus_read_later(&window, &stand_in);
+    assert_eq!(
+        (reported.node.role, reported.node.name),
+        (Role::Window, window.cached_string(UIA_NamePropertyId))
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 fn main() {
     harness::run(&[
         (
@@ -375,6 +408,10 @@ fn main() {
         (
             "a_controls_own_focus_reports_its_focused_child",
             a_controls_own_focus_reports_its_focused_child,
+        ),
+        (
+            "a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_in",
+            a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_in,
         ),
     ]);
 }

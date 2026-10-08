@@ -381,6 +381,11 @@ fn drain_commands(hwnd: HWND, context: &WindowContext) {
             acknowledge("applied");
             continue;
         }
+        if let Command::RefuseText(refuse) = command {
+            uia::refuse_text(refuse);
+            acknowledge("applied");
+            continue;
+        }
         if let Command::Hold = command {
             hits::hold_next();
             acknowledge("applied");

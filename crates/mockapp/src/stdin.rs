@@ -84,6 +84,11 @@ pub(crate) enum Command {
     /// answers at once again. Applied on the window thread, so the calls
     /// before it are answered at the old pace.
     Slow(u64),
+    /// `refuse-text on` or `refuse-text off`: while on, every request for a
+    /// node's text pattern fails (`E_FAIL`) rather than answering, as a
+    /// provider that is not ready yet does while its application starts.
+    /// UIA-only.
+    RefuseText(bool),
     /// `take-runtime-id <id> <from>`: node `from` dies, leaving the tree
     /// (its parent no longer lists it, and every call on its elements fails
     /// as on an element that is gone, `UIA_E_ELEMENTNOTAVAILABLE`), and node
@@ -151,6 +156,11 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "caret-event" if !rest.is_empty() => Some(Command::CaretEvent(rest.to_owned())),
         "stall" => rest.parse().ok().map(Command::Stall),
         "slow" => rest.parse().ok().map(Command::Slow),
+        "refuse-text" => match rest {
+            "on" => Some(Command::RefuseText(true)),
+            "off" => Some(Command::RefuseText(false)),
+            _ => None,
+        },
         "take-runtime-id" => {
             let mut parts = rest.split_whitespace();
             let id = parts.next()?;

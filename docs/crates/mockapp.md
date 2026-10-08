@@ -136,7 +136,11 @@ the window thread prints `stall started` on stdout as it begins and
 ends, so a test waits for the stall itself rather than for a guessed
 time), `slow <ms>` (every provider call on either backend from then on is
 answered that many milliseconds late, as by an application busy building
-a window, until `slow 0`; acknowledged `applied`), `hold` (the next
+a window, until `slow 0`; acknowledged `applied`), `refuse-text on` and
+`refuse-text off` (while on, every request for a node's text pattern fails
+with `E_FAIL`, as a provider that is not ready yet while its application
+starts, which UIA reports to the client as no pattern at all; UIA-only;
+acknowledged `applied`), `hold` (the next
 provider call, whichever client makes it, prints `held <method>` on
 stdout as it begins and waits until `release`, so a test knows a client's
 call is in progress and decides when it ends; acknowledged `applied`),

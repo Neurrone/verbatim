@@ -42,6 +42,21 @@ struct HostState {
     descriptors: Vec<SettingDescriptor>,
     current: Vec<(SettingId, SettingValue)>,
     committed: Vec<(SettingId, SettingValue)>,
+    /// What a synthesizer switch under way owes once it ends; `None` when
+    /// no switch is under way.
+    switch: Option<Owed>,
+}
+
+/// What the end of a synthesizer switch owes for a commit or revert asked
+/// for while it was under way.
+#[derive(Clone, Copy, Default)]
+struct Owed {
+    /// A commit was made: the synthesizer the switch starts is persisted
+    /// too, once it has started.
+    commit: bool,
+    /// A revert was asked for: carried out only if the switch fails, since
+    /// the synthesizer it starts has its own values.
+    revert: bool,
 }
 
 /// A cloneable settings-GUI handle over the pipeline.
@@ -70,6 +85,7 @@ impl SettingsHost {
             descriptors: initial.descriptors.clone(),
             current: initial.values.clone(),
             committed: initial.values.clone(),
+            switch: None,
         };
         Self {
             shared: Arc::new(Mutex::new(state)),
@@ -81,6 +97,44 @@ impl SettingsHost {
     fn with_state<R>(&self, f: impl FnOnce(&HostState) -> R) -> R {
         let guard = self.shared.lock().expect("settings mirror poisoned");
         f(&guard)
+    }
+
+    /// A switch has ended with `outcome`: the mirror takes the new
+    /// synthesizer when it started, and a commit or revert asked for during
+    /// the switch is carried out for the synthesizer now active. NVDA's
+    /// switch blocks its GUI, so its settings dialog can never be closed
+    /// during one (`docs/parity.md`, "Settings dialog during a synthesizer
+    /// switch"); this host's switch does not block, so a commit made
+    /// meanwhile must still save what the switch ended with.
+    fn switch_ended(&self, outcome: Result<DriverState, SynthError>) -> Result<(), SynthError> {
+        let owed = {
+            let mut guard = self.shared.lock().expect("settings mirror poisoned");
+            let owed = guard.switch.take().unwrap_or_default();
+            if let Ok(state) = &outcome {
+                guard.active = state.choice.clone();
+                guard.chosen = true;
+                guard.descriptors.clone_from(&state.descriptors);
+                guard.current.clone_from(&state.values);
+                guard.committed.clone_from(&state.values);
+            }
+            owed
+        };
+        match outcome {
+            Ok(_) => {
+                if owed.commit
+                    && let Err(error) = self.commit()
+                {
+                    tracing::warn!(target: "verbatim::speech", %error, "could not save the synthesizer the switch started");
+                }
+                Ok(())
+            }
+            Err(error) => {
+                if owed.revert {
+                    self.revert();
+                }
+                Err(error)
+            }
+        }
     }
 }
 
@@ -140,18 +194,17 @@ impl SpeechSettingsHost for SettingsHost {
     }
 
     fn switch_synthesizer(&self, id: &SynthId, done: SwitchDone) {
-        let shared = Arc::clone(&self.shared);
+        {
+            let mut guard = self.shared.lock().expect("settings mirror poisoned");
+            guard.switch = Some(Owed::default());
+        }
+        let host = self.clone();
         // Runs on the synth thread once the switch has finished; the mirror
-        // describes the new synthesizer before `done` hears of it.
+        // describes the new synthesizer before `done` hears of it, and a
+        // commit or revert asked for meanwhile is settled by the outcome.
         let reply = Box::new(move |outcome: Result<DriverState, SynthError>| {
-            done(outcome.map(|state| {
-                let mut guard = shared.lock().expect("settings mirror poisoned");
-                guard.active = state.choice;
-                guard.chosen = true;
-                guard.descriptors = state.descriptors;
-                guard.current.clone_from(&state.values);
-                guard.committed = state.values;
-            }));
+            let outcome = host.switch_ended(outcome);
+            done(outcome);
         });
         if let Err(crossbeam_channel::SendError(QueueEvent::SwitchSynth { reply, .. })) =
             self.queue_tx.send(QueueEvent::SwitchSynth {
@@ -202,6 +255,12 @@ impl SpeechSettingsHost for SettingsHost {
         let mut guard = self.shared.lock().expect("settings mirror poisoned");
         let current = guard.current.clone();
         guard.committed = current;
+        if let Some(owed) = &mut guard.switch {
+            *owed = Owed {
+                commit: true,
+                revert: false,
+            };
+        }
         Ok(())
     }
 
@@ -209,6 +268,12 @@ impl SpeechSettingsHost for SettingsHost {
         let restored = {
             let mut guard = self.shared.lock().expect("settings mirror poisoned");
             let state = &mut *guard;
+            if let Some(owed) = &mut state.switch {
+                // Restored, if at all, when the switch ends: queued now, the
+                // previous synthesizer's values would reach the new one.
+                owed.revert = true;
+                return;
+            }
             state.current.clone_from(&state.committed);
             state.current.clone()
         };

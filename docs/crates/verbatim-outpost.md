@@ -365,7 +365,12 @@ Public API:
     at once only if its application holds attention; otherwise the next
     fact for the application starts one. After three crashes within a
     minute (`CRASH_LIMIT`, `CRASH_WINDOW`, the pure `CrashHistory`) it is
-    not replaced until the next foreground change to that application. The
+    not replaced until the next foreground change to that application;
+    the app hears `OutpostMessage::NotWatched` after the third crash, since
+    it may be waiting for a replacement to ask for the focus, and again for
+    every request to start one meanwhile (`ensure_spawned`), so a focus it
+    wants from that application is dropped rather than awaited for ever
+    (`crates/verbatim-outpost/tests/target_gone.rs`). The
     sweep lets go of crash histories of applications that have since
     exited.
   - Hang: every child is pinged every three seconds; nine seconds without a
@@ -542,9 +547,19 @@ Implementation notes:
   Without it the focus is emitted from the event alone, with
   `ancestors_unknown`, and a queued `Item::ResolveFocus` follow-up (up to
   three attempts, while the focus is unchanged) finds the element and
-  moves the focus-following subscription to it. When the focused element
+  moves the focus-following subscription to it, and, for a focus that may
+  have text, the caret and text subscription too, and asks for its caret,
+  whose line Core then speaks for the focus. When the focused element
   read is in another application, the fact is out of date and dropped.
-  When it is another element of this application, the focus has most
+  When it is another element of this application, and the fact's element
+  is a window of its own, that window's element is read
+  (`own_element_focused`): if it is the fact's element and has the
+  keyboard focus, read live, the focus is reported from it at once, as
+  NVDA accepts a UIA focus event whose own element has the keyboard focus
+  (`shouldAllowUIAFocusEvent`); Windows 11 Notepad, starting up, answered
+  the focused element read with a stand-in for one to three seconds while
+  its text area, a window of its own, had the focus (`phase6-design.md`,
+  "Notepad at launch and the outposts' loose ends"). Otherwise the focus has most
   likely moved on (NVDA 2027.1 drops a focus event whose element no longer
   has the keyboard focus), but an application still starting can answer
   with a stand-in, so the fact is held back and reported only if a
@@ -732,7 +747,17 @@ Implementation notes:
   registry that issued it: a UIA node has text when its element has a text
   pattern, fetched once per node (`TextPattern2` where the provider has it,
   for the caret) and kept until the node is released, and a node whose
-  element has none answers `NoText`; an MSAA node has text when it is the
+  element has none answers `NoText`. That answer is kept only until the
+  node is next reported as the focus, or raises a caret or text event,
+  which only an element with text does (`text_reads::forget_no_text`):
+  UIA reports a provider that fails the request, as one not ready yet
+  while its application starts, exactly as one with no pattern, and
+  Windows 11 Notepad once answered so at launch, after which every caret
+  key in it was silent. A caret key's watch on such a UIA node stays open
+  rather than being answered `NoText`, so the application's caret event
+  answers it; a fetch that fails with an error is not kept at all and
+  answers `Unanswered` (mockapp's `refuse-text`, in
+  `crates/mockapp/tests/caret_watch.rs`). An MSAA node has text when it is the
   client area of a window whose class, normalized by NVDA's class map, is
   an edit control's (`Edit`, `RichEdit`, `RichEdit20`, `REComboBox20W`,
   `RICHEDIT50W`), read through its messages, and any other MSAA node
@@ -879,8 +904,13 @@ Implementation notes:
   unchanged, and sent as `CaretMoved`. So does any other focus whose role
   is edit field, document, or terminal; when that report finds no text to
   read (an MSAA object that is not an edit control, a UIA element with no
-  text pattern) or the caret cannot be read, `NoText` is sent instead, and
-  Core speaks the focus's value in place of its line. The worker then follows its caret:
+  text pattern), `NoText` is sent instead, and Core speaks the focus's
+  value in place of its line, as NVDA speaks the value of an object
+  without navigable text. When the text could not be read now (its
+  element is not known yet, the provider did not answer, or the caret
+  read failed), nothing is sent: Core speaks the line when the caret is
+  next reported, and never the value, which for a document is all of its
+  text. The worker then follows its caret:
   a second focus-following UIA subscription, moved to the focus when it
   has text and to nothing otherwise, delivers `Text_TextSelectionChanged`,
   reported as `CaretMoved`, and `Text_TextChanged`, reported as

@@ -73,7 +73,9 @@ pub trait SpeechSettingsHost: Send + Sync {
     fn set_setting(&self, id: &SettingId, value: SettingValue) -> Result<(), SynthError>;
 
     /// Persists the active synthesizer and its current setting values to the
-    /// base profile.
+    /// base profile. During a switch, the synthesizer still active is
+    /// persisted at once, and the one the switch starts is persisted too
+    /// once it has started, so what is saved is the switch's outcome.
     ///
     /// # Errors
     ///
@@ -81,6 +83,9 @@ pub trait SpeechSettingsHost: Send + Sync {
     fn commit(&self) -> Result<(), SynthError>;
 
     /// Restores the last committed synthesizer and setting values,
-    /// discarding uncommitted live changes.
+    /// discarding uncommitted live changes. During a switch, nothing is
+    /// restored until it ends: a synthesizer that starts has its own saved
+    /// values, and only when the switch fails are the previous
+    /// synthesizer's committed values restored.
     fn revert(&self);
 }

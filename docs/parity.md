@@ -1138,7 +1138,18 @@ verified.
     after all; and the remote operation that reads the ancestors reads
     `HasKeyboardFocus` live again in the same round trip, holding the fact
     back the same way when it is false. With remote operations off, the
-    focused-element read is the live check.
+    focused-element read is the live check. Since 2026-10-08, when the
+    focused-element read names another element of the application and the
+    event's element is a window of its own, the outpost reads that
+    window's element and accepts the focus at once if it is the event's
+    element and has the keyboard focus, read live, which is exactly
+    NVDA's check (**matched since 2026-10-08**): Windows 11 Notepad,
+    starting up, answered the focused-element read with a stand-in while
+    its text area had the focus, and its focus was held back and announced
+    one to three seconds late (mockapp's
+    `a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_in`).
+    A windowless element is still held back as above, since only its own
+    window's element can be read without NVDA's event element.
     Until 2026-10-03 Verbatim's outpost read the focused element live,
     took the focus from that read, and dropped the focus when the read
     failed; under a busy application the read blocked
@@ -1416,6 +1427,28 @@ verified.
   minimum and large steps, which gives the same steps for settings from 0
   to 100. Segments are joined with one space where NVDA joins chunks with
   two, which is not audible.
+- Settings dialog during a synthesizer switch. NVDA: the Select
+  Synthesizer dialog's OK calls `setSynth` on the GUI thread
+  (`SynthesizerSelectionDialog.onOk`, `nvda/source/gui/settingsDialogs.py`
+  lines 1293 to 1313), which terminates the old synthesizer, starts the
+  new one, and on success sets the configured synthesizer
+  (`nvda/source/synthDriverHandler.py` lines 504 to 547, the assignment at
+  544) before it returns, so the settings dialog's OK and Cancel can never
+  be pressed while a switch is under way. Verbatim: **different** — the
+  switch does not block the GUI thread (a synthesizer host can take its
+  time limit to start), so the settings dialog can be closed meanwhile.
+  Since 2026-10-08 its outcome decides what is saved: OK or Apply during
+  the switch saves the synthesizer still active at once and, once the
+  switch has started the new one, saves that as the configured
+  synthesizer with its settings; Cancel during the switch restores
+  nothing until it ends, and restores the previous synthesizer's
+  committed values only when it fails, since a synthesizer that starts
+  has its own saved values (`verbatim-speech`'s
+  `a_commit_during_a_switch_saves_the_synth_the_switch_started` and
+  `a_revert_during_a_switch_that_fails_restores_the_committed_values`).
+  Before, OK saved whichever synthesizer was active when it was pressed,
+  and Cancel's restore of the previous synthesizer's values could reach
+  the new one.
 - Instant cancel (stop + reset, audible immediately). NVDA:
   `WavePlayer.stop`. Verbatim: **matched (verified)** — WASAPI
   stop+reset; latency measured in the E2E ledger.
@@ -1705,6 +1738,30 @@ verified.
   as "terminal" without its English-only name, "Text Area", as NVDA's
   console class drops it (**matched since 2026-10-07**, found by
   comparing transcripts; the terminal scenarios assert it).
+- A text pattern missing at the focus. NVDA fetches a UIA object's text
+  pattern live, keeps what it got for that object's life, and makes a new
+  object for every focus event (`_get_UIATextPattern` and
+  `_get_TextInfo`, `nvda/source/NVDAObjects/UIA/__init__.py` lines 1766
+  to 1772 and 1802 to 1804); an object without a text pattern has no
+  navigable text, so its value is spoken in place of its line
+  (`_get__hasNavigableText`, `nvda/source/NVDAObjects/__init__.py` lines
+  1590 to 1603; `getObjectSpeech`, `nvda/source/speech/speech.py` lines
+  870 to 917). UIA reports a provider that fails the pattern request
+  exactly as one with no pattern. Verbatim: **matched**, and since
+  2026-10-08 the answer of no pattern is not kept past evidence that it
+  is out of date: the next focus on the node, or a caret or text event
+  from it, which only an element with text raises, has the pattern
+  fetched again; a caret key's watch on such a node stays open for that
+  event instead of being answered at once; and a fetch that fails with an
+  error is not kept at all. Found live in Windows 11 Notepad at launch,
+  whose document answered no pattern: Verbatim spoke the whole document,
+  as NVDA would have, and then every caret key in that window was silent,
+  since the answer was kept for the node's life (mockapp's
+  `a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event`).
+  **Different:** when a focus's text has a pattern but cannot be read at
+  all, nothing is said in place of its line until its caret is next
+  reported, where NVDA's read raises and nothing more of the focus is
+  spoken.
 - New terminal output. NVDA: [Editable text and
   terminals](nvda/editable-text-and-terminals.md), "Terminals": diffing by
   default, the whole document per text change; Windows Terminal's output

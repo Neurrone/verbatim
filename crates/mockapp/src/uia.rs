@@ -68,6 +68,19 @@ pub(crate) fn root_fragment(tree: SharedTree, hwnd: HWND) -> IRawElementProvider
     }
 }
 
+/// Whether every request for a text pattern fails (`refuse-text`).
+static REFUSE_TEXT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Has every request for a text pattern fail from now on, or answer again.
+pub(crate) fn refuse_text(refuse: bool) {
+    REFUSE_TEXT.store(refuse, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether requests for a text pattern fail now.
+fn refusing_text() -> bool {
+    REFUSE_TEXT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 mod text;
 
 pub(crate) use text::{KeyMoved, caret_key};
@@ -168,6 +181,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         // Handled by the window thread before dispatch.
         Command::Stall(_)
         | Command::Slow(_)
+        | Command::RefuseText(_)
         | Command::Hold
         | Command::Release
         | Command::Quit
@@ -1199,6 +1213,9 @@ mod handler {
         if (pattern_id == UIA_TextPatternId || pattern_id == UIA_TextPattern2Id)
             && text::has_text(tree, index)
         {
+            if super::refusing_text() {
+                return Err(Error::from(windows::Win32::Foundation::E_FAIL));
+            }
             return Ok(text::provider(tree, hwnd, index));
         }
         if pattern_id == UIA_SelectionItemPatternId && props::selection_available(states) {

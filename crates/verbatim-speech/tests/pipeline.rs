@@ -1088,6 +1088,99 @@ fn switching_synth_starts_it_with_its_saved_settings() {
     );
 }
 
+/// `inner`, which starts only once `gate` lets it, as a synthesizer host
+/// that takes its time to start does.
+fn gated(inner: SynthFactory, gate: crossbeam_channel::Receiver<()>) -> SynthFactory {
+    Box::new(move || {
+        gate.recv().expect("the test opens the gate");
+        inner()
+    })
+}
+
+/// NVDA's switch blocks its GUI, so its settings dialog cannot be closed
+/// during one; Verbatim's does not. A commit made while the switch is under
+/// way saves the synthesizer still active at once, and the one the switch
+/// starts once it has started, so what is saved is the switch's outcome.
+#[test]
+fn a_commit_during_a_switch_saves_the_synth_the_switch_started() {
+    let saved: SavedStore = Arc::new(Mutex::new(Vec::new()));
+    let (open, gate) = crossbeam_channel::bounded(0);
+    let mut registry = SynthRegistry::new();
+    registry.register(SynthId::new("one"), "One", SettingsSynth::factory("one"));
+    registry.register(
+        SynthId::new("two"),
+        "Two",
+        gated(SettingsSynth::factory("two"), gate),
+    );
+    let manager = settings_manager(registry, "one", &saved).expect("pipeline starts");
+    let commits = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&commits);
+    let host = manager.settings_host(Box::new(move |id, chosen, _| {
+        recorded.lock().unwrap().push((id.clone(), chosen));
+        Ok(())
+    }));
+
+    let (done_tx, done) = crossbeam_channel::bounded(1);
+    host.switch_synthesizer(
+        &SynthId::new("two"),
+        Box::new(move |outcome| {
+            let _ = done_tx.send(outcome);
+        }),
+    );
+    host.commit().expect("commits");
+    open.send(()).expect("the switch waits at the gate");
+    done.recv()
+        .expect("the switch reports its outcome")
+        .expect("switches");
+    assert_eq!(
+        *commits.lock().unwrap(),
+        vec![(SynthId::new("one"), true), (SynthId::new("two"), true)]
+    );
+}
+
+/// A revert asked for while a switch is under way restores nothing until
+/// the switch ends, so the previous synthesizer's values never reach the
+/// new one; when the switch fails, the previous synthesizer's committed
+/// values are restored.
+#[test]
+fn a_revert_during_a_switch_that_fails_restores_the_committed_values() {
+    let saved: SavedStore = Arc::new(Mutex::new(Vec::new()));
+    let (open, gate) = crossbeam_channel::bounded(0);
+    let mut registry = SynthRegistry::new();
+    registry.register(SynthId::new("one"), "One", SettingsSynth::factory("one"));
+    registry.register(
+        SynthId::new("broken"),
+        "Broken",
+        gated(broken_factory(), gate),
+    );
+    let manager = settings_manager(registry, "one", &saved).expect("pipeline starts");
+    let host = manager.settings_host(Box::new(|_, _, _| Ok(())));
+    let rate = SettingId::new("rate");
+    host.set_setting(&rate, SettingValue::Number(75))
+        .expect("a rate in range");
+
+    let (done_tx, done) = crossbeam_channel::bounded(1);
+    host.switch_synthesizer(
+        &SynthId::new("broken"),
+        Box::new(move |outcome| {
+            let _ = done_tx.send(outcome);
+        }),
+    );
+    host.revert();
+    assert_eq!(
+        host.setting(&rate),
+        Some(SettingValue::Number(75)),
+        "nothing is restored while the switch is under way"
+    );
+    open.send(()).expect("the switch waits at the gate");
+    assert!(matches!(
+        done.recv().expect("the switch reports its outcome"),
+        Err(SynthError::Unavailable(_))
+    ));
+    assert_eq!(host.active_synthesizer().id, SynthId::new("one"));
+    assert_eq!(host.setting(&rate), Some(SettingValue::Number(50)));
+}
+
 /// A silent synth with a pitch setting that records the pitch it held for
 /// each piece of text it spoke.
 struct PitchSynth {

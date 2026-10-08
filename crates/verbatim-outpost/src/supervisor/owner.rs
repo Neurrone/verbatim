@@ -211,11 +211,13 @@ impl Owner {
         match event {
             OwnerEvent::Shutdown(reply) => self.shut_down_all(reply),
             OwnerEvent::EnsureSpawned(pid) => {
-                if self.shutting_down.is_none()
-                    && !self.records.contains_key(&pid)
-                    && !self.respawn_stopped(pid)
-                {
-                    let _ = self.start_outpost(pid, None);
+                if self.shutting_down.is_none() && !self.records.contains_key(&pid) {
+                    if self.respawn_stopped(pid) {
+                        tracing::info!(%pid, "no outpost is started: respawning is stopped after repeated crashes");
+                        self.not_watched(pid);
+                    } else {
+                        let _ = self.start_outpost(pid, None);
+                    }
                 }
             }
             OwnerEvent::Views { attention, holding } => {
@@ -294,9 +296,7 @@ impl Owner {
         if let Err(not_held) = self.hold_target(pid) {
             tracing::info!(%pid, %not_held, "no outpost is started for an application that is not running");
             self.release_target(pid);
-            let _ = self
-                .events_tx
-                .send(OutpostMessage::NotWatched { target_pid: pid });
+            self.not_watched(pid);
             return false;
         }
         let outpost = self.next_outpost_id();
@@ -319,6 +319,14 @@ impl Owner {
         );
         self.launch(outpost, Role::Outpost(pid));
         true
+    }
+
+    /// Tells the app that no outpost will watch `pid` for now
+    /// ([`OutpostMessage::NotWatched`]), so nothing waits for one.
+    fn not_watched(&self, pid: Pid) {
+        let _ = self
+            .events_tx
+            .send(OutpostMessage::NotWatched { target_pid: pid });
     }
 
     /// Holds `pid`'s process, unless it is held already: the pid then names
@@ -726,6 +734,9 @@ impl Owner {
                 .record(Instant::now(), CRASH_LIMIT, CRASH_WINDOW);
         if stopped {
             tracing::error!(%pid, "outpost crashed repeatedly; not replacing it until the next foreground change to its application");
+            // The app, told of the crash, may be waiting for a replacement
+            // to ask for the focus.
+            self.not_watched(pid);
             return;
         }
         if self.attention == Some(pid) {

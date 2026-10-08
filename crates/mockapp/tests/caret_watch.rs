@@ -1,8 +1,9 @@
 //! A caret key's watch for evidence in a real outpost, against mockapp's
 //! UIA text provider: the worker never waits for a caret key, so a focus
 //! change made while a key's watch is open is handled at once, a caret move
-//! the application reports later still answers the watch, and a key that
-//! moves nothing is answered by nothing at all.
+//! the application reports later still answers the watch, a key that
+//! moves nothing is answered by nothing at all, and a text pattern missing
+//! as the focus arrives is read once the application raises a caret event.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -214,6 +215,62 @@ fn a_key_that_moves_nothing_is_answered_with_nothing() {
     app.quit();
 }
 
+/// Windows 11 Notepad, starting up, once answered that its document had
+/// no text pattern (`phase6-design.md`, "Live caret event checks"), and
+/// every caret key in it was silent from then on. A provider that fails the
+/// request reaches the client the same way, as no pattern, so the focus is
+/// reported as having no text, and Core speaks its value, as NVDA does for
+/// an object without text. That answer is not kept past the evidence that
+/// it is out of date: a caret key's watch on the document stays open, and
+/// once the provider answers, the application's caret event, which only an
+/// element with text raises, has the text read again and answers the key.
+fn a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event() {
+    let (mut app, hwnd, mut outpost) = start("mockapp-caret-watch-not-ready");
+    app.send("refuse-text on");
+    let fact = focus_fact(&mut app, &outpost, hwnd, "doc");
+    outpost.deliver(fact);
+    let notes = match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::FocusChanged { node, .. },
+            ..
+        } => node.id,
+        other => panic!("the outpost said {other:?}, not the document's focus"),
+    };
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::NoText { node_id },
+            ..
+        } if node_id == notes => {}
+        other => panic!("the outpost said {other:?}, not that the document has no text"),
+    }
+    let key = outpost.ask(Query::Text {
+        node_id: notes,
+        op: TextOp::AwaitCaret(CaretWatch {
+            since: None,
+            pressed_at_ms: 0,
+            unit: TextUnit::Character,
+            compare: None,
+            previous_selection: None,
+        }),
+    });
+    // The watch is open: nothing is said, and the worker has finished.
+    outpost.settled();
+
+    app.send("refuse-text off");
+    app.send("caret doc 1");
+    app.send("caret-event doc");
+    let reply = caret_reply(answer_to(&outpost, key));
+    assert!(reply.moved);
+    assert_eq!(
+        (reply.caret.line.text.as_str(), reply.caret.line.offset),
+        ("alpha beta\n", 1)
+    );
+    assert_eq!(reply.unit.expect("the character").text, "l");
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -228,6 +285,10 @@ fn main() {
         (
             "a_key_that_moves_nothing_is_answered_with_nothing",
             a_key_that_moves_nothing_is_answered_with_nothing,
+        ),
+        (
+            "a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event",
+            a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event,
         ),
     ]);
 }

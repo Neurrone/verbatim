@@ -1054,8 +1054,12 @@ impl Worker<'_> {
     /// focus and the worker has not read its caret since the event that
     /// asked: a caret key's answer, read after the event, already told Core.
     /// For the report that follows a new focus (`after_focus`), a focus with
-    /// no text to read, or whose caret could not be read, is reported as
-    /// `NoText`, and Core speaks its value instead of a line.
+    /// no text to read is reported as `NoText`, and Core speaks its value
+    /// instead of a line. A focus whose text could not be read now reports
+    /// nothing: Core speaks its line when its caret is next reported, as a
+    /// caret event of the application's says the text can be read, and
+    /// never its value, which for a document is all of its text, as NVDA
+    /// never speaks the value of an object with text.
     fn caret_of(
         &mut self,
         node_id: NodeId,
@@ -1080,9 +1084,15 @@ impl Worker<'_> {
             "caret read timing"
         );
         let event = match report {
-            Some(caret) => NormalizedEvent::CaretMoved { node_id, caret },
-            None if after_focus => NormalizedEvent::NoText { node_id },
-            None => return,
+            Ok(caret) => NormalizedEvent::CaretMoved { node_id, caret },
+            Err(text_reads::NoCaret::NoText) if after_focus => NormalizedEvent::NoText { node_id },
+            Err(text_reads::NoCaret::NotRead) if after_focus => {
+                tracing::debug!(
+                    "the focus's caret could not be read; its line is spoken when its caret is next reported"
+                );
+                return;
+            }
+            Err(_) => return,
         };
         let backend = if self.context.uia_registry.runtime_id_of(node_id).is_some() {
             Backend::Uia
@@ -1160,15 +1170,13 @@ impl Worker<'_> {
     /// the line or the value), and moves the subscription to caret and text
     /// changes to it (to nothing for a focus without text, or one read
     /// through MSAA, whose caret events come from the hooks).
-    fn follow_text(&self, node: &NodeSnapshot, trace: TraceId) {
-        let has_text = self.follow_text_events(node);
-        let role_has_text = matches!(
-            node.role,
-            Role::EditableText | Role::Document | Role::Terminal
-        );
+    fn follow_text(&self, (node_id, role): (NodeId, Role), trace: TraceId) {
+        text_reads::forget_no_text(self.context, node_id);
+        let has_text = self.follow_text_events((node_id, role));
+        let role_has_text = matches!(role, Role::EditableText | Role::Document | Role::Terminal);
         if has_text || role_has_text {
             self.context.intake.push(Entry {
-                item: Item::CaretOf { node_id: node.id },
+                item: Item::CaretOf { node_id },
                 trace,
                 observed_at_ms: now_ms(),
                 timing: EventTiming {
@@ -1183,11 +1191,11 @@ impl Worker<'_> {
     /// may have text and is read through UIA, and to nothing otherwise
     /// (an edit control's caret events come from the hooks). Returns
     /// whether the node may have text.
-    fn follow_text_events(&self, node: &NodeSnapshot) -> bool {
-        let has_text = text_reads::may_have_text(self.context, node);
+    fn follow_text_events(&self, (node_id, role): (NodeId, Role)) -> bool {
+        let has_text = text_reads::may_have_text(self.context, node_id, role);
         if let Some(subscription) = self.context.text_events.get() {
             let element = has_text
-                .then(|| self.context.uia_registry.element_of(node.id))
+                .then(|| self.context.uia_registry.element_of(node_id))
                 .flatten();
             subscription.retarget(match element {
                 Some(element) => verbatim_uia::Scope::Elements(vec![element]),
@@ -1392,7 +1400,7 @@ impl Worker<'_> {
                 self.context.intake.set_judged(self.judged_ancestors());
             }
             if let Some(node) = text_node {
-                self.follow_text(&node, trace);
+                self.follow_text((node.id, node.role), trace);
             }
         }
     }
@@ -1760,9 +1768,11 @@ impl Worker<'_> {
                     .context
                     .uia_registry
                     .existing_id(&event.parts.runtime_id)
-                    && !self.check_open_watch(node_id, true)
                 {
-                    self.caret_of(node_id, trace, observed_at_ms, false);
+                    text_reads::forget_no_text(self.context, node_id);
+                    if !self.check_open_watch(node_id, true) {
+                        self.caret_of(node_id, trace, observed_at_ms, false);
+                    }
                 }
                 return;
             }
@@ -1821,6 +1831,7 @@ impl Worker<'_> {
         let Some(node_id) = self.context.uia_registry.existing_id(runtime_id) else {
             return;
         };
+        text_reads::forget_no_text(self.context, node_id);
         self.check_open_watch(node_id, false);
         if self.focused_terminal(node_id) {
             self.terminal_output(node_id, trace, observed_at_ms);
@@ -1877,7 +1888,7 @@ impl Worker<'_> {
             .and_then(|agile| agile.resolve().ok());
         let focused = match known {
             Some(element) => element,
-            None => match self.live_focus_element(&focus_id) {
+            None => match self.live_focus_element(&focus_id, 0) {
                 LiveFocus::Found(element) => element,
                 LiveFocus::InAnotherApplication | LiveFocus::Elsewhere | LiveFocus::Unresolved => {
                     return None;
@@ -2275,7 +2286,7 @@ impl Worker<'_> {
             return;
         }
         let reading = Instant::now();
-        let element = match self.live_focus_element(&fact.runtime_id) {
+        let element = match self.live_focus_element(&fact.runtime_id, fact_hwnd) {
             LiveFocus::Found(element) => Some(element),
             LiveFocus::InAnotherApplication => {
                 tracing::debug!("UIA focus dropped: the focus is in another application now");
@@ -2532,8 +2543,16 @@ impl Worker<'_> {
     }
 
     /// The live element for the focus `runtime_id` names, read as the
-    /// focused element within [`FOCUS_READ_WAIT`].
-    fn live_focus_element(&mut self, runtime_id: &[i32]) -> LiveFocus {
+    /// focused element within [`FOCUS_READ_WAIT`]. When the focused element
+    /// read is another element of this application and the focus's element
+    /// is a window of its own, `own_window` (0 for a windowless element),
+    /// that window's element is read and is the focus if it is the same
+    /// element and has the keyboard focus, read live: NVDA accepts a UIA
+    /// focus event whose own element has the keyboard focus
+    /// (`shouldAllowUIAFocusEvent`), whatever the focused element read says,
+    /// and an application starting up, Windows 11 Notepad among them,
+    /// answers the focused element read with a stand-in for a while.
+    fn live_focus_element(&mut self, runtime_id: &[i32], own_window: isize) -> LiveFocus {
         let Some(uia) = self.client.uia() else {
             return LiveFocus::Unresolved;
         };
@@ -2553,9 +2572,37 @@ impl Worker<'_> {
             LiveFocus::Found(element)
         } else if process.is_some_and(|pid| pid != 0 && pid != self.context.target_pid) {
             LiveFocus::InAnotherApplication
+        } else if let Some(own) = self.own_element_focused(runtime_id, own_window) {
+            LiveFocus::Found(own)
         } else {
             LiveFocus::Elsewhere
         }
+    }
+
+    /// The element of `own_window`, the window of the focus `runtime_id`
+    /// names, when it is that element and has the keyboard focus, read
+    /// within [`FOCUS_READ_WAIT`]; `None` otherwise, and for no window.
+    fn own_element_focused(
+        &mut self,
+        runtime_id: &[i32],
+        own_window: isize,
+    ) -> Option<IUIAutomationElement> {
+        if own_window == 0 {
+            return None;
+        }
+        let uia = self.client.uia()?;
+        let cache = self.context.uia_cache(uia).ok()?;
+        let read = uia.within(FOCUS_READ_WAIT, |uia| {
+            let element = uia.element_from_handle(own_window, &cache).ok()?;
+            // Built with the base cache request.
+            let same = snapshot_parts_from_cached_element(&element).runtime_id == runtime_id;
+            (same && matches!(element.has_keyboard_focus(), Ok(true))).then_some(element)
+        });
+        let element = read.ok().flatten()?;
+        tracing::debug!(
+            "UIA focus: the focused element read named another element, but the event's own element has the keyboard focus"
+        );
+        Some(element)
     }
 
     /// Queues a follow-up that finds the live element of the focus
@@ -2612,7 +2659,7 @@ impl Worker<'_> {
         if let Some(held) = held {
             // Reported now if its element has the keyboard focus after all,
             // read afresh as the event would have been.
-            match self.live_focus_element(runtime_id) {
+            match self.live_focus_element(runtime_id, held.windows.0) {
                 LiveFocus::Found(_) => {
                     self.uia_focus(held.windows, &held.fact, trace, held.observed_at_ms);
                 }
@@ -2637,6 +2684,13 @@ impl Worker<'_> {
         let id = context.uia_registry.id_for_element(runtime_id, &element);
         if let Some(subscription) = context.focus_properties.get() {
             subscription.retarget(following(context.uia_registry.element_of(id)));
+        }
+        // The focus was reported without its element, so its text could not
+        // be read: its caret and text events are followed from now on, and
+        // its caret reported, whose line Core speaks for the focus.
+        let role = context.tracking().role;
+        if let Some(role) = role {
+            self.follow_text((id, role), trace);
         }
         tracing::debug!("the focus's element was found; its changes are followed");
     }
@@ -2778,7 +2832,7 @@ impl Worker<'_> {
                 // key there is answered by the control's caret events, so
                 // they are followed as a reported focus's are.
                 if let Some(control) = &answer.focus {
-                    self.follow_text_events(&control.node);
+                    self.follow_text_events((control.node.id, control.node.role));
                 }
                 Ok(QueryResult::Focus(answer))
             }

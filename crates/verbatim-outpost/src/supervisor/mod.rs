@@ -149,7 +149,9 @@ pub enum OutpostMessage {
     },
     /// An outpost was wanted for `target_pid`, asked for or to replace one
     /// that crashed, and none was started: the application's process has
-    /// exited, or cannot be opened to be held. Nothing should wait for one.
+    /// exited, or cannot be opened to be held, or its outposts crashed
+    /// repeatedly, which stops respawning until the next foreground change
+    /// to it. Nothing should wait for one.
     NotWatched {
         /// The application.
         target_pid: Pid,
@@ -226,8 +228,8 @@ impl Supervisor {
     /// to report anything. Used once at startup for Core's own process, so
     /// its outpost is warm before the first gesture: a cold spawn races a
     /// real keypress sent right after Verbatim's menu opens. An application
-    /// whose process has exited gets none, and the app hears
-    /// [`OutpostMessage::NotWatched`].
+    /// whose process has exited, or whose outposts crashed repeatedly, gets
+    /// none, and the app hears [`OutpostMessage::NotWatched`].
     pub fn ensure_spawned(&self, target_pid: Pid) {
         let _ = self
             .owner
