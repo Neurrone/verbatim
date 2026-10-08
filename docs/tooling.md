@@ -873,6 +873,15 @@ Install `nvda-addon/verbatimTranscript.nvda-addon` into NVDA and run
 `cargo xtask nvda capture` with the keys to press;
 [the NVDA transcript guide](nvda-transcript.md) has the details.
 
+The capture presses its keys only in the window it means to: the one in
+front when it starts, then the one each `--front` brings forward. It
+stops with an error, sending nothing more, when a `--front` finds no
+window to bring forward, and before any key or typing step when the
+window in front belongs to another process, or when a `--launch` has not
+been followed by a `--front`. Before this guard (2026-10-09), a `--front`
+that failed only printed a note, and the steps after it typed into
+whatever window was in front.
+
 ## Troubleshooting
 
 **The agent is unreachable after a checkpoint restore, but perfectly

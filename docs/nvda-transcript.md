@@ -59,7 +59,13 @@ A step is a key to press, or one of these:
   `--front *=<title>` brings forward whichever program's window has that
   title, for a window whose program is not obvious, such as a console
   window, which belongs to the console host or to the shell it runs
-  depending on how it was started.
+  depending on how it was started. If no such window takes the
+  foreground, the capture stops with an error. Before every key and
+  typing step, the capture checks that the window in front still belongs
+  to the process the last `--front` brought forward (or, before any, to
+  the one in front when the capture started) and stops with an error
+  otherwise, so its keys never reach another window; after a `--launch`,
+  a `--front` must name the launched program's window before any key.
 - `--gesture <identifier>` sends a gesture such as `kb:verbatim+v` to
   the Verbatim running on this machine through its control pipe, so
   Verbatim's own commands can be used without pressing a modifier key

@@ -531,9 +531,15 @@ fn capture(args: &[String]) -> io::Result<()> {
             }
         }
     };
+    // The process whose window the keys go to: the one in front when the
+    // capture starts, then the one each --front brings forward. A launch
+    // leaves none until a --front names its window.
+    let mut target = agent.foreground_info()?.foreground.map(|window| window.pid);
     for (index, step) in options.steps.iter().enumerate() {
         let sent_ms = source.now_ms();
-        let mut note = None;
+        if matches!(step, Step::Key(_) | Step::Type(_)) {
+            require_in_front(&mut agent, target, step)?;
+        }
         match step {
             Step::Key(keys) => {
                 let keys: Vec<String> = keys.split(',').map(str::to_owned).collect();
@@ -541,6 +547,7 @@ fn capture(args: &[String]) -> io::Result<()> {
             }
             Step::Launch { program, args } => {
                 agent.launch_process(program, args, None, &[], None)?;
+                target = None;
             }
             Step::Front { image, title } => {
                 // The window, found by its image and title, is brought
@@ -552,12 +559,17 @@ fn capture(args: &[String]) -> io::Result<()> {
                             .as_deref()
                             .is_none_or(|title| window.title.contains(title))
                 });
-                let taken = match window {
+                let taken = match &window {
                     Some(window) => agent.set_foreground(window.window)?,
                     None => false,
                 };
+                target = window.filter(|_| taken).map(|window| window.pid);
+                // The steps after it press keys in whatever is in front:
+                // without the window, none of them may run.
                 if !taken {
-                    note = Some("no matching window took the foreground".to_owned());
+                    return Err(io::Error::other(format!(
+                        "no window of {image} titled {title:?} took the foreground; the remaining steps were not run"
+                    )));
                 }
             }
             Step::Gesture(identifier) => send_gesture(identifier)?,
@@ -569,9 +581,6 @@ fn capture(args: &[String]) -> io::Result<()> {
             println!("{}", json!({"step": index, "label": step.label()}));
         } else {
             println!("> {}", step.label());
-        }
-        if let Some(note) = note {
-            print(index, None, &Entry::Note(note));
         }
         let mut last_activity = Instant::now();
         let deadline = last_activity + options.timeout;
@@ -596,6 +605,34 @@ fn capture(args: &[String]) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Fails, before `step` presses any key, unless the window in front
+/// belongs to `target`, the process the keys are meant for: a key pressed
+/// in any other window acts on whatever it is (`docs/tooling.md`,
+/// "Capturing NVDA").
+fn require_in_front(agent: &mut AgentClient, target: Option<u32>, step: &Step) -> io::Result<()> {
+    let Some(target) = target else {
+        return Err(io::Error::other(format!(
+            "no window was brought forward after the launch; {} and the steps after it were not run",
+            step.label()
+        )));
+    };
+    let foreground = agent.foreground_info()?.foreground;
+    match foreground {
+        Some(window) if window.pid == target => Ok(()),
+        other => Err(io::Error::other(format!(
+            "the window in front is {}, not the capture's (pid {target}); {} and the steps after it were not run",
+            other.map_or_else(
+                || "none".to_owned(),
+                |window| format!(
+                    "{:?} of {} (pid {})",
+                    window.title, window.image, window.pid
+                )
+            ),
+            step.label()
+        ))),
+    }
 }
 
 /// Sends one gesture to the local Verbatim's control pipe.
