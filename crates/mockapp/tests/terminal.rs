@@ -10,8 +10,11 @@
 //! What is checked: the remote program and the classic implementation
 //! agree on every kind of read; the outpost reports appended lines, a line
 //! that grew, a scrollback that shifted beneath the anchor, and a cleared
-//! screen; and a terminal read costs exactly what `docs/performance.md`
-//! records, by client calls and provider hits, remotely and classically.
+//! screen; a terminal read costs exactly what `docs/performance.md`
+//! records, by client calls and provider hits, remotely and classically;
+//! and a terminal whose text changes with no caret event, as the console
+//! host's does while typing, still has Core's Backspace say exactly what it
+//! deleted, since the caret is read with the text.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -19,13 +22,21 @@ mod harness;
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-
-use verbatim_model::{CallCounts, LineChange, Skipped, TerminalOutput};
+use verbatim_core::{SrState, reduce};
+use verbatim_model::{
+    Backend, CallCounts, CaretKey, CaretMotion, CaretReport, Effect, Input, LineChange,
+    NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid, Role, SegmentContent,
+    Skipped, StateSet, TerminalOutput, TextOp, TraceId,
+};
 use verbatim_outpost::terminal::{TailText, Terminal, read};
+use verbatim_outpost::text::uia::UiaText;
+use verbatim_outpost::text::{
+    Anchors, CaretSignal, NodeText, Watched, caret_report_from, check_caret, perform,
+};
 use verbatim_uia::{NodeIdRegistry, Uia};
 use verbatim_uia_rops::{
-    Fingerprint, Found, Path, TailQuery, TailStart, terminal_tail, terminal_tail_classic,
-    terminal_tail_remote,
+    CaretLineQuery, Fingerprint, Found, Path, TailQuery, TailStart, terminal_tail,
+    terminal_tail_classic, terminal_tail_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
@@ -85,6 +96,7 @@ fn anchored<'a>(
             fingerprint: Fingerprint { line, previous },
         },
         lines_wanted: WANTED,
+        caret: None,
     }
 }
 
@@ -106,6 +118,7 @@ fn remote_and_classic_terminal_tails_agree() {
     let fresh = TailQuery {
         start: TailStart::Document(&document),
         lines_wanted: WANTED,
+        caret: None,
     };
     let (tail, last) = both(&uia, &fresh);
     assert_eq!(tail.found, Found::Afresh);
@@ -169,6 +182,7 @@ fn a_fingerprint_is_found_by_its_text_past_partial_matches() {
     let fresh = TailQuery {
         start: TailStart::Document(&document),
         lines_wanted: WANTED,
+        caret: None,
     };
     let (tail, last) = both(&uia, &fresh);
     assert_eq!(tail.last_line, "last");
@@ -235,6 +249,7 @@ fn a_fingerprint_far_up_is_found_and_costs_exactly() {
     let fresh = TailQuery {
         start: TailStart::Document(&document),
         lines_wanted: WANTED,
+        caret: None,
     };
     let (tail, last) = both(&uia, &fresh);
     assert_eq!(tail.last_line, "lastline");
@@ -272,17 +287,19 @@ fn a_fingerprint_far_up_is_found_and_costs_exactly() {
         assert_eq!(tail.found, Found::Moved(300));
         costs.push((verbatim_uia::calls::take(), common::read_hits(hwnd)));
     }
+    // The lines after the fingerprint, more than are read, are read from
+    // their start too (the first of a flood).
     let hits: Hits = &[
-        ("Clone", 19),
+        ("Clone", 21),
         ("CompareEndpoints", 4),
         ("ExpandToEnclosingUnit", 9),
         ("FindText", 1),
-        ("GetText", 8),
-        ("Move", 7),
+        ("GetText", 9),
+        ("Move", 9),
         ("MoveEndpointByUnit", 1),
-        ("MoveEndpointByRange", 9),
+        ("MoveEndpointByRange", 11),
     ];
-    let expected: [(CallCounts, Hits); 2] = [(uia_calls(1), hits), (uia_calls(58), hits)];
+    let expected: [(CallCounts, Hits); 2] = [(uia_calls(1), hits), (uia_calls(65), hits)];
     for ((calls, hits), (expected_calls, expected_hits)) in costs.iter().zip(expected) {
         assert_eq!(
             (*calls, hits.as_slice()),
@@ -313,6 +330,7 @@ fn a_fingerprint_under_a_blank_line_is_found_by_its_own_line() {
     let fresh = TailQuery {
         start: TailStart::Document(&document),
         lines_wanted: WANTED,
+        caret: None,
     };
     let (tail, last) = both(&uia, &fresh);
     assert_eq!(
@@ -359,6 +377,7 @@ fn a_failing_find_text_falls_back_to_the_walk() {
     let fresh = TailQuery {
         start: TailStart::Document(&document),
         lines_wanted: WANTED,
+        caret: None,
     };
     let (_, last) = both(&uia, &fresh);
     common::apply(
@@ -390,6 +409,7 @@ fn a_backward_move_counted_forward_still_counts_the_rows() {
     let fresh = TailQuery {
         start: TailStart::Document(&document),
         lines_wanted: WANTED,
+        caret: None,
     };
     let (tail, _) = both(&uia, &fresh);
     assert_eq!(tail.found, Found::Afresh);
@@ -421,8 +441,8 @@ fn measured_read(
 ) -> (TerminalOutput, CallCounts, Vec<(&'static str, u32)>) {
     common::reset_hits(hwnd);
     let _ = verbatim_uia::calls::take();
-    let (output, _) =
-        read(uia, text, terminal, WANTED, remote, baseline).expect("the terminal reads");
+    let (output, _, _) =
+        read(uia, text, None, terminal, (WANTED, remote, baseline)).expect("the terminal reads");
     let calls = verbatim_uia::calls::take();
     (output, calls, common::read_hits(hwnd))
 }
@@ -469,6 +489,7 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
                 appended: true,
                 uncertain: 0,
             }),
+            head: Vec::new(),
             skipped: None,
             lines: Vec::new(),
         }
@@ -486,16 +507,18 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
         output,
         TerminalOutput {
             changed: None,
+            head: Vec::new(),
             skipped: None,
             lines: texts(&["notes.txt", "ready>"]),
         }
     );
 
-    // More than a read takes: the rest is counted as skipped.
+    // More than a read takes: the first lines and the last are read, and
+    // the rest between them counted as skipped.
     common::apply(
         &mut app,
         hwnd,
-        r"set-text term one\ntwo\nthree\nfour\nfive\nready> ls\nnotes.txt\nready> dir\n1\n2\n3\n4\nready>",
+        r"set-text term one\ntwo\nthree\nfour\nfive\nready> ls\nnotes.txt\nready> dir\n1\n2\n3\n4\n5\n6\nready>",
     );
     let (output, overflow_calls, overflow_hits) =
         measured_read(&uia, hwnd, text, &mut terminal, remote, false);
@@ -508,8 +531,9 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
                 appended: true,
                 uncertain: 0,
             }),
-            skipped: Some(Skipped::Count(2)),
-            lines: texts(&["3", "4", "ready>"]),
+            head: texts(&["1", "2", "3"]),
+            skipped: Some(Skipped::Count(1)),
+            lines: texts(&["5", "6", "ready>"]),
         }
     );
 
@@ -526,6 +550,7 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
         output,
         TerminalOutput {
             changed: None,
+            head: Vec::new(),
             skipped: None,
             lines: texts(&["hello", "ready>"]),
         }
@@ -555,7 +580,7 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
             ("baseline", uia_calls(1), REMOTE_BASELINE_HITS),
             ("typed", uia_calls(1), TYPED_HITS),
             ("output line", uia_calls(1), LINE_HITS),
-            ("overflow", uia_calls(1), LINE_HITS),
+            ("overflow", uia_calls(1), OVERFLOW_HITS),
             ("redraw", uia_calls(2), REMOTE_REDRAW_HITS),
             ("cleared", uia_calls(2), REMOTE_CLEARED_HITS),
         ]
@@ -564,7 +589,7 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
             ("baseline", uia_calls(31), BASELINE_HITS),
             ("typed", uia_calls(27), TYPED_HITS),
             ("output line", uia_calls(39), LINE_HITS),
-            ("overflow", uia_calls(39), LINE_HITS),
+            ("overflow", uia_calls(46), OVERFLOW_HITS),
             ("redraw", uia_calls(58), REDRAW_HITS),
             ("cleared", uia_calls(61), CLEARED_HITS),
         ]
@@ -636,6 +661,18 @@ const LINE_HITS: &[(&str, u32)] = &[
     ("GetText", 6),
     ("Move", 5),
     ("MoveEndpointByRange", 7),
+];
+
+/// The provider hits of a read that found more new lines than it reads: a
+/// line's read, and the read of the first of them too, from the anchor's
+/// line on.
+const OVERFLOW_HITS: &[(&str, u32)] = &[
+    ("Clone", 15),
+    ("CompareEndpoints", 2),
+    ("ExpandToEnclosingUnit", 6),
+    ("GetText", 7),
+    ("Move", 7),
+    ("MoveEndpointByRange", 9),
 ];
 
 /// The provider hits of a read that found nothing new after a skip,
@@ -711,6 +748,320 @@ fn terminal_reads_cost_exactly_classic() {
     terminal_reads_report_new_output_and_cost_exactly(false);
 }
 
+/// A caret key's watch checked once with no caret event: the test moves
+/// mockapp's caret before Core's request is answered, so the first read is
+/// the evidence.
+struct AlreadyMoved;
+
+impl CaretSignal for AlreadyMoved {
+    fn caret_event(&mut self) -> bool {
+        false
+    }
+
+    fn now_ms(&mut self) -> u64 {
+        0
+    }
+}
+
+/// The node Core knows mockapp's terminal by.
+fn terminal_node() -> NodeId {
+    NodeId::in_outpost(OutpostId(1), 1)
+}
+
+/// Sets mockapp's terminal's text to `text`, its caret at the end, raising
+/// no event: the console host's pattern while typing.
+fn type_silently(app: &mut common::MockApp, hwnd: HWND, text: &str) {
+    common::apply(
+        app,
+        hwnd,
+        &format!("set-text term {}", text.replace('\n', "\\n")),
+    );
+    let end = text.encode_utf16().count();
+    common::apply(app, hwnd, &format!("caret term {end} {end}"));
+}
+
+/// One read of the terminal's new output with its caret, as the outpost's
+/// worker makes it on a change of the terminal's text, and the caret as a
+/// report, as the worker sends it to Core.
+fn read_output_and_caret(
+    uia: &Uia,
+    source: &mut UiaText,
+    anchors: &mut NodeText<'_, verbatim_outpost::text::uia::UiaPos>,
+    terminal: &mut Terminal,
+    remote: bool,
+) -> (TerminalOutput, CaretReport) {
+    let caret = CaretLineQuery {
+        element: source.element(),
+        pattern: source.pattern(),
+        pattern2: source.pattern2(),
+        max_text: 4096,
+    };
+    let (output, answer, _) = read(
+        uia,
+        (source.element(), source.pattern()),
+        Some(caret),
+        terminal,
+        (WANTED, remote, false),
+    )
+    .expect("the terminal reads");
+    let answer = answer.expect("the caret is read with the text");
+    let read = source.caret_read_from(answer).expect("the caret read");
+    let report = caret_report_from(source, anchors, read, 0).expect("the caret report");
+    (output, report)
+}
+
+/// The console host raises no caret event for every character typed, only
+/// its text's change; Core's Backspace works out what it deleted from the
+/// caret it last heard of before the key. The caret read with each change
+/// of the text keeps that current: typing "helo" after the prompt and
+/// pressing Backspace says exactly "o".
+#[expect(
+    clippy::too_many_lines,
+    reason = "one typing session, read top to bottom as it happens"
+)]
+fn backspace_says_what_it_deleted_without_caret_events(remote: bool) {
+    let title = common::unique_title("mockapp-terminal-backspace");
+    let mut app = common::spawn("terminal.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    let (element, _) = terminal_text(&uia, hwnd);
+    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let mut source = UiaText::new(element, pattern, pattern2, true).remote(remote);
+    let mut store = Anchors::new(Arc::default());
+    let mut anchors = store.node(1);
+    let mut terminal = Terminal::default();
+    let event = |observed_at_ms, event| Input::Event {
+        trace_id: TraceId::mint(),
+        observed_at_ms,
+        source: Pid(1),
+        backend: Backend::Uia,
+        window: None,
+        event,
+    };
+
+    // The prompt, its text read where it ends now, as a focus does.
+    let mut text = "one\ntwo\nthree\nfour\nfive\nready>".to_owned();
+    type_silently(&mut app, hwnd, &text);
+    let _ = read(
+        &uia,
+        (source.element(), source.pattern()),
+        None,
+        &mut terminal,
+        (WANTED, remote, true),
+    )
+    .expect("the baseline read");
+    let mut state = SrState::new();
+    let _ = reduce(
+        &mut state,
+        &event(
+            0,
+            NormalizedEvent::FocusChanged {
+                node: NodeSnapshot {
+                    id: terminal_node(),
+                    backend: Backend::Uia,
+                    role: Role::Terminal,
+                    name: Some("Terminal".to_owned()),
+                    value: None,
+                    states: StateSet::new(),
+                    details: NodeDetails::default(),
+                },
+                foreground: false,
+                ancestors: Vec::new(),
+                ancestors_unknown: false,
+                selected_child: None,
+            },
+        ),
+    );
+
+    // Typing: each character changes the text, and nothing else is raised.
+    let mut observed_at_ms = 1_000;
+    for character in ["h", "e", "l", "o"] {
+        text.push_str(character);
+        type_silently(&mut app, hwnd, &text);
+        let (output, caret) =
+            read_output_and_caret(&uia, &mut source, &mut anchors, &mut terminal, remote);
+        observed_at_ms += 100;
+        if !output.is_empty() {
+            let _ = reduce(
+                &mut state,
+                &event(
+                    observed_at_ms,
+                    NormalizedEvent::TerminalOutput {
+                        node_id: terminal_node(),
+                        output,
+                    },
+                ),
+            );
+        }
+        let _ = reduce(
+            &mut state,
+            &event(
+                observed_at_ms,
+                NormalizedEvent::CaretMoved {
+                    node_id: terminal_node(),
+                    caret,
+                },
+            ),
+        );
+    }
+
+    // Backspace, and the terminal's text and caret after it.
+    let effects = reduce(
+        &mut state,
+        &Input::CaretKey {
+            trace_id: TraceId::mint(),
+            key: CaretKey {
+                motion: CaretMotion::Backspace,
+                select: false,
+            },
+            pressed_at_ms: observed_at_ms + 50,
+        },
+    );
+    text.pop();
+    type_silently(&mut app, hwnd, &text);
+    let mut spoken = Vec::new();
+    let mut inputs: Vec<Input> = Vec::new();
+    let mut pending = effects;
+    loop {
+        for effect in pending {
+            match effect {
+                Effect::Text(request) => {
+                    let reply = match &request.op {
+                        TextOp::AwaitCaret(watch) => {
+                            match check_caret(&mut source, &mut anchors, watch, &mut AlreadyMoved)
+                            {
+                                Watched::Answered(reply) => reply,
+                                Watched::Watching => panic!("the check found no evidence"),
+                            }
+                        }
+                        op => perform(&mut source, &mut anchors, op),
+                    };
+                    inputs.push(Input::TextCompleted {
+                        trace_id: TraceId::mint(),
+                        query_id: request.query_id,
+                        reply,
+                    });
+                }
+                Effect::Speak(utterance) => spoken.push(
+                    utterance
+                        .segments
+                        .iter()
+                        .map(|segment| segment.content.clone())
+                        .collect::<Vec<_>>(),
+                ),
+                _ => {}
+            }
+        }
+        let Some(input) = inputs.pop() else {
+            break;
+        };
+        pending = reduce(&mut state, &input);
+    }
+    assert_eq!(spoken, [[SegmentContent::Character("o".to_owned())]]);
+    app.quit();
+}
+
+/// The provider hits of the typed read ([`TYPED_HITS`]) with the caret and
+/// its line read too: the selection, whether it is collapsed, and the
+/// caret's line, its text, and the text before the caret.
+const TYPED_WITH_CARET_HITS: &[(&str, u32)] = &[
+    ("ITextProvider::GetSelection", 1),
+    ("Clone", 12),
+    ("CompareEndpoints", 3),
+    ("ExpandToEnclosingUnit", 6),
+    ("GetText", 5),
+    ("Move", 3),
+    ("MoveEndpointByRange", 5),
+];
+
+/// The same remotely: the program also gets the text pattern from the
+/// element, which the provider answers through the element's own calls,
+/// and copies the caret once more than the classic read does.
+const REMOTE_TYPED_WITH_CARET_HITS: &[(&str, u32)] = &[
+    ("ProviderOptions", 2),
+    ("GetPatternProvider", 1),
+    ("GetPropertyValue", 1),
+    ("HostRawElementProvider", 1),
+    ("Navigate", 1),
+    ("ITextProvider::GetSelection", 1),
+    ("Clone", 13),
+    ("CompareEndpoints", 3),
+    ("ExpandToEnclosingUnit", 6),
+    ("GetText", 5),
+    ("Move", 3),
+    ("MoveEndpointByRange", 6),
+];
+
+/// What a read of a typed character's echo costs with the caret read in
+/// it (`docs/performance.md`, "A terminal's caret"): remotely, still the
+/// program's one call; classically, the typed read's 27 calls and the
+/// caret's 8 (the selection, whether it is collapsed, and the caret's
+/// line: a copy expanded and read, and a copy up to the caret read).
+fn a_read_with_the_caret_costs_exactly(remote: bool) {
+    let title = common::unique_title("mockapp-terminal-caret-cost");
+    let mut app = common::spawn("terminal.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    let (element, _) = terminal_text(&uia, hwnd);
+    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let source = UiaText::new(element, pattern, pattern2, true).remote(remote);
+    let mut terminal = Terminal::default();
+    let text = "one\ntwo\nthree\nfour\nfive\nready>";
+    type_silently(&mut app, hwnd, text);
+    let _ = read(
+        &uia,
+        (source.element(), source.pattern()),
+        None,
+        &mut terminal,
+        (WANTED, remote, true),
+    )
+    .expect("the baseline read");
+    type_silently(&mut app, hwnd, &format!("{text}h"));
+    common::reset_hits(hwnd);
+    let _ = verbatim_uia::calls::take();
+    let caret = CaretLineQuery {
+        element: source.element(),
+        pattern: source.pattern(),
+        pattern2: source.pattern2(),
+        max_text: 4096,
+    };
+    let (output, answer, _) = read(
+        &uia,
+        (source.element(), source.pattern()),
+        Some(caret),
+        &mut terminal,
+        (WANTED, remote, false),
+    )
+    .expect("the terminal reads");
+    let calls = verbatim_uia::calls::take();
+    let hits = common::read_hits(hwnd);
+    assert!(!output.is_empty());
+    assert!(answer.is_some());
+    let expected = if remote {
+        (uia_calls(1), REMOTE_TYPED_WITH_CARET_HITS)
+    } else {
+        (uia_calls(35), TYPED_WITH_CARET_HITS)
+    };
+    assert_eq!((calls, hits.as_slice()), expected);
+    app.quit();
+}
+
+fn a_read_with_the_caret_costs_exactly_remote() {
+    a_read_with_the_caret_costs_exactly(true);
+}
+
+fn a_read_with_the_caret_costs_exactly_classic() {
+    a_read_with_the_caret_costs_exactly(false);
+}
+
+fn backspace_says_what_it_deleted_without_caret_events_remote() {
+    backspace_says_what_it_deleted_without_caret_events(true);
+}
+
+fn backspace_says_what_it_deleted_without_caret_events_classic() {
+    backspace_says_what_it_deleted_without_caret_events(false);
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
@@ -746,6 +1097,22 @@ fn main() {
         (
             "terminal_reads_cost_exactly_classic",
             terminal_reads_cost_exactly_classic,
+        ),
+        (
+            "backspace_says_what_it_deleted_without_caret_events_remote",
+            backspace_says_what_it_deleted_without_caret_events_remote,
+        ),
+        (
+            "backspace_says_what_it_deleted_without_caret_events_classic",
+            backspace_says_what_it_deleted_without_caret_events_classic,
+        ),
+        (
+            "a_read_with_the_caret_costs_exactly_remote",
+            a_read_with_the_caret_costs_exactly_remote,
+        ),
+        (
+            "a_read_with_the_caret_costs_exactly_classic",
+            a_read_with_the_caret_costs_exactly_classic,
         ),
     ]);
 }

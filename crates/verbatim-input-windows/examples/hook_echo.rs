@@ -29,7 +29,7 @@ fn main() {
         DecisionConfig::default(),
         map,
         tx,
-        Box::new(|_| {}),
+        Box::new(|_, _| {}),
         Box::new(|report| println!("{report:?}")),
     )
     .expect("install hook");
@@ -38,7 +38,10 @@ fn main() {
     let deadline = Instant::now() + Duration::from_secs(8);
     while Instant::now() < deadline {
         match rx.recv_timeout(Duration::from_millis(200)) {
-            Ok(emitted) => println!("gesture: {} (trace {})", emitted.gesture, emitted.trace_id),
+            Ok(verbatim_input_windows::Routed::Gesture(emitted)) => {
+                println!("gesture: {} (trace {})", emitted.gesture, emitted.trace_id);
+            }
+            Ok(other) => println!("{other:?}"),
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         }

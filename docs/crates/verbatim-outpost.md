@@ -502,14 +502,19 @@ Implementation notes:
   window drops the fact and the watchdog's moved-on check applies to it.
   Only a fact with neither is reported without window facts, arbitrated
   against this application's own focus window. An MSAA focus fact is
-  acquired with NVDA's child-0-on-a-list redirect (`focus_candidate`) and
-  checked as NVDA checks it before anything else is read: it is dropped as
-  a duplicate when it names the address of the focus last reported, a
-  whole object rather than a child by id, with no foreground change
-  reported since (the focus may have been in another application then),
-  counting as reported so no older focus of the batch is tried; and it is
-  accepted only when the object or an ancestor has the focused state, read
-  live. Only then is it read and its ancestors walked.
+  acquired with NVDA's child-0-on-a-list redirect, and the redirect of any
+  control's own focus to a focused child its `accFocus` names
+  (`focus_candidate`), and checked as NVDA checks it before anything else
+  is read: it is dropped as a duplicate when it names the address of the
+  focus last reported, a whole object rather than a child by id, with no
+  foreground change reported since (the focus may have been in another
+  application then), counting as reported so no older focus of the batch
+  is tried; and it is accepted only when the object or an ancestor has the
+  focused state, read live. Only then is it read and its ancestors walked.
+  When a control's focus was reported as its child, the child's own focus
+  event, which the control raised in the same `SetFocus` call, is dropped
+  while the child is still the focus (`Intake::take_redirected_focus`), so
+  the child is reported once, as NVDA reports it.
 - MSAA name, value, and state changes are spoken only for the focus, so
   the event's object is told from the focus by its identity
   (`EventObject::which_of`) before any property is read, and an object
@@ -890,13 +895,21 @@ finds it.
   while a read is in progress are coalesced by the intake into one more
   read, one waiting entry per element). It is one remote program
   (`verbatim_uia_rops::terminal_tail`), with the classic fallback behind
-  the same entry point; a window whose elements cannot be imported is read
+  the same entry point, which reads the caret and its line too: the
+  worker reports the caret as `CaretMoved` after the output
+  (`UiaText::caret_read_from` and `text::caret_report_from` make the
+  report of it), since a terminal raises no caret event for every
+  character typed (the console host's come on a schedule of their own),
+  and Core works out what a Backspace deleted from the caret it last
+  heard of; a window whose elements cannot be imported is read
   classically from then on, as for the focus ancestry. `after_anchor`
   turns the read into a `TerminalOutput`: the anchor's line compared
   character by character with what it held (grown: the text added;
   rewritten: from the start of the word where it first differs; shorter:
-  nothing), and the lines after it, all of them up to the read limit, or
-  the last ones with the rest counted (`Skipped::Count`). A rewrite under
+  nothing), and the lines after it, all of them up to the read limit, or,
+  when more follow, the first ones (`TerminalOutput::head`, so a flood's
+  start is heard) and the last ones, each up to the read limit, with those
+  between counted (`Skipped::Count`). A rewrite under
   a blank line is not trusted, since a blank line matches too easily. The
   anchor's line found above the anchor (`Found::Moved`) is compared the
   same way, since the last line read is often the one output was still

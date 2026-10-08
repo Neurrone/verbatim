@@ -195,6 +195,39 @@ impl Client {
         }
     }
 
+    /// Sends one request without waiting for its reply, and returns the id
+    /// its reply will carry: for a subscribed connection that reads its
+    /// frames with [`Client::next_frame`] and must not lose any of them
+    /// while it waits, such as the end-to-end harness's speech connection
+    /// asking whether Verbatim is idle.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
+    pub fn send(&mut self, request: Request) -> io::Result<u64> {
+        let id = self.next_id;
+        self.next_id += 1;
+        write_message(&mut self.writer, &RequestEnvelope { id, request })?;
+        Ok(id)
+    }
+
+    /// Sets the read timeout of a TCP transport, which every later read
+    /// observes; a pipe transport has none, and is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket refuses the timeout.
+    pub fn set_read_timeout(&self, timeout: Option<std::time::Duration>) -> io::Result<()> {
+        // The reader reads through its own duplicate of the socket's
+        // handle, whose timeout is its own.
+        for transport in [&self.writer, self.reader.get_ref().get_ref()] {
+            if let Transport::Tcp(stream) = transport {
+                stream.set_read_timeout(timeout)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Reads the next frame of any kind, for subscription loops
     /// (`watch-events`, `watch-speech`).
     ///

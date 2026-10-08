@@ -29,6 +29,7 @@ use verbatim_uia::Uia;
 use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt};
 
 use crate::builder::{Builder, Reg, kind};
+use crate::caret::{CaretAnswer, CaretLineQuery, caret_line_classic, emit_caret_line};
 use crate::error::Error;
 use crate::focus::Path;
 use crate::opcode::Comparison;
@@ -148,6 +149,11 @@ pub struct TailQuery<'a> {
     pub start: TailStart<'a>,
     /// The most lines to read from the end of the text.
     pub lines_wanted: u32,
+    /// The caret and its line to read too, in the same round trip
+    /// ([`Tail::caret`]): a terminal raises no caret event for every
+    /// character typed (the console host's come on a schedule of their
+    /// own), so its caret is read with each change of its text.
+    pub caret: Option<CaretLineQuery<'a>>,
 }
 
 /// Where the anchor's fingerprint was found.
@@ -194,6 +200,13 @@ pub struct Tail {
     /// each without its line break. A line the terminal wrapped across
     /// rows is one line here, so there can be fewer than `rows`.
     pub lines: Vec<String>,
+    /// From an anchor, when more lines follow it than the last `rows`: how
+    /// many of the first of them were read too, up to the query's
+    /// `lines_wanted`, so the start of a flood is heard. Zero otherwise.
+    pub head_rows: u32,
+    /// The text of those first `head_rows` lines, oldest first, as
+    /// [`Self::lines`] is.
+    pub head: Vec<String>,
     /// The text of the last line, read as a line.
     pub last_line: String,
     /// The text of the line before the last, read as a line; empty at the
@@ -209,6 +222,9 @@ pub struct Tail {
     /// that the read did not see, rather than only the last lines being
     /// written to.
     pub scrolled: bool,
+    /// The caret and its line, when the query asked for them
+    /// ([`TailQuery::caret`]), read after the text.
+    pub caret: Option<CaretAnswer>,
 }
 
 impl Tail {
@@ -228,11 +244,14 @@ impl Tail {
             count: end.count,
             rows: end.rows,
             lines: end.lines,
+            head_rows: end.head_rows,
+            head: end.head,
             last_line: end.last_line,
             before_last: end.before_last,
             last,
             settled: end.settled,
             scrolled: end.scrolled,
+            caret: None,
         }
     }
 }
@@ -422,6 +441,13 @@ fn emit_tail(
         b.set(block, text);
     });
 
+    let (head_rows, head_block) = emit_head(
+        b,
+        c,
+        count_lines_from.then_some(from),
+        (count, reading, wanted),
+    );
+
     let guard_after = b.new_string("");
     let guard_after = b.add_to_results(guard_after);
     b.if_(has_guard, |b| {
@@ -434,11 +460,50 @@ fn emit_tail(
         count,
         rows,
         block,
+        head_rows,
+        head_block,
         last_line,
         before_last,
         guard_before,
         guard_after,
     }
+}
+
+/// Emits, from the anchor's line `from` (none with no anchor, when nothing
+/// is read), the read of the first of the lines that follow it: as many
+/// more as follow the last ones read (`count` less `reading`), up to the
+/// number `wanted`, in one read. Returns the registers of how many were
+/// read and their text.
+fn emit_head(
+    b: &mut Builder,
+    c: &Constants,
+    from: Option<Reg<kind::TextRange>>,
+    (count, reading, wanted): (Reg<kind::Int>, Reg<kind::Int>, Reg<kind::Int>),
+) -> (Reg<kind::Int>, Reg<kind::Str>) {
+    let head_block = b.new_string("");
+    let head_block = b.add_to_results(head_block);
+    let head_rows = b.new_int(0);
+    let head_rows = b.add_to_results(head_rows);
+    let Some(from) = from else {
+        return (head_rows, head_block);
+    };
+    let heading = b.new_int(0);
+    b.set(heading, count);
+    b.subtract_assign(heading, reading);
+    let more = b.compare(heading, wanted, Comparison::GreaterThan);
+    b.if_(more, |b| b.set(heading, wanted));
+    let some = b.compare(heading, c.zero, Comparison::GreaterThan);
+    b.if_(some, |b| {
+        let first = c.collapsed(b, from);
+        let _ = b.text_range_move(first, c.line, c.one);
+        let after = b.text_range_clone(first);
+        let went = b.text_range_move(after, c.line, heading);
+        b.set(head_rows, went);
+        b.text_range_move_endpoint_by_range(first, c.end, after, c.start);
+        let text = b.text_range_get_text(first, c.all);
+        b.set(head_block, text);
+    });
+    (head_rows, head_block)
 }
 
 /// The registers [`emit_tail`] asks for.
@@ -449,6 +514,8 @@ struct TailRegisters {
     count: Reg<kind::Int>,
     rows: Reg<kind::Int>,
     block: Reg<kind::Str>,
+    head_rows: Reg<kind::Int>,
+    head_block: Reg<kind::Str>,
     last_line: Reg<kind::Str>,
     before_last: Reg<kind::Str>,
     guard_before: Reg<kind::Str>,
@@ -460,6 +527,8 @@ struct TailEnd {
     count: u32,
     rows: u32,
     lines: Vec<String>,
+    head_rows: u32,
+    head: Vec<String>,
     last_line: String,
     before_last: String,
     settled: bool,
@@ -471,6 +540,8 @@ impl TailRegisters {
     fn end(&self, outcome: &Outcome) -> Result<TailEnd, Error> {
         let rows = count_of(outcome.get(self.rows)?);
         let block = string_of(outcome, self.block)?;
+        let head_rows = count_of(outcome.get(self.head_rows)?);
+        let head = split_lines(&string_of(outcome, self.head_block)?, head_rows);
         let last_line = string_of(outcome, self.last_line)?;
         let before_last = string_of(outcome, self.before_last)?;
         let guard_before = string_of(outcome, self.guard_before)?;
@@ -486,6 +557,8 @@ impl TailRegisters {
             count: count_of(outcome.get(self.count)?),
             rows,
             lines: split_lines(&block, rows),
+            head_rows,
+            head,
             last_line,
             before_last,
             settled,
@@ -566,15 +639,18 @@ pub fn terminal_tail_remote(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, E
                 }
             };
             let tail = emit_tail(&mut b, &c, document, None, query.lines_wanted);
+            let caret = query.caret.map(|caret| emit_caret_line(&mut b, &caret));
             let outcome = b.finish().execute()?;
-            Ok(Tail::new(
+            let mut answer = Tail::new(
                 Found::Afresh,
                 (String::new(), String::new(), String::new()),
                 tail.end(&outcome)?,
                 outcome
                     .get(tail.last)?
                     .ok_or(Error::MissingResult(tail.last.id()))?,
-            ))
+            );
+            answer.caret = caret.map(|caret| caret.read(&outcome)).transpose()?;
+            Ok(answer)
         }
         TailStart::Anchor { range, fingerprint } => {
             let anchor = b.import_text_range(range);
@@ -651,13 +727,14 @@ pub fn terminal_tail_remote(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, E
                 b.if_(short, |b| b.set(shift, c.one));
                 b.set(found, shift);
             });
+            let caret = query.caret.map(|caret| emit_caret_line(&mut b, &caret));
             let outcome = b.finish().execute()?;
             let found = match outcome.get(found)? {
                 0 => Found::AtAnchor,
                 shift if shift > 0 => Found::Moved(count_of(shift)),
                 _ => Found::NotFound,
             };
-            Ok(Tail::new(
+            let mut answer = Tail::new(
                 found,
                 (
                     string_of(&outcome, line)?,
@@ -668,7 +745,9 @@ pub fn terminal_tail_remote(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, E
                 outcome
                     .get(tail.last)?
                     .ok_or(Error::MissingResult(tail.last.id()))?,
-            ))
+            );
+            answer.caret = caret.map(|caret| caret.read(&outcome)).transpose()?;
+            Ok(answer)
         }
     }
 }
@@ -876,6 +955,21 @@ fn classic_tail(
             before_last,
         )
     };
+    let heading = if count_lines_from {
+        (count - reading).min(wanted)
+    } else {
+        0
+    };
+    let (head_rows, head_block) = if heading == 0 {
+        (0, String::new())
+    } else {
+        let first = collapsed(from)?;
+        let _ = first.move_by(TextUnit_Line, 1)?;
+        let after = first.clone_range()?;
+        let went = after.move_by(TextUnit_Line, i32::try_from(heading).unwrap_or(i32::MAX))?;
+        first.move_endpoint_to(Endpoint::End, &after, Endpoint::Start)?;
+        (count_of(went), String::from_utf16_lossy(&first.text(-1)?))
+    };
     let guard_after = if has_guard {
         line_text(&guard)?
     } else {
@@ -893,6 +987,8 @@ fn classic_tail(
             count,
             rows,
             lines: split_lines(&block, rows),
+            head_rows,
+            head: split_lines(&head_block, head_rows),
             last_line,
             before_last,
             settled,
@@ -1049,6 +1145,15 @@ fn classic_walk(
 /// [`Error::Uia`] when a call fails, as one on a range from before a
 /// terminal switched screens does.
 pub fn terminal_tail_classic(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, Error> {
+    let mut tail = classic_text(query)?;
+    if let Some(caret) = &query.caret {
+        tail.caret = Some(caret_line_classic(caret)?);
+    }
+    Ok(tail)
+}
+
+/// The tail's text the classic way, as [`terminal_tail_classic`] reads it.
+fn classic_text(query: &TailQuery<'_>) -> Result<Tail, Error> {
     match query.start {
         TailStart::Document(_) | TailStart::Text { .. } => {
             let document = match query.start {

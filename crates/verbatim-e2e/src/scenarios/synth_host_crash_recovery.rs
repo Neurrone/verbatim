@@ -1,45 +1,50 @@
 //! A synthesizer host that dies is replaced (decision D18): speech goes on
-//! after `verbatim-synth-host.exe` is killed. Verbatim's menu is opened and
-//! heard, the host is ended from outside, and the next announcement must
-//! still be heard in full, from a host Verbatim started in its place.
+//! after Verbatim's own `verbatim-synth-host.exe` is ended. Verbatim's menu
+//! is opened and heard; Verbatim has exactly one synthesizer host, which is
+//! ended by its process id, as a crash would end it; the next announcement
+//! must still be heard in full, from the one host Verbatim started in its
+//! place, a new process.
 
-use std::io;
 use std::time::Duration;
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
-/// Per-step budget, matching the other scenarios that drive the menu.
-const STEP_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) use super::{no_setup as setup, no_teardown as teardown};
 
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "must match ScenarioDef::setup's fn-pointer signature"
-)]
-pub(crate) fn setup(_scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    // Nothing external: the scenario drives Verbatim's own menu.
-    Ok(ScenarioState::None)
+/// The synthesizer host's executable.
+const HOST: &str = "verbatim-synth-host.exe";
+
+/// How long the ended host is given to exit.
+const EXIT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Verbatim's one synthesizer host's process id.
+fn the_host(scenario: &mut Scenario) -> u32 {
+    let hosts: Vec<u32> = scenario
+        .verbatim_children()
+        .expect("lists Verbatim's processes")
+        .into_iter()
+        .filter(|child| child.image.eq_ignore_ascii_case(HOST))
+        .map(|child| child.pid)
+        .collect();
+    let [host] = hosts.as_slice() else {
+        panic!("expected exactly one synthesizer host, found {hosts:?}");
+    };
+    *host
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    super::open_verbatim_menu(scenario, STEP_TIMEOUT);
-
-    let ended = scenario
-        .kill_processes_by_name("verbatim-synth-host.exe")
+    super::open_verbatim_menu(scenario);
+    let host = the_host(scenario);
+    scenario
+        .end_verbatim_process(host, EXIT_TIMEOUT)
         .expect("ends the synthesizer host");
-    assert!(ended >= 1, "a synthesizer host was running");
 
     scenario.send_keys(&["downarrow"]).expect("sends downarrow");
-    scenario
-        .speech()
-        .expect_in_order(&["Settings..."], STEP_TIMEOUT);
-}
+    scenario.speech().expect(&["Settings... s"]);
+    let replacement = the_host(scenario);
+    assert_ne!(replacement, host, "the synthesizer host was replaced");
 
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "must match ScenarioDef::teardown's fn-pointer signature"
-)]
-pub(crate) fn teardown(scenario: &mut Scenario, _state: ScenarioState) {
-    // Close the menu again.
-    let _ = scenario.send_keys(&["escape"]);
+    scenario.send_keys(&["escape"]).expect("sends escape");
+    super::expect_desktop(scenario);
 }

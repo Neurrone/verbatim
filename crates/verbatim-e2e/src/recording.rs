@@ -3,11 +3,12 @@
 //! [`Recording::start`] launches ffmpeg through the agent, before Verbatim,
 //! capturing the desktop with `gdigrab` into fragmented MP4; it has to run
 //! through the agent because only a process in the interactive session can
-//! capture the desktop. Verbatim records its own audio: the launch passes
-//! [`Recording::audio_env`], naming a WAV file the mixer writes everything
-//! it plays into, in step with the clock, with the time it started beside
-//! it. So the video has exactly what Verbatim played, wherever its audio
-//! went and whatever else the machine was playing.
+//! capture the desktop. Verbatim records its own audio in every run,
+//! recording or not, so that recording changes nothing Verbatim does: the
+//! launch always passes [`audio_env`], naming a WAV file the mixer writes
+//! everything it plays into, in step with the clock, with the time it
+//! started beside it. So the video has exactly what Verbatim played,
+//! wherever its audio went and whatever else the machine was playing.
 //!
 //! [`Recording::finish`] ends the capture, lines the audio up with the
 //! video from the two start times (`gdigrab` reports the wall-clock time of
@@ -16,17 +17,17 @@
 //! `TerminateProcess`; the fragmented container means the file is still
 //! playable, losing at most the fragment being written.
 //!
-//! Before capturing, every window on the desktop is minimized, so the video
-//! shows the scenario's own windows rather than whatever was open.
+//! Every scenario, recorded or not, starts from the desktop with every
+//! window minimized (`crate::scenario::Scenario::launch`), so the video
+//! shows the scenario's own windows; recording itself changes nothing on
+//! the desktop.
 //!
-//! Recording is on whenever ffmpeg can be started: set [`RECORD_ENV`] to
-//! `0` to turn it off. A recording that cannot start or finish is reported
-//! as a warning and never fails a scenario.
+//! Recording is on unless [`RECORD_ENV`] is `0`. When it is on, a
+//! recording that cannot start or finish fails the scenario.
 
 use std::io;
 use std::path::Path;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use verbatim_agent::protocol::ProcessState;
 
@@ -48,6 +49,19 @@ pub const QUALITY_ENV: &str = "VERBATIM_E2E_RECORD_QUALITY";
 /// The variable naming the WAV file Verbatim records its audio into; read
 /// by `verbatim-app`.
 const AUDIO_ENV: &str = "VERBATIM_RECORD_AUDIO";
+
+/// The WAV file of Verbatim's audio in the run directory `dir`.
+#[must_use]
+pub fn audio_path(dir: &str) -> String {
+    format!(r"{dir}\recording-audio.wav")
+}
+
+/// The variable that has Verbatim record its audio into [`audio_path`], set
+/// on every run so recording changes nothing Verbatim does.
+#[must_use]
+pub fn audio_env(dir: &str) -> (String, String) {
+    (AUDIO_ENV.to_owned(), audio_path(dir))
+}
 
 /// How long muxing may take before it is abandoned; a demo's is an encode.
 const MUX_TIMEOUT: Duration = Duration::from_secs(120);
@@ -84,7 +98,6 @@ impl Recording {
     ///
     /// Returns an error if ffmpeg cannot be launched.
     pub fn start(agent: &mut AgentClient, dir: &str) -> io::Result<Self> {
-        minimize_all_windows(agent);
         let ffmpeg = std::env::var(FFMPEG_ENV).unwrap_or_else(|_| "ffmpeg".to_owned());
         let demo = std::env::var(QUALITY_ENV).is_ok_and(|value| value == "demo");
         let mut recording = Self {
@@ -93,7 +106,7 @@ impl Recording {
             video_pid: None,
             video: format!(r"{dir}\recording-video.mp4"),
             video_log: format!(r"{dir}\recording-video.log"),
-            audio: format!(r"{dir}\recording-audio.wav"),
+            audio: audio_path(dir),
             muxed: format!(r"{dir}\recording.mp4"),
             mux_log: format!(r"{dir}\recording-mux.log"),
         };
@@ -106,15 +119,8 @@ impl Recording {
             &[],
             Some(&recording.video_log),
         )?;
-        recording.video_pid = Some(pid);
+        recording.video_pid = Some(pid.pid);
         Ok(recording)
-    }
-
-    /// The environment variable that has Verbatim record its audio for
-    /// this recording.
-    #[must_use]
-    pub fn audio_env(&self) -> (String, String) {
-        (AUDIO_ENV.to_owned(), self.audio.clone())
     }
 
     /// Ends the capture, muxes video and audio, and copies the result to
@@ -125,7 +131,7 @@ impl Recording {
     /// Returns an error if the capture produced nothing usable, muxing
     /// failed, or the copy failed.
     pub fn finish(&mut self, agent: &mut AgentClient, to: &Path) -> io::Result<()> {
-        self.stop(agent);
+        self.stop(agent)?;
         let log = String::from_utf8_lossy(&agent.read_file(&self.video_log)?).into_owned();
         let video_start = video_start_seconds(&log).ok_or_else(|| {
             io::Error::other(format!(
@@ -143,73 +149,67 @@ impl Recording {
             reason = "a Unix time in milliseconds is exact in an f64 for millennia"
         )]
         let offset = audio_start.map(|ms| ms as f64 / 1_000.0 - video_start);
-        // Verbatim ended before saying anything leaves a WAV with no audio,
-        // which ffmpeg cannot read: the video is still worth keeping.
-        if let Err(error) = self.mux(agent, offset) {
-            if offset.is_none() {
-                return Err(error);
-            }
-            eprintln!("WARNING: {error}; saving the video without audio");
-            self.mux(agent, None)?;
-        }
+        let offset = offset.ok_or_else(|| {
+            io::Error::other(format!(
+                "Verbatim's audio has no start time beside {}",
+                self.audio
+            ))
+        })?;
+        self.mux(agent, offset)?;
         agent.copy_file(&self.muxed, to)
     }
 
-    /// Muxes the capture, with the audio at `offset` unless it is `None`.
-    fn mux(&self, agent: &mut AgentClient, offset: Option<f64>) -> io::Result<()> {
-        let pid = agent.launch_process(
-            &self.ffmpeg,
-            &mux_args(&self.video, &self.audio, offset, &self.muxed, self.demo),
-            None,
-            &[],
-            Some(&self.mux_log),
-        )?;
+    /// Muxes the capture, with the audio at `offset`.
+    fn mux(&self, agent: &mut AgentClient, offset: f64) -> io::Result<()> {
+        let pid = agent
+            .launch_process(
+                &self.ffmpeg,
+                &mux_args(
+                    &self.video,
+                    &self.audio,
+                    Some(offset),
+                    &self.muxed,
+                    self.demo,
+                ),
+                None,
+                &[],
+                Some(&self.mux_log),
+            )?
+            .pid;
         let timeout = if self.demo {
             DEMO_MUX_TIMEOUT
         } else {
             MUX_TIMEOUT
         };
-        match wait_for_exit(agent, pid, timeout)? {
-            Some(0) => Ok(()),
-            code => {
-                let _ = agent.kill_process(pid);
-                let log = agent.read_file(&self.mux_log).unwrap_or_default();
+        match agent.wait_for_exit(pid, timeout)? {
+            ProcessState::Exited { exit_code: Some(0) } => Ok(()),
+            state => {
+                let killed = agent.kill_process(pid);
+                let log = agent.read_file(&self.mux_log)?;
                 Err(io::Error::other(format!(
-                    "muxing the recording failed ({code:?}): {}",
+                    "muxing the recording failed ({state:?}, ended: {killed:?}): {}",
                     tail(&String::from_utf8_lossy(&log))
                 )))
             }
         }
     }
 
-    /// Ends the capture, if it is still running.
-    pub fn stop(&mut self, agent: &mut AgentClient) {
+    /// Ends the capture, if it is still running, and waits for ffmpeg to
+    /// exit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if ffmpeg cannot be ended.
+    pub fn stop(&mut self, agent: &mut AgentClient) -> io::Result<()> {
         if let Some(pid) = self.video_pid.take() {
-            let _ = agent.kill_process(pid);
-            let _ = wait_for_exit(agent, pid, EXIT_TIMEOUT);
+            agent.kill_process(pid)?;
+            if agent.wait_for_exit(pid, EXIT_TIMEOUT)? == ProcessState::Running {
+                return Err(io::Error::other(format!(
+                    "ffmpeg (pid {pid}) did not exit within {EXIT_TIMEOUT:?}"
+                )));
+            }
         }
-    }
-}
-
-/// Minimizes every window on the agent's desktop, as the taskbar's Show
-/// Desktop does, so a video shows only the scenario's own windows rather
-/// than whatever was open. Best-effort: the scenario runs either way.
-fn minimize_all_windows(agent: &mut AgentClient) {
-    let minimized = agent
-        .launch_process(
-            "powershell",
-            &[
-                "-NoProfile".to_owned(),
-                "-Command".to_owned(),
-                "(New-Object -ComObject Shell.Application).MinimizeAll()".to_owned(),
-            ],
-            None,
-            &[],
-            None,
-        )
-        .and_then(|pid| wait_for_exit(agent, pid, EXIT_TIMEOUT));
-    if let Err(error) = minimized {
-        eprintln!("could not minimize the desktop's windows before recording: {error}");
+        Ok(())
     }
 }
 
@@ -310,21 +310,6 @@ fn video_start_seconds(log: &str) -> Option<f64> {
         .filter_map(|line| line.split_once("start: ").map(|(_, rest)| rest))
         .find_map(|rest| rest.split(',').next()?.trim().parse::<f64>().ok())
         .filter(|start| *start > 0.0)
-}
-
-/// Polls until `pid` exits, returning its exit code, or `Ok(None)` with it
-/// still running after `timeout`.
-fn wait_for_exit(agent: &mut AgentClient, pid: u32, timeout: Duration) -> io::Result<Option<i32>> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let ProcessState::Exited { exit_code } = agent.process_status(pid)? {
-            return Ok(exit_code.or(Some(-1)));
-        }
-        if Instant::now() >= deadline {
-            return Ok(None);
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
 }
 
 fn tail(log: &str) -> String {

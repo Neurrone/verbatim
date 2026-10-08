@@ -18,7 +18,11 @@
 //! suspended and assigned before its first instruction, so everything it
 //! starts is in the job too, and [`kill`] ends all of it. A launcher that
 //! starts the real program as its own child, such as a Chocolatey shim, is
-//! otherwise killed while the program it started keeps running.
+//! otherwise killed while the program it started keeps running. Every
+//! process in the job is watched as it joins and exits ([`crate::jobs`]).
+//!
+//! Nothing here ends a process by its image name: a process is ended by
+//! its id, and a launched child's by the handle the agent holds.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -26,10 +30,10 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use tracing::warn;
 use windows::Win32::Foundation::{
     CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, STILL_ACTIVE, SetHandleInformation,
 };
+use windows::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
@@ -40,13 +44,14 @@ use windows::Win32::System::JobObjects::{
 use windows::Win32::System::Threading::{
     CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, GetExitCodeProcess, OpenProcess,
     PROCESS_ACCESS_RIGHTS, PROCESS_INFORMATION, PROCESS_NAME_WIN32,
-    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, QueryFullProcessImageNameW, ResumeThread,
-    STARTF_USESTDHANDLES, STARTUPINFOW, TerminateProcess,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+    QueryFullProcessImageNameW, ResumeThread, STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES,
+    STARTUPINFOW, TerminateProcess, WaitForSingleObject,
 };
+use windows::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow;
 use windows::core::{PCWSTR, PWSTR};
 
-use crate::foreground::ForegroundNudge;
-use crate::protocol::{KillOutcome, ProcessState};
+use crate::protocol::{KillOutcome, ProcessInfo, ProcessState};
 
 /// Spawns `command` with `args`, and environment (extended, not replaced,
 /// by `env`).
@@ -68,9 +73,17 @@ use crate::protocol::{KillOutcome, ProcessState};
 /// argument parsing follow; `command` is found as `CreateProcessW` finds a
 /// program, adding `.exe` when it has no extension and searching `PATH`.
 ///
-/// The process may take the foreground with its first window; `nudge` says
-/// whether a Control tap may be injected to allow that past the foreground
-/// lock (`foreground::allow_foreground`).
+/// The process may take the foreground with its first window, as a program
+/// a user starts may, when Windows lets the agent allow it
+/// (`AllowSetForegroundWindow`): it does when the agent may set the
+/// foreground itself, as the program that injected the last input may.
+/// Nothing is injected to make that so. Returns the process's id and
+/// whether it was allowed.
+///
+/// A console program's window is titled `console_title`, when given, from
+/// its first frame. With `minimized`, the program's first window opens
+/// minimized and inactive (`SW_SHOWMINNOACTIVE`), for a caller that brings
+/// it forward itself once it is ready.
 ///
 /// # Errors
 ///
@@ -83,20 +96,31 @@ pub fn launch(
     working_dir: Option<&str>,
     env: &[(String, String)],
     stderr_to: Option<&str>,
-    nudge: ForegroundNudge,
-) -> io::Result<u32> {
+    console_title: Option<&str>,
+    minimized: bool,
+) -> io::Result<(u32, bool)> {
     let capture = stderr_to
         .map(|path| std::fs::File::create(path).and_then(|file| inheritable(&file)))
         .transpose()?;
     let mut command_line = wide(&command_line(command, args));
     let environment = (!env.is_empty()).then(|| environment_block(env));
     let directory = working_dir.map(wide);
+    let mut title = console_title.map(wide);
     let mut startup = STARTUPINFOW {
         cb: u32::try_from(size_of::<STARTUPINFOW>()).unwrap_or(u32::MAX),
+        lpTitle: title
+            .as_mut()
+            .map_or(PWSTR::null(), |title| PWSTR(title.as_mut_ptr())),
         ..STARTUPINFOW::default()
     };
+    if minimized {
+        startup.dwFlags |= STARTF_USESHOWWINDOW;
+        startup.wShowWindow =
+            u16::try_from(windows::Win32::UI::WindowsAndMessaging::SW_SHOWMINNOACTIVE.0)
+                .unwrap_or_default();
+    }
     if let Some(capture) = &capture {
-        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.dwFlags |= STARTF_USESTDHANDLES;
         startup.hStdOutput = HANDLE(capture.as_raw_handle());
         startup.hStdError = HANDLE(capture.as_raw_handle());
     }
@@ -104,8 +128,8 @@ pub fn launch(
     let mut info = PROCESS_INFORMATION::default();
     // SAFETY: every pointer passed points into a buffer that outlives the
     // call: the command line is writable and nul-terminated, as the
-    // directory is, and the environment block is UTF-16 ending in two
-    // nuls, as `CREATE_UNICODE_ENVIRONMENT` declares. The capture handle,
+    // directory and the console title are, and the environment block is
+    // UTF-16 ending in two nuls, as `CREATE_UNICODE_ENVIRONMENT` declares. The capture handle,
     // when there is one, is open and inheritable.
     unsafe {
         CreateProcessW(
@@ -130,8 +154,13 @@ pub fn launch(
     // SAFETY: as above.
     let thread = unsafe { OwnedHandle::from_raw_handle(info.hThread.0) };
     let pid = info.dwProcessId;
-    crate::foreground::allow_foreground(pid, nudge);
-    if let Err(error) = assign_to_job(&job, &child).and_then(|()| resume(&thread)) {
+    // SAFETY: a plain call taking a process id; failure is its answer.
+    let foreground_allowed = unsafe { AllowSetForegroundWindow(pid) }.is_ok();
+    if let Err(error) = crate::jobs::watch_job(&job, pid)
+        .and_then(|()| assign_to_job(&job, &child))
+        .and_then(|()| resume(&thread))
+    {
+        crate::jobs::forget(pid);
         // SAFETY: `child` is open, with the full access CreateProcessW
         // grants.
         let _ = unsafe { TerminateProcess(HANDLE(child.as_raw_handle()), 1) };
@@ -143,14 +172,18 @@ pub fn launch(
     // for the life of the agent. The time is for its exit code to be asked
     // for.
     let now = Instant::now();
-    launched.retain(|_, entry| {
+    launched.retain(|launched_pid, entry| {
         let finished =
             !job_has_processes(&entry.job) && already_exited(HANDLE(entry.child.as_raw_handle()));
         if !finished {
             return true;
         }
         let since = *entry.finished_at.get_or_insert(now);
-        now.duration_since(since) < FINISHED_KEPT
+        let kept = now.duration_since(since) < FINISHED_KEPT;
+        if !kept {
+            crate::jobs::forget(*launched_pid);
+        }
+        kept
     });
     launched.insert(
         pid,
@@ -160,7 +193,7 @@ pub fn launch(
             finished_at: None,
         },
     );
-    Ok(pid)
+    Ok((pid, foreground_allowed))
 }
 
 /// `text` as UTF-16, nul-terminated.
@@ -359,13 +392,6 @@ pub fn status(pid: u32) -> io::Result<ProcessState> {
 /// `TerminateProcess` itself fails for a reason other than the exit race
 /// above.
 pub fn kill(pid: u32) -> io::Result<KillOutcome> {
-    kill_as(pid, None)
-}
-
-/// [`kill`], except that a pid this agent did not launch is terminated only
-/// when it still runs the executable `image` names, if given
-/// ([`image_matches`]).
-fn kill_as(pid: u32, image: Option<&str>) -> io::Result<KillOutcome> {
     {
         let launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
         // The entry's held handle keeps the pid from being reused, so the
@@ -386,24 +412,15 @@ fn kill_as(pid: u32, image: Option<&str>) -> io::Result<KillOutcome> {
             });
         }
     }
-    kill_opened(pid, image)
+    kill_opened(pid)
 }
 
-/// Terminates `pid`, which this agent did not launch, opening it afresh;
-/// when `image` is given, only if the opened process still runs the
-/// executable it names, so a pid reused since it was looked up is left
-/// alone.
-fn kill_opened(pid: u32, image: Option<&str>) -> io::Result<KillOutcome> {
+/// Terminates `pid`, which this agent did not launch, opening it afresh.
+fn kill_opened(pid: u32) -> io::Result<KillOutcome> {
     let Some(handle) = open_process(pid, PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION)
     else {
         return Ok(KillOutcome::AlreadyExited);
     };
-    if let Some(image) = image
-        && !image_path(handle).is_some_and(|path| image_matches(&path, image))
-    {
-        close(handle);
-        return Ok(KillOutcome::AlreadyExited);
-    }
     if already_exited(handle) {
         close(handle);
         return Ok(KillOutcome::AlreadyExited);
@@ -420,84 +437,6 @@ fn kill_opened(pid: u32, image: Option<&str>) -> io::Result<KillOutcome> {
     outcome
 }
 
-/// Terminates every currently running process whose image (executable file)
-/// matches `name`, and returns how many were actually terminated. A bare
-/// file name (`"notepad.exe"`) matches that file name wherever it runs
-/// from; a full path (`r"C:\stage\mockapp.exe"`) matches only processes
-/// running that very file, so a program the harness deploys is swept
-/// without ending the same program run from elsewhere, such as the
-/// `mockapp` a concurrent `cargo test` drives. Both compare
-/// case-insensitively ([`image_matches`]). Zero is a normal, successful
-/// outcome, not an error: it simply means no matching process was running.
-///
-/// Exists for the handoff case Windows 11 Notepad exhibits: launching it
-/// when an instance already exists hands the window off to that existing
-/// process and the newly launched one exits immediately, so a pid-based
-/// kill (recorded from the launch that got handed off) can miss the
-/// process actually holding the window. Sweeping by image name catches it
-/// regardless of which launch's pid ended up owning it.
-///
-/// Individual per-pid kill failures (a genuine `TerminateProcess` error,
-/// not the ordinary already-exited race [`kill`] already tolerates) are
-/// logged and skipped rather than aborting the sweep — this is a
-/// best-effort mass cleanup, and one uncooperative process should not stop
-/// the rest from being cleaned up.
-///
-/// # Errors
-///
-/// Returns an error if the system process snapshot itself cannot be taken
-/// or walked; a failure killing an individual matched process does not
-/// propagate.
-pub fn kill_by_name(name: &str) -> io::Result<u32> {
-    let mut terminated = 0u32;
-    // The snapshot holds file names only; a path is checked once each
-    // match is opened.
-    let file_name = name.rsplit(['\\', '/']).next().unwrap_or(name);
-    for pid in matching_pids(file_name)? {
-        // Checked again once opened: the pid may have been reused since
-        // the snapshot.
-        match kill_as(pid, Some(name)) {
-            Ok(KillOutcome::Terminated) => terminated += 1,
-            Ok(KillOutcome::AlreadyExited) => {}
-            Err(error) => {
-                warn!(pid, name, %error, "failed to kill a process matched by name; skipping");
-            }
-        }
-    }
-    Ok(terminated)
-}
-
-/// Snapshots every running process and returns the pids whose image file
-/// name matches `name`, case-insensitively.
-pub(crate) fn matching_pids(name: &str) -> io::Result<Vec<u32>> {
-    // SAFETY: `TH32CS_SNAPPROCESS` with a `th32ProcessID` of 0 snapshots
-    // every process system-wide; the returned handle is checked below and
-    // closed via `CloseHandle` before returning.
-    let snapshot =
-        unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.map_err(io::Error::other)?;
-
-    let mut entry = PROCESSENTRY32W {
-        dwSize: u32::try_from(size_of::<PROCESSENTRY32W>())
-            .expect("PROCESSENTRY32W's size fits in a u32"),
-        ..Default::default()
-    };
-    let mut pids = Vec::new();
-    // SAFETY: `snapshot` is a valid, just-created snapshot handle; `entry`
-    // is zero-initialized with `dwSize` set as `Process32FirstW` requires.
-    let mut has_entry = unsafe { Process32FirstW(snapshot, &raw mut entry) }.is_ok();
-    while has_entry {
-        if exe_file_name(&entry.szExeFile).eq_ignore_ascii_case(name) {
-            pids.push(entry.th32ProcessID);
-        }
-        // SAFETY: `snapshot` and `entry` are the same valid values as above;
-        // `Process32NextW` overwrites `entry` in place for the next process.
-        has_entry = unsafe { Process32NextW(snapshot, &raw mut entry) }.is_ok();
-    }
-
-    close(snapshot);
-    Ok(pids)
-}
-
 /// Decodes a `PROCESSENTRY32W::szExeFile` fixed-size, nul-terminated,
 /// UTF-16 buffer into an owned `String`.
 fn exe_file_name(buffer: &[u16]) -> String {
@@ -506,20 +445,6 @@ fn exe_file_name(buffer: &[u16]) -> String {
         .position(|&unit| unit == 0)
         .unwrap_or(buffer.len());
     String::from_utf16_lossy(&buffer[..len])
-}
-
-/// Whether a process running the executable at `path` (a full path, as
-/// Windows reports it) matches `image`: by its full path when `image` is
-/// one, by its file name otherwise; case-insensitively either way, and
-/// with either slash as the separator.
-fn image_matches(path: &str, image: &str) -> bool {
-    let normalize = |text: &str| text.replace('/', "\\").to_lowercase();
-    let (path, image) = (normalize(path), normalize(image));
-    if image.contains('\\') {
-        path == image
-    } else {
-        path.rsplit('\\').next() == Some(image.as_str())
-    }
 }
 
 /// The full path of the executable an open process handle's process runs,
@@ -587,71 +512,183 @@ fn close(handle: HANDLE) {
     }
 }
 
+/// The executable file name, such as `verbatim-outpost.exe`, of the process
+/// an open handle names.
+pub(crate) fn image_name_of(handle: &OwnedHandle) -> Option<String> {
+    let path = image_path(HANDLE(handle.as_raw_handle()))?;
+    path.rsplit(['\\', '/']).next().map(str::to_owned)
+}
+
+/// Whether the process an open handle names is running, or how it exited.
+///
+/// # Errors
+///
+/// Returns an error if its exit code cannot be read.
+pub(crate) fn exit_state(handle: HANDLE) -> io::Result<ProcessState> {
+    read_exit_code(handle)
+}
+
+/// Waits up to `timeout` for `pid` to exit, on its process handle, and
+/// reports whether it is still running. A pid that names no process is
+/// reported as exited.
+///
+/// # Errors
+///
+/// Returns an error if the wait fails, or the exit code cannot be read.
+pub fn wait_for_exit(pid: u32, timeout: Duration) -> io::Result<ProcessState> {
+    let Some(handle) = open_process(pid, PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION)
+    else {
+        return status(pid);
+    };
+    let milliseconds = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX - 1);
+    // SAFETY: `handle` is open with SYNCHRONIZE access, and closed below.
+    let waited = unsafe { WaitForSingleObject(handle, milliseconds) };
+    close(handle);
+    if waited != WAIT_OBJECT_0 && waited != WAIT_TIMEOUT {
+        return Err(io::Error::last_os_error());
+    }
+    status(pid)
+}
+
+/// The processes whose parent is `pid`, with their image names.
+///
+/// # Errors
+///
+/// Returns an error if the system's process list cannot be read.
+pub fn child_processes(pid: u32) -> io::Result<Vec<ProcessInfo>> {
+    // SAFETY: snapshots every process; the handle is closed below.
+    let snapshot =
+        unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.map_err(io::Error::other)?;
+    let mut entry = PROCESSENTRY32W {
+        dwSize: u32::try_from(size_of::<PROCESSENTRY32W>()).unwrap_or(u32::MAX),
+        ..Default::default()
+    };
+    let mut children = Vec::new();
+    // SAFETY: `snapshot` is open and `entry` has its size set.
+    let mut has_entry = unsafe { Process32FirstW(snapshot, &raw mut entry) }.is_ok();
+    while has_entry {
+        if entry.th32ParentProcessID == pid {
+            children.push(ProcessInfo {
+                pid: entry.th32ProcessID,
+                image: exe_file_name(&entry.szExeFile),
+            });
+        }
+        // SAFETY: as above.
+        has_entry = unsafe { Process32NextW(snapshot, &raw mut entry) }.is_ok();
+    }
+    close(snapshot);
+    Ok(children)
+}
+
+/// Ends every child the agent launched that is still running, with
+/// everything in its job, and returns how many were running.
+///
+/// # Errors
+///
+/// Returns an error if a job cannot be terminated.
+pub fn end_launched() -> io::Result<u32> {
+    let launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut ended = 0u32;
+    for entry in launched.values() {
+        if job_has_processes(&entry.job) {
+            if !already_exited(HANDLE(entry.child.as_raw_handle())) {
+                ended += 1;
+            }
+            // SAFETY: the job handle stays open while the lock is held.
+            unsafe { TerminateJobObject(HANDLE(entry.job.as_raw_handle()), 1) }
+                .map_err(io::Error::other)?;
+        }
+    }
+    Ok(ended)
+}
+
+/// Held for reading by every test that launches a child, and for writing
+/// by the test that ends every launched child, so that test ends no other
+/// test's child.
+#[cfg(test)]
+pub(crate) static LAUNCHING: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Spawns a long-running harmless child (`powershell Start-Sleep`),
-    /// exercising launch, running status, kill, and exited status in
-    /// sequence — the lifecycle host-side E2E tests depend on. Cleans up
-    /// even on assertion failure by killing unconditionally at the end.
-    #[test]
-    fn launch_status_kill_status_lifecycle() {
-        let pid = launch(
+    /// The longest a test waits for a child to start or exit.
+    const WAIT: Duration = Duration::from_secs(30);
+
+    /// A child that runs until it is ended: PowerShell waiting for an event
+    /// that never comes.
+    fn long_running() -> u32 {
+        launch(
             "powershell",
             &[
                 "-NoProfile".to_owned(),
                 "-Command".to_owned(),
-                "Start-Sleep -Seconds 300".to_owned(),
+                "Wait-Event".to_owned(),
             ],
             None,
             &[],
             None,
-            ForegroundNudge::Never,
+            None,
+            false,
         )
-        .expect("spawns powershell");
-        assert!(pid > 0, "pid is a valid nonzero process id");
-
-        let running = status(pid).expect("queries status");
-        assert_eq!(running, ProcessState::Running);
-
-        let outcome = kill(pid).expect("kills the process");
-        assert_eq!(outcome, KillOutcome::Terminated);
-
-        // GetExitCodeProcess can lag TerminateProcess by a moment; poll
-        // briefly rather than asserting on the first read.
-        let mut final_state = ProcessState::Running;
-        for _ in 0..50 {
-            final_state = status(pid).expect("queries status again");
-            if final_state != ProcessState::Running {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        assert!(
-            matches!(final_state, ProcessState::Exited { .. }),
-            "process is reported exited after being killed, got {final_state:?}"
-        );
-
-        // Killing an already-exited process is tolerated, not an error.
-        let second_kill = kill(pid).expect("kills a second time without error");
-        assert_eq!(second_kill, KillOutcome::AlreadyExited);
+        .expect("spawns powershell")
+        .0
     }
 
-    /// Exercises `stderr_to`: a child that writes to stderr and exits, with
-    /// stdout and stderr captured into a file that outlives the process.
+    /// Waits, on the job watcher's notifications, until `met` holds for the
+    /// job of the launched child `pid`.
+    fn wait_for_job(pid: u32, met: impl Fn(&crate::jobs::JobRecord) -> bool) {
+        let jobs = crate::jobs::JOBS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let (jobs, timeout) = crate::jobs::CHANGED
+            .wait_timeout_while(jobs, WAIT, |jobs| !jobs.get(&pid).is_some_and(&met))
+            .unwrap_or_else(PoisonError::into_inner);
+        assert!(
+            !timeout.timed_out(),
+            "the job of {pid} did not change as expected: running {:?}, exits {:?}",
+            jobs.get(&pid).map(|job| job
+                .running
+                .iter()
+                .map(|(pid, (_, image))| (*pid, image.clone()))
+                .collect::<Vec<_>>()),
+            jobs.get(&pid).map(|job| job.exits.clone())
+        );
+    }
+
+    #[test]
+    fn launch_status_kill_status_lifecycle() {
+        let _launching = crate::process::LAUNCHING
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        let pid = long_running();
+        assert_eq!(status(pid).expect("queries status"), ProcessState::Running);
+        assert_eq!(
+            kill(pid).expect("kills the process"),
+            KillOutcome::Terminated
+        );
+        assert!(
+            matches!(
+                wait_for_exit(pid, WAIT).expect("waits"),
+                ProcessState::Exited { .. }
+            ),
+            "the process exits once killed"
+        );
+        assert_eq!(kill(pid).expect("kills again"), KillOutcome::AlreadyExited);
+    }
+
     #[test]
     fn launch_with_stderr_to_captures_the_childs_stderr() {
+        let _launching = crate::process::LAUNCHING
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
         let path = std::env::temp_dir().join(format!(
             "verbatim-agent-test-stderr-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
         let path_str = path.to_str().expect("utf8 temp path").to_owned();
-
-        // cmd starts in milliseconds; PowerShell's cold start took more
-        // than two seconds on GitHub's ARM64 runner.
-        let pid = launch(
+        let (pid, _) = launch(
             "cmd",
             &[
                 "/c".to_owned(),
@@ -660,122 +697,96 @@ mod tests {
             None,
             &[],
             Some(&path_str),
-            ForegroundNudge::Never,
+            None,
+            false,
         )
         .expect("spawns cmd with a stderr capture path");
-
-        // Waits for the exit, however long the machine takes to start the
-        // child; the test is about the capture, not the start-up time.
-        let mut final_state = ProcessState::Running;
-        for _ in 0..1500 {
-            final_state = status(pid).expect("queries status");
-            if final_state != ProcessState::Running {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        assert_eq!(final_state, ProcessState::Exited { exit_code: Some(0) });
-
+        assert_eq!(
+            wait_for_exit(pid, WAIT).expect("waits"),
+            ProcessState::Exited { exit_code: Some(0) }
+        );
         // Exactly what cmd's echo wrote: the text up to the redirection,
         // with the space before it, and a line break.
         let captured =
             std::fs::read_to_string(&path).expect("reads the captured stderr/stdout file");
         assert_eq!(captured, "agent stderr capture test \r\n");
-
         std::fs::remove_file(&path).expect("removes the capture file");
     }
 
     #[test]
-    fn a_path_matches_only_that_file_and_a_name_matches_it_anywhere() {
-        let running = r"C:\Stage\mockapp.exe";
-        assert!(image_matches(running, "MOCKAPP.EXE"));
-        assert!(image_matches(running, r"c:\stage\mockapp.exe"));
-        assert!(image_matches(running, "C:/Stage/mockapp.exe"));
-        assert!(!image_matches(running, r"C:\target\debug\mockapp.exe"));
-        assert!(!image_matches(running, "notepad.exe"));
-    }
-
-    #[test]
     fn reports_the_exit_code_of_a_launched_child_after_it_exited() {
-        let pid = launch(
+        let _launching = crate::process::LAUNCHING
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        let (pid, _) = launch(
             "cmd",
             &["/C".to_owned(), "exit 3".to_owned()],
             None,
             &[],
             None,
-            ForegroundNudge::Never,
+            None,
+            false,
         )
         .expect("spawns cmd");
-        // Waits for the exit, however long the machine takes to start the
-        // child, as above.
-        let mut state = ProcessState::Running;
-        for _ in 0..1500 {
-            state = status(pid).expect("queries status");
-            if state != ProcessState::Running {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        assert_eq!(state, ProcessState::Exited { exit_code: Some(3) });
-    }
-
-    #[test]
-    fn killing_a_launched_child_ends_what_it_started() {
-        let pid = launch(
-            "cmd",
-            &["/C".to_owned(), "ping -n 60 127.0.0.1 >nul".to_owned()],
-            None,
-            &[],
-            None,
-            ForegroundNudge::Never,
-        )
-        .expect("spawns cmd");
-        let mut grandchild = None;
-        for _ in 0..100 {
-            grandchild = children_of(pid).into_iter().next();
-            if grandchild.is_some() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        let grandchild = grandchild.expect("cmd starts ping");
-
-        assert_eq!(kill(pid).expect("kills"), KillOutcome::Terminated);
-        let mut state = ProcessState::Running;
-        for _ in 0..100 {
-            state = status(grandchild).expect("queries ping");
-            if state != ProcessState::Running {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        assert!(
-            matches!(state, ProcessState::Exited { .. }),
-            "ping, started by the killed cmd, still runs"
+        assert_eq!(
+            wait_for_exit(pid, WAIT).expect("waits"),
+            ProcessState::Exited { exit_code: Some(3) }
         );
     }
 
-    /// The processes whose parent is `pid`.
-    fn children_of(pid: u32) -> Vec<u32> {
-        // SAFETY: CreateToolhelp32Snapshot has no preconditions.
-        let snapshot =
-            unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.expect("snapshot");
-        let mut entry = PROCESSENTRY32W {
-            dwSize: u32::try_from(std::mem::size_of::<PROCESSENTRY32W>()).unwrap(),
-            ..PROCESSENTRY32W::default()
-        };
-        let mut children = Vec::new();
-        // SAFETY: `snapshot` is open and `entry` has its size set.
-        let mut has_entry = unsafe { Process32FirstW(snapshot, &raw mut entry) }.is_ok();
-        while has_entry {
-            if entry.th32ParentProcessID == pid {
-                children.push(entry.th32ProcessID);
-            }
-            // SAFETY: as above.
-            has_entry = unsafe { Process32NextW(snapshot, &raw mut entry) }.is_ok();
-        }
-        close(snapshot);
-        children
+    #[test]
+    fn killing_a_launched_child_ends_what_it_started_and_the_job_records_both_exits() {
+        let _launching = crate::process::LAUNCHING
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        let (pid, _) = launch(
+            "cmd",
+            &[
+                "/C".to_owned(),
+                "powershell -NoProfile -Command Wait-Event".to_owned(),
+            ],
+            None,
+            &[],
+            None,
+            None,
+            false,
+        )
+        .expect("spawns cmd");
+        wait_for_job(pid, |job| job.running.len() == 2);
+        let grandchild = child_processes(pid)
+            .expect("lists children")
+            .into_iter()
+            .map(|child| child.pid)
+            .next()
+            .expect("cmd started powershell");
+        assert_eq!(kill(pid).expect("kills"), KillOutcome::Terminated);
+        assert!(matches!(
+            wait_for_exit(grandchild, WAIT).expect("waits"),
+            ProcessState::Exited { .. }
+        ));
+        wait_for_job(pid, |job| job.exits.len() == 2);
+        let exits = crate::jobs::exits(pid).expect("the job is known");
+        let mut images: Vec<&str> = exits.iter().map(|exit| exit.image.as_str()).collect();
+        images.sort_unstable();
+        assert_eq!(images, ["cmd.exe", "powershell.exe"]);
+        assert!(
+            exits
+                .iter()
+                .all(|exit| exit.exit_code == Some(1) && !exit.abnormal)
+        );
+    }
+
+    #[test]
+    fn ending_the_launched_children_ends_one_still_running() {
+        let _launching = crate::process::LAUNCHING
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
+        let pid = long_running();
+        assert!(end_launched().expect("ends") >= 1);
+        assert!(matches!(
+            wait_for_exit(pid, WAIT).expect("waits"),
+            ProcessState::Exited { .. }
+        ));
     }
 
     #[test]
@@ -797,8 +808,6 @@ mod tests {
 
     #[test]
     fn status_of_a_pid_that_never_existed_reports_exited() {
-        // A pid this unlikely to be live keeps the test independent of
-        // whatever else is running on the machine.
         let state = status(0xFFFF_FFF0).expect("querying an invalid pid is not an error");
         assert_eq!(state, ProcessState::Exited { exit_code: None });
     }
@@ -807,75 +816,5 @@ mod tests {
     fn kill_of_a_pid_that_never_existed_is_already_exited() {
         let outcome = kill(0xFFFF_FFF0).expect("killing an invalid pid is not an error");
         assert_eq!(outcome, KillOutcome::AlreadyExited);
-    }
-
-    #[test]
-    fn kill_by_name_of_an_unmatched_name_returns_zero() {
-        let terminated = kill_by_name("verbatim-agent-test-nonexistent-image-name.exe")
-            .expect("querying an unmatched name is not an error");
-        assert_eq!(terminated, 0);
-    }
-
-    /// Windows identifies a process's image name from the executable file
-    /// itself, not the command line, so a uniquely named copy of
-    /// `powershell.exe` lets this test match by name deterministically,
-    /// with no risk of also catching an unrelated `powershell.exe` already
-    /// running on the machine this test happens to run on. `Start-Sleep` is
-    /// a PowerShell cmdlet, not a separately resolved executable, so unlike
-    /// an external command name it cannot be shadowed by a same-named tool
-    /// earlier on `PATH` (confirmed live: an earlier attempt using a
-    /// renamed `cmd.exe` running `timeout /t 300` failed exactly that way,
-    /// resolving to a Git-Bash-provided `timeout` with an incompatible
-    /// argument syntax instead of Windows' own).
-    #[test]
-    fn kill_by_name_terminates_every_matching_process() {
-        let unique_name = format!(
-            "verbatim-agent-test-killbyname-{}-{:?}.exe",
-            std::process::id(),
-            std::thread::current().id()
-        );
-        let exe_path = std::env::temp_dir().join(&unique_name);
-        std::fs::copy(
-            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
-            &exe_path,
-        )
-        .expect("copies powershell.exe under a unique name");
-
-        let pid = launch(
-            exe_path.to_str().expect("utf8 path"),
-            &[
-                "-NoProfile".to_owned(),
-                "-Command".to_owned(),
-                "Start-Sleep -Seconds 300".to_owned(),
-            ],
-            None,
-            &[],
-            None,
-            ForegroundNudge::Never,
-        )
-        .expect("spawns the renamed powershell.exe");
-
-        // `launch` returns once `CreateProcessW` has, by which time the
-        // process is in every later snapshot.
-        let terminated = kill_by_name(&unique_name).expect("kills by name");
-        assert_eq!(
-            terminated, 1,
-            "expected exactly the one process spawned under this unique name"
-        );
-
-        let mut final_state = ProcessState::Running;
-        for _ in 0..50 {
-            final_state = status(pid).expect("queries status");
-            if final_state != ProcessState::Running {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        assert!(
-            matches!(final_state, ProcessState::Exited { .. }),
-            "process is reported exited after kill_by_name, got {final_state:?}"
-        );
-
-        std::fs::remove_file(&exe_path).ok();
     }
 }

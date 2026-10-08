@@ -6,6 +6,7 @@
 //! job, and plain libtest filtering) discovers and runs it by name.
 
 #[test]
+#[ignore = "live: drives a real Verbatim through a running agent; the end-to-end job runs it with --ignored (docs/tooling.md)"]
 fn system_information_tree() {
     verbatim_e2e::registry::run_named("system_information_tree");
 }

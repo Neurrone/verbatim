@@ -45,7 +45,8 @@ use windows::core::AgileReference;
 use verbatim_model::{LineChange, MAX_TERMINAL_LINE_BYTES, Skipped, TerminalOutput};
 use verbatim_uia::Uia;
 use verbatim_uia_rops::{
-    Error as RopsError, Fingerprint, Found, Path, Tail, TailQuery, TailStart, terminal_tail,
+    CaretAnswer, CaretLineQuery, Error as RopsError, Fingerprint, Found, Path, Tail, TailQuery,
+    TailStart, terminal_tail,
 };
 
 use crate::text::TextError;
@@ -82,6 +83,11 @@ pub struct TailText {
     /// The text of those lines, oldest first; a line the terminal wrapped
     /// is one line here.
     pub lines: Vec<String>,
+    /// How many of the first lines after the anchor's were read too, when
+    /// more followed it than the last lines read.
+    pub head_rows: u32,
+    /// The text of those first lines, oldest first.
+    pub head: Vec<String>,
     /// The last line, read as a line: the next fingerprint's line.
     pub last_line: String,
     /// The line before it: the next fingerprint's line before.
@@ -104,6 +110,8 @@ impl From<&Tail> for TailText {
             count: tail.count,
             rows: tail.rows,
             lines: tail.lines.clone(),
+            head_rows: tail.head_rows,
+            head: tail.head.clone(),
             last_line: tail.last_line.clone(),
             before_last: tail.before_last.clone(),
             settled: tail.settled,
@@ -208,7 +216,11 @@ pub fn after_anchor(memory: &Memory, tail: &TailText, wanted: usize) -> Next {
         Found::NotFound | Found::Afresh => return Next::Afresh,
     };
     let lines: Vec<String> = tail.lines.iter().map(|line| trimmed(line)).collect();
-    let unread = tail.count.saturating_sub(tail.rows);
+    let head: Vec<String> = tail.head.iter().map(|line| trimmed(line)).collect();
+    let unread = tail
+        .count
+        .saturating_sub(tail.rows)
+        .saturating_sub(tail.head_rows);
     let skipped = (unread > 0).then_some(Skipped::Count(unread));
     let previous_now = if matches!(tail.found, Found::Moved(_)) {
         memory.previous.as_str()
@@ -228,12 +240,14 @@ pub fn after_anchor(memory: &Memory, tail: &TailText, wanted: usize) -> Next {
         if let Some(last) = screen.last_mut() {
             *last = trimmed(line_now);
         }
+        screen.extend(head.iter().cloned());
         screen
     };
     screen.extend(lines.iter().cloned());
     keep_last(&mut screen, wanted);
     let output = TerminalOutput {
         changed,
+        head,
         skipped,
         lines,
     };
@@ -487,6 +501,10 @@ struct UiaTail<'a> {
     uia: &'a Uia,
     element: &'a IUIAutomationElement,
     pattern: &'a IUIAutomationTextPattern,
+    /// The caret to read with each read of the text.
+    caret: Option<CaretLineQuery<'a>>,
+    /// The caret the newest read found.
+    caret_found: Option<CaretAnswer>,
     anchor: Option<IUIAutomationTextRange>,
     remote: bool,
     /// The last line of the newest read, the next anchor.
@@ -506,7 +524,7 @@ impl UiaTail<'_> {
             TailStart::Anchor { .. } => "anchor",
             TailStart::Document(_) | TailStart::Text { .. } => "fresh",
         };
-        let (tail, path) = match result {
+        let (mut tail, path) = match result {
             Ok(answer) => answer,
             Err(error) => {
                 tracing::debug!(start, elapsed_us, calls, %error, "terminal tail read failed");
@@ -527,6 +545,9 @@ impl UiaTail<'_> {
             "terminal tail timing"
         );
         self.paths.push(path);
+        if let Some(caret) = tail.caret.take() {
+            self.caret_found = Some(caret);
+        }
         let text = TailText::from(&tail);
         if !text.settled {
             tracing::debug!("a terminal's text changed while it was read; the read is set aside");
@@ -569,6 +590,7 @@ impl TailSource for UiaTail<'_> {
                 },
             },
             lines_wanted: wanted,
+            caret: self.caret,
         };
         match self.run(&query) {
             Ok(tail) => Ok(Some(tail)),
@@ -589,6 +611,7 @@ impl TailSource for UiaTail<'_> {
                 pattern: self.pattern,
             },
             lines_wanted: wanted,
+            caret: self.caret,
         };
         self.run(&query).map_err(|error| text_error(&error))
     }
@@ -596,27 +619,30 @@ impl TailSource for UiaTail<'_> {
 
 /// Reads what is new in a focused terminal's text since the last read
 /// ([`read_new`]) through UIA, keeping the anchor and memory in `terminal`.
-/// `remote` tries the remote program first. The answer is the output (empty
-/// when nothing changed) and the path each read took, for the caller to log
-/// a fallback and stop trying the remote program for a window whose import
+/// `remote` tries the remote program first. With `caret`, each read of the
+/// text reads the caret and its line too, in the same round trip. The
+/// answer is the output (empty when nothing changed), the caret the last
+/// read found, and the path each read took, for the caller to log a
+/// fallback and stop trying the remote program for a window whose import
 /// failed.
 ///
 /// # Errors
 ///
 /// [`TextError::Gone`] when the terminal is gone, [`TextError::Failed`]
 /// when it could not be read.
-pub fn read(
-    uia: &Uia,
-    (element, pattern): (&IUIAutomationElement, &IUIAutomationTextPattern),
+pub fn read<'a>(
+    uia: &'a Uia,
+    (element, pattern): (&'a IUIAutomationElement, &'a IUIAutomationTextPattern),
+    caret: Option<CaretLineQuery<'a>>,
     terminal: &mut Terminal,
-    wanted: u32,
-    remote: bool,
-    baseline: bool,
-) -> Result<(TerminalOutput, Vec<Path>), TextError> {
+    (wanted, remote, baseline): (u32, bool, bool),
+) -> Result<(TerminalOutput, Option<CaretAnswer>, Vec<Path>), TextError> {
     let mut source = UiaTail {
         uia,
         element,
         pattern,
+        caret,
+        caret_found: None,
         anchor: terminal
             .anchor
             .as_ref()
@@ -630,7 +656,7 @@ pub fn read(
         terminal.anchor = AgileReference::new(last).ok();
     }
     terminal.memory = Some(memory);
-    Ok((output, source.paths))
+    Ok((output, source.caret_found, source.paths))
 }
 
 #[cfg(test)]

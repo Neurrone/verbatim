@@ -14,25 +14,29 @@ use std::thread;
 use tracing::warn;
 use verbatim_control::protocol::{read_message, write_message};
 
-use crate::foreground::ForegroundNudge;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
 use crate::protocol::{AGENT_PROTOCOL_VERSION, Frame, ReplyPayload, Request, RequestEnvelope};
-use crate::{desktop, files, foreground, process, session, tunnel, typing};
+use crate::{desktop, events, files, focus, jobs, keys, process, session, tunnel, typing};
+
+/// The number the next key stroke or typed character the agent injects
+/// carries for the end-to-end harness (`verbatim_input::harness`), shared by
+/// every connection so numbers never repeat while the agent runs.
+static NEXT_INPUT: AtomicU64 = AtomicU64::new(1);
 
 /// Accepts connections on `listener` until it errors, spawning a thread
 /// per connection. Each connection is pointed at `pipe_name` for
 /// [`Request::OpenControlTunnel`].
 ///
-/// A launch may tap Control to let the launched program take the
-/// foreground when `nudge` allows it ([`ForegroundNudge`]).
-///
 /// Blocks the calling thread; callers that need to keep doing other work
 /// (tests, in particular) run this on a background thread.
-pub fn serve(listener: &TcpListener, pipe_name: &str, nudge: ForegroundNudge) {
+pub fn serve(listener: &TcpListener, pipe_name: &str) {
     for incoming in listener.incoming() {
         match incoming {
             Ok(stream) => {
                 let pipe_name = pipe_name.to_owned();
-                thread::spawn(move || handle_connection(&stream, &pipe_name, nudge));
+                thread::spawn(move || handle_connection(&stream, &pipe_name));
             }
             Err(error) => {
                 warn!(%error, "accept failed; agent TCP listener stopping");
@@ -63,7 +67,7 @@ fn reject_malformed(writer: &mut TcpStream, error: &io::Error) {
 /// malformed message arrives (answered by [`reject_malformed`]), the first
 /// request is not [`Request::Hello`], or [`Request::OpenControlTunnel`]
 /// hands the connection off to [`tunnel::run`].
-fn handle_connection(stream: &TcpStream, pipe_name: &str, nudge: ForegroundNudge) {
+fn handle_connection(stream: &TcpStream, pipe_name: &str) {
     let mut writer = match stream.try_clone() {
         Ok(writer) => writer,
         Err(error) => {
@@ -159,7 +163,7 @@ fn handle_connection(stream: &TcpStream, pipe_name: &str, nudge: ForegroundNudge
             }
         }
 
-        let frame = dispatch(envelope.id, envelope.request, nudge);
+        let frame = dispatch(envelope.id, envelope.request);
         if write_message(&mut writer, &frame).is_err() {
             return;
         }
@@ -168,7 +172,7 @@ fn handle_connection(stream: &TcpStream, pipe_name: &str, nudge: ForegroundNudge
 
 /// Dispatches one already-validated (post-`Hello`, non-tunnel) request to
 /// a [`Frame`] reply or error.
-fn dispatch(id: u64, request: Request, nudge: ForegroundNudge) -> Frame {
+fn dispatch(id: u64, request: Request) -> Frame {
     match request {
         Request::Hello { .. } => Frame::Reply {
             to: id,
@@ -182,17 +186,23 @@ fn dispatch(id: u64, request: Request, nudge: ForegroundNudge) -> Frame {
             working_dir,
             env,
             stderr_to,
+            console_title,
+            minimized,
         } => match process::launch(
             &command,
             &args,
             working_dir.as_deref(),
             &env,
             stderr_to.as_deref(),
-            nudge,
+            console_title.as_deref(),
+            minimized,
         ) {
-            Ok(pid) => Frame::Reply {
+            Ok((pid, foreground_allowed)) => Frame::Reply {
                 to: id,
-                payload: ReplyPayload::Launched { pid },
+                payload: ReplyPayload::Launched {
+                    pid,
+                    foreground_allowed,
+                },
             },
             Err(error) => error_frame(id, &error),
         },
@@ -203,28 +213,13 @@ fn dispatch(id: u64, request: Request, nudge: ForegroundNudge) -> Frame {
             },
             Err(error) => error_frame(id, &error),
         },
-        Request::KillProcessesByName { name } => match process::kill_by_name(&name) {
-            Ok(terminated) => Frame::Reply {
-                to: id,
-                payload: ReplyPayload::KilledByName { terminated },
-            },
-            Err(error) => error_frame(id, &error),
-        },
-        Request::BringToForeground {
-            image_name,
-            title_contains,
-            timeout_ms,
-        } => match foreground::bring_to_foreground(
-            &image_name,
-            title_contains.as_deref(),
-            std::time::Duration::from_millis(timeout_ms),
-        ) {
-            Ok(taken) => Frame::Reply {
-                to: id,
-                payload: ReplyPayload::Foreground { taken },
-            },
-            Err(error) => error_frame(id, &error),
-        },
+        request @ (Request::EndLaunched
+        | Request::ChildProcesses { .. }
+        | Request::JobExits { .. }
+        | Request::WaitForExit { .. }
+        | Request::WaitForFile { .. }
+        | Request::CreateEvent { .. }
+        | Request::WaitForEvent { .. }) => process_request(id, request),
         Request::ProcessStatus { pid } => match process::status(pid) {
             Ok(state) => Frame::Reply {
                 to: id,
@@ -255,9 +250,16 @@ fn dispatch(id: u64, request: Request, nudge: ForegroundNudge) -> Frame {
         },
         request @ (Request::ForegroundInfo
         | Request::CloseWindows { .. }
+        | Request::SetForeground { .. }
+        | Request::WaitForWindow { .. }
+        | Request::MinimizeAll { .. }
         | Request::WriteFile { .. }
         | Request::DeleteFile { .. }
         | Request::DeleteFolder { .. }) => desktop_request(id, request),
+        request @ (Request::FocusedElement
+        | Request::FocusByAutomationId { .. }
+        | Request::MisspeltWords
+        | Request::KeyToggled { .. }) => state_request(id, request),
         Request::ListFiles { path } => list_reply(id, files::list(&path)),
         Request::ListFolders { path } => list_reply(id, files::list_folders(&path)),
         Request::SendKeys { keys } => send_keys(id, &keys),
@@ -265,6 +267,119 @@ fn dispatch(id: u64, request: Request, nudge: ForegroundNudge) -> Frame {
         Request::OpenControlTunnel => {
             unreachable!("OpenControlTunnel is handled in handle_connection before dispatch")
         }
+    }
+}
+
+/// Answers the requests about processes and the evidence they leave:
+/// ending the launched children, listing a process's children or a job's
+/// exits, and waiting for a process to exit, a file to appear, or an event
+/// to be set.
+fn process_request(id: u64, request: Request) -> Frame {
+    match request {
+        Request::EndLaunched => match process::end_launched() {
+            Ok(ended) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::EndedLaunched { ended },
+            },
+            Err(error) => error_frame(id, &error),
+        },
+        Request::ChildProcesses { pid } => match process::child_processes(pid) {
+            Ok(processes) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::Processes { processes },
+            },
+            Err(error) => error_frame(id, &error),
+        },
+        Request::JobExits { pid } => match jobs::exits(pid) {
+            Ok(exits) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::Exits { exits },
+            },
+            Err(error) => error_frame(id, &error),
+        },
+        Request::WaitForExit { pid, timeout_ms } => {
+            match process::wait_for_exit(pid, Duration::from_millis(timeout_ms)) {
+                Ok(state) => Frame::Reply {
+                    to: id,
+                    payload: ReplyPayload::ProcessStatus(state),
+                },
+                Err(error) => error_frame(id, &error),
+            }
+        }
+        Request::WaitForFile { path, timeout_ms } => {
+            match files::wait_for(&path, Duration::from_millis(timeout_ms)) {
+                Ok(exists) => Frame::Reply {
+                    to: id,
+                    payload: ReplyPayload::FileExists { exists },
+                },
+                Err(error) => error_frame(id, &error),
+            }
+        }
+        Request::CreateEvent { name } => match events::create(&name) {
+            Ok(()) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::EventCreated,
+            },
+            Err(error) => error_frame(id, &error),
+        },
+        Request::WaitForEvent {
+            name,
+            pid,
+            timeout_ms,
+        } => match events::wait(&name, pid, Duration::from_millis(timeout_ms)) {
+            Ok(outcome) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::EventWait(outcome),
+            },
+            Err(error) => error_frame(id, &error),
+        },
+        other => Frame::Error {
+            to: id,
+            message: format!("not a process request: {other:?}"),
+        },
+    }
+}
+
+/// Answers the requests that read state a test fixes its expectations
+/// from, independently of the screen reader under test: the focused
+/// element, an element focused by its identifier, the focused text's
+/// misspelt words, and a lock key's state.
+fn state_request(id: u64, request: Request) -> Frame {
+    match request {
+        Request::FocusedElement => match focus::focused_element() {
+            Ok(element) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::Focused(element),
+            },
+            Err(error) => error_frame(id, &error),
+        },
+        Request::FocusByAutomationId { automation_id } => {
+            match focus::focus_by_automation_id(&automation_id) {
+                Ok(count) => Frame::Reply {
+                    to: id,
+                    payload: ReplyPayload::Children { count },
+                },
+                Err(error) => error_frame(id, &error),
+            }
+        }
+        Request::MisspeltWords => match focus::misspelt_words() {
+            Ok(words) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::Words { words },
+            },
+            Err(error) => error_frame(id, &error),
+        },
+        Request::KeyToggled { key } => match keys::toggled(&key) {
+            Ok(on) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::KeyToggled { on },
+            },
+            Err(error) => error_frame(id, &error),
+        },
+        other => Frame::Error {
+            to: id,
+            message: format!("not a state request: {other:?}"),
+        },
     }
 }
 
@@ -281,15 +396,17 @@ fn list_reply(id: u64, names: io::Result<Vec<String>>) -> Frame {
 }
 
 /// Answers [`Request::SendKeys`], injecting nothing unless every key name
-/// parses.
+/// parses, each combination numbered for the harness.
 fn send_keys(id: u64, keys: &[String]) -> Frame {
     match verbatim_control::send_keys::parse_all(keys)
         .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))
-        .and_then(|combos| verbatim_control::send_keys::inject(&combos))
-    {
-        Ok(()) => Frame::Reply {
+        .and_then(|combos| {
+            let first = NEXT_INPUT.fetch_add(combos.len() as u64, Ordering::Relaxed);
+            verbatim_control::send_keys::inject_numbered(&combos, first)
+        }) {
+        Ok(input) => Frame::Reply {
             to: id,
-            payload: ReplyPayload::KeysSent,
+            payload: ReplyPayload::KeysSent { input },
         },
         Err(error) => error_frame(id, &error),
     }
@@ -298,10 +415,11 @@ fn send_keys(id: u64, keys: &[String]) -> Frame {
 /// Answers [`Request::TypeText`], typing nothing unless every character can
 /// be typed.
 fn type_text(id: u64, text: &str) -> Frame {
-    match typing::type_text(text) {
-        Ok(()) => Frame::Reply {
+    let first = NEXT_INPUT.fetch_add(text.chars().count() as u64, Ordering::Relaxed);
+    match typing::type_text(text, first) {
+        Ok(input) => Frame::Reply {
             to: id,
-            payload: ReplyPayload::TextTyped,
+            payload: ReplyPayload::TextTyped { input },
         },
         Err(error) => error_frame(id, &error),
     }
@@ -324,10 +442,33 @@ fn desktop_request(id: u64, request: Request) -> Frame {
             payload: ReplyPayload::WindowsClosed {
                 remaining: desktop::close_windows(
                     &title_contains,
-                    std::time::Duration::from_millis(timeout_ms),
+                    Duration::from_millis(timeout_ms),
                 ),
             },
         },
+        Request::SetForeground { window } => Frame::Reply {
+            to: id,
+            payload: ReplyPayload::Foreground {
+                taken: desktop::set_foreground(window),
+            },
+        },
+        Request::WaitForWindow {
+            condition,
+            timeout_ms,
+        } => {
+            let (met, desktop) = desktop::wait_for(&condition, Duration::from_millis(timeout_ms));
+            Frame::Reply {
+                to: id,
+                payload: ReplyPayload::WindowState { met, desktop },
+            }
+        }
+        Request::MinimizeAll { timeout_ms } => {
+            let (met, desktop) = desktop::minimize_all(Duration::from_millis(timeout_ms));
+            Frame::Reply {
+                to: id,
+                payload: ReplyPayload::WindowState { met, desktop },
+            }
+        }
         Request::WriteFile { path, data_base64 } => {
             match files::write_base64(&path, &data_base64) {
                 Ok(()) => Frame::Reply {
@@ -388,7 +529,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").expect("binds an ephemeral port");
         let addr = listener.local_addr().expect("has a local address");
         let pipe_name = pipe_name.to_owned();
-        thread::spawn(move || serve(&listener, &pipe_name, ForegroundNudge::Never));
+        thread::spawn(move || serve(&listener, &pipe_name));
         addr
     }
 
@@ -509,7 +650,10 @@ mod tests {
     }
 
     #[test]
-    fn launch_status_kill_lifecycle_over_the_wire() {
+    fn launch_status_kill_wait_lifecycle_over_the_wire() {
+        let _launching = crate::process::LAUNCHING
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let addr = start_agent(r"\\.\pipe\verbatim-agent-test-unused-c");
         let mut client = TestClient::connect(addr);
         client.hello();
@@ -519,14 +663,16 @@ mod tests {
             args: vec![
                 "-NoProfile".to_owned(),
                 "-Command".to_owned(),
-                "Start-Sleep -Seconds 300".to_owned(),
+                "Wait-Event".to_owned(),
             ],
             working_dir: None,
             env: vec![],
             stderr_to: None,
+            console_title: None,
+            minimized: false,
         });
         let Frame::Reply {
-            payload: ReplyPayload::Launched { pid },
+            payload: ReplyPayload::Launched { pid, .. },
             ..
         } = launch_reply
         else {
@@ -550,81 +696,18 @@ mod tests {
                 payload: ReplyPayload::Killed(KillOutcome::Terminated),
             }
         );
-    }
 
-    /// A uniquely named copy of `powershell.exe`: Windows identifies a
-    /// process's image name from the executable file itself, not the
-    /// command line, so this lets `KillProcessesByName` match
-    /// deterministically over the wire, with no risk of also catching an
-    /// unrelated `powershell.exe` already running on the machine this test
-    /// happens to run on. See `process::tests::kill_by_name_terminates_every_matching_process`'s
-    /// doc comment for why `powershell.exe` plus `Start-Sleep`, not
-    /// `cmd.exe` plus an external `timeout` command.
-    #[test]
-    fn kill_processes_by_name_over_the_wire() {
-        let addr = start_agent(r"\\.\pipe\verbatim-agent-test-unused-g");
-        let mut client = TestClient::connect(addr);
-        client.hello();
-
-        let unique_name = format!(
-            "verbatim-agent-test-killbyname-server-{}.exe",
-            std::process::id()
-        );
-        let exe_path = std::env::temp_dir().join(&unique_name);
-        std::fs::copy(
-            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
-            &exe_path,
-        )
-        .expect("copies powershell.exe under a unique name");
-
-        let launch_reply = client.request(Request::LaunchProcess {
-            command: exe_path.to_str().expect("utf8 path").to_owned(),
-            args: vec![
-                "-NoProfile".to_owned(),
-                "-Command".to_owned(),
-                "Start-Sleep -Seconds 300".to_owned(),
-            ],
-            working_dir: None,
-            env: vec![],
-            stderr_to: None,
-        });
-        let Frame::Reply {
-            payload: ReplyPayload::Launched { pid },
-            ..
-        } = launch_reply
-        else {
-            panic!("expected a Launched reply, got {launch_reply:?}");
-        };
-
-        // The launch is answered once `CreateProcessW` has returned, by
-        // which time the process is in every later snapshot
-        // KillProcessesByName walks.
-
-        let kill_reply = client.request(Request::KillProcessesByName {
-            name: unique_name.clone(),
+        let wait_reply = client.request(Request::WaitForExit {
+            pid,
+            timeout_ms: 30_000,
         });
         assert_eq!(
-            kill_reply,
+            wait_reply,
             Frame::Reply {
-                to: 3,
-                payload: ReplyPayload::KilledByName { terminated: 1 },
+                to: 5,
+                payload: ReplyPayload::ProcessStatus(ProcessState::Exited { exit_code: Some(1) }),
             }
         );
-
-        let status_reply = client.request(Request::ProcessStatus { pid });
-        let Frame::Reply {
-            payload: ReplyPayload::ProcessStatus(state),
-            ..
-        } = status_reply
-        else {
-            panic!("expected a ProcessStatus reply, got {status_reply:?}");
-        };
-        assert!(
-            matches!(state, ProcessState::Exited { .. }),
-            "expected the process to be exited after KillProcessesByName, got {state:?}"
-        );
-
-        std::fs::remove_file(&exe_path).ok();
     }
 
     #[test]
@@ -713,6 +796,8 @@ mod tests {
             dump_tree: Box::new(|| Err("not exercised".to_owned())),
             dump_recorder: Box::new(|| Err("not exercised".to_owned())),
             quit: Box::new(|| {}),
+            await_idle: Box::new(|_, _| Ok(())),
+            dump_focus: Box::new(|| Err("not exercised".to_owned())),
         };
         let control_server =
             ControlServer::start_on(pipe_name, handlers).expect("starts the control server");

@@ -45,9 +45,8 @@ use crate::text;
 /// lasts tens of seconds of speech, so a round trip is rare.
 pub(crate) const READ_AHEAD: u8 = 20;
 
-/// How many utterances are handed to speech ahead of playback: the one
-/// playing and the one after it, so speech never waits for Core between
-/// them.
+/// How many utterances are handed to speech ahead of playback: two queued
+/// behind the one playing, so speech never waits for Core between them.
 pub(crate) const HANDED: usize = 2;
 
 /// The next batch is read once fewer than this many utterances are left to

@@ -7,8 +7,22 @@ names, and the gesture tables carry no Windows dependency.
 
 Public API: `InputHook::start(config, map, events, speech, reports)`,
 which installs `WH_KEYBOARD_LL` on a dedicated thread; drop uninstalls.
-`speech` is a `SpeechEffectFn` (a boxed `Fn(KeySpeechEffect) + Send`) that
-carries out each key press's effect on speech; `reports` is a
+`events` is the gesture router's channel of `Routed` values, in the order
+the keys came: `Gesture`, a gesture that fired; `Handled(n)`, sent when
+the last key event of an end-to-end harness's numbered key stroke
+(`verbatim_input::harness`, read from `dwExtraInfo`) has been decided, so
+everything the stroke caused was sent before it; and `Barrier(token)`,
+which the hook never sends but the router's other producers do, for a
+control-plane idle request answered only after everything sent before it.
+`speech` is a `SpeechEffectFn` (a boxed `Fn(KeySpeechEffect, u64) +
+Send`) that carries out each key press's effect on speech, given the
+press's key sequence number. Every key press gets the next number
+(`next_key`), and the hook records under it, by trace id, everything the
+press causes: its gesture, its observed caret key, the text it types
+(`record_key_origin`, looked up with `key_of`, the latest 1,024 kept). The
+app passes the number to `SpeechControl::cancel_through`, and the speech a
+trace causes to `SpeechManager::speak_for_key`, so speech an earlier press
+caused never follows a later press's cancel. `reports` is a
 `KeyReportFn` that receives, after the speech effect, what a key passed to
 the application did, a `KeyReport`: `Observed`, the observed gesture the
 key completed (a caret key, `Decision::observed`) and `pressed_at_us`,

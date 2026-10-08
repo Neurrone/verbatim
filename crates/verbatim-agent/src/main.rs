@@ -84,10 +84,6 @@ fn main() -> ExitCode {
         cli.pipe_name
     );
 
-    verbatim_agent::server::serve(
-        &listener,
-        &cli.pipe_name,
-        verbatim_agent::ForegroundNudge::Allowed,
-    );
+    verbatim_agent::server::serve(&listener, &cli.pipe_name);
     ExitCode::SUCCESS
 }

@@ -88,6 +88,18 @@ pub(crate) enum Command {
     /// `id` takes its runtime id, as File Explorer gives a new item the
     /// runtime id of one it destroyed. Raises no event. UIA-only.
     TakeRuntimeId(String, String),
+    /// `focus-child <container> <child>`: addresses `container`'s children
+    /// as numbered simple children from then on, moves the focused state to
+    /// `child`, and raises `EVENT_OBJECT_FOCUS` on `container` itself and
+    /// then on `child` by its child id, in the one turn of the window
+    /// thread, as a Win32 tree view taking the focus does within its one
+    /// `SetFocus` call. MSAA-only.
+    FocusChild(String, String),
+    /// `client-name <text>`: names the window's client area, the root
+    /// node, `text`, leaving the window's text as it is, and raises
+    /// `EVENT_OBJECT_NAMECHANGE` on the client area, as Windows 11 Notepad
+    /// renames its window as it is first activated. MSAA-only.
+    ClientName(String),
     /// `quit`.
     Quit,
     /// A line that is no command, rejected on the window thread, so its
@@ -147,6 +159,14 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "set-text" => {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
             (!id.is_empty()).then(|| Command::SetText(id.to_owned(), unescape(text)))
+        }
+        "client-name" => Some(Command::ClientName(rest.to_owned())),
+        "focus-child" => {
+            let (container, child) = rest.split_once(' ')?;
+            Some(Command::FocusChild(
+                container.to_owned(),
+                child.trim().to_owned(),
+            ))
         }
         "set-description" => {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));

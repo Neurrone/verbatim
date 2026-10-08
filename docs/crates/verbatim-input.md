@@ -99,6 +99,19 @@ Public API:
   Delete, and Control with each; and Control+A. They are observed, never
   bound: the shell adds them to the hook's map with `with_observed` and
   turns each reported gesture into `Input::CaretKey`.
+- `harness` — the number an end-to-end test harness puts on each key it
+  injects, so Verbatim can say when it has handled that key: evidence for
+  "nothing more was said" that is not a period of silence. The agent
+  numbers every key stroke and carries the number in each key event's
+  `dwExtraInfo`: `encode(number, last)` puts a fixed tag in the top sixteen
+  bits, a flag marking the stroke's last event (a stroke is modifiers
+  down, the key down and up, modifiers up) in the next bit, and the number
+  in the rest, up to `MAX_NUMBER`; `decode(extra)` reads a `NumberedKey`
+  back, or `None` for a key the harness did not number. The Windows hook
+  (`verbatim-input-windows`) reports the number once it has handed on the
+  stroke's last event, and Core reports it handled once everything the
+  stroke caused is queued (the control plane's `AwaitIdle` and
+  `Frame::InputHandled`).
 
 Implementation notes, `DecisionMachine::on_key` (the intricate one;
 `docs/parity.md`'s input section is the behavioural record for these

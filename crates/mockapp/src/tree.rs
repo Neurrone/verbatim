@@ -80,6 +80,11 @@ pub(crate) struct Tree {
     /// [`Self::focused`]): set by the `select` stdin command, which moves
     /// the `Selected` state here from any previously selected node.
     pub(crate) selected: Option<usize>,
+    /// The node whose children are addressed as numbered simple children
+    /// of it, as a Win32 tree view's items are: set by `focus-child`, after
+    /// which the node's `accFocus` names its focused child by child id and
+    /// its `accChild` has no object for any child. MSAA-only.
+    pub(crate) simple_children: Option<usize>,
 }
 
 /// A tree shared between the window thread (which owns every provider COM
@@ -112,6 +117,7 @@ impl Tree {
             by_fixture_id,
             focused,
             selected: None,
+            simple_children: None,
         }
     }
 

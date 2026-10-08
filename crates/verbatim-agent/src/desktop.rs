@@ -1,7 +1,12 @@
 //! The desktop's state, for a test to establish and check what it starts
 //! from and to leave the desktop as it found it:
-//! [`Request::ForegroundInfo`](crate::protocol::Request::ForegroundInfo) and
-//! [`Request::CloseWindows`](crate::protocol::Request::CloseWindows).
+//! [`Request::ForegroundInfo`](crate::protocol::Request::ForegroundInfo),
+//! [`Request::CloseWindows`](crate::protocol::Request::CloseWindows),
+//! [`Request::MinimizeAll`](crate::protocol::Request::MinimizeAll),
+//! [`Request::SetForeground`](crate::protocol::Request::SetForeground), and
+//! the conditions
+//! [`Request::WaitForWindow`](crate::protocol::Request::WaitForWindow)
+//! waits for.
 //!
 //! NVDA's system tests check before every assertion that the window they
 //! opened is the foreground window, failing with the foreground window's
@@ -12,8 +17,7 @@
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::path::Path;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, WPARAM};
 use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
@@ -21,15 +25,15 @@ use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GW_OWNER, GetClassNameW, GetForegroundWindow, GetWindow, GetWindowTextW,
-    GetWindowThreadProcessId, IsWindow, IsWindowVisible, PostMessageW, WM_CLOSE,
+    EnumWindows, FindWindowW, GW_OWNER, GWL_STYLE, GetClassNameW, GetForegroundWindow, GetWindow,
+    GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+    PostMessageW, SW_RESTORE, SetForegroundWindow, ShowWindow, WM_CLOSE, WM_COMMAND,
+    WS_MINIMIZEBOX,
 };
-use windows::core::{BOOL, PWSTR};
+use windows::core::{BOOL, PWSTR, w};
 
-use crate::protocol::{ForegroundInfo, WindowInfo};
-
-/// How often [`close_windows`] checks whether the windows have gone.
-const CLOSE_POLL: Duration = Duration::from_millis(100);
+use crate::protocol::{ForegroundInfo, WindowCondition, WindowInfo};
+use crate::wait;
 
 /// The foreground window and every visible, titled, unowned top-level
 /// window, each with its title, class, and image name.
@@ -44,8 +48,9 @@ pub fn foreground_info() -> ForegroundInfo {
 }
 
 /// Sends a close request to every visible top-level window whose title
-/// contains `title_contains`, and waits up to `timeout` for them to go.
-/// Returns how many were still open when it gave up; zero means all closed.
+/// contains `title_contains`, and waits up to `timeout` for them to go,
+/// on window events ([`wait::until`]). Returns how many were still open
+/// when it gave up; zero means all closed.
 #[must_use]
 pub fn close_windows(title_contains: &str, timeout: Duration) -> u32 {
     let matching = || -> Vec<HWND> {
@@ -66,26 +71,111 @@ pub fn close_windows(title_contains: &str, timeout: Duration) -> u32 {
             let _ = PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }
-    let deadline = Instant::now() + timeout;
-    loop {
-        let remaining = matching()
+    wait::until(|| matching().is_empty(), timeout);
+    u32::try_from(matching().len()).unwrap_or(u32::MAX)
+}
+
+/// Whether `condition` holds on the desktop now.
+#[must_use]
+pub fn holds(condition: &WindowCondition) -> bool {
+    match condition {
+        WindowCondition::Foreground {
+            title_contains,
+            unsaved,
+        } => foreground_info().foreground.is_some_and(|window| {
+            !window.cloaked
+                && window.title.contains(title_contains.as_str())
+                && unsaved.is_none_or(|unsaved| window.title.starts_with('*') == unsaved)
+        }),
+        WindowCondition::NotForeground { title_contains } => !foreground_info()
+            .foreground
+            .is_some_and(|window| window.title.contains(title_contains.as_str())),
+        WindowCondition::Present { title_contains } => top_level_windows()
             .into_iter()
-            // SAFETY: IsWindow tolerates any handle.
-            .filter(|&window| unsafe { IsWindow(Some(window)) }.as_bool())
-            .count();
-        if remaining == 0 || Instant::now() >= deadline {
-            return u32::try_from(remaining).unwrap_or(u32::MAX);
-        }
-        thread::sleep(CLOSE_POLL);
+            .any(|window| window_text(window).contains(title_contains.as_str())),
+        WindowCondition::Absent { title_contains } => !top_level_windows()
+            .into_iter()
+            .any(|window| window_text(window).contains(title_contains.as_str())),
+        WindowCondition::AllMinimized => top_level_windows()
+            .into_iter()
+            .all(|window| !minimizable(window) || is_minimized(window) || is_cloaked(window)),
     }
 }
 
-fn window_info(window: HWND) -> WindowInfo {
-    let mut pid = 0u32;
-    // SAFETY: tolerates any handle, writing 0 for an invalid one.
-    unsafe {
-        GetWindowThreadProcessId(window, Some(&raw mut pid));
+/// Waits up to `timeout` for `condition`, on window events
+/// ([`wait::until`]), and returns whether it held and the desktop then.
+#[must_use]
+pub fn wait_for(condition: &WindowCondition, timeout: Duration) -> (bool, ForegroundInfo) {
+    let met = wait::until(|| holds(condition), timeout);
+    (met, foreground_info())
+}
+
+/// Minimizes every window as the taskbar's Show Desktop command does, and
+/// gives the desktop the foreground: the state every scenario starts from.
+/// Minimizing leaves the foreground on the window that had it, minimized,
+/// so the desktop's window, Program Manager, is then brought forward with
+/// `SetForegroundWindow`, injecting no input. Waits up to `timeout` for
+/// every window that can be minimized to be ([`WindowCondition::AllMinimized`]),
+/// and then for the desktop to hold the foreground. Returns whether both
+/// held, and the desktop then.
+#[must_use]
+pub fn minimize_all(timeout: Duration) -> (bool, ForegroundInfo) {
+    /// The taskbar's command that minimizes every window.
+    const MINIMIZE_ALL: usize = 419;
+    // SAFETY: looks a window up by class; no pointer is kept.
+    if let Ok(taskbar) = unsafe { FindWindowW(w!("Shell_TrayWnd"), None) } {
+        // SAFETY: a command message carrying no pointer.
+        unsafe {
+            let _ = PostMessageW(Some(taskbar), WM_COMMAND, WPARAM(MINIMIZE_ALL), LPARAM(0));
+        }
     }
+    let (minimized, desktop) = wait_for(&WindowCondition::AllMinimized, timeout);
+    if !minimized {
+        return (false, desktop);
+    }
+    // SAFETY: looks a window up by class; no pointer is kept.
+    let Ok(desktop_window) = (unsafe { FindWindowW(w!("Progman"), None) }) else {
+        return (false, foreground_info());
+    };
+    // SAFETY: a window just found; a stale one fails.
+    let _ = unsafe { SetForegroundWindow(desktop_window) };
+    wait_for(
+        &WindowCondition::Foreground {
+            title_contains: window_text(desktop_window),
+            unsaved: None,
+        },
+        timeout,
+    )
+}
+
+/// Brings `window` to the foreground with `SetForegroundWindow`, restoring
+/// it first when it is minimized, as clicking its taskbar button does,
+/// injecting no input, and returns whether it is the foreground window
+/// afterwards.
+#[must_use]
+pub fn set_foreground(window: u64) -> bool {
+    let window = HWND(usize::try_from(window).unwrap_or(0) as *mut c_void);
+    if is_minimized(window) {
+        // SAFETY: tolerates any handle; the return value is the window's
+        // earlier visibility, not a failure.
+        let _ = unsafe { ShowWindow(window, SW_RESTORE) };
+    }
+    // SAFETY: tolerates any handle; a stale one fails.
+    let set = unsafe { SetForegroundWindow(window) }.as_bool();
+    // SAFETY: GetForegroundWindow has no preconditions.
+    set && unsafe { GetForegroundWindow() } == window
+}
+
+/// Whether `window` has a minimize box, so Show Desktop minimizes it.
+fn minimizable(window: HWND) -> bool {
+    // SAFETY: reads a window's style; 0 for an invalid handle.
+    let style = unsafe { GetWindowLongPtrW(window, GWL_STYLE) };
+    u32::try_from(style).is_ok_and(|style| style & WS_MINIMIZEBOX.0 != 0)
+}
+
+/// Whether `window` is cloaked: kept by the window manager but not shown,
+/// as a suspended app's window is.
+fn is_cloaked(window: HWND) -> bool {
     let mut cloaked = 0u32;
     // SAFETY: the out-parameter is a u32, the size DWMWA_CLOAKED writes.
     let read = unsafe {
@@ -96,11 +186,29 @@ fn window_info(window: HWND) -> WindowInfo {
             u32::try_from(size_of::<u32>()).unwrap_or(4),
         )
     };
+    read.is_ok() && cloaked != 0
+}
+
+/// Whether `window` is minimized.
+fn is_minimized(window: HWND) -> bool {
+    // SAFETY: tolerates any handle.
+    unsafe { IsIconic(window) }.as_bool()
+}
+
+fn window_info(window: HWND) -> WindowInfo {
+    let mut pid = 0u32;
+    // SAFETY: tolerates any handle, writing 0 for an invalid one.
+    unsafe {
+        GetWindowThreadProcessId(window, Some(&raw mut pid));
+    }
     WindowInfo {
+        window: window.0 as u64,
+        pid,
         title: window_text(window),
         class: class_name(window),
         image: image_name(pid).unwrap_or_default(),
-        cloaked: read.is_ok() && cloaked != 0,
+        cloaked: is_cloaked(window),
+        minimized: is_minimized(window),
     }
 }
 
@@ -175,6 +283,7 @@ fn image_name(pid: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
     use windows::Win32::Foundation::LRESULT;
     use windows::Win32::System::StationsAndDesktops::{
         CloseDesktop, CreateDesktopW, DESKTOP_CONTROL_FLAGS, DESKTOP_CREATEWINDOW,
@@ -259,7 +368,7 @@ mod tests {
         }
         .expect("creates a desktop");
         let handle = desktop.0 as usize;
-        let info = thread::spawn(move || {
+        let (info, listed) = thread::spawn(move || {
             // SAFETY: this new thread has no windows or hooks yet, and the
             // desktop stays open until the thread has ended.
             unsafe { SetThreadDesktop(HDESK(handle as *mut c_void)) }
@@ -283,7 +392,7 @@ mod tests {
                 // SAFETY: a window this thread made.
                 unsafe { DestroyWindow(window) }.expect("destroys the window");
             }
-            info
+            (info, listed.0 as u64)
         })
         .join()
         .expect("the window thread ends");
@@ -301,10 +410,13 @@ mod tests {
             ForegroundInfo {
                 foreground: None,
                 windows: vec![WindowInfo {
+                    window: listed,
+                    pid: std::process::id(),
                     title: "Listed".to_owned(),
                     class: "VerbatimAgentDesktopTest".to_owned(),
                     image,
                     cloaked: false,
+                    minimized: false,
                 }],
             }
         );

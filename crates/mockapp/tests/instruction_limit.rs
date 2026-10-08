@@ -19,11 +19,11 @@ mod harness;
 use verbatim_uia::text::{Endpoint, TextPatternExt};
 use verbatim_uia::{CACHED_PROPERTIES, ElementExt, Uia, runtime_id};
 use verbatim_uia_rops::{
-    Attributes, Builder, CaretQuery, Comparison, Error, Fingerprint, FocusAncestry, FocusQuery,
-    FormatSpan, Found, Movement, NavigationDirection, Position, RangeEnd, Status, StepQuery,
-    TailQuery, TailStart, TextAttribute, TextFrom, TextTarget, UnitsQuery, caret_read_remote,
-    counting, focus_ancestry_remote, navigation_step_remote, terminal_tail_remote,
-    text_units_remote,
+    Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, Error, Fingerprint, FocusAncestry,
+    FocusQuery, FormatSpan, Found, Movement, NavigationDirection, Position, RangeEnd, Status,
+    StepQuery, TailQuery, TailStart, TextAttribute, TextFrom, TextTarget, UnitsQuery,
+    caret_read_remote, counting, focus_ancestry_remote, navigation_step_remote,
+    terminal_tail_remote, text_units_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
@@ -403,9 +403,7 @@ fn terminal_tails_execute_exactly() {
     common::init_com();
     let mut fixture = Fixture::start("terminal.json", "mockapp-instructions-terminal");
     let terminal = fixture.find("Terminal");
-    let pattern = verbatim_uia::text::text_pattern(&terminal)
-        .expect("a text pattern")
-        .0;
+    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
     let lines = numbered(80);
     common::apply(
         &mut fixture.app,
@@ -416,6 +414,7 @@ fn terminal_tails_execute_exactly() {
     let fresh = TailQuery {
         start: TailStart::Document(&document),
         lines_wanted: 30,
+        caret: None,
     };
     let last = terminal_tail_remote(&fixture.uia, &fresh)
         .expect("the program runs")
@@ -426,12 +425,20 @@ fn terminal_tails_execute_exactly() {
         fixture.hwnd,
         &format!(r"set-text term {decoys}one\ntwo"),
     );
+    // With the caret read in the same program, as the outpost reads a
+    // focused terminal on each change of its text.
     let anchored = |line, previous| TailQuery {
         start: TailStart::Anchor {
             range: &last,
             fingerprint: Fingerprint { line, previous },
         },
         lines_wanted: 30,
+        caret: Some(CaretLineQuery {
+            element: &terminal,
+            pattern: &pattern,
+            pattern2: pattern2.as_ref(),
+            max_text: 4096,
+        }),
     };
     let worst = counted(|| {
         let tail = terminal_tail_remote(&fixture.uia, &anchored("ready>", "ready>\n"))
@@ -451,7 +458,7 @@ fn terminal_tails_execute_exactly() {
     fixture.app.quit();
     assert_eq!(
         [worst, typical],
-        [1128, 101],
+        [1164, 137],
         "terminal tail worst and typical"
     );
     assert!(worst < LIMIT / 2);

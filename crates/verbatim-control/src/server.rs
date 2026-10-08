@@ -40,6 +40,7 @@ use std::io::{self, BufRead, Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use tracing::warn;
@@ -69,8 +70,8 @@ use windows::Win32::System::Threading::{CreateEventW, GetCurrentProcess, OpenPro
 use windows::core::{HRESULT, PCWSTR, PWSTR};
 
 use crate::protocol::{
-    Frame, LatencyRecord, PIPE_NAME, PROTOCOL_VERSION, ReplyPayload, Request, RequestEnvelope,
-    StatusInfo, read_message, write_message,
+    FocusReport, Frame, LatencyRecord, PIPE_NAME, PROTOCOL_VERSION, ReplyPayload, Request,
+    RequestEnvelope, StatusInfo, read_message, write_message,
 };
 use crate::send_keys;
 
@@ -103,6 +104,14 @@ pub struct ServerHandlers {
     pub dump_recorder: Box<dyn Fn() -> Result<String, String> + Send + Sync>,
     /// Answers [`Request::Quit`] by asking the application to exit.
     pub quit: Box<dyn Fn() + Send + Sync>,
+    /// Answers [`Request::AwaitIdle`], given the input to wait for and the
+    /// time to wait: `Ok` once Core is idle, else what was outstanding.
+    /// Called on the connection's own thread, which it blocks while it
+    /// waits, so every frame broadcast meanwhile reaches the connection
+    /// before the answer does.
+    pub await_idle: Box<dyn Fn(Option<u64>, Duration) -> Result<(), String> + Send + Sync>,
+    /// Answers [`Request::DumpFocus`].
+    pub dump_focus: Box<dyn Fn() -> Result<FocusReport, String> + Send + Sync>,
 }
 
 /// Identifies one live connection for the [`Registry`].
@@ -124,6 +133,18 @@ struct ConnectionEntry {
 /// remove a subscriber that is not keeping up or whose writer is gone).
 type Registry = Arc<Mutex<HashMap<ConnectionId, ConnectionEntry>>>;
 
+/// The speech frames broadcast before the first connection subscribed to
+/// speech: Verbatim's startup sound and words, which come before any client
+/// can have connected. The first speech subscription receives them, in
+/// order, just after its reply, and from then on nothing more is kept
+/// (`None`). Held at most [`STARTUP_HISTORY_LIMIT`] frames.
+type SpeechHistory = Arc<Mutex<Option<Vec<Frame>>>>;
+
+/// The most speech frames kept for the first subscriber: far more than
+/// Verbatim says at startup, so a long wait before anyone subscribes cannot
+/// grow the history without bound. Frames past it are not kept.
+const STARTUP_HISTORY_LIMIT: usize = 1024;
+
 /// Live pipe instances, transport-specific and separate from [`Registry`]
 /// (which stays transport-agnostic so [`run_session`] is testable without a
 /// real pipe). Used only so [`ControlServer`]'s `Drop` can force-disconnect
@@ -141,7 +162,7 @@ fn run_session<R: BufRead>(
     mut reader: R,
     conn_id: ConnectionId,
     handlers: &ServerHandlers,
-    registry: &Registry,
+    (registry, history): (&Registry, &SpeechHistory),
     outbound: &Sender<Frame>,
 ) {
     let events_subscribed = Arc::new(AtomicBool::new(false));
@@ -191,13 +212,14 @@ fn run_session<R: BufRead>(
             break;
         }
 
-        let frame = dispatch_request(
-            envelope.id,
-            envelope.request,
-            handlers,
-            &events_subscribed,
-            &speech_subscribed,
-        );
+        if matches!(envelope.request, Request::SubscribeSpeech) {
+            if subscribe_speech(envelope.id, registry, history, outbound, &speech_subscribed) {
+                continue;
+            }
+            break;
+        }
+
+        let frame = dispatch_request(envelope.id, envelope.request, handlers, &events_subscribed);
         if outbound.send(frame).is_err() {
             break;
         }
@@ -207,6 +229,43 @@ fn run_session<R: BufRead>(
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .remove(&conn_id);
+}
+
+/// Subscribes this connection to speech: answers request `id`, then, for
+/// the first subscription, sends the speech frames broadcast before it
+/// ([`SpeechHistory`]), then marks the connection subscribed. All of it
+/// happens under the registry's lock, which every broadcast takes too, so
+/// no frame is both in the history and sent live, and none falls between.
+/// Returns whether the connection is still there.
+fn subscribe_speech(
+    id: u64,
+    registry: &Registry,
+    history: &SpeechHistory,
+    outbound: &Sender<Frame>,
+    speech_subscribed: &AtomicBool,
+) -> bool {
+    let _registry = registry.lock().unwrap_or_else(PoisonError::into_inner);
+    let earlier = history
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take()
+        .unwrap_or_default();
+    let reply = Frame::Reply {
+        to: id,
+        payload: ReplyPayload::Ok,
+    };
+    // Info, not debug: when a test harness reports hearing nothing,
+    // whether the subscription was ever registered is the first
+    // question, and this line in the captured stderr answers it.
+    tracing::info!(
+        replayed = earlier.len(),
+        "speech subscribed on a control connection"
+    );
+    let sent = std::iter::once(reply)
+        .chain(earlier)
+        .all(|frame| outbound.try_send(frame).is_ok());
+    speech_subscribed.store(true, Ordering::Relaxed);
+    sent
 }
 
 /// Negotiates the protocol version for a connection: the lower of what the
@@ -224,7 +283,6 @@ fn dispatch_request(
     request: Request,
     handlers: &ServerHandlers,
     events_subscribed: &AtomicBool,
-    speech_subscribed: &AtomicBool,
 ) -> Frame {
     match request {
         Request::Hello { protocol_version } => Frame::Reply {
@@ -244,17 +302,10 @@ fn dispatch_request(
                 payload: ReplyPayload::Ok,
             }
         }
-        Request::SubscribeSpeech => {
-            speech_subscribed.store(true, Ordering::Relaxed);
-            // Info, not debug: when a test harness reports hearing nothing,
-            // whether the subscription was ever registered is the first
-            // question, and this line in the captured stderr answers it.
-            tracing::info!("speech subscribed on a control connection");
-            Frame::Reply {
-                to: id,
-                payload: ReplyPayload::Ok,
-            }
-        }
+        Request::SubscribeSpeech => Frame::Error {
+            to: id,
+            message: "a speech subscription is answered by its session".to_owned(),
+        },
         Request::SendGesture { identifier } => match (handlers.send_gesture)(&identifier) {
             Ok(()) => Frame::Reply {
                 to: id,
@@ -300,6 +351,23 @@ fn dispatch_request(
                 payload: ReplyPayload::Ok,
             }
         }
+        Request::AwaitIdle {
+            after_input,
+            timeout_ms,
+        } => match (handlers.await_idle)(after_input, Duration::from_millis(timeout_ms)) {
+            Ok(()) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::Idle,
+            },
+            Err(message) => Frame::Error { to: id, message },
+        },
+        Request::DumpFocus => match (handlers.dump_focus)() {
+            Ok(report) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::Focus(report),
+            },
+            Err(message) => Frame::Error { to: id, message },
+        },
     }
 }
 
@@ -687,7 +755,7 @@ fn spawn_connection(
     raw: RawPipe,
     conn_id: ConnectionId,
     handlers: Arc<ServerHandlers>,
-    registry: Registry,
+    (registry, history): (Registry, SpeechHistory),
     connections: Connections,
 ) {
     let raw = Arc::new(raw);
@@ -718,7 +786,13 @@ fn spawn_connection(
         .name(format!("verbatim-control-reader-{conn_id}"))
         .spawn(move || {
             let reader = io::BufReader::new(PipeReader(raw));
-            run_session(reader, conn_id, &handlers, &registry, &outbound_tx);
+            run_session(
+                reader,
+                conn_id,
+                &handlers,
+                (&registry, &history),
+                &outbound_tx,
+            );
             connections
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
@@ -759,7 +833,7 @@ fn accept_loop(
     mut first: Option<RawPipe>,
     create: &dyn Fn() -> io::Result<RawPipe>,
     shutdown: &AtomicBool,
-    registry: &Registry,
+    (registry, history): (&Registry, &SpeechHistory),
     connections: &Connections,
     handlers: &Arc<ServerHandlers>,
     next_conn_id: &AtomicU64,
@@ -800,7 +874,7 @@ fn accept_loop(
             raw,
             conn_id,
             Arc::clone(handlers),
-            Arc::clone(registry),
+            (Arc::clone(registry), Arc::clone(history)),
             Arc::clone(connections),
         );
     }
@@ -817,6 +891,7 @@ pub struct ControlServer {
     pipe_name: String,
     shutdown: Arc<AtomicBool>,
     registry: Registry,
+    history: SpeechHistory,
     connections: Connections,
     accept_thread: Option<JoinHandle<()>>,
 }
@@ -845,6 +920,7 @@ impl ControlServer {
         let security = build_owner_only_security_descriptor()?;
         let shutdown = Arc::new(AtomicBool::new(false));
         let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
+        let history: SpeechHistory = Arc::new(Mutex::new(Some(Vec::new())));
         let connections: Connections = Arc::new(Mutex::new(HashMap::new()));
         let handlers = Arc::new(handlers);
         let next_conn_id = Arc::new(AtomicU64::new(0));
@@ -857,6 +933,7 @@ impl ControlServer {
         let accept_thread = {
             let shutdown = Arc::clone(&shutdown);
             let registry = Arc::clone(&registry);
+            let history = Arc::clone(&history);
             let connections = Arc::clone(&connections);
             let pipe_name = pipe_name_owned.clone();
             thread::Builder::new()
@@ -866,7 +943,7 @@ impl ControlServer {
                         Some(first),
                         &|| create_pipe_instance(&pipe_name, &security, false),
                         &shutdown,
-                        &registry,
+                        (&registry, &history),
                         &connections,
                         &handlers,
                         &next_conn_id,
@@ -879,6 +956,7 @@ impl ControlServer {
             pipe_name: pipe_name_owned,
             shutdown,
             registry,
+            history,
             connections,
             accept_thread: Some(accept_thread),
         })
@@ -897,9 +975,13 @@ impl ControlServer {
     /// so a caller can skip copying an utterance's text nobody will receive.
     #[must_use]
     pub fn has_speech_subscribers(&self) -> bool {
-        any_subscribed(&self.registry, |entry| {
-            entry.speech_subscribed.load(Ordering::Relaxed)
-        })
+        self.history
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+            || any_subscribed(&self.registry, |entry| {
+                entry.speech_subscribed.load(Ordering::Relaxed)
+            })
     }
 
     /// Fans a normalized accessibility event out to every connection
@@ -941,37 +1023,70 @@ impl ControlServer {
             event_observed_at_ms,
             queued_at_ms,
         };
-        self.fan_out(&frame, |entry| {
-            entry.speech_subscribed.load(Ordering::Relaxed)
-        });
+        self.fan_out_speech(&frame);
     }
 
     /// Fans a [`Frame::SpeechStarted`] out to every speech subscriber.
     pub fn broadcast_speech_started(&self, utterance: UtteranceId, at_ms: u64) {
         let frame = Frame::SpeechStarted { utterance, at_ms };
-        self.fan_out(&frame, |entry| {
-            entry.speech_subscribed.load(Ordering::Relaxed)
-        });
+        self.fan_out_speech(&frame);
     }
 
     /// Fans a [`Frame::SpeechEnded`] out to every speech subscriber.
     pub fn broadcast_speech_ended(&self, utterance: UtteranceId, ending: UtteranceEnding) {
         let frame = Frame::SpeechEnded { utterance, ending };
+        self.fan_out_speech(&frame);
+    }
+
+    /// Fans a [`Frame::InputHandled`] out to every connection subscribed
+    /// via [`Request::SubscribeEvents`].
+    pub fn broadcast_input_handled(&self, input: u64) {
+        let frame = Frame::InputHandled { input };
         self.fan_out(&frame, |entry| {
-            entry.speech_subscribed.load(Ordering::Relaxed)
+            entry.events_subscribed.load(Ordering::Relaxed)
+        });
+    }
+
+    /// Fans a [`Frame::OutpostEnded`] out to every connection subscribed
+    /// to events.
+    pub fn broadcast_outpost_ended(&self, target_pid: Pid, reason: String) {
+        let frame = Frame::OutpostEnded { target_pid, reason };
+        self.fan_out(&frame, |entry| {
+            entry.events_subscribed.load(Ordering::Relaxed)
         });
     }
 
     /// Fans a [`Frame::Sound`] out to every speech subscriber.
     pub fn broadcast_sound(&self, indication: String, at_ms: u64) {
         let frame = Frame::Sound { indication, at_ms };
-        self.fan_out(&frame, |entry| {
+        self.fan_out_speech(&frame);
+    }
+
+    /// Fans a speech frame out to every speech subscriber, keeping it for
+    /// the first one while there has been none ([`SpeechHistory`]).
+    fn fan_out_speech(&self, frame: &Frame) {
+        self.fan_out(frame, |entry| {
             entry.speech_subscribed.load(Ordering::Relaxed)
         });
     }
 
     fn fan_out(&self, frame: &Frame, subscribed: impl Fn(&ConnectionEntry) -> bool) {
         let mut registry = self.registry.lock().unwrap_or_else(PoisonError::into_inner);
+        if matches!(
+            frame,
+            Frame::Speech { .. }
+                | Frame::SpeechStarted { .. }
+                | Frame::SpeechEnded { .. }
+                | Frame::Sound { .. }
+        ) && let Some(history) = self
+            .history
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_mut()
+            && history.len() < STARTUP_HISTORY_LIMIT
+        {
+            history.push(frame.clone());
+        }
         let mut dead: Vec<ConnectionId> = Vec::new();
         for (&conn_id, entry) in registry.iter() {
             if !subscribed(entry) {
@@ -1098,6 +1213,8 @@ mod tests {
             dump_tree: Box::new(|| Err("dump_tree not exercised by this test".to_owned())),
             dump_recorder: Box::new(|| Err("dump_recorder not exercised by this test".to_owned())),
             quit: Box::new(|| {}),
+            await_idle: Box::new(|_, _| Ok(())),
+            dump_focus: Box::new(|| Err("dump_focus not exercised by this test".to_owned())),
         }
     }
 
@@ -1132,7 +1249,7 @@ mod tests {
                 io::BufReader::new(reader),
                 1,
                 &handlers,
-                &session_registry,
+                (&session_registry, &Arc::new(Mutex::new(None))),
                 &outbound_tx,
             );
         });
@@ -1260,7 +1377,7 @@ mod tests {
                 io::BufReader::new(reader),
                 1,
                 &handlers,
-                &registry,
+                (&registry, &Arc::new(Mutex::new(None))),
                 &outbound_tx,
             );
         });

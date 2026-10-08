@@ -79,8 +79,9 @@ pub fn parse_all(keys: &[String]) -> Result<Vec<ParsedCombo>, String> {
     keys.iter().map(|entry| parse_combo(entry)).collect()
 }
 
-/// Builds one `KEYBDINPUT` [`INPUT`] for a virtual key transition.
-fn keybd_input(key: KeyName, key_up: bool) -> INPUT {
+/// Builds one `KEYBDINPUT` [`INPUT`] for a virtual key transition, with
+/// `extra` as its extra information.
+fn keybd_input(key: KeyName, key_up: bool, extra: usize) -> INPUT {
     let mut flags = KEYBD_EVENT_FLAGS(0);
     if key.extended == Some(true) {
         flags |= KEYEVENTF_EXTENDEDKEY;
@@ -96,7 +97,7 @@ fn keybd_input(key: KeyName, key_up: bool) -> INPUT {
                 wScan: 0,
                 dwFlags: flags,
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: extra,
             },
         },
     }
@@ -122,17 +123,52 @@ fn keybd_input(key: KeyName, key_up: bool) -> INPUT {
 /// already validated every key name via [`parse_all`] before calling this,
 /// per the crate's "reject before injecting anything" contract.
 pub fn inject(combos: &[ParsedCombo]) -> io::Result<()> {
+    inject_inputs(&build(combos, None))
+}
+
+/// [`inject`], numbering each combo for the end-to-end harness
+/// ([`verbatim_input::harness`]): the first combo is `first`, the next
+/// `first + 1`, and so on, each of its key events carrying its number and
+/// its last event marked as the last. Returns the last combo's number, or
+/// `first - 1` when `combos` is empty.
+///
+/// # Errors
+///
+/// As [`inject`].
+pub fn inject_numbered(combos: &[ParsedCombo], first: u64) -> io::Result<u64> {
+    inject_inputs(&build(combos, Some(first)))?;
+    Ok(first + combos.len() as u64 - 1)
+}
+
+/// The key events for `combos`, numbered from `first` when given.
+fn build(combos: &[ParsedCombo], first: Option<u64>) -> Vec<INPUT> {
     let mut inputs = Vec::new();
-    for combo in combos {
+    for (index, combo) in combos.iter().enumerate() {
+        let extra = |last: bool| {
+            first.map_or(0, |first| {
+                let number = first + index as u64;
+                usize::try_from(verbatim_input::harness::encode(number, last)).unwrap_or(0)
+            })
+        };
         for modifier in &combo.modifiers {
-            inputs.push(keybd_input(*modifier, false));
+            inputs.push(keybd_input(*modifier, false, extra(false)));
         }
-        inputs.push(keybd_input(combo.key, false));
-        inputs.push(keybd_input(combo.key, true));
-        for modifier in combo.modifiers.iter().rev() {
-            inputs.push(keybd_input(*modifier, true));
+        inputs.push(keybd_input(combo.key, false, extra(false)));
+        inputs.push(keybd_input(
+            combo.key,
+            true,
+            extra(combo.modifiers.is_empty()),
+        ));
+        let count = combo.modifiers.len();
+        for (position, modifier) in combo.modifiers.iter().rev().enumerate() {
+            inputs.push(keybd_input(*modifier, true, extra(position + 1 == count)));
         }
     }
+    inputs
+}
+
+/// Injects `inputs` with one `SendInput` call.
+fn inject_inputs(inputs: &[INPUT]) -> io::Result<()> {
     if inputs.is_empty() {
         return Ok(());
     }
@@ -141,7 +177,7 @@ pub fn inject(combos: &[ParsedCombo]) -> io::Result<()> {
     // SAFETY: `inputs` is a valid, live slice of properly initialized
     // `INPUT` values for the duration of this call; `SendInput` does not
     // retain the pointer afterward.
-    let sent = unsafe { SendInput(&inputs, input_size) };
+    let sent = unsafe { SendInput(inputs, input_size) };
     if sent as usize != inputs.len() {
         return Err(io::Error::other(format!(
             "SendInput injected {sent} of {} events",

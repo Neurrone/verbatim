@@ -937,6 +937,26 @@ pub fn caret_report<S: TextSource>(
     Ok((report, state))
 }
 
+/// The report for a caret read another program already made, finished at
+/// `read_at_ms` (a terminal's, read with its new output).
+///
+/// # Errors
+///
+/// [`TextError`] when the line's anchor cannot be made.
+pub fn caret_report_from<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    read: CaretRead<S::Pos>,
+    read_at_ms: u64,
+) -> TextResult<CaretReport> {
+    report_for(
+        source,
+        anchors,
+        (&read.state, read_at_ms),
+        Some((read.line.0, read.line.1, read.formats)),
+    )
+}
+
 /// The line containing the caret, and the caret's UTF-16 offset in it.
 fn caret_line<S: TextSource>(
     source: &mut S,

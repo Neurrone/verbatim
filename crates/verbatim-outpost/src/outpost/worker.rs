@@ -66,7 +66,8 @@ use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, CONSOLE_WINDOW_CLASS, OpenWatch};
 use super::window::{
     focus_window_of, foreground_window_handle, front_is_another_thread_of_its_application, now_ms,
-    window_belongs_to_hidden_frame, window_facts, window_is_foreground, window_is_hidden_frame,
+    top_level_of, window_belongs_to_hidden_frame, window_facts, window_is_foreground,
+    window_is_hidden_frame, window_owner,
 };
 use crate::arbitration::window_class_name;
 use crate::text::Watched;
@@ -1077,23 +1078,34 @@ impl Worker<'_> {
                 .dequeued_at_us
                 .saturating_sub(self.timing.observed_at_us),
             elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-            lines = read.as_ref().map_or(0, |output| output.lines.len()),
+            lines = read.as_ref().map_or(0, |(output, _)| output.lines.len()),
             "terminal read timing"
         );
-        let Some(output) = read else {
+        let Some((output, caret)) = read else {
             return;
         };
-        if output.is_empty() {
-            return;
-        }
         let window = self.context.tracking().window;
-        self.emit(
-            trace,
-            observed_at_ms,
-            Backend::Uia,
-            window,
-            NormalizedEvent::TerminalOutput { node_id, output },
-        );
+        if !output.is_empty() {
+            self.emit(
+                trace,
+                observed_at_ms,
+                Backend::Uia,
+                window,
+                NormalizedEvent::TerminalOutput { node_id, output },
+            );
+        }
+        // The caret read with the text: the console host raises no caret
+        // event for every character typed, so this keeps Core's copy of it
+        // following typing.
+        if let Some(caret) = caret {
+            self.emit(
+                trace,
+                observed_at_ms,
+                Backend::Uia,
+                window,
+                NormalizedEvent::CaretMoved { node_id, caret },
+            );
+        }
     }
 
     /// Asks for the caret of a newly reported focus that may have text, or
@@ -1148,7 +1160,15 @@ impl Worker<'_> {
         // are dropped, can never report a node that is about to vanish.
         let (objects, released) = {
             let mut state = self.context.watch.lock();
+            let position = state.position;
             let released = state.take_releasable(&held, acknowledged);
+            tracing::debug!(
+                ?held,
+                acknowledged,
+                position,
+                ?released,
+                "releasing the nodes Core no longer holds"
+            );
             if released.is_empty() {
                 return;
             }
@@ -1210,6 +1230,9 @@ impl Worker<'_> {
         object: Option<Object>,
         (ancestors, selected_child): read::Enrichment,
     ) {
+        if !foreground && let Some(hwnd) = window {
+            self.report_foreign_window(trace, observed_at_ms, hwnd);
+        }
         let mut node = node;
         let mut ancestors = ancestors;
         // The console host's text area is a terminal, known by its window
@@ -1388,6 +1411,22 @@ impl Worker<'_> {
         };
         let registry = &self.context.msaa_registry;
         if kind == WinEventKind::Selection {
+            // A tree view item selected on its way to the focus, from one of
+            // its children, is one of the focus's logical ancestors only:
+            // NVDA, whose ancestors are reached through `accParent`, sees it
+            // as neither the focus nor an ancestor, and says nothing of it.
+            if object
+                .which_of(&self.logical_ancestors(), registry)
+                .is_some()
+            {
+                tracing::debug!(
+                    hwnd,
+                    id_object,
+                    id_child,
+                    "MSAA selection dropped: a logical ancestor of the focus only"
+                );
+                return;
+            }
             let node = object.read(registry, Purpose::Announce);
             let event = NormalizedEvent::SelectionChanged { node };
             self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
@@ -1491,8 +1530,17 @@ impl Worker<'_> {
     ) -> Option<NodeId> {
         let (focus, mut candidates) = {
             let tracking = self.context.tracking();
+            // The ancestors NVDA has are those reached through `accParent`,
+            // not the focus's logical ones ([`Self::logical_ancestors`]):
+            // their state changes are not spoken, as selecting a tree item's
+            // parent on its way to the focus would otherwise say "selected".
             let ancestors: Vec<NodeId> = if kind == WinEventKind::StateChange {
-                tracking.chain.iter().map(|node| node.id).collect()
+                tracking
+                    .chain
+                    .iter()
+                    .map(|node| node.id)
+                    .filter(|&id| !self.is_logical_ancestor(id))
+                    .collect()
             } else {
                 Vec::new()
             };
@@ -1502,6 +1550,33 @@ impl Worker<'_> {
         object
             .which_of(&candidates, &self.context.msaa_registry)
             .map(|_| focus)
+    }
+
+    /// Whether `node`, one of the focus's ancestors, was reached through a
+    /// tree view item's logical parents
+    /// (`verbatim_ia2::acquire::ancestor_chain`) rather than `accParent`:
+    /// `accParent` only ever reaches whole objects, so an ancestor that is a
+    /// simple child of its window's object is a logical one.
+    fn is_logical_ancestor(&self, node: NodeId) -> bool {
+        self.context
+            .msaa_registry
+            .key_of(node)
+            .is_some_and(|(_, _, child)| child != CHILDID_SELF)
+    }
+
+    /// The focus's logical ancestors ([`Self::is_logical_ancestor`]).
+    fn logical_ancestors(&self) -> Vec<NodeId> {
+        let chain: Vec<NodeId> = self
+            .context
+            .tracking()
+            .chain
+            .iter()
+            .map(|node| node.id)
+            .collect();
+        chain
+            .into_iter()
+            .filter(|&id| self.is_logical_ancestor(id))
+            .collect()
     }
 
     /// A UIA event from this outpost's own subscriptions.
@@ -1880,6 +1955,45 @@ impl Worker<'_> {
         );
     }
 
+    /// Reports the top-level window of `hwnd`, a focus's window, as the
+    /// foreground, read as a foreground report reads it, when another
+    /// process owns that window and it is the foreground window: a console
+    /// window, which Windows names as its shell's, around the console
+    /// host's text area, or the Settings app's frame, `ApplicationFrameHost`'s,
+    /// around its content. The window's own outpost reports it on the
+    /// foreground change, but nothing orders the two outposts, and a window
+    /// reported after a focus inside it is not announced: reported here,
+    /// just before the focus, it reaches Core first whichever outpost is
+    /// quicker, and the reducer announces it once (`reduce_focus_changed`,
+    /// a foreground report for the window already holding the focus says
+    /// nothing).
+    fn report_foreign_window(&mut self, trace: TraceId, observed_at_ms: u64, hwnd: isize) {
+        let top = top_level_of(hwnd);
+        if top == 0
+            || window_owner(top).1 == self.context.target_pid
+            || window_belongs_to_hidden_frame(top)
+            || !window_is_foreground(top)
+        {
+            return;
+        }
+        let (backend, node) = read::foreground_window(self.context, self.client, top);
+        tracing::debug!(
+            hwnd = top,
+            name = ?node.name,
+            "the foreground window of another process reported before its focus"
+        );
+        self.emit_focus(
+            trace,
+            observed_at_ms,
+            backend,
+            Some(top),
+            node,
+            true,
+            None,
+            (Some(Vec::new()), None),
+        );
+    }
+
     /// An MSAA focus fact.
     fn msaa_focus(
         &mut self,
@@ -1895,6 +2009,23 @@ impl Worker<'_> {
         if read::window_uses_uia(self.context, hwnd) {
             // UIA owns this window; its UIA fact reports the focus.
             tracing::debug!(hwnd, "MSAA focus dropped: UIA owns the window");
+            return;
+        }
+        // A control taking the focus raised focus on itself and then on its
+        // focused child, and the control's event was already reported as
+        // the child (`verbatim_ia2::acquire::focus_candidate`): NVDA handles
+        // the two together and reports the child once.
+        if self
+            .context
+            .intake
+            .take_redirected_focus(&Object::Msaa(hwnd, id_object, id_child))
+        {
+            tracing::debug!(
+                hwnd,
+                id_object,
+                id_child,
+                "MSAA focus dropped: already reported from its control's focus"
+            );
             return;
         }
         let Some(mut candidate) = verbatim_ia2::acquire::focus_candidate(hwnd, id_object, id_child)
@@ -1936,6 +2067,20 @@ impl Worker<'_> {
             );
             return;
         }
+        // NVDA's limiter handles only the newest focus of everything that
+        // arrived since it last ran. A focus in the same window that arrived
+        // while this one was read would have been in its batch, as a tree
+        // view's focus on its item follows the window's own focus by a
+        // moment, and the newer one is what the focus is now.
+        if self.context.intake.msaa_focus_waiting(hwnd) {
+            tracing::debug!(
+                hwnd,
+                id_object,
+                id_child,
+                "MSAA focus dropped: a newer focus in its window is waiting"
+            );
+            return;
+        }
         let node = candidate.read(&self.context.msaa_registry);
         let previous = self.focus_chain();
         let enrichment = read::msaa_enrichment(self.context, self.client, &node, &previous);
@@ -1944,6 +2089,9 @@ impl Worker<'_> {
             .msaa_registry
             .key_of(node.id)
             .map(|(hwnd, object, child)| Object::Msaa(hwnd, object, child));
+        let redirected = object
+            .as_ref()
+            .is_some_and(|object| *object != Object::Msaa(hwnd, id_object, id_child));
         self.emit_focus(
             trace,
             observed_at_ms,
@@ -1951,9 +2099,12 @@ impl Worker<'_> {
             Some(hwnd),
             node,
             false,
-            object,
+            object.clone(),
             enrichment,
         );
+        if redirected && self.context.intake.focused() == object {
+            self.context.intake.set_focus_redirected();
+        }
     }
 
     /// A UIA focus fact. What the focus is comes from the event, as NVDA

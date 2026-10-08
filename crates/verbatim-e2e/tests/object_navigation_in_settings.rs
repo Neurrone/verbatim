@@ -6,6 +6,7 @@
 //! job, and plain libtest filtering) discovers and runs it by name.
 
 #[test]
+#[ignore = "live: drives a real Verbatim through a running agent; the end-to-end job runs it with --ignored (docs/tooling.md)"]
 fn object_navigation_in_settings() {
     verbatim_e2e::registry::run_named("object_navigation_in_settings");
 }

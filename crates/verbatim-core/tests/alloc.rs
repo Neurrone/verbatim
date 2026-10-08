@@ -300,6 +300,7 @@ fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
             node_id: NodeId::new(1),
             output: verbatim_model::TerminalOutput {
                 changed: None,
+                head: Vec::new(),
                 skipped: None,
                 lines: vec!["total 42".to_owned()],
             },

@@ -345,13 +345,19 @@ pub(super) fn report_caret(
 /// (`crate::terminal`), or, for `baseline`, only notes where its text ends
 /// now: a focus arriving, whose earlier output is not new to the user.
 /// `None` when it has no text pattern, is gone, or could not be read.
+///
+/// Except for `baseline`, the caret is read with the text, in the same
+/// round trip, and returned as a caret report: a terminal raises no caret
+/// event for every character typed (the console host's come on a schedule
+/// of their own), so Core's copy of the caret would lag behind typing, and
+/// a Backspace would say the wrong character.
 pub(super) fn terminal_output(
     context: &Context,
     uia: &verbatim_uia::Uia,
     node_id: NodeId,
     baseline: bool,
-) -> Option<TerminalOutput> {
-    let Ok(source) = uia_source(context, node_id) else {
+) -> Option<(TerminalOutput, Option<CaretReport>)> {
+    let Ok(mut source) = uia_source(context, node_id) else {
         return None;
     };
     let window = context.tracking().window();
@@ -359,17 +365,22 @@ pub(super) fn terminal_output(
     let wanted = u32::from(context.terminal_lines());
     let mut terminals = context.terminals();
     let terminal = terminals.entry(node_id.number()).or_default();
+    let caret = (!baseline).then(|| verbatim_uia_rops::CaretLineQuery {
+        element: source.element(),
+        pattern: source.pattern(),
+        pattern2: source.pattern2(),
+        max_text: i32::try_from(crate::text::MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
+    });
     let read = crate::terminal::read(
         uia,
         (source.element(), source.pattern()),
+        caret,
         terminal,
-        wanted,
-        remote,
-        baseline,
+        (wanted, remote, baseline),
     );
     drop(terminals);
     match read {
-        Ok((output, paths)) => {
+        Ok((output, caret, paths)) => {
             for path in paths {
                 if let Path::Fallback(error) = &path {
                     tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
@@ -378,7 +389,20 @@ pub(super) fn terminal_output(
                     }
                 }
             }
-            Some(output)
+            let caret = caret.and_then(|answer| {
+                context.caret_read(node_id);
+                let read_at_ms = super::now_ms();
+                let read = source.caret_read_from(answer).ok()?;
+                let mut anchors = context.uia_anchors();
+                crate::text::caret_report_from(
+                    &mut source,
+                    &mut anchors.node(node_id.number()),
+                    read,
+                    read_at_ms,
+                )
+                .ok()
+            });
+            Some((output, caret))
         }
         Err(TextError::Gone) => None,
         Err(TextError::Failed(reason)) => {

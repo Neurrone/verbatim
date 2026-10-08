@@ -300,6 +300,10 @@ struct State {
     /// reported within the batch a menu opening belongs to.
     batch_number: u64,
     focused: Option<Object>,
+    /// Whether [`State::focused`] was reached by redirecting a control's
+    /// own focus event to its focused child, whose own event is still to
+    /// come.
+    focus_redirected: bool,
     closed: bool,
     /// When the worker asked to be given [`Item::Wake`] if nothing else
     /// comes first.
@@ -566,6 +570,14 @@ impl Intake {
         before != state.waiting.len() + state.batch.len()
     }
 
+    /// Whether an MSAA focus in window `hwnd` is waiting for a later batch:
+    /// one that arrived while an older focus there was being read.
+    pub(super) fn msaa_focus_waiting(&self, hwnd: isize) -> bool {
+        self.lock().waiting.iter().any(
+            |waiting| matches!(waiting.key, Some(Key::MsaaFocus(window, _, _)) if window == hwnd),
+        )
+    }
+
     /// Whether anything is waiting to be handled, planned or not.
     pub(super) fn busy(&self) -> bool {
         let state = self.lock();
@@ -575,7 +587,27 @@ impl Intake {
     /// Records the object the worker last reported as the focus: its events
     /// are always kept.
     pub(super) fn set_focused(&self, object: Option<Object>) {
-        self.lock().focused = object;
+        let mut state = self.lock();
+        state.focused = object;
+        state.focus_redirected = false;
+    }
+
+    /// Records that the focus last reported was reached by redirecting a
+    /// control's own focus event to its focused child.
+    pub(super) fn set_focus_redirected(&self) {
+        self.lock().focus_redirected = true;
+    }
+
+    /// Whether a focus event on `object` is the redirected-to child's own,
+    /// arriving after its control's: `object` is the focus, reached by a
+    /// redirect, and no other focus came between. Answers once.
+    pub(super) fn take_redirected_focus(&self, object: &Object) -> bool {
+        let mut state = self.lock();
+        let repeated = state.focus_redirected && state.focused.as_ref() == Some(object);
+        if repeated {
+            state.focus_redirected = false;
+        }
+        repeated
     }
 
     /// The object the worker last reported as the focus.
@@ -1251,6 +1283,21 @@ mod tests {
             vec![30, 5, 4, 2, 60],
             "the group takes the newest focus's place"
         );
+    }
+
+    #[test]
+    fn an_msaa_focus_waiting_in_a_window_is_found_until_its_batch_is_planned() {
+        let intake = Intake::default();
+        let focus = DeliveredFact::MsaaFocus {
+            hwnd: 9,
+            id_object: -4,
+            id_child: 1,
+        };
+        intake.push(fact(focus, 1).entry);
+        assert!(intake.msaa_focus_waiting(9));
+        assert!(!intake.msaa_focus_waiting(8));
+        let _ = intake.next();
+        assert!(!intake.msaa_focus_waiting(9));
     }
 
     #[test]

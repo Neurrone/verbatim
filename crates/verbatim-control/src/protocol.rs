@@ -1,5 +1,7 @@
-//! Control-plane protocol v1: v0 with each latency timeline's stages and
-//! cross-process call counts ([`LatencyRecord::stages`]).
+//! Control-plane protocol v2: v1 with the end-to-end harness's barrier
+//! ([`Request::AwaitIdle`], [`Frame::InputHandled`]) and Core's focus
+//! report ([`Request::DumpFocus`]); v1 added each latency timeline's stages
+//! and cross-process call counts ([`LatencyRecord::stages`]).
 //!
 //! Newline-delimited compact JSON over the named pipe
 //! `\\.\pipe\verbatim-control`. Clients send [`RequestEnvelope`]s; the
@@ -13,13 +15,15 @@ use std::io::{self, BufRead, Write};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    Backend, CallCounts, NormalizedEvent, Pid, TraceId, TreeNode, UtteranceEnding, UtteranceId,
-    WindowFacts,
+    Backend, CallCounts, NodeSnapshot, NormalizedEvent, Pid, TraceId, TreeNode, UtteranceEnding,
+    UtteranceId, WindowFacts,
 };
 
 /// The protocol version this vocabulary defines. Version 1 added
 /// [`LatencyRecord::stages`]; a v0 peer's records read with no stages.
-pub const PROTOCOL_VERSION: u32 = 1;
+/// Version 2 added [`Request::AwaitIdle`], [`Request::DumpFocus`], and
+/// [`Frame::InputHandled`].
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// The pipe name clients connect to.
 pub const PIPE_NAME: &str = r"\\.\pipe\verbatim-control";
@@ -83,6 +87,27 @@ pub enum Request {
     DumpRecorder,
     /// Asks Verbatim to exit cleanly.
     Quit,
+    /// Waits until Core is idle, and answers [`ReplyPayload::Idle`]: the
+    /// harness's barrier, for asserting that nothing more was said. Idle
+    /// means Core has handled the input numbered `after_input`, when given
+    /// (the number the end-to-end agent puts on each key it injects, which
+    /// the keyboard hook reads), and everything sent to it before this
+    /// request, its queues are empty, no request to an outpost is
+    /// outstanding, and the speech queue has taken in every utterance Core
+    /// gave it. Every utterance queued before the reply is announced on
+    /// this connection before it, when the connection is subscribed to
+    /// speech. Answered by [`Frame::Error`] when Core is not idle within
+    /// `timeout_ms`, naming what was outstanding.
+    AwaitIdle {
+        /// The number of the last injected input to wait for, if any.
+        after_input: Option<u64>,
+        /// How long to wait, in milliseconds.
+        timeout_ms: u64,
+    },
+    /// Asks for Core's focus, its ancestors, and the navigator object, as
+    /// Core last knew them: what a failed test saves beside its timeline.
+    /// Answered by [`ReplyPayload::Focus`].
+    DumpFocus,
 }
 
 /// One server-to-client frame.
@@ -152,6 +177,24 @@ pub enum Frame {
         /// How it ended.
         ending: UtteranceEnding,
     },
+    /// Core has handled an injected input (subscription frame, sent to
+    /// event subscribers): every reducer step the key caused has run and
+    /// its effects are queued. `input` is the number the end-to-end agent
+    /// put on the key ([`Request::AwaitIdle`]).
+    InputHandled {
+        /// The input's number.
+        input: u64,
+    },
+    /// An outpost ended and Core has handled its end (subscription frame,
+    /// sent to event subscribers): the nodes held in it are gone, and an
+    /// outpost that crashed or was killed while its application held
+    /// attention is being replaced, which [`Request::AwaitIdle`] waits for.
+    OutpostEnded {
+        /// The application the outpost watched.
+        target_pid: Pid,
+        /// Why it ended, as the supervisor reports it.
+        reason: String,
+    },
     /// A sound played at once for an event, outside any utterance
     /// (subscription frame, sent to speech subscribers): the exit sound,
     /// for instance. A sound in the speech stream is named in its
@@ -195,6 +238,21 @@ pub enum ReplyPayload {
         /// Absolute path of the written dump file.
         path: String,
     },
+    /// Answer to [`Request::AwaitIdle`]: Core is idle.
+    Idle,
+    /// Answer to [`Request::DumpFocus`].
+    Focus(FocusReport),
+}
+
+/// Core's focus and navigator, for [`Request::DumpFocus`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FocusReport {
+    /// The focused object, if Core knows one.
+    pub focus: Option<NodeSnapshot>,
+    /// The focus's ancestors, outermost first.
+    pub ancestors: Vec<NodeSnapshot>,
+    /// The navigator object, if there is one.
+    pub navigator: Option<NodeSnapshot>,
 }
 
 /// A status snapshot.
@@ -397,6 +455,12 @@ impl<R: BufRead> MessageReader<R> {
             reader,
             partial: Vec::new(),
         }
+    }
+
+    /// The wrapped reader, for setting options on the transport it reads,
+    /// such as a socket's read timeout.
+    pub fn get_ref(&self) -> &R {
+        &self.reader
     }
 
     /// Reads the next message; `Ok(None)` means the peer closed the

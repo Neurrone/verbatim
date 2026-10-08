@@ -258,15 +258,34 @@ verified.
     alerts, and UIA elements added to or removed from a selection. MSAA
     description changes (`EVENT_OBJECT_DESCRIPTIONCHANGE`) on the focus,
     and state changes, a selection included, on the focus's ancestors:
-    **matched since 2026-10-07** (reducer tests and the `msaa_events`
-    mockapp test, an ancestor in a real tree view collapsed). An ancestor
-    is recognized by the address it was reported at or by its COM object,
-    so an event on a windowless ancestor reached through `accParent`, at
-    an address made up for it, is not recognized unless the application
-    hands out the same object each time; NVDA compares such objects by
-    their properties too. UIA delivers no ancestor's events to the
+    **matched since 2026-10-07** (reducer tests; the `msaa_events`
+    mockapp test pins that a real tree view item's logical parent is not
+    such an ancestor). An ancestor is recognized by the address it was
+    reported at, as NVDA recognizes it: NVDA meets an event's object
+    again only through its table of live objects, keyed by the address
+    an object was created for or its identity string names, and its
+    state-change gate asks whether the event's object is the very
+    ancestor it holds, by Python identity, not whether it is equal by
+    window, role, name, and location (that comparison redirects only an
+    event on the focus). A windowless ancestor reached through
+    `accParent`, with no identity string and no `IAccessible2` unique id,
+    has no such address, so neither NVDA nor Verbatim speaks its state
+    change (the `msaa_events` mockapp test pins it, since 2026-10-08).
+    Its COM identity cannot serve either: oleacc hands every object to
+    another process in a new wrapper of its own, so two sightings of one
+    object never share an `IUnknown`, as measured against mockapp, whose
+    provider keeps one object per node (`docs/crates/verbatim-ia2.md`,
+    "Identity"). Verbatim does not read `IAccessible2` unique ids yet, by
+    which NVDA keys an `IAccessible2` object's address. UIA delivers no ancestor's events to the
     focus-following registration ("UIA event registration"), so a UIA
-    ancestor's state change is still not spoken.
+    ancestor's state change is still not spoken. The ancestors are NVDA's, those
+    reached through `accParent`: a tree view item's logical parents,
+    which Verbatim reads among the focus's ancestors through the
+    control's own messages, are not NVDA's ancestors, whose tree view
+    items are the control's children, so their state changes and
+    selections are not spoken (since 2026-10-08, after Left Arrow to a
+    tree item's parent said "selected" before the parent; the
+    `native_controls` mockapp test, on a real tree view).
   - Dialog text, which NVDA reads on entering a dialog: a message box's
     question, read after the dialog's title and role and before its
     focused button. **Matched since 2026-10-07** ("A dialog's own text" in
@@ -741,6 +760,39 @@ verified.
   - An alert-role object's alert event, as above.
 - Live regions (browsers). NVDA: in-process IA2 machinery
   ([IA2 usage](nvda/ia2.md)). Verbatim: **not yet (M6)**.
+- A window and its content in two processes. A console window, which
+  Windows names as its shell's, holds the console host's text area, and
+  the Settings app's frame, `ApplicationFrameHost`'s, holds
+  `SystemSettings`'s page. NVDA handles the frame's foreground event and
+  the content's focus event in one queue, in the order they were raised,
+  so it announces the window and then the focus. Verbatim's two outposts,
+  one for each process, report them with nothing ordering them, and the
+  reducer says nothing for a window reported after a focus inside it, so
+  the window went unannounced whenever the content's outpost was
+  quicker. **Matched since 2026-10-08, by another route**: an outpost
+  reporting a focus whose top-level window belongs to another process
+  and is the foreground window reports that window first, read as a
+  foreground report reads it, so the window reaches Core before the focus
+  whichever outpost is quicker, and its second report says nothing
+  (reducer tests feeding both orders, for a console window and for a
+  Settings page).
+- A control's own focus with a focused child. A Win32 control taking
+  the focus, such as a tree view (`SysTreeView32`) or a tab control
+  (`SysTabControl32`), raises a focus event on itself (child id 0) and
+  then one on its focused child, both within the application's one
+  `SetFocus` call. NVDA redirects a container's own focus to its
+  `accFocus` child only for lists, but its event pump runs after both
+  events are delivered and tries focus events newest first, so the child
+  wins and the control is spoken only as a new ancestor, without its
+  shortcut: five NVDA transcripts on 2026-10-07, tabbing onto the tree on
+  Verbatim's Theme settings page, all had "Indications: tree view", then
+  the item. Verbatim's outpost could read the control before the child's
+  event reached it, and announced the control itself first. **Matched
+  since 2026-10-07, by a different route**: before reporting an MSAA focus
+  on an object's child id 0, the outpost asks the object's `accFocus`
+  once, and when that names a child by id that has the focused state,
+  reports the child instead, with the object as its ancestor (`mockapp`'s
+  `focus_reports` test and the `theme_panel` scenario).
 
 ## Object navigation and review
 
@@ -1709,6 +1761,15 @@ verified.
 
 ## System integration
 
+- Starting. NVDA plays its start sound and speaks no start message: "NVDA
+  started" goes to braille only, and "Loading NVDA. Please wait..." is
+  spoken only when start-up has taken more than five seconds; then it
+  queues the initial focus (`core.py`). Verbatim: **matched since
+  2026-10-08**: the start sound, then the foreground's announcement, its
+  first speech. It used to speak "Verbatim is starting.", which the
+  foreground's announcement cut off or not depending on how soon the
+  foreground's outpost answered, a race. The slow-start message is **not
+  yet**.
 - Vision framework (focus highlight, screen curtain, magnifier),
   OCR, secure screens, remote access: all **not yet** (M8 for OCR
   and secure desktop, M12 remote); references [The vision framework](nvda/vision.md),

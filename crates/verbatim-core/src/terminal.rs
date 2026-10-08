@@ -8,12 +8,20 @@
 //!   dropped. Newer output never cancels older output still waiting.
 //! - Lines are handed to speech a few at a time, each starting with an index
 //!   mark, and the rest wait here, so the backlog of output not yet spoken
-//!   is known. When more lines wait than "Lines spoken in full", the oldest
-//!   are replaced by "skipped N lines" ("skipped lines" when the outpost
-//!   could not count them) and the newest "Last lines to speak" are kept.
-//!   Output shorter than the limit is never touched, however many batches
-//!   it arrives in. Nothing is lost for good: every line stays reachable
-//!   with the review cursor.
+//!   is known. Output is spoken in groups (the flood policy): the first
+//!   "Lines spoken in full" lines of a burst of output are spoken whole,
+//!   however fast the rest arrives. Only once a group's last line is
+//!   playing is the backlog looked at: when more lines wait than "Lines
+//!   spoken in full", the older are replaced by "skipped N lines"
+//!   ("skipped lines" when the outpost could not count them) and the newest
+//!   "Last lines to speak" are kept (every line of output counts, a
+//!   shell's prompt shown after the output included), and those make the
+//!   next group; when
+//!   no more wait than that, they are the next group as they are. This
+//!   repeats until the output stops and everything waiting is heard, and
+//!   the next output starts a burst of its own. Output shorter than the
+//!   limit is never touched, however many batches it arrives in. Nothing
+//!   is lost for good: every line stays reachable with the review cursor.
 //! - The last line read, changed in place (a prompt that grew, a progress
 //!   bar rewritten), speaks what changed; while an earlier version of that
 //!   line is still waiting, the newer one takes its place, so a line
@@ -41,7 +49,7 @@ use crate::state::SrState;
 use crate::text;
 
 /// How many utterances of output are handed to speech before their marks
-/// are reached: one playing and one ready behind it, so there is no gap
+/// are reached: two queued behind the one playing, so there is no gap
 /// between lines and the backlog stays here, where it can be trimmed.
 const AHEAD: usize = 2;
 
@@ -51,9 +59,15 @@ const AHEAD: usize = 2;
 pub(crate) struct TerminalSpeech {
     /// The terminal this is about.
     pub(crate) node: Option<NodeId>,
-    /// Output not yet handed to speech, oldest first; at most
-    /// `MAX_TERMINAL_LINES` lines and one skipped count.
+    /// Output not yet handed to speech, oldest first: what is left of the
+    /// group being spoken, and after it at most as many lines as either
+    /// limit keeps, older ones counted as skipped ([`bound`]).
     pub(crate) waiting: VecDeque<Waiting>,
+    /// How many more lines the group being spoken hands to speech before
+    /// the backlog is looked at; `None` between bursts of output, when
+    /// everything has been heard.
+    #[serde(default)]
+    pub(crate) group: Option<usize>,
     /// The marks of output handed to speech whose playback has not reached
     /// them yet, oldest first, with whether each is a line.
     pub(crate) ahead: VecDeque<(SpeechMark, bool)>,
@@ -100,8 +114,11 @@ pub(crate) fn output(
         return effects;
     }
     state.terminal.trace = Some(trace_id);
+    if state.terminal.group.is_none() {
+        state.terminal.group = Some(state.settings.full_lines());
+    }
     queue(state, changed.as_ref(), output);
-    trim(state);
+    bound(state);
     effects.extend(pump(state, trace_id));
     effects
 }
@@ -208,6 +225,12 @@ fn queue(state: &mut SrState, changed: Option<&LineChange>, output: &TerminalOut
         }
         terminal.last_line_waiting = true;
     }
+    for line in &output.head {
+        if !text::is_blank(line) {
+            terminal.waiting.push_back(Waiting::Line(line.clone()));
+        }
+        terminal.last_line_waiting = false;
+    }
     if let Some(skipped) = output.skipped {
         push_skipped(&mut terminal.waiting, skipped);
         terminal.last_line_waiting = false;
@@ -231,46 +254,121 @@ fn push_skipped(waiting: &mut VecDeque<Waiting>, skipped: Skipped) {
     }
 }
 
-/// The flood policy: with more lines waiting than "Lines spoken in full",
-/// everything before the newest "Last lines to speak" becomes one skipped
-/// count.
-fn trim(state: &mut SrState) {
-    let full = state.settings.full_lines();
-    let last = state.settings.last_lines();
-    let terminal = &mut state.terminal;
-    let lines = |queue: &VecDeque<Waiting>| {
-        queue
-            .iter()
-            .filter(|item| matches!(item, Waiting::Line(_)))
-            .count()
-    };
-    let ahead = terminal.ahead.iter().filter(|(_, line)| *line).count();
-    let waiting = lines(&terminal.waiting);
-    if waiting + ahead <= full || waiting <= last {
-        return;
+/// Where the backlog starts in `waiting`: past the lines the group being
+/// spoken still hands to speech, `group_left` of them, and anything among
+/// them.
+fn backlog_start(waiting: &VecDeque<Waiting>, group_left: usize) -> usize {
+    if group_left == 0 {
+        return 0;
     }
-    let mut dropped = waiting - last;
-    let mut skipped = Skipped::Count(0);
-    while dropped > 0 || matches!(terminal.waiting.front(), Some(Waiting::Skipped(_))) {
-        match terminal.waiting.pop_front() {
-            Some(Waiting::Line(_)) => {
-                skipped = skipped.plus(Skipped::Count(1));
-                dropped -= 1;
+    let mut lines = 0;
+    for (index, item) in waiting.iter().enumerate() {
+        if matches!(item, Waiting::Line(_)) {
+            lines += 1;
+            if lines == group_left {
+                return index + 1;
             }
-            Some(Waiting::Skipped(count)) => skipped = skipped.plus(count),
+        }
+    }
+    waiting.len()
+}
+
+/// Replaces everything in `waiting` from `start` on but its newest `keep`
+/// lines with one skipped count, which then comes first among them.
+fn skip_all_but(waiting: &mut VecDeque<Waiting>, start: usize, keep: usize) {
+    let lines = waiting
+        .iter()
+        .skip(start)
+        .filter(|item| matches!(item, Waiting::Line(_)))
+        .count();
+    let mut dropping = lines.saturating_sub(keep);
+    let mut skipped: Option<Skipped> = None;
+    let index = start;
+    while index < waiting.len()
+        && (dropping > 0 || matches!(waiting.get(index), Some(Waiting::Skipped(_))))
+    {
+        match waiting.remove(index) {
+            Some(Waiting::Line(_)) => {
+                skipped = Some(skipped.map_or(Skipped::Count(1), |s| s.plus(Skipped::Count(1))));
+                dropping -= 1;
+            }
+            Some(Waiting::Skipped(count)) => {
+                skipped = Some(skipped.map_or(count, |s| s.plus(count)));
+            }
             None => break,
         }
     }
-    terminal.waiting.push_front(Waiting::Skipped(skipped));
+    if let Some(skipped) = skipped {
+        waiting.insert(start, Waiting::Skipped(skipped));
+    }
 }
 
-/// Hands waiting output to speech until enough is ahead of playback.
+/// Keeps the backlog behind the group being spoken bounded: at most as
+/// many lines as either limit could keep, older ones counted as skipped.
+/// Which of them is spoken is decided once the group is heard ([`decide`]).
+fn bound(state: &mut SrState) {
+    let keep = state.settings.full_lines().max(state.settings.last_lines());
+    let terminal = &mut state.terminal;
+    let start = backlog_start(&terminal.waiting, terminal.group.unwrap_or(0));
+    let backlog = terminal
+        .waiting
+        .iter()
+        .skip(start)
+        .filter(|item| matches!(item, Waiting::Line(_)))
+        .count();
+    if backlog > keep {
+        skip_all_but(&mut terminal.waiting, start, keep);
+    }
+}
+
+/// The flood policy, once the group being spoken has handed its last line
+/// to speech and that line is playing: when more lines wait than "Lines
+/// spoken in full" (those skipped already included), everything but the
+/// newest "Last lines to speak" becomes one skipped count. What waits then
+/// is the next group; with nothing waiting, the burst is over.
+fn decide(state: &mut SrState) {
+    let full = state.settings.full_lines();
+    let last = state.settings.last_lines();
+    let terminal = &mut state.terminal;
+    if terminal.waiting.is_empty() {
+        terminal.group = None;
+        return;
+    }
+    let mut lines = 0usize;
+    let mut skipped = Skipped::Count(0);
+    for item in &terminal.waiting {
+        match item {
+            Waiting::Line(_) => lines += 1,
+            Waiting::Skipped(count) => skipped = skipped.plus(*count),
+        }
+    }
+    let waiting = match skipped {
+        Skipped::Count(count) => lines.saturating_add(usize::try_from(count).unwrap_or(usize::MAX)),
+        Skipped::Uncounted => usize::MAX,
+    };
+    if waiting > full {
+        skip_all_but(&mut terminal.waiting, 0, last);
+        lines = lines.min(last);
+    }
+    terminal.group = Some(full.max(lines));
+}
+
+/// Hands waiting output to speech until enough is ahead of playback, as
+/// far as the group being spoken goes.
 fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     let mut effects = Vec::new();
     while state.terminal.ahead.len() < AHEAD {
+        if state.terminal.group == Some(0) {
+            break;
+        }
         let Some(item) = state.terminal.waiting.pop_front() else {
             break;
         };
+        if matches!(item, Waiting::Line(_))
+            && let Some(left) = state.terminal.group.as_mut()
+        {
+            *left = left.saturating_sub(1);
+        }
         if state.terminal.waiting.is_empty() {
             state.terminal.last_line_waiting = false;
         }
@@ -330,6 +428,10 @@ pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect>
     {
         terminal.ahead.pop_front();
     }
+    // The group's last line, or the last of everything, is playing.
+    if terminal.ahead.is_empty() && (terminal.group == Some(0) || terminal.waiting.is_empty()) {
+        decide(state);
+    }
     pump(state, trace_id)
 }
 
@@ -339,6 +441,7 @@ pub(crate) fn cut(state: &mut SrState) {
     terminal.waiting.clear();
     terminal.ahead.clear();
     terminal.last_line_waiting = false;
+    terminal.group = None;
 }
 
 /// The focus moved to `node`: another node's output is forgotten.
@@ -362,6 +465,9 @@ pub(crate) fn cuts_speech(effect: &Effect) -> bool {
 pub(crate) fn drop_waiting(state: &mut SrState) {
     state.terminal.waiting.clear();
     state.terminal.last_line_waiting = false;
+    if state.terminal.ahead.is_empty() {
+        state.terminal.group = None;
+    }
 }
 
 /// Verbatim+5: toggles "Report new output", says its new value, and

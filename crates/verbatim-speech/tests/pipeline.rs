@@ -9,7 +9,7 @@ use std::ops::ControlFlow;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use verbatim_audio::{Mixer, PcmFormat, PlaybackEvent, SilentDevice};
 use verbatim_model::{
     FocusNow, FocusValidity, NodeId, Role, SegmentContent, SpeechPriority, Theme, ThemeOptions,
@@ -36,6 +36,16 @@ struct Recorder {
     /// Signalled whenever an ending is reported.
     ended: Condvar,
     marks: Mutex<Vec<(UtteranceId, IndexMark)>>,
+    /// Where the control synth hears how far playback has got.
+    progress: Option<Sender<Progress>>,
+}
+
+/// How far playback has got, as the control synth paces itself by it.
+enum Progress {
+    /// Playback reached a mark.
+    Mark(UtteranceId, IndexMark),
+    /// An utterance ended.
+    Ended(UtteranceId),
 }
 
 impl SpeechEvents for Recorder {
@@ -45,6 +55,9 @@ impl SpeechEvents for Recorder {
 
     fn mark_reached(&self, utterance: UtteranceId, _: TraceId, mark: IndexMark, _: Instant) {
         self.marks.lock().unwrap().push((utterance, mark));
+        if let Some(progress) = &self.progress {
+            let _ = progress.send(Progress::Mark(utterance, mark));
+        }
     }
 
     fn utterance_ended(
@@ -59,6 +72,9 @@ impl SpeechEvents for Recorder {
             .unwrap()
             .push((utterance, ending.clone()));
         self.ended.notify_all();
+        if let Some(progress) = &self.progress {
+            let _ = progress.send(Progress::Ended(utterance));
+        }
     }
 }
 
@@ -114,29 +130,53 @@ struct ControlSynth {
     started: Sender<String>,
     finish: Receiver<()>,
     returned: Sender<String>,
+    /// How far playback has got, from the harness's [`Recorder`].
+    progress: Receiver<Progress>,
 }
 
 impl ControlSynth {
-    /// Streams tone for `text` until told to finish or cancelled.
-    fn stream(&self, text: &str, sink: &mut dyn SynthSink) -> Result<(), SynthError> {
+    /// Streams tone for `utterance`, whose text is `text`, until told to
+    /// finish or cancelled. It pushes one chunk at a time with a mark after
+    /// it, and pushes the next once playback reaches that mark, so it stays
+    /// just ahead of the device and never waits in the mixer for room. Until
+    /// then it waits for the mark, for the test to say finish, or for the
+    /// utterance to end, which a cancel does; the next push then learns of
+    /// the cancel.
+    fn stream(
+        &self,
+        utterance: UtteranceId,
+        text: &str,
+        sink: &mut dyn SynthSink,
+    ) -> Result<(), SynthError> {
         if text == "fail" {
             return Err(SynthError::Synthesis("asked to fail".to_owned()));
         }
         let chunk = [1_000i16; 16];
         let deadline = Instant::now() + STEP_TIMEOUT;
-        loop {
-            match self.finish.try_recv() {
-                Ok(()) | Err(TryRecvError::Disconnected) => return Ok(()),
-                Err(TryRecvError::Empty) => {}
-            }
+        for mark in 1.. {
             if let ControlFlow::Break(()) = sink.push_pcm(FORMAT, &chunk) {
                 return Ok(());
             }
-            if Instant::now() > deadline {
-                return Err(SynthError::Synthesis("control synth timed out".to_owned()));
+            let mark = IndexMark(mark);
+            sink.index_reached(mark);
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                crossbeam_channel::select! {
+                    recv(self.finish) -> _ => return Ok(()),
+                    recv(self.progress) -> progress => match progress {
+                        Ok(Progress::Mark(played, reached))
+                            if played == utterance && reached == mark => break,
+                        Ok(Progress::Ended(ended)) if ended == utterance => break,
+                        Ok(_) => {}
+                        Err(_) => return Ok(()),
+                    },
+                    default(remaining) => {
+                        return Err(SynthError::Synthesis("control synth timed out".to_owned()));
+                    }
+                }
             }
-            std::thread::sleep(Duration::from_millis(1));
         }
+        Ok(())
     }
 }
 
@@ -172,7 +212,7 @@ impl SynthDriver for ControlSynth {
     ) -> Result<(), SynthError> {
         let text = sequence.text();
         self.started.send(text.clone()).unwrap();
-        let result = self.stream(&text, sink);
+        let result = self.stream(sequence.utterance, &text, sink);
         let _ = self.returned.send(text);
         result
     }
@@ -213,6 +253,7 @@ fn control_manager() -> ControlHarness {
     let (started_tx, started_rx) = unbounded::<String>();
     let (finish_tx, finish_rx) = unbounded::<()>();
     let (returned_tx, returned_rx) = unbounded::<String>();
+    let (progress_tx, progress_rx) = unbounded::<Progress>();
     let mixer = mixer();
 
     let mut registry = SynthRegistry::new();
@@ -224,11 +265,15 @@ fn control_manager() -> ControlHarness {
                 started: started_tx.clone(),
                 finish: finish_rx.clone(),
                 returned: returned_tx.clone(),
+                progress: progress_rx.clone(),
             }) as Box<dyn SynthDriver>)
         }),
     );
 
-    let recorder = Arc::new(Recorder::default());
+    let recorder = Arc::new(Recorder {
+        progress: Some(progress_tx),
+        ..Recorder::default()
+    });
     let manager = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new("control"),
@@ -655,6 +700,34 @@ fn a_cancel_ends_current_and_queued_speech() {
         vec![
             (current, UtteranceEnding::Cancelled),
             (waiting, UtteranceEnding::Cancelled),
+        ]
+    );
+}
+
+/// A key press's cancel fences off speech an earlier key press caused
+/// that reaches the manager after it: key 2's cancel comes before key 1's
+/// speech is queued, as when key 1's gesture is still on its way to the
+/// reducer, and key 1's speech ends cancelled without being spoken, as if
+/// it had come first, while key 2's own speech and speech no key caused
+/// are spoken.
+#[test]
+fn speech_an_earlier_key_caused_is_dropped_after_a_later_keys_cancel() {
+    let harness = control_manager();
+    harness.manager.control().cancel_through(2);
+    let earlier = harness.manager.speak_for_key(queued("key one"), Some(1));
+    let later = harness.manager.speak_for_key(queued("key two"), Some(2));
+    let unkeyed = harness.manager.speak_for_key(queued("a focus"), None);
+    assert_eq!(recv_started(&harness.started), "key two");
+    harness.finish.send(()).unwrap();
+    assert_eq!(recv_started(&harness.started), "a focus");
+    harness.finish.send(()).unwrap();
+
+    assert_eq!(
+        harness.endings_before_a_marker(),
+        vec![
+            (earlier, UtteranceEnding::Cancelled),
+            (later, UtteranceEnding::Completed),
+            (unkeyed, UtteranceEnding::Completed),
         ]
     );
 }

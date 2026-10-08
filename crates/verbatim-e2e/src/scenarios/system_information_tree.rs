@@ -13,110 +13,71 @@
 //! back to the previous sibling ("Hardware Resources"), up to the parent
 //! ("System Summary"), up again onto the tree control itself (role "tree
 //! view", never an item), and finally snap the navigator back to focus.
-//! Substring matches, tolerant of state wording, like the other scenarios.
-//! A tree item is spoken as NVDA speaks it on focus and object navigation,
-//! by name without its "tree view item" role, so each step is anchored on
-//! the item's name and level. As in NVDA, the level comes before the name
+//! Every step asserts exactly what is said. A tree item is spoken as NVDA
+//! speaks it on focus and object navigation, by name without its "tree
+//! view item" role. As in NVDA, the level comes before the name
 //! when it differs from the last level spoken that way, and after the rest
 //! when it does not ("Where the level goes" in `docs/nvda/speech.md`). The
-//! tree-control step additionally captures the full utterance and asserts
-//! it is not an item announcement.
+//! tree control itself is spoken by its bare role, never as an item.
 
 use std::io;
-use std::time::Duration;
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
-/// Generous per-step budget: msinfo32 is slow to open and populate on a
-/// loaded VM.
-const STEP_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) use super::no_teardown as teardown;
+
+/// The title of msinfo32's window.
+const TITLE: &str = "System Information";
 
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    let pid = scenario.launch_target("msinfo32.exe", &[])?;
-    Ok(ScenarioState::TargetPid(pid))
+    scenario.launch_target("msinfo32.exe", &[], TITLE)?;
+    Ok(ScenarioState::None)
+}
+
+/// Sends `gesture` and asserts exactly `heard`.
+fn navigate(scenario: &mut Scenario, gesture: &str, heard: &str) {
+    scenario.send_gesture(gesture).expect("sends the gesture");
+    scenario.speech().expect(&[heard]);
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    // msinfo32 opens with its window ("System Information") and focus on the
-    // tree's "System Summary" root item. Asserted as one ordered matcher
-    // sequence rather than two separate waits: under load the window title
-    // and the focused item can arrive as a single combined announcement, and
-    // two waits would let the first consume the line the second needs. One
-    // `expect_in_order` advances through all three substrings whether they
-    // land on one line or several.
-    scenario.speech().expect_in_order(
-        &["System Information", "level 0", "System Summary"],
-        STEP_TIMEOUT,
+    // msinfo32 opens with its window, its tree, and focus on the tree's
+    // "System Summary" root item.
+    scenario.speech().expect(&[
+        "System Information dialog",
+        "tree view",
+        "level 0 System Summary expanded 1 of 1",
+    ]);
+    // First child of the root, one level deeper, so the level comes first;
+    // its next sibling, a real sibling, and back, at the same level, so
+    // the level comes last; the logical parent item, a level up again; and
+    // the tree control itself, the root item's parent.
+    navigate(
+        scenario,
+        "kb:verbatim+numpad2",
+        "level 1 Hardware Resources not selected collapsed 1 of 3",
     );
-
-    // First child of the root: "Hardware Resources", one level deeper, so
-    // the level comes first.
-    scenario
-        .send_gesture("kb:verbatim+numpad2")
-        .expect("sends move-to-first-child");
-    scenario
-        .speech()
-        .expect_in_order(&["level 1", "Hardware Resources"], STEP_TIMEOUT);
-
-    // Next sibling: "Components" — a real sibling; the flat exposure used
-    // to answer the next visible item, descending into children instead.
-    scenario
-        .send_gesture("kb:verbatim+numpad6")
-        .expect("sends move-to-next-sibling");
-    scenario
-        .speech()
-        .expect_in_order(&["Components", "level 1"], STEP_TIMEOUT);
-
-    // Previous sibling: back to "Hardware Resources".
-    scenario
-        .send_gesture("kb:verbatim+numpad4")
-        .expect("sends move-to-previous-sibling");
-    scenario
-        .speech()
-        .expect_in_order(&["Hardware Resources", "level 1"], STEP_TIMEOUT);
-
-    // Parent: the logical parent item "System Summary", not the tree
-    // control (the flat exposure used to answer the control for every
-    // item), and a level up, so the level comes first again.
-    scenario
-        .send_gesture("kb:verbatim+numpad8")
-        .expect("sends move-to-parent");
-    scenario
-        .speech()
-        .expect_in_order(&["level 0", "System Summary"], STEP_TIMEOUT);
-
-    // Parent from the root item: the tree control itself, spoken by its
-    // bare role since msinfo32's tree control is unnamed — and never as an
-    // item, which the captured text rules out: an item would carry a level.
-    scenario
-        .send_gesture("kb:verbatim+numpad8")
-        .expect("sends move-to-parent");
-    let spoken = scenario
-        .speech()
-        .expect_in_order_capturing(&["tree view"], STEP_TIMEOUT);
-    assert!(
-        !spoken.contains("tree view item") && !spoken.contains("level"),
-        "parent of the root item must be the tree control, not an item; heard: {spoken}"
+    navigate(
+        scenario,
+        "kb:verbatim+numpad6",
+        "Components not selected collapsed 2 of 3 level 1",
     );
-
-    // Snap the navigator back to focus: the focused "System Summary" item.
-    scenario
-        .send_gesture("kb:verbatim+numpadminus")
-        .expect("sends move-review-to-focus");
-    scenario
-        .speech()
-        .expect_in_order(&["System Summary", "level 0"], STEP_TIMEOUT);
-}
-
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "must match ScenarioDef::teardown's fn-pointer signature"
-)]
-pub(crate) fn teardown(scenario: &mut Scenario, state: ScenarioState) {
-    if let ScenarioState::TargetPid(pid) = state {
-        scenario
-            .kill_target(pid)
-            .expect("kills msinfo32 through the agent");
-    }
+    navigate(
+        scenario,
+        "kb:verbatim+numpad4",
+        "Hardware Resources not selected collapsed 1 of 3 level 1",
+    );
+    navigate(
+        scenario,
+        "kb:verbatim+numpad8",
+        "level 0 System Summary expanded 1 of 1",
+    );
+    navigate(scenario, "kb:verbatim+numpad8", "tree view");
+    // Back to the focus: the focused "System Summary" item.
+    navigate(
+        scenario,
+        "kb:verbatim+numpadminus",
+        "Move to focus System Summary expanded 1 of 1 level 0",
+    );
 }

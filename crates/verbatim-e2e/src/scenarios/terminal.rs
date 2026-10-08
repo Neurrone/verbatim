@@ -2,31 +2,37 @@
 //! end-to-end scenarios"), so their results depend neither on the user's
 //! own terminals and settings nor on timing.
 //!
+//! A scenario in Windows Terminal and its twin in the console host are
+//! separate code, each with its own expectations (`docs/testing.md`): the
+//! helpers here open a terminal and drive the shell, and every expectation
+//! is the caller's.
+//!
 //! Each scenario opens a window of its own, titled with a marker unique to
-//! the run ([`harness_marker`]), and finds, brings forward, and closes it
-//! by that title, never by class or program, so the user's own terminals
-//! are never touched; nothing here ends `WindowsTerminal.exe` or
-//! `conhost.exe` by name. Windows Terminal opens with `wt.exe -w new
-//! --size 120,30 new-tab --title <title> --suppressApplicationTitle`; its
-//! window may belong to a Windows Terminal process the user's own windows
-//! share, so a window that will not close is reported and left open, never
-//! terminated. The console host opens with `conhost.exe`, and the shell
-//! sets its size with `mode con cols=120 lines=30` and its title. Which
-//! terminal a scenario gets is decided by what is installed: a scenario
-//! that prefers Windows Terminal asks the agent to start `wt.exe`, and when
-//! that fails, because Windows Terminal is not installed, it says so and
-//! uses the console host. GitHub's Windows Server runner image ships
-//! Windows Terminal, and CI's `e2e` job checks it is there, so there it is
-//! used too. Nothing depends on the
-//! machine's name.
+//! the run ([`harness_marker`]), waits for it to take the foreground, and
+//! closes it by that title at cleanup, never by class or program, so the
+//! user's own terminals are never touched. Each scenario names its
+//! terminal, and gets that one or fails: Windows Terminal opens with
+//! `wt.exe -w new --size 120,30 new-tab --title <title>
+//! --suppressApplicationTitle`, and its window belongs to
+//! `WindowsTerminal.exe`, which the user's own windows may share, so only
+//! the window must close; the console host opens with `conhost.exe`, its
+//! window titled from its first frame (the launch's console title, without
+//! which it shows its own path until the shell sets one), owns its window,
+//! and must exit, and the shell sets its size with `mode con cols=120
+//! lines=30` and its title. The program that owns the window is
+//! asserted; Windows reports a console window as the shell's, so for the
+//! console host the window's class is, and that the shell is the launched
+//! console host's child. Nothing depends on the machine's name.
 //!
 //! The shell is Windows PowerShell, present on both, started with
 //! `-NoProfile -NoLogo -NoExit -ExecutionPolicy Bypass -File start.ps1`.
 //! The start script removes `PSReadLine`, so a line is neither re-rendered
 //! nor given predictions, moves to the run's folder, and sets a one-word
-//! prompt, `ready> `, spoken as "ready>". The script then waits for a file
-//! the scenario writes once Verbatim's announcement of the focused terminal
-//! has been heard out, so the first prompt appears only after the outpost
+//! prompt, `ready> `, spoken as "ready>". It writes the shell's process id
+//! to a file, so cleanup can wait for the shell to exit before deleting the
+//! folder it ran in. The script then waits, on the folder's change
+//! notifications, for a file the scenario writes once Verbatim's
+//! announcement of the focused terminal has been asserted, so the first prompt appears only after the outpost
 //! has read where the terminal's text ends, and is spoken as new output,
 //! which the scenario hears in full before it goes on: the evidence that
 //! Verbatim follows this terminal's text. It then waits for Core to receive
@@ -43,112 +49,170 @@ use std::io;
 use std::time::{Duration, Instant};
 
 use verbatim_control::client::Client as ControlClient;
-use verbatim_control::protocol::{Frame, ReplyPayload, Request};
+use verbatim_control::protocol::Frame;
 use verbatim_model::NormalizedEvent;
 
 use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, harness_marker};
-use crate::speech::Heard;
 
 /// The prompt line as Verbatim speaks it, without its trailing space.
 pub(crate) const PROMPT: &str = "ready>";
 
-/// How long each step's speech is given to arrive.
-pub(crate) const STEP_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// How long a terminal's window is given to appear.
-const WINDOW_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long Core is given to receive the caret on the prompt.
+const STEP_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// How long the shell is given to show its first prompt.
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// How long one read of speech lasts before the caller checks its own
-/// deadline and, when asked, Verbatim's control plane.
-const LISTEN_SLICE: Duration = Duration::from_millis(500);
 
 /// The file the prompt writes the first time it runs.
 const READY_FILE: &str = "prompt-ready";
 
 /// The file the start script waits for before the shell shows its first
-/// prompt, written once Verbatim has announced the terminal's focus.
+/// prompt, written once Verbatim's announcement of the terminal's focus
+/// has been asserted.
 const GO_FILE: &str = "prompt-go";
 
-/// What Verbatim's announcement of a focused terminal contains: its role.
-const FOCUSED_TERMINAL: &str = "terminal";
+/// The file the start script writes the shell's process id into.
+const SHELL_PID_FILE: &str = "shell-pid";
 
-/// The terminal a scenario's shell runs in.
+/// The window class only the console host registers.
+const CONSOLE_WINDOW_CLASS: &str = "ConsoleWindowClass";
+
+/// The terminal a scenario's shell runs in, for launching it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Terminal {
-    /// Windows Terminal, when it is installed; the console host otherwise.
+enum Terminal {
+    /// Windows Terminal.
     WindowsTerminal,
     /// The console host, `conhost.exe`.
     ConsoleHost,
 }
 
+impl Terminal {
+    /// The program that owns the terminal's window.
+    fn owner(self) -> &'static str {
+        match self {
+            Self::WindowsTerminal => "WindowsTerminal.exe",
+            Self::ConsoleHost => "conhost.exe",
+        }
+    }
+}
+
+/// Opens Windows Terminal running the shell, as [`open`] describes.
+///
+/// # Errors
+///
+/// As [`open`].
+pub(crate) fn open_windows_terminal(
+    scenario: &mut Scenario,
+    name: &str,
+    scripts: &[(&str, &str)],
+) -> io::Result<ScenarioState> {
+    open(scenario, name, Terminal::WindowsTerminal, scripts)
+}
+
+/// Opens the console host running the shell, as [`open`] describes.
+///
+/// # Errors
+///
+/// As [`open`].
+pub(crate) fn open_console_host(
+    scenario: &mut Scenario,
+    name: &str,
+    scripts: &[(&str, &str)],
+) -> io::Result<ScenarioState> {
+    open(scenario, name, Terminal::ConsoleHost, scripts)
+}
+
 /// Writes `scripts` (file names and contents) and the start script into a
-/// folder of the run's own, opens a terminal running the shell in it, with
-/// `name` in its title, and brings its window forward. The shell shows its
-/// first prompt once [`expect_prompt_read`] lets it. The window is closed
-/// by [`close`].
+/// folder of the run's own, opens `terminal` running the shell in it, with
+/// `name` in its title (after "console-" in the console host, so the two
+/// terminals' runs of a scenario never share a title or a folder), waits
+/// for its window to take the foreground, and
+/// asserts the program that owns it. The shell shows its first prompt once
+/// [`expect_prompt_read`] lets it. The window is closed at cleanup.
 ///
 /// # Errors
 ///
-/// Returns an error if a file cannot be written, no terminal can be
-/// started, or its window does not take the foreground.
-pub(crate) fn open(
+/// Returns an error if a file cannot be written, the terminal cannot be
+/// started, its window does not take the foreground, or another program
+/// owns it.
+fn open(
     scenario: &mut Scenario,
     name: &str,
-    preferred: Terminal,
+    terminal: Terminal,
     scripts: &[(&str, &str)],
 ) -> io::Result<ScenarioState> {
-    open_with(scenario, name, preferred, true, scripts)
-}
-
-/// [`open`] in Windows Terminal, with no console host in its place: for a
-/// demonstration of Windows Terminal, which fails when it cannot be
-/// started.
-///
-/// # Errors
-///
-/// As [`open`], and when Windows Terminal cannot be started.
-pub(crate) fn open_windows_terminal_only(
-    scenario: &mut Scenario,
-    name: &str,
-    scripts: &[(&str, &str)],
-) -> io::Result<ScenarioState> {
-    open_with(scenario, name, Terminal::WindowsTerminal, false, scripts)
-}
-
-/// [`open`], using the console host when Windows Terminal is preferred but
-/// cannot be started only when `console_host_fallback` is set.
-fn open_with(
-    scenario: &mut Scenario,
-    name: &str,
-    preferred: Terminal,
-    console_host_fallback: bool,
-    scripts: &[(&str, &str)],
-) -> io::Result<ScenarioState> {
-    let title = harness_marker(name);
-    let directory = scenario.harness_folder(name)?;
+    let name = match terminal {
+        Terminal::WindowsTerminal => name.to_owned(),
+        Terminal::ConsoleHost => format!("console-{name}"),
+    };
+    let title = harness_marker(&name);
+    let directory = scenario.harness_folder(&name);
     for (file, contents) in scripts {
         scenario.write_agent_file(&format!(r"{directory}\{file}"), contents.as_bytes())?;
     }
     let ready = format!(r"{directory}\{READY_FILE}");
     let go = format!(r"{directory}\{GO_FILE}");
+    let shell_pid = format!(r"{directory}\{SHELL_PID_FILE}");
     let start = format!(r"{directory}\start.ps1");
     scenario.write_agent_file(
         &start,
-        start_script(&title, &directory, &go, &ready).as_bytes(),
+        start_script(&title, &directory, &go, &ready, &shell_pid).as_bytes(),
     )?;
-
-    // What Verbatim said before the window opens, such as another
-    // terminal's focus, is not taken for this one's.
-    scenario.speech().wait_until_quiet(STEP_TIMEOUT);
-    let pid = launch(scenario, preferred, console_host_fallback, &title, &start)?;
-    let image = scenario.bring_titled_window_forward(&title, WINDOW_TIMEOUT)?;
-    println!("the terminal window {title:?} belongs to {image}");
+    let window = match terminal {
+        Terminal::WindowsTerminal => {
+            let mut args: Vec<String> = [
+                "-w",
+                "new",
+                "--size",
+                "120,30",
+                "new-tab",
+                "--title",
+                &title,
+                "--suppressApplicationTitle",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+            args.extend(shell_command(&start, terminal));
+            scenario.launch_titled("wt.exe", &args, &title, false)?
+        }
+        Terminal::ConsoleHost => {
+            let args = shell_command(&start, terminal);
+            scenario.launch_console("conhost.exe", &args, &title)?
+        }
+    };
+    match terminal {
+        Terminal::WindowsTerminal => {
+            if !window.image.eq_ignore_ascii_case(terminal.owner()) {
+                return Err(io::Error::other(format!(
+                    "the terminal window {title:?} belongs to {}, not {}",
+                    window.image,
+                    terminal.owner()
+                )));
+            }
+        }
+        Terminal::ConsoleHost => {
+            // Windows reports a console window as the console's first
+            // client's, here the shell; the window is the console host's
+            // when it has the class only the console host registers and
+            // that client is the shell the launched console host started.
+            let (host, children) = scenario.launched_children()?;
+            if window.class != CONSOLE_WINDOW_CLASS
+                || !children.iter().any(|child| child.pid == window.pid)
+            {
+                return Err(io::Error::other(format!(
+                    "the terminal window {title:?} (class {}, reported as {} pid {}) is not the                      window of the {} the scenario launched, pid {host}, whose children are {children:?}",
+                    window.class,
+                    window.image,
+                    window.pid,
+                    terminal.owner()
+                )));
+            }
+        }
+    }
     Ok(ScenarioState::Window {
-        pid,
+        pid: window.pid,
         title,
         directory,
     })
@@ -162,7 +226,11 @@ fn open_with(
 ///
 /// Returns an error if no such report arrives within `timeout`, or the
 /// connection fails.
-fn wait_for_caret_on(events: &mut ControlClient, line: &str, timeout: Duration) -> io::Result<()> {
+pub(crate) fn wait_for_caret_on(
+    events: &mut ControlClient,
+    line: &str,
+    timeout: Duration,
+) -> io::Result<()> {
     let deadline = Instant::now() + timeout;
     loop {
         match events.next_frame() {
@@ -184,52 +252,6 @@ fn wait_for_caret_on(events: &mut ControlClient, line: &str, timeout: Duration) 
             )));
         }
     }
-}
-
-/// Starts the terminal: Windows Terminal when it is preferred and can be
-/// started, the console host otherwise, unless `console_host_fallback` is
-/// off. Returns the launch's pid.
-fn launch(
-    scenario: &mut Scenario,
-    preferred: Terminal,
-    console_host_fallback: bool,
-    title: &str,
-    start: &str,
-) -> io::Result<u32> {
-    if preferred == Terminal::WindowsTerminal {
-        let mut args: Vec<String> = [
-            "-w",
-            "new",
-            "--size",
-            "120,30",
-            "new-tab",
-            "--title",
-            title,
-            "--suppressApplicationTitle",
-        ]
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-        args.extend(shell_command(start, Terminal::WindowsTerminal));
-        match scenario.launch_titled("wt.exe", &args, title, false) {
-            Ok(pid) => {
-                println!("terminal: Windows Terminal");
-                return Ok(pid);
-            }
-            Err(error) if !console_host_fallback => {
-                return Err(io::Error::other(format!(
-                    "this scenario needs Windows Terminal, which could not be started: {error}"
-                )));
-            }
-            Err(error) => println!(
-                "terminal: the console host, since Windows Terminal could not be started: {error}"
-            ),
-        }
-    } else {
-        println!("terminal: the console host");
-    }
-    let args = shell_command(start, Terminal::ConsoleHost);
-    scenario.launch_titled("conhost.exe", &args, title, true)
 }
 
 /// The shell's command line, running the start script.
@@ -254,15 +276,19 @@ fn shell_command(start: &str, terminal: Terminal) -> Vec<String> {
 }
 
 /// The start script: `PSReadLine` removed, the console host's size and
-/// every terminal's title set, the run's folder made current, and the
-/// prompt, which writes `ready` the first time it runs. The prompt removes
-/// `PSReadLine` again, in case the shell loaded it after the script ran.
-/// The script ends, and the shell shows its first prompt, once `go` exists.
-fn start_script(title: &str, directory: &str, go: &str, ready: &str) -> String {
+/// every terminal's title set, the shell's process id written to
+/// `shell_pid`, the run's folder made current, and the prompt, which writes
+/// `ready` the first time it runs. The prompt removes `PSReadLine` again,
+/// in case the shell loaded it after the script ran. The script ends, and
+/// the shell shows its first prompt, once `go` exists: it waits on the
+/// folder's change notifications, never polling.
+fn start_script(title: &str, directory: &str, go: &str, ready: &str, shell_pid: &str) -> String {
     let title = quoted(title);
-    let directory = quoted(directory);
+    let directory_text = quoted(directory);
+    let go_name = quoted(GO_FILE);
     let go = quoted(go);
     let ready = quoted(ready);
+    let shell_pid = quoted(shell_pid);
     format!(
         "param([switch]$ConsoleHost)\r\n\
          Remove-Module PSReadLine -ErrorAction SilentlyContinue\r\n\
@@ -271,13 +297,16 @@ fn start_script(title: &str, directory: &str, go: &str, ready: &str) -> String {
          \x20   $Host.UI.RawUI.BufferSize = New-Object Management.Automation.Host.Size(120, 9001)\r\n\
          }}\r\n\
          $Host.UI.RawUI.WindowTitle = {title}\r\n\
-         Set-Location -LiteralPath {directory}\r\n\
+         [IO.File]::WriteAllText({shell_pid}, \"$PID\")\r\n\
+         Set-Location -LiteralPath {directory_text}\r\n\
          function global:prompt {{\r\n\
          \x20   Remove-Module PSReadLine -ErrorAction SilentlyContinue\r\n\
          \x20   if (-not (Test-Path -LiteralPath {ready})) {{ [IO.File]::WriteAllText({ready}, '') }}\r\n\
          \x20   'ready> '\r\n\
          }}\r\n\
-         while (-not (Test-Path -LiteralPath {go})) {{ Start-Sleep -Milliseconds 20 }}\r\n"
+         $watcher = New-Object IO.FileSystemWatcher({directory_text}, {go_name})\r\n\
+         if (-not (Test-Path -LiteralPath {go})) {{ $null = $watcher.WaitForChanged('Created') }}\r\n\
+         $watcher.Dispose()\r\n"
     )
 }
 
@@ -288,42 +317,41 @@ fn quoted(text: &str) -> String {
 
 /// What Verbatim echoes for each character of `text` typed: the character
 /// itself, and "space" for a space.
+#[cfg(test)]
 pub(crate) fn echo_of(text: &str) -> Vec<String> {
-    text.chars()
-        .map(|character| {
-            if character == ' ' {
-                "space".to_owned()
-            } else {
-                character.to_string()
-            }
-        })
-        .collect()
+    text.chars().map(super::character_name).collect()
 }
 
-/// Lets the shell in the window [`open`] opened show its first prompt, and
-/// reads the review cursor's line, which follows the caret onto it: the
-/// evidence that Verbatim reads this terminal's text before a scenario
-/// types into it.
-///
-/// First the terminal's focus is heard out: by then the outpost has read
-/// where its text ends, so the prompt, shown only once the go file exists,
-/// is new output, heard in full. The console host reports its caret some
-/// time after its text, and the review cursor follows the caret, so the
-/// line is read only once Core has received the caret on the prompt.
-pub(crate) fn expect_prompt_read(scenario: &mut Scenario, state: &ScenarioState) {
-    let ScenarioState::Window { directory, .. } = state else {
+/// The title of the terminal window a scenario's setup opened.
+pub(crate) fn title(state: &ScenarioState) -> &str {
+    let ScenarioState::Window { title, .. } = state else {
         panic!("a terminal scenario's setup opens a terminal window");
     };
-    let focused = scenario
-        .speech()
-        .expect_in_order_capturing(&[FOCUSED_TERMINAL], STEP_TIMEOUT);
-    // The console host names its text area "Text Area", in English only;
-    // NVDA drops the name, and so does Verbatim.
-    assert!(
-        !focused.contains("Text Area"),
-        "the terminal was announced as {focused:?}"
-    );
-    scenario.speech().wait_until_quiet(STEP_TIMEOUT);
+    title
+}
+
+/// Asserts that Verbatim says exactly `announcement` as the terminal's
+/// window takes the foreground, lets the shell show its first prompt, and
+/// reads the review
+/// cursor's line, which follows the caret onto it: the evidence that
+/// Verbatim reads this terminal's text before a scenario types into it.
+///
+/// The prompt, shown only once the go file exists, is new output, heard in
+/// full. The console host reports its caret some time after its text, and
+/// the review cursor follows the caret, so the line is read only once Core
+/// has received the caret on the prompt.
+pub(crate) fn expect_prompt_read(
+    scenario: &mut Scenario,
+    state: &ScenarioState,
+    announcement: &[&str],
+) {
+    let ScenarioState::Window {
+        directory, title, ..
+    } = state
+    else {
+        panic!("a terminal scenario's setup opens a terminal window");
+    };
+    scenario.speech().expect(announcement);
     let mut events = scenario
         .subscribe_events()
         .expect("subscribes to Verbatim's events");
@@ -333,110 +361,66 @@ pub(crate) fn expect_prompt_read(scenario: &mut Scenario, state: &ScenarioState)
     scenario
         .wait_for_agent_file(&format!(r"{directory}\{READY_FILE}"), READY_TIMEOUT)
         .expect("the shell shows its first prompt");
-    scenario.speech().expect_exactly(&[PROMPT], STEP_TIMEOUT);
+    scenario.speech().expect(&[PROMPT]);
     wait_for_caret_on(&mut events, PROMPT, STEP_TIMEOUT)
         .expect("Core receives the caret on the prompt");
+    let shell = scenario
+        .wait_for_agent_file(&format!(r"{directory}\{SHELL_PID_FILE}"), READY_TIMEOUT)
+        .expect("the shell writes its process id");
+    let shell: u32 = String::from_utf8_lossy(&shell)
+        .trim()
+        .parse()
+        .expect("the shell's process id is a number");
+    scenario.expect_exit_at_cleanup(title, shell);
     scenario
         .send_gesture("kb:numpad8")
         .expect("sends the read-line gesture");
-    scenario.speech().expect_exactly(&[PROMPT], STEP_TIMEOUT);
+    scenario.speech().expect(&[PROMPT]);
 }
 
-/// Types `command` and presses Enter.
-pub(crate) fn run_command(scenario: &mut Scenario, command: &str) {
-    scenario.type_text(command).expect("types the command");
-    scenario.send_keys(&["enter"]).expect("presses enter");
+/// Where a terminal's echo of typing comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Echo {
+    /// What the terminal shows, as by default.
+    Shown,
+    /// Each key as it is typed, as with "Speak passwords" on.
+    Typed,
 }
 
-/// Types `command`, waits until the echo of its end, from its last space,
-/// has been heard in full, and presses Enter: the terminal has then shown
-/// the command line as typed, so running it adds only the command's own
-/// output. A command typed and entered faster than the terminal shows it
-/// is read back as output instead, since Enter drops typing not yet shown.
-pub(crate) fn run_command_after_echo(scenario: &mut Scenario, command: &str) {
-    scenario.type_text(command).expect("types the command");
-    let end = command
-        .rfind(' ')
-        .map_or(command, |space| &command[space..]);
-    let echo = echo_of(end);
-    let echo: Vec<&str> = echo.iter().map(String::as_str).collect();
-    scenario.speech().expect_exactly(&echo, STEP_TIMEOUT);
-    scenario.send_keys(&["enter"]).expect("presses enter");
-}
-
-/// Types `text`, waits until every character's echo has been queued, in
-/// order, and the last heard in full, then presses Enter.
-pub(crate) fn type_with_echo(scenario: &mut Scenario, text: &str) {
-    scenario.type_text(text).expect("types the text");
-    let echo = echo_of(text);
-    let echo: Vec<&str> = echo.iter().map(String::as_str).collect();
-    scenario.speech().expect_exactly(&echo, STEP_TIMEOUT);
-    scenario.send_keys(&["enter"]).expect("presses enter");
-}
-
-/// Fails unless Verbatim's control plane answers a status request, within
-/// the connection's read timeout.
-pub(crate) fn expect_status_answers(scenario: &mut Scenario) {
-    match scenario.control().request(Request::Status) {
-        Ok(Frame::Reply {
-            payload: ReplyPayload::Status(_),
-            ..
-        }) => {}
-        other => panic!("Verbatim's control plane did not answer a status request: {other:?}"),
-    }
-}
-
-/// Every utterance queued from now until one exactly `last`, which is the
-/// final one returned and is waited for until heard in full. With
-/// `poll_status`, Verbatim's control plane is asked for its status between
-/// reads, so a Verbatim that stops answering fails the scenario rather than
-/// stalling it.
+/// Types `text` a character at a time, as a listening user types, hearing
+/// each character's echo in full before the next: typed while an echo
+/// plays, a character would cut it off. When the echo is what the terminal
+/// shows ([`Echo::Shown`]), a space it shows at the end of a line cannot be
+/// told from padding until something follows it, so a space is typed with
+/// the character after it, and the two echoes are heard together.
 ///
 /// # Panics
 ///
-/// Panics, naming the last things heard, if `last` is not queued within
-/// `timeout`, if it is not heard in full, or if the control plane stops
-/// answering.
-pub(crate) fn listen_until(
-    scenario: &mut Scenario,
-    last: &str,
-    timeout: Duration,
-    poll_status: bool,
-) -> Vec<Heard> {
-    let deadline = Instant::now() + timeout;
-    let mut heard: Vec<Heard> = Vec::new();
-    loop {
-        heard.extend(scenario.speech().take_heard(last, LISTEN_SLICE));
-        if poll_status {
-            expect_status_answers(scenario);
+/// Panics if `text` ends with a space and the echo is what the terminal
+/// shows, since that space's echo would never come.
+pub(crate) fn type_hearing(scenario: &mut Scenario, text: &str, echo: Echo) {
+    assert!(
+        echo == Echo::Typed || !text.ends_with(' '),
+        "a space typed last is never echoed: {text:?}"
+    );
+    let mut typed = String::new();
+    for character in text.chars() {
+        typed.push(character);
+        if character == ' ' && echo == Echo::Shown {
+            continue;
         }
-        if let Some(found) = heard.last().filter(|heard| heard.text == last) {
-            let found = found.clone();
-            scenario.speech().expect_completed(&found);
-            return heard;
-        }
-        if Instant::now() >= deadline {
-            let recent: Vec<&str> = heard
-                .iter()
-                .rev()
-                .take(40)
-                .rev()
-                .map(|heard| heard.text.as_str())
-                .collect();
-            panic!(
-                "{last:?} was not spoken within {timeout:?}; the last things queued were: {recent:?}"
-            );
-        }
+        scenario.type_text(&typed).expect("types a character");
+        let echo: Vec<String> = typed.chars().map(super::character_name).collect();
+        let echo: Vec<&str> = echo.iter().map(String::as_str).collect();
+        scenario.speech().expect(&echo);
+        typed.clear();
     }
 }
 
-/// Closes the scenario's terminal window by its title.
-pub(crate) fn close(scenario: &mut Scenario, state: &ScenarioState) {
-    if let ScenarioState::Window { pid, .. } = state {
-        scenario
-            .kill_target(*pid)
-            .expect("closes the terminal window by its title");
-    }
+/// Types `text` as [`type_hearing`] does, then presses Enter.
+pub(crate) fn type_with_echo(scenario: &mut Scenario, text: &str, echo: Echo) {
+    type_hearing(scenario, text, echo);
+    scenario.send_keys(&["enter"]).expect("presses enter");
 }
 
 #[cfg(test)]
@@ -450,14 +434,20 @@ mod tests {
 
     #[test]
     fn the_start_script_quotes_what_it_names() {
-        let script = start_script("it's", r"C:\run's", r"C:\run's\go", r"C:\run's\ready");
+        let script = start_script(
+            "it's",
+            r"C:\run's",
+            r"C:\run's\go",
+            r"C:\run's\ready",
+            r"C:\run's\pid",
+        );
         assert!(script.contains("WindowTitle = 'it''s'"));
         assert!(script.contains(r"Set-Location -LiteralPath 'C:\run''s'"));
         assert!(script.contains(r"WriteAllText('C:\run''s\ready', '')"));
         assert!(script.contains("    'ready> '\r\n"));
-        assert!(script.ends_with(
-            "while (-not (Test-Path -LiteralPath 'C:\\run''s\\go')) { Start-Sleep -Milliseconds 20 }\r\n"
-        ));
+        assert!(script.contains(r"WriteAllText('C:\run''s\pid', "));
+        assert!(script.contains(r"New-Object IO.FileSystemWatcher('C:\run''s', 'prompt-go')"));
+        assert!(!script.contains("Sleep"));
     }
 
     #[test]

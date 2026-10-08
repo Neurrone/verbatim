@@ -1550,6 +1550,43 @@ fn an_unnamed_tree_ancestor_is_still_announced() {
 }
 
 #[test]
+fn a_tree_view_taking_the_focus_on_its_item_is_spoken_as_the_items_ancestor() {
+    // A Win32 tree view taking the focus is reported by its focused item,
+    // with the tree as its ancestor (`docs/parity.md`, "A control's own
+    // focus with a focused child"): NVDA says the tree's name and role,
+    // without its shortcut, and then the item.
+    let state = SrState::new();
+    let mut tree = node(630, Role::Tree, Some("Categories"), None, StateSet::new());
+    tree.details.keyboard_shortcut = Some("Alt+i".to_owned());
+    let mut item = tree_item(631, "General", 0);
+    item.details.position_in_set = Some(1);
+    item.details.set_size = Some(5);
+
+    let (_, effects) = reduce(
+        &state,
+        &focus_event_with_ancestors(TraceId::mint(), Pid(1), item, vec![tree]),
+    );
+
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 631, &[630], None),
+            vec![
+                vec![UtteranceSegment::label("Categories"), role(Role::Tree)],
+                vec![
+                    UtteranceSegment::new(SegmentContent::Level(0)),
+                    UtteranceSegment::label("General"),
+                    UtteranceSegment::new(SegmentContent::Position {
+                        position: 1,
+                        set_size: Some(5),
+                    }),
+                ],
+            ]
+        )
+    );
+}
+
+#[test]
 fn an_unnamed_group_ancestor_is_dropped() {
     let state = SrState::new();
     let source = Pid(1);
@@ -2962,6 +2999,108 @@ fn the_same_window_reported_by_another_outpost_is_not_reannounced() {
             ]
         ),
         "the frame window is not spoken a second time"
+    );
+}
+
+/// The utterances `inputs` speak, fed in order from a fresh state, each as
+/// its segments: what is heard, whatever else the inputs do.
+fn spoken_by(inputs: &[Input]) -> Vec<Vec<UtteranceSegment>> {
+    let mut state = SrState::new();
+    let mut spoken = Vec::new();
+    for input in inputs {
+        let (next, effects) = reduce(&state, input);
+        state = next;
+        spoken.extend(effects.into_iter().filter_map(|effect| match effect {
+            Effect::Speak(utterance) => Some(utterance.segments),
+            _ => None,
+        }));
+    }
+    spoken
+}
+
+#[test]
+fn a_console_window_is_announced_before_its_focus_whichever_outpost_reports_first() {
+    // Windows names a console window's owner as its shell, whose outpost
+    // reports the window on the foreground change; the console host's
+    // outpost reports the focus, and the window just before it, as the
+    // window of another process (`docs/parity.md`, "A window and its
+    // content in two processes"). Either outpost can reach Core first.
+    let shell = Pid(1);
+    let console_host = Pid(2);
+    let title = || node(1, Role::Window, Some("Build"), None, StateSet::new());
+    let from_shell = foreground_in(shell, foreground_window(10), title());
+    let from_host = foreground_in(console_host, foreground_window(10), title());
+    let text_area = || {
+        focus_in(
+            console_host,
+            foreground_window(10),
+            node(2, Role::Terminal, None, None, StateSet::new()),
+            Vec::new(),
+        )
+    };
+    let expected = vec![
+        vec![UtteranceSegment::label("Build"), role(Role::Window)],
+        vec![role(Role::Terminal)],
+    ];
+    assert_eq!(
+        spoken_by(&[from_shell.clone(), from_host.clone(), text_area()]),
+        expected,
+        "the shell's report first"
+    );
+    assert_eq!(
+        spoken_by(&[from_host, text_area(), from_shell]),
+        expected,
+        "the console host's focus first"
+    );
+}
+
+#[test]
+fn a_settings_page_is_announced_before_its_focus_whichever_outpost_reports_first() {
+    // The Settings app: the frame window is `ApplicationFrameHost`'s, the
+    // page and its focus `SystemSettings`'s, whose outpost reports the frame
+    // just before the focus. Either outpost can reach Core first.
+    let frame_host = Pid(1);
+    let settings = Pid(2);
+    let frame = || node(1, Role::Pane, Some("Settings"), None, StateSet::new());
+    let from_frame_host = foreground_in(frame_host, foreground_window(10), frame());
+    let from_settings = foreground_in(settings, foreground_window(10), frame());
+    let search = || {
+        focus_in(
+            settings,
+            foreground_window(10),
+            node(
+                3,
+                Role::EditableText,
+                Some("Search box"),
+                None,
+                StateSet::new(),
+            ),
+            vec![node(
+                2,
+                Role::Window,
+                Some("Settings"),
+                None,
+                StateSet::new(),
+            )],
+        )
+    };
+    let expected = vec![
+        vec![UtteranceSegment::label("Settings")],
+        vec![UtteranceSegment::label("Settings"), role(Role::Window)],
+        vec![
+            UtteranceSegment::label("Search box"),
+            role(Role::EditableText),
+        ],
+    ];
+    assert_eq!(
+        spoken_by(&[from_frame_host.clone(), from_settings.clone(), search()]),
+        expected,
+        "the frame host's report first"
+    );
+    assert_eq!(
+        spoken_by(&[from_settings, search(), from_frame_host]),
+        expected,
+        "the page's focus first"
     );
 }
 

@@ -134,7 +134,9 @@ pub struct SpeechManagerConfig {
 /// Commands the queue thread accepts, from the manager, the settings host, and
 /// (as `SynthFinished`) the synth thread itself.
 pub(crate) enum QueueEvent {
-    Speak(UtteranceId, Box<Utterance>),
+    /// Speak an utterance, caused by the key press numbered as given, if a
+    /// key press caused it ([`SpeechManager::speak_for_key`]).
+    Speak(UtteranceId, Box<Utterance>, Option<u64>),
     ApplySetting {
         id: SettingId,
         value: SettingValue,
@@ -145,14 +147,18 @@ pub(crate) enum QueueEvent {
         reply: Sender<Result<DriverState, SynthError>>,
     },
     SynthFinished,
-    /// Cancel everything, as a key press does.
-    Cancel,
+    /// Cancel everything, as a key press does; the key press's number, when
+    /// a key press cancels, fences off speech earlier presses cause that
+    /// arrives after it ([`SpeechControl::cancel_through`]).
+    Cancel(Option<u64>),
     /// Pause speech, or resume it when paused.
     TogglePause,
     /// The focus moved: drop focus speech that no longer holds.
     DropExpired(FocusNow),
     /// The mixer ended an utterance it had been handed.
     Ended(UtteranceId),
+    /// Run this once every event sent before it has been handled.
+    AfterQueued(Box<dyn FnOnce() + Send>),
     Shutdown,
 }
 
@@ -166,7 +172,19 @@ pub struct SpeechControl {
 impl SpeechControl {
     /// Cancels current and queued speech, and ends a pause.
     pub fn cancel(&self) {
-        let _ = self.queue_tx.send(QueueEvent::Cancel);
+        let _ = self.queue_tx.send(QueueEvent::Cancel(None));
+    }
+
+    /// Cancels current and queued speech, and ends a pause, for key press
+    /// `key` (its key sequence number): speech an earlier key press caused
+    /// that reaches the manager after this cancel ends cancelled, unspoken,
+    /// as it would have had it come first. A key press cancels
+    /// at once, while what the press before it caused may still be on its
+    /// way; NVDA runs a key's cancel in order behind the earlier keys'
+    /// scripts (`docs/nvda/input.md`, "What a key press does to speech"),
+    /// and this keeps that order without making the cancel wait.
+    pub fn cancel_through(&self, key: u64) {
+        let _ = self.queue_tx.send(QueueEvent::Cancel(Some(key)));
     }
 
     /// Pauses speech where it is, or resumes it when paused.
@@ -333,20 +351,8 @@ impl SpeechManager {
         let queue_handle = std::thread::Builder::new()
             .name("verbatim-speech-queue".to_owned())
             .spawn(move || {
-                QueueThread {
-                    synth_tx,
-                    source,
-                    events: queue_events,
-                    theme,
-                    next_lane: VecDeque::new(),
-                    queued_lane: VecDeque::new(),
-                    in_flight: None,
-                    handed_on: VecDeque::new(),
-                    paused: false,
-                    paused_flag: queue_paused,
-                    focus_now: None,
-                }
-                .run(&queue_rx);
+                QueueThread::new(synth_tx, source, queue_events, theme, queue_paused)
+                    .run(&queue_rx);
             })
             .map_err(|error| {
                 SynthError::Unavailable(format!("failed to start queue thread: {error}"))
@@ -383,11 +389,36 @@ impl SpeechManager {
         id
     }
 
+    /// Runs `done` on the speech queue's thread once it has taken in every
+    /// utterance given to it before this call, each announced as queued to
+    /// the speech events: the end-to-end harness's barrier, which then knows
+    /// that everything said so far has been announced. Non-blocking.
+    pub fn after_queued(&self, done: impl FnOnce() + Send + 'static) {
+        let _ = self.queue_tx.send(QueueEvent::AfterQueued(Box::new(done)));
+    }
+
+    /// Speaks `utterance`, as [`SpeechManager::speak`] does, caused by key
+    /// press `key` (its key sequence number), if a key press caused it:
+    /// when a later key press has cancelled speech before it arrives
+    /// ([`SpeechControl::cancel_through`]), it ends cancelled, unspoken, as
+    /// if it had come before the cancel.
+    #[allow(
+        clippy::must_use_candidate,
+        reason = "most speech is spoken without following its utterance"
+    )]
+    pub fn speak_for_key(&self, utterance: Utterance, key: Option<u64>) -> UtteranceId {
+        let id = mint_utterance();
+        let _ = self
+            .queue_tx
+            .send(QueueEvent::Speak(id, Box::new(utterance), key));
+        id
+    }
+
     /// Enqueues `utterance` under an id already minted.
     fn speak_as(&self, id: UtteranceId, utterance: Utterance) {
         let _ = self
             .queue_tx
-            .send(QueueEvent::Speak(id, Box::new(utterance)));
+            .send(QueueEvent::Speak(id, Box::new(utterance), None));
     }
 
     /// The handle on the active theme, which the settings dialog switches.
@@ -740,13 +771,46 @@ struct QueueThread {
     /// Where the focus was last reported, for judging waiting focus speech
     /// when its turn comes.
     focus_now: Option<FocusNow>,
+    /// The number of the latest key press that cancelled speech: speech
+    /// an earlier key press caused is dropped when it arrives.
+    cancelled_through: u64,
 }
 
 impl QueueThread {
+    /// A queue thread with nothing waiting, speaking through `synth_tx`
+    /// into `source`.
+    fn new(
+        synth_tx: Sender<SynthCommand>,
+        source: Source,
+        events: Option<Arc<dyn SpeechEvents>>,
+        theme: Box<dyn Presenter>,
+        paused_flag: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            synth_tx,
+            source,
+            events,
+            theme,
+            next_lane: VecDeque::new(),
+            queued_lane: VecDeque::new(),
+            in_flight: None,
+            handed_on: VecDeque::new(),
+            paused: false,
+            paused_flag,
+            focus_now: None,
+            cancelled_through: 0,
+        }
+    }
+
     fn run(mut self, queue_rx: &Receiver<QueueEvent>) {
         while let Ok(event) = queue_rx.recv() {
             match event {
-                QueueEvent::Speak(id, utterance) => self.speak(id, &utterance),
+                QueueEvent::Speak(id, utterance, key)
+                    if key.is_some_and(|key| key < self.cancelled_through) =>
+                {
+                    self.fenced_off(id, &utterance);
+                }
+                QueueEvent::Speak(id, utterance, _) => self.speak(id, &utterance),
                 QueueEvent::ApplySetting { id, value } => {
                     let _ = self.synth_tx.send(SynthCommand::SetSetting { id, value });
                 }
@@ -764,7 +828,12 @@ impl QueueThread {
                     self.in_flight = None;
                     self.pump();
                 }
-                QueueEvent::Cancel => self.cancel_everything(),
+                QueueEvent::Cancel(key) => {
+                    if let Some(key) = key {
+                        self.cancelled_through = self.cancelled_through.max(key);
+                    }
+                    self.cancel_everything();
+                }
                 QueueEvent::TogglePause => {
                     self.paused = !self.paused;
                     self.source.pause(self.paused);
@@ -772,6 +841,7 @@ impl QueueThread {
                 }
                 QueueEvent::DropExpired(now) => self.drop_expired(now),
                 QueueEvent::Ended(id) => self.handed_on.retain(|(handed, _)| *handed != id),
+                QueueEvent::AfterQueued(done) => done(),
                 QueueEvent::Shutdown => {
                     self.cancel_everything();
                     let _ = self.synth_tx.send(SynthCommand::Shutdown);
@@ -843,6 +913,25 @@ impl QueueThread {
     }
 
     /// Reports waiting sequences cancelled.
+    /// Ends an utterance an earlier key press caused that arrived after a
+    /// later key press's cancel: announced as queued and at once as
+    /// cancelled, unspoken, exactly as if it had come before the cancel.
+    fn fenced_off(&self, id: UtteranceId, utterance: &Utterance) {
+        let sequence = self.theme.flatten(utterance, id);
+        trace!(
+            target: "verbatim::speech",
+            utterance = %id,
+            trace_id = %sequence.trace_id,
+            cancelled_through = self.cancelled_through,
+            "utterance cancelled: a later key press cancelled speech before it arrived"
+        );
+        if let Some(events) = &self.events {
+            let now = Instant::now();
+            events.utterance_queued(id, sequence.trace_id, &sequence.text(), now);
+            events.utterance_ended(id, sequence.trace_id, &UtteranceEnding::Cancelled, now);
+        }
+    }
+
     fn end_waiting(&self, waiting: impl IntoIterator<Item = Waiting>) {
         let now = Instant::now();
         for waiting in waiting {

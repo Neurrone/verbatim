@@ -66,6 +66,17 @@ impl ManualDevice {
         self.state.0.lock().unwrap().written.clone()
     }
 
+    /// Returns once the mixer has written at least `frames` frames in all,
+    /// woken by each write. Fails at [`WAIT`], saying `what` did not happen.
+    fn wait_written(&self, frames: usize, what: &str) {
+        let (state, condvar) = &*self.state;
+        let state = state.lock().unwrap();
+        let (_state, wait) = condvar
+            .wait_timeout_while(state, WAIT, |state| state.written.len() < frames)
+            .unwrap();
+        assert!(!wait.timed_out(), "{what} within {WAIT:?}");
+    }
+
     /// Returns once the mixer has made a whole pass that began after this
     /// call, so everything the test did before it is reflected in what the
     /// mixer has written and reported (it reports during the pass, before
@@ -105,9 +116,12 @@ impl AudioDevice for ManualDevice {
     }
 
     fn write(&mut self, samples: &[f32]) -> Result<(), AudioError> {
-        let mut state = self.state.0.lock().unwrap();
+        let (state, condvar) = &*self.state;
+        let mut state = state.lock().unwrap();
         state.queued += u32::try_from(samples.len()).unwrap();
         state.written.extend_from_slice(samples);
+        // For `wait_written`, which waits on the same condition variable.
+        condvar.notify_all();
         Ok(())
     }
 
@@ -382,14 +396,9 @@ fn a_write_waits_while_the_source_is_too_far_ahead_of_playback() {
     // waits for room before letting go of it; so once the mixer has given
     // the device anything, the writer is waiting, and with nothing played
     // it has no room.
-    let deadline = std::time::Instant::now() + WAIT;
-    while harness.device.written().is_empty() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the mixer writes the first frames"
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    harness
+        .device
+        .wait_written(1, "the mixer writes the first frames");
     assert!(done_rx.try_recv().is_err(), "the write is held back");
     harness.play(10);
     done_rx
@@ -409,14 +418,9 @@ fn a_reopened_device_is_given_again_what_had_not_played() {
     // must be written again, so the utterance is still heard in full.
     harness.device.reopen.store(true, Ordering::SeqCst);
     harness.device.play(0);
-    let deadline = std::time::Instant::now() + WAIT;
-    while harness.device.written().len() < 16 {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the unplayed frames are written again"
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    harness
+        .device
+        .wait_written(16, "the unplayed frames are written again");
     harness.nothing_more();
     harness.play(6);
     assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Completed));
@@ -470,19 +474,22 @@ fn a_device_that_comes_back_in_another_format_fails_the_unheard_utterance() {
     harness.nothing_more();
 }
 
-/// Collects what the tap is given.
-struct Collected(Arc<Mutex<Vec<f32>>>);
+/// Collects what the tap is given, and wakes whoever waits on the
+/// condition variable each time it is given more.
+struct Collected(Arc<(Mutex<Vec<f32>>, Condvar)>);
 
 impl AudioTap for Collected {
     fn played(&mut self, samples: &[f32], _format: DeviceFormat) {
-        self.0.lock().unwrap().extend_from_slice(samples);
+        let (frames, fed) = &*self.0;
+        frames.lock().unwrap().extend_from_slice(samples);
+        fed.notify_all();
     }
 }
 
 #[test]
 fn the_tap_gets_exactly_what_played_and_never_what_was_cut_off() {
     let device = ManualDevice::default();
-    let tapped = Arc::new(Mutex::new(Vec::new()));
+    let tapped = Arc::new((Mutex::new(Vec::new()), Condvar::new()));
     let mixer = Mixer::start_with_tap(
         Box::new(device.clone()),
         Box::new(Collected(Arc::clone(&tapped))),
@@ -507,12 +514,15 @@ fn the_tap_gets_exactly_what_played_and_never_what_was_cut_off() {
 
     // Ten frames had been written to the device; only the five played are
     // recorded.
-    let deadline = std::time::Instant::now() + WAIT;
-    while tapped.lock().unwrap().len() < 5 && std::time::Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    let (frames, fed) = &*tapped;
+    let frames = frames.lock().unwrap();
+    let (frames, wait) = fed
+        .wait_timeout_while(frames, WAIT, |frames| frames.len() < 5)
+        .unwrap();
+    assert!(!wait.timed_out(), "the tap is given what played");
+    drop(frames);
     harness.device.settle();
-    assert_eq!(tapped.lock().unwrap().len(), 5);
+    assert_eq!(tapped.0.lock().unwrap().len(), 5);
 }
 
 /// A device that played some frames and then asked to be reopened, before
@@ -522,14 +532,7 @@ fn the_tap_gets_exactly_what_played_and_never_what_was_cut_off() {
 fn a_device_reopened_between_polls_is_not_given_again_what_it_played() {
     let harness = harness();
     harness.speak(1, 10);
-    let deadline = std::time::Instant::now() + WAIT;
-    while harness.device.written().len() < 10 {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the frames are written"
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    harness.device.wait_written(10, "the frames are written");
     {
         // Four frames play and the device asks to be reopened, with no
         // wake-up between, so the mixer sees both at its next poll.
@@ -538,14 +541,9 @@ fn a_device_reopened_between_polls_is_not_given_again_what_it_played() {
         harness.device.reopen.store(true, Ordering::SeqCst);
     }
     harness.device.play(0);
-    let deadline = std::time::Instant::now() + WAIT;
-    while harness.device.written().len() < 16 {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the unplayed frames are written again"
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    harness
+        .device
+        .wait_written(16, "the unplayed frames are written again");
     harness.device.settle();
     assert_eq!(
         harness.device.written().len(),
@@ -755,14 +753,9 @@ fn a_partly_heard_sound_goes_on_where_it_was_after_the_device_reopens() {
     // sound goes on from its fifth frame, so all of it is heard once.
     harness.device.reopen.store(true, Ordering::SeqCst);
     harness.device.play(0);
-    let deadline = std::time::Instant::now() + WAIT;
-    while harness.device.written().len() < 16 {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the unplayed frames are written again"
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    harness
+        .device
+        .wait_written(16, "the unplayed frames are written again");
     harness.play(6);
     let expected: Vec<f32> = ramp.iter().map(|value| level(*value)).collect();
     let written = harness.device.written();

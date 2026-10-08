@@ -543,15 +543,17 @@ fn capture(args: &[String]) -> io::Result<()> {
                 agent.launch_process(program, args, None, &[], None)?;
             }
             Step::Front { image, title } => {
-                let image = if image == ANY_IMAGE {
-                    titled_window_image(&mut agent, title.as_deref(), options.timeout)?
-                } else {
-                    Some(image.clone())
-                };
-                let taken = match image {
-                    Some(image) => {
-                        agent.bring_to_foreground(&image, title.as_deref(), options.timeout)?
-                    }
+                // The window, found by its image and title, is brought
+                // forward with SetForegroundWindow, which injects no input;
+                // Windows allows it when the agent injected the last input.
+                let window = agent.foreground_info()?.windows.into_iter().find(|window| {
+                    (image == ANY_IMAGE || window.image.eq_ignore_ascii_case(image))
+                        && title
+                            .as_deref()
+                            .is_none_or(|title| window.title.contains(title))
+                });
+                let taken = match window {
+                    Some(window) => agent.set_foreground(window.window)?,
                     None => false,
                 };
                 if !taken {
@@ -559,7 +561,9 @@ fn capture(args: &[String]) -> io::Result<()> {
                 }
             }
             Step::Gesture(identifier) => send_gesture(identifier)?,
-            Step::Type(text) => agent.type_text(text)?,
+            Step::Type(text) => {
+                agent.type_text(text)?;
+            }
         }
         if options.json {
             println!("{}", json!({"step": index, "label": step.label()}));
@@ -592,37 +596,6 @@ fn capture(args: &[String]) -> io::Result<()> {
         }
     }
     Ok(())
-}
-
-/// The image of the first visible window whose title contains `title`,
-/// waiting up to `timeout` for one to appear, for `--front *=<title>`: a
-/// console window belongs to the console host, or to the shell it runs,
-/// depending on how it was started, so the title is what names it.
-fn titled_window_image(
-    agent: &mut AgentClient,
-    title: Option<&str>,
-    timeout: Duration,
-) -> io::Result<Option<String>> {
-    let Some(title) = title else {
-        return Err(io::Error::other(format!(
-            "--front {ANY_IMAGE} needs a title: {ANY_IMAGE}=<title>"
-        )));
-    };
-    let deadline = Instant::now() + timeout;
-    loop {
-        let info = agent.foreground_info()?;
-        if let Some(window) = info
-            .windows
-            .iter()
-            .find(|window| window.title.contains(title))
-        {
-            return Ok(Some(window.image.clone()));
-        }
-        if Instant::now() >= deadline {
-            return Ok(None);
-        }
-        thread::sleep(POLL_INTERVAL);
-    }
 }
 
 /// Sends one gesture to the local Verbatim's control pipe.

@@ -23,8 +23,15 @@ pub struct TerminalOutput {
     /// The last line read before, changed in place since: a prompt that
     /// grew, or a progress bar rewritten. `None` when it is unchanged.
     pub changed: Option<LineChange>,
-    /// Lines that went by unread, between the changed line and
-    /// [`Self::lines`]. `None` when every new line is in `lines`.
+    /// When lines went by unread, the first new lines, oldest first, before
+    /// them: the start of a flood, which is spoken in full ("Lines spoken in
+    /// full"). Each as in [`Self::lines`], at most as many. Empty when every
+    /// new line is in `lines`.
+    #[serde(default)]
+    pub head: Vec<String>,
+    /// Lines that went by unread, between [`Self::head`] (or the changed
+    /// line) and [`Self::lines`]. `None` when every new line is in `head`
+    /// and `lines`.
     pub skipped: Option<Skipped>,
     /// The newest lines, oldest first, each without its trailing padding
     /// and at most [`MAX_TERMINAL_LINE_BYTES`]; an empty string is a blank
@@ -36,7 +43,10 @@ impl TerminalOutput {
     /// Whether nothing at all changed.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.changed.is_none() && self.skipped.is_none() && self.lines.is_empty()
+        self.changed.is_none()
+            && self.head.is_empty()
+            && self.skipped.is_none()
+            && self.lines.is_empty()
     }
 }
 
