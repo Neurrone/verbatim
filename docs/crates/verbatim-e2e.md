@@ -151,14 +151,15 @@ and the input methods above:
   then restores that window and sets it as the foreground, as its taskbar
   button does, and waits for it to take the foreground, so the launch does
   not depend on the agent having injected the last input (`docs/tooling.md`,
-  "Windows' foreground lock keeps launched applications behind");
-  `launch_target`, for msinfo32, opens its window in front as
-  `launch_titled` did before 2026-10-08;
+  "Windows' foreground lock keeps launched applications behind"); a
+  window that ignores the minimized show state, as msinfo32's does, is
+  minimized by the agent before it is restored;
   `launch_console(command, args, title)` starts a console program with its
   console window titled from its first frame (the launch's console title),
   which the console host scenarios use, opened minimized and inactive and
-  brought forward as `launch_titled` does; `launch_target` refuses to run when
-  a window so titled is already open; `launched_children` lists what the
+  brought forward as `launch_titled` does; `require_absent(title)` fails
+  when a window so titled is already open, for a program whose title is
+  not the run's own, such as msinfo32; `launched_children` lists what the
   last launched program started.
 - `bring_document_forward(name)` brings the Notepad document opened
   before launch to the foreground, as its taskbar button does;

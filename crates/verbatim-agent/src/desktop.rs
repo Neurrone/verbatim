@@ -186,16 +186,43 @@ pub fn minimize_all(timeout: Duration) -> (bool, ForegroundInfo) {
     )
 }
 
-/// Brings `window` to the foreground with `SetForegroundWindow`, restoring
-/// it first when it is minimized, as clicking its taskbar button does,
+/// Brings `window` to the foreground as clicking its taskbar button does,
 /// injecting no input, and returns whether it is the foreground window
 /// afterwards.
+///
+/// A minimized window is restored and then set as the foreground with
+/// `SetForegroundWindow`; Windows gives a window it restores from
+/// minimized the foreground whatever input came last. A restored window
+/// that is not already in front is minimized first, and restored once it
+/// is: `SetForegroundWindow` alone succeeds only while the agent may set
+/// the foreground, which it may only after injecting the last input
+/// (`docs/tooling.md`, "Windows' foreground lock keeps launched
+/// applications behind"). msinfo32 is such a window: it ignores the
+/// minimized show state it is launched with and opens restored and
+/// inactive (found 2026-10-09). Such a window is logged, at info, and the
+/// minimize is waited for on window events, up to [`MINIMIZE_LIMIT`].
 #[must_use]
 pub fn set_foreground(window: u64) -> bool {
     let window = HWND(usize::try_from(window).unwrap_or(0) as *mut c_void);
-    if is_minimized(window) {
+    // SAFETY: GetForegroundWindow has no preconditions.
+    let in_front = unsafe { GetForegroundWindow() } == window;
+    if !in_front && !is_minimized(window) {
+        let info = window_info(window);
+        tracing::info!(
+            class = info.class,
+            image = info.image,
+            title = info.title,
+            "a window to bring forward was restored and not in front; minimized before it is restored"
+        );
         // SAFETY: tolerates any handle; the return value is the window's
         // earlier visibility, not a failure.
+        let _ = unsafe { ShowWindow(window, SW_MINIMIZE) };
+        if !wait::until(|| is_minimized(window), MINIMIZE_LIMIT) {
+            return false;
+        }
+    }
+    if is_minimized(window) {
+        // SAFETY: as above.
         let _ = unsafe { ShowWindow(window, SW_RESTORE) };
     }
     // SAFETY: tolerates any handle; a stale one fails.
@@ -203,6 +230,10 @@ pub fn set_foreground(window: u64) -> bool {
     // SAFETY: GetForegroundWindow has no preconditions.
     set && unsafe { GetForegroundWindow() } == window
 }
+
+/// How long [`set_foreground`] waits for a window it minimized to be
+/// minimized: well within the client's read timeout.
+const MINIMIZE_LIMIT: Duration = Duration::from_secs(5);
 
 /// Whether `window` has a minimize box, so Show Desktop minimizes it.
 fn minimizable(window: HWND) -> bool {

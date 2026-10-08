@@ -147,10 +147,13 @@ pub enum Request {
         /// The parent's OS process id.
         pid: u32,
     },
-    /// Brings the window `window` names to the foreground with
-    /// `SetForegroundWindow`, injecting no input: it succeeds when Windows
-    /// lets the agent set the foreground, as it does for the program that
-    /// injected the last input. Answered by [`ReplyPayload::Foreground`].
+    /// Brings the window `window` names to the foreground as clicking its
+    /// taskbar button does, injecting no input: a window not already in
+    /// front is restored from minimized, after being minimized first when
+    /// it was not, and then set as the foreground with
+    /// `SetForegroundWindow`, which Windows allows for a window it has just
+    /// restored whatever input came last. Answered by
+    /// [`ReplyPayload::Foreground`].
     SetForeground {
         /// The window's handle, as [`WindowInfo::window`] reports it.
         window: u64,

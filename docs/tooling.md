@@ -977,8 +977,10 @@ foreground (`AllowSetForegroundWindow`), which Windows permits while the
 agent injected the last input; every scenario's keys go through the agent,
 so within a run it does. After you type or click on the machine yourself,
 it does not until the agent has injected input again, and a scenario that
-launches a window first then fails saying Windows did not let the agent
-allow it. Run a scenario that sends keys first, such as
+opens a File Explorer folder or a Settings page first
+(`Scenario::open_folder`, `Scenario::open_settings_page`), the two
+launches that still open their windows in front, then fails saying Windows
+did not let the agent allow it. Run a scenario that sends keys first, such as
 `lock_key_announcements`. Never tap keys by hand, or have a script send
 keys, to fix it, and note that the harness itself never injects a key to
 take the foreground: a window that refuses the foreground fails the test.
@@ -1000,9 +1002,19 @@ console host and Windows Terminal scenarios open theirs the same way
 honor the launch's `SW_SHOWMINNOACTIVE`, the console host for the console
 window it creates and Windows Terminal for its first window, which the
 harness found minimized when it appeared, so Windows Terminal needs no
-option of its own. Only `system_information_tree`'s msinfo32 still opens
-in front (`Scenario::launch_target`), so it still needs the agent's input
-to have come last;
+option of its own. `system_information_tree` launches msinfo32 through
+`launch_titled` too, but msinfo32 ignores the show state and opens its
+window restored and inactive. The agent's `SetForeground` therefore
+minimizes a window that is restored and not in front, waits on window
+events until it is minimized, and only then restores it and sets it as
+the foreground: `SetForegroundWindow` on a restored background window
+needs the agent's right, while a window restored from minimized takes the
+foreground at once. Each such window is logged by the agent at info. After
+one zero-pixel mouse move injected from another process, the agent's
+`SetForeground` on msinfo32's restored, inactive window answered `false`
+before this change and `true` after it, every time; before it, the window
+took the foreground a moment after the `false` answer, which the harness
+had already failed on.
 `phase6-design.md`, "Test isolation and the foreground lock (2026-10-08)",
 has the evidence.
 

@@ -31,7 +31,8 @@ pub(crate) use super::no_teardown as teardown;
 const TITLE: &str = "System Information";
 
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    scenario.launch_target("msinfo32.exe", &[], TITLE)?;
+    scenario.require_absent(TITLE)?;
+    scenario.launch_titled("msinfo32.exe", &[], TITLE, true)?;
     Ok(ScenarioState::None)
 }
 

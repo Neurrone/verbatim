@@ -2247,6 +2247,20 @@ Made while Dickson was away (2026-10-09), each to be confirmed:
   both test windows) rather than the 40 rows the plan named, so the
   alternate screen is exactly the window: the script draws as many rows as
   the window has.
+- System Information without the foreground right: the minimize before
+  the restore is in the agent's `SetForeground`, not the harness's
+  `bring_forward`, so every caller (launches, Notepad's documents, the
+  tab closing at cleanup) brings a window forward the same way and the
+  protocol needs no minimize request. A window already in front is left
+  as it is. The wait for the minimize is bounded at five seconds, well
+  inside the client's read timeout.
+- System Information: its title is not the run's own, so the scenario
+  checks no such window is open (`Scenario::require_absent`, now public)
+  before `launch_titled`, as `launch_target` did.
+- `set_foreground` still reads `GetForegroundWindow` straight after
+  `SetForegroundWindow`; on the old path that read the foreground mid-change.
+  Left as it is, since the new path restores the window before the read;
+  waiting for the foreground event instead is a follow-up.
 
 ## Language audit (2026-10-08)
 
@@ -2442,3 +2456,5 @@ The latency ledger kept the stages of the last message received on a trace, mixe
 Outcome for the terminals (2026-10-08): the console host and Windows Terminal scenarios open their windows minimized and inactive and bring them forward as `launch_titled` does. Both honor the launch's `SW_SHOWMINNOACTIVE`: the console host for the console window it creates, and Windows Terminal for its first window, which the harness found minimized when it appeared (`minimized` in the agent's window report), so no Windows Terminal option was needed. After one zero-pixel mouse move injected from a scratch process, `conhost_short_output` and `windows_terminal_short_output` failed in setup on the old path ("Windows did not let the agent allow its launch to take the foreground") and passed on the new one.
 
 Decision (Dickson, 2026-10-08): the machine's foreground lock timeout stays as it is. The remaining launches (System Information, the console host and Windows Terminal) are made to work the new way too, without the agent's foreground right, starting with finding why msinfo32's restore is refused.
+
+Outcome for System Information (2026-10-09): msinfo32's restore was never refused; it was never minimized. msinfo32 ignores the minimized show state it is launched with and opens its window restored and inactive, and the agent's `SetForeground` restored only a minimized window, so it went straight to `SetForegroundWindow`, which a restored background window takes only while the agent has the foreground right (Dickson, live). The agent's `SetForeground` now minimizes a window that is restored and not already in front, waits on window events until it is minimized, and then restores it and sets it as the foreground, logging each such window at info; `system_information_tree` launches msinfo32 through `Scenario::launch_titled`, after `Scenario::require_absent` checks no System Information window is open, and `Scenario::launch_target` and `require_launched_in_front` are gone. The console host and Windows Terminal launches (`launch_console`, `launch_owning_window`) already went through the same `bring_forward` and so through the same `SetForeground`. Evidence, each after one zero-pixel mouse move injected from a scratch process: with msinfo32's window restored and inactive behind a scratch window, the agent's `SetForeground` answered `false` on the old code in three of three tries and `true` on the new in three of three, the new agent logging the minimize each time. On the old code the window took the foreground a moment after the `false` answer, so on this machine the old failure was most likely `set_foreground` reading `GetForegroundWindow` while the change was still under way rather than a refusal; a window restored from minimized is in front before the read. `system_information_tree` passed five times of five after such a move. Every `conhost_` and `windows_terminal_` scenario was run once after one: all 36 came forward and passed setup, and 34 passed; `conhost_scrollback_overflow` and `conhost_scrollback_overflow_during_group` failed in their flood's speech ("skipped more than 8972 lines", where 8971 and the lines after were expected) and both passed when run again, so they are the console host's intermittent flood, not the launch. In those five runs msinfo32 took the foreground by itself as it opened, the desktop being in front (a scratch probe saw the same with no Verbatim running), so they did not need the new path; the direct `SetForeground` comparison is what shows it works. Two launches still open their windows in front and need the agent's right: `Scenario::open_folder` (File Explorer) and `Scenario::open_settings_page` (Settings).

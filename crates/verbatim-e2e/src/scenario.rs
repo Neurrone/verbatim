@@ -651,9 +651,10 @@ impl Scenario {
     }
 
     /// Launches `command`, which opens a window titled with `title`, a
-    /// title of this run's own ([`harness_marker`]), its first window
-    /// minimized and inactive, then brings that window forward as clicking
-    /// its taskbar button does, and waits for it to take the foreground.
+    /// title of this run's own ([`harness_marker`]) or one no window had
+    /// before ([`Scenario::require_absent`]), its first window minimized
+    /// and inactive, then brings that window forward as clicking its
+    /// taskbar button does, and waits for it to take the foreground.
     /// The window is closed by its title at cleanup, and when
     /// `owner_exits`, the process that owned it must exit then.
     ///
@@ -662,7 +663,9 @@ impl Scenario {
     /// (`docs/tooling.md`, "Windows' foreground lock keeps launched
     /// applications behind"); a minimized window restored and set as the
     /// foreground, as Notepad's documents are brought forward, takes it
-    /// whatever input came last.
+    /// whatever input came last. A program that ignores the minimized show
+    /// state, as msinfo32 does, is minimized by the agent before it is
+    /// restored.
     ///
     /// # Errors
     ///
@@ -783,57 +786,6 @@ impl Scenario {
     ) -> io::Result<WindowInfo> {
         let launch = self.agent.launch_console(command, args, title)?;
         self.bring_forward(launch, title, true)
-    }
-
-    /// Records `launch` for cleanup, its window titled `title`, and waits
-    /// for that window to take the foreground.
-    fn require_launched_in_front(
-        &mut self,
-        launch: AgentLaunch,
-        title: &str,
-        owner_exits: bool,
-    ) -> io::Result<WindowInfo> {
-        self.launched.push(Launched {
-            pid: launch.pid,
-            title: Some(title.to_owned()),
-            owners: Vec::new(),
-            owners_exit: owner_exits,
-            document: None,
-            notepad: false,
-            also_exit: Vec::new(),
-        });
-        self.require_in_front(title, launch)
-    }
-
-    /// Launches `command` with `args`, which opens a window whose title
-    /// contains `title`, and waits for it to take the foreground. The
-    /// window is closed by that title at cleanup and its owner must exit;
-    /// no window of the program may be open before, so the window is the
-    /// scenario's own.
-    ///
-    /// The window opens in front, as [`Scenario::launch_titled`]'s did
-    /// before 2026-10-08, so it takes the foreground only while the agent
-    /// injected the last input. Launched minimized and brought forward as
-    /// `launch_titled` does, msinfo32, its one user, could not be brought
-    /// to the foreground once other input had come (found 2026-10-08; why
-    /// is not yet known), where it passes this way whenever the agent's
-    /// input came last.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if a window so titled is already open, the agent
-    /// cannot start the program, or its window does not take the
-    /// foreground.
-    pub fn launch_target(
-        &mut self,
-        command: &str,
-        args: &[&str],
-        title: &str,
-    ) -> io::Result<WindowInfo> {
-        self.require_absent(title)?;
-        let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
-        let launch = self.agent.launch_process(command, &args, None, &[], None)?;
-        self.require_launched_in_front(launch, title, true)
     }
 
     /// Brings the harness document `name`, which Notepad opened before
@@ -1000,8 +952,13 @@ impl Scenario {
     }
 
     /// Fails unless no visible window, cloaked ones aside, is titled with
-    /// `title`.
-    fn require_absent(&mut self, title: &str) -> io::Result<()> {
+    /// `title`: for a scenario that launches a program whose window has a
+    /// title not of this run's own, so the window is the scenario's.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails or such a window is open.
+    pub fn require_absent(&mut self, title: &str) -> io::Result<()> {
         let info = self.agent.foreground_info()?;
         // A cloaked window is not shown: a suspended app keeps its window
         // so, as the Settings app does once its window is closed.

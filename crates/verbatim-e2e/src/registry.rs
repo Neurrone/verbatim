@@ -223,13 +223,13 @@ impl Group {
 /// Scenario-specific state a [`ScenarioDef::setup`] creates and its matching
 /// [`ScenarioDef::teardown`] restores. `None` when a scenario needs nothing
 /// beyond `Scenario::launch` itself; `TargetPid` names a process launched via
-/// [`Scenario::launch_target`] that teardown must kill.
+/// [`Scenario::launch_titled`] that teardown must kill.
 #[derive(Debug)]
 pub enum ScenarioState {
     /// No extra state: `setup` did nothing beyond validating preconditions.
     None,
     /// The pid of a target application `setup` launched via
-    /// [`Scenario::launch_target`], for `teardown` to kill.
+    /// [`Scenario::launch_titled`], for `teardown` to kill.
     TargetPid(u32),
     /// Names `setup` recorded for `teardown`, such as the folders that were
     /// there before the scenario.

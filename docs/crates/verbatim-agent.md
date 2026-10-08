@@ -41,7 +41,9 @@ Public API:
   - The desktop: `ForegroundInfo` (the foreground window and the visible
     top-level windows, each with its handle, owning pid, title, class,
     program, and whether it is cloaked or minimized), `SetForeground`
-    (`SetForegroundWindow` on a window, injecting no input),
+    (restoring a window from minimized, minimizing it first when it is
+    restored and not in front, then `SetForegroundWindow`, injecting no
+    input, so it works whatever input came last),
     `WaitForWindow` with a `WindowCondition` (`Foreground`, optionally
     requiring the title to mark unsaved changes or not; `NotForeground`;
     `Absent`; `AllMinimized`, where a cloaked window, kept but not shown,
