@@ -60,8 +60,14 @@ fn stuck_child(args: &[String]) -> ! {
 fn a_child_that_does_not_exit_in_time_is_killed_and_the_kill_is_reported() {
     let (events_tx, events) = unbounded();
     let exe = std::env::current_exe().expect("this test binary's path");
-    let supervisor = Supervisor::with_executable(events_tx, OutpostOptions::default(), exe, LIMIT)
-        .expect("the supervisor starts");
+    let supervisor = Supervisor::with_executable(
+        events_tx,
+        OutpostOptions::default(),
+        exe,
+        LIMIT,
+        std::sync::Arc::default(),
+    )
+    .expect("the supervisor starts");
     match events.recv_timeout(READY_TIMEOUT) {
         Ok(OutpostMessage::ListenerReady { replacement: false }) => {}
         Ok(other) => panic!("the supervisor said {other:?} before the listener was ready"),

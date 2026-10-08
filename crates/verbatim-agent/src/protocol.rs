@@ -30,10 +30,20 @@ use serde::{Deserialize, Serialize};
 /// ([`Request::WaitForWindow`], [`Request::WaitForExit`],
 /// [`Request::WaitForFile`], [`Request::WaitForEvent`]),
 /// [`Request::SetForeground`], [`Request::ChildProcesses`],
-/// [`Request::EndLaunched`], and [`Request::CreateEvent`]. A test run
-/// against an older agent is refused at `Hello` instead of losing its
-/// connection mid-run.
-pub const AGENT_PROTOCOL_VERSION: u32 = 10;
+/// [`Request::EndLaunched`], and [`Request::CreateEvent`]; version 11
+/// added `ignore_foreign_terminals` to [`Request::LaunchProcess`] and
+/// `ignored` to its answer, so the owner's own Windows Terminal is never
+/// read by the Verbatim under test. A test run against an older agent is
+/// refused at `Hello` instead of losing its connection mid-run, or running
+/// without the exclusion.
+pub const AGENT_PROTOCOL_VERSION: u32 = 11;
+
+/// The environment variable that names, to the Verbatim under test, the
+/// processes it ignores entirely (`ignore_foreign_terminals` in
+/// [`Request::LaunchProcess`]): their pids, separated by commas. The same
+/// name as `verbatim_outpost::supervisor::IGNORE_PIDS_ENV`, which this crate
+/// does not depend on.
+pub const IGNORE_PIDS_ENV: &str = "VERBATIM_IGNORE_PIDS";
 
 /// The default TCP port the agent listens on.
 ///
@@ -106,6 +116,16 @@ pub enum Request {
         /// inactive, for a caller that brings it forward once it is ready.
         #[serde(default)]
         minimized: bool,
+        /// For a launch of Verbatim: whether to name, in its
+        /// `VERBATIM_IGNORE_PIDS`, every `WindowsTerminal.exe` process the
+        /// agent did not launch, and the `OpenConsole.exe` processes they
+        /// host, so the Verbatim under test never reads the owner's own
+        /// Windows Terminal. The agent holds those processes open for as
+        /// long as it keeps the launch, so their pids name no other
+        /// process meanwhile. The portable Windows Terminal a scenario
+        /// launches is in the agent's jobs, and is not named.
+        #[serde(default)]
+        ignore_foreign_terminals: bool,
     },
     /// Terminates a process by pid.
     KillProcess {
@@ -390,6 +410,10 @@ pub enum ReplyPayload {
         /// may (`AllowSetForegroundWindow`). It does when the agent may set
         /// the foreground itself, such as when it injected the last input.
         foreground_allowed: bool,
+        /// The pids named to the process as ones to ignore
+        /// (`ignore_foreign_terminals`), empty otherwise.
+        #[serde(default)]
+        ignored: Vec<u32>,
     },
     /// Answer to [`Request::KillProcess`].
     Killed(KillOutcome),
@@ -684,6 +708,7 @@ mod tests {
                 stderr_to: Some(r"C:\VerbatimLab\verbatim\stderr-e2e.log".to_owned()),
                 console_title: Some("A console".to_owned()),
                 minimized: true,
+                ignore_foreign_terminals: true,
             },
         };
         let frame = Frame::Reply {
@@ -691,6 +716,7 @@ mod tests {
             payload: ReplyPayload::Launched {
                 pid: 4242,
                 foreground_allowed: true,
+                ignored: vec![29864, 31000],
             },
         };
 

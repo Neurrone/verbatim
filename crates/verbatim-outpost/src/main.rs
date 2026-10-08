@@ -14,11 +14,13 @@
 //!   outpost watches for its whole life (decision D9: fixed at spawn, never
 //!   retargeted). Commands are read from `--pipe-in`, messages written to
 //!   `--pipe-out`.
-//! - `--listener --pipe-in <handle> --pipe-out <handle>`: the focus-listener
-//!   mode (decision D13), spawned by the same supervisor into its dedicated
-//!   slot with no target pid. It holds the desktop-global UIA focus
-//!   registration and the global MSAA hooks and forwards each focus fact to
-//!   Core; the same pipe conventions apply.
+//! - `--listener --pipe-in <handle> --pipe-out <handle> [--ignore-pids
+//!   <pid,pid>]`: the focus-listener mode (decision D13), spawned by the
+//!   same supervisor into its dedicated slot with no target pid. It holds
+//!   the desktop-global UIA focus registration and the global MSAA hooks and
+//!   forwards each focus fact to Core, except those of the processes
+//!   `--ignore-pids` names, which Verbatim ignores entirely; the same pipe
+//!   conventions apply.
 //! - `--attach <pid>`: a dev mode that watches `<pid>` directly and prints
 //!   outbound messages as JSON lines to stdout, for standalone testing without
 //!   Core.
@@ -77,7 +79,16 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Some(Mode::Listener { pipe_in, pipe_out }) => {
+        Some(Mode::Listener {
+            pipe_in,
+            pipe_out,
+            ignore_pids,
+        }) => {
+            // Held before anything is installed; Core holds them too, so
+            // these pids still name the processes Core was told of.
+            let ignored = verbatim_outpost::supervisor::IgnoredProcesses::hold(
+                verbatim_outpost::supervisor::parse_pids(&ignore_pids),
+            );
             // SAFETY: the supervisor passes the values of the pipe ends it
             // created for this process, which inherited them and uses them
             // nowhere else; `inherited_pipes` checks that they are distinct
@@ -90,7 +101,7 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            match run_listener(Box::new(reader), Box::new(writer)) {
+            match run_listener(Box::new(reader), Box::new(writer), ignored) {
                 Ok(()) => end_without_detach(0),
                 Err(error) => {
                     report_error!("listener pipe loop ended with error: {error}");
@@ -109,7 +120,7 @@ fn main() -> ExitCode {
             report_error!(
                 "verbatim-outpost is spawned by verbatim.exe. Usage:\n  \
                  verbatim-outpost --pipe-in <handle> --pipe-out <handle> --target-pid <pid> [--classic-uia]\n  \
-                 verbatim-outpost --listener --pipe-in <handle> --pipe-out <handle>\n  \
+                 verbatim-outpost --listener --pipe-in <handle> --pipe-out <handle> [--ignore-pids <pid,pid>]\n  \
                  verbatim-outpost --attach <pid> [--classic-uia]   (dev mode: prints JSON to stdout)"
             );
             ExitCode::FAILURE
@@ -165,6 +176,8 @@ enum Mode {
     Listener {
         pipe_in: usize,
         pipe_out: usize,
+        /// The pids of the processes to ignore, separated by commas.
+        ignore_pids: String,
     },
     Attach {
         pid: u32,
@@ -180,6 +193,7 @@ fn parse_args(args: &[String]) -> Option<Mode> {
     let mut target_pid = None;
     let mut attach = None;
     let mut listener = false;
+    let mut ignore_pids = String::new();
     let mut options = OutpostOptions::default();
     let mut index = 1;
     while index < args.len() {
@@ -188,6 +202,7 @@ fn parse_args(args: &[String]) -> Option<Mode> {
             "--pipe-out" => pipe_out = args.get(index + 1).and_then(|v| v.parse().ok()),
             "--target-pid" => target_pid = args.get(index + 1).and_then(|v| v.parse().ok()),
             "--attach" => attach = args.get(index + 1).and_then(|v| v.parse().ok()),
+            "--ignore-pids" => ignore_pids = args.get(index + 1).cloned().unwrap_or_default(),
             // A bare flag, not a valued option; do not consume a following arg.
             "--listener" => {
                 listener = true;
@@ -208,7 +223,11 @@ fn parse_args(args: &[String]) -> Option<Mode> {
     }
     if listener {
         return match (pipe_in, pipe_out) {
-            (Some(pipe_in), Some(pipe_out)) => Some(Mode::Listener { pipe_in, pipe_out }),
+            (Some(pipe_in), Some(pipe_out)) => Some(Mode::Listener {
+                pipe_in,
+                pipe_out,
+                ignore_pids,
+            }),
             _ => None,
         };
     }

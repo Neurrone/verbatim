@@ -96,7 +96,15 @@ Public API:
   leaves its message; `console_title` titles the console window a console
   program opens from its first frame (`STARTUPINFO`'s title), since the
   console host started directly otherwise shows its own path until the
-  shell sets a title. Both fields default when omitted on the wire. A
+  shell sets a title. Both fields default when omitted on the wire.
+  `ignore_foreign_terminals`, set for a launch of Verbatim (protocol
+  version 11), names to the child, in `VERBATIM_IGNORE_PIDS`, every
+  `WindowsTerminal.exe` process outside the agent's jobs and the
+  `OpenConsole.exe` processes they host
+  (`process::foreign_terminal_processes`, each opened and checked to run
+  the image it was listed with), holds them open with the launch's entry
+  so their pids name no other process meanwhile, and answers their pids in
+  `Launched`'s `ignored`. A
   launch without a `console_title` is started with `CREATE_NO_WINDOW`: a
   console program, such as Verbatim, mockapp, ffmpeg, or the Windows
   PowerShell that shows the harness's Windows Forms text box, gets a

@@ -200,9 +200,90 @@ pub fn launch(
             child,
             job,
             finished_at: None,
+            held: Vec::new(),
         },
     );
     Ok((pid, foreground_allowed))
+}
+
+/// Keeps `handles` open with the launch of `pid`, for as long as its entry
+/// is kept.
+pub(crate) fn keep_with_launch(pid: u32, handles: impl IntoIterator<Item = OwnedHandle>) {
+    if let Some(entry) = LAUNCHED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get_mut(&pid)
+    {
+        entry.held.extend(handles);
+    }
+}
+
+/// Every `WindowsTerminal.exe` process the agent did not launch, and the
+/// `OpenConsole.exe` processes those host (their children), each opened and
+/// checked to run the image it was listed with, so the pid names the
+/// process found: the owner's own Windows Terminal, which the Verbatim
+/// under test is told to ignore. The portable copy a scenario launches is
+/// in the agent's jobs, and so is left out.
+///
+/// # Errors
+///
+/// Returns an error if the system's process list cannot be read.
+pub(crate) fn foreign_terminal_processes() -> io::Result<Vec<(u32, OwnedHandle)>> {
+    const TERMINAL: &str = "WindowsTerminal.exe";
+    const CONSOLE: &str = "OpenConsole.exe";
+    let processes = all_processes()?;
+    let terminals: Vec<u32> = processes
+        .iter()
+        .filter(|(pid, _, image)| image.eq_ignore_ascii_case(TERMINAL) && !in_launched_job(*pid))
+        .map(|(pid, _, _)| *pid)
+        .collect();
+    let consoles = processes.iter().filter(|(pid, parent, image)| {
+        image.eq_ignore_ascii_case(CONSOLE) && terminals.contains(parent) && !in_launched_job(*pid)
+    });
+    let wanted = terminals
+        .iter()
+        .map(|&pid| (pid, TERMINAL))
+        .chain(consoles.map(|(pid, _, _)| (*pid, CONSOLE)));
+    let mut held = Vec::new();
+    for (pid, image) in wanted {
+        let Some(handle) =
+            open_process(pid, PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION)
+        else {
+            continue; // It exited since the list was read.
+        };
+        // SAFETY: the handle was just returned by OpenProcess and is owned
+        // here alone.
+        let handle = unsafe { OwnedHandle::from_raw_handle(handle.0) };
+        if image_name_of(&handle).is_some_and(|name| name.eq_ignore_ascii_case(image)) {
+            held.push((pid, handle));
+        }
+    }
+    Ok(held)
+}
+
+/// Every process: its pid, its parent's pid, and its image name.
+fn all_processes() -> io::Result<Vec<(u32, u32, String)>> {
+    // SAFETY: snapshots every process; the handle is closed below.
+    let snapshot =
+        unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.map_err(io::Error::other)?;
+    let mut entry = PROCESSENTRY32W {
+        dwSize: u32::try_from(size_of::<PROCESSENTRY32W>()).unwrap_or(u32::MAX),
+        ..Default::default()
+    };
+    let mut processes = Vec::new();
+    // SAFETY: `snapshot` is open and `entry` has its size set.
+    let mut has_entry = unsafe { Process32FirstW(snapshot, &raw mut entry) }.is_ok();
+    while has_entry {
+        processes.push((
+            entry.th32ProcessID,
+            entry.th32ParentProcessID,
+            exe_file_name(&entry.szExeFile),
+        ));
+        // SAFETY: as above.
+        has_entry = unsafe { Process32NextW(snapshot, &raw mut entry) }.is_ok();
+    }
+    close(snapshot);
+    Ok(processes)
 }
 
 /// The creation flag that decides whether a console program has a console
@@ -308,6 +389,9 @@ struct Launched {
     job: OwnedHandle,
     /// When a later launch first found the child exited and its job empty.
     finished_at: Option<Instant>,
+    /// Processes held open for as long as the entry is kept: the ones the
+    /// child was told to ignore, whose pids then name no other process.
+    held: Vec<OwnedHandle>,
 }
 
 /// How long an entry is kept after its child has exited and its job has

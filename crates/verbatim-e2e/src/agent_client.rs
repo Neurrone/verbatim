@@ -161,6 +161,37 @@ impl AgentClient {
             stderr_to: stderr_to.map(str::to_owned),
             console_title: None,
             minimized: false,
+            ignore_foreign_terminals: false,
+        })
+    }
+
+    /// Launches Verbatim, as [`AgentClient::launch_process`] launches any
+    /// program, telling it to ignore entirely every Windows Terminal the
+    /// agent did not launch, with the console hosts it runs: the owner's
+    /// own, which a Verbatim under test must never read
+    /// (`VERBATIM_IGNORE_PIDS`). Answers the launch and the pids of the
+    /// processes Verbatim was told to ignore.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails or the agent could not spawn
+    /// the process.
+    pub fn launch_verbatim(
+        &mut self,
+        command: &str,
+        working_dir: &str,
+        env: &[(String, String)],
+        stderr_to: &str,
+    ) -> io::Result<(Launched, Vec<u32>)> {
+        self.launch_answer(Request::LaunchProcess {
+            command: command.to_owned(),
+            args: Vec::new(),
+            working_dir: Some(working_dir.to_owned()),
+            env: env.to_vec(),
+            stderr_to: Some(stderr_to.to_owned()),
+            console_title: None,
+            minimized: false,
+            ignore_foreign_terminals: true,
         })
     }
 
@@ -181,6 +212,7 @@ impl AgentClient {
             stderr_to: None,
             console_title: None,
             minimized: true,
+            ignore_foreign_terminals: false,
         })
     }
 
@@ -206,23 +238,34 @@ impl AgentClient {
             stderr_to: None,
             console_title: Some(title.to_owned()),
             minimized: false,
+            ignore_foreign_terminals: false,
         })
     }
 
     /// Sends a launch request and reads its reply.
     fn launch(&mut self, request: Request) -> io::Result<Launched> {
+        self.launch_answer(request).map(|(launched, _)| launched)
+    }
+
+    /// Sends a launch request and reads its reply, with the pids of the
+    /// processes the launched program was told to ignore.
+    fn launch_answer(&mut self, request: Request) -> io::Result<(Launched, Vec<u32>)> {
         match self.request(request)? {
             Frame::Reply {
                 payload:
                     ReplyPayload::Launched {
                         pid,
                         foreground_allowed,
+                        ignored,
                     },
                 ..
-            } => Ok(Launched {
-                pid,
-                foreground_allowed,
-            }),
+            } => Ok((
+                Launched {
+                    pid,
+                    foreground_allowed,
+                },
+                ignored,
+            )),
             other => Err(unexpected("LaunchProcess", &other)),
         }
     }

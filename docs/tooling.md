@@ -579,6 +579,27 @@ every console program the harness itself runs, is started with no console
 window (`CREATE_NO_WINDOW`); the console host scenarios start
 `conhost.exe` explicitly. Every scenario fails if a window of a Windows
 Terminal process the agent did not launch appears while it runs.
+
+**The Verbatim under test never reads your Windows Terminal.** A stray
+UIA focus fact from the owner's Windows Terminal used to start an outpost
+for it, which then called into it, and that Windows Terminal crashed once
+inside UI Automation while it was read (`phase6-design.md`, "Windows
+Terminal crash of 2026-10-08"). So the agent launches Verbatim with
+`ignore_foreign_terminals` (`AgentClient::launch_verbatim`): it lists
+every `WindowsTerminal.exe` process outside the agent's own jobs, and the
+`OpenConsole.exe` processes they host, holds each open for as long as it
+keeps the launch, and names their pids to Verbatim in
+`VERBATIM_IGNORE_PIDS`, separated by commas. Verbatim holds them open
+too, and ignores them entirely: its focus listener drops every fact from
+them before routing it, the supervisor never starts an outpost for one,
+and Core never asks one for its focus or takes a focus in one of their
+windows. The portable copy a terminal scenario launches is in the agent's
+jobs, so it is read as usual. Every scenario fails if Verbatim's log
+folder holds an outpost log named for one of those processes. Nothing
+else sets the variable, so a Verbatim you start yourself ignores
+nothing. What still reaches your Windows Terminal is UI Automation's own
+work for any desktop-wide client: see `phase6-design.md`, "Ignoring the
+owner's Windows Terminal".
 CI's `e2e` job runs `cargo xtask windows-terminal` as a step of its own
 before the suite, so GitHub's runner tests the same release, not the
 Windows Terminal its image ships.

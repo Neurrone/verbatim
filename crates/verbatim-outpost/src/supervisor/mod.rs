@@ -27,6 +27,7 @@
 //! the owner kills or retires it, `Ended` is sent at once and anything the
 //! child wrote afterwards follows it, which the app drops.
 
+mod ignored;
 mod owner;
 mod policy;
 mod process;
@@ -43,6 +44,7 @@ use verbatim_model::{OutpostId, Pid};
 
 use crate::protocol::{OutpostToSupervisor, SupervisorToOutpost};
 
+pub use ignored::{IGNORE_PIDS_ENV, IgnoredProcesses, parse_pids};
 pub use retire::ShutdownSummary;
 pub use writer::QueueError;
 
@@ -149,9 +151,10 @@ pub enum OutpostMessage {
     },
     /// An outpost was wanted for `target_pid`, asked for or to replace one
     /// that crashed, and none was started: the application's process has
-    /// exited, or cannot be opened to be held, or its outposts crashed
-    /// repeatedly, which stops respawning until the next foreground change
-    /// to it. Nothing should wait for one.
+    /// exited, or cannot be opened to be held, or is one Verbatim ignores
+    /// ([`IgnoredProcesses`]), or its outposts crashed repeatedly, which
+    /// stops respawning until the next foreground change to it. Nothing
+    /// should wait for one.
     NotWatched {
         /// The application.
         target_pid: Pid,
@@ -168,13 +171,16 @@ type Writers = Arc<Mutex<std::collections::HashMap<OutpostId, writer::WriterHand
 pub struct Supervisor {
     owner: Sender<owner::OwnerEvent>,
     writers: Writers,
+    ignored: Arc<IgnoredProcesses>,
 }
 
 impl Supervisor {
     /// Starts the supervisor: its lifecycle owner thread and the focus
     /// listener. Outpost messages and lifecycle notices go to `events_tx`.
     /// The outpost executable is resolved next to the current executable.
-    /// Every outpost is launched with `options`.
+    /// Every outpost is launched with `options`. The processes `ignored`
+    /// holds are ignored entirely: the listener drops their facts, and no
+    /// outpost is ever started for them.
     ///
     /// # Errors
     ///
@@ -183,18 +189,26 @@ impl Supervisor {
     pub fn new(
         events_tx: Sender<OutpostMessage>,
         options: crate::OutpostOptions,
+        ignored: Arc<IgnoredProcesses>,
     ) -> io::Result<Self> {
         let exe_path = std::env::current_exe()?
             .parent()
             .ok_or_else(|| io::Error::other("current exe has no parent directory"))?
             .join("verbatim-outpost.exe");
-        Self::with_executable(events_tx, options, exe_path, retire::SHUTDOWN_LIMIT)
+        Self::with_executable(
+            events_tx,
+            options,
+            exe_path,
+            retire::SHUTDOWN_LIMIT,
+            ignored,
+        )
     }
 
     /// [`Supervisor::new`], launching every child from `exe_path` and giving
     /// each `shutdown_limit` to exit after the shutdown message before it is
-    /// killed. For tests that launch a stand-in for the outpost binary;
-    /// Verbatim uses [`Supervisor::new`].
+    /// killed, and ignoring the processes `ignored` holds. For tests that
+    /// launch a stand-in for the outpost binary; Verbatim uses
+    /// [`Supervisor::new`].
     ///
     /// # Errors
     ///
@@ -204,6 +218,7 @@ impl Supervisor {
         options: crate::OutpostOptions,
         exe_path: std::path::PathBuf,
         shutdown_limit: Duration,
+        ignored: Arc<IgnoredProcesses>,
     ) -> io::Result<Self> {
         // The launch's log directory was prepared by the app at startup,
         // before any child (the synthesizer host first) began writing to it.
@@ -217,11 +232,20 @@ impl Supervisor {
             writers: Arc::clone(&writers),
             own_tx: owner_tx.clone(),
             events: owner_rx,
+            ignored: Arc::clone(&ignored),
         })?;
         Ok(Self {
             owner: owner_tx,
             writers,
+            ignored,
         })
+    }
+
+    /// Whether `pid` names a process Verbatim ignores entirely
+    /// ([`IgnoredProcesses`]): nothing asks it for anything.
+    #[must_use]
+    pub fn is_ignored(&self, pid: Pid) -> bool {
+        self.ignored.contains(pid)
     }
 
     /// Starts an outpost for `target_pid` if none exists, without asking it

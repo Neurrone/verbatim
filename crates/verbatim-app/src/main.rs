@@ -242,7 +242,11 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     // change reaches the reducer as a focus on the window, which moves its
     // attention.
     let (outpost_tx, outpost_rx) = unbounded::<OutpostMessage>();
-    let supervisor = Arc::new(Supervisor::new(outpost_tx, outpost_options)?);
+    // The processes the end-to-end harness names in `VERBATIM_IGNORE_PIDS`
+    // (the owner's own Windows Terminal), ignored entirely: nothing is ever
+    // read from them. Unset for real users, so nothing is ignored.
+    let ignored = Arc::new(verbatim_outpost::supervisor::IgnoredProcesses::from_env());
+    let supervisor = Arc::new(Supervisor::new(outpost_tx, outpost_options, ignored)?);
     let outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>> = Arc::new(Mutex::new(HashMap::new()));
     // Set once the focus listener first reports ready; part of the
     // readiness the control plane's status reports.
@@ -760,6 +764,16 @@ fn warm_own_outpost(
     supervisor.ensure_spawned(Pid(own_pid));
 }
 
+/// The process owning the window `hwnd`, read with a local call.
+fn window_pid(hwnd: isize) -> Option<Pid> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+    let mut pid: u32 = 0;
+    // SAFETY: tolerates any handle; `pid` is a local out-parameter.
+    unsafe { GetWindowThreadProcessId(HWND(hwnd as *mut _), Some(&raw mut pid)) };
+    (pid != 0).then_some(Pid(pid))
+}
+
 /// The application holding the system foreground right now, read with a
 /// local call.
 fn foreground_pid() -> Option<Pid> {
@@ -975,7 +989,8 @@ impl ReducerThread<'_> {
         {
             return;
         }
-        let Some(pid) = foreground_pid() else {
+        let Some(pid) = foreground_pid().filter(|&pid| !self.context.supervisor.is_ignored(pid))
+        else {
             return;
         };
         let Some(outpost) = self.live.ready(pid) else {
@@ -1001,9 +1016,36 @@ impl ReducerThread<'_> {
         );
     }
 
+    /// Whether `event` is a focus in a top-level window of a process
+    /// Verbatim ignores, which another application's outpost can report as
+    /// the window around its own focus: it is dropped, so an ignored process
+    /// never becomes the focus or the attention. A local read.
+    fn in_ignored_window(
+        &self,
+        event: &verbatim_model::NormalizedEvent,
+        window: Option<verbatim_model::WindowFacts>,
+    ) -> bool {
+        let (verbatim_model::NormalizedEvent::FocusChanged { .. }, Some(window)) = (event, window)
+        else {
+            return false;
+        };
+        let owner = window_pid(isize::try_from(window.top_level.0.cast_signed()).unwrap_or(0));
+        let ignored = owner.is_some_and(|pid| self.context.supervisor.is_ignored(pid));
+        if ignored {
+            tracing::info!(
+                ?owner,
+                "a focus in a window of an ignored process is dropped"
+            );
+        }
+        ignored
+    }
+
     /// Asks `pid`'s outpost for the current focus now if it is ready, or as
     /// soon as it is, starting one if there is none.
     fn want_focus_now(&mut self, pid: Pid) {
+        if self.context.supervisor.is_ignored(pid) {
+            return; // Nothing is asked of a process Verbatim ignores.
+        }
         if let Some(outpost) = self.live.ready(pid) {
             self.focus_now(outpost, pid);
         } else {
@@ -1047,6 +1089,9 @@ impl ReducerThread<'_> {
                 // foreground, later than Windows raised it.
                 // An event read is the outpost's application answering.
                 self.live.answered(outpost);
+                if self.in_ignored_window(&event, window) {
+                    return;
+                }
                 let first_observed_ms = match timing.observed_at_us {
                     0 => observed_at_ms,
                     us => us / 1000,

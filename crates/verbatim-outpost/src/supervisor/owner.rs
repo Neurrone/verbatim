@@ -19,6 +19,7 @@ use crate::protocol::{
     read_message,
 };
 
+use super::ignored::IgnoredProcesses;
 use super::policy::{
     CrashHistory, HeldFact, HeldFacts, WedgeReason, retirement_decision, wedge_decision,
 };
@@ -91,6 +92,8 @@ pub(super) struct Setup {
     pub(super) writers: Writers,
     pub(super) own_tx: Sender<OwnerEvent>,
     pub(super) events: Receiver<OwnerEvent>,
+    /// The processes ignored entirely.
+    pub(super) ignored: std::sync::Arc<IgnoredProcesses>,
 }
 
 /// One application's outpost: starting until its launch reports back, then
@@ -150,6 +153,9 @@ struct Owner {
     /// Set once Verbatim is exiting: where the summary goes once every
     /// child has ended.
     shutting_down: Option<Sender<ShutdownSummary>>,
+    /// The processes ignored entirely: no outpost is started for them, and
+    /// the listener, told of them, drops their facts.
+    ignored: std::sync::Arc<IgnoredProcesses>,
 }
 
 /// Starts the owner thread, which starts the listener at once.
@@ -162,6 +168,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         writers,
         own_tx,
         events,
+        ignored,
     } = setup;
     let mut owner = Owner {
         exe_path,
@@ -182,6 +189,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         holding: BTreeSet::new(),
         ping_seq: 0,
         own_pid: Pid(std::process::id()),
+        ignored,
     };
     thread::Builder::new()
         .name("verbatim-supervisor".to_owned())
@@ -293,6 +301,13 @@ impl Owner {
     /// cannot be held, gets no outpost, and the app is told
     /// ([`OutpostMessage::NotWatched`]), so nothing waits for one.
     fn start_outpost(&mut self, pid: Pid, first: Option<HeldFact>) -> bool {
+        if self.ignored.contains(pid) {
+            tracing::debug!(%pid, "no outpost is started for a process Verbatim ignores");
+            let _ = self
+                .events_tx
+                .send(OutpostMessage::NotWatched { target_pid: pid });
+            return false;
+        }
         if let Err(not_held) = self.hold_target(pid) {
             tracing::info!(%pid, %not_held, "no outpost is started for an application that is not running");
             self.release_target(pid);
@@ -389,6 +404,7 @@ impl Owner {
     /// and the owner always learns of the launch before the child's `Ready`
     /// or the end of its pipe.
     fn launch(&self, outpost: OutpostId, role: Role) {
+        let ignored = self.ignored.list();
         let exe_path = self.exe_path.clone();
         let options = self.options;
         let events_tx = self.events_tx.clone();
@@ -397,7 +413,14 @@ impl Owner {
         let spawned = thread::Builder::new()
             .name("verbatim-launch".to_owned())
             .spawn(move || {
-                match launch_child(&exe_path, options, outpost, role, &events_tx, &writers) {
+                match launch_child(
+                    &exe_path,
+                    (options, &ignored),
+                    outpost,
+                    role,
+                    &events_tx,
+                    &writers,
+                ) {
                     Ok((child, from_child)) => {
                         let _ = own_tx.send(OwnerEvent::Launched {
                             outpost,
@@ -532,6 +555,10 @@ impl Owner {
         fact: ListenerFact,
     ) {
         let pid = fact.pid();
+        if self.ignored.contains(pid) {
+            // The listener drops these already; nothing is routed either way.
+            return;
+        }
         if matches!(fact.fact, DeliveredFact::Foreground { .. })
             && let Some(history) = self.crashes.get_mut(&pid)
         {
@@ -891,13 +918,13 @@ fn deliver(writer: &WriterHandle, held: HeldFact) {
 /// the child and the pipe its reader will read.
 fn launch_child(
     exe_path: &std::path::Path,
-    options: crate::OutpostOptions,
+    (options, ignored): (crate::OutpostOptions, &str),
     outpost: OutpostId,
     role: Role,
     events_tx: &Sender<OutpostMessage>,
     writers: &Writers,
 ) -> io::Result<(Child, File)> {
-    let (launched, pipes) = process::launch(exe_path, role, options)?;
+    let (launched, pipes) = process::launch(exe_path, role, options, ignored)?;
     tracing::info!(%outpost, process_id = %launched.process_id, ?role, "launched");
     let writer_name = match role {
         Role::Outpost(_) => "verbatim-outpost-writer",
