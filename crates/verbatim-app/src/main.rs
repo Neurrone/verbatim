@@ -254,6 +254,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     // fetches, text requests, activations, and clipboard copies out.
     {
         let context = ReducerContext {
+            clipboard: clipboard::Clipboard::start(Arc::clone(&manager))?,
             manager: Arc::clone(&manager),
             supervisor: Arc::clone(&supervisor),
             ledger: Arc::clone(&ledger),
@@ -748,6 +749,8 @@ fn foreground_pid() -> Option<Pid> {
 /// signature from growing an argument for every subsystem it touches.
 struct ReducerContext {
     manager: Arc<SpeechManager>,
+    /// Where copies to the clipboard are made, off the reducer thread.
+    clipboard: clipboard::Clipboard,
     supervisor: Arc<Supervisor>,
     ledger: Arc<LatencyLedger>,
     server_slot: Arc<OnceLock<ControlServer>>,
@@ -1249,7 +1252,7 @@ impl ReducerThread<'_> {
                 };
                 self.send(outpost, id, command);
             }
-            Effect::CopyToClipboard(text) => clipboard::copy(&self.context.manager, &text),
+            Effect::CopyToClipboard(text) => self.context.clipboard.copy(text),
             Effect::Text(request) => self.text_request(trace_id, request),
             Effect::KeepDisplayOn(on) => keep_display_on(on),
             Effect::SettingsChanged(settings) => {
