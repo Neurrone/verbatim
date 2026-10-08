@@ -2267,6 +2267,13 @@ Made while Dickson was away (2026-10-09), each to be confirmed:
   text event cannot supply it: those subscriptions follow the focus's
   element, so none arrives while it is unknown, and no subscription was
   added for that case.
+- `hello_version_mismatch_is_refused`'s reset: fixed at the launch, by
+  giving a child with a capture file a handle list naming only that file,
+  rather than by making the server's socket duplicates non-inheritable,
+  which would leave every other inheritable handle in the agent, and a
+  window between the duplicate and the flag change, for a concurrent
+  launch to take. The regression test asserts the peer reads the end of
+  the stream within a 30-second bound while the child runs.
 
 ## Language audit (2026-10-08)
 

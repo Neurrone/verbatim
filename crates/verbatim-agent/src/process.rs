@@ -43,11 +43,13 @@ use windows::Win32::System::JobObjects::{
 };
 use windows::Win32::System::Threading::{
     CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
-    GetExitCodeProcess, OpenProcess, PROCESS_ACCESS_RIGHTS, PROCESS_CREATION_FLAGS,
+    DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess,
+    InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcess,
+    PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_ACCESS_RIGHTS, PROCESS_CREATION_FLAGS,
     PROCESS_INFORMATION, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
     PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, QueryFullProcessImageNameW, ResumeThread,
-    STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOW, TerminateProcess,
-    WaitForSingleObject,
+    STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess,
+    UpdateProcThreadAttribute, WaitForSingleObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow;
 use windows::core::{PCWSTR, PWSTR};
@@ -67,7 +69,14 @@ use crate::protocol::{KillOutcome, ProcessInfo, ProcessState};
 /// content, so each launch starts its own fresh log) and the child's stdout
 /// and stderr both go to it, so a panic message on stderr and any
 /// surrounding stdout diagnostics land together in one combined,
-/// chronologically ordered log rather than two.
+/// chronologically ordered log rather than two. That file's handle is the
+/// only one the child inherits (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`): every
+/// other inheritable handle the agent holds stays its own, such as a
+/// duplicate of a connection's socket, which `TcpStream::try_clone` makes
+/// inheritable. A child that inherited one kept the connection open after
+/// the agent closed it, and reset it when the child exited (found
+/// 2026-10-09, as `hello_version_mismatch_is_refused`'s client reading a
+/// reset instead of the end of the stream).
 ///
 /// The command line is built from `command` and `args` by the quoting rules
 /// of the Microsoft C runtime, which `CommandLineToArgvW` and Rust's own
@@ -115,31 +124,38 @@ pub fn launch(
     let environment = (!env.is_empty()).then(|| environment_block(env));
     let directory = working_dir.map(wide);
     let mut title = console_title.map(wide);
-    let mut startup = STARTUPINFOW {
-        cb: u32::try_from(size_of::<STARTUPINFOW>()).unwrap_or(u32::MAX),
-        lpTitle: title
-            .as_mut()
-            .map_or(PWSTR::null(), |title| PWSTR(title.as_mut_ptr())),
-        ..STARTUPINFOW::default()
-    };
+    let inherited: Vec<HANDLE> = capture
+        .iter()
+        .map(|capture| HANDLE(capture.as_raw_handle()))
+        .collect();
+    let handle_list = HandleList::new(&inherited)?;
+    let mut startup = STARTUPINFOEXW::default();
+    startup.StartupInfo.cb = u32::try_from(size_of::<STARTUPINFOEXW>()).unwrap_or(u32::MAX);
+    startup.StartupInfo.lpTitle = title
+        .as_mut()
+        .map_or(PWSTR::null(), |title| PWSTR(title.as_mut_ptr()));
+    startup.lpAttributeList = handle_list.attributes();
     if minimized {
-        startup.dwFlags |= STARTF_USESHOWWINDOW;
-        startup.wShowWindow =
+        startup.StartupInfo.dwFlags |= STARTF_USESHOWWINDOW;
+        startup.StartupInfo.wShowWindow =
             u16::try_from(windows::Win32::UI::WindowsAndMessaging::SW_SHOWMINNOACTIVE.0)
                 .unwrap_or_default();
     }
     if let Some(capture) = &capture {
-        startup.dwFlags |= STARTF_USESTDHANDLES;
-        startup.hStdOutput = HANDLE(capture.as_raw_handle());
-        startup.hStdError = HANDLE(capture.as_raw_handle());
+        startup.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
+        startup.StartupInfo.hStdOutput = HANDLE(capture.as_raw_handle());
+        startup.StartupInfo.hStdError = HANDLE(capture.as_raw_handle());
     }
     let job = create_job()?;
     let mut info = PROCESS_INFORMATION::default();
     // SAFETY: every pointer passed points into a buffer that outlives the
     // call: the command line is writable and nul-terminated, as the
     // directory and the console title are, and the environment block is
-    // UTF-16 ending in two nuls, as `CREATE_UNICODE_ENVIRONMENT` declares. The capture handle,
-    // when there is one, is open and inheritable.
+    // UTF-16 ending in two nuls, as `CREATE_UNICODE_ENVIRONMENT` declares.
+    // The startup information is sized as the extended one it is, and its
+    // attribute list, when there is a capture handle, names that handle
+    // alone, which is open and inheritable; handles are inherited only
+    // then.
     unsafe {
         CreateProcessW(
             PCWSTR::null(),
@@ -147,16 +163,20 @@ pub fn launch(
             None,
             None,
             capture.is_some(),
-            CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | console_window(console_title),
+            CREATE_SUSPENDED
+                | CREATE_UNICODE_ENVIRONMENT
+                | EXTENDED_STARTUPINFO_PRESENT
+                | console_window(console_title),
             environment.as_ref().map(|block| block.as_ptr().cast()),
             directory
                 .as_ref()
                 .map_or(PCWSTR::null(), |directory| PCWSTR(directory.as_ptr())),
-            &raw const startup,
+            (&raw const startup).cast(),
             &raw mut info,
         )
     }
     .map_err(io::Error::other)?;
+    drop(handle_list);
     // SAFETY: both handles were just returned by CreateProcessW, and are
     // owned here alone.
     let child = unsafe { OwnedHandle::from_raw_handle(info.hProcess.0) };
@@ -297,6 +317,79 @@ fn console_window(console_title: Option<&str>) -> PROCESS_CREATION_FLAGS {
 }
 
 /// `text` as UTF-16, nul-terminated.
+/// A process's attribute list naming the only handles it inherits
+/// (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`), or no list for a process that
+/// inherits none. Deleted on drop.
+struct HandleList<'a> {
+    /// The list's storage, in `usize`s so it is aligned for the pointers
+    /// it holds; empty when there is no list.
+    buffer: Vec<usize>,
+    /// The handles the list names, which must outlive it.
+    _handles: &'a [HANDLE],
+}
+
+impl<'a> HandleList<'a> {
+    /// A list naming `handles`, each open and inheritable; no list when
+    /// there are none.
+    fn new(handles: &'a [HANDLE]) -> io::Result<Self> {
+        let mut list = Self {
+            buffer: Vec::new(),
+            _handles: handles,
+        };
+        if handles.is_empty() {
+            return Ok(list);
+        }
+        let mut size = 0usize;
+        // SAFETY: the first call only reports the size needed; its failure
+        // with "insufficient buffer" is expected.
+        unsafe {
+            let _ = InitializeProcThreadAttributeList(None, 1, None, &raw mut size);
+        }
+        let mut buffer = vec![0usize; size.div_ceil(size_of::<usize>())];
+        let attributes = LPPROC_THREAD_ATTRIBUTE_LIST(buffer.as_mut_ptr().cast());
+        // SAFETY: `buffer` is at least `size` bytes, as the first call
+        // asked for, and aligned for a pointer.
+        unsafe { InitializeProcThreadAttributeList(Some(attributes), 1, None, &raw mut size) }
+            .map_err(io::Error::other)?;
+        // Deleted from here on, by drop, whatever happens next.
+        list.buffer = buffer;
+        // SAFETY: the list is initialized; `handles` outlives it, and its
+        // size is given.
+        unsafe {
+            UpdateProcThreadAttribute(
+                list.attributes(),
+                0,
+                PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
+                Some(handles.as_ptr().cast()),
+                std::mem::size_of_val(handles),
+                None,
+                None,
+            )
+        }
+        .map_err(io::Error::other)?;
+        Ok(list)
+    }
+
+    /// The list, or a null one when there is none.
+    fn attributes(&self) -> LPPROC_THREAD_ATTRIBUTE_LIST {
+        if self.buffer.is_empty() {
+            LPPROC_THREAD_ATTRIBUTE_LIST(std::ptr::null_mut())
+        } else {
+            LPPROC_THREAD_ATTRIBUTE_LIST(self.buffer.as_ptr().cast_mut().cast())
+        }
+    }
+}
+
+impl Drop for HandleList<'_> {
+    fn drop(&mut self) {
+        if !self.buffer.is_empty() {
+            // SAFETY: the list was initialized in `new` and is not used
+            // after this.
+            unsafe { DeleteProcThreadAttributeList(self.attributes()) };
+        }
+    }
+}
+
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -838,6 +931,71 @@ mod tests {
             std::fs::read_to_string(&path).expect("reads the captured stderr/stdout file");
         assert_eq!(captured, "agent stderr capture test \r\n");
         std::fs::remove_file(&path).expect("removes the capture file");
+    }
+
+    /// A child launched with a capture file inherits that file's handle and
+    /// no other: a connection the agent closes is closed, though its
+    /// socket's handle was inheritable when the child was launched, as
+    /// `TcpStream::try_clone` makes a socket's handles, and the peer reads
+    /// the end of the stream while the child still runs. A child that
+    /// inherited the handle held the connection open, and reset it when it
+    /// exited.
+    #[test]
+    fn a_child_with_a_capture_file_inherits_no_other_handle() {
+        use std::io::Read as _;
+        use std::os::windows::io::AsRawSocket as _;
+
+        let _launching = crate::process::LAUNCHING
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("binds a port");
+        let mut client =
+            std::net::TcpStream::connect(listener.local_addr().expect("has an address"))
+                .expect("connects");
+        let (accepted, _) = listener.accept().expect("accepts the connection");
+        let socket = HANDLE(
+            usize::try_from(accepted.as_raw_socket()).expect("a handle fits a pointer")
+                as *mut std::ffi::c_void,
+        );
+        // SAFETY: the socket is open; only its inheritance flag changes.
+        unsafe { SetHandleInformation(socket, HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT) }
+            .expect("makes the socket's handle inheritable");
+        let path = std::env::temp_dir().join(format!(
+            "verbatim-agent-test-inherit-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let path_str = path.to_str().expect("utf8 temp path").to_owned();
+        let (pid, _) = launch(
+            "powershell",
+            &[
+                "-NoProfile".to_owned(),
+                "-Command".to_owned(),
+                "Wait-Event".to_owned(),
+            ],
+            None,
+            &[],
+            Some(&path_str),
+            None,
+            false,
+        )
+        .expect("spawns powershell with a capture file");
+        drop(accepted);
+        client
+            .set_read_timeout(Some(WAIT))
+            .expect("bounds the read");
+        let read = client.read(&mut [0u8; 1]).map_err(|error| error.kind());
+        assert_eq!(kill(pid).expect("kills the child"), KillOutcome::Terminated);
+        assert!(matches!(
+            wait_for_exit(pid, WAIT).expect("waits"),
+            ProcessState::Exited { .. }
+        ));
+        std::fs::remove_file(&path).expect("removes the capture file");
+        assert_eq!(
+            read,
+            Ok(0),
+            "the peer reads the end of the stream while the child runs"
+        );
     }
 
     #[test]

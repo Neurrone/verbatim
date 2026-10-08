@@ -138,7 +138,11 @@ an agent started with its output redirected to a log made the console
 host, started explicitly as `conhost.exe`, take them as a pseudoconsole's
 input and output, open no window, and exit. The command line is quoted
 by the C runtime's rules, and an environment override is set over the
-agent's own environment. Before the child runs, it is allowed to take the
+agent's own environment. A child given a capture file inherits that
+file's handle and no other (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`): the
+duplicates `TcpStream::try_clone` makes of a connection's socket are
+inheritable, and a child that inherited one held the connection open
+after the agent closed it, then reset it when the child exited. Before the child runs, it is allowed to take the
 foreground (`AllowSetForegroundWindow`), as a program a user starts may,
 and the reply says whether Windows let the agent allow it: it does while
 the agent injected the last input, which every end-to-end scenario's keys
