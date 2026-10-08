@@ -19,15 +19,22 @@ minidump (DumpType 1), with the call stacks and the memory they reference,
 and at most 20 dumps for each program, so the folder cannot fill the disk.
 The folder is created with read access for the machine's users, so the
 suite's agent, running as the signed-in user, can read the dumps.
+It also keeps dumps of the terminals the suite drives (WindowsTerminal.exe,
+OpenConsole.exe and conhost.exe), so that a crash inside an application
+Verbatim reads can be traced to the call that caused it. These are full
+dumps (DumpType 2), since a crash inside UI Automation's own code needs its
+internal state to diagnose, and at most 5 for each program, as each can be
+several hundred megabytes.
+
 Re-running this script sets the same values again.
 
 Run once from an elevated PowerShell:
 
     vm\scripts\Enable-VerbatimCrashDumps.ps1
 
-To undo it, delete the three keys under
+To undo it, delete the keys under
 HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps named
-after Verbatim's programs.
+after the programs listed above.
 #>
 #Requires -RunAsAdministrator
 
@@ -35,6 +42,7 @@ $ErrorActionPreference = 'Stop'
 
 $folder = 'C:\ProgramData\Verbatim\CrashDumps'
 $images = 'verbatim.exe', 'verbatim-outpost.exe', 'verbatim-synth-host.exe'
+$terminals = 'WindowsTerminal.exe', 'OpenConsole.exe', 'conhost.exe'
 $root = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps'
 
 New-Item -ItemType Directory -Force -Path $folder | Out-Null
@@ -48,11 +56,17 @@ Set-Acl -Path $folder -AclObject $acl
 if (-not (Test-Path -Path $root)) {
     New-Item -Path $root -Force | Out-Null
 }
-foreach ($image in $images) {
+function Set-LocalDumps($image, $type, $count) {
     $key = Join-Path $root $image
     New-Item -Path $key -Force | Out-Null
     New-ItemProperty -Path $key -Name DumpFolder -PropertyType ExpandString -Value $folder -Force | Out-Null
-    New-ItemProperty -Path $key -Name DumpType -PropertyType DWord -Value 1 -Force | Out-Null
-    New-ItemProperty -Path $key -Name DumpCount -PropertyType DWord -Value 20 -Force | Out-Null
+    New-ItemProperty -Path $key -Name DumpType -PropertyType DWord -Value $type -Force | Out-Null
+    New-ItemProperty -Path $key -Name DumpCount -PropertyType DWord -Value $count -Force | Out-Null
     Write-Output "Crash dumps of $image go to $folder"
+}
+foreach ($image in $images) {
+    Set-LocalDumps $image 1 20
+}
+foreach ($image in $terminals) {
+    Set-LocalDumps $image 2 5
 }
