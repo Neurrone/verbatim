@@ -127,6 +127,73 @@ fn a_description_change_on_the_focus_is_spoken() {
     app.quit();
 }
 
+/// A modal dialog's owner disabled as the dialog opens says nothing: a
+/// state change on the foreground window the focus is in, an ancestor the
+/// outpost knows at its own address, the window's client area, is not
+/// spoken, as NVDA, checked live, never speaks it (`docs/parity.md`, "A
+/// top-level window's state change"). The window is the foreground as
+/// the focus enters it, and is disabled while the focus is still on its
+/// Remove button; the description change on the button after it is the
+/// next thing the outpost says, whatever the timing.
+fn disabling_the_focus_window_is_not_spoken() {
+    /// The Remove button, by its index in mockapp's tree.
+    const REMOVE: usize = 1;
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-modal-owner");
+    let mut app = common::spawn("modal_owner.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(app.pid());
+    let mut state = SrState::new();
+
+    app.send("client-identity");
+    outpost.set_foreground(hwnd);
+    app.send("set-focus remove");
+    let reported = outpost.msaa_focus(hwnd, REMOVE);
+    assert_eq!(reported.chain(), [Some("Settings"), Some("Remove")]);
+    let _ = spoken(&mut state, focus_event(&reported));
+    app.send("disable-client");
+    app.send("set-description remove Removes the theme");
+    let event = next_event(&outpost);
+    outpost.settled();
+    assert_eq!(
+        spoken(&mut state, event),
+        [vec![SegmentContent::Description(
+            "Removes the theme".to_owned()
+        )]],
+        "the window's change was not reported"
+    );
+    app.quit();
+}
+
+/// A top-level window that was not the foreground as the focus entered
+/// it, as a popup menu's never is, keeps its place among the focus's
+/// ancestors, as in NVDA, whose foreground object is another window's: its
+/// state change is spoken.
+fn disabling_a_window_not_in_the_foreground_is_spoken() {
+    /// The Remove button, by its index in mockapp's tree.
+    const REMOVE: usize = 1;
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-background-owner");
+    let mut app = common::spawn("modal_owner.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(app.pid());
+    let mut state = SrState::new();
+
+    app.send("client-identity");
+    app.send("set-focus remove");
+    let reported = outpost.msaa_focus(hwnd, REMOVE);
+    assert_eq!(reported.chain(), [Some("Settings"), Some("Remove")]);
+    let _ = spoken(&mut state, focus_event(&reported));
+    app.send("disable-client");
+    let event = next_event(&outpost);
+    outpost.settled();
+    assert_eq!(
+        spoken(&mut state, event),
+        [vec![SegmentContent::State(State::Disabled)]]
+    );
+    app.quit();
+}
+
 /// A state change on a windowless ancestor of the focus, one reached
 /// through `accParent` with no address of its own, is not spoken, as NVDA
 /// does not speak it: NVDA meets an event's object again only at an
@@ -298,6 +365,14 @@ fn main() {
         (
             "a_state_change_on_a_windowless_ancestor_is_not_spoken",
             a_state_change_on_a_windowless_ancestor_is_not_spoken,
+        ),
+        (
+            "disabling_the_focus_window_is_not_spoken",
+            disabling_the_focus_window_is_not_spoken,
+        ),
+        (
+            "disabling_a_window_not_in_the_foreground_is_spoken",
+            disabling_a_window_not_in_the_foreground_is_spoken,
         ),
         (
             "collapsing_a_tree_items_parent_says_nothing_until_its_focus",

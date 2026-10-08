@@ -62,6 +62,35 @@ pub(crate) fn node_accessible(tree: &SharedTree, hwnd: HWND, index: usize) -> IA
     })
 }
 
+/// `client-identity`: the root's object from now on answers `IAccIdentity`
+/// too, with the address of `hwnd`'s client area.
+fn give_client_identity(tree: &SharedTree, hwnd: HWND) {
+    let root = handler::IdentifiedRoot {
+        inner: node_accessible(tree, hwnd, 0),
+        hwnd,
+    };
+    OBJECTS.with(|objects| {
+        objects
+            .borrow_mut()
+            .insert((hwnd.0 as isize, 0), root.into());
+    });
+}
+
+/// `disable-client`: the root gains the unavailable state, and a state
+/// change is raised on `hwnd`'s client area, as disabling a window raises.
+fn disable_client(tree: &SharedTree, hwnd: HWND) {
+    tree.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .nodes[0]
+        .states
+        .insert(State::Disabled);
+    // SAFETY: `hwnd` is the mockapp window's own live handle, whose client
+    // area its `WM_GETOBJECT` handler answers.
+    unsafe {
+        NotifyWinEvent(EVENT_OBJECT_STATECHANGE, hwnd, OBJID_CLIENT.0, CHILDID_SELF);
+    }
+}
+
 /// The custom `idObject` mockapp answers `WM_GETOBJECT` with for `index`,
 /// letting events address any node directly. Always positive, since
 /// negative values are reserved for the standard object identifiers
@@ -108,6 +137,8 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
                 NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, hwnd, OBJID_CLIENT.0, CHILDID_SELF);
             }
         }
+        Command::ClientIdentity => give_client_identity(tree, hwnd),
+        Command::DisableClient => disable_client(tree, hwnd),
         Command::FocusChild(container, child) => {
             let parent = tree
                 .lock()
@@ -369,13 +400,19 @@ mod handler {
     use std::mem::ManuallyDrop;
     use windows::Win32::Foundation::{E_POINTER, HWND, S_FALSE};
 
+    use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
     use windows::Win32::System::Com::{
         DISPATCH_FLAGS, DISPPARAMS, EXCEPINFO, IDispatch, ITypeInfo,
     };
     use windows::Win32::System::Variant::{
         VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_DISPATCH, VT_I4,
     };
-    use windows::Win32::UI::Accessibility::{IAccessible, IAccessible_Impl};
+    use windows::Win32::UI::Accessibility::{
+        CLSID_AccPropServices, CreateStdAccessibleObject, IAccIdentity, IAccIdentity_Impl,
+        IAccPropServices, IAccessible, IAccessible_Impl,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
+    use windows::core::Interface;
     use windows::core::{BSTR, Result as WinResult};
     use windows_core::{Error, implement};
 
@@ -794,6 +831,203 @@ mod handler {
         fn put_accValue(&self, _varchild: &VARIANT, _szvalue: &BSTR) -> WinResult<()> {
             hits::hit(hits::Method::PutAccValue);
             Err(Error::from_hresult(windows::Win32::Foundation::E_NOTIMPL))
+        }
+    }
+
+    /// The root node's object once `client-identity` is given: the root's
+    /// own object, `inner`, answering everything but its parent, which is
+    /// the window's own window object, as a client area's is, and
+    /// `IAccIdentity` besides, with the address of `hwnd`'s client area.
+    #[implement(IAccessible, IAccIdentity, Agile = false)]
+    pub(crate) struct IdentifiedRoot {
+        pub(crate) inner: IAccessible,
+        pub(crate) hwnd: HWND,
+    }
+
+    impl IAccIdentity_Impl for IdentifiedRoot_Impl {
+        fn GetIdentityString(
+            &self,
+            dwidchild: u32,
+            ppidstring: *mut *mut u8,
+            pdwidstringlen: *mut u32,
+        ) -> WinResult<()> {
+            // SAFETY: creates an in-process COM object on the window
+            // thread, which initialized COM.
+            let services: IAccPropServices =
+                unsafe { CoCreateInstance(&CLSID_AccPropServices, None, CLSCTX_INPROC_SERVER) }?;
+            // SAFETY: the out-parameters are the caller's, passed on as
+            // `IAccIdentity` hands them over; the string is allocated with
+            // `CoTaskMemAlloc`, which the caller frees.
+            unsafe {
+                services.ComposeHwndIdentityString(
+                    self.hwnd,
+                    OBJID_CLIENT.0.cast_unsigned(),
+                    dwidchild,
+                    ppidstring,
+                    pdwidstringlen,
+                )
+            }
+        }
+    }
+
+    impl IAccessible_Impl for IdentifiedRoot_Impl {
+        fn accParent(&self) -> WinResult<IDispatch> {
+            hits::hit(hits::Method::AccParent);
+            // The window's own window object, which Windows provides, as
+            // the parent of a window's client area is.
+            let mut parent: *mut core::ffi::c_void = std::ptr::null_mut();
+            // SAFETY: `hwnd` is this window's own live handle, and `parent`
+            // a local that receives an `IDispatch` on success.
+            unsafe {
+                CreateStdAccessibleObject(
+                    self.hwnd,
+                    OBJID_WINDOW.0,
+                    &IDispatch::IID,
+                    &raw mut parent,
+                )
+            }?;
+            // SAFETY: on success `parent` holds an owned `IDispatch`.
+            Ok(unsafe { IDispatch::from_raw(parent) })
+        }
+        fn accChildCount(&self) -> WinResult<i32> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.accChildCount() }
+        }
+        fn get_accChild(&self, varchild: &VARIANT) -> WinResult<IDispatch> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.get_accChild(varchild) }
+        }
+        fn get_accName(&self, varchild: &VARIANT) -> WinResult<BSTR> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.get_accName(varchild) }
+        }
+        fn get_accValue(&self, varchild: &VARIANT) -> WinResult<BSTR> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.get_accValue(varchild) }
+        }
+        fn get_accDescription(&self, varchild: &VARIANT) -> WinResult<BSTR> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.get_accDescription(varchild) }
+        }
+        fn get_accRole(&self, varchild: &VARIANT) -> WinResult<VARIANT> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.get_accRole(varchild) }
+        }
+        fn get_accState(&self, varchild: &VARIANT) -> WinResult<VARIANT> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.get_accState(varchild) }
+        }
+        fn get_accHelp(&self, varchild: &VARIANT) -> WinResult<BSTR> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.get_accHelp(varchild) }
+        }
+        fn get_accHelpTopic(&self, pszhelpfile: *mut BSTR, varchild: &VARIANT) -> WinResult<i32> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.get_accHelpTopic(pszhelpfile, varchild) }
+        }
+        fn get_accKeyboardShortcut(&self, varchild: &VARIANT) -> WinResult<BSTR> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.get_accKeyboardShortcut(varchild) }
+        }
+        fn accFocus(&self) -> WinResult<VARIANT> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.accFocus() }
+        }
+        fn accSelection(&self) -> WinResult<VARIANT> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.accSelection() }
+        }
+        fn get_accDefaultAction(&self, varchild: &VARIANT) -> WinResult<BSTR> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.get_accDefaultAction(varchild) }
+        }
+        fn accSelect(&self, flagsselect: i32, varchild: &VARIANT) -> WinResult<()> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.accSelect(flagsselect, varchild) }
+        }
+        fn accLocation(
+            &self,
+            pxleft: *mut i32,
+            pytop: *mut i32,
+            pcxwidth: *mut i32,
+            pcyheight: *mut i32,
+            varchild: &VARIANT,
+        ) -> WinResult<()> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe {
+                self.inner
+                    .accLocation(pxleft, pytop, pcxwidth, pcyheight, varchild)
+            }
+        }
+        fn accNavigate(&self, navdir: i32, varstart: &VARIANT) -> WinResult<VARIANT> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.accNavigate(navdir, varstart) }
+        }
+        fn accHitTest(&self, xleft: i32, ytop: i32) -> WinResult<VARIANT> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.accHitTest(xleft, ytop) }
+        }
+        fn accDoDefaultAction(&self, varchild: &VARIANT) -> WinResult<()> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.accDoDefaultAction(varchild) }
+        }
+        fn put_accName(&self, varchild: &VARIANT, szname: &BSTR) -> WinResult<()> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.put_accName(varchild, szname) }
+        }
+        fn put_accValue(&self, varchild: &VARIANT, szvalue: &BSTR) -> WinResult<()> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.put_accValue(varchild, szvalue) }
+        }
+    }
+
+    impl windows::Win32::System::Com::IDispatch_Impl for IdentifiedRoot_Impl {
+        fn GetTypeInfoCount(&self) -> WinResult<u32> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.GetTypeInfoCount() }
+        }
+        fn GetTypeInfo(&self, itinfo: u32, lcid: u32) -> WinResult<ITypeInfo> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe { self.inner.GetTypeInfo(itinfo, lcid) }
+        }
+        fn GetIDsOfNames(
+            &self,
+            riid: *const windows_core::GUID,
+            rgsznames: *const windows_core::PCWSTR,
+            cnames: u32,
+            lcid: u32,
+            rgdispid: *mut i32,
+        ) -> WinResult<()> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe {
+                self.inner
+                    .GetIDsOfNames(riid, rgsznames, cnames, lcid, rgdispid)
+            }
+        }
+        fn Invoke(
+            &self,
+            dispidmember: i32,
+            riid: *const windows_core::GUID,
+            lcid: u32,
+            wflags: DISPATCH_FLAGS,
+            pdispparams: *const DISPPARAMS,
+            pvarresult: *mut VARIANT,
+            pexcepinfo: *mut EXCEPINFO,
+            puargerr: *mut u32,
+        ) -> WinResult<()> {
+            // SAFETY: a live interface, passed the caller's arguments unchanged.
+            unsafe {
+                self.inner.Invoke(
+                    dispidmember,
+                    riid,
+                    lcid,
+                    wflags,
+                    pdispparams,
+                    Some(pvarresult),
+                    Some(pexcepinfo),
+                    Some(puargerr),
+                )
+            }
         }
     }
 

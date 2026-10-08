@@ -319,6 +319,10 @@ pub(super) struct Tracking {
     /// The dialog the last foreground report gathered text for, which the
     /// focus that follows it reuses.
     dialog: read::DialogMemo,
+    /// The last focus's top-level window, when it was the foreground
+    /// window as the focus entered it: the window NVDA holds the
+    /// foreground object for ([`Worker::is_foreground_window`]).
+    foreground_window: Option<isize>,
 }
 
 impl Tracking {
@@ -1318,6 +1322,14 @@ impl Worker<'_> {
                 tracking.reported += 1;
                 tracking.focus = Some(node_id);
                 tracking.focus_states = Some(states);
+                // NVDA makes its foreground object when the focus enters a
+                // top-level window, so the window keeps the verdict it had
+                // then while the focus moves within it.
+                let top = window.map(top_level_of).filter(|&top| top != 0);
+                if top != tracking.window.map(top_level_of) {
+                    let foreground = self.context.foreground_window();
+                    tracking.foreground_window = top.filter(|&top| top == foreground);
+                }
                 tracking.window = window;
                 // Unknown ancestors leave the previous chain, as the reducer
                 // keeps it.
@@ -1534,12 +1546,17 @@ impl Worker<'_> {
             // not the focus's logical ones ([`Self::logical_ancestors`]):
             // their state changes are not spoken, as selecting a tree item's
             // parent on its way to the focus would otherwise say "selected".
+            // Nor is the foreground window an ancestor here
+            // ([`Self::is_foreground_window`]).
             let ancestors: Vec<NodeId> = if kind == WinEventKind::StateChange {
                 tracking
                     .chain
                     .iter()
                     .map(|node| node.id)
-                    .filter(|&id| !self.is_logical_ancestor(id))
+                    .filter(|&id| {
+                        !self.is_logical_ancestor(id)
+                            && !self.is_foreground_window(id, tracking.foreground_window)
+                    })
                     .collect()
             } else {
                 Vec::new()
@@ -1562,6 +1579,36 @@ impl Worker<'_> {
             .msaa_registry
             .key_of(node)
             .is_some_and(|(_, _, child)| child != CHILDID_SELF)
+    }
+
+    /// Whether `node`, one of the focus's ancestors, is the foreground
+    /// window's own object, its client area or its window object, the
+    /// window being the focus's top-level window and the foreground when
+    /// the focus entered it: NVDA never speaks a state change on
+    /// it, as a modal dialog's owner being disabled when the dialog opens,
+    /// live-checked against NVDA on 2026-10-08 (eleven captures, never
+    /// "unavailable"). NVDA's state-change gate speaks for an ancestor only
+    /// when the event's object is the very instance in its ancestor list,
+    /// and an event finds an existing instance only in its live-object
+    /// table, keyed by the event's address. When the focus enters a
+    /// top-level window, NVDA reads its ancestors and then creates the
+    /// foreground object, for the foreground window's client area, which
+    /// takes the address's place in the table and is held as the
+    /// foreground, so an event on that window resolves to the foreground
+    /// object, never to the ancestor (`docs/parity.md`, "A top-level
+    /// window's state change"). A top-level window that is not the
+    /// foreground, such as a popup menu's, keeps its ancestor.
+    fn is_foreground_window(&self, node: NodeId, foreground: Option<isize>) -> bool {
+        foreground.is_some_and(|foreground| {
+            self.context
+                .msaa_registry
+                .key_of(node)
+                .is_some_and(|(hwnd, id_object, child)| {
+                    hwnd == foreground
+                        && child == CHILDID_SELF
+                        && (id_object == OBJID_CLIENT.0 || id_object == OBJID_WINDOW.0)
+                })
+        })
     }
 
     /// The focus's logical ancestors ([`Self::is_logical_ancestor`]).

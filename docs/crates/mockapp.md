@@ -95,7 +95,13 @@ thread; MSAA-only), `client-name <text>`
 (names the window's client area, the root node, `text`, leaving the
 window's text alone, and raises `EVENT_OBJECT_NAMECHANGE` on the client
 area, as Windows 11 Notepad renames its window as it is first activated;
-unsupported on the UIA backend), `select <id>` (marks
+unsupported on the UIA backend), `client-identity` (the root node's
+object answers as the object Windows provides for a client area does
+from then on: `IAccIdentity` with the address of the window's client
+area, so a client finds it again at that address however it reached it,
+and `accParent` with the window's own window object; MSAA-only), `disable-client` (the root node gains the unavailable state
+and `EVENT_OBJECT_STATECHANGE` is raised on the client area, as when a
+modal dialog disables its owner; MSAA-only), `select <id>` (marks
 the node selected, moving the state off any previous selection, and raises
 `SelectionItem_ElementSelected` for UIA or `EVENT_OBJECT_SELECTION` for
 MSAA), `notify <text>` (raises a UIA `AutomationNotification` from the

@@ -125,7 +125,16 @@ pub(crate) struct Context {
     terminal_lines: std::sync::atomic::AtomicU16,
     /// How the worker reads the element that has the keyboard focus.
     focused_element: FocusedElementReader,
+    /// How the worker reads the foreground window when it records the
+    /// window a focus was reported in ([`Outpost::set_foreground_reader`]).
+    foreground: Mutex<ForegroundReader>,
 }
+
+/// Reads the foreground window's handle. An outpost reads the system's
+/// (`GetForegroundWindow`); a test whose application cannot take the
+/// foreground on the desktop it runs on supplies its own
+/// ([`Outpost::set_foreground_reader`]).
+pub type ForegroundReader = Arc<dyn Fn() -> isize + Send + Sync>;
 
 /// Reads the UIA element that has the keyboard focus, built with the given
 /// cache request, with the given client, on the worker's thread. An
@@ -163,6 +172,18 @@ impl Context {
         self.arbitrator
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The foreground window's handle, by the reader the outpost was given
+    /// ([`Outpost::set_foreground_reader`]).
+    fn foreground_window(&self) -> isize {
+        let reader = Arc::clone(
+            &self
+                .foreground
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        reader()
     }
 
     fn tracking(&self) -> MutexGuard<'_, Tracking> {
@@ -364,6 +385,7 @@ impl Outpost {
                 verbatim_model::DEFAULT_TERMINAL_LINES,
             ),
             focused_element,
+            foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
         });
         if let Some(registration) = register_focus_properties(&context) {
             let _ = context.focus_properties.set(registration);
@@ -443,6 +465,20 @@ impl Outpost {
     /// no UIA provider runs out and its probe is made again.
     pub fn set_arbitration_clock(&self, clock: crate::arbitration::Clock) {
         self.context.arbitrator().set_clock(clock);
+    }
+
+    /// Reads the foreground window with `reader` from now on, in place of
+    /// the system's, when recording the window a focus was reported in,
+    /// whose own object NVDA holds as the foreground and so never speaks a
+    /// state change on as an ancestor: a test whose application runs on a
+    /// desktop where no window can take the foreground says which window
+    /// is the foreground.
+    pub fn set_foreground_reader(&self, reader: ForegroundReader) {
+        *self
+            .context
+            .foreground
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = reader;
     }
 
     /// Handles one command from Core, on the reader thread. Pings are
