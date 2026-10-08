@@ -92,6 +92,18 @@ pub(crate) enum Command {
     /// `EVENT_OBJECT_NAMECHANGE` on the client area, as Windows 11 Notepad
     /// renames its window as it is first activated. MSAA-only.
     ClientName(String),
+    /// `client-identity`: the window's client area, the root node, answers
+    /// as the object Windows provides for a window's client area does from
+    /// then on: `IAccIdentity` with its address, the window's
+    /// `OBJID_CLIENT`, so a client finds it again at that address however
+    /// it reached it, and `accParent` with the window's own window object.
+    /// MSAA-only.
+    ClientIdentity,
+    /// `disable-client`: the window is disabled, as a modal dialog's owner
+    /// is when the dialog opens: the root node gains the unavailable state,
+    /// and `EVENT_OBJECT_STATECHANGE` is raised on the client area.
+    /// MSAA-only.
+    DisableClient,
     /// `quit`.
     Quit,
     /// A line that is no command, rejected on the window thread, so its
@@ -152,6 +164,8 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
             (!id.is_empty()).then(|| Command::SetText(id.to_owned(), unescape(text)))
         }
         "client-name" => Some(Command::ClientName(rest.to_owned())),
+        "client-identity" => Some(Command::ClientIdentity),
+        "disable-client" => Some(Command::DisableClient),
         "focus-child" => {
             let (container, child) = rest.split_once(' ')?;
             Some(Command::FocusChild(

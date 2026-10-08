@@ -16,6 +16,7 @@
 //! test says, however long the test takes.
 
 use std::io::Write;
+use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -94,6 +95,8 @@ pub struct OutpostUnderTest {
     pub focus: FocusSlot,
     /// The time the outpost's arbitration reads.
     time: Arc<Mutex<Instant>>,
+    /// The window the outpost reads as the foreground.
+    foreground: Arc<AtomicIsize>,
 }
 
 impl OutpostUnderTest {
@@ -129,12 +132,18 @@ impl OutpostUnderTest {
         outpost.set_arbitration_clock(Arc::new(move || {
             *clock.lock().unwrap_or_else(PoisonError::into_inner)
         }));
+        // No window takes the foreground where these tests run: the test
+        // says which is the foreground ([`OutpostUnderTest::set_foreground`]).
+        let foreground = Arc::new(AtomicIsize::new(0));
+        let reader = Arc::clone(&foreground);
+        outpost.set_foreground_reader(Arc::new(move || reader.load(Ordering::Relaxed)));
         let under_test = Self {
             outpost,
             messages,
             next_request: 1,
             focus,
             time,
+            foreground,
         };
         assert_eq!(
             under_test.next(),
@@ -144,6 +153,12 @@ impl OutpostUnderTest {
             }
         );
         under_test
+    }
+
+    /// Makes `hwnd` the window the outpost reads as the foreground when it
+    /// records the window a focus was reported in.
+    pub fn set_foreground(&self, hwnd: HWND) {
+        self.foreground.store(hwnd.0 as isize, Ordering::Relaxed);
     }
 
     /// Moves the time the outpost's arbitration reads on by `by`.

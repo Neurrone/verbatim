@@ -202,7 +202,10 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // the theme's buttons. The new theme is removed, which selects the
     // default theme again. The confirmation is announced by its title and
     // its question, as NVDA reads a dialog's own text on entering it, and
-    // then its focused button.
+    // then its focused button. The settings dialog, disabled as the
+    // confirmation opens while the focus is still on Remove, says nothing,
+    // as NVDA says nothing (`docs/parity.md`, "A top-level window's state
+    // change").
     for control in [
         "Report as: combo box speech collapsed Alt+r",
         "Words: edit Alt+w",

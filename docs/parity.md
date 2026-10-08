@@ -286,6 +286,41 @@ verified.
     selections are not spoken (since 2026-10-08, after Left Arrow to a
     tree item's parent said "selected" before the parent; the
     `native_controls` mockapp test, on a real tree view).
+  - A top-level window's state change. Opening a modal dialog disables
+    its owner, raising a state change on the owner's client area while
+    the focus is still inside it, on an ancestor NVDA holds. NVDA says
+    nothing: live captures on 2026-10-08 of Verbatim's Remove Theme
+    confirmation opened eleven times, from the Remove button reached by
+    Tab and after returning from the confirmation, never said
+    "unavailable". The rule that silences it is in how NVDA meets the
+    event's object again. Its base `event_stateChange` speaks for an
+    ancestor only when the event's object is the very ancestor instance
+    (`any(self is obj for obj in api.getFocusAncestors())`), and the
+    event finds an existing instance only through `liveNVDAObjectTable`,
+    keyed by its address (`IAccessibleHandler.winEventToNVDAEvent`), in
+    which each new instance with that address replaces the last one
+    (`IAccessible.__init__`, at the end). When the focus enters a
+    top-level window, `doPreGainFocus` first sets the focus and its
+    ancestors (`api.setFocusObject`, whose walk creates the window's
+    ancestor instance), then, the focus difference level being 1 or less,
+    creates the foreground object (`objectInForeground`, an object for
+    the foreground window's `OBJID_CLIENT`), which takes the table's
+    entry for that address and is held as the foreground. So the event
+    on the window resolves to the foreground object, which is not among
+    the ancestors, and is silent. A top-level window that was not the
+    foreground as the focus entered it, as a popup menu's never is, keeps
+    its ancestor instance, and its state change is spoken. Verbatim:
+    **matched since 2026-10-08**: the outpost records, as the focus enters
+    a top-level window, whether that window is the foreground, and while it
+    is, does not count the window's own object, its client area or window
+    object, among the ancestors whose state changes are spoken (the
+    `msaa_events` mockapp tests, one each way, and the `theme_panel`
+    scenario). Before, whether Verbatim said "unavailable" depended on
+    timing: the intake moves the events of objects that are neither the
+    focus nor the object a focus change moves to after that focus change
+    when both are in one batch, so the owner's change was silent when it
+    shared a batch with the confirmation's focus and spoken when it came
+    in a batch of its own.
   - Dialog text, which NVDA reads on entering a dialog: a message box's
     question, read after the dialog's title and role and before its
     focused button. **Matched since 2026-10-07** ("A dialog's own text" in

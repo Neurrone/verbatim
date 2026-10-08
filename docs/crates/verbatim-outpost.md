@@ -189,7 +189,15 @@ Public API:
   element with, which is otherwise the system's keyboard focus
   (`Uia::focused_element`): mockapp's tests hand a real outpost a UIA
   focus in a window that does not have the keyboard focus, and measure
-  everything it does with it. `Outpost::settle` waits until the worker has
+  everything it does with it. `Outpost::set_foreground_reader` gives the
+  outpost a `ForegroundReader`, the function it reads the foreground
+  window with when it records the window a focus entered, which is
+  otherwise `GetForegroundWindow`: an MSAA state change on that window's
+  own object, when the window was the foreground as the focus entered it,
+  is not spoken as an ancestor's, as NVDA's foreground object takes its
+  place (`docs/parity.md`, "A top-level window's state change"), and
+  mockapp's windows, on desktops where none takes the foreground, are made
+  the foreground this way. `Outpost::settle` waits until the worker has
   handled everything queued, follow-ups included, the focus-following
   subscriptions have made every move asked of them, and every message
   published has been written to the pipe: the evidence those tests wait on

@@ -1,0 +1,8 @@
+{
+  "id": "root",
+  "role": "dialog",
+  "name": "Settings",
+  "children": [
+    { "id": "remove", "role": "button", "name": "Remove", "states": ["focusable"] }
+  ]
+}
