@@ -434,11 +434,12 @@ verified.
   moves attention; its outpost has already dropped it if the window
   was no longer the system's foreground when the outpost handled it.
   Before handling a batch that holds a foreground fact, the outpost
-  waits up to 250 ms for that window to become the foreground window,
-  as NVDA holds back event handling after a foreground event (issue
-  3831); a starting application's focus event, which can come just
-  before its foreground event, is then judged against the real
-  foreground. The bound was measured live on 2026-10-02: over 245 such
+  holds the batch for up to 250 ms for that window to become the
+  foreground window, as NVDA holds back event handling after a foreground
+  event (issue 3831); a starting application's focus event, which can
+  come just before its foreground event, is then judged against the real
+  foreground. Core's queries to that outpost are answered meanwhile,
+  where NVDA's scripts would wait behind the held events. The bound was measured live on 2026-10-02: over 245 such
   events, the window arrived 5 to 100 ms after its event. Without the
   wait, msinfo32 was sometimes never announced. A focus event is
   attended only when its window was in the system's foreground window

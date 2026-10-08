@@ -5,8 +5,12 @@
 //! into the application, so events and replies leave the outpost in the order
 //! the intake plans their entries: the order they joined the queue, but for
 //! the events of other objects that a focus change overtakes
-//! (`intake::overtaken`). This is NVDA's model, one thread doing all the
-//! work, with one such thread per application.
+//! (`intake::overtaken`) and the queries that go ahead of a batch held for
+//! its foreground change. This is NVDA's model, one thread doing all the
+//! work, with one such thread per application. The worker waits for
+//! nothing but its calls into the application and the queue: a caret key's
+//! evidence is watched for between entries, and a foreground change is
+//! confirmed by the queue.
 //!
 //! Being the only thread that calls into the application, the worker is also
 //! where those calls are counted: the backend crates count each call on the
@@ -55,7 +59,9 @@ use crate::protocol::{
 };
 
 use super::Context;
-use super::intake::{Entry, HeldFocus, Item, Object, Planned, UiaEvent, UiaKind, window_of};
+use super::intake::{
+    Entry, Foreground, HeldFocus, Item, Object, Planned, UiaEvent, UiaKind, window_of,
+};
 use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, CONSOLE_WINDOW_CLASS, OpenWatch};
 use super::window::{
@@ -74,16 +80,6 @@ use windows::Win32::UI::Accessibility::IUIAutomationElement;
 /// (found live in the end-to-end suite); NVDA announces the focus late, and
 /// a shorter deadline here dropped it for good.
 const HANDLING_DEADLINE: Duration = Duration::from_secs(10);
-
-/// The longest the worker waits, before a batch holding a foreground change,
-/// for that change's window to become the foreground window. Measured live
-/// on 2026-10-02 over 245 such events (msinfo32, Notepad, and Verbatim's own
-/// windows): 5 to 100 ms, median 44 ms. A window that has not arrived by
-/// then was refused the foreground, and the batch is handled anyway.
-const FOREGROUND_WAIT: Duration = Duration::from_millis(250);
-
-/// How often the worker checks the foreground window while it waits.
-const FOREGROUND_POLL: Duration = Duration::from_millis(10);
 
 /// How long a UIA focus waits to find its element live, for ancestors and
 /// navigation, before it is reported from the event alone. Such a read
@@ -536,13 +532,17 @@ fn run(context: &Context, generation: u64) {
 /// The worker's loop, until the intake closes or this worker is abandoned.
 fn run_loop(context: &Context, generation: u64) {
     let mut client = Client::default();
-    // When the current batch's foreground change was confirmed. `next` names
-    // the window only with a batch's first entry, and the foreground fact
-    // need not be that entry, so the time is kept for the whole batch.
+    // When the current batch's foreground change was confirmed. `next` says
+    // so only with a batch's first entry, and the foreground fact need not
+    // be that entry, so the time is kept for the whole batch.
     let mut confirmed: Option<(u64, Option<u64>)> = None;
     while let Some((planned, batch, foreground)) = context.intake.next() {
-        if let Some(hwnd) = foreground {
-            confirmed = Some((batch, wait_for_foreground(hwnd)));
+        if let Some(foreground) = foreground {
+            let at = match foreground {
+                Foreground::Confirmed(at) => Some(at),
+                Foreground::NotConfirmed => None,
+            };
+            confirmed = Some((batch, at));
         }
         let foreground_at_ms = confirmed
             .filter(|(confirmed_batch, _)| *confirmed_batch == batch)
@@ -661,25 +661,6 @@ fn run_entry(
         }
     }
     Ok(())
-}
-
-/// Waits, up to [`FOREGROUND_WAIT`], for `hwnd` to become the foreground
-/// window, as NVDA holds back event handling after a foreground event until
-/// the foreground window matches (`_shouldGetEvents`, issue 3831). Local
-/// calls only; the application is never asked.
-fn wait_for_foreground(hwnd: isize) -> Option<u64> {
-    let deadline = Instant::now() + FOREGROUND_WAIT;
-    while !window_is_foreground(hwnd) {
-        if Instant::now() >= deadline {
-            tracing::debug!(
-                hwnd,
-                "the foreground window did not become the event's window"
-            );
-            return None;
-        }
-        thread::sleep(FOREGROUND_POLL);
-    }
-    Some(now_ms())
 }
 
 /// The deadline for an entry, and the query it answers, if it is one.

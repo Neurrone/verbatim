@@ -153,9 +153,11 @@ Public API:
   - The worker (`outpost::worker`): one thread takes entries in order and
     finishes each before the next. A caret key's evidence is watched for
     between entries (under "Text" below), not waited on. It is the only
-    thread that calls into the application, so events and replies leave in the order their entries
-    were planned: the order they joined the queue, but for the events a
-    focus change overtakes. It replaces the announce lane, the query pool, the
+    thread that calls into the application, so events and replies leave in
+    the order their entries were planned: the order they joined the queue,
+    but for the events a focus change overtakes, the queries that go ahead
+    of a batch held for its foreground change, and a caret key's answer,
+    which leaves when its evidence comes. It replaces the announce lane, the query pool, the
     announce poll, the probe threads, and the late window retry. Being the
     only such thread, it is where the calls are counted: the backend crates
     count each call on the thread that makes it, and the worker takes both
@@ -370,11 +372,18 @@ Implementation notes:
   harness fetches these logs alongside the timeline and stderr, so a silent
   outpost is readable after the fact instead of theorized. Best-effort: a
   failed log open leaves the child unredirected, never unspawned.
-- Foreground changes (the worker): before the first entry of a batch that
-  holds a foreground fact, the worker waits up to 250 ms, checking every
-  10 ms with local calls, for that fact's window to become the system's
-  foreground window (`Intake::next` names the window), as NVDA holds back
-  event handling after a foreground event (issue 3831). Then a
+- Foreground changes (the intake and the worker): a batch that holds a
+  foreground fact is held in the intake for up to 250 ms
+  (`intake::FOREGROUND_WAIT`), its window checked with a local call
+  whenever something joins the queue and every 10 ms otherwise, until that
+  fact's window is the system's foreground window, as NVDA holds back
+  event handling after a foreground event (issue 3831); no event says
+  when a window has become the foreground window. `Intake::next` tells
+  the worker, with the batch's first entry, when it was confirmed. While
+  the batch is held, Core's queries and its list of held nodes are handed
+  to the worker ahead of it, so a caret key or a review command never
+  waits for the foreground (since 2026-10-08; the worker had slept in
+  10 ms steps before the batch, and everything waited). Then a
   foreground fact is reported at once, stamped with the time its window
   was confirmed as the foreground rather than the time Windows raised the
   event, which comes before the change completes (`docs/parity.md`,
