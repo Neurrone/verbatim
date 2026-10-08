@@ -33,6 +33,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Condvar, Mutex, PoisonError};
+use std::time::Instant;
 
 use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{Notification, TraceId};
@@ -122,6 +123,9 @@ pub(super) enum Item {
     /// else is waiting, the focus-following subscriptions have made every
     /// move asked of them, and every message published has been written.
     Settle(std::sync::mpsc::Sender<()>),
+    /// The time [`Intake::wake_at`] named has come with nothing else to do:
+    /// a caret key's watch may have reached the bound on its age.
+    Wake,
 }
 
 /// A UIA focus fact the worker held back as possibly stale
@@ -262,6 +266,9 @@ struct State {
     batch_number: u64,
     focused: Option<Object>,
     closed: bool,
+    /// When the worker asked to be given [`Item::Wake`] if nothing else
+    /// comes first.
+    wake: Option<Instant>,
 }
 
 /// The queue the worker draws from.
@@ -377,8 +384,9 @@ impl Intake {
     /// batch from everything waiting when the current one is done. With the
     /// first entry of a batch that holds a foreground change comes that
     /// change's window, for the worker to wait on before handling the batch
-    /// (see [`foreground_of`]). Blocks while there is nothing to do; `None`
-    /// once the queue is closed.
+    /// (see [`foreground_of`]). Blocks while there is nothing to do, and
+    /// gives [`Item::Wake`] when the time [`wake_at`](Self::wake_at) named
+    /// comes first; `None` once the queue is closed.
     pub(super) fn next(&self) -> Option<(Planned, u64, Option<isize>)> {
         let mut state = self.lock();
         let mut foreground = None;
@@ -398,11 +406,38 @@ impl Intake {
             if state.closed {
                 return None;
             }
+            let Some(wake) = state.wake else {
+                state = self
+                    .ready
+                    .wait(state)
+                    .unwrap_or_else(PoisonError::into_inner);
+                continue;
+            };
+            let now = Instant::now();
+            if now >= wake {
+                state.wake = None;
+                let entry = Entry {
+                    item: Item::Wake,
+                    trace: TraceId::mint(),
+                    observed_at_ms: super::now_ms(),
+                    timing: crate::protocol::EventTiming::default(),
+                };
+                return Some((Planned::Run(entry), state.batch_number, None));
+            }
             state = self
                 .ready
-                .wait(state)
-                .unwrap_or_else(PoisonError::into_inner);
+                .wait_timeout(state, wake - now)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
         }
+    }
+
+    /// Asks [`next`](Self::next) for an [`Item::Wake`] at `at` if nothing
+    /// else is to be done then, or for none. The worker waits for nothing:
+    /// the queue's own wait for work ends at that time as well.
+    pub(super) fn wake_at(&self, at: Option<Instant>) {
+        self.lock().wake = at;
+        self.ready.notify_one();
     }
 
     /// Withdraws query `request_id` if it has not started. Returns whether it
@@ -540,7 +575,7 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         // Only the newest caret report for a node matters, and it is never
         // limited: the focus's caret.
         Item::CaretOf { node_id } => (Some(Key::CaretOf(node_id.number())), Category::Exempt, 0),
-        Item::Query { .. } | Item::ResolveFocus { .. } | Item::Settle(_) => {
+        Item::Query { .. } | Item::ResolveFocus { .. } | Item::Settle(_) | Item::Wake => {
             (None, Category::Exempt, 0)
         }
     }

@@ -71,10 +71,10 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     press(scenario, "uparrow", FIRST);
 
     // Two words selected, the second unselected, then the rest of the line
-    // selected. Unselecting comes before Shift+End because Windows 11
-    // Notepad's Shift+End takes the line break in, which
-    // Shift+Control+Left Arrow would then unselect first.
-    press(scenario, "home", "V");
+    // selected, from the line's start, where Up Arrow left the caret (Home
+    // there would move nothing, and say nothing). Unselecting comes before
+    // Shift+End because Windows 11 Notepad's Shift+End takes the line
+    // break in, which Shift+Control+Left Arrow would then unselect first.
     press_selecting(scenario, "shift+control+rightarrow", "Verbatim", "selected");
     press_selecting(scenario, "shift+control+rightarrow", "reads", "selected");
     press_selecting(scenario, "shift+control+leftarrow", "reads", "unselected");

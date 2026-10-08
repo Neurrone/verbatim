@@ -3,7 +3,8 @@
 //! Commands are one per line: `focus <id>`, `set-focus <id>`,
 //! `set-name <id> <text>`, `set-value <id> <text>`,
 //! `set-description <id> <text>`, `set-states <id> <state>...`, `select <id>`,
-//! `caret <id> <start> [<end>]`, `set-text <id> <text>`, `notify <text>`,
+//! `caret <id> <start> [<end>]`, `caret-event <id>`, `set-text <id> <text>`,
+//! `notify <text>`,
 //! `active-text-position <id> <start> <end>`, `take-runtime-id <id> <from>`,
 //! `stall <ms>`, `slow <ms>`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
@@ -47,6 +48,13 @@ pub(crate) enum Command {
     /// left out), raising no event, as an application's caret moves before
     /// the client asks where it is.
     Caret(String, usize, usize),
+    /// `caret-event <id>`: raises the backend's caret event for a text
+    /// node, as an application reports its caret after moving it: UIA's
+    /// text selection changed event from the node, or, in the MSAA backend,
+    /// `EVENT_OBJECT_TEXTSELECTIONCHANGED` from the edit control's client
+    /// object, which a Common Controls version 6 edit control raises
+    /// whenever its caret moves.
+    CaretEvent(String),
     /// `set-text <id> <text>`: replaces a UIA text node's text, raising no
     /// event, as a terminal's text changes before a client reads it; `\n`
     /// in `text` is a line feed and `\\` a backslash, so one stdin line can
@@ -103,6 +111,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "set-focus" if !rest.is_empty() => Some(Command::SetFocus(rest.to_owned())),
         "select" if !rest.is_empty() => Some(Command::Select(rest.to_owned())),
         "notify" if !rest.is_empty() => Some(Command::Notify(rest.to_owned())),
+        "caret-event" if !rest.is_empty() => Some(Command::CaretEvent(rest.to_owned())),
         "stall" => rest.parse().ok().map(Command::Stall),
         "slow" => rest.parse().ok().map(Command::Slow),
         "take-runtime-id" => {

@@ -21,18 +21,19 @@ mod harness;
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use std::time::{Duration, Instant};
 
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
-    Backend, CaretMotion, CaretWait, CaretWatch, Effect, Input, NodeDetails, NodeId, NodeSnapshot,
-    NormalizedEvent, OutpostId, Pid, PreviousSelection, ReviewCommand, Role, SegmentContent,
-    SpeechMark, StateSet, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead,
-    TextReadAhead, TextReply, TextUnit, TraceId,
+    Backend, CaretWatch, Effect, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent,
+    OutpostId, Pid, PreviousSelection, ReviewCommand, Role, SegmentContent, SpeechMark, StateSet,
+    TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply,
+    TextUnit, TraceId,
 };
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::UiaText;
-use verbatim_outpost::text::{Anchors, CaretSignal, NodeText, TextSource, caret_report, perform};
+use verbatim_outpost::text::{
+    Anchors, CaretSignal, NodeText, TextSource, Watched, caret_report, check_caret, perform,
+};
 use verbatim_uia::text::Endpoint;
 use verbatim_uia::{NodeIdRegistry, Uia};
 use verbatim_uia_rops::{
@@ -47,8 +48,8 @@ use windows::Win32::UI::Accessibility::{IUIAutomationElement, TextUnit_Line, Tex
 use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
 use windows::core::w;
 
-/// A caret key's wait that never needs to wait: every test moves mockapp's
-/// caret before asking, so the first read is the evidence.
+/// A caret key's watch checked once with no caret event: every test moves
+/// mockapp's caret before asking, so the first read is the evidence.
 struct AlreadyMoved;
 
 impl CaretSignal for AlreadyMoved {
@@ -56,16 +57,16 @@ impl CaretSignal for AlreadyMoved {
         false
     }
 
-    fn wait(&mut self, _timeout: Duration) {
-        panic!("the caret had already moved, so nothing should wait");
-    }
-
-    fn now(&mut self) -> Instant {
-        Instant::now()
-    }
-
     fn now_ms(&mut self) -> u64 {
         0
+    }
+}
+
+/// The caret reply a check of a key's watch answered with.
+fn answered(watched: Watched) -> TextReply {
+    match watched {
+        Watched::Answered(reply) => reply,
+        Watched::Watching => panic!("the check found no evidence"),
     }
 }
 
@@ -133,7 +134,6 @@ fn read<S: TextSource>(
             movement: movement.map(|(unit, count)| TextMovement { unit, count }),
             unit,
         }),
-        &mut AlreadyMoved,
     )
 }
 
@@ -197,7 +197,6 @@ fn lines_stop_at_the_end<S: TextSource>(
             unit: TextUnit::Line,
             count: 16,
         }),
-        &mut AlreadyMoved,
     );
     let TextReply::Chunks { moved, chunks } = reply else {
         panic!("chunks, not {reply:?}");
@@ -230,7 +229,6 @@ fn lines_stop_at_the_end<S: TextSource>(
             unit: TextUnit::Line,
             count: 2,
         }),
-        &mut AlreadyMoved,
     );
     let TextReply::Chunks { moved, chunks } = reply else {
         panic!("chunks, not {reply:?}");
@@ -308,20 +306,18 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
     common::apply(app, hwnd, "caret doc 0");
     let (before, _) = caret_report(source, anchors, &mut || 0, false).expect("the caret");
     common::apply(app, hwnd, "caret doc 6");
-    let reply = perform(
+    let reply = answered(check_caret(
         source,
         anchors,
-        &TextOp::AwaitCaret(CaretWatch {
+        &CaretWatch {
             pressed_at_ms: 0,
             since: Some(point_of(&before.line)),
             unit: TextUnit::Word,
-            motion: CaretMotion::NextWord,
             compare: None,
             previous_selection: None,
-            wait: CaretWait::Standard,
-        }),
+        },
         &mut AlreadyMoved,
-    );
+    ));
     let TextReply::Caret(reply) = reply else {
         panic!("a caret reply, not {reply:?}");
     };
@@ -333,20 +329,18 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
     let (collapsed, _) = caret_report(source, anchors, &mut || 0, false).expect("the caret");
     common::apply(app, hwnd, "caret doc 0 5");
     let at = point_of(&collapsed.line);
-    let reply = perform(
+    let reply = answered(check_caret(
         source,
         anchors,
-        &TextOp::AwaitCaret(CaretWatch {
+        &CaretWatch {
             pressed_at_ms: 0,
             since: Some(at),
             unit: TextUnit::Character,
-            motion: CaretMotion::NextCharacter,
             compare: None,
             previous_selection: Some(PreviousSelection { start: at, end: at }),
-            wait: CaretWait::Standard,
-        }),
+        },
         &mut AlreadyMoved,
-    );
+    ));
     let TextReply::Caret(reply) = reply else {
         panic!("a caret reply, not {reply:?}");
     };
@@ -495,7 +489,6 @@ fn remote_and_classic_caret_reads_agree() {
         learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
-        edge: None,
     };
 
     // The caret in "beta", a spelling error after bold "alpha": the line's
@@ -616,7 +609,6 @@ fn a_failing_attribute_is_not_supported() {
         learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
-        edge: None,
     };
     common::apply(&mut app, hwnd, "caret doc 1");
     let classic = caret_read_classic(&query).expect("the classic reads run");
@@ -659,7 +651,6 @@ fn a_mixed_stretch_is_read_by_words_then_characters() {
         learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
-        edge: None,
     };
     let italic = |italic| RunAttributes {
         italic: Some(italic),
@@ -836,7 +827,6 @@ fn remote_and_classic_text_reads_agree() {
         learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
-        edge: None,
     })
     .expect("the caret");
     let selection = selected.selection.expect("the selection made");
@@ -981,7 +971,7 @@ fn say_all_step<S: TextSource>(
                     if let TextOp::MoveCaret(point) = request.op {
                         step.caret_moves.push(point);
                     }
-                    let reply = perform(source, anchors, &request.op, &mut AlreadyMoved);
+                    let reply = perform(source, anchors, &request.op);
                     inputs.push(Input::TextCompleted {
                         trace_id: TraceId::mint(),
                         query_id: request.query_id,
@@ -1265,7 +1255,6 @@ fn every_attribute_is_read_both_ways() {
         learning,
         max_text: 1024,
         max_change_text: 1024,
-        edge: None,
     };
     let plain = plain_formatting;
     let read = |formats| {
@@ -1393,7 +1382,6 @@ fn unsupported_attributes_are_found_both_ways() {
         learning: Attributes::ALL,
         max_text: 1024,
         max_change_text: 1024,
-        edge: None,
     };
     let unsupported = Some(Attributes::of(&[
         TextAttribute::StrikethroughStyle,

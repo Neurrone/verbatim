@@ -99,7 +99,12 @@ position changed event from a text node, with the range of its text from
 offsets, the caret alone at `start` when `end` is left out, raising no
 event, as an application's caret moves before a client asks where it is;
 on the MSAA backend the offsets are the edit control's, with its carriage
-returns, sent as `EM_SETSEL`), `set-text <id> <text>` (replaces a UIA
+returns, sent as `EM_SETSEL`), `caret-event <id>` (raises the backend's
+caret event for a text node, as an application reports its caret once it
+has moved it: UIA's text selection changed event from the node, or, on
+the MSAA backend, `EVENT_OBJECT_TEXTSELECTIONCHANGED` from the edit
+control's client object, which a Common Controls version 6 edit control
+raises whenever its caret moves), `set-text <id> <text>` (replaces a UIA
 text node's text, with `\n` for a line feed and `\\` for a backslash,
 raising no event, as a terminal's buffer changes before a client reads it;
 the terminal tests write lines, discard the oldest, and clear the screen
@@ -166,7 +171,9 @@ its crate-internal modules are the reviewable surface:
   window move the focused node's caret by these units (`caret_key`): Right
   Arrow by a character, Control+Right Arrow to the next word's start, and
   Down and Up Arrow to the same column of the next or previous line, or its
-  end when that line is shorter, raising no event; the language (`Culture`) is `en-US`
+  end when that line is shorter, raising UIA's text selection changed
+  event from the node when the caret moved, as an editor reports its
+  caret, and nothing for a key that left it where it was; the language (`Culture`) is `en-US`
   outside the node's `cultures` stretches (each a start and an end offset and
   a Windows locale id) and theirs within one, mixed over a range holding
   more than one; the
@@ -306,15 +313,16 @@ forever. `child_cleanup.rs` pins this: it runs itself as a subprocess
 that starts a `mockapp` and panics where the panic cannot unwind, and
 asserts that the subprocess's standard error closes promptly. The test files that use UIA as a
 client (`arbitration.rs`, `call_counts.rs`, `controller_for.rs`,
-`events.rs`, `focus_reports.rs`, `instruction_limit.rs`, `remote_ops.rs`,
-`terminal.rs`, `text.rs`, `uia_tree.rs`)
+`caret_watch.rs`, `events.rs`, `focus_reports.rs`, `instruction_limit.rs`,
+`remote_ops.rs`, `terminal.rs`, `text.rs`, `uia_tree.rs`)
 run through `tests/common/harness.rs` instead of libtest (`harness =
 false`): it runs and reports the tests as libtest does, then ends the
 process without running DLL detach code, because `UIAutomationCore.dll`'s
 own detach code sometimes hangs or crashes in a process that has connected
 to providers; the file's comment gives the evidence. The two that pin
 the calls mockapp's providers answer, `call_counts.rs` and `terminal.rs`,
-run each test isolated (`harness::run_isolated`): the runner starts the
+and `caret_watch.rs`, whose tests raise mockapp's events and must hear no
+other client's, run each test isolated (`harness::run_isolated`): the runner starts the
 binary again for each test, with `--isolated-test` and its name, on a
 new desktop made for it, and reports its result. A provider cannot tell
 which client called it (UIA's calls reach it from UI Automation's own
@@ -387,15 +395,26 @@ text requests answered by the text module against mockapp
 one sentence's end and the next one's start is spoken as two utterances,
 the sentence running on to the next line as one with that line's mark
 where its words start, and mockapp's caret is moved to each line's start
-as its mark is reached. Its caret wait never waits: every test moves mockapp's caret first, and the
-wait panics if called. `call_counts.rs` pins a caret move and a caret
-report on both stacks this way too (`docs/performance.md`), and caret
-keys that cannot move the caret (Control+Home at the start, Home at a
-line's start, End at a line's end, Down Arrow on the last line, Right
-Arrow at the end) in the UIA text both ways and in the edit control: each
-is answered on the wait's first read, unmoved, with the wait's own reason
-for ending (`WaitEnd::AtDestination`) asserted and a wait panicking if
-called.
+as its mark is reached. Its caret keys' watches are checked once, and
+every test moves mockapp's caret first, so that check answers.
+`call_counts.rs` pins a caret move and a caret report on both stacks this
+way too (`docs/performance.md`), and a caret key's watch on both stacks,
+in the UIA text both ways: its first check, which finds no evidence and
+leaves the watch open after one read, and the check a later caret event
+prompts, which answers it.
+`caret_watch.rs` drives a real `verbatim_outpost::Outpost` in the test
+process (the outpost harness `call_counts.rs` uses) against mockapp's
+`caret_watch.json`, a UIA document and a button: a focus on the button
+delivered while a caret key's watch on the document is open is reported
+first, and the watch then ends, answered `WatchEnded`
+(`a_focus_change_during_a_caret_watch_is_handled_at_once`; before
+2026-10-08 the key's 100 ms wait was answered first and the focus waited
+behind it); a caret moved and reported with `caret-event` after the
+watch opened answers it with the character there
+(`a_caret_move_raised_later_answers_the_watch`); and a key that moves
+nothing says nothing, a caret event that shows no change leaves its watch
+open, and the next key's watch ends it, answered `WatchEnded`
+(`a_key_that_moves_nothing_is_answered_with_nothing`).
 `slow_application.rs` runs a real
 `verbatim_outpost::Outpost` in the test process against an `msaa`-backend
 mockapp: it captures the address of mockapp's own scripted focus event,

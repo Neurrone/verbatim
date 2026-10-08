@@ -104,9 +104,10 @@ worker's count is exactly the calls its current entry has made. The worker
 takes the count when it publishes an event or a query reply and sends it
 in the message's timing; Core's latency ledger keeps it with the trace, and
 `verbatim-inspect latency` prints it with the outpost read stage. For a
-caret key, the calls its wait for evidence made are taken when the wait
-ends and printed with the caret wait stage instead; the message's total
-still holds them, so the counts this ledger pins are unchanged.
+caret key whose watch stayed open, the calls of the checks that found no
+evidence are kept with the watch and printed with the caret wait stage;
+the reply's total holds them and the answering check's, so the counts
+this ledger pins are each check's.
 
 ## Cold and steady state
 
@@ -572,57 +573,45 @@ spelling and grammar errors. Measured against mockapp's text provider
   attribute read each classically, and nothing remotely.
 - Target: 1.
 
-### A caret wait that finds nothing, UIA
+### A caret key's watch, UIA
 
-A caret key that could have moved the caret but changed nothing (Right
-Arrow one character into the text, which the application ignored): the
-wait reads the caret every 10 milliseconds until its 100 run out, then
-answers.
+A caret key that could have moved the caret but has not yet (Right Arrow
+one character into the text, which the application has not handled when
+the request arrives): the watch's first check reads the caret once,
+finds no evidence, and leaves the watch open, and the worker goes on with
+its queue (`docs/crates/verbatim-outpost.md`, the caret key's watch).
+When the application then moves the caret and reports it, the check that
+caret event prompts reads the caret once more and answers the key. A key
+that moves nothing makes the first check alone, and is silent. Measured
+by `crates/mockapp/tests/call_counts.rs` in mockapp's text, both ways,
+and in its edit control.
 
-- Minimum: one round trip per read: 11 for a wait of 100 milliseconds.
-- Today: 11 remotely, each read the whole caret read above, so the read
-  that would find the evidence is the answer; the first also reads the
-  document's range and compares its end with the caret (one
-  `DocumentRange` and one `CompareEndpoints` inside the provider), which
-  tells whether the key could have moved it at all (the next section).
-  Classically 134, 12 per read and those 2 calls once; 132 before the
-  comparison (2026-10-08). Before remote operations each read was 9 calls
-  (the caret, the comparisons, and the line, whose characters at the
-  caret are evidence too).
-- Target: 11.
-
-### A caret key that cannot move the caret
-
-A caret key that finds the caret where it takes it: Control+Home at the
-start of the text, Home at the start of a line whose first character is
-not white space, End before a line's break, Down Arrow on the last line,
-Right Arrow at the end, and likewise Left Arrow, Control with Left or
-Right Arrow, Up Arrow, and the page keys at their edges. The application
-raises nothing for such a key. Archived end-to-end runs showed about one
-caret key in ten taking about 110 milliseconds, every one of them a key
-like these: the wait read the caret until its 100-millisecond deadline,
-which the wait's timer rounds up to its tick, and answered unmoved. Since
-2026-10-08 the wait's first read also finds whether the caret is at the
-key's destination, and when it is, and is where it was before the key,
-answers at once (`docs/crates/verbatim-outpost.md`, the wait for
-evidence). Measured by `crates/mockapp/tests/call_counts.rs` in mockapp's
-text ("alpha beta", "gamma", and an empty last line), both ways, and in
-its edit control.
-
-- Minimum: one caret read, with no wait.
-- Today: through UIA, 1 round trip remotely for each of the five keys
-  measured, 11 before. Classically: Control+Home 38 calls (the line's
-  formatting walked, with the document's range read and its start
-  compared with the caret), 396 before; Home and End 12 (the line already
-  read tells, at no cost), 132 before; Down Arrow on the empty last line
-  12 (the document's range read and its end compared with the line's),
-  110 before; Right Arrow at the end 14 (the same comparison with the
-  caret), 132 before. In the edit control, 5 window messages for each, 55
-  before: the start of its text is offset zero, its end the text's
-  length, which reading the last line reads anyway.
-- Wall clock: about 110 milliseconds before, the deadline and the timer's
-  rounding; now one caret read.
-- Target: one caret read.
+- Minimum: one round trip for each check; nothing for waiting.
+- Today: 1 remotely for each check, the whole caret read above, so the
+  check that finds the evidence is the answer; classically 12 for each,
+  the caret move's reads; in the edit control 5 window messages for each.
+  Before 2026-10-08 the outpost waited for the evidence on its worker,
+  reading the caret every 10 milliseconds until its 100 ran out (300 in a
+  terminal): a key that moved nothing cost 11 round trips remotely, 134
+  calls classically (12 for each of eleven reads and 2 comparing the
+  caret with an end of the document, which a wait's first read made for
+  the keys whose destination it could tell), and 55 window messages in
+  the edit control; and Control+Home at the start of the text, the one
+  such key that read the line's formatting, 396 calls classically, before
+  that comparison let it answer at once.
+- Target: one round trip for each check.
+- Wall clock: what matters is what waits behind the key. Before, every
+  other entry of the application's outpost waited out the key's wait: in
+  mockapp, a focus change delivered just after a Right Arrow the
+  application ignored was handled 100.7 milliseconds later, once the
+  wait's 100 had run out (`crates/mockapp/tests/caret_watch.rs`,
+  `a_focus_change_during_a_caret_watch_is_handled_at_once`, failing on
+  the code before the change). Archived end-to-end runs showed about one
+  caret key in ten taking about 110 milliseconds, every one a key that
+  could not move the caret. Now the focus is taken from the queue as soon
+  as the key's one check is done: 0.74 to 0.85 milliseconds after the
+  key in five runs of the same test, and the key's watch ends with it,
+  saying nothing.
 
 ### A caret report, UIA
 

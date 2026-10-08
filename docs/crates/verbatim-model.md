@@ -307,8 +307,8 @@ query_id, reply }`. A newer request for the same purpose supersedes an
 older one, whose answer Core then drops. The operations (`TextOp`):
 
 - `AwaitCaret(CaretWatch)`: Core has just passed a caret key to the
-  application. Wait for evidence, then answer `TextReply::Caret` with a
-  `CaretReply`. Evidence is any of: a caret event from the application;
+  application. Watch for evidence, without waiting for it, and answer
+  `TextReply::Caret` with a `CaretReply` once it comes. Evidence is any of: a caret event from the application;
   the caret no longer where it was when the key was pressed (Core's
   `since`, where Core last knew it, `None` when it did not, unless the
   outpost itself reported a caret from a read that finished before
@@ -316,14 +316,14 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   which case its newest such report; a caret read at or after that time
   may already show the key's effect); the text of `unit` at the caret differing from `compare` (the
   character or word at the caret before a Delete); the selection no longer
-  `previous_selection`. Wait up to 100 milliseconds for
-  `CaretWait::Standard` and 300 for `CaretWait::Extended` (terminals), and
-  answer when the wait runs out too, with `moved` false. The watch carries
-  the key's `motion` (a `CaretMotion`): when the caret is still where it
-  was before the key and that is where the motion takes it (Control+Home
-  at the start of the text, Home at a line's start, Down Arrow on the last
-  line), the key cannot move it, and the outpost answers at once with
-  `moved` false rather than waiting. The reply carries
+  `previous_selection`. The outpost checks for it when the request
+  arrives and whenever the application reports a caret, text, or
+  selection change, and answers with `moved` true. A watch that ends with
+  no evidence, when the next caret key's watch replaces it, the focus
+  moves, or a bound on its age that only frees it passes, is answered
+  `TextReply::WatchEnded`, and Core says nothing: a key that moves
+  nothing is silent (since 2026-10-08; the outpost had waited up to 100
+  milliseconds, 300 in a terminal, and answered `moved` false). The reply carries
   the caret as it now is, with `read_at_ms`, when the outpost read it on
   the clock of `observed_at_ms` (0 when unknown, which Core compares with
   a later key's `pressed_at_ms`), the requested `unit` at the caret as a chunk
@@ -384,7 +384,8 @@ Any request can also be answered `NoText` (the node has no text interface
 at all; Core then reviews its value or name as flat text, as NVDA's object
 review falls back to), `AnchorLost`, `Gone` (the node no longer exists),
 or `Unanswered` (the application did not answer in time, or the read
-failed).
+failed). A caret key's watch that ends with no evidence is answered
+`WatchEnded`.
 
 ### Inputs from the shell
 
@@ -421,8 +422,8 @@ failed).
 
 The model also adds `Role::Terminal`, NVDA's terminal role, for Windows
 Terminal's text control, the console host, and embedded terminals: the
-review cursor keeps cell columns there, caret waits are longer, and typing
-waits for the terminal to show it.
+review cursor keeps cell columns there, and typing waits for the terminal
+to show it.
 
 ## Themes (milestone M4)
 

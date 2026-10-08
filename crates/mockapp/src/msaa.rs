@@ -17,7 +17,8 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::NotifyWinEvent;
 use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE,
-    EVENT_OBJECT_SELECTION, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_VALUECHANGE,
+    EVENT_OBJECT_SELECTION, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_TEXTSELECTIONCHANGED,
+    EVENT_OBJECT_VALUECHANGE, OBJID_CLIENT,
 };
 
 use crate::stdin::Command;
@@ -89,6 +90,19 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         // MSAA has no notification event; `notify` is a UIA-backend command
         // (see crate::stdin::Command::Notify).
         Command::Notify(_) => return Err("notify is not supported on the msaa backend".into()),
+        Command::CaretEvent(_) => {
+            let edit = crate::edit::find(hwnd).ok_or("the window hosts no edit control")?;
+            // SAFETY: `edit` is the edit control's live handle, a child of
+            // this thread's window, which answers for its client object.
+            unsafe {
+                NotifyWinEvent(
+                    EVENT_OBJECT_TEXTSELECTIONCHANGED,
+                    edit,
+                    OBJID_CLIENT.0,
+                    CHILDID_SELF,
+                );
+            }
+        }
         Command::Caret(_, start, end) => {
             // The text is the edit control's, in its own offsets.
             let edit = crate::edit::find(hwnd).ok_or("the window hosts no edit control")?;

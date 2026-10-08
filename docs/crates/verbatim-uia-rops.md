@@ -416,10 +416,8 @@ which attributes to read (`attributes`, an `Attributes` set of
 the font's name, size, and weight, italic, the underline and
 strikethrough styles, the foreground and background colors, the bullet
 style, and the link attribute), and which of them are being learned
-(`learning`: those whose support the caller does not know yet), and a
-comparison with an end of the document to make (`edge`, an `EdgeQuery`:
-the caret or the caret's line, and which end), for a caret key that cannot
-take the caret past that end. The `CaretAnswer`:
+(`learning`: those whose support the caller does not know yet). The
+`CaretAnswer`:
 
 - `caret`, a range whose start is the caret, and whether it is known to
   be collapsed; `selection`, the selected range when text is selected.
@@ -445,11 +443,6 @@ take the caret past that end. The `CaretAnswer`:
   "not supported" for, the rest being supported; `None` when nothing was
   learned, as from a character's read or an empty line's, which say too
   little about the provider.
-- `at_edge`: with an `edge`, whether the caret's start, or the line's end
-  named, is at that end of the document range (`GetDocumentRange` and one
-  `CompareEndpoints`, in a branch of the program, or two calls more
-  classically); false, with no comparison made, when the caret or the
-  selection moved, which is evidence already.
 
 The program imports the element and gets its text pattern with the
 pattern getter instructions (Microsoft's `GetTextPattern`, whose opcode
@@ -506,8 +499,8 @@ against mockapp's `formatting.json`, which supports every attribute, and
 its `text.json`, which supports none of strikethrough, background,
 bullets, and links (`every_attribute_is_read_both_ways` and
 `unsupported_attributes_are_found_both_ways`).
-Both read the whole answer on every call, so a caret key's
-wait for evidence costs one round trip per read remotely
+Both read the whole answer on every call, so each check of a caret
+key's watch for evidence costs one round trip remotely
 (`docs/performance.md`, "A caret move, UIA").
 
 With a previous selection, the answer also carries the selection's
@@ -823,7 +816,7 @@ a navigation step reads the same both ways; and the stalled and exited
 provider findings above.
 `crates/mockapp/tests/call_counts.rs` pins the calls and provider hits of
 a UIA focus through `focus_ancestry` as the outpost makes it, of
-navigation steps, of caret moves, caret reports, and a caret wait through
+navigation steps, of caret moves, caret reports, and a caret key's watch through
 `caret_read`, and of the review cursor's line and word reads, say-all's
 read ahead and caret move, the caret's location, the selected text, and a
 selecting key's answer, remotely and classically;

@@ -4,16 +4,19 @@
 //! (`phase6-design.md`, M4 items 3 and 4).
 //!
 //! A caret key reaches the application unchanged; the hook reports it, and
-//! the reducer asks the focus's outpost to wait for evidence of what the
-//! key did and report the caret ([`TextOp::AwaitCaret`]). The reply is
+//! the reducer asks the focus's outpost to watch for evidence of what the
+//! key did and report the caret ([`TextOp::AwaitCaret`]); the outpost never
+//! waits for it, and a key that moves nothing gets no answer worth
+//! speaking ([`TextReply::WatchEnded`]), so it is silent. The reply is
 //! spoken: the character after Left or Right Arrow, Home, and End; the
 //! provider's word after Control with Left or Right Arrow; the line after
 //! Up or Down Arrow, the page keys, and Control with Home or End; the
 //! paragraph after Control with Up or Down Arrow; what Backspace deleted;
 //! the character or word now at the caret after Delete. A key with Shift
-//! speaks what became selected or unselected instead. A newer key, or a
-//! focus change, supersedes a key still waiting, so speech never lags
-//! behind fast typing and a focus announcement wins over a caret line.
+//! speaks what became selected or unselected instead. A newer key, a typed
+//! character, or a focus change supersedes a key still watched, so speech
+//! never lags behind fast typing, a later edit is not spoken as an earlier
+//! key's answer, and a focus announcement wins over a caret line.
 //!
 //! Formatting (milestone M4 item 7) is spoken as it changes, as NVDA
 //! speaks it (`docs/nvda/document-formatting.md`): the outpost sends the
@@ -25,11 +28,11 @@
 use std::sync::Arc;
 
 use verbatim_model::{
-    CaretKey, CaretMotion, CaretReply, CaretReport, CaretWait, CaretWatch, Effect, FocusValidity,
-    NodeId, NodeSnapshot, Phrase, PreviousSelection, Role, SegmentContent, Selection,
-    SelectionChange, SelectionText, SpeechPriority, State, TextAttributes, TextChunk, TextOp,
-    TextPoint, TextPosition, TextRead, TextReply, TextRequest, TextUnit, TraceId, TypingEcho,
-    Utterance, UtteranceSegment,
+    CaretKey, CaretMotion, CaretReply, CaretReport, CaretWatch, Effect, FocusValidity, NodeId,
+    NodeSnapshot, Phrase, PreviousSelection, Role, SegmentContent, Selection, SelectionChange,
+    SelectionText, SpeechPriority, State, TextAttributes, TextChunk, TextOp, TextPoint,
+    TextPosition, TextRead, TextReply, TextRequest, TextUnit, TraceId, TypingEcho, Utterance,
+    UtteranceSegment,
 };
 
 use crate::state::{
@@ -145,14 +148,8 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
         since: context.map(CaretBefore::caret),
         pressed_at_ms,
         unit,
-        motion: key.motion,
         compare,
         previous_selection,
-        wait: if grid {
-            CaretWait::Extended
-        } else {
-            CaretWait::Standard
-        },
     };
     // The key is moving the caret, which the review cursor follows: a
     // review command from now on reads where the caret is, not where Core
@@ -281,7 +278,7 @@ fn compared_text(line: &TextChunk, motion: CaretMotion, grid: bool) -> Option<St
     }
 }
 
-/// Handles the outpost's answer to a caret key's wait: keeps the caret
+/// Handles the outpost's answer to a caret key's watch: keeps the caret
 /// current, moves the review cursor with it, and speaks what the key did.
 pub(crate) fn caret_reply(
     state: &mut SrState,
@@ -289,9 +286,15 @@ pub(crate) fn caret_reply(
     pending: &PendingCaret,
     reply: TextReply,
 ) -> Vec<Effect> {
+    // A watch that ended without evidence (`TextReply::WatchEnded`), or a
+    // reply without it, says nothing: a key that did not move the caret is
+    // silent (`docs/parity.md`, "Text, documents, terminals").
     let TextReply::Caret(reply) = reply else {
         return Vec::new();
     };
+    if !reply.moved {
+        return Vec::new();
+    }
     let Some(focus) = state
         .focus
         .as_ref()
@@ -912,6 +915,9 @@ fn focus_speech(
 /// spoken.
 pub(crate) fn character_typed(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<Effect> {
     let mut effects = crate::say_all::stop(state);
+    // The typing supersedes a caret key still watched: the caret the typing
+    // moves is not that key's answer.
+    state.pending_caret = None;
     let Some(focus) = state.focus.as_ref().filter(|focus| focus.alive) else {
         return effects;
     };

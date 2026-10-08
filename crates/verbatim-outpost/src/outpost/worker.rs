@@ -35,8 +35,8 @@ use std::time::{Duration, Instant};
 use verbatim_ia2::acquire::Purpose;
 use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{
-    Backend, CallCounts, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role, State,
-    StateSet, TraceId,
+    Backend, CallCounts, CaretWatch, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role,
+    State, StateSet, TextOp, TextReply, TraceId,
 };
 use verbatim_uia::map::{
     cached_process_id, snapshot_from_cached_element, with_legacy_checked_state,
@@ -57,12 +57,13 @@ use crate::protocol::{
 use super::Context;
 use super::intake::{Entry, HeldFocus, Item, Object, Planned, UiaEvent, UiaKind, window_of};
 use super::read::{self, Client, ReadError};
-use super::text_reads::{self, CONSOLE_WINDOW_CLASS};
+use super::text_reads::{self, CARET_WATCH_BOUND, CONSOLE_WINDOW_CLASS, OpenWatch};
 use super::window::{
     focus_window_of, foreground_window_handle, front_is_another_thread_of_its_application, now_ms,
     window_belongs_to_hidden_frame, window_facts, window_is_foreground, window_is_hidden_frame,
 };
 use crate::arbitration::window_class_name;
+use crate::text::Watched;
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
 
 /// The deadline for handling an event, a focus, or a focus-now query: NVDA's
@@ -111,8 +112,9 @@ const STEP_DEADLINE: Duration = Duration::from_millis(400);
 /// 4096 nodes.
 const WALK_DEADLINE: Duration = Duration::from_secs(5);
 
-/// The deadline for a text request: a caret key's wait for evidence takes
-/// up to 300 ms in a terminal, and the reads after it a few calls more.
+/// The deadline for a text request: one read, or a few, of the node's text;
+/// a caret key's watch is checked once within it and then kept open
+/// outside it.
 const TEXT_DEADLINE: Duration = Duration::from_secs(2);
 
 /// The worker incarnation in charge, its deadline, and the abandoned count.
@@ -219,6 +221,56 @@ impl Watch {
         true
     }
 
+    /// Runs `send`, the answer to query `request_id` given outside that
+    /// query's own entry (a caret key's watch), under the watch lock if
+    /// `generation` is still the worker in charge, without ending the entry
+    /// in hand, and says whether it ran. The query is no longer the one an
+    /// abandonment answers, if it was.
+    fn publish_aside(
+        &self,
+        generation: u64,
+        request_id: u64,
+        send: impl FnOnce(&mut WatchState),
+    ) -> bool {
+        let mut state = self.lock();
+        if state.generation != generation {
+            return false;
+        }
+        if state
+            .running
+            .is_some_and(|(running, _)| running == request_id)
+        {
+            state.running = None;
+        }
+        send(&mut state);
+        true
+    }
+
+    /// Makes `query` the one an abandonment of `generation` answers, while
+    /// the entry in hand, an event, reads for it (a caret key's watch).
+    /// False when `generation` is no longer in charge.
+    fn adopt(&self, generation: u64, query: (u64, TraceId)) -> bool {
+        let mut state = self.lock();
+        if state.generation != generation {
+            return false;
+        }
+        state.running = Some(query);
+        true
+    }
+
+    /// The query `generation` is handling will be answered later, outside
+    /// its entry (a caret key's watch kept open), so an abandonment no
+    /// longer answers it and the entry's end does not either. False when
+    /// `generation` is no longer in charge: an abandonment has answered it.
+    fn release_query(&self, generation: u64) -> bool {
+        let mut state = self.lock();
+        if state.generation != generation {
+            return false;
+        }
+        state.running = None;
+        true
+    }
+
     /// Ends the deadline, if `generation` is still in charge, returning the
     /// query still waiting for its reply, if any. `Err` for an abandoned
     /// worker, which is then no longer counted and must exit.
@@ -299,6 +351,29 @@ fn publish(context: &Context, generation: u64, message: OutpostToSupervisor) -> 
         state.record(message.carries_nodes(), touched.map(NodeId::number));
         context.outbound.send(message);
     })
+}
+
+/// Publishes `message`, the answer to query `request_id` given outside
+/// that query's own entry, as [`publish`] does, but without ending the entry
+/// in hand: a caret key's watch, answered or ended while the worker handles
+/// an event, a focus, or the next key.
+fn publish_aside(
+    context: &Context,
+    generation: u64,
+    request_id: u64,
+    message: OutpostToSupervisor,
+) -> bool {
+    context
+        .watch
+        .publish_aside(generation, request_id, |state| {
+            let touched = context
+                .uia_registry
+                .take_touched()
+                .into_iter()
+                .chain(context.msaa_registry.take_touched());
+            state.record(message.carries_nodes(), touched.map(NodeId::number));
+            context.outbound.send(message);
+        })
 }
 
 /// The cross-process calls this thread has made through either backend
@@ -624,7 +699,8 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
         | Item::Uia(_)
         | Item::ResolveFocus { .. }
         | Item::CaretOf { .. }
-        | Item::Settle(_) => (HANDLING_DEADLINE, None),
+        | Item::Settle(_)
+        | Item::Wake => (HANDLING_DEADLINE, None),
         // Releasing thousands of objects after a tree dump takes a while.
         Item::NodesHeld { .. } => (WALK_DEADLINE, None),
     }
@@ -647,6 +723,7 @@ fn describe(item: &Item) -> String {
         Item::ResolveFocus { attempt, .. } => format!("resolve focus (attempt {attempt})"),
         Item::CaretOf { node_id } => format!("caret of {node_id:?}"),
         Item::Settle(_) => "settle".to_owned(),
+        Item::Wake => "wake".to_owned(),
     }
 }
 
@@ -739,6 +816,164 @@ impl Worker<'_> {
             } => self.resolve_focus(&runtime_id, trace, attempt, held),
             Item::CaretOf { node_id } => self.caret_of(node_id, trace, observed_at_ms, true),
             Item::Settle(done) => self.settle(done, trace),
+            Item::Wake => self.wake(),
+        }
+    }
+
+    /// Handles a caret key's watch for evidence (`TextOp::AwaitCaret`):
+    /// ends the watch it replaces, then checks the new one with one read
+    /// and answers it when the application has already done what the key
+    /// asked. Otherwise the watch stays open, and the worker returns to its
+    /// queue: nothing else waits for the key's evidence, which a caret,
+    /// text, or selection change brings later ([`check_open_watch`]).
+    ///
+    /// [`check_open_watch`]: Self::check_open_watch
+    fn caret_key(&mut self, request_id: u64, trace: TraceId, node_id: NodeId, watch: &CaretWatch) {
+        self.end_watch("the next caret key replaced it");
+        match text_reads::check_watch(self.context, node_id, watch, false) {
+            Watched::Answered(reply) => self.reply(
+                request_id,
+                trace,
+                QueryOutcome::Done(QueryResult::Text(reply)),
+            ),
+            Watched::Watching => {
+                let calls = take_calls();
+                // Under the watch lock: an abandonment has either answered
+                // the request already or can no longer answer it.
+                if !self.context.watch.release_query(self.generation) {
+                    return;
+                }
+                let opened = Instant::now();
+                *self.context.caret_watch() = Some(OpenWatch {
+                    request_id,
+                    trace,
+                    node_id,
+                    watch: watch.clone(),
+                    opened,
+                    timing: self.timing,
+                    calls,
+                });
+                self.context
+                    .intake
+                    .wake_at(Some(opened + CARET_WATCH_BOUND));
+                tracing::debug!(%trace, ?calls, "a caret key's watch is open");
+            }
+        }
+    }
+
+    /// Checks the open caret key's watch on `node_id`, if there is one, as
+    /// the application reports a caret change (`caret_event`), a text
+    /// change, or a selection change in it: answers the key once the
+    /// evidence is there, and otherwise keeps the watch open. Returns
+    /// whether it answered. An event observed before the caret was last
+    /// read shows nothing that read did not see, and checks nothing.
+    fn check_open_watch(&mut self, node_id: NodeId, caret_event: bool) -> bool {
+        let context = self.context;
+        if context.caret_read_since(node_id, self.timing.observed_at_us) {
+            return false;
+        }
+        let Some(mut open) = context
+            .caret_watch()
+            .take_if(|open| open.node_id == node_id)
+        else {
+            return false;
+        };
+        // While the caret is read, an abandonment answers the key.
+        if !context
+            .watch
+            .adopt(self.generation, (open.request_id, open.trace))
+        {
+            *context.caret_watch() = Some(open);
+            return false;
+        }
+        match text_reads::check_watch(context, node_id, &open.watch, caret_event) {
+            Watched::Watching => {
+                open.calls += take_calls();
+                if context.watch.release_query(self.generation) {
+                    *context.caret_watch() = Some(open);
+                }
+                false
+            }
+            Watched::Answered(reply) => {
+                context.intake.wake_at(None);
+                let calls = take_calls();
+                tracing::debug!(
+                    trace = %open.trace,
+                    waited_ms = open.opened.elapsed().as_millis(),
+                    "a caret key's watch is answered"
+                );
+                publish_aside(
+                    context,
+                    self.generation,
+                    open.request_id,
+                    OutpostToSupervisor::Reply {
+                        trace_id: open.trace,
+                        request_id: open.request_id,
+                        outcome: QueryOutcome::Done(QueryResult::Text(reply)),
+                        timing: EventTiming {
+                            // The watch waited until the evidence was taken
+                            // from the queue; the read after it is the
+                            // answer's.
+                            awaited_at_us: self.timing.dequeued_at_us,
+                            awaited_calls: open.calls,
+                            calls: open.calls + calls,
+                            published_at_us: now_us(),
+                            ..open.timing
+                        },
+                    },
+                );
+                true
+            }
+        }
+    }
+
+    /// Ends the open caret key's watch, if there is one, without evidence:
+    /// answered `WatchEnded`, for which Core says nothing. `why` is logged.
+    fn end_watch(&mut self, why: &str) {
+        let Some(open) = self.context.caret_watch().take() else {
+            return;
+        };
+        self.context.intake.wake_at(None);
+        let published = publish_aside(
+            self.context,
+            self.generation,
+            open.request_id,
+            OutpostToSupervisor::Reply {
+                trace_id: open.trace,
+                request_id: open.request_id,
+                outcome: QueryOutcome::Done(QueryResult::Text(TextReply::WatchEnded)),
+                timing: EventTiming {
+                    calls: open.calls,
+                    published_at_us: now_us(),
+                    ..open.timing
+                },
+            },
+        );
+        if published {
+            tracing::debug!(
+                trace = %open.trace,
+                why,
+                waited_ms = open.opened.elapsed().as_millis(),
+                "a caret key's watch ended without evidence"
+            );
+        } else {
+            // Abandoned: the worker that replaces this one ends it.
+            *self.context.caret_watch() = Some(open);
+        }
+    }
+
+    /// [`Item::Wake`]: ends the open caret key's watch once it has reached
+    /// [`CARET_WATCH_BOUND`], which only frees it and says nothing.
+    fn wake(&mut self) {
+        let bound = self
+            .context
+            .caret_watch()
+            .as_ref()
+            .map(|open| open.opened + CARET_WATCH_BOUND);
+        match bound {
+            Some(bound) if Instant::now() >= bound => self.end_watch("its bound passed"),
+            Some(bound) => self.context.intake.wake_at(Some(bound)),
+            None => {}
         }
     }
 
@@ -1032,6 +1267,16 @@ impl Worker<'_> {
         };
         let followed = self.context.uia_registry.element_of(node_id);
         if self.emit(trace, observed_at_ms, backend, window, event) {
+            // A caret key's watch on another node ends with the focus,
+            // saying nothing, as NVDA's wait gives way to a focus change.
+            if self
+                .context
+                .caret_watch()
+                .as_ref()
+                .is_some_and(|open| open.node_id != node_id)
+            {
+                self.end_watch("the focus moved");
+            }
             if !foreground {
                 self.context.intake.set_focused(object);
                 // Move the focus-following UIA property subscription to the
@@ -1105,7 +1350,9 @@ impl Worker<'_> {
                         self.context
                             .msaa_registry
                             .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF));
-                    self.caret_of(node_id, trace, observed_at_ms, false);
+                    if !self.check_open_watch(node_id, true) {
+                        self.caret_of(node_id, trace, observed_at_ms, false);
+                    }
                 }
                 return;
             }
@@ -1122,6 +1369,7 @@ impl Worker<'_> {
                     self.context
                         .msaa_registry
                         .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF));
+                self.check_open_watch(node_id, false);
                 self.emit(
                     trace,
                     observed_at_ms,
@@ -1299,6 +1547,7 @@ impl Worker<'_> {
                     .context
                     .uia_registry
                     .existing_id(&event.parts.runtime_id)
+                    && !self.check_open_watch(node_id, true)
                 {
                     self.caret_of(node_id, trace, observed_at_ms, false);
                 }
@@ -1309,24 +1558,7 @@ impl Worker<'_> {
                 return self.active_text_position(event, (trace, observed_at_ms));
             }
             UiaKind::TextChanged => {
-                if let Some(node_id) = self
-                    .context
-                    .uia_registry
-                    .existing_id(&event.parts.runtime_id)
-                {
-                    if self.focused_terminal(node_id) {
-                        self.terminal_output(node_id, trace, observed_at_ms);
-                        return;
-                    }
-                    self.emit(
-                        trace,
-                        observed_at_ms,
-                        Backend::Uia,
-                        hwnd,
-                        NormalizedEvent::TextChanged { node_id },
-                    );
-                }
-                return;
+                return self.text_changed(&event.parts.runtime_id, hwnd, (trace, observed_at_ms));
             }
             _ => {}
         }
@@ -1362,6 +1594,32 @@ impl Worker<'_> {
             }
         };
         self.emit(trace, observed_at_ms, Backend::Uia, hwnd, normalized);
+    }
+
+    /// A UIA text change of the text focus whose runtime id it carries: it
+    /// checks a caret key's watch open on the node, then is reported, or,
+    /// for a terminal, has its new output read.
+    fn text_changed(
+        &mut self,
+        runtime_id: &[i32],
+        hwnd: Option<isize>,
+        (trace, observed_at_ms): (TraceId, u64),
+    ) {
+        let Some(node_id) = self.context.uia_registry.existing_id(runtime_id) else {
+            return;
+        };
+        self.check_open_watch(node_id, false);
+        if self.focused_terminal(node_id) {
+            self.terminal_output(node_id, trace, observed_at_ms);
+            return;
+        }
+        self.emit(
+            trace,
+            observed_at_ms,
+            Backend::Uia,
+            hwnd,
+            NormalizedEvent::TextChanged { node_id },
+        );
     }
 
     /// An active text position change for the text focus whose runtime id
@@ -2196,12 +2454,20 @@ impl Worker<'_> {
         );
     }
 
-    /// A query from Core, answered with exactly one reply.
+    /// A query from Core, answered with exactly one reply: at once, or, for
+    /// a caret key's watch kept open, when its evidence comes or it ends.
     fn query(&mut self, request_id: u64, query: &Query, trace: TraceId) {
+        if let Query::Text {
+            node_id,
+            op: TextOp::AwaitCaret(watch),
+        } = query
+        {
+            self.caret_key(request_id, trace, *node_id, watch);
+            return;
+        }
         let context = self.context;
         let client = &mut *self.client;
         let started = std::time::Instant::now();
-        let mut awaited = None;
         let result = match query {
             Query::FocusNow => {
                 let mut answer = read::focus_now(context, client);
@@ -2232,9 +2498,7 @@ impl Worker<'_> {
             }
             Query::DumpTree => read::dump_tree(context, client).map(QueryResult::Tree),
             Query::Text { node_id, op } => {
-                let (reply, wait) = text_reads::answer(context, *node_id, op);
-                awaited = wait;
-                Ok(QueryResult::Text(reply))
+                Ok(QueryResult::Text(text_reads::answer(context, *node_id, op)))
             }
         };
         let outcome = match result {
@@ -2248,8 +2512,13 @@ impl Worker<'_> {
             elapsed_ms = started.elapsed().as_millis(),
             "query answered"
         );
+        self.reply(request_id, trace, outcome);
+    }
+
+    /// Publishes the reply to the query in hand, ending its entry.
+    fn reply(&self, request_id: u64, trace: TraceId, outcome: QueryOutcome) {
         publish(
-            context,
+            self.context,
             self.generation,
             OutpostToSupervisor::Reply {
                 trace_id: trace,
@@ -2257,9 +2526,7 @@ impl Worker<'_> {
                 outcome,
                 timing: EventTiming {
                     published_at_us: now_us(),
-                    awaited_at_us: awaited.map_or(0, |awaited| awaited.at_us),
-                    awaited_calls: awaited.map(|awaited| awaited.calls).unwrap_or_default(),
-                    calls: awaited.map(|awaited| awaited.calls).unwrap_or_default() + take_calls(),
+                    calls: take_calls(),
                     ..self.timing
                 },
             },

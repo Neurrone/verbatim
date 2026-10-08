@@ -361,7 +361,7 @@ What the state keeps, within the bounds of "Core's state" in
 `phase6-design.md`: the focus's caret (`CaretContext`: its line, with the
 caret at the line's offset, and the selection), the review cursor's
 position (`ReviewText`: unknown, flat, a line and a position on it, at
-the caret it follows, or a point whose line has not been read), the caret key waiting for evidence,
+the caret it follows, or a point whose line has not been read), the caret key whose evidence is watched for,
 the one review or text request in flight, the start marker, a say-all's
 queue of spoken pieces, the word typed so far (at most 256 bytes), and
 typing held for a terminal (at most 1 KB). Text is held only a line at a
@@ -373,20 +373,23 @@ in the state allocates under 1 KB.
 
 Which objects have text. A focus or navigator object whose role is an
 edit field, a document, or a terminal may have text, and so does any node
-the outpost sent a caret report for. For those, caret keys wait for
+the outpost sent a caret report for. For those, caret keys watch for
 evidence and the review cursor reads lines through the protocol; the
 first review command reads the line at the caret, and a `NoText` answer
 makes the object flat text, reviewed by its value or name as in M3. Any
 other object is flat text without asking.
 
 Caret keys (`docs/nvda/editable-text-and-terminals.md`). An
-`Input::CaretKey` on a focus with text asks its outpost to wait for
+`Input::CaretKey` on a focus with text asks its outpost to watch for
 evidence (`TextOp::AwaitCaret`), with the caret Core last knew and when
-the key was pressed, the unit
-to report, the key's motion (from which the outpost tells a key that
-cannot move the caret and answers it at once), for Delete the character or word at the caret (whose change is
-evidence), for a selecting key the selection before it, and a wait three
-times longer in a terminal. The caret, the Delete text, the selection,
+the key was pressed, the unit to report, for Delete the character or
+word at the caret (whose change is evidence), and for a selecting key
+the selection before it. The outpost never waits for the evidence: it
+answers once the evidence comes, and a watch that ends without it is
+answered `TextReply::WatchEnded`, for which Core says nothing, as it
+says nothing for a reply with `moved` false. A key that moves nothing,
+such as Home at a line's start, is silent, where NVDA speaks the unit
+after its 100 ms wait (`docs/parity.md`). The caret, the Delete text, the selection,
 and what Backspace deletes all come from the caret as the key found it:
 Core keeps the focus's last 8 caret reports (`CARET_HISTORY`, held
 inline in the state) with the time each was observed, a caret event's
@@ -401,9 +404,10 @@ the newest by observed time, not the last to arrive: a timed report
 observed before it, such as a caret key's reply read before a caret
 event that reached Core first, only joins the history, and neither the
 caret nor the review cursor following it moves back. A report without a
-time is taken as it arrives. A newer caret key supersedes one still
-waiting, and a focus change drops it, so a focus announcement wins and
-speech never lags behind fast typing. The answer updates the caret,
+time is taken as it arrives. A newer caret key or a typed character
+supersedes one still watched, and a focus change drops it, so a focus
+announcement wins, speech never lags behind fast typing, and the caret
+typing moves is not spoken as an earlier key's answer. The answer updates the caret,
 then speaks, queued:
 
 - Left and Right Arrow, Home, and End: the character at the caret, a
@@ -485,7 +489,7 @@ command reads the line at the caret as the outpost finds it
 caret: an application's caret event for a key can reach Core after a
 review command pressed later, so Down Arrow followed at once by reading
 the current line reads the line Down Arrow moved to, as a caret key speaks
-what the outpost reads after its wait. Say-all from the caret and the
+what the outpost reads once its evidence comes. Say-all from the caret and the
 caret's location ask about the caret the same way. Once moved, the cursor
 holds its line, so character and word motion within the line and reading
 the current unit need no round trip; another line, page, the document's ends,

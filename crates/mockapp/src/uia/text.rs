@@ -822,24 +822,33 @@ fn range_array(range: &ITextRangeProvider) -> *mut SAFEARRAY {
     unsafe { super::props::filled_vector(VT_UNKNOWN, &[range.as_raw().cast_const()]) }
 }
 
+/// What a key did to the focused node's caret ([`caret_key`]).
+pub(crate) enum KeyMoved {
+    /// Not a key the caret moves with, or a focus without text.
+    Ignored,
+    /// A caret key that left the caret where it was, at an edge of the text.
+    Kept,
+    /// The caret of the node at this index moved.
+    Moved(usize),
+}
+
 /// Moves the focused node's caret for `key`, with Control held when
 /// `control` is set, as an editor moves its caret, by this module's units:
 /// Right Arrow to the next character, Control+Right Arrow to the next
 /// word's start, Down and Up Arrow to the same column of the next or the
 /// previous line (its end when the line is shorter). These are the keys the
-/// end-to-end suite presses.
-/// Returns whether the caret was moved; any other key, or a focus without
-/// text, is left alone.
-pub(crate) fn caret_key(tree: &SharedTree, key: VIRTUAL_KEY, control: bool) -> bool {
+/// end-to-end suite presses. Any other key, or a focus without text, is
+/// left alone.
+pub(crate) fn caret_key(tree: &SharedTree, key: VIRTUAL_KEY, control: bool) -> KeyMoved {
     let mut guard = tree
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some(index) = guard.focused else {
-        return false;
+        return KeyMoved::Ignored;
     };
     let node = &mut guard.nodes[index];
     let Some(text) = node.text.as_deref() else {
-        return false;
+        return KeyMoved::Ignored;
     };
     let caret = node.selection.0.min(text.len());
     // A line's end, before its line feed.
@@ -866,15 +875,18 @@ pub(crate) fn caret_key(tree: &SharedTree, key: VIRTUAL_KEY, control: bool) -> b
                 line.checked_sub(1)
             };
             let Some(target) = target else {
-                return true;
+                return KeyMoved::Kept;
             };
             let column = caret - lines[line].0;
             (lines[target].0 + column).min(line_end(lines[target]))
         }
-        _ => return false,
+        _ => return KeyMoved::Ignored,
     };
+    if node.selection == (to, to) {
+        return KeyMoved::Kept;
+    }
     node.selection = (to, to);
-    true
+    KeyMoved::Moved(index)
 }
 
 /// Whether the provider at `index` serves the text pattern: it has text.

@@ -90,8 +90,9 @@ pub(crate) struct Context {
     /// The focus-following UIA subscription to a text focus's caret and
     /// text changes, which the worker moves (milestone M4).
     text_events: OnceLock<Registration>,
-    /// Caret events as they arrive, for a caret key's wait.
-    caret_events: text_reads::CaretEvents,
+    /// The caret key's watch for evidence the worker keeps open between its
+    /// entries, if one is open.
+    caret_watch: Mutex<Option<text_reads::OpenWatch>>,
     /// The text anchors minted in UIA text and in edit controls; both number
     /// theirs from one counter.
     uia_anchors: Mutex<Anchors<UiaPos>>,
@@ -215,6 +216,13 @@ impl Context {
         uia.cache_request_for(self.fetches())
     }
 
+    /// The caret key's watch the worker keeps open, if any.
+    fn caret_watch(&self) -> MutexGuard<'_, Option<text_reads::OpenWatch>> {
+        self.caret_watch
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
     fn caret_read(&self, node: NodeId) {
         *self
             .caret_read
@@ -335,7 +343,7 @@ impl Outpost {
             remote_operations: options.remote_operations,
             classic_windows: Mutex::new(HashMap::new()),
             text_events: OnceLock::new(),
-            caret_events: text_reads::CaretEvents::default(),
+            caret_watch: Mutex::new(None),
             uia_anchors: Mutex::new(Anchors::new(Arc::clone(&anchor_counter))),
             edit_anchors: Mutex::new(Anchors::new(anchor_counter)),
             patterns: Mutex::new(HashMap::new()),
@@ -369,13 +377,6 @@ impl Outpost {
                         || id_child != verbatim_ia2::CHILDID_SELF)
                 {
                     return;
-                }
-                if matches!(
-                    kind,
-                    verbatim_ia2::WinEventKind::Caret
-                        | verbatim_ia2::WinEventKind::TextSelectionChange
-                ) {
-                    context.caret_events.arrived();
                 }
                 context.push(
                     Item::Msaa {
@@ -613,13 +614,12 @@ fn register_focus_properties(context: &Arc<Context>) -> Option<Registration> {
 /// Starts the focus-following UIA subscription to a text focus's caret and
 /// text changes (`Text_TextSelectionChanged` and `Text_TextChanged`) and
 /// its active text position changes, one event handler group listening
-/// nowhere until the worker reports a focus with text. A caret change also
-/// counts for a caret key's wait for evidence.
+/// nowhere until the worker reports a focus with text. A caret or text
+/// change also has the worker check a caret key's watch.
 fn register_text_events(context: &Arc<Context>) -> Option<Registration> {
     let callback_context = Arc::clone(context);
     let callback = Arc::new(move |element: &IUIAutomationElement, event_id: i32| {
         let kind = if event_id == UIA_Text_TextSelectionChangedEventId.0 {
-            callback_context.caret_events.arrived();
             UiaKind::TextSelection
         } else {
             UiaKind::TextChanged
