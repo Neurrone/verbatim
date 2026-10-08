@@ -44,6 +44,7 @@ struct Cli {
 }
 
 fn main() -> ExitCode {
+    init_tracing();
     let cli = Cli::parse();
 
     let info = match verbatim_agent::session::current() {
@@ -86,4 +87,20 @@ fn main() -> ExitCode {
 
     verbatim_agent::server::serve(&listener, &cli.pipe_name);
     ExitCode::SUCCESS
+}
+
+/// Installs a tracing subscriber writing to standard error, so the agent's
+/// own diagnostics (a window the taskbar's Minimize All left restored, a
+/// failed request) are kept wherever its standard error goes. Respects
+/// `RUST_LOG`, defaulting to `info`. A failed write is dropped rather than
+/// reported, which would panic when standard error fails too.
+fn init_tracing() {
+    use tracing_subscriber::EnvFilter;
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .log_internal_errors(false)
+        .with_writer(std::io::stderr)
+        .try_init();
 }

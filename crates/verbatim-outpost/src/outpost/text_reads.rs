@@ -217,6 +217,29 @@ pub(super) fn text_event_from(
     if let (Some(element), Some(runtime_id)) =
         (element, context.uia_registry.runtime_id_of(node_id))
     {
+        // Cached reads only: which element is replaced, by which.
+        let describe = |element: &windows::Win32::UI::Accessibility::IUIAutomationElement| {
+            use windows::Win32::UI::Accessibility::{
+                UIA_ClassNamePropertyId, UIA_FrameworkIdPropertyId, UIA_NamePropertyId,
+            };
+            (
+                element.cached_string(UIA_NamePropertyId),
+                element.cached_string(UIA_ClassNamePropertyId),
+                element.cached_string(UIA_FrameworkIdPropertyId),
+            )
+        };
+        let replaced = context
+            .uia_registry
+            .element_of(node_id)
+            .and_then(|agile| agile.resolve().ok())
+            .map(|old| describe(&old));
+        tracing::info!(
+            ?node_id,
+            ?runtime_id,
+            ?replaced,
+            by = ?describe(element),
+            "a caret or text event's element replaced the element of a node that had answered no text pattern"
+        );
         // The same node: the registry knows it by this runtime id.
         let _ = context.uia_registry.id_for_element(&runtime_id, element);
     }

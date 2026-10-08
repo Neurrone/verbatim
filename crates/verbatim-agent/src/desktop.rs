@@ -19,16 +19,19 @@ use std::mem::size_of;
 use std::path::Path;
 use std::time::Duration;
 
+use windows::Win32::Foundation::FILETIME;
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, WPARAM};
 use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
+use windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
 use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    GetProcessTimes, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    QueryFullProcessImageNameW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowW, GW_OWNER, GWL_STYLE, GetClassNameW, GetForegroundWindow, GetWindow,
     GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-    PostMessageW, SW_MINIMIZE, SW_RESTORE, SetForegroundWindow, ShowWindow, ShowWindowAsync,
-    WM_CLOSE, WM_COMMAND, WS_MINIMIZEBOX,
+    PostMessageW, SMTO_ABORTIFHUNG, SW_MINIMIZE, SW_RESTORE, SendMessageTimeoutW,
+    SetForegroundWindow, ShowWindow, ShowWindowAsync, WM_CLOSE, WM_COMMAND, WS_MINIMIZEBOX,
 };
 use windows::core::{BOOL, PWSTR, w};
 
@@ -120,7 +123,10 @@ pub fn wait_for(condition: &WindowCondition, timeout: Duration) -> (bool, Foregr
 /// just before, may not yet be (found 2026-10-08: that window stayed
 /// restored and the run failed), so each window the command is to minimize
 /// is also sent a minimize of its own (`ShowWindowAsync`, which never waits
-/// on the window's thread). Waits up to `timeout` for
+/// on the window's thread). The command is sent and waited for, so each
+/// window still restored once the taskbar has handled it is logged, at
+/// info, with its class and how long its process has run, before it is
+/// minimized directly. Waits up to `timeout` for
 /// every window that can be minimized to be ([`WindowCondition::AllMinimized`]),
 /// and then for the desktop to hold the foreground. Returns whether both
 /// held, and the desktop then.
@@ -130,15 +136,33 @@ pub fn minimize_all(timeout: Duration) -> (bool, ForegroundInfo) {
     const MINIMIZE_ALL: usize = 419;
     // SAFETY: looks a window up by class; no pointer is kept.
     if let Ok(taskbar) = unsafe { FindWindowW(w!("Shell_TrayWnd"), None) } {
-        // SAFETY: a command message carrying no pointer.
+        // SAFETY: a command message carrying no pointer; it returns once
+        // the taskbar has handled it, or after the limit if the taskbar
+        // does not answer.
         unsafe {
-            let _ = PostMessageW(Some(taskbar), WM_COMMAND, WPARAM(MINIMIZE_ALL), LPARAM(0));
+            let _ = SendMessageTimeoutW(
+                taskbar,
+                WM_COMMAND,
+                WPARAM(MINIMIZE_ALL),
+                LPARAM(0),
+                SMTO_ABORTIFHUNG,
+                TASKBAR_LIMIT_MS,
+                None,
+            );
         }
     }
     for window in top_level_windows()
         .into_iter()
         .filter(|&window| minimizable(window) && !is_minimized(window) && !is_cloaked(window))
     {
+        let info = window_info(window);
+        tracing::info!(
+            class = info.class,
+            image = info.image,
+            title = info.title,
+            process_age_ms = process_age_ms(info.pid),
+            "a window was still restored once the taskbar's Minimize All was handled; minimized directly"
+        );
         // SAFETY: tolerates any handle; the minimize is posted to the
         // window's thread, and its answer is not waited for.
         let _ = unsafe { ShowWindowAsync(window, SW_MINIMIZE) };
@@ -266,6 +290,43 @@ fn class_name(window: HWND) -> String {
     // SAFETY: writes at most the buffer's length; 0 for an invalid handle.
     let length = unsafe { GetClassNameW(window, &mut buffer) };
     String::from_utf16_lossy(&buffer[..usize::try_from(length).unwrap_or(0)])
+}
+
+/// How long the taskbar is given to handle Minimize All.
+const TASKBAR_LIMIT_MS: u32 = 5_000;
+
+/// How long process `pid` has run, in milliseconds; `None` when it cannot
+/// be read.
+fn process_age_ms(pid: u32) -> Option<u64> {
+    // SAFETY: a query-only open that fails safely; the handle is closed
+    // below.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+    let (mut created, mut exited, mut kernel, mut user) = (
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+    );
+    // SAFETY: `handle` is open with query access; the out-parameters are
+    // locals.
+    let read = unsafe {
+        GetProcessTimes(
+            handle,
+            &raw mut created,
+            &raw mut exited,
+            &raw mut kernel,
+            &raw mut user,
+        )
+    };
+    // SAFETY: the handle opened above, closed once.
+    let _ = unsafe { CloseHandle(handle) };
+    read.ok()?;
+    // SAFETY: no preconditions.
+    let now = unsafe { GetSystemTimeAsFileTime() };
+    let ticks =
+        |time: FILETIME| (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime);
+    // Filetime ticks are 100 nanoseconds.
+    Some(ticks(now).saturating_sub(ticks(created)) / 10_000)
 }
 
 /// `pid`'s executable file name, such as `notepad.exe`.
