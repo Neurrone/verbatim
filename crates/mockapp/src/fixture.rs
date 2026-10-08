@@ -81,6 +81,8 @@ struct RawNode {
     #[serde(default)]
     keyboard_shortcut: Option<String>,
     #[serde(default)]
+    automation_id: Option<String>,
+    #[serde(default)]
     default_action: Option<String>,
     #[serde(default)]
     position_in_set: Option<u32>,
@@ -170,6 +172,9 @@ pub(crate) struct FixtureNode {
     pub(crate) states: StateSet,
     pub(crate) description: Option<String>,
     pub(crate) keyboard_shortcut: Option<String>,
+    /// The UIA automation id the node reports ("Text Area" for a console
+    /// host's text area).
+    pub(crate) automation_id: Option<String>,
     pub(crate) default_action: Option<String>,
     pub(crate) position_in_set: Option<u32>,
     pub(crate) set_size: Option<u32>,
@@ -323,6 +328,7 @@ fn convert(
         states,
         description: raw.description,
         keyboard_shortcut: raw.keyboard_shortcut,
+        automation_id: raw.automation_id,
         default_action: raw.default_action,
         position_in_set: raw.position_in_set,
         set_size: raw.set_size,

@@ -1131,7 +1131,11 @@ verified.
     the keyboard focus read live, as NVDA reads `currentHasKeyboardFocus`
     in `shouldAllowUIAFocusEvent` (since NVDA commit `3ca80a5fa`), because
     a stale cached value let intermediate focus events through ([The UIA
-    client](nvda/uia.md)) (**matched since 2026-10-06**). Verbatim first
+    client](nvda/uia.md)) (**matched since 2026-10-06**). The console
+    host's window element never gives the focus, whatever it reports, as
+    NVDA's `consoleUIAWindow` refuses its focus events
+    (`NVDAObjects/UIA/winConsoleUIA.py` 356 to 358 and 446 to 447;
+    **matched since 2026-10-08**). Verbatim first
     requires the delivered properties to say so; the outpost then reads
     the focused element live and drops a fact whose element is not the
     one focused, as NVDA's handler returns without queuing the focus

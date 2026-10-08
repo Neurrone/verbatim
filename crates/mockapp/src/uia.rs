@@ -677,6 +677,10 @@ mod props {
             node.description
                 .as_deref()
                 .map_or_else(empty_variant, bstr_variant)
+        } else if id == windows::Win32::UI::Accessibility::UIA_AutomationIdPropertyId.0 {
+            node.automation_id
+                .as_deref()
+                .map_or_else(empty_variant, bstr_variant)
         } else if id == UIA_AccessKeyPropertyId.0 {
             node.keyboard_shortcut
                 .as_deref()

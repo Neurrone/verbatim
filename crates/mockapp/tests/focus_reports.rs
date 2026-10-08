@@ -427,6 +427,37 @@ fn a_windowless_focus_that_lost_the_keyboard_focus_waits_for_the_next_focus_even
     app.quit();
 }
 
+/// The console host's window is the parent of its text area, reports the
+/// keyboard focus whenever the text area has it, and raises focus events
+/// around the text area's; those are never the focus (NVDA refuses them,
+/// `consoleUIAWindow` in `NVDAObjects/UIA/winConsoleUIA.py`). So a UIA
+/// focus on a console window's own element, while the focused element read
+/// answers its text area, is not reported, though the window's element has
+/// the keyboard focus: the text area's own focus is the one reported.
+fn a_console_windows_own_focus_is_not_reported_when_its_text_area_is_focused() {
+    let title = common::unique_title("mockapp-console-window");
+    let mut app = common::spawn("console_window.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(app.pid());
+
+    let text_area = client.named("Text Area");
+    app.send("set-focus root");
+    let cache = client.uia.base_cache_request().expect("a cache request");
+    let window = client
+        .uia
+        .element_from_handle(hwnd.0 as isize, &cache)
+        .expect("mockapp's root element");
+    let ListenerFact { pid: _, fact } =
+        uia_focus_fact(&window).expect("mockapp's element has its process");
+    outpost.read_focus_as(&text_area);
+    outpost.deliver(fact);
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
         (
@@ -456,6 +487,10 @@ fn main() {
         (
             "a_windowless_focus_that_lost_the_keyboard_focus_waits_for_the_next_focus_event",
             a_windowless_focus_that_lost_the_keyboard_focus_waits_for_the_next_focus_event,
+        ),
+        (
+            "a_console_windows_own_focus_is_not_reported_when_its_text_area_is_focused",
+            a_console_windows_own_focus_is_not_reported_when_its_text_area_is_focused,
         ),
     ]);
 }

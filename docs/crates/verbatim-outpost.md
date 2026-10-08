@@ -578,7 +578,14 @@ Implementation notes:
   NVDA accepts a UIA focus event whose own element has the keyboard focus
   (`shouldAllowUIAFocusEvent`), where the outpost had held the focus back
   and read again (`phase6-design.md`, "Notepad at launch and the
-  outposts' loose ends"). Otherwise the focus has moved on and
+  outposts' loose ends"). The console host's window is never taken this
+  way: its element is the parent of the text area, reports the keyboard
+  focus whenever the text area has it, and raises focus events around
+  the text area's, which NVDA refuses whatever the element reports
+  (`consoleUIAWindow.shouldAllowUIAFocusEvent` is false,
+  `NVDAObjects/UIA/winConsoleUIA.py` lines 356 to 358 and 446 to 447);
+  taken, it was announced as a second focus beside the text area's.
+  Otherwise the focus has moved on and
   the fact is dropped, as NVDA ignores a UIA focus event whose sender no
   longer has the keyboard focus, read live (`shouldAllowUIAFocusEvent` in
   `NVDAObjects/UIA/__init__.py`, lines 1632 to 1637, checked by

@@ -47,7 +47,9 @@ A `native` tree view (`tree_view.rs`, `tests/fixtures/tree_view.json`) is
 a child window of the host window whose items are the node's `tree_item`
 children, nested as they are, read through comctl32's own MSAA
 implementation and its `TVM_*` messages, as Verbatim reads real
-applications' tree views. Its `window_class` registers it under another
+applications' tree views. The root's `window_class` names the host
+window's class instead (`tests/fixtures/console_window.json` is a console
+host's window, `ConsoleWindowClass`, whose text area reports the automation id "Text Area" through the node's `automation_id`, as the console's text area does). A tree view's `window_class` registers it under another
 name first, a superclass whose `WM_GETOBJECT` answers the client object
 with comctl32's tree view proxy (`CreateStdAccessibleProxyW`), as Windows
 Forms names and wraps its tree view. With `state_images`, every item gets
