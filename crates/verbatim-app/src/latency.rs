@@ -540,6 +540,16 @@ impl SpeechEvents for LatencyLedger {
         }
     }
 
+    fn speech_paused(&self, paused: bool, _at: std::time::Instant) {
+        // Reported to speech subscribers, so the end-to-end suite waits
+        // for a pause and a resume, and asserts them, as it does speech.
+        if let Some(server) = self.server.get()
+            && server.has_speech_subscribers()
+        {
+            server.broadcast_speech_paused(paused, now_ms());
+        }
+    }
+
     fn utterance_ended(
         &self,
         utterance: UtteranceId,

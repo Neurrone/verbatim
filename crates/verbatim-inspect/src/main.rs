@@ -280,6 +280,11 @@ fn speech_line(frame: &Frame) -> Option<String> {
             "sound: {indication} played {}",
             timestamp::local(*at_ms)
         )),
+        Frame::SpeechPaused { paused, at_ms } => Some(format!(
+            "speech {} {}",
+            if *paused { "paused" } else { "resumed" },
+            timestamp::local(*at_ms)
+        )),
         _ => None,
     }
 }

@@ -7,8 +7,9 @@
 //! `\\.\pipe\verbatim-control`. Clients send [`RequestEnvelope`]s; the
 //! server answers every request with a [`Frame::Reply`] or [`Frame::Error`]
 //! carrying the request's id, and pushes [`Frame::Event`] frames, and
-//! [`Frame::Speech`], [`Frame::SpeechStarted`], [`Frame::SpeechEnded`], and
-//! [`Frame::Sound`] frames, to connections that subscribed.
+//! [`Frame::Speech`], [`Frame::SpeechStarted`], [`Frame::SpeechEnded`],
+//! [`Frame::Sound`], and [`Frame::SpeechPaused`] frames, to connections
+//! that subscribed.
 
 use std::io::{self, BufRead, Write};
 
@@ -51,8 +52,9 @@ pub enum Request {
     Status,
     /// Starts streaming [`Frame::Event`] frames on this connection.
     SubscribeEvents,
-    /// Starts streaming [`Frame::Speech`], [`Frame::SpeechStarted`], and
-    /// [`Frame::SpeechEnded`] frames on this connection.
+    /// Starts streaming [`Frame::Speech`], [`Frame::SpeechStarted`],
+    /// [`Frame::SpeechEnded`], [`Frame::Sound`], and [`Frame::SpeechPaused`]
+    /// frames on this connection.
     SubscribeSpeech,
     /// Routes a gesture identifier through the gesture router as if the
     /// keys had been pressed. Which identifiers are accepted is up to the
@@ -204,6 +206,16 @@ pub enum Frame {
         /// reads as `sound: exit`, as a sound in an utterance's text does.
         indication: String,
         /// Milliseconds since the Unix epoch when it started playing.
+        at_ms: u64,
+    },
+    /// Speech was paused where it was, or resumed (subscription frame,
+    /// sent to speech subscribers): Shift pauses and resumes it, and a
+    /// cancel ends a pause. Sent once the pause or resume is applied, once
+    /// per change.
+    SpeechPaused {
+        /// `true` for a pause, `false` for a resume.
+        paused: bool,
+        /// Milliseconds since the Unix epoch when it was applied.
         at_ms: u64,
     },
 }

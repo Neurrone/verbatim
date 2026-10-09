@@ -678,6 +678,12 @@ impl SpeechEvents for Observer {
         }
     }
 
+    fn speech_paused(&self, paused: bool, at: Instant) {
+        if let Some(inner) = &self.inner {
+            inner.speech_paused(paused, at);
+        }
+    }
+
     fn utterance_ended(
         &self,
         utterance: UtteranceId,
@@ -835,6 +841,7 @@ impl QueueThread {
                     self.paused = !self.paused;
                     self.source.pause(self.paused);
                     self.paused_flag.store(self.paused, Ordering::Release);
+                    self.report_pause();
                 }
                 QueueEvent::DropExpired(now) => self.drop_expired(now),
                 QueueEvent::Ended(id) => self.handed_on.retain(|(handed, _)| *handed != id),
@@ -948,6 +955,15 @@ impl QueueThread {
             self.paused = false;
             self.source.pause(false);
             self.paused_flag.store(false, Ordering::Release);
+            self.report_pause();
+        }
+    }
+
+    /// Reports the pause just applied to the mixer, or the resume.
+    fn report_pause(&self) {
+        trace!(target: "verbatim::speech", paused = self.paused, "speech paused");
+        if let Some(events) = &self.events {
+            events.speech_paused(self.paused, Instant::now());
         }
     }
 

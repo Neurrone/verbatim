@@ -36,6 +36,10 @@ struct Recorder {
     /// Signalled whenever an ending is reported.
     ended: Condvar,
     marks: Mutex<Vec<(UtteranceId, IndexMark)>>,
+    /// Every pause, `true`, and resume, `false`, in the order reported.
+    pauses: Mutex<Vec<bool>>,
+    /// Signalled whenever a pause or resume is reported.
+    paused: Condvar,
     /// Where the control synth hears how far playback has got.
     progress: Option<Sender<Progress>>,
 }
@@ -50,6 +54,11 @@ enum Progress {
 
 impl SpeechEvents for Recorder {
     fn utterance_queued(&self, _: UtteranceId, _: TraceId, _: &str, _: Instant) {}
+
+    fn speech_paused(&self, paused: bool, _: Instant) {
+        self.pauses.lock().unwrap().push(paused);
+        self.paused.notify_all();
+    }
 
     fn audio_started(&self, _: UtteranceId, _: TraceId, _: Instant) {}
 
@@ -115,6 +124,24 @@ impl Recorder {
             *endings
         );
         endings.clone()
+    }
+
+    /// Waits until at least `count` pauses and resumes have been reported,
+    /// then returns them all, in the order reported. Fails at
+    /// [`STEP_TIMEOUT`].
+    fn pauses(&self, count: usize) -> Vec<bool> {
+        let (pauses, timeout) = self
+            .paused
+            .wait_timeout_while(self.pauses.lock().unwrap(), STEP_TIMEOUT, |pauses| {
+                pauses.len() < count
+            })
+            .unwrap();
+        assert!(
+            !timeout.timed_out(),
+            "waited {STEP_TIMEOUT:?} for {count} pauses and resumes; reported: {:?}",
+            *pauses
+        );
+        pauses.clone()
     }
 
     /// The endings reported so far, in the order reported.
@@ -762,7 +789,8 @@ fn expired_focus_speech_is_dropped_with_what_came_before_it() {
 }
 
 /// Shift pauses speech where it is: its ending waits until it is resumed.
-/// Speech arriving while paused cancels what was paused.
+/// Speech arriving while paused cancels what was paused, which ends the
+/// pause. Each pause and resume is reported once applied.
 #[test]
 fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
     let harness = control_manager();
@@ -770,9 +798,9 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
     assert_eq!(recv_started(&harness.started), "held");
     harness.manager.control().toggle_pause();
     // The pause reaches the mixer through the queue thread, the audio
-    // through the synth thread; once the pause is applied, audio sent after
-    // it is ordered after it at the mixer.
-    wait_for_pause(&harness.manager, true);
+    // through the synth thread; once the pause is reported applied, audio
+    // sent after it is ordered after it at the mixer.
+    assert_eq!(harness.recorder.pauses(1), [true]);
     harness.finish.send(()).unwrap();
     assert_eq!(
         harness
@@ -806,20 +834,7 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
             (next, UtteranceEnding::Completed),
         ]
     );
-}
-
-/// Waits until `manager` reports speech `paused`, or fails at
-/// [`STEP_TIMEOUT`].
-fn wait_for_pause(manager: &SpeechManager, paused: bool) {
-    let deadline = std::time::Instant::now() + STEP_TIMEOUT;
-    while manager.paused() != paused {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "speech never became {}",
-            if paused { "paused" } else { "unpaused" }
-        );
-        std::thread::yield_now();
-    }
+    assert_eq!(harness.recorder.pauses(4), [true, false, true, false]);
 }
 
 /// Plays `length` of quiet tone through a source of its own on `mixer` and

@@ -1062,6 +1062,12 @@ impl ControlServer {
         self.fan_out_speech(&frame);
     }
 
+    /// Fans a [`Frame::SpeechPaused`] out to every speech subscriber.
+    pub fn broadcast_speech_paused(&self, paused: bool, at_ms: u64) {
+        let frame = Frame::SpeechPaused { paused, at_ms };
+        self.fan_out_speech(&frame);
+    }
+
     /// Fans a speech frame out to every speech subscriber, keeping it for
     /// the first one while there has been none ([`SpeechHistory`]).
     fn fan_out_speech(&self, frame: &Frame) {
@@ -1078,6 +1084,7 @@ impl ControlServer {
                 | Frame::SpeechStarted { .. }
                 | Frame::SpeechEnded { .. }
                 | Frame::Sound { .. }
+                | Frame::SpeechPaused { .. }
         ) && let Some(history) = self
             .history
             .lock()

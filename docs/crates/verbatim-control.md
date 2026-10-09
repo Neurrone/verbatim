@@ -11,7 +11,7 @@ Public API:
   `DumpRecorder`, `Quit`, and, since version 2, `AwaitIdle` and
   `DumpFocus`) in a `RequestEnvelope` with a correlation id;
   `Frame` (`Reply`, `Error`, `Event`, `Speech`, `SpeechStarted`,
-  `SpeechEnded`, `Sound`, and, since version 2, `InputHandled` and
+  `SpeechEnded`, `Sound`, `SpeechPaused`, and, since version 2, `InputHandled` and
   `OutpostEnded`); `ReplyPayload`, `StatusInfo` (whose `ready` says Verbatim can take
   input: GUI up, focus listener running, own-window outpost ready, focus
   known),
@@ -37,7 +37,10 @@ Public API:
   exit sounds, an application not responding): the id of the indication
   it reports, such as `exit`, and when it started. A sound in the speech
   stream is not sent this way; its utterance's text names it in its place
-  (`sound: spelling-error`).
+  (`sound: spelling-error`). A fifth, `SpeechPaused`, goes to them too
+  when speech is paused where it is, which Shift does, or resumed, by
+  Shift again or by a cancel ending the pause: whether it paused, and
+  when, sent once the change is applied, once per change.
   `ReplyPayload::DumpTree` answers `Request::DumpTree` with the walked
   tree (`verbatim_model::TreeNode`) and whether the outpost's depth or
   node-count cap cut it short; a walk that could not complete at all comes

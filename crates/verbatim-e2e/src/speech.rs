@@ -8,7 +8,11 @@
 //! an empty one included, and a sound played at once for an event, which
 //! reads as `sound:` and its indication. A step that interrupts speech
 //! still playing first asserts, with [`SpeechCollector::expect_started`],
-//! that the utterance it interrupts has started to play.
+//! that the utterance it interrupts has started to play. A pause or resume
+//! of speech, which Verbatim reports apart from utterances, is asserted
+//! with [`SpeechCollector::expect_paused`] and
+//! [`SpeechCollector::expect_resumed`], and, like an utterance, before
+//! the next input.
 //!
 //! A scenario ends with [`SpeechCollector::expect_nothing_more`]: Verbatim
 //! is asked, on this same connection, to answer once it has handled the
@@ -248,6 +252,9 @@ pub struct SpeechCollector {
     /// down from the top of the id space, which the pipeline's own ids,
     /// counting up from 1, never reach.
     next_sound: u64,
+    /// Pauses, `true`, and resumes, `false`, read and not yet matched by
+    /// an assertion, oldest first.
+    pauses: VecDeque<bool>,
 }
 
 impl SpeechCollector {
@@ -289,6 +296,7 @@ impl SpeechCollector {
             timings: HashMap::new(),
             order: Vec::new(),
             next_sound: u64::MAX,
+            pauses: VecDeque::new(),
         }
     }
 
@@ -347,6 +355,14 @@ impl SpeechCollector {
                 self.started.insert(utterance);
                 self.endings.insert(utterance, UtteranceEnding::Completed);
                 Absorbed::Utterance(Utterance { utterance, text })
+            }
+            // A pause or resume is not an utterance: it is asserted on its
+            // own, and like an utterance must be asserted before the next
+            // input.
+            Frame::SpeechPaused { paused, .. } => {
+                self.timeline.push_paused(paused);
+                self.pauses.push_back(paused);
+                Absorbed::Other
             }
             Frame::Reply { to, .. } => Absorbed::Reply { to, error: None },
             Frame::Error { to, message } => Absorbed::Reply {
@@ -631,6 +647,56 @@ impl SpeechCollector {
         }
     }
 
+    /// Asserts that speech was paused next, waiting up to [`STEP_TIMEOUT`]
+    /// for Verbatim to report it: the evidence that Shift's pause has been
+    /// applied.
+    ///
+    /// # Panics
+    ///
+    /// Panics if speech was resumed instead, or no pause is reported in
+    /// time.
+    pub fn expect_paused(&mut self) {
+        self.expect_pause(true);
+    }
+
+    /// Asserts that speech was resumed next, waiting up to
+    /// [`STEP_TIMEOUT`] for Verbatim to report it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if speech was paused instead, or no resume is reported in
+    /// time.
+    pub fn expect_resumed(&mut self) {
+        self.expect_pause(false);
+    }
+
+    fn expect_pause(&mut self, paused: bool) {
+        let what = |paused: bool| if paused { "paused" } else { "resumed" };
+        let deadline = Instant::now() + self.step_timeout;
+        loop {
+            if let Some(got) = self.pauses.pop_front() {
+                if got != paused {
+                    self.fail(&format!(
+                        "speech was expected to be {}, but was {}",
+                        what(paused),
+                        what(got)
+                    ));
+                }
+                return;
+            }
+            if Instant::now() >= deadline {
+                self.fail(&format!(
+                    "speech was not {} within {:?}",
+                    what(paused),
+                    self.step_timeout
+                ));
+            }
+            if let Err(error) = self.read_one() {
+                self.fail(&format!("the speech connection failed: {error}"));
+            }
+        }
+    }
+
     /// The utterances queued from now until one whose text is exactly
     /// `until`, inclusive, each waited for up to `timeout`, for a step whose
     /// speech cannot be known before it runs. The caller asserts on every
@@ -775,6 +841,16 @@ impl SpeechCollector {
         let restored = self.source.set_read_timeout(self.read_timeout);
         if let Err(error) = drained.and(restored) {
             self.fail(&format!("the speech connection failed: {error}"));
+        }
+        if !self.pauses.is_empty() {
+            let unmatched: Vec<&str> = self
+                .pauses
+                .iter()
+                .map(|paused| if *paused { "paused" } else { "resumed" })
+                .collect();
+            self.fail(&format!(
+                "harness error: pauses and resumes no assertion matched were waiting {when}: {unmatched:?}"
+            ));
         }
         if let Some(first) = self.pending.front() {
             let unmatched: Vec<&str> = self.pending.iter().map(|u| u.text.as_str()).collect();
@@ -1050,6 +1126,34 @@ mod tests {
     fn an_input_injected_past_unmatched_speech_is_a_harness_error() {
         let mut speech = collector(vec![queued(1, "unread")]);
         let message = fails(move || speech.require_all_asserted("before keys tab"));
+        assert!(message.contains("harness error"), "{message}");
+    }
+
+    #[test]
+    fn a_pause_and_a_resume_are_asserted_in_order_apart_from_speech() {
+        let paused = |paused| Frame::SpeechPaused { paused, at_ms: 0 };
+        let mut speech = collector(vec![
+            queued(1, "held"),
+            paused(true),
+            paused(false),
+            ended(1, UtteranceEnding::Completed),
+        ]);
+        speech.expect_paused();
+        speech.expect_resumed();
+        speech.expect(&["held"]);
+        speech.require_all_asserted("after the resume");
+        let mut speech = collector(vec![paused(false)]);
+        let message = fails(move || speech.expect_paused());
+        assert!(message.contains("expected to be paused"), "{message}");
+    }
+
+    #[test]
+    fn an_input_injected_past_an_unasserted_pause_is_a_harness_error() {
+        let mut speech = collector(vec![Frame::SpeechPaused {
+            paused: true,
+            at_ms: 0,
+        }]);
+        let message = fails(move || speech.require_all_asserted("before keys shift"));
         assert!(message.contains("harness error"), "{message}");
     }
 

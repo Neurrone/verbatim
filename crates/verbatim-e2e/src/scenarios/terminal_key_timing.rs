@@ -14,10 +14,10 @@
 //!   of their own, heard as any flood: lines 101 to 130, "skipped 1841
 //!   lines", lines 1972 to 2000 and the prompt.
 //! - `*_shift_flood`: Shift while a flood's first line plays pauses
-//!   speech, and Shift again resumes it. Nothing is cut off or lost: the
-//!   first line and the two queued behind it are heard in full, and the
-//!   flood then as usual. Speech gives no event for a pause, so the
-//!   scenario asserts only that pausing and resuming lose nothing.
+//!   speech, and Shift again resumes it: each waits for Verbatim to report
+//!   speech paused, then resumed, and asserts it. Nothing is cut off or
+//!   lost: the first line and the two queued behind it are heard in full,
+//!   and the flood then as usual.
 //! - `*_line_key_flood`: Up Arrow while a flood's first line plays, once
 //!   the flood has ended and the shell shows its prompt (Core receives the
 //!   caret on it). `long.ps1` prints 200 lines of twenty words, so the
@@ -201,9 +201,11 @@ fn shift_steps(scenario: &mut Scenario) {
     scenario
         .send_keys(&["shift"])
         .expect("presses Shift to pause");
+    scenario.speech().expect_paused();
     scenario
         .send_keys(&["shift"])
         .expect("presses Shift to resume");
+    scenario.speech().expect_resumed();
     scenario.speech().expect_ended(&first, Ending::Completed);
     for heard in &queued {
         scenario.speech().expect_ended(heard, Ending::Completed);

@@ -424,10 +424,13 @@ Keys during output (`scenarios/terminal_key_timing.rs`), each in both
 terminals: Control while a flood's first line plays cuts it and drops
 what waits, and the flood's later part, let go by a file the scenario
 writes, is a burst of its own (`*_control_flood`); Shift twice pauses
-and resumes with nothing lost (`*_shift_flood`); Up Arrow once a flood
+and resumes with nothing lost, each change waited for and asserted as
+Verbatim reports it (`SpeechCollector::expect_paused` and
+`expect_resumed`) (`*_shift_flood`); Up Arrow once a flood
 has ended but is still being spoken cuts it and says the recalled line
 (`*_line_key_flood`); and Up Arrow with a character typed at once says
-the recalled line, then the character (`*_up_typing`). Scripts wait for
+the line's change, the recalled line with the character, once
+(`*_up_typing`). Scripts wait for
 the scenario's files through `FILE_SIGNALS`, on change notifications.
 Other floods (`scenarios/terminal_flood_kinds.rs`): 2000 identical lines
 counted as any flood (`*_same_flood`), every line of a hundred heard with

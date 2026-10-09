@@ -778,7 +778,10 @@ timing and how each utterance ended. An assertion that fails because its
 utterance was cancelled usually means something cut it off: a key press
 (injected keys included), a new foreground window, entering a menu, a
 focus change that left the focus it announced, or interrupting speech;
-the lines just above the `cancelled` line show what.
+the lines just above the `cancelled` line show what. A pause or resume of
+speech (Shift) comes as a `SpeechPaused` frame, recorded as a `speech
+paused` or `speech resumed` line; a scenario asserts it on its own, apart
+from the utterances, before its next input.
 
 ### Hearing and recording a run
 

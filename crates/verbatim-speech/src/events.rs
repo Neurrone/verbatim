@@ -58,6 +58,15 @@ pub trait SpeechEvents: Send + Sync {
         let _ = (indication, at);
     }
 
+    /// Speech was paused where it was, `paused` true, or resumed, `paused`
+    /// false, once the mixer has been told: by
+    /// `SpeechControl::toggle_pause`, which Shift calls, or, for a resume,
+    /// by a cancel ending the pause. Called on the queue thread, once per
+    /// change.
+    fn speech_paused(&self, paused: bool, at: Instant) {
+        let _ = (paused, at);
+    }
+
     /// The utterance has ended, once, as `ending` says.
     fn utterance_ended(
         &self,

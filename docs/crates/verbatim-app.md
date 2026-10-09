@@ -292,7 +292,8 @@ knowing for review:
   each utterance's milestones to speech subscribers as a `Speech` frame at
   queue time, a `SpeechStarted` frame when its first frame plays, and a
   `SpeechEnded` frame with its ending, each sound played at once for an
-  event as a `Sound` frame naming its indication, and it answers the
+  event as a `Sound` frame naming its indication, each pause and resume
+  of speech as a `SpeechPaused` frame, and it answers the
   `latency`
   command newest first. Core-originated speech with no event reports its
   queue time as the timeline start.

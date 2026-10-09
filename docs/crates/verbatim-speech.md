@@ -113,7 +113,10 @@ Public API:
   for the latency log), `utterance_ended` (its one ending, as an
   `UtteranceEnding`), and `sound_played` (an event's sound played at once,
   with its indication, for reporting as `sound:` and its id; a default
-  no-op, called on the thread that asked for the earcon). `utterance_queued`, and the ending of an utterance
+  no-op, called on the thread that asked for the earcon), and
+  `speech_paused` (speech paused, or resumed, once the mixer has been
+  told; a default no-op, called on the queue thread once per change, for
+  a toggle and for a cancel that ends a pause). `utterance_queued`, and the ending of an utterance
   cancelled before synthesis, are called on the queue thread; the rest on
   the mixer's audio thread, so every implementation must be cheap and
   non-blocking.
@@ -275,7 +278,8 @@ three things end speech early, all carried to the queue thread as events:
   playback events where they are; calling it again resumes. Any cancel ends
   the pause, and an utterance arriving while paused cancels what was paused
   first, as NVDA does, since the key press that would otherwise come first
-  would have cancelled it.
+  would have cancelled it. Each pause and resume is reported through
+  `SpeechEvents::speech_paused` once applied.
 
 Silence trimming (`trim.rs`). Every driver's PCM passes through a trimmer
 before reaching the mixer. Quiet frames (every sample within 64 of zero,

@@ -66,6 +66,10 @@ impl SpeechEvents for ShellSpeechEvents {
         self.ledger.sound_played(indication, at);
     }
 
+    fn speech_paused(&self, paused: bool, at: Instant) {
+        self.ledger.speech_paused(paused, at);
+    }
+
     fn utterance_ended(
         &self,
         utterance: UtteranceId,

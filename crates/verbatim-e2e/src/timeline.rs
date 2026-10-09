@@ -40,6 +40,8 @@ enum TimelineKind {
     AudioStarted(String),
     /// An utterance ended: its text and how it ended.
     Ended(String, UtteranceEnding),
+    /// Speech was paused, `true`, or resumed, `false`.
+    Paused(bool),
 }
 
 /// One [`TimelineKind`] paired with the [`Instant`] it was recorded at,
@@ -113,6 +115,11 @@ impl Timeline {
         self.push(TimelineKind::Ended(text.to_owned(), ending.clone()));
     }
 
+    /// Records that speech was paused, `paused` true, or resumed.
+    pub fn push_paused(&self, paused: bool) {
+        self.push(TimelineKind::Paused(paused));
+    }
+
     fn push(&self, kind: TimelineKind) {
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
         entries.push(TimelineEntry {
@@ -155,7 +162,8 @@ impl Timeline {
                 | TimelineKind::Keys(_)
                 | TimelineKind::Text(_)
                 | TimelineKind::AudioStarted(_)
-                | TimelineKind::Ended(..) => None,
+                | TimelineKind::Ended(..)
+                | TimelineKind::Paused(_) => None,
             })
             .collect()
     }
@@ -252,7 +260,7 @@ impl TimelineKind {
             Self::Gesture(identifier) => Some(format!("gesture {identifier}")),
             Self::Keys(keys) => Some(format!("keys [{}]", keys.join(", "))),
             Self::Text(text) => Some(format!("text {text:?}")),
-            Self::Utterance(..) | Self::AudioStarted(_) | Self::Ended(..) => None,
+            Self::Utterance(..) | Self::AudioStarted(_) | Self::Ended(..) | Self::Paused(_) => None,
         }
     }
 }
@@ -274,6 +282,8 @@ impl TimelineEntry {
             TimelineKind::Ended(text, UtteranceEnding::Failed(reason)) => {
                 format!("failed {text:?}: {reason}")
             }
+            TimelineKind::Paused(true) => "speech paused".to_owned(),
+            TimelineKind::Paused(false) => "speech resumed".to_owned(),
             input => input.input().unwrap_or_default(),
         };
         format!("+{elapsed}ms {what}")
