@@ -93,11 +93,11 @@ pub fn holds(condition: &WindowCondition) -> bool {
         WindowCondition::NotForeground { title_contains } => !foreground_info()
             .foreground
             .is_some_and(|window| window.title.contains(title_contains.as_str())),
-        WindowCondition::Present { title_contains } => top_level_windows()
-            .into_iter()
-            .any(|window| {
+        WindowCondition::Present { title_contains } => {
+            top_level_windows().into_iter().any(|window| {
                 !is_cloaked(window) && window_text(window).contains(title_contains.as_str())
-            }),
+            })
+        }
         WindowCondition::Absent { title_contains } => !top_level_windows()
             .into_iter()
             .any(|window| window_text(window).contains(title_contains.as_str())),
