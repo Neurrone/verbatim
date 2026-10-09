@@ -367,12 +367,17 @@ The groups:
   which opens it minimized and inactive and brings it forward as
   `launch_titled_once` does, and fails unless the launched process owns the
   window. Each window is brought forward only once its shell has written
-  its process id, so what Windows PowerShell prints as it starts is on
-  screen before the terminal is announced: with Verbatim running,
-  Windows' screen reader flag is set, and the interactive host prints a
-  notice that it leaves `PSReadLine` out. A second window, or a second
-  tab, which the running Windows Terminal opens in front at once, runs
-  its shell with `-NonInteractive`, which leaves the notice out. The scenario
+  its process id. With Verbatim running, Windows' screen reader flag is
+  set, and Windows PowerShell's interactive host prints, as it starts, a
+  notice that it leaves `PSReadLine` out. The console host's window
+  holds that text once the process id is written, so it is never new
+  output there; Windows Terminal takes it from its own console host some
+  time later, and shows nothing while minimized that tells when (on
+  GitHub's runner its window was announced before the notice, or with
+  half of it), so every Windows Terminal shell runs with
+  `-NonInteractive`, which leaves the notice out. The password prompt
+  the commands scenarios use is drawn by their script, since `Read-Host`
+  fails in a shell that is not interactive. The scenario
   also fails if any other Windows Terminal process opened a window
   meanwhile (`Scenario::top_level_windows`, before and after), and the
   copy's process must exit once its window closes at cleanup. The

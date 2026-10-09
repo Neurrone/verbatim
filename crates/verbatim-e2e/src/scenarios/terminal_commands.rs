@@ -16,12 +16,12 @@
 //!    then gives exactly "hello" and then the prompt, "ready>". This shows
 //!    echo works in this window, so the silence that follows means
 //!    something.
-//! 2. It runs `.\password.ps1`, a written script that calls
-//!    `Read-Host -AsSecureString "Password"` and then prints "done": its
-//!    echo, then the prompt "Password:", is spoken.
+//! 2. It runs `.\password.ps1`, a written script that prompts for a
+//!    password as `Read-Host -AsSecureString "Password"` does and then
+//!    prints "done": its echo, then the prompt "Password:", is spoken.
 //! 3. It types `secret` one character at a time. With "speak passwords" off
-//!    (the default), each character is not spoken: Windows PowerShell's
-//!    console shows an asterisk for it, and that new output is what is
+//!    (the default), each character is not spoken: the prompt shows an
+//!    asterisk for it, and that new output is what is
 //!    spoken. With "speak passwords" on, each character is spoken, then its
 //!    asterisk.
 //! 4. Enter: "done", and then "ready>". Every asterisk was spoken as it
@@ -39,10 +39,17 @@ use crate::scenario::Scenario;
 
 pub(crate) use super::no_teardown as teardown;
 
-/// The script the scenario runs: a password prompt, then "done".
+/// The script the scenario runs: a password prompt, then "done". The
+/// prompt is the script's own, drawn as `Read-Host -AsSecureString`
+/// draws one, "Password: " and an asterisk for each key until Enter,
+/// since Windows Terminal's shell is not interactive (the `terminal`
+/// module), where `Read-Host` fails.
 pub(crate) const SCRIPTS: &[(&str, &str)] = &[(
     "password.ps1",
-    "$secure = Read-Host -AsSecureString 'Password'\r\n'done'\r\n",
+    "[Console]::Write('Password: ')\r\n\
+     while ([Console]::ReadKey($true).Key -ne 'Enter') { [Console]::Write('*') }\r\n\
+     [Console]::WriteLine()\r\n\
+     'done'\r\n",
 )];
 
 pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {

@@ -2465,12 +2465,18 @@ confirmed):
   ends the session the run is in.
 - With the flag set, Windows PowerShell prints a notice that it leaves
   `PSReadLine` out as its interactive host starts, before the shell runs
-  its script. The terminal scenarios now bring a window forward only once
-  its shell has written its process id, so the notice is on screen before
-  the terminal is announced and is not new output; a second Windows
-  Terminal window or tab, which opens in front at once, runs its shell
-  with `-NonInteractive`, which leaves the notice out (the password prompt
-  that needs an interactive host is in a first window). NVDA, captured
+  its script. The terminal scenarios bring a window forward only once
+  its shell has written its process id, so in the console host the notice
+  is on screen before the terminal is announced and is not new output.
+  Windows Terminal takes the notice from its own console host later, and
+  on GitHub's runner a first window was announced before it had the
+  notice, or with half of it (runs 37926631704 and 37931377428, a
+  different set of scenarios each run), so since 2026-10-10 every Windows
+  Terminal shell runs with `-NonInteractive`, which leaves the notice
+  out, as the second window and tab already did; the commands scenarios'
+  password prompt, which `Read-Host` cannot give a shell that is not
+  interactive, is drawn by their script in both terminals (to be
+  confirmed; `docs/crates/verbatim-e2e.md`). NVDA, captured
   with a tab opened the same way, spoke the notice as output when its
   read of the tab came before it was printed, and missed it otherwise.
 

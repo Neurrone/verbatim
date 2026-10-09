@@ -9,11 +9,8 @@
 //!
 //! Each scenario opens a window of its own, titled with a marker unique to
 //! the run ([`harness_marker`]), brings it forward once its shell has
-//! started (the shell's process id written), so that what Windows
-//! PowerShell prints as it starts is on screen before the terminal is
-//! announced (with Verbatim running, Windows' screen reader flag is set,
-//! and the interactive host prints a notice that it leaves `PSReadLine`
-//! out), waits for it to take the foreground, and
+//! started (the shell's process id written), waits for it to take the
+//! foreground, and
 //! closes it by that title at cleanup, never by class or program, so the
 //! user's own terminals are never touched. Each scenario names its
 //! terminal, and gets that one or fails. Windows Terminal is the harness's
@@ -35,6 +32,19 @@
 //!
 //! The shell is Windows PowerShell, present on both, started with
 //! `-NoProfile -NoLogo -NoExit -ExecutionPolicy Bypass -File start.ps1`.
+//! With Verbatim running, Windows' screen reader flag is set, and the
+//! interactive host prints, as it starts, a notice that it leaves
+//! `PSReadLine` out. In the console host, whose window holds the text as
+//! the shell writes it, the notice is on screen once the shell's process
+//! id is written, before the window is brought forward, so it is never
+//! new output. Windows Terminal takes the text from its own console host
+//! some time later, and nothing it shows while its window is minimized
+//! tells when: on GitHub's runner its window was announced before it had
+//! the notice, or with half of it, which was then spoken as new output.
+//! So every Windows Terminal shell also runs with `-NonInteractive`
+//! ([`shell_command`]), which prints no notice. No scenario needs more
+//! of the interactive host than its prompt, which `-NoExit` keeps; the
+//! password prompt is a script's own ([`super::terminal_commands`]).
 //! The start script removes `PSReadLine`, so a line is neither re-rendered
 //! nor given predictions, moves to the run's folder, and sets a one-word
 //! prompt, `ready> `, spoken as "ready>". It writes the shell's process id
@@ -275,20 +285,6 @@ fn new_tab(title: &str, start: &str) -> Vec<String> {
     args
 }
 
-/// Marks the shell in `args` as not interactive (`-NonInteractive`), for a
-/// window or tab the running Windows Terminal opens in front at once,
-/// before its shell has started: the interactive host's start-up, with a
-/// screen reader running, prints a notice that `PSReadLine` is left out,
-/// which would then be new output. These shells need nothing interactive
-/// beyond the prompt, which `-NoExit` keeps.
-fn non_interactive(args: &mut Vec<String>) {
-    let shell = args
-        .iter()
-        .position(|arg| arg == "powershell.exe")
-        .expect("the arguments run the shell");
-    args.insert(shell + 1, "-NonInteractive".to_owned());
-}
-
 /// The harness's Windows Terminal's folder and executable.
 fn windows_terminal_paths(scenario: &Scenario) -> (String, String) {
     let folder = format!(r"{}\{}", scenario.run_directory(), windows_terminal::FOLDER);
@@ -345,7 +341,6 @@ pub(crate) fn open_windows_terminal_window(
     let others_before = other_terminal_windows(scenario, Some(running))?;
     let mut args = new_window();
     args.extend(new_tab(&title, &start));
-    non_interactive(&mut args);
     let window = scenario.launch_titled_once(&executable, &args, &title, false, Some(&started))?;
     if window.pid != running {
         return Err(io::Error::other(format!(
@@ -413,7 +408,6 @@ pub(crate) fn open_windows_terminal_tab(
     let (_, executable) = windows_terminal_paths(scenario);
     let mut args: Vec<String> = vec!["-w".to_owned(), "0".to_owned()];
     args.extend(new_tab(&title, &start));
-    non_interactive(&mut args);
     scenario.run_handing_off(&executable, &args)?;
     let window = scenario.wait_for_window_in_front(&title, STEP_TIMEOUT)?;
     if window.pid != *pid {
@@ -484,21 +478,28 @@ fn other_terminal_windows(
         .collect())
 }
 
-/// The shell's command line, running the start script.
+/// The shell's command line, running the start script: in Windows
+/// Terminal not interactive (`-NonInteractive`), so it prints no notice
+/// that it leaves `PSReadLine` out, which Windows Terminal could show only
+/// after its window is announced (the module's documentation).
 fn shell_command(start: &str, terminal: Terminal) -> Vec<String> {
-    let mut command: Vec<String> = [
-        "powershell.exe",
-        "-NoProfile",
-        "-NoLogo",
-        "-NoExit",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        start,
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect();
+    let mut command: Vec<String> = vec!["powershell.exe".to_owned()];
+    if terminal == Terminal::WindowsTerminal {
+        command.push("-NonInteractive".to_owned());
+    }
+    command.extend(
+        [
+            "-NoProfile",
+            "-NoLogo",
+            "-NoExit",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            start,
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
     if terminal == Terminal::ConsoleHost {
         command.push("-ConsoleHost".to_owned());
     }
@@ -678,6 +679,18 @@ mod tests {
         assert!(script.contains(r"WriteAllText('C:\run''s\pid', "));
         assert!(script.contains(r"New-Object IO.FileSystemWatcher('C:\run''s', 'prompt-go')"));
         assert!(!script.contains("Sleep"));
+    }
+
+    #[test]
+    fn only_windows_terminal_runs_its_shell_not_interactive() {
+        assert!(
+            shell_command("start.ps1", Terminal::WindowsTerminal)
+                .contains(&"-NonInteractive".to_owned())
+        );
+        assert!(
+            !shell_command("start.ps1", Terminal::ConsoleHost)
+                .contains(&"-NonInteractive".to_owned())
+        );
     }
 
     #[test]
