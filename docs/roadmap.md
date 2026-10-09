@@ -34,13 +34,114 @@ and exit-criteria evidence are archived in
 - A minimal built-in character-description table (punctuation and symbol
   names): character navigation must say "comma" on a comma even though the
   configurable dictionary system waits until M8.
-- Remote-ops integration (ancestor fetch on focus; terminal text ranges) —
-  includes the ARM64 remote-ops verification (R3).
+- Remote-ops integration (ancestor fetch on focus; terminal text ranges).
+  The ARM64 remote-ops verification (R3) is not part of M4: it was
+  deferred on 2026-10-06, and M4 is built and verified on x64 only.
 - Windows Terminal: diff-based output announcement with flood policy; the
   "cat a huge file" scenario is an E2E latency test.
 
 Exit: Notepad editing and Terminal sessions are solid; terminal flood E2E
 shows bounded latency and no hang.
+
+### Phase 6 remainder
+
+Decided by Dickson during phase 6 and not yet built; each is part of M4's
+completion. The reasoning and measurements are in `phase6-design.md`,
+in the dated section named with each item.
+
+- Audio (2026-10-08, "Audio start-up latency and scheduling"): the audio
+  stream stays awake after speech, writing silence, for a configurable
+  period, 30 seconds by default as in NVDA; cancelling keeps Stop and
+  Reset. Speech that starts while an earcon plays is mixed into audio
+  not yet played, re-mixing what was already handed to the device, so an
+  indication's sound and its speech start together and cancelling an
+  utterance cancels both. The latency ledger stops counting the tail of
+  earlier speech as "mixer and device".
+- Scheduling (2026-10-08, same section): every Verbatim process opts out
+  of Windows' power throttling (EcoQoS); the keyboard hook thread runs at
+  high priority, and the speech queue and synthesis threads above normal.
+- Status cues (2026-10-08, "Status cues settled"): every indication in
+  the theme's Events group (start and exit, error, application not
+  responding, browse and focus mode, suggestions opened and closed,
+  progress) plays through key presses; indications in every other group
+  are content and are cut off. This is built-in behavior defined by the
+  group, not a setting.
+- Sound-only announcements (2026-10-08, "The review cursor in a
+  terminal", the paragraph "Further"): an announcement a theme reports by
+  sound alone is a first-class announcement, queued, timed, measured and
+  cancelled exactly like a spoken one; the start-up sound becomes one.
+- Memory growth (2026-10-08, "Memory growth tracking"): a scenario of
+  about 25 seconds in every suite, ten iterations of opening a Windows
+  Forms text box window, editing and reviewing in it, closing it, and
+  Tabbing through the settings dialog. After two warm-up iterations, the
+  counts Verbatim reports through the control plane (held nodes, text
+  anchors, outposts, queued speech, cache sizes, a new status addition)
+  return to exactly the same values after every iteration, and each
+  process's private memory may grow from iteration 3 to 10 by no more
+  than a small bound, enforced locally and recorded on GitHub.
+- The settings package (2026-10-08, "NVDA's settings in Verbatim"): the
+  missing settings for behavior Verbatim already has (capital pitch
+  change, OneCore's pause after punctuation, the audio output device,
+  sounds' volume following the voice, the audio device awake time,
+  handling keys from other applications, the multiple key press timeout,
+  the review cursor following focus, reporting tooltips, reporting
+  notifications, the word segmentation standard, cancelling speech for
+  expired focus events, trimming leading silence); dialog controls for
+  the nine settings that exist only in `settings.toml`; and three small
+  features (say "cap" before capitals, delayed character descriptions,
+  the spelling-error sound while typing). The review cursor follows focus
+  and the caret by default, each with NVDA's setting to turn it off.
+  Spoken progress comes every 10 percent, as NVDA's does.
+- The review cursor on objects that no longer exist (2026-10-08, the
+  section of that name): review commands read live from the application
+  rather than from Core's cached line or the node's snapshot; a Gone
+  answer for the navigator's node re-seeds the navigator from the focus
+  and announces it, or says "No navigator object" when the dead node is
+  the focus itself; and the outpost reports held MSAA nodes it forgets
+  when their window is destroyed. Also an end-to-end test in both
+  terminals that a reviewed line stays on its text while new output is
+  written below it without filling the history (2026-10-08, "Revised").
+- A behavior-based MSAA audit (2026-10-08, afternoon decisions): live NVDA
+  captures against a matrix of standard controls, compared exactly with
+  Verbatim.
+- Response-time budgets (2026-10-08, afternoon decisions; reaffirmed in
+  the coherence review of 2026-10-09): enforced by default in local
+  runs; on GitHub's runners an explicit setting turns enforcement off and
+  the numbers are recorded. Today the suite records them and asserts
+  none.
+- Selection lists in a terminal (confirmed 2026-10-09, "Decisions to
+  confirm with Dickson"): every line that gains a marker another line
+  lost is spoken, top to bottom, not only the first; the marker rule is
+  tried live against list-drawing programs already installed on the test
+  machine, and removed in favour of NVDA's caret line if any shows a
+  false match.
+- End-to-end tests decided on but dropped, restored by the coherence
+  review (2026-10-09): Control during a flood, leaving and returning
+  during one, closing a tab, Shift pausing and resuming speech, a flood
+  of identical lines, a raised flood setting, and a full-screen redraw
+  larger than the flood limit.
+- The coherence fixes (2026-10-09, "Coherence review decisions"):
+  - The blank lines a burst of output starts with count as lines again:
+    the exception is removed and its cause fixed in the outpost, where
+    rows not yet written to are dropped from a screen read and come back
+    as inserted blank lines when a footer is drawn below them.
+  - The flood setting's cap of 100 is raised above the terminal's
+    history size, Core's 10 MB bound protecting memory.
+  - Control+Tab announces the tab ("list", the tab's name, "1 of 2") as
+    NVDA does, and a new tab no longer says an extra "blank".
+  - The waits not driven by events (the outpost's 10 ms foreground check
+    for up to 250 ms, the watchdog's 500 ms foreground check, the one
+    follow-up focus read) are measured against when the foreground event
+    comes, and every wait the measurement shows is not needed is removed.
+  - The two-window terminal scenarios switch windows with Alt+Tab, as a
+    user does.
+  - File Explorer is announced once its window is shown and titled, and
+    launched without the agent's foreground right.
+  - A second Verbatim waits for the first one's clean shutdown instead of
+    ending it after 4 seconds.
+  - Rows and lines are no longer mixed in the terminal screen read.
+  - Tests for Up Arrow followed by typing, a line key during a flood, and
+    UIA text fields read by parts.
 
 ## M5 — Extensions v1
 
@@ -222,14 +323,18 @@ and the audio-themes family of NVDA add-ons.
   (a spelling or syntax error under the cursor plays a sound rather than
   being spoken); capitals, quotes, and emphasis can become pitch or voice
   changes.
-- The default theme reproduces plain speech exactly; switching themes is a
-  runtime configuration change, no restart.
+- The default theme, built in M4, matches NVDA's defaults: everything is
+  spoken as NVDA speaks it, and sounds play where NVDA plays them by
+  default, plus Verbatim's own cues and the error sound for a spelling
+  error (decided 2026-10-07). A theme without sounds is added when
+  braille arrives. Switching themes is a runtime configuration change, no
+  restart.
 - Themes are data, and eventually extension-provided packages — giving the
   porting track a consumer in the audio-themes add-on family.
 
-Exit: an earcon theme ships alongside the plain default; a scripted E2E
-hears the slider earcon and the spelling-error sound; the plain theme's
-output is identical to pre-M11 speech.
+Exit: an earcon theme ships alongside the default theme; a scripted E2E
+hears the slider earcon and the spelling-error sound; the default
+theme's output is unchanged from before M11.
 
 ## M12 — Remote support
 
@@ -334,7 +439,11 @@ Tiers, gated by the capabilities each module needs:
 
 ## Ongoing tracks (every milestone)
 
-- **Latency**: budget tests run in E2E from M2 on; regressions fail the build.
+- **Latency**: the end-to-end suite records each step's response time
+  from M2 on. Enforcing the budgets is decided but not yet built
+  (Dickson, 2026-10-08, reaffirmed 2026-10-09): enforced by default in
+  local runs, and recorded but not enforced on GitHub's runners (see
+  "Phase 6 remainder" under M4).
 - **Localization**: no hardcoded user-visible strings, ever; pseudo-locale
   test from M1.
 - **Flight recorder into regression tests**: every reproduced field/VM bug
