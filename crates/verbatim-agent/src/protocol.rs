@@ -278,8 +278,9 @@ pub enum Request {
     /// [`ReplyPayload::ForegroundInfo`].
     ForegroundInfo,
     /// Sends a close request to every visible top-level window whose title
-    /// contains `title_contains`, and waits up to `timeout_ms` for them to
-    /// go. Answered by [`ReplyPayload::WindowsClosed`].
+    /// contains `title_contains`, cloaked ones aside, and waits up to
+    /// `timeout_ms` for them to go. Answered by
+    /// [`ReplyPayload::WindowsClosed`].
     CloseWindows {
         /// Text the windows' titles contain.
         title_contains: String,
@@ -649,7 +650,8 @@ pub enum WindowCondition {
         /// Text the title contains.
         title_contains: String,
     },
-    /// No visible top-level window is titled with `title_contains`.
+    /// No visible top-level window is titled with `title_contains`, cloaked
+    /// ones aside, as for [`WindowCondition::Present`].
     Absent {
         /// Text the title contains.
         title_contains: String,

@@ -50,14 +50,16 @@ pub fn foreground_info() -> ForegroundInfo {
     }
 }
 
-/// Sends a close request to every visible top-level window whose title
-/// contains `title_contains`, and waits up to `timeout` for them to go,
-/// on window events ([`wait::until`]). Returns how many were still open
-/// when it gave up; zero means all closed.
+/// Sends a close request to every shown top-level window whose title
+/// contains `title_contains` ([`shown_top_level_windows`]), and waits up
+/// to `timeout` for them to go, on window events ([`wait::until`]).
+/// Returns how many were still shown when it gave up; zero means all
+/// closed. A window that is closed and cloaked, as the Settings app keeps
+/// its closed window, has gone from the desktop.
 #[must_use]
 pub fn close_windows(title_contains: &str, timeout: Duration) -> u32 {
     let matching = || -> Vec<HWND> {
-        top_level_windows()
+        shown_top_level_windows()
             .into_iter()
             .filter(|&window| window_text(window).contains(title_contains))
             .collect()
@@ -93,17 +95,15 @@ pub fn holds(condition: &WindowCondition) -> bool {
         WindowCondition::NotForeground { title_contains } => !foreground_info()
             .foreground
             .is_some_and(|window| window.title.contains(title_contains.as_str())),
-        WindowCondition::Present { title_contains } => {
-            top_level_windows().into_iter().any(|window| {
-                !is_cloaked(window) && window_text(window).contains(title_contains.as_str())
-            })
-        }
-        WindowCondition::Absent { title_contains } => !top_level_windows()
+        WindowCondition::Present { title_contains } => shown_top_level_windows()
             .into_iter()
             .any(|window| window_text(window).contains(title_contains.as_str())),
-        WindowCondition::AllMinimized => top_level_windows()
+        WindowCondition::Absent { title_contains } => !shown_top_level_windows()
             .into_iter()
-            .all(|window| !minimizable(window) || is_minimized(window) || is_cloaked(window)),
+            .any(|window| window_text(window).contains(title_contains.as_str())),
+        WindowCondition::AllMinimized => shown_top_level_windows()
+            .into_iter()
+            .all(|window| !minimizable(window) || is_minimized(window)),
     }
 }
 
@@ -152,9 +152,9 @@ pub fn minimize_all(timeout: Duration) -> (bool, bool, ForegroundInfo) {
             );
         }
     }
-    for window in top_level_windows()
+    for window in shown_top_level_windows()
         .into_iter()
-        .filter(|&window| minimizable(window) && !is_minimized(window) && !is_cloaked(window))
+        .filter(|&window| minimizable(window) && !is_minimized(window))
     {
         let info = window_info(window);
         tracing::info!(
@@ -293,6 +293,19 @@ pub(crate) fn window_info(window: HWND) -> WindowInfo {
         // SAFETY: tolerates any handle.
         hung: unsafe { IsHungAppWindow(window) }.as_bool(),
     }
+}
+
+/// The shown top-level windows: [`top_level_windows`] without the cloaked
+/// ones, which the window manager keeps but does not show, as a suspended
+/// app's window or the Settings app's closed window. Every condition and
+/// close request judges windows by these, so a cloaked window is absent
+/// to all of them alike; the report ([`foreground_info`]) still lists it,
+/// marked cloaked.
+fn shown_top_level_windows() -> Vec<HWND> {
+    top_level_windows()
+        .into_iter()
+        .filter(|&window| !is_cloaked(window))
+        .collect()
 }
 
 /// The visible, titled, unowned top-level windows, in Z order.

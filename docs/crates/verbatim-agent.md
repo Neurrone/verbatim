@@ -43,12 +43,13 @@ Public API:
     program, whether it is cloaked or minimized, and whether Windows judges it not responding, `hung`), `SetForeground`
     (restoring a window from minimized, minimizing it first when it is
     restored and not in front, then `SetForegroundWindow`, injecting no
-    input, so it works whatever input came last, and answering once window
-    events show the window in front, or after five seconds without),
+    input, so it works whatever input came last, and answering whether the
+    window is in front once `SetForegroundWindow` returns),
     `WaitForWindow` with a `WindowCondition` (`Foreground`, optionally
     requiring the title to mark unsaved changes or not; `NotForeground`;
-    `Absent`; `AllMinimized`, where a cloaked window, kept but not shown,
-    counts as not shown), `MinimizeAll` (the taskbar's Minimize All command,
+    `Present`; `Absent`; `AllMinimized`), where a cloaked window, kept but
+    not shown, counts as not shown in every condition, as it does for
+    `CloseWindows`, which neither closes nor waits for one, `MinimizeAll` (the taskbar's Minimize All command,
     waited for, then a minimize sent directly to each window still
     restored, logged at info, since the command once left a window just
     opened restored, suspected but not confirmed to be because the taskbar
