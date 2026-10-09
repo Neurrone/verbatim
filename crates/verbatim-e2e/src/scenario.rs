@@ -329,13 +329,10 @@ impl Scenario {
         if let Some(document) = document {
             opened.push(open_document(&mut agent, &run_dir, &document)?);
         }
-        let (minimized, desktop) = agent.minimize_all(MINIMIZE_TIMEOUT)?;
-        if !minimized {
+        let (minimized, desktop_in_front, desktop) = agent.minimize_all(MINIMIZE_TIMEOUT)?;
+        if let Some(failure) = minimize_failure(minimized, desktop_in_front, &desktop) {
             close_documents(&mut agent, &opened)?;
-            return Err(io::Error::other(format!(
-                "not every window was minimized within {MINIMIZE_TIMEOUT:?}: {}",
-                describe_foreground(&desktop)
-            )));
+            return Err(io::Error::other(failure));
         }
         let dumps_before = crash_dumps(&mut agent);
 
@@ -2301,6 +2298,40 @@ fn config_error(error: &verbatim_config::ConfigError) -> io::Error {
 const ESPEAK_ID: &str = "espeak";
 
 /// `info` as one line: the foreground window, then the visible windows.
+/// Why the start of a scenario, every window minimized and the desktop in
+/// front ([`AgentClient::minimize_all`]), did not happen: windows left
+/// restored, or a desktop that did not take the foreground, naming the
+/// window that kept it. `None` when both held.
+fn minimize_failure(
+    minimized: bool,
+    desktop_in_front: bool,
+    desktop: &ForegroundInfo,
+) -> Option<String> {
+    if !minimized {
+        return Some(format!(
+            "not every window was minimized within {MINIMIZE_TIMEOUT:?}: {}",
+            describe_foreground(desktop)
+        ));
+    }
+    if !desktop_in_front {
+        let holder = desktop.foreground.as_ref().map_or_else(
+            || "no window".to_owned(),
+            |window| {
+                format!(
+                    "{:?} of {} (pid {})",
+                    window.title, window.image, window.pid
+                )
+            },
+        );
+        return Some(format!(
+            "every window was minimized, but the desktop did not take the foreground within \
+             {MINIMIZE_TIMEOUT:?}; {holder} kept it: {}",
+            describe_foreground(desktop)
+        ));
+    }
+    None
+}
+
 fn describe_foreground(info: &ForegroundInfo) -> String {
     let describe = |window: &WindowInfo| {
         format!(
@@ -2371,6 +2402,49 @@ fn outpost_log_names(name: &str, pid: u32) -> bool {
     };
     let pid_part = stem.rsplit('-').next().unwrap_or(stem);
     pid_part == pid.to_string()
+}
+
+#[cfg(test)]
+mod minimize_tests {
+    use super::*;
+
+    fn window(title: &str, image: &str, pid: u32) -> WindowInfo {
+        WindowInfo {
+            window: 1,
+            pid,
+            title: title.to_owned(),
+            class: "Class".to_owned(),
+            image: image.to_owned(),
+            cloaked: false,
+            minimized: true,
+            hung: false,
+        }
+    }
+
+    #[test]
+    fn a_desktop_that_did_not_take_the_foreground_names_the_window_that_kept_it() {
+        let desktop = ForegroundInfo {
+            foreground: Some(window("phase 6", "WindowsTerminal.exe", 29864)),
+            windows: Vec::new(),
+        };
+        let failure = minimize_failure(true, false, &desktop).expect("a failure");
+        assert!(
+            failure.starts_with(
+                "every window was minimized, but the desktop did not take the foreground"
+            ),
+            "{failure}"
+        );
+        assert!(
+            failure.contains("\"phase 6\" of WindowsTerminal.exe (pid 29864) kept it"),
+            "{failure}"
+        );
+        assert!(
+            minimize_failure(false, false, &desktop)
+                .expect("a failure")
+                .starts_with("not every window was minimized")
+        );
+        assert_eq!(minimize_failure(true, true, &desktop), None);
+    }
 }
 
 #[cfg(test)]

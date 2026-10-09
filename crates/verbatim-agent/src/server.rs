@@ -515,10 +515,15 @@ fn desktop_request(id: u64, request: Request) -> Frame {
             }
         }
         Request::MinimizeAll { timeout_ms } => {
-            let (met, desktop) = desktop::minimize_all(Duration::from_millis(timeout_ms));
+            let (minimized, desktop_in_front, desktop) =
+                desktop::minimize_all(Duration::from_millis(timeout_ms));
             Frame::Reply {
                 to: id,
-                payload: ReplyPayload::WindowState { met, desktop },
+                payload: ReplyPayload::Minimized {
+                    minimized,
+                    desktop_in_front,
+                    desktop,
+                },
             }
         }
         Request::WriteFile { path, data_base64 } => {

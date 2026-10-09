@@ -54,7 +54,10 @@ Public API:
     opened restored, suspected but not confirmed to be because the taskbar
     had not taken it in yet; then a wait
     until every window that can be minimized is, then the desktop
-    brought to the foreground), `CloseWindows` (an ordinary close
+    brought to the foreground; answered `Minimized`, which says which of
+    the two held, since protocol version 12, so a scenario that cannot
+    start names the window that kept the foreground rather than
+    reporting windows left restored), `CloseWindows` (an ordinary close
     request to every visible window whose title contains some text, then a
     wait for them to go), and `TakeForeignTerminalWindows` (every Windows
     Terminal window shown since the last such request by a process outside

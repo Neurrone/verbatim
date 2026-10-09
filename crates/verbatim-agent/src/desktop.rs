@@ -128,10 +128,11 @@ pub fn wait_for(condition: &WindowCondition, timeout: Duration) -> (bool, Foregr
 /// class and how long its process has run, and then minimized directly
 /// (`ShowWindowAsync`, which never waits on the window's thread). Waits up to `timeout` for
 /// every window that can be minimized to be ([`WindowCondition::AllMinimized`]),
-/// and then for the desktop to hold the foreground. Returns whether both
-/// held, and the desktop then.
+/// and then for the desktop to hold the foreground. Returns whether each
+/// held, the second false when the first did not, as the desktop is then
+/// not given the foreground, and the desktop as it was.
 #[must_use]
-pub fn minimize_all(timeout: Duration) -> (bool, ForegroundInfo) {
+pub fn minimize_all(timeout: Duration) -> (bool, bool, ForegroundInfo) {
     /// The taskbar's command that minimizes every window.
     const MINIMIZE_ALL: usize = 419;
     // SAFETY: looks a window up by class; no pointer is kept.
@@ -169,21 +170,22 @@ pub fn minimize_all(timeout: Duration) -> (bool, ForegroundInfo) {
     }
     let (minimized, desktop) = wait_for(&WindowCondition::AllMinimized, timeout);
     if !minimized {
-        return (false, desktop);
+        return (false, false, desktop);
     }
     // SAFETY: looks a window up by class; no pointer is kept.
     let Ok(desktop_window) = (unsafe { FindWindowW(w!("Progman"), None) }) else {
-        return (false, foreground_info());
+        return (true, false, foreground_info());
     };
     // SAFETY: a window just found; a stale one fails.
     let _ = unsafe { SetForegroundWindow(desktop_window) };
-    wait_for(
+    let (in_front, desktop) = wait_for(
         &WindowCondition::Foreground {
             title_contains: window_text(desktop_window),
             unsaved: None,
         },
         timeout,
-    )
+    );
+    (true, in_front, desktop)
 }
 
 /// Brings `window` to the foreground as clicking its taskbar button does,

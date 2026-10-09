@@ -33,10 +33,13 @@ use serde::{Deserialize, Serialize};
 /// [`Request::EndLaunched`], and [`Request::CreateEvent`]; version 11
 /// added `ignore_foreign_terminals` to [`Request::LaunchProcess`] and
 /// `ignored` to its answer, so the owner's own Windows Terminal is never
-/// read by the Verbatim under test. A test run against an older agent is
+/// read by the Verbatim under test; version 12 answered
+/// [`Request::MinimizeAll`] with [`ReplyPayload::Minimized`], which tells
+/// windows left restored from a desktop that did not take the foreground,
+/// and added `hung` to [`WindowInfo`]. A test run against an older agent is
 /// refused at `Hello` instead of losing its connection mid-run, or running
 /// without the exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 11;
+pub const AGENT_PROTOCOL_VERSION: u32 = 12;
 
 /// The environment variable that names, to the Verbatim under test, the
 /// processes it ignores entirely (`ignore_foreign_terminals` in
@@ -171,9 +174,10 @@ pub enum Request {
         timeout_ms: u64,
     },
     /// Minimizes every window as the taskbar's Show Desktop command does,
-    /// the state every end-to-end scenario starts from, and waits up to
-    /// `timeout_ms` for every window that can be minimized to be. Answered
-    /// by [`ReplyPayload::WindowState`].
+    /// the state every end-to-end scenario starts from, waits up to
+    /// `timeout_ms` for every window that can be minimized to be, then
+    /// gives the desktop the foreground and waits for it to hold it.
+    /// Answered by [`ReplyPayload::Minimized`].
     MinimizeAll {
         /// How long to wait, in milliseconds.
         timeout_ms: u64,
@@ -432,6 +436,18 @@ pub enum ReplyPayload {
     Processes {
         /// The processes, in the order Windows lists them.
         processes: Vec<ProcessInfo>,
+    },
+    /// Answer to [`Request::MinimizeAll`]: whether every window that can
+    /// be minimized was, whether the desktop then took the foreground
+    /// (false when the windows were not all minimized, as it was not
+    /// tried), and the desktop as it was when the waits ended.
+    Minimized {
+        /// Whether every window that can be minimized was.
+        minimized: bool,
+        /// Whether the desktop holds the foreground.
+        desktop_in_front: bool,
+        /// The foreground window and the visible windows.
+        desktop: ForegroundInfo,
     },
     /// Answer to [`Request::WaitForWindow`]: whether the condition held when
     /// the wait ended, and the desktop as it was then.

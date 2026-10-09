@@ -376,13 +376,14 @@ impl AgentClient {
         }
     }
 
-    /// Minimizes every window, as Show Desktop does, and waits up to
-    /// `timeout` for every window that can be minimized to be.
+    /// Minimizes every window, as Show Desktop does, waits up to `timeout`
+    /// for every window that can be minimized to be, then for the desktop
+    /// to hold the foreground; returns whether each held, and the desktop.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails.
-    pub fn minimize_all(&mut self, timeout: Duration) -> io::Result<(bool, ForegroundInfo)> {
+    pub fn minimize_all(&mut self, timeout: Duration) -> io::Result<(bool, bool, ForegroundInfo)> {
         match self.request_waiting(
             Request::MinimizeAll {
                 timeout_ms: millis(timeout),
@@ -390,9 +391,14 @@ impl AgentClient {
             timeout,
         )? {
             Frame::Reply {
-                payload: ReplyPayload::WindowState { met, desktop },
+                payload:
+                    ReplyPayload::Minimized {
+                        minimized,
+                        desktop_in_front,
+                        desktop,
+                    },
                 ..
-            } => Ok((met, desktop)),
+            } => Ok((minimized, desktop_in_front, desktop)),
             other => Err(unexpected("MinimizeAll", &other)),
         }
     }
