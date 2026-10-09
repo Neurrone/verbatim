@@ -405,6 +405,24 @@ pager on the alternate screen, its twenty-nine lines and prompt heard in
 full, and move it down a line and back up: each move says only the line
 it brought onto the screen, "page line 30" and then "page line 1".
 
+Keys during output (`scenarios/terminal_key_timing.rs`), each in both
+terminals: Control while a flood's first line plays cuts it and drops
+what waits, and the flood's later part, let go by a file the scenario
+writes, is a burst of its own (`*_control_flood`); Shift twice pauses
+and resumes with nothing lost (`*_shift_flood`); Up Arrow once a flood
+has ended but is still being spoken cuts it and says the recalled line
+(`*_line_key_flood`); and Up Arrow with a character typed at once says
+the recalled line, then the character (`*_up_typing`). Scripts wait for
+the scenario's files through `FILE_SIGNALS`, on change notifications.
+Other floods (`scenarios/terminal_flood_kinds.rs`): 2000 identical lines
+counted as any flood (`*_same_flood`), every line of a hundred heard with
+both limits raised to 200 (`*_raised_flood`), and a full-screen redraw
+of 30 rows with both limits lowered to 10 (`*_redraw_limit`). In
+`scenarios/terminal_windows.rs`, `*_leave_flood` leaves a terminal for a
+second window during a flood, which is finished while away and not
+spoken, and returns to its caret's line; `windows_terminal_close_tab`
+closes the second tab and hears the first's terminal and prompt.
+
 The review-output scenarios (`scenarios/terminal_review_output.rs`)
 review a line above the caret, let a script print two lines, and hear the
 review cursor follow the caret to the prompt. The footer-flood scenarios

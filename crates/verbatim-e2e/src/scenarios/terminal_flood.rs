@@ -58,7 +58,7 @@ const LINES: u32 = 2_000;
 
 /// How many lines a burst speaks whole, and how many it speaks last: the
 /// e2e settings' "Lines spoken in full" and "Last lines to speak".
-const GROUP: u32 = 30;
+pub(crate) const GROUP: u32 = 30;
 
 /// The flood script; its argument names the run's elapsed-time file, which
 /// is written under another name and renamed, so it never exists empty for
@@ -72,7 +72,7 @@ $watch.Stop()\r\n\
 
 /// The longest a flood and the speech it causes may take between one
 /// utterance and the next; it only bounds a hang.
-const FLOOD_STEP: Duration = Duration::from_secs(120);
+pub(crate) const FLOOD_STEP: Duration = Duration::from_secs(120);
 
 const OUTPUT_OFF: &str = "report new output off";
 const OUTPUT_ON: &str = "report new output on";
@@ -118,7 +118,7 @@ pub(crate) fn body_wrapped_console_host(scenario: &mut Scenario, state: &mut Sce
 }
 
 /// "flood line `line`".
-fn line(line: u32) -> String {
+pub(crate) fn line(line: u32) -> String {
     format!("flood line {line}")
 }
 
@@ -131,7 +131,7 @@ pub(crate) fn flood_speech() -> Vec<String> {
 
 /// What a burst of `lines` lines named by `name`, and the prompt after
 /// them, says.
-fn burst_speech(lines: u32, name: fn(u32) -> String) -> Vec<String> {
+pub(crate) fn burst_speech(lines: u32, name: fn(u32) -> String) -> Vec<String> {
     let total = lines + 1;
     let mut speech: Vec<String> = (1..=GROUP).map(name).collect();
     speech.push(format!(
@@ -176,7 +176,7 @@ pub(crate) fn heard_flood(scenario: &mut Scenario, run: u32) {
 /// output, and output it shows after reporting is turned back on is new
 /// output, rightly spoken. The subscription is read as events arrive, since
 /// one left unread through a flood falls behind and is disconnected.
-fn watch_for_prompt(scenario: &mut Scenario) -> std::thread::JoinHandle<()> {
+pub(crate) fn watch_for_prompt(scenario: &mut Scenario) -> std::thread::JoinHandle<()> {
     let mut events = scenario
         .subscribe_events()
         .expect("subscribes to Verbatim's events");
@@ -187,7 +187,7 @@ fn watch_for_prompt(scenario: &mut Scenario) -> std::thread::JoinHandle<()> {
 }
 
 /// Waits for [`watch_for_prompt`]'s evidence.
-fn wait_for_prompt(watch: std::thread::JoinHandle<()>) {
+pub(crate) fn wait_for_prompt(watch: std::thread::JoinHandle<()>) {
     if let Err(panic) = watch.join() {
         std::panic::resume_unwind(panic);
     }
