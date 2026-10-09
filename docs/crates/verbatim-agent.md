@@ -43,7 +43,8 @@ Public API:
     program, and whether it is cloaked or minimized), `SetForeground`
     (restoring a window from minimized, minimizing it first when it is
     restored and not in front, then `SetForegroundWindow`, injecting no
-    input, so it works whatever input came last),
+    input, so it works whatever input came last, and answering once window
+    events show the window in front, or after five seconds without),
     `WaitForWindow` with a `WindowCondition` (`Foreground`, optionally
     requiring the title to mark unsaved changes or not; `NotForeground`;
     `Absent`; `AllMinimized`, where a cloaked window, kept but not shown,

@@ -2260,7 +2260,11 @@ Made while Dickson was away (2026-10-09), each to be confirmed:
 - `set_foreground` still reads `GetForegroundWindow` straight after
   `SetForegroundWindow`; on the old path that read the foreground mid-change.
   Left as it is, since the new path restores the window before the read;
-  waiting for the foreground event instead is a follow-up.
+  waiting for the foreground event instead is a follow-up. Done the same
+  day: it waits on window events, the foreground event among them, for the
+  window to be in front, bounded at five seconds, and no longer takes
+  `SetForegroundWindow`'s `false` as final, since a window restored from
+  minimized can still be taking the foreground.
 - The focus's element after one follow-up read: a selection event of the
   focus supplies it by reading the focused element once, as a focus event
   does, since the listener's selection fact carries no element. A caret or
@@ -2274,6 +2278,22 @@ Made while Dickson was away (2026-10-09), each to be confirmed:
   window between the duplicate and the flag change, for a concurrent
   launch to take. The regression test asserts the peer reads the end of
   the stream within a 30-second bound while the child runs.
+- The console host's flood (`conhost_scrollback_overflow` and its
+  `_during_group` twin failing about one run in two, after the terminal
+  package's second part): a screen read whose view moved is trusted when
+  the old screen's last line is still on its row, as it was or grown,
+  rather than never; the footer flood's case, a footer drawn a row lower
+  over a row the flood then wrote, is still set aside. And a read whose
+  text grew between its walks to the text's end is no longer set aside:
+  the shift lies within the rows the text grew by, and moving from the
+  anchor finds it exactly, halving that range each step (at most 14
+  steps for 9,000 rows, a few hundred instructions within the remote
+  operation's limit). Both checks set aside nearly every read during a
+  console host flood, which then went unread until it ended. The count
+  of "skipped more than N lines" still comes from the screen's lines, not
+  its rows, so a read made after a flood ends and before the prompt is
+  written counts one more; it is left as it is, since Core's own request
+  at the end of a group comes after the prompt in both scenarios.
 
 ## Language audit (2026-10-08)
 

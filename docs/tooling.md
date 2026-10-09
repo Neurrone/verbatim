@@ -1014,7 +1014,10 @@ one zero-pixel mouse move injected from another process, the agent's
 `SetForeground` on msinfo32's restored, inactive window answered `false`
 before this change and `true` after it, every time; before it, the window
 took the foreground a moment after the `false` answer, which the harness
-had already failed on.
+had already failed on. `SetForeground` therefore no longer reads the
+foreground straight after `SetForegroundWindow`: it waits on window
+events, the foreground event among them, for the window to be in front,
+for at most five seconds (2026-10-09).
 `phase6-design.md`, "Test isolation and the foreground lock (2026-10-08)",
 has the evidence.
 

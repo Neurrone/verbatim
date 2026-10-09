@@ -153,7 +153,9 @@ pub enum Request {
     /// it was not, and then set as the foreground with
     /// `SetForegroundWindow`, which Windows allows for a window it has just
     /// restored whatever input came last. Answered by
-    /// [`ReplyPayload::Foreground`].
+    /// [`ReplyPayload::Foreground`] once Windows reports the window in
+    /// front, or once a bound well within the client's read timeout passes
+    /// without it.
     SetForeground {
         /// The window's handle, as [`WindowInfo::window`] reports it.
         window: u64,
