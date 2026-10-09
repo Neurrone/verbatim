@@ -163,6 +163,8 @@ fn record(def: &ScenarioDef, name: &str) -> Result<PathBuf, String> {
             "test",
             "-p",
             "verbatim-e2e",
+            "--test",
+            "e2e",
             scenario,
             "--",
             "--exact",

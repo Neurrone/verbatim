@@ -3,14 +3,19 @@
 The end-to-end suite, a scenario registry since milestone M3 Track B:
 drives a real, running Verbatim (and target applications such as Notepad)
 through `verbatim-agent` and, tunneled through it, Verbatim's own control
-plane. Dev-only; a library rather than only test binaries because both
-`crates/verbatim-e2e/tests/` and `xtask vm test` drive it. Every scenario
+plane. Dev-only; a library rather than only a test binary because both
+`crates/verbatim-e2e/tests/e2e.rs` and `xtask vm test` drive it. Every scenario
 meets `docs/testing.md`. See `docs/tooling.md` for how to run it by hand
 and how to read a failure.
 
 ## Running, skipping, and failing
 
-- Every live `#[test]` wrapper under `crates/verbatim-e2e/tests/` is
+- The suite is one test binary, `crates/verbatim-e2e/tests/e2e.rs`, with
+  a `#[test]` per scenario named after it, so
+  `cargo test -p verbatim-e2e --test e2e -- --ignored --exact <name> --test-threads=1`
+  runs one scenario. One binary rather than one per scenario keeps the
+  build small: each test binary links the whole harness.
+- Every live `#[test]` in it is
   `#[ignore]`d with the reason "live", so a workspace test run (and
   `cargo xtask ci`) lists them as ignored rather than reporting them as
   passed. The end-to-end job runs them with

@@ -56,8 +56,8 @@ module tree, not a library):
   restoring `golden` first when `--restore` is given), deploys,
   then runs `session_info`'s own test as a precondition — once, unrecorded,
   regardless of selection — before entering `run_one_scenario`'s per-scenario
-  loop: each scenario runs as its own `cargo test -p verbatim-e2e <name> --
-  --exact` subprocess (`run_scenario_subprocess`), with
+  loop: each scenario runs as its own `cargo test -p verbatim-e2e --test e2e
+  <name> -- --exact` subprocess (`run_scenario_subprocess`), with
   `VERBATIM_E2E_FFMPEG` set to `FFMPEG_GUEST_PATH`, so the scenario's
   `Scenario::launch`, setup, body, teardown, and its recording (started
   by `Scenario::launch` and finished by `verbatim_e2e::registry::run`;

@@ -5,14 +5,14 @@
 //! applications such as Notepad) through the M2 in-guest agent
 //! (`verbatim-agent`, `verbatim_agent::protocol`) and, once tunneled
 //! through it, Verbatim's own control plane (`verbatim_control`). It is a
-//! library so the thin test binaries under `tests/` and `xtask vm test` can
-//! both drive it.
+//! library so the suite's one test binary, `tests/e2e.rs`, and `xtask vm
+//! test` can both drive it.
 //!
 //! [`registry`] is the entry point for the restructuring: every live
 //! scenario is a named, grouped [`registry::ScenarioDef`] — setup, body,
 //! teardown — instead of logic living only inside a `#[test]` function.
-//! [`registry::run_named`] is what each thin `#[test]` wrapper under
-//! `crates/verbatim-e2e/tests/` calls, and what `cargo xtask vm test`
+//! [`registry::run_named`] is what each scenario's `#[test]` in
+//! `crates/verbatim-e2e/tests/e2e.rs` calls, and what `cargo xtask vm test`
 //! selects by name or group ([`registry::select`]) and invokes once per
 //! scenario (one `cargo test` subprocess per scenario). [`recording`]
 //! records each scenario's video, with Verbatim's audio. [`artifacts`] is the host-side
@@ -26,7 +26,8 @@
 //! is `#[ignore]`d, listed as ignored by a workspace test run, and the
 //! end-to-end job runs them with `--ignored`. Run that way without
 //! [`endpoint`] set, [`registry::run_named`] fails rather than reporting a
-//! pass. `session_info` (`crates/verbatim-e2e/tests/session_info.rs`) is
+//! pass. `session_info` (`agent_reports_an_interactive_window_station` in
+//! `crates/verbatim-e2e/tests/e2e.rs`) is
 //! not a scenario, a precondition check every scenario depends on, so it
 //! stays a plain ignored `#[test]` outside the registry, failing the same
 //! way without [`endpoint`].

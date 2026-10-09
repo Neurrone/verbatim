@@ -4,7 +4,7 @@
 //!
 //! One identifier, [`ScenarioDef::name`], is used everywhere a scenario
 //! needs naming: the plain-libtest `#[test]` function wrapping it (so
-//! `cargo test -p verbatim-e2e <name> -- --exact` selects exactly one
+//! `cargo test -p verbatim-e2e --test e2e <name> -- --exact` selects exactly one
 //! scenario), `cargo xtask vm test --scenario <name>`'s selector, the
 //! per-scenario artifacts directory ([`crate::artifacts::scenario_dir`]),
 //! and the name of the scenario's video in that directory
@@ -259,7 +259,7 @@ pub enum ScenarioState {
 #[derive(Debug)]
 pub struct ScenarioDef {
     /// Selects this scenario: its `#[test]` function name
-    /// (`cargo test -p verbatim-e2e <name> -- --exact`), its
+    /// (`cargo test -p verbatim-e2e --test e2e <name> -- --exact`), its
     /// `cargo xtask vm test --scenario <name>` selector, its artifacts
     /// directory name, and its recording file name prefix.
     pub name: &'static str,
@@ -1305,8 +1305,8 @@ pub fn startup_speech() -> [crate::speech::Expected; 1] {
     [crate::speech::heard("sound: start")]
 }
 
-/// Looks up `name` and runs it: the body of every `#[test]` wrapper under
-/// `crates/verbatim-e2e/tests/`. The wrappers are `#[ignore]`d, so a
+/// Looks up `name` and runs it: the body of every scenario's `#[test]` in
+/// `crates/verbatim-e2e/tests/e2e.rs`. Those tests are `#[ignore]`d, so a
 /// workspace test run lists them as ignored rather than running them, and
 /// the end-to-end job runs them with `--ignored`.
 ///

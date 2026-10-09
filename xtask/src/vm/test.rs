@@ -14,17 +14,18 @@
 //!   `cargo xtask demo` on a development machine and refused here.
 //!   `--list` prints the registry (name and group, one per line) and exits
 //!   without touching the VM at all — no build, no restore, no deploy.
-//! - `session_info` (`crates/verbatim-e2e/tests/session_info.rs`) is not a
+//! - `session_info` (`agent_reports_an_interactive_window_station` in
+//!   `crates/verbatim-e2e/tests/e2e.rs`) is not a
 //!   scenario — a precondition every scenario depends on — so it always
 //!   runs first, once, regardless of `--scenario`/`--group`, and a failure
 //!   there aborts the whole run before any scenario is attempted: nothing
 //!   downstream can work from a non-interactive agent session.
 //! - Each selected scenario runs as its own `cargo test -p verbatim-e2e
-//!   <name> -- --exact` subprocess ([`run_scenario_subprocess`]), not one
+//!   --test e2e <name> -- --exact` subprocess ([`run_scenario_subprocess`]), not one
 //!   shared invocation covering every scenario. This is the design choice
 //!   for controlling scenario boundaries from here (`docs/roadmap.md`'s M3
 //!   Track B item asks for one or the other): reusing the existing
-//!   `#[test]`-per-scenario libtest binaries this way needs no new runner
+//!   `#[test]`-per-scenario libtest binary this way needs no new runner
 //!   mode inside `verbatim-e2e` itself, and it gives each scenario a
 //!   boundary from process start to process exit, with no new IPC. The
 //!   scenario's recording lives inside that boundary too: its
@@ -37,8 +38,8 @@
 //!   scenario at the end: pass or fail, and how many of its latency
 //!   timelines reached audio. A selected scenario that exited but wrote *no*
 //!   summary is reported as a failure of the run, never a pass: a
-//!   `--scenario` typo or a missing `tests/<name>.rs` libtest wrapper makes
-//!   `cargo test <name> -- --exact` match zero tests and still exit 0, and
+//!   `--scenario` typo or a scenario missing from `tests/e2e.rs` makes
+//!   `cargo test --test e2e <name> -- --exact` match zero tests and still exit 0, and
 //!   silently green-lighting that would defeat the point of running it. The
 //!   artifacts directory holds the interleaved timeline, Verbatim's captured
 //!   stderr log, and a reducer flight-recorder dump — all for every run, pass
@@ -111,7 +112,7 @@ use super::{
 };
 
 /// `session_info`'s own test function name
-/// (`crates/verbatim-e2e/tests/session_info.rs`) — not a registered
+/// (in `crates/verbatim-e2e/tests/e2e.rs`) — not a registered
 /// scenario, but the precondition [`test`] always runs first, once, before
 /// any scenario. Named literally here rather than looked up, since it
 /// deliberately has no [`registry::ScenarioDef`] to look up.
@@ -311,8 +312,8 @@ fn run_one_scenario(
 
     // A selected scenario whose subprocess exited cleanly but wrote no summary
     // never actually ran its body, and that is a run FAILURE, never a pass: a
-    // `--scenario` typo or a missing `tests/<name>.rs` libtest wrapper makes
-    // `cargo test <name> -- --exact` match zero tests and still exit 0 (libtest
+    // `--scenario` typo or a scenario missing from `tests/e2e.rs` makes
+    // `cargo test --test e2e <name> -- --exact` match zero tests and still exit 0 (libtest
     // treats "no tests ran" as success), and a crash before
     // `verbatim_e2e::registry::run` writes the summary lands here too. This
     // holds only because the directory was cleared above; otherwise a
@@ -322,8 +323,8 @@ fn run_one_scenario(
     if process_ok && summary.is_none() {
         errors.push(format!(
             "scenario '{scenario_name}' exited cleanly but wrote no run summary — it did not run \
-             (a `--scenario` name matching no test, or a missing tests/{scenario_name}.rs \
-             wrapper), or it crashed before writing the summary; treated as a failure, not a pass"
+             (a `--scenario` name matching no test, or a scenario missing from \
+             tests/e2e.rs), or it crashed before writing the summary; treated as a failure, not a pass"
         ));
     }
     summary
@@ -378,7 +379,7 @@ fn print_run_summary(results: &[(String, Option<ScenarioSummary>)]) {
 
 /// The pass/fail word for a scenario's run summary. A missing summary is
 /// always `"fail"`, never `"pass"`: a selected scenario that wrote no summary
-/// did not run (a `--scenario` typo, a missing libtest wrapper) or crashed
+/// did not run (a `--scenario` typo, a scenario missing from `tests/e2e.rs`) or crashed
 /// before writing it — the same trap [`run_one_scenario`] records as a run
 /// error. Pure, so the pass/fail policy is unit-tested directly.
 fn result_word(summary: Option<&ScenarioSummary>) -> &'static str {
@@ -397,8 +398,8 @@ fn format_optional_u64(value: Option<u64>) -> String {
 }
 
 /// Runs one scenario (or, for [`SESSION_INFO_TEST_NAME`], the `session_info`
-/// precondition) as its own `cargo test -p verbatim-e2e <test_name> --
-/// --exact --ignored --test-threads=1` subprocess against the guest, with the
+/// precondition) as its own `cargo test -p verbatim-e2e --test e2e <test_name>
+/// -- --exact --ignored --test-threads=1` subprocess against the guest, with the
 /// environment `verbatim_e2e::Scenario::launch` needs for a remote, audible,
 /// recorded run. See this module's own doc comment for why one subprocess per
 /// scenario is the scenario-boundary design this harness uses.
@@ -420,6 +421,8 @@ fn run_scenario_subprocess(
             "test",
             "-p",
             "verbatim-e2e",
+            "--test",
+            "e2e",
             test_name,
             "--",
             "--exact",

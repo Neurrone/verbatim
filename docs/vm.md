@@ -72,7 +72,7 @@ arguments for the full verb list printed from the source of truth.
   aborts the whole run, since nothing downstream can work from a
   non-interactive agent session), and then runs the selected scenarios
   from `crates/verbatim-e2e/src/registry.rs`, one at a time. Each scenario
-  runs as its own `cargo test -p verbatim-e2e <name> -- --exact` subprocess
+  runs as its own `cargo test -p verbatim-e2e --test e2e <name> -- --exact` subprocess
   on the host with `VERBATIM_E2E_ENDPOINT` pointed at the guest's agent,
   `VERBATIM_E2E_VERBATIM_EXE` pointed at the guest-side path,
   `VERBATIM_E2E_REMOTE=1`, `VERBATIM_E2E_AUDIBLE=1`, and

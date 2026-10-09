@@ -75,6 +75,23 @@ cargo hakari manage-deps
 
 `cargo xtask ci` fails until the crate is up to date.
 
+### Build disk use
+
+Most of a debug build is debug information (PDBs) and incremental
+compilation state, and every test binary carries its own PDB holding
+everything it links. Two choices keep that down. Every crate is built
+with line tables only (above). The end-to-end suite is one test binary,
+`crates/verbatim-e2e/tests/e2e.rs`, rather than one per scenario, since
+each one linked the whole harness. Add a scenario to that file, never as
+a file of its own under `tests/`.
+
+Measured on 2026-10-09 on x64, a clean build of everything `cargo xtask
+ci` and the suite build (`cargo build --workspace --all-targets` and
+`cargo test -p verbatim-e2e --no-run`) was 9.6 GB, 5.5 GB of it PDBs,
+with full debug info for workspace crates and a test binary per scenario.
+Line tables for workspace crates brought it to 6.1 GB, and one suite
+binary to 4.1 GB, 1.4 GB of it PDBs and 1.2 GB incremental state.
+
 ## Driving a running Verbatim with verbatim-inspect
 
 `verbatim-inspect` is a developer CLI over the control plane
@@ -509,9 +526,10 @@ already have been matched. There is no separate paced mode.
 
 The suite is a scenario registry (`crates/verbatim-e2e/src/registry.rs`,
 milestone M3 Track B): every scenario is a named, grouped setup/body/teardown
-definition, and `crates/verbatim-e2e/tests/` holds one thin `#[test]`
-wrapper per scenario calling `registry::run_named("that scenario's name")`,
-plus `session_info` (the agent reports an interactive session — the
+definition, and `crates/verbatim-e2e/tests/e2e.rs`, the suite's one test
+binary, holds one `#[test]` per scenario, named after it and calling
+`registry::run_named` with that name, plus `session_info`'s
+`agent_reports_an_interactive_window_station` (the agent reports an interactive session — the
 precondition everything else depends on, not itself a scenario). The
 M3 scenarios: `menu_and_settings_dialog` (the scripted walk of
 the M1 exit criteria through Verbatim's menu and Settings dialog, now
@@ -641,7 +659,7 @@ which maps each character with the foreground window's keyboard layout, so
 any layout that can type the commands works. `crates/verbatim-e2e/src/
 scenarios/` documents exactly what each asserts, at the top of its module.
 A scenario's name is also its
-`#[test]` function name, so `cargo test -p verbatim-e2e --test <name> --
+`#[test]` function name, so `cargo test -p verbatim-e2e --test e2e --
 --ignored --exact <name> --test-threads=1` runs exactly that one scenario
 runner-direct, the same
 selection mechanism `cargo xtask vm test --scenario <name>` uses against the
