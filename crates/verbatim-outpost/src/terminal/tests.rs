@@ -245,6 +245,29 @@ fn a_flood_within_the_history_is_counted_exactly() {
 }
 
 #[test]
+fn a_screen_a_flood_scrolled_away_whole_is_not_taken_for_the_main_screen() {
+    // A screen with no history yet, as a new console host's, read as the
+    // flood's first line is written.
+    let mut sim = Sim::new(3, 100, &["a", "b", "line 1"]);
+    let (_, memory) = read(&mut sim, None);
+    // Read after the flood scrolled that screen away whole: a known shift
+    // in the same text, no alternate screen, so it is no main screen.
+    let first: Vec<String> = (2..=9).map(|line| format!("line {line}")).collect();
+    sim.push(&first.iter().map(String::as_str).collect::<Vec<_>>());
+    let (_, memory) = read(&mut sim, Some(&memory));
+    assert_eq!(memory.main, None);
+    // A later screen whose first line starts with the line that ended the
+    // first screen ("line 1"), "line 17", is still the flood, counted.
+    let rest: Vec<String> = (10..=19).map(|line| format!("line {line}")).collect();
+    sim.push(&rest.iter().map(String::as_str).collect::<Vec<_>>());
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert_eq!(output.changed, None);
+    assert_eq!(output.head, ["line 10", "line 11", "line 12"]);
+    assert_eq!(output.skipped, Some(Skipped::Count(4)));
+    assert_eq!(output.lines, ["line 17", "line 18", "line 19"]);
+}
+
+#[test]
 fn a_flood_after_typing_speaks_the_command_line_that_scrolled_away() {
     let mut sim = Sim::new(3, 100, &["a", "b", "ready>"]);
     let (_, memory) = read(&mut sim, None);

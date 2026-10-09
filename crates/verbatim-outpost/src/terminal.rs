@@ -312,7 +312,13 @@ pub fn read_new<S: ScreenSource>(
     let Some(old) = earlier.filter(|_| !unsettled) else {
         return Ok(Found::Output(TerminalOutput::default(), remembered));
     };
-    let (main, restored) = main_screen(old, &new);
+    // A screen that scrolled by a known shift is the same text moved on, as
+    // a flood moves it, however little of it is left: no screen switch, so
+    // the main screen is neither taken from it nor found again in it.
+    let (main, restored) = match shift {
+        Some(rows) if rows > 0 => (old.main.clone(), None),
+        _ => main_screen(old, &new),
+    };
     remembered.main = main;
     if let Some(output) = restored {
         return Ok(Found::Output(output, remembered));

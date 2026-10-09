@@ -1288,7 +1288,13 @@ finds it.
   alternate screen over it. When a later screen replaces the alternate
   one whole and starts with the main screen's lines (after as many of them
   as scrolled away, the last allowed to have grown), the main screen is
-  back, and only what follows it is new.
+  back, and only what follows it is new. A screen the read found scrolled
+  by a known shift is the same text moved on, however little of it is
+  left, so neither: a flood in a new console host, whose screen had no
+  history yet, scrolled its first screen away whole between two reads,
+  which kept it as a main screen, and a later read whose first line
+  started with that screen's last ("flood line 1972" after "flood line
+  1") took itself for the main screen back and lost the skipped count.
 
 - A line key (Up or Down Arrow) in a terminal is watched as in a text
   field (Dickson, 2026-10-09, `phase6-design.md`, "Terminal line keys as
