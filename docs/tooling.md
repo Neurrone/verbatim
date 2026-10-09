@@ -92,6 +92,21 @@ with full debug info for workspace crates and a test binary per scenario.
 Line tables for workspace crates brought it to 6.1 GB, and one suite
 binary to 4.1 GB, 1.4 GB of it PDBs and 1.2 GB incremental state.
 
+Several worktrees building at once (for example, parallel agents) each
+build into their own `target` directory; do not point them at one shared
+`CARGO_TARGET_DIR`. On a shared one, workspace crates from different
+checkouts overwrite each other's output, every switch between checkouts
+recompiles them all, and the suite stages Verbatim from the worktree's own
+`target\debug`, not the shared one. Share only wxWidgets, by setting
+`VERBATIM_WX_DIR` to one directory for all of them. A worktree whose path
+is deep (such as one under `.claude\worktrees`) also needs
+`CMAKE_GENERATOR=Ninja`, since MSBuild's tracking files in eSpeak NG's
+CMake build exceed the path length limit there. On a 16 GB machine, build
+with `-j 4`, and never build while end-to-end scenarios run: a build
+alongside a run once ran memory out and the run was killed (2026-10-09).
+A second worktree's build needs about 5.5 GB once `cargo xtask ci` has
+run in it.
+
 ## Driving a running Verbatim with verbatim-inspect
 
 `verbatim-inspect` is a developer CLI over the control plane
