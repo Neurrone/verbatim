@@ -2601,3 +2601,14 @@ A read-only review of phase 6 against the dated decisions, docs/parity.md and do
 8. The two-window scenarios switch windows with Alt+Tab, as a user does, so they test activating a window already open rather than restoring a minimized one.
 
 Fixes needing no decision, also from the review: File Explorer is announced once its window is shown and titled, and launched without the foreground right; a second Verbatim waits for the first one's clean shutdown instead of ending it after 4 seconds; rows and lines are no longer mixed in the terminal screen read; tests for Up followed by typing, a line key during a flood, and UIA text fields read by parts; the end-to-end tests decided on but dropped (Control during a flood, leaving and returning during one, closing a tab, Shift pause and resume, a flood of identical lines, a raised flood setting, a full-screen redraw larger than the flood limit); and a documentation pass over docs/architecture.md, docs/roadmap.md and docs/testing.md, with the decisions not yet built added to the roadmap.
+
+## Terminal line keys as NVDA has them (Dickson, 2026-10-09)
+
+Live trials in programs already installed (git log's pager, less, vim, tig, Microsoft Edit, gh's prompts, PSReadLine's MenuComplete, nano) found the marker rule matching by accident (git log's Up spoke 15 lines where NVDA says ":" and the new line), and the per-key machinery behind it failing in real programs: line keys silent in tig, less and vim, because output was held waiting for a finished redraw that no read showed; redraws answered half done in the console host. Dickson decided that Up and Down in terminals work as NVDA's do, reversing the selection-list difference and the confirmed decisions on held output and the eight kept screens:
+
+- The marker rule, the line-key watch's judgement of a finished redraw (`terminal::keys`), output held while a line key's watch is open, and the kept earlier screens are removed.
+- When the caret moves to another line, that line is spoken, as in a text field. Screen changes are spoken at once as output, through the screen diff.
+- The screen diff recognises a full-screen program scrolling (on the alternate screen as on the main one), so a pager's line move speaks the new line, not every row.
+- docs/parity.md records the selection lists as matching NVDA.
+
+Verbatim also sets Windows' screen reader flag while it runs and clears it when it exits, as NVDA does (`nvda.pyw` 285 and 286, 308 and 309), so programs that change their behaviour for a screen reader, such as PowerShell's PSReadLine, behave the same under both.
