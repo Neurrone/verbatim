@@ -1980,7 +1980,9 @@ verified.
   live on 2026-10-09): NVDA says the character, "x", as it is typed and
   then the recalled line with it, "echo onex"; Verbatim reads the line's
   change once, both in it, and says "echo onex" without the character's
-  own echo (**different**, a decision to confirm, `phase6-design.md`).
+  own echo (**different, deliberately**: kept as Verbatim's behaviour by
+  Dickson on 2026-10-09, since it does not occur in normal use,
+  `phase6-design.md`).
   Typing and
   its output after a switch are echoed and spoken as in any terminal
   (matched). An earlier report that Verbatim left the window's title out
