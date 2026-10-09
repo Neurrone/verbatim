@@ -429,7 +429,9 @@ debug log can be larger than one read of the agent's.
 - `artifacts`: `artifacts_root`, `scenario_dir`, `ScenarioSummary`, and
   `archive_run`, shared with `xtask vm test` without argument passing.
 - `latency`: `fetch` and `report` read the control plane's latency
-  timelines; budgets are reported, not enforced.
+  timelines; budgets are reported, not enforced. Enforcing them by
+  default in local runs, and only recording them on GitHub's runners, is
+  decided but not yet built (`docs/testing.md`).
 - `recording`: described above.
 - `windows_terminal`: the Windows Terminal the terminal scenarios drive,
   kept apart from the machine's own, which runs every window in one

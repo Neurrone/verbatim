@@ -25,7 +25,7 @@ use verbatim_control::protocol::{Frame, LatencyRecord, ReplyPayload, Request};
 /// a prominent warning line plus the per-scenario summary's measured
 /// maxima — and never asserted.
 ///
-/// Report-only is a recorded decision, made after two rounds of evidence
+/// Report-only was a recorded decision, made after two rounds of evidence
 /// that a wall-clock assertion inside a shared, variably loaded VM measures
 /// the host's scheduling, not Verbatim's code. An initial 50 ms budget (set
 /// from lightly loaded runs measuring 1 to 8 ms) flaked at 58 ms on a
@@ -33,10 +33,13 @@ use verbatim_control::protocol::{Frame, LatencyRecord, ReplyPayload, Request};
 /// audible suite run — and a dedicated rerun of the identical build
 /// measured 3 ms. A real pipeline regression (a reducer accidentally doing
 /// blocking I/O, say) still shows up unmistakably in the always-reported
-/// maxima; the enforced budget returns in M8, as a tight number from
-/// eSpeak's reference measurement in a controlled environment. The
-/// end-to-end `OneCore` smoke number the roadmap also mentions is likewise
-/// not enforced: observed audio latency ranges past 1300 ms for a long
+/// maxima. Enforcement is decided but not yet built (Dickson, 2026-10-08,
+/// reaffirmed 2026-10-09; `docs/testing.md`, "Waits are for evidence"):
+/// each step's budget is to be enforced by default in local runs, and
+/// recorded but not enforced on GitHub's runners, through an explicit
+/// setting. Until then this budget is reported only. The end-to-end
+/// `OneCore` smoke number the roadmap also mentions is likewise not
+/// enforced: observed audio latency ranges past 1300 ms for a long
 /// utterance (synthesis time scales with text), too variable for any
 /// stable threshold.
 pub const PIPELINE_BUDGET_MS: u64 = 200;

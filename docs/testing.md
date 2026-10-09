@@ -38,7 +38,7 @@ Where a scenario exists for two targets, each target's scenario is its own code:
 - No fixed sleeps, polling loops, retries, or "wait until quiet" in place of evidence. Every wait names the event or reply it waits for. `cargo xtask ci` fails on a fixed sleep or a retry counter in test code.
 - Evidence that Verbatim has handled an input comes from Verbatim: the harness numbers every key it injects, and Verbatim reports each number once everything the key caused is queued. Evidence about an application comes from the specific event Core receives, never from a period of silence.
 - Every wait in the agent or the control plane ends before the client's read timeout, so a failure is a named timeout on a live connection, not a broken one.
-- Response times are asserted. Each step has a budget from event to queued speech and from event to audio, set from measurements; a long timeout only bounds a hang and never stands in for a budget.
+- Response times are asserted. Each step has a budget from event to queued speech and from event to audio, set from measurements; a long timeout only bounds a hang and never stands in for a budget. Budgets are enforced by default in local runs, and on GitHub's runners an explicit setting turns enforcement off, so the numbers there are recorded but not enforced (Dickson, 2026-10-08, reaffirmed 2026-10-09). This is decided but not yet built: today the suite records the latency of each step and asserts none (`crates/verbatim-e2e/src/latency.rs`).
 - No tolerances that let a regression pass. Where a measurement varies by machine, such as the terminal flood's slowdown, it is recorded for trends rather than asserted with a loose limit.
 
 ## Failures are never hidden
