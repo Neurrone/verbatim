@@ -21,9 +21,10 @@
 //! for a UIA focus on an element with no window of its own,
 //! `GetGUIThreadInfo`, which names the keyboard focus window. A foreground
 //! event is forwarded unchecked; the outpost's worker checks that its
-//! window is the foreground, as NVDA's `processForegroundWinEvent` does,
-//! after waiting for the change to complete. No cross-process calls means no deadlines and no way for any application to
-//! stall focus detection for the rest of the desktop.
+//! window is the foreground when it handles it, as NVDA's
+//! `processForegroundWinEvent` does. No cross-process calls means no
+//! deadlines and no way for any application to stall focus detection for
+//! the rest of the desktop.
 //!
 //! Outgoing facts are coalesced with NVDA's UIA limiter rule before they are
 //! sent: one waiting fact per element and kind, a newer one replacing it and
@@ -465,10 +466,8 @@ fn forward_msaa_event(
         },
         // Forwarded unchecked: whether the window is still the foreground
         // window is checked later, by the outpost's worker when it handles
-        // the fact. NVDA deliberately does not filter in the event callback,
-        // because a starting application's window raises its foreground
-        // event before it actually becomes the foreground window (NVDA's
-        // issue 4001; found live with msinfo32).
+        // the fact, as NVDA checks it when it processes the event rather
+        // than in its event callback.
         WinEventKind::Foreground => DeliveredFact::Foreground { hwnd },
         WinEventKind::MenuPopupStart => DeliveredFact::MenuPopup {
             hwnd,

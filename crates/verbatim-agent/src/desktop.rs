@@ -204,13 +204,13 @@ pub fn minimize_all(timeout: Duration) -> (bool, bool, ForegroundInfo) {
 /// inactive (found 2026-10-09). Such a window is logged, at info, and the
 /// minimize is waited for on window events, up to [`MINIMIZE_LIMIT`].
 ///
-/// `SetForegroundWindow` can return before the window is the foreground
-/// window, so the answer is not read at once: it waits on window events,
-/// the foreground event among them, for the window to be in front, up to
-/// [`FOREGROUND_LIMIT`]. Read straight after the call, the foreground was
-/// sometimes still the window before, which took the foreground a moment
-/// after the `false` answer (`phase6-design.md`, "Test isolation and the
-/// foreground lock", 2026-10-09).
+/// The answer is read straight after `SetForegroundWindow`: a window
+/// restored from minimized and set as the foreground is the foreground
+/// window when the call returns (measured live over 37 such calls on
+/// 2026-10-09, `phase6-design.md`, "Foreground events against the
+/// foreground window"). The wait for it on window events, added when a
+/// restored inactive window was set as the foreground without being
+/// minimized first, is gone.
 #[must_use]
 pub fn set_foreground(window: u64) -> bool {
     let window = HWND(usize::try_from(window).unwrap_or(0) as *mut c_void);
@@ -235,27 +235,16 @@ pub fn set_foreground(window: u64) -> bool {
         // SAFETY: as above.
         let _ = unsafe { ShowWindow(window, SW_RESTORE) };
     }
-    // SAFETY: tolerates any handle; a stale one fails. A refusal is not
-    // final: a window restored from minimized just above may still be
-    // taking the foreground, so the wait below decides.
+    // SAFETY: tolerates any handle; a stale one fails. Its answer is not
+    // used: whether the window is in front is read below.
     let _ = unsafe { SetForegroundWindow(window) };
-    wait::until(
-        || {
-            // SAFETY: GetForegroundWindow has no preconditions.
-            let foreground = unsafe { GetForegroundWindow() };
-            foreground == window
-        },
-        FOREGROUND_LIMIT,
-    )
+    // SAFETY: GetForegroundWindow has no preconditions.
+    unsafe { GetForegroundWindow() == window }
 }
 
 /// How long [`set_foreground`] waits for a window it minimized to be
 /// minimized: well within the client's read timeout.
 const MINIMIZE_LIMIT: Duration = Duration::from_secs(5);
-
-/// How long [`set_foreground`] waits for the window to be the foreground
-/// window: with [`MINIMIZE_LIMIT`], well within the client's read timeout.
-const FOREGROUND_LIMIT: Duration = Duration::from_secs(5);
 
 /// Whether `window` has a minimize box, so Show Desktop minimizes it.
 fn minimizable(window: HWND) -> bool {

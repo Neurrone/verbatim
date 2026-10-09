@@ -30,11 +30,14 @@
 //!   before a batch's focus change, it is handled before it, whether it
 //!   came first in the batch, in an earlier batch, or was pushed after the
 //!   change though observed before it ([`State::judged`]).
-//! - A batch that holds a foreground change is held until that change's
-//!   window is the foreground window, for 250 ms at most, as NVDA holds
-//!   back event handling after a foreground event; Core's queries and its
-//!   list of held nodes are handed out ahead of it meanwhile, so the worker
-//!   never waits for the foreground.
+//! - A batch that holds a foreground change is handed out at once, never
+//!   held for its window to become the foreground window: Windows raises
+//!   the foreground event once the change is made, so a foreground event
+//!   whose window is not in front when its batch is handled is stale or
+//!   raised early by the application itself, and the worker drops it, as
+//!   NVDA's `processForegroundWinEvent` does (measured live;
+//!   `phase6-design.md`, "Foreground events against the foreground
+//!   window").
 //!
 //! Intake callbacks only push and return: they never call into the
 //! application and never wait on the worker.
@@ -43,7 +46,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Condvar, Mutex, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{Notification, TraceId};
@@ -252,36 +255,6 @@ impl Planned {
 /// back on.
 const FOCUS_CANDIDATES: usize = 3;
 
-/// The longest a batch holding a foreground change is held, for that
-/// change's window to become the foreground window. Measured live on
-/// 2026-10-02 over 245 such events (msinfo32, Notepad, and Verbatim's own
-/// windows): 5 to 100 ms, median 44 ms. A window that has not arrived by
-/// then was refused the foreground, and the batch is handed out anyway.
-pub(super) const FOREGROUND_WAIT: Duration = Duration::from_millis(250);
-
-/// How often a held batch's window is checked, with a local call, while
-/// nothing else comes: no event says when a window has become the
-/// foreground window, since Windows raises the foreground event before.
-const FOREGROUND_POLL: Duration = Duration::from_millis(10);
-
-/// What became of a batch's foreground change while the batch was held,
-/// told with the batch's first entry.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Foreground {
-    /// Its window became the foreground window at this time, in
-    /// milliseconds since the Unix epoch.
-    Confirmed(u64),
-    /// It had not within [`FOREGROUND_WAIT`].
-    NotConfirmed,
-}
-
-/// A planned batch held until its foreground change's window is the
-/// foreground window.
-struct Hold {
-    hwnd: isize,
-    until: Instant,
-}
-
 #[derive(Default)]
 struct State {
     waiting: VecDeque<Waiting>,
@@ -307,8 +280,6 @@ struct State {
     /// When the worker asked to be given [`Item::Wake`] if nothing else
     /// comes first.
     wake: Option<Instant>,
-    /// The planned batch held for its foreground change, if it is.
-    hold: Option<Hold>,
 }
 
 /// The queue the worker draws from.
@@ -319,31 +290,6 @@ pub(super) struct Intake {
 }
 
 impl State {
-    /// Takes the oldest entry that does not wait for a held batch's
-    /// foreground change: a query from Core, or the list of nodes Core
-    /// holds, from the held batch first and then from what is waiting
-    /// behind it. Events, focus changes above all, are judged against the
-    /// foreground and wait; a query answers Core about the application as
-    /// it is.
-    fn take_unheld(&mut self) -> Option<Entry> {
-        let unheld = |item: &Item| matches!(item, Item::Query { .. } | Item::NodesHeld { .. });
-        if let Some(index) = self
-            .batch
-            .iter()
-            .position(|planned| matches!(planned, Planned::Run(entry) if unheld(&entry.item)))
-        {
-            return match self.batch.remove(index) {
-                Some(Planned::Run(entry)) => Some(entry),
-                _ => None,
-            };
-        }
-        let index = self
-            .waiting
-            .iter()
-            .position(|waiting| unheld(&waiting.entry.item))?;
-        self.waiting.remove(index).map(|waiting| waiting.entry)
-    }
-
     /// The wake [`Intake::wake_at`] asked for, when its time has come.
     fn wake_due(&mut self, now: Instant) -> Option<Entry> {
         if self.wake.is_none_or(|wake| now < wake) {
@@ -483,55 +429,11 @@ impl Intake {
     /// while there is nothing to do, and gives [`Item::Wake`] when the time
     /// [`wake_at`](Self::wake_at) named comes first; `None` once the queue
     /// is closed.
-    ///
-    /// A batch that holds a foreground change is held until that change's
-    /// window is the foreground window, or for [`FOREGROUND_WAIT`] at most,
-    /// as NVDA holds back event handling after a foreground event until the
-    /// foreground window matches (`_shouldGetEvents`, issue 3831; see
-    /// [`foreground_of`]); what became of it comes with the batch's first
-    /// entry. While it is held, queries and the list of nodes Core holds
-    /// are handed out ahead of it, so they never wait for the foreground.
-    pub(super) fn next(&self) -> Option<(Planned, u64, Option<Foreground>)> {
-        self.next_with(&super::window::window_is_foreground, FOREGROUND_WAIT)
-    }
-
-    /// [`next`](Self::next), with the foreground read through
-    /// `is_foreground` and batches held for `foreground_wait` at most.
-    fn next_with(
-        &self,
-        is_foreground: &dyn Fn(isize) -> bool,
-        foreground_wait: Duration,
-    ) -> Option<(Planned, u64, Option<Foreground>)> {
+    pub(super) fn next(&self) -> Option<(Planned, u64)> {
         let mut state = self.lock();
-        let mut foreground = None;
         loop {
-            if let Some(hold) = &state.hold {
-                let (hwnd, until) = (hold.hwnd, hold.until);
-                let now = Instant::now();
-                if is_foreground(hwnd) {
-                    state.hold = None;
-                    foreground = Some(Foreground::Confirmed(super::now_ms()));
-                } else if now >= until {
-                    tracing::debug!(
-                        hwnd,
-                        "the foreground window did not become the event's window"
-                    );
-                    state.hold = None;
-                    foreground = Some(Foreground::NotConfirmed);
-                } else if let Some(entry) = state.take_unheld().or_else(|| state.wake_due(now)) {
-                    return Some((Planned::Run(entry), state.batch_number, None));
-                } else {
-                    let poll = FOREGROUND_POLL.min(until - now);
-                    state = self
-                        .ready
-                        .wait_timeout(state, poll)
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .0;
-                    continue;
-                }
-            }
             if let Some(planned) = state.batch.pop_front() {
-                return Some((planned, state.batch_number, foreground));
+                return Some((planned, state.batch_number));
             }
             if !state.waiting.is_empty() {
                 let waiting: Vec<Waiting> = state.waiting.drain(..).collect();
@@ -542,10 +444,6 @@ impl Intake {
                     (focused.as_ref(), &judged),
                     super::window::window_is_hung,
                 );
-                state.hold = foreground_of(&batch).map(|hwnd| Hold {
-                    hwnd,
-                    until: Instant::now() + foreground_wait,
-                });
                 state.batch = batch.into();
                 state.batch_number += 1;
                 continue;
@@ -555,7 +453,7 @@ impl Intake {
             }
             let now = Instant::now();
             if let Some(entry) = state.wake_due(now) {
-                return Some((Planned::Run(entry), state.batch_number, None));
+                return Some((Planned::Run(entry), state.batch_number));
             }
             state = match state.wake {
                 Some(wake) => {
@@ -572,16 +470,14 @@ impl Intake {
         }
     }
 
-    /// Closes the queue for the outpost's shutdown: everything waiting, the
-    /// batch in progress, and a batch held for its foreground change are
-    /// dropped, nothing pushed from now on is kept, and every
+    /// Closes the queue for the outpost's shutdown: everything waiting and
+    /// the batch in progress are dropped, nothing pushed from now on is kept, and every
     /// [`next`](Self::next) answers `None` once the entry in hand is done.
     /// The entries are returned for the caller to drop on a thread in COM's
     /// multithreaded apartment, since an entry can hold a UIA element.
     pub(super) fn close(&self) -> Vec<Entry> {
         let mut state = self.lock();
         state.closed = true;
-        state.hold = None;
         state.wake = None;
         let mut dropped: Vec<Entry> = state
             .waiting
@@ -960,22 +856,6 @@ fn plan(
     planned
 }
 
-/// The window of a batch's newest foreground change, if it has one. Windows
-/// can raise a window's foreground event a little before the window is the
-/// foreground window (NVDA issue 3831), and an application's focus event
-/// can come before its foreground event; NVDA holds back all event handling
-/// until the foreground window matches, so the batch's focus is judged
-/// against the real foreground.
-fn foreground_of(batch: &[Planned]) -> Option<isize> {
-    batch.iter().rev().find_map(|planned| match planned {
-        Planned::Run(Entry {
-            item: Item::Fact(DeliveredFact::Foreground { hwnd }),
-            ..
-        }) => Some(*hwnd),
-        _ => None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1184,7 +1064,7 @@ mod tests {
         push(1, 30);
         let mut order = Vec::new();
         for _ in 0..2 {
-            if let Some((Planned::Run(entry), _, _)) = intake.next() {
+            if let Some((Planned::Run(entry), _)) = intake.next() {
                 order.push(entry.observed_at_ms);
             }
         }
@@ -1205,7 +1085,7 @@ mod tests {
                 timing: crate::protocol::EventTiming::default(),
             });
         }
-        let Some((Planned::Run(entry), _, _)) = intake.next() else {
+        let Some((Planned::Run(entry), _)) = intake.next() else {
             panic!("the list is planned");
         };
         assert!(matches!(
@@ -1228,33 +1108,10 @@ mod tests {
         });
     }
 
-    fn push_query(intake: &Intake, request_id: u64) {
-        intake.push(Entry {
-            item: Item::Query {
-                request_id,
-                query: Query::FocusNow,
-            },
-            trace: TraceId::mint(),
-            observed_at_ms: 0,
-            timing: crate::protocol::EventTiming::default(),
-        });
-    }
-
-    /// The query an entry carries, if it is one.
-    fn request_of(planned: &Planned) -> Option<u64> {
-        match planned {
-            Planned::Run(Entry {
-                item: Item::Query { request_id, .. },
-                ..
-            }) => Some(*request_id),
-            _ => None,
-        }
-    }
-
     #[test]
-    fn a_batch_holding_a_foreground_change_is_held_until_its_window_is_in_front() {
-        // msinfo32 raises its focus event just before its foreground event,
-        // and neither is handed out before the window is in front.
+    fn a_batch_holding_a_foreground_change_is_handed_out_at_once() {
+        // Window 77 is not the foreground window, nor any window at all:
+        // the batch is not held for it, and the worker judges the change.
         let intake = Intake::default();
         push_fact(
             &intake,
@@ -1265,74 +1122,10 @@ mod tests {
             },
         );
         push_fact(&intake, DeliveredFact::Foreground { hwnd: 77 });
-        let in_front = |hwnd| hwnd == 77;
-        let first = intake
-            .next_with(&in_front, FOREGROUND_WAIT)
-            .expect("an entry");
-        assert!(
-            matches!(first.2, Some(Foreground::Confirmed(_))),
-            "{:?}",
-            first.2
-        );
-        let second = intake
-            .next_with(&in_front, FOREGROUND_WAIT)
-            .expect("an entry");
-        assert_eq!(second.2, None, "only the batch's first entry carries it");
-        assert_eq!(first.1, second.1, "one batch");
-
-        push_fact(
-            &intake,
-            DeliveredFact::MsaaFocus {
-                hwnd: 78,
-                id_object: -4,
-                id_child: 2,
-            },
-        );
-        assert_eq!(
-            intake
-                .next_with(&in_front, FOREGROUND_WAIT)
-                .expect("an entry")
-                .2,
-            None
-        );
-    }
-
-    #[test]
-    fn queries_go_ahead_of_a_batch_held_for_its_foreground() {
-        // The window is not in front yet: the batch's events wait, and its
-        // query, and one that arrives meanwhile, are handed out at once.
-        let intake = Intake::default();
-        push_fact(&intake, DeliveredFact::Foreground { hwnd: 77 });
-        push_query(&intake, 1);
-        let not_yet = |_| false;
-        let long = Duration::from_secs(60);
-        let first = intake.next_with(&not_yet, long).expect("an entry");
-        assert_eq!((request_of(&first.0), first.2), (Some(1), None));
-        push_query(&intake, 2);
-        let second = intake.next_with(&not_yet, long).expect("an entry");
-        assert_eq!((request_of(&second.0), second.2), (Some(2), None));
-        assert!(intake.busy(), "the foreground change still waits");
-        let third = intake
-            .next_with(&|hwnd| hwnd == 77, long)
-            .expect("an entry");
-        assert!(matches!(
-            third.0,
-            Planned::Run(Entry {
-                item: Item::Fact(DeliveredFact::Foreground { hwnd: 77 }),
-                ..
-            })
-        ));
-        assert!(matches!(third.2, Some(Foreground::Confirmed(_))));
-    }
-
-    #[test]
-    fn a_batch_whose_window_never_comes_in_front_is_handed_out_after_the_wait() {
-        let intake = Intake::default();
-        push_fact(&intake, DeliveredFact::Foreground { hwnd: 77 });
-        let entry = intake
-            .next_with(&|_| false, Duration::ZERO)
-            .expect("an entry");
-        assert_eq!(entry.2, Some(Foreground::NotConfirmed));
+        let (_, first) = intake.next().expect("an entry");
+        let (_, second) = intake.next().expect("an entry");
+        assert_eq!(first, second, "one batch");
+        assert!(!intake.busy(), "nothing is held");
     }
 
     #[test]
@@ -1498,7 +1291,7 @@ mod tests {
         push(state_change(2), 2);
         push(state_change(3), 3);
         let mut order = Vec::new();
-        let (first, _, _) = intake.next().expect("an entry");
+        let (first, _) = intake.next().expect("an entry");
         order.extend(first.entries().iter().map(|entry| entry.observed_at_ms));
         push(
             Item::Fact(DeliveredFact::MsaaFocus {
@@ -1509,7 +1302,7 @@ mod tests {
             4,
         );
         while intake.busy() {
-            let (planned, _, _) = intake.next().expect("an entry");
+            let (planned, _) = intake.next().expect("an entry");
             order.extend(planned.entries().iter().map(|entry| entry.observed_at_ms));
         }
         assert_eq!(
@@ -1540,7 +1333,7 @@ mod tests {
         push(name_change(2), 2);
         push(name_change(3), 3);
         let mut order = Vec::new();
-        let (first, batch, _) = intake.next().expect("an entry");
+        let (first, batch) = intake.next().expect("an entry");
         order.extend(first.entries().iter().map(|entry| entry.observed_at_ms));
         push(
             Item::Fact(DeliveredFact::MsaaFocus {
@@ -1552,7 +1345,7 @@ mod tests {
         );
         let mut batches = Vec::new();
         while intake.busy() {
-            let (planned, number, _) = intake.next().expect("an entry");
+            let (planned, number) = intake.next().expect("an entry");
             order.extend(planned.entries().iter().map(|entry| entry.observed_at_ms));
             batches.push(number);
         }

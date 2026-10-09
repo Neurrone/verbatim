@@ -2799,3 +2799,24 @@ Live trials in programs already installed (git log's pager, less, vim, tig, Micr
 - docs/parity.md records the selection lists as matching NVDA.
 
 Verbatim also sets Windows' screen reader flag while it runs and clears it when it exits, as NVDA does (`nvda.pyw` 285 and 286, 308 and 309), so programs that change their behaviour for a screen reader, such as PowerShell's PSReadLine, behave the same under both.
+
+## Foreground events against the foreground window (2026-10-09)
+
+Decision 7 of the coherence review asked for the order of foreground events against `GetForegroundWindow` to be measured, and every wait the measurement shows is not needed to be removed.
+
+How it was measured. A scratch probe installed out-of-context `WinEvent` hooks, as the listener does, for the foreground, focus, create, show, hide, name, minimize and cloak events of top-level windows, and logged at each foreground event whether `GetForegroundWindow` already named the event's window, and if not, when it did. A second scratch program logged UIA focus events. The probe launched and switched windows itself: console windows started through `conhost.exe` (launched minimized, restored and set as the foreground as the agent does, and switched with Alt+Tab), File Explorer folder windows (launched minimized and normally), Notepad and msinfo32. Separately, the listener and the outposts logged each foreground event and how long the intake's hold waited, over one run each of ten scenarios (`explorer_folder_window`, `system_information_tree`, `conhost_two_windows`, `windows_terminal_two_windows`, `notepad_say_all`, `settings_system_page`, `menu_and_settings_dialog`, `second_application_and_verbatim_menu`, `windows_terminal_tabs`, `text_box_editing`).
+
+What it showed:
+
+- The probe: every system foreground event reached the hook once `GetForegroundWindow` already named its window, over 37 restores with `SetForegroundWindow`, 27 Alt+Tab switches and 28 launches. Each `SetForegroundWindow` after a restore had made the window the foreground window by the time it returned (37 of 37).
+- The events whose window was not in front came in two kinds. The Alt+Tab switcher's staging windows (`ForegroundStaging`), already passed when their events arrived, never came in front. File Explorer raises a foreground event of its own as it creates a folder window, titled "File Explorer", hidden, 140 to 404 ms before the window is in front (14 of 14 launches); the system's own event follows once it is, with the folder's title already set.
+- The scenarios: 25 foreground events, 23 with the window already in front at the listener. Of the outposts' 20 holds, 17 found the window in front at once; the others waited for File Explorer's early event (129 ms), and for Core's hidden frame (14 ms, and once the full 250 ms), whose foreground the outpost drops anyway.
+- No focus follow-up read (`resolve_focus_later`) ran in those runs: no UIA focus was reported from its event alone.
+
+What was removed:
+
+- The intake's hold of a batch with a foreground change, 250 ms at most with a check every 10 ms. The worker drops a foreground fact whose window is not the foreground window when it handles it, as NVDA's `processForegroundWinEvent` drops it after at most two core cycles of deferral; File Explorer's early event is dropped and its window reported from the system's event.
+- The watchdog's check every 500 ms whether the user had left a slow window for another thread of its application. It checks when the grace ends and again whenever a foreground fact reaches the outpost, which is the evidence of the move.
+- The agent's wait after `SetForegroundWindow`: the answer is read when the call returns.
+
+One older observation disagrees: on 2026-10-05 an observer saw Notepad's foreground event arrive about 130 ms before Notepad was in front, after Alt+Tab from the desktop. It did not reproduce in these measurements, and the related scenarios pass without the hold; a foreground event that does come early is now dropped, as NVDA drops one that stays early past its two deferrals, and Notepad's focus event still reports the window's focus.

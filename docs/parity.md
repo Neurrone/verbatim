@@ -510,15 +510,23 @@ verified.
   NVDA compares against. A foreground fact is always accepted and
   moves attention; its outpost has already dropped it if the window
   was no longer the system's foreground when the outpost handled it.
-  Before handling a batch that holds a foreground fact, the outpost
-  holds the batch for up to 250 ms for that window to become the
-  foreground window, as NVDA holds back event handling after a foreground
-  event (issue 3831); a starting application's focus event, which can
-  come just before its foreground event, is then judged against the real
-  foreground. Core's queries to that outpost are answered meanwhile,
-  where NVDA's scripts would wait behind the held events. The bound was measured live on 2026-10-02: over 245 such
-  events, the window arrived 5 to 100 ms after its event. Without the
-  wait, msinfo32 was sometimes never announced. A focus event is
+  The outpost handles a batch that holds a foreground fact at once and
+  drops the fact when its window is not the foreground window then, as
+  NVDA's `processForegroundWinEvent` drops it once its deferral of at most
+  two core cycles (issue 3831) has passed. It does not wait for the window
+  to come in front: measured live on 2026-10-09, the system's foreground
+  event reached an out-of-context hook only once `GetForegroundWindow`
+  named its window, after a restore, `SetForegroundWindow`, Alt+Tab, or a
+  launch, for console windows, File Explorer, Notepad, msinfo32, Windows
+  Terminal, a Windows Forms window and Verbatim's menu and dialogs. The
+  events that came before were stale (the Alt+Tab switcher's staging
+  windows, already passed), raised by the application itself (File
+  Explorer raises one as it creates its folder window, 140 to 400 ms
+  before the window is in front, and the system raises its own once it
+  is), or Core's hidden frame's, 14 ms early once, which the outpost drops
+  whatever the foreground. In the outposts of ten scenarios, the 250 ms
+  hold this replaced waited only for File Explorer's early event and for
+  the hidden frame. A focus event is
   attended only when its window was in the system's foreground window
   when its outpost read it, topmost, or a `Windows.UI.Core` window under
   the input thread's active window, as NVDA tests it against the real

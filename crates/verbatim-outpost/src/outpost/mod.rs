@@ -673,15 +673,20 @@ impl Outpost {
                 observed_at_ms,
                 timing,
                 fact,
-            } => context.push(
-                Item::Fact(fact.clone()),
-                *trace_id,
-                *observed_at_ms,
-                EventTiming {
-                    relayed_at_us: now_us(),
-                    ..*timing
-                },
-            ),
+            } => {
+                context.push(
+                    Item::Fact(fact.clone()),
+                    *trace_id,
+                    *observed_at_ms,
+                    EventTiming {
+                        relayed_at_us: now_us(),
+                        ..*timing
+                    },
+                );
+                if matches!(fact, crate::protocol::DeliveredFact::Foreground { .. }) {
+                    context.watch.foreground_changed();
+                }
+            }
             SupervisorToOutpost::Query {
                 trace_id,
                 request_id,

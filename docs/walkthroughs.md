@@ -61,9 +61,13 @@ releases Alt. Notepad has no outpost yet.
 2. **Windows raises events.** When Alt is released, Windows raises
    `EVENT_SYSTEM_SWITCHEND`, `EVENT_SYSTEM_FOREGROUND` for Notepad's
    window, a UIA focus-changed event for Notepad's text area, and an MSAA
-   focus event for it. The foreground event is raised before the change
-   completes: measured live, Notepad's event arrived while the desktop was
-   still the foreground window, which it stayed for about 130 ms more.
+   focus event for it. An observer on 2026-10-05 saw Notepad's foreground
+   event arrive while the desktop was still the foreground window, for
+   about 130 ms more; measured again on 2026-10-09 over dozens of
+   switches, launches and restores, the system's foreground event arrived
+   only once Notepad's window was the foreground window, and the early
+   ones were raised by applications themselves (`docs/parity.md`, "Stale
+   focus events").
 3. **The listener captures facts, without calling anyone.** The listener
    process is the only receiver of focus events (D13, amended 2026-10-05;
    outposts do not subscribe to their own, so no event is handled twice).
@@ -73,8 +77,8 @@ releases Alt. Notepad has no outpost yet.
      and forwards the raw window, object id, and child id untouched as a
      `DeliveredFact::Foreground` or `DeliveredFact::MsaaFocus`. A
      foreground event is not checked against the foreground here; the
-     outpost's worker checks it later, because a starting application's
-     window raises the event before it is actually in front.
+     outpost's worker checks it when it handles it, as NVDA checks it
+     when it processes the event.
    - The UIA focus callback (`install_focus_registration`) receives the
      element with its properties already cached. `capture` reads the
      cached pid, the cached window handle, and the cached snapshot parts
@@ -125,25 +129,23 @@ releases Alt. Notepad has no outpost yet.
    (`plan`), only the newest foreground change is kept, focus events are
    grouped per backend (the newest three in all, tried newest first until
    one is reported), and a menu opening is moved last.
-6. **The worker waits for the window to really be in front.** The worker
-   thread takes the batch (`run` in `outpost/worker.rs`). Because the
-   batch holds a foreground change, `Intake::next` names its window, and
-   before handling anything the worker calls `wait_for_foreground`: it
-   checks `GetForegroundWindow` every 10 ms for up to 250 ms until
-   Notepad's window is the foreground window, and records the time it was
-   confirmed. This is NVDA holding back event handling after a foreground
-   event (NVDA issue 3831). Measured live on 2026-10-02 over 245 such
-   events, the window arrived 5 to 100 ms after its event (median 44 ms);
-   the 130 ms in step 2 is a single case from the 2026-10-05 observer run.
+6. **The worker takes the batch.** The worker thread takes the batch
+   (`run` in `outpost/worker.rs`) at once; nothing waits for the window to
+   come in front. Until 2026-10-09 the intake held a batch with a
+   foreground change for up to 250 ms, checking `GetForegroundWindow`
+   every 10 ms, as NVDA defers event handling for up to two core cycles
+   after a foreground event (NVDA issue 3831); measured, the system's
+   event arrives once the window is in front, and the wait was removed.
 7. **The worker reports the foreground change.** `Worker::foreground`
-   reads the window's own accessible object through its backend
-   (`read::foreground_window`: a UIA element from the handle, or the MSAA
-   client object; a window that cannot be read yet is reported from local
-   window data; an empty name takes the window text). If the window is no
-   longer the foreground window by then, the report is dropped, as NVDA
-   drops it. Otherwise it is published as a `FocusChanged` with
+   drops it if Notepad's window is not the foreground window, as NVDA
+   drops it, then reads the window's own accessible object through its
+   backend (`read::foreground_window`: a UIA element from the handle, or
+   the MSAA client object; a window that cannot be read yet is reported
+   from local window data; an empty name takes the window text). If the
+   window is no longer the foreground window by then, the report is
+   dropped. Otherwise it is published as a `FocusChanged` with
    `foreground: true`, stamped with the later of its observation time and
-   the confirmation time, not the time Windows raised it. Every call into
+   the time it was confirmed in front, not the time Windows raised it. Every call into
    Notepad runs under the watchdog's 10 s deadline (walkthrough 4).
 8. **The worker reads the focused control.** The UIA focus fact comes
    next (`Worker::uia_focus`):

@@ -166,8 +166,7 @@ Public API:
     between entries (under "Text" below), not waited on. It is the only
     thread that calls into the application, so events and replies leave in
     the order their entries were planned: the order they joined the queue,
-    but for the events a focus change overtakes, the queries that go ahead
-    of a batch held for its foreground change, and a caret key's answer,
+    but for the events a focus change overtakes and a caret key's answer,
     which leaves when its evidence comes. It replaces the announce lane, the query pool, the
     announce poll, the probe threads, and the late window retry. Being the
     only such thread, it is where the calls are counted: the backend crates
@@ -458,22 +457,18 @@ Implementation notes:
   harness fetches these logs alongside the timeline and stderr, so a silent
   outpost is readable after the fact instead of theorized. Best-effort: a
   failed log open leaves the child unredirected, never unspawned.
-- Foreground changes (the intake and the worker): a batch that holds a
-  foreground fact is held in the intake for up to 250 ms
-  (`intake::FOREGROUND_WAIT`), its window checked with a local call
-  whenever something joins the queue and every 10 ms otherwise, until that
-  fact's window is the system's foreground window, as NVDA holds back
-  event handling after a foreground event (issue 3831); no event says
-  when a window has become the foreground window. `Intake::next` tells
-  the worker, with the batch's first entry, when it was confirmed. While
-  the batch is held, Core's queries and its list of held nodes are handed
-  to the worker ahead of it, so a caret key or a review command never
-  waits for the foreground (since 2026-10-08; the worker had slept in
-  10 ms steps before the batch, and everything waited). Then a
-  foreground fact is reported at once, stamped with the time its window
-  was confirmed as the foreground rather than the time Windows raised the
-  event, which comes before the change completes (`docs/parity.md`,
-  "Stale focus events"),
+- Foreground changes (the worker): a batch that holds a foreground fact
+  is handed out at once. A foreground fact whose window is not the
+  system's foreground window when the worker handles it is dropped, as
+  NVDA's `processForegroundWinEvent` drops it: measured live on
+  2026-10-09, Windows raises the foreground event once the change is
+  made, and the events that come before are stale or raised early by the
+  application itself, such as File Explorer's as it creates its window,
+  which the system's own event follows (`docs/parity.md`, "Stale focus
+  events"). The intake held such a batch for up to 250 ms, checking every
+  10 ms, until then. Otherwise a foreground fact is reported at once,
+  stamped with the time its window was confirmed as the foreground, after
+  its name is read, rather than the time Windows raised the event,
   named or not, as a focus on the window, since the foreground change is what
   moves the reducer's attention; the reducer does not speak a nameless
   foreground window, and nothing announces it later. The window's own

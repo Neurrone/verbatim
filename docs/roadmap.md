@@ -129,10 +129,10 @@ in the dated section named with each item.
     history size, Core's 10 MB bound protecting memory.
   - Control+Tab announces the tab ("list", the tab's name, "1 of 2") as
     NVDA does, and a new tab no longer says an extra "blank".
-  - The waits not driven by events (the outpost's 10 ms foreground check
-    for up to 250 ms, the watchdog's 500 ms foreground check, the one
-    follow-up focus read) are measured against when the foreground event
-    comes, and every wait the measurement shows is not needed is removed.
+  - The one follow-up focus read, the last wait not driven by events, is
+    removed once the focus's element is found from its own events (the
+    foreground checks went on 2026-10-09, `phase6-design.md`,
+    "Foreground events against the foreground window").
   - The two-window terminal scenarios switch windows with Alt+Tab, as a
     user does.
   - File Explorer is announced once its window is shown and titled, and

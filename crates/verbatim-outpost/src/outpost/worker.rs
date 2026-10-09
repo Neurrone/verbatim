@@ -5,12 +5,10 @@
 //! into the application, so events and replies leave the outpost in the order
 //! the intake plans their entries: the order they joined the queue, but for
 //! the events of other objects that a focus change overtakes
-//! (`intake::overtaken`) and the queries that go ahead of a batch held for
-//! its foreground change. This is NVDA's model, one thread doing all the
+//! (`intake::overtaken`). This is NVDA's model, one thread doing all the
 //! work, with one such thread per application. The worker waits for
 //! nothing but its calls into the application and the queue: a caret key's
-//! evidence is watched for between entries, and a foreground change is
-//! confirmed by the queue.
+//! evidence is watched for between entries.
 //!
 //! Being the only thread that calls into the application, the worker is also
 //! where those calls are counted: the backend crates count each call on the
@@ -59,7 +57,7 @@ use crate::protocol::{
 };
 
 use super::Context;
-use super::intake::{Entry, Foreground, Item, Object, Planned, UiaEvent, UiaKind, window_of};
+use super::intake::{Entry, Item, Object, Planned, UiaEvent, UiaKind, window_of};
 use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, CONSOLE_WINDOW_CLASS, OpenWatch};
 use super::window::{
@@ -95,8 +93,11 @@ const FOCUS_READ_WAIT: Duration = Duration::from_secs(1);
 /// several threads (Explorer's folder windows, taskbar, and Alt+Tab
 /// switcher), and those must not wait behind a slow window the user has
 /// left. Windows of other applications have their own outposts and never
-/// wait behind this one. The check is repeated at this interval until the
-/// deadline.
+/// wait behind this one. The check is made when the grace ends and again
+/// each time a foreground fact reaches the outpost, until the deadline:
+/// the foreground event of a window of this application, which Windows
+/// raises once the window is in front, is the evidence that the user has
+/// moved to it.
 const MOVED_ON_GRACE: Duration = Duration::from_millis(500);
 
 /// The deadline for one navigation step or an activation.
@@ -162,6 +163,18 @@ impl Watch {
     /// How many abandoned workers have not yet returned.
     pub(super) fn abandoned(&self) -> usize {
         self.abandoned.load(Ordering::Relaxed)
+    }
+
+    /// Wakes the watchdog to judge again whether the user has moved on from
+    /// the worker's window: a foreground fact reached the outpost, which
+    /// Windows raises once the change is made (`phase6-design.md`,
+    /// "Foreground events against the foreground window"). The watch lock
+    /// is taken first, so the watchdog is waiting when it is told and the
+    /// wake is never lost.
+    pub(super) fn foreground_changed(&self) {
+        let state = self.lock();
+        self.changed.notify_one();
+        drop(state);
     }
 
     /// Starts the worker's deadline for one entry concerning `window` (0 for
@@ -497,24 +510,23 @@ fn abandon_reason(
     }
 }
 
-/// When the watchdog next checks a worker it did not abandon at `now`: at
-/// the deadline for an entry concerning no window, else at the end of the
-/// grace and every [`MOVED_ON_GRACE`] after it, never later than the
-/// deadline.
+/// When the watchdog next checks a worker it did not abandon at `now`, if
+/// no foreground fact wakes it first ([`Watch::foreground_changed`]): at
+/// the end of the grace for an entry concerning a window, while the grace
+/// lasts, and otherwise at the deadline.
 fn next_check(now: Instant, deadline: Instant, started: Instant, window: isize) -> Instant {
-    let check = if window == 0 {
-        deadline
-    } else if now < started + MOVED_ON_GRACE {
+    let check = if window != 0 && now < started + MOVED_ON_GRACE {
         started + MOVED_ON_GRACE
     } else {
-        now + MOVED_ON_GRACE
+        deadline
     };
     check.min(deadline)
 }
 
 /// The watchdog: waits for the worker's deadline and abandons a worker that
 /// passes it, or that has waited [`MOVED_ON_GRACE`] on a window the user has
-/// left for one of the same application on another UI thread.
+/// left for one of the same application on another UI thread, judged when
+/// the grace ends and whenever a foreground fact reaches the outpost.
 fn watchdog(context: &Arc<Context>) {
     let mut state = context.watch.lock();
     loop {
@@ -588,30 +600,9 @@ fn run(context: &Context, generation: u64) {
 /// The worker's loop, until the intake closes or this worker is abandoned.
 fn run_loop(context: &Context, generation: u64) {
     let mut client = Client::default();
-    // When the current batch's foreground change was confirmed. `next` says
-    // so only with a batch's first entry, and the foreground fact need not
-    // be that entry, so the time is kept for the whole batch.
-    let mut confirmed: Option<(u64, Option<u64>)> = None;
-    while let Some((planned, batch, foreground)) = context.intake.next() {
-        if let Some(foreground) = foreground {
-            let at = match foreground {
-                Foreground::Confirmed(at) => Some(at),
-                Foreground::NotConfirmed => None,
-            };
-            confirmed = Some((batch, at));
-        }
-        let foreground_at_ms = confirmed
-            .filter(|(confirmed_batch, _)| *confirmed_batch == batch)
-            .and_then(|(_, at)| at);
+    while let Some((planned, batch)) = context.intake.next() {
         let mut run = |entry: Entry, menu: bool| {
-            run_entry(
-                context,
-                &mut client,
-                generation,
-                (batch, foreground_at_ms),
-                entry,
-                menu,
-            )
+            run_entry(context, &mut client, generation, batch, entry, menu)
         };
         let outcome = match planned {
             Planned::Run(entry) => run(entry, false),
@@ -635,14 +626,13 @@ fn run_loop(context: &Context, generation: u64) {
     }
 }
 
-/// Handles one entry of `batch`, whose foreground change, if it holds one,
-/// was confirmed at `foreground_at_ms`, under its deadline. `Err` when this
-/// worker was abandoned meanwhile and must exit.
+/// Handles one entry of `batch` under its deadline. `Err` when this worker
+/// was abandoned meanwhile and must exit.
 fn run_entry(
     context: &Context,
     client: &mut Client,
     generation: u64,
-    (batch, foreground_at_ms): (u64, Option<u64>),
+    batch: u64,
     entry: Entry,
     menu: bool,
 ) -> Result<(), ()> {
@@ -664,7 +654,6 @@ fn run_entry(
             client,
             generation,
             batch,
-            foreground_at_ms,
             timing,
         };
         if menu {
@@ -816,9 +805,6 @@ struct Worker<'a> {
     generation: u64,
     /// The batch the entry belongs to.
     batch: u64,
-    /// When the batch's foreground change was confirmed: its window had
-    /// become the system's foreground window.
-    foreground_at_ms: Option<u64>,
     /// When the entry was raised, observed, relayed, and dequeued, for the
     /// latency log.
     timing: EventTiming,
@@ -2320,17 +2306,26 @@ impl Worker<'_> {
     /// window by the time it is read.
     ///
     /// It is stamped with the time its window was confirmed as the
-    /// foreground, not the time Windows raised the event: Windows raises it
-    /// before the change completes (measured live: Notepad's event arrived
-    /// while the desktop was still the foreground window, which it stayed
-    /// for about 130 ms more), and the old foreground window's own focus
-    /// events in that interval would otherwise be newer than the change
-    /// and make Core drop it as stale. NVDA judges a foreground event
-    /// against the foreground window when it processes the event, so it
-    /// orders the change at the same point.
+    /// foreground, read after the window's name, not the time Windows
+    /// raised the event, so the old foreground window's own focus events
+    /// handled meanwhile are never newer than the change. NVDA judges a
+    /// foreground event against the foreground window when it processes
+    /// the event, and drops it when they differ (`processForegroundWinEvent`,
+    /// `IAccessibleHandler/__init__.py` 834 to 841); so does this, without
+    /// waiting for the window to come in front. Measured live: the system's
+    /// foreground event reached an out-of-context hook only once
+    /// `GetForegroundWindow` named its window, and the events that did not
+    /// were stale or raised early by the application itself, as File
+    /// Explorer raises one as it creates its window and the system's own
+    /// follows once the window is in front (`phase6-design.md`,
+    /// "Foreground events against the foreground window").
     fn foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_ms: u64) {
         if window_belongs_to_hidden_frame(hwnd) {
             tracing::debug!(hwnd, "foreground dropped: Core's hidden frame");
+            return;
+        }
+        if !window_is_foreground(hwnd) {
+            tracing::debug!(hwnd, "foreground dropped: not the foreground window");
             return;
         }
         let (backend, node) = read::foreground_window(self.context, self.client, hwnd);
@@ -2341,12 +2336,9 @@ impl Worker<'_> {
             );
             return;
         }
-        // Confirmed by the wait before the batch, or, when the wait timed
-        // out, by the check just made.
-        let confirmed_at_ms = self.foreground_at_ms.unwrap_or_else(now_ms);
         self.emit_focus(
             trace,
-            observed_at_ms.max(confirmed_at_ms),
+            observed_at_ms.max(now_ms()),
             backend,
             Some(hwnd),
             node,
@@ -3275,8 +3267,8 @@ mod tests {
         );
         assert_eq!(
             next_check(after_grace, deadline, started, WINDOW),
-            after_grace + MOVED_ON_GRACE,
-            "and is checked again every grace period"
+            deadline,
+            "and is checked again when a foreground fact wakes the watchdog, or at the deadline"
         );
     }
 
