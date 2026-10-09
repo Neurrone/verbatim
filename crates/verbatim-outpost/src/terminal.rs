@@ -527,27 +527,59 @@ pub struct Terminal {
     /// A range at the start of the screen's top row as last read, tried
     /// before a search ([`ScreenAnchor::range`]).
     top: Option<AgileReference<IUIAutomationTextRange>>,
-    /// When the read that `memory` holds ended: a key pressed after that
-    /// cannot show in it, where one pressed while it was under way can.
-    memory_read_ms: u64,
+    /// When the first read that found the screen as `memory` holds it
+    /// ended: a key pressed after that cannot show in it, where one pressed
+    /// while it was under way can. Later reads that find the same screen
+    /// and caret leave it as it was.
+    memory_since_ms: u64,
+    /// The screen `memory` replaced when the screen or its caret last
+    /// changed, with its own `memory_since_ms`: the screen before a key
+    /// whose change was read before the key's request reached the outpost.
+    previous: Option<(Memory, u64)>,
 }
 
 impl Terminal {
     /// The screen as it was before a key pressed at `pressed_at_ms` (Unix
-    /// milliseconds): the memory, when its read ended before then; `None`
-    /// when it did not, since the read may show what the key did.
+    /// milliseconds): the memory, when the first read that found its
+    /// screen ended before then; else the screen before the last change,
+    /// when its first read ended before then, the change having come with
+    /// the key, read before the key's request reached the outpost; `None`
+    /// otherwise, since either may show what the key did.
     #[must_use]
     pub fn screen_at(&self, pressed_at_ms: u64) -> Option<&Memory> {
-        self.memory
+        if self.memory_since_ms < pressed_at_ms {
+            return self.memory.as_ref();
+        }
+        self.previous
             .as_ref()
-            .filter(|_| self.memory_read_ms < pressed_at_ms)
+            .filter(|(_, since_ms)| *since_ms < pressed_at_ms)
+            .map(|(memory, _)| memory)
     }
 
     /// Remembers `memory`, read just now, with `top` as its range.
     fn remember(&mut self, memory: Memory, top: Option<AgileReference<IUIAutomationTextRange>>) {
+        self.remember_at(memory, top, crate::protocol::now_us() / 1_000);
+    }
+
+    /// Remembers `memory`, whose read ended at `read_ms`, with `top` as its
+    /// range: when its screen or caret differs from the memory's, the
+    /// memory is kept as the screen before the change.
+    fn remember_at(
+        &mut self,
+        memory: Memory,
+        top: Option<AgileReference<IUIAutomationTextRange>>,
+        read_ms: u64,
+    ) {
+        match self.memory.take() {
+            Some(old) if old.screen == memory.screen && old.caret == memory.caret => {}
+            Some(old) => {
+                self.previous = Some((old, self.memory_since_ms));
+                self.memory_since_ms = read_ms;
+            }
+            None => self.memory_since_ms = read_ms,
+        }
         self.memory = Some(memory);
         self.top = top;
-        self.memory_read_ms = crate::protocol::now_us() / 1_000;
     }
 }
 

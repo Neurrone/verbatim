@@ -6,6 +6,38 @@
 use super::screen::line_change;
 use super::*;
 
+/// A screen of `lines` with the caret on line `caret`.
+fn remembered(lines: &[&str], caret: usize) -> Memory {
+    Memory {
+        screen: lines.iter().map(|line| (*line).to_owned()).collect(),
+        caret: Some(caret),
+        ..Memory::default()
+    }
+}
+
+#[test]
+fn the_screen_before_a_key_is_found_after_its_change_was_read() {
+    let typed = remembered(&["ready> echo aaaxyz"], 0);
+    let cleared = remembered(&["ready>"], 0);
+    let mut terminal = Terminal::default();
+    terminal.remember_at(typed.clone(), None, 100);
+    // The key, pressed at 150, cleared the line; two reads, from the
+    // console's update and from UIA's text change, found it cleared
+    // before the key's request came.
+    terminal.remember_at(cleared.clone(), None, 160);
+    terminal.remember_at(cleared.clone(), None, 170);
+    assert_eq!(terminal.screen_at(150), Some(&typed));
+    // A key pressed after the change was first read finds the screen as
+    // it is now.
+    assert_eq!(terminal.screen_at(165), Some(&cleared));
+    // A key pressed before the screen before the change was first read
+    // finds nothing.
+    assert_eq!(terminal.screen_at(100), None);
+    // Two changes after the key: the screen before it is no longer kept.
+    terminal.remember_at(remembered(&["ready> x"], 0), None, 180);
+    assert_eq!(terminal.screen_at(150), None);
+}
+
 /// The columns every simulated row is padded to.
 const WIDTH: usize = 20;
 

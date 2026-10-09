@@ -1338,9 +1338,12 @@ finds it.
   screen and that line was cut short, the rest of it is the answer's
   `CaretReply::removed`; the next line still showing that rest is a
   redraw under way, and the watch stays open. The screen before the key
-  is the terminal's memory when the read behind it ended before the key
-  was pressed (`Terminal::screen_at`); otherwise the key is judged by
-  the caret alone.
+  is the terminal's memory when the first read that found its screen
+  ended before the key was pressed, or else the screen before the
+  memory's last change when its first read did, the change having been
+  read, from the console's own update events, before the key's request
+  reached the outpost (`Terminal::screen_at`); otherwise the key is
+  judged by the caret alone.
 - On-demand reading (`terminal::reading`, `phase6-design.md`, "Terminal
   decisions"), a pure transition function the worker drives. Live, the
   default, a text change of the focused terminal (`Text_TextChanged`) is
