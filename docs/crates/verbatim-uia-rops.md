@@ -337,7 +337,11 @@ are exact and the caller trims:
   when the anchor was sought by its text and not found.
 - `settled`: whether the text held still while it was read: the screen's
   text starts with its top row as read on its own, that row reads the same
-  at the end, and the two walks to the text's end agree.
+  at the end, and the shift is exact: the screen's two walks to the
+  text's end agree, or, where output grew the text between them, moving
+  from the anchor finds the screen's top within the rows it grew by
+  (halving them each step, since rows at a fixed place keep their
+  distance while output is added below them).
 - `view_moved`: whether the first visible range starts elsewhere at the
   end of the read than at its start, so the rows read are no longer all
   on screen. The caller judges it: output scrolling the view leaves the

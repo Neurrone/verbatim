@@ -234,6 +234,40 @@ fn is_settled(text: &str, top_row: &str, top_after: &str) -> bool {
     top_row == top_after && first.starts_with(top_row.trim_end())
 }
 
+/// The rows from the anchor's top row to the screen's top, from the walks
+/// to the text's end: `low`, the anchor's walk less the screen's second,
+/// is exact when the text did not grow between the screen's two walks
+/// (`spread`, how far they differ, is 0). Output written during the walks
+/// grew the text by `spread` rows, some before the anchor's walk and some
+/// after, so the shift lies from `low` to `low + spread`; rows at a fixed
+/// place keep their distance while output is added below them, so it is
+/// found by `probe`, which moves from the anchor by that many rows and
+/// compares where it lands with the screen's top, halving the range each
+/// time. `None` when the text shrank, or no row in the range is the
+/// screen's top (the history discarded rows meanwhile): the read is then
+/// not trusted. During a flood in the console host the text grows during
+/// nearly every read, so a read untrusted for it left the flood unread
+/// until it ended.
+fn exact_shift(
+    low: i32,
+    spread: i32,
+    mut probe: impl FnMut(i32) -> Result<std::cmp::Ordering, Error>,
+) -> Result<Option<i32>, Error> {
+    if spread == 0 {
+        return Ok(Some(low));
+    }
+    let (mut from, mut to) = (0, spread);
+    while from <= to {
+        let mid = from.midpoint(to);
+        match probe(low + mid)? {
+            std::cmp::Ordering::Equal => return Ok(Some(low + mid)),
+            std::cmp::Ordering::Less => from = mid + 1,
+            std::cmp::Ordering::Greater => to = mid - 1,
+        }
+    }
+    Ok(None)
+}
+
 /// A string result, empty for a null one.
 fn string_of(outcome: &Outcome, reg: Reg<kind::Str>) -> Result<String, Error> {
     Ok(match outcome.get(reg.any())? {
@@ -498,9 +532,8 @@ pub fn terminal_screen_remote(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Scr
             found,
             |b| {
                 // Rows from the old top to the end, less the rows from
-                // the screen's top to the end, counted before and after:
-                // output written between the two walks would count in one
-                // and not the other, and the read is then not trusted.
+                // the screen's top to the end, counted before and after
+                // ([`exact_shift`]).
                 let from_screen = c.collapsed(b, top);
                 let screen_to_end = b.text_range_move(from_screen, c.line, c.far);
                 let from_old = c.collapsed(b, found_top);
@@ -510,7 +543,50 @@ pub fn terminal_screen_remote(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Scr
                 let unchanged = b.equal(screen_to_end, screen_to_end_again);
                 b.set(walks_agree, unchanged);
                 b.set(shift, to_end);
-                b.subtract_assign(shift, screen_to_end);
+                b.subtract_assign(shift, screen_to_end_again);
+                let spread = b.subtract(screen_to_end_again, screen_to_end);
+                let grew = b.compare(spread, c.zero, Comparison::GreaterThan);
+                b.if_(grew, |b| {
+                    // Output written during the walks: the shift is found
+                    // by moving from the anchor and comparing with the
+                    // screen's top, halving the rows it may lie within.
+                    let base = c.collapsed(b, found_top);
+                    let _ = b.text_range_move(base, c.line, shift);
+                    let low = b.new_int(0);
+                    let high = b.new_int(0);
+                    b.set(high, spread);
+                    let two = b.int(2);
+                    b.while_(
+                        |b| b.compare(low, high, Comparison::LessThanOrEqual),
+                        |b| {
+                            let mid = b.add(low, high);
+                            b.divide_assign(mid, two);
+                            let probe = b.text_range_clone(base);
+                            let _ = b.text_range_move(probe, c.line, mid);
+                            let order =
+                                b.text_range_compare_endpoints(probe, c.start, top, c.start);
+                            let at = b.equal(order, c.zero);
+                            b.if_(at, |b| {
+                                b.add_assign(shift, mid);
+                                let yes = b.bool(true);
+                                b.set(walks_agree, yes);
+                                b.break_loop();
+                            });
+                            let before = b.compare(order, c.zero, Comparison::LessThan);
+                            b.if_else(
+                                before,
+                                |b| {
+                                    b.set(low, mid);
+                                    b.add_assign(low, c.one);
+                                },
+                                |b| {
+                                    b.set(high, mid);
+                                    b.subtract_assign(high, c.one);
+                                },
+                            );
+                        },
+                    );
+                });
                 let seen = b.int(i32::try_from(query.seen_rows).unwrap_or(i32::MAX));
                 // The old screen's last row as it is now, which may have
                 // changed since (the line output was being written to).
@@ -754,8 +830,17 @@ pub fn terminal_screen_classic(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Sc
             Some(found_top) => {
                 let screen_to_end = collapsed(&top)?.move_by(TextUnit_Line, FAR)?;
                 let to_end = collapsed(&found_top)?.move_by(TextUnit_Line, FAR)?;
-                walks_agree = screen_to_end == collapsed(&top)?.move_by(TextUnit_Line, FAR)?;
-                let shift = to_end - screen_to_end;
+                let again = collapsed(&top)?.move_by(TextUnit_Line, FAR)?;
+                let low = to_end - again;
+                let found = exact_shift(low, again - screen_to_end, |rows| {
+                    let probe = collapsed(&found_top)?;
+                    probe.move_by(TextUnit_Line, rows)?;
+                    Ok(probe
+                        .compare_endpoints(Endpoint::Start, &top, Endpoint::Start)?
+                        .cmp(&0))
+                })?;
+                walks_agree = found.is_some();
+                let shift = found.unwrap_or(low);
                 answer.shift = (shift >= 0).then(|| count_of(shift));
                 let seen = i32::try_from(query.seen_rows).unwrap_or(i32::MAX);
                 if seen > 0 {
@@ -793,7 +878,39 @@ pub fn terminal_screen_classic(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Sc
 
 #[cfg(test)]
 mod tests {
-    use super::{ScreenAnchor, Side, Sought, is_settled};
+    use super::{ScreenAnchor, Side, Sought, exact_shift, is_settled};
+
+    /// Where `exact_shift` finds the screen's top `shift` rows below the
+    /// anchor, and how many probes it took.
+    fn search(low: i32, spread: i32, shift: i32) -> (Option<i32>, u32) {
+        let mut probes = 0;
+        let found = exact_shift(low, spread, |rows| {
+            probes += 1;
+            Ok(rows.cmp(&shift))
+        })
+        .expect("a probe never fails here");
+        (found, probes)
+    }
+
+    #[test]
+    fn a_shift_from_walks_that_agree_needs_no_probe() {
+        assert_eq!(search(40, 0, 40), (Some(40), 0));
+    }
+
+    #[test]
+    fn a_shift_from_walks_the_text_grew_between_is_found_wherever_it_lies() {
+        for shift in 100..=160 {
+            let (found, probes) = search(100, 60, shift);
+            assert_eq!(found, Some(shift));
+            assert!(probes <= 6, "{probes} probes for a spread of 60");
+        }
+    }
+
+    #[test]
+    fn a_shift_outside_the_walks_or_text_that_shrank_is_not_trusted() {
+        assert_eq!(search(100, 10, 120).0, None);
+        assert_eq!(search(100, -3, 100), (None, 0));
+    }
 
     #[expect(
         clippy::unnecessary_wraps,

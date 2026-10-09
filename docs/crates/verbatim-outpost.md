@@ -1183,9 +1183,10 @@ finds it.
   which went by unread, are read too, up to the read limit, so a flood's
   start is heard. Not found by its text, the rows of the whole text are
   counted. A screen whose top row read differently from its text, or
-  changed by the end of the read, or whose walks to the text's end
-  disagree, was written to while it was read, and is not trusted
-  (`settled` false). Nor is one whose view moved while it was read
+  changed by the end of the read, or whose shift could not be found
+  exactly (the text shrank, or grew and the screen's top was not found
+  within the rows it grew by), was written to while it was read, and is
+  not trusted (`settled` false). Nor is one whose view moved while it was read
   (`view_moved`) unless the old screen's last line is still on its row,
   as it was or grown: output scrolling the view leaves every row where it
   was, and the rows below the read are read next time, while a footer

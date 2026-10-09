@@ -452,7 +452,7 @@ fn terminal_screens_execute_exactly() {
     fixture.app.quit();
     assert_eq!(
         [worst, typical],
-        [441, 163],
+        [442, 167],
         "terminal screen worst and typical"
     );
     assert!(worst < LIMIT / 2);

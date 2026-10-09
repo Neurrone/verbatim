@@ -1403,11 +1403,14 @@ share of the limit in brackets:
   for a first batch from the caret in one language. The count does not
   grow with the lines' length.
 - A terminal's screen, with the caret and its line read in the same
-  program as the outpost reads a focused terminal: 441 (4 percent) when
+  program as the outpost reads a focused terminal: 442 (4 percent) when
   its anchor is nowhere and the search checks its 20 matches
   (`SEARCH_MATCHES`), about 15 each, before the text's rows are counted;
-  163 for an anchor found by its text one row up under new output (the
+  167 for an anchor found by its text one row up under new output (the
   tail read it replaced took 1,164 and 137, its search checking 64
   matches). Nine of each are the visible range read again at the end, to
   find a view the terminal moved while it was read (2026-10-09). The count
-  does not grow with the history or the lines read.
+  does not grow with the history or the lines read, except when output
+  grows the text while the program walks it: the shift is then found by
+  halving the rows it may lie within, about 17 instructions a step, 14
+  steps for a growth of 9,000 rows (2026-10-09).
