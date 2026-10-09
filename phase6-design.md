@@ -2158,7 +2158,7 @@ Outcome of the terminal package (2026-10-08):
 - What a key did: Backspace and Control+Backspace speak the text removed, from evidence, so the classic edit control's Control+Backspace, which inserts DEL, says nothing; any other key that types no text (`CaretMotion::Other`) speaks text it removed at the caret, a new line, or by where the caret landed. A caret key's answer read after a later key was pressed is not spoken for it, and a terminal's line redrawn by a caret key is the key's own, not output.
 - Done since (2026-10-09): NVDA captures for the typing scenarios, the selection-list scripts ("Selection lists in a terminal" below), the full-screen alternate screen and the long-line scenarios, each with NVDA captured first.
 - Done since (2026-10-09): the review cursor after new output and the flood above a redrawing footer, each with NVDA captured first.
-- Not done: tabs and two windows of each terminal (NVDA captured; see "Decisions to confirm with Dickson").
+- Done since (2026-10-09): tabs and two windows of each terminal, with NVDA captured again first (`conhost_two_windows`, `windows_terminal_two_windows`, `windows_terminal_tabs`; the tab difference is in `docs/parity.md`).
 
 ### Selection lists in a terminal (Dickson, 2026-10-09)
 
@@ -2318,6 +2318,36 @@ Made while Dickson was away (2026-10-09), each to be confirmed:
   rather than build on a second difference; reading a foreground window's
   name only once it has been shown, or after its title settles, is a
   follow-up.
+- Tabs and two windows of each terminal: NVDA was captured again, since
+  the earlier captures were gone. The earlier findings did not reproduce:
+  after Control+Shift+Tab Verbatim said the tab's terminal and its line,
+  with no "blank", no late "window" and no typing lost, and the capture's
+  `--front` to a second Windows Terminal window worked (after
+  `SetForeground` began waiting for the foreground); NVDA leaves a
+  console's title out of its terminal as Verbatim does. The one
+  difference left, NVDA saying "list" and the tab as Control+Tab moves the
+  focus through it, is recorded as deliberate in `docs/parity.md` rather
+  than matched: it is a race between Windows Terminal moving the focus on
+  and the reader judging the focus event, which NVDA wins by judging it on
+  its event thread; matching it would mean judging focus events in
+  Verbatim's listener as they arrive, a change to every application's
+  focus handling.
+- The tabs scenario opens its second tab from the command line
+  (`WindowsTerminal.exe -w 0 new-tab`) once the first tab's window is
+  announced, since a window opened with both tabs is announced with
+  whichever tab's title Windows Terminal reports first. NVDA was captured
+  on that step too. Its Windows Terminal turns `confirmCloseAllTabs` off,
+  the one setting changed from the release's defaults, so cleanup can
+  close the window by its title. The second tab is titled with the first
+  tab's title and " two", so that title names the window whichever tab is
+  in front, and `Scenario::expect_exit_at_cleanup` now finds the window
+  whose title the given title contains.
+- The NVDA captures of Windows Terminal launched the harness's portable
+  copy's `WindowsTerminal.exe` directly, as the scenarios do, never
+  `wt.exe`, so the owner's Windows Terminal was never involved.
+- The Settings page's "Windows isn't activated" banner was read once in
+  five `settings_system_page` runs in place of the search box's "blank";
+  left as it is and reported.
 
 ## Language audit (2026-10-08)
 

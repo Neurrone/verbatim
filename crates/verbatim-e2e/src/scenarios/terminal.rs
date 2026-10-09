@@ -148,61 +148,39 @@ fn open(
     terminal: Terminal,
     scripts: &[(&str, &str)],
 ) -> io::Result<ScenarioState> {
+    open_with(scenario, name, terminal, scripts, None)
+}
+
+/// [`open`], with Windows Terminal's `settings.json` written as
+/// `windows_terminal_settings` when given, instead of starting from the
+/// release's defaults.
+fn open_with(
+    scenario: &mut Scenario,
+    name: &str,
+    terminal: Terminal,
+    scripts: &[(&str, &str)],
+    windows_terminal_settings: Option<&[u8]>,
+) -> io::Result<ScenarioState> {
     let name = match terminal {
         Terminal::WindowsTerminal => name.to_owned(),
         Terminal::ConsoleHost => format!("console-{name}"),
     };
     let title = harness_marker(&name);
-    let directory = scenario.harness_folder(&name);
-    for (file, contents) in scripts {
-        scenario.write_agent_file(&format!(r"{directory}\{file}"), contents.as_bytes())?;
-    }
-    let ready = format!(r"{directory}\{READY_FILE}");
-    let go = format!(r"{directory}\{GO_FILE}");
-    let shell_pid = format!(r"{directory}\{SHELL_PID_FILE}");
-    let start = format!(r"{directory}\start.ps1");
-    scenario.write_agent_file(
-        &start,
-        start_script(&title, &directory, &go, &ready, &shell_pid).as_bytes(),
-    )?;
+    let (directory, start) = prepare_shell(scenario, &name, &title, scripts)?;
     let window = match terminal {
         Terminal::WindowsTerminal => {
-            let folder = format!(r"{}\{}", scenario.run_directory(), windows_terminal::FOLDER);
+            let (folder, executable) = windows_terminal_paths(scenario);
             // Every run starts from the release's default settings.
-            scenario
-                .delete_agent_folder(&format!(r"{folder}\{}", windows_terminal::SETTINGS_FOLDER))?;
-            let others_before = other_terminal_windows(scenario, None)?;
-            let mut args: Vec<String> = [
-                "-w",
-                "new",
-                "--size",
-                "120,30",
-                "new-tab",
-                "--title",
-                &title,
-                "--suppressApplicationTitle",
-            ]
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
-            args.extend(shell_command(&start, terminal));
-            let executable = format!(r"{folder}\{}", windows_terminal::EXECUTABLE);
-            let window = scenario.launch_owning_window(&executable, &args, &title)?;
-            let others_after = other_terminal_windows(scenario, Some(window.pid))?;
-            let opened: Vec<&WindowInfo> = others_after
-                .iter()
-                .filter(|after| {
-                    !others_before
-                        .iter()
-                        .any(|before| before.window == after.window)
-                })
-                .collect();
-            if !opened.is_empty() {
-                return Err(io::Error::other(format!(
-                    "starting the harness's Windows Terminal (pid {}) opened windows in another Windows Terminal process: {opened:?}",
-                    window.pid
-                )));
+            let settings = format!(r"{folder}\{}", windows_terminal::SETTINGS_FOLDER);
+            scenario.delete_agent_folder(&settings)?;
+            if let Some(contents) = windows_terminal_settings {
+                scenario.write_agent_file(&format!(r"{settings}\settings.json"), contents)?;
             }
+            let others_before = other_terminal_windows(scenario, None)?;
+            let mut args = new_window();
+            args.extend(new_tab(&title, &start));
+            let window = scenario.launch_owning_window(&executable, &args, &title)?;
+            require_no_other_terminal_window(scenario, &others_before, window.pid)?;
             window
         }
         Terminal::ConsoleHost => {
@@ -241,6 +219,187 @@ fn open(
     }
     Ok(ScenarioState::Window {
         pid: window.pid,
+        title,
+        directory,
+    })
+}
+
+/// Writes `scripts` and the start script for a shell whose terminal is
+/// titled `title` into the run's folder named `name`, and returns the
+/// folder and the start script's path.
+fn prepare_shell(
+    scenario: &mut Scenario,
+    name: &str,
+    title: &str,
+    scripts: &[(&str, &str)],
+) -> io::Result<(String, String)> {
+    let directory = scenario.harness_folder(name);
+    for (file, contents) in scripts {
+        scenario.write_agent_file(&format!(r"{directory}\{file}"), contents.as_bytes())?;
+    }
+    let ready = format!(r"{directory}\{READY_FILE}");
+    let go = format!(r"{directory}\{GO_FILE}");
+    let shell_pid = format!(r"{directory}\{SHELL_PID_FILE}");
+    let start = format!(r"{directory}\start.ps1");
+    scenario.write_agent_file(
+        &start,
+        start_script(title, &directory, &go, &ready, &shell_pid).as_bytes(),
+    )?;
+    Ok((directory, start))
+}
+
+/// The harness's Windows Terminal's arguments for a new window of the
+/// test size, before its tabs.
+fn new_window() -> Vec<String> {
+    ["-w", "new", "--size", "120,30"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A Windows Terminal tab titled `title` running the shell with the start
+/// script `start`.
+fn new_tab(title: &str, start: &str) -> Vec<String> {
+    let mut args: Vec<String> = ["new-tab", "--title", title, "--suppressApplicationTitle"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    args.extend(shell_command(start, Terminal::WindowsTerminal));
+    args
+}
+
+/// The harness's Windows Terminal's folder and executable.
+fn windows_terminal_paths(scenario: &Scenario) -> (String, String) {
+    let folder = format!(r"{}\{}", scenario.run_directory(), windows_terminal::FOLDER);
+    let executable = format!(r"{folder}\{}", windows_terminal::EXECUTABLE);
+    (folder, executable)
+}
+
+/// Fails if a Windows Terminal process other than `own` has a window that
+/// was not among `before`: the harness's start was handed to another one.
+fn require_no_other_terminal_window(
+    scenario: &mut Scenario,
+    before: &[WindowInfo],
+    own: u32,
+) -> io::Result<()> {
+    let opened: Vec<WindowInfo> = other_terminal_windows(scenario, Some(own))?
+        .into_iter()
+        .filter(|after| !before.iter().any(|before| before.window == after.window))
+        .collect();
+    if opened.is_empty() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "starting the harness's Windows Terminal (pid {own}) opened windows in another Windows Terminal process: {opened:?}"
+        )))
+    }
+}
+
+/// Opens a second window of the harness's Windows Terminal, whose first
+/// window `first` opened ([`open_windows_terminal`]), running the shell in
+/// a folder of the run's own named `name`, and brings it forward. The
+/// `WindowsTerminal.exe` launched hands its command line to the running
+/// one, which must own the new window, and exits; no other Windows
+/// Terminal process may open a window. The window is closed by its title
+/// at cleanup, and the running Windows Terminal exits once its first
+/// window closes too.
+///
+/// # Errors
+///
+/// Returns an error if a file cannot be written, the window does not take
+/// the foreground, or another process owns it.
+pub(crate) fn open_windows_terminal_window(
+    scenario: &mut Scenario,
+    name: &str,
+    first: &ScenarioState,
+) -> io::Result<ScenarioState> {
+    let ScenarioState::Window { pid: running, .. } = first else {
+        panic!("the first window's setup opens a terminal window");
+    };
+    let running = *running;
+    let title = harness_marker(name);
+    let (directory, start) = prepare_shell(scenario, name, &title, &[])?;
+    let (_, executable) = windows_terminal_paths(scenario);
+    let others_before = other_terminal_windows(scenario, Some(running))?;
+    let mut args = new_window();
+    args.extend(new_tab(&title, &start));
+    let window = scenario.launch_titled(&executable, &args, &title, false)?;
+    if window.pid != running {
+        return Err(io::Error::other(format!(
+            "the second window {title:?} belongs to {} pid {}, not to the harness's running Windows Terminal, pid {running}",
+            window.image, window.pid
+        )));
+    }
+    require_no_other_terminal_window(scenario, &others_before, running)?;
+    Ok(ScenarioState::Window {
+        pid: window.pid,
+        title,
+        directory,
+    })
+}
+
+/// Opens the harness's Windows Terminal as [`open_windows_terminal`] does,
+/// for a scenario that opens a second tab in its window
+/// ([`open_windows_terminal_tab`]). Windows Terminal asks before it closes
+/// a window of several tabs, so its settings turn that question off
+/// (`confirmCloseAllTabs`), the one setting changed from the release's
+/// defaults.
+///
+/// # Errors
+///
+/// As [`open_windows_terminal`].
+pub(crate) fn open_windows_terminal_for_tabs(
+    scenario: &mut Scenario,
+    name: &str,
+) -> io::Result<ScenarioState> {
+    open_with(
+        scenario,
+        name,
+        Terminal::WindowsTerminal,
+        &[],
+        Some(br#"{"confirmCloseAllTabs": false}"#),
+    )
+}
+
+/// Opens a second tab in the window `first` opened
+/// ([`open_windows_terminal_for_tabs`]), running the shell in a folder of
+/// the run's own named `name`, titled with the first tab's title and
+/// " two", so the window, titled with the tab in front's, is closed by the
+/// first's at cleanup whichever is in front. The `WindowsTerminal.exe`
+/// launched hands its command line to the running one (`-w 0`, its most
+/// recent window) and exits; the new tab is in front once the window's
+/// title is its own.
+///
+/// # Errors
+///
+/// Returns an error if a file cannot be written, the launch fails or does
+/// not exit, or the tab does not come to the front.
+pub(crate) fn open_windows_terminal_tab(
+    scenario: &mut Scenario,
+    name: &str,
+    first: &ScenarioState,
+) -> io::Result<ScenarioState> {
+    let ScenarioState::Window {
+        pid, title: first, ..
+    } = first
+    else {
+        panic!("the first tab's setup opens a terminal window");
+    };
+    let title = format!("{first} two");
+    let (directory, start) = prepare_shell(scenario, name, &title, &[])?;
+    let (_, executable) = windows_terminal_paths(scenario);
+    let mut args: Vec<String> = vec!["-w".to_owned(), "0".to_owned()];
+    args.extend(new_tab(&title, &start));
+    scenario.run_handing_off(&executable, &args)?;
+    let window = scenario.wait_for_window_in_front(&title, STEP_TIMEOUT)?;
+    if window.pid != *pid {
+        return Err(io::Error::other(format!(
+            "the tab {title:?} opened in {} pid {}, not in the harness's running Windows Terminal, pid {pid}",
+            window.image, window.pid
+        )));
+    }
+    Ok(ScenarioState::Window {
+        pid: *pid,
         title,
         directory,
     })

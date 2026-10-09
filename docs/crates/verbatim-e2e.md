@@ -387,6 +387,16 @@ region above a footer that is redrawn during the flood and changed after
 it: the flood policy's thirty lines, "skipped 41 lines", the last
 twenty-nine, and the footer's change, "done".
 
+The window scenarios (`scenarios/terminal_windows.rs`) open a second
+window of each terminal, switch between the two as clicking a taskbar
+button does, and type in each; and open a second tab in a Windows
+Terminal window from the command line (`-w 0 new-tab`), switch tabs with
+Control+Shift+Tab and Control+Tab, and type in each. A second Windows
+Terminal window or tab is handed to the harness's running Windows
+Terminal, which must own it. The tabs scenario's Windows Terminal has
+`confirmCloseAllTabs` turned off, so its window closes at cleanup without
+asking.
+
 The flood scenarios assert the flood policy exactly within the
 scrollback: 2,000 lines are heard as lines 1 to 30, "skipped 1941 lines"
 after the skipped-lines sound, and lines 1,972 to 2,000 with the prompt.

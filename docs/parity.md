@@ -1917,6 +1917,36 @@ verified.
   to 30, "skipped 41 lines", lines 72 to 100) and says the footer only as
   it changed, "done", in both (**different**: the flood policy).
 
+  Two windows of each terminal and two tabs of Windows Terminal, captured
+  live from NVDA on 2026-10-09 (an alpha build, alpha-57645). Switching to
+  the other window, as clicking its taskbar button does, both say the
+  window's title and "window", then the terminal and the caret's line:
+  "<title> terminal" in Windows Terminal, whose text area is named for its
+  tab, and "terminal" in the console host, whose text area's name both
+  drop (matched; NVDA says the terminal and its line as one utterance,
+  Verbatim as two). A second tab opened from the command line says
+  "<title> terminal" and then the prompt as output (matched). Typing and
+  its output after a switch are echoed and spoken as in any terminal
+  (matched). An earlier report that Verbatim left the window's title out
+  of a console's terminal was not borne out: NVDA leaves it out too.
+  **Different:** switching tabs with Control+Tab or Control+Shift+Tab,
+  NVDA says "list" and the tab ("<title> 1 of 2", and on Control+Tab from
+  the first tab sometimes the tab it left as well), then "<title>
+  terminal" and the line; Verbatim says only "<title> terminal" and the
+  line. Windows Terminal gives the tab the keyboard focus only until it
+  moves it to the tab's terminal, a few milliseconds later. NVDA judges a
+  UIA focus event by the sender's keyboard focus as its event thread
+  receives it (`IUIAutomationFocusChangedEventHandler_HandleFocusChangedEvent`
+  and `shouldAllowUIAFocusEvent`, `nvda/source/UIAHandler/__init__.py`
+  lines 948 to 953 and `nvda/source/NVDAObjects/UIA/__init__.py` lines
+  1632 to 1637), so the tab is still focused; Verbatim's outpost judges it
+  as it handles the event, by when the focus has moved on, and drops it
+  ("another element has the keyboard focus"), speaking only where the
+  focus lands. Whether a reader hears the tab depends on that race;
+  NVDA's own capture heard a tab Control+Tab passed through. The end-to-end
+  scenarios (`conhost_two_windows`, `windows_terminal_two_windows`,
+  `windows_terminal_tabs`) pin Verbatim's speech.
+
   **Different:** Up and Down Arrow in a selection list a program draws in
   a terminal. Decision (Dickson, 2026-10-09): when the key makes the
   program rewrite lines and the caret is not on a changed line, Verbatim

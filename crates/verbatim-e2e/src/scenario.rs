@@ -800,7 +800,20 @@ impl Scenario {
     /// Returns an error if a request fails, no window is titled with the
     /// document, or it does not take the foreground in time.
     pub fn bring_document_forward(&mut self, name: &str) -> io::Result<()> {
-        let marker = harness_marker(name);
+        self.bring_window_forward(&harness_marker(name))
+    }
+
+    /// Brings the window titled with `marker`, one the scenario opened and
+    /// another window has since taken the foreground from, to the
+    /// foreground as clicking its taskbar button does, and waits on window
+    /// events until it is in front: a user switching back to it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a request fails, no window is titled with
+    /// `marker`, or it does not take the foreground in time.
+    pub fn bring_window_forward(&mut self, marker: &str) -> io::Result<()> {
+        let marker = marker.to_owned();
         let desktop = self.agent.foreground_info()?;
         let window = desktop
             .windows
@@ -814,7 +827,7 @@ impl Scenario {
             })?;
         if !self.agent.set_foreground(window.window)? {
             return Err(io::Error::other(format!(
-                "Notepad's window {:?} could not be brought to the foreground: {}",
+                "the window {:?} could not be brought to the foreground: {}",
                 window.title,
                 describe_foreground(&desktop)
             )));
@@ -936,6 +949,9 @@ impl Scenario {
     /// opened has closed, for process `pid` to exit too, failing the
     /// scenario if it does not: for a process the window ran, such as a
     /// terminal's shell, which holds the harness folder open until it exits.
+    /// The window is the one whose title `title` contains, so a Windows
+    /// Terminal tab titled with its window's first tab's title and more
+    /// names that window.
     ///
     /// # Panics
     ///
@@ -944,7 +960,12 @@ impl Scenario {
         let launched = self
             .launched
             .iter_mut()
-            .find(|launched| launched.title.as_deref() == Some(title))
+            .find(|launched| {
+                launched
+                    .title
+                    .as_deref()
+                    .is_some_and(|launched| title.contains(launched))
+            })
             .unwrap_or_else(|| panic!("the scenario opened no window titled {title:?}"));
         launched.also_exit.push(pid);
     }
@@ -1044,6 +1065,26 @@ impl Scenario {
             timeout,
             &format!("the window titled {title_contains:?} to leave the foreground"),
         )
+    }
+
+    /// Runs `command` with `args`, a program that hands what it is asked to
+    /// a running instance of itself and exits, such as Windows Terminal's
+    /// executable opening a tab in a window of the harness's running
+    /// Windows Terminal, and waits for it to exit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the agent cannot start it or it does not exit
+    /// within the window timeout.
+    pub fn run_handing_off(&mut self, command: &str, args: &[String]) -> io::Result<()> {
+        let launch = self.agent.launch_process(command, args, None, &[], None)?;
+        match self.agent.wait_for_exit(launch.pid, WINDOW_TIMEOUT)? {
+            ProcessState::Exited { .. } => Ok(()),
+            ProcessState::Running => Err(io::Error::other(format!(
+                "{command} (pid {}) did not exit within {WINDOW_TIMEOUT:?}",
+                launch.pid
+            ))),
+        }
     }
 
     /// Waits, on window events, until a window titled with

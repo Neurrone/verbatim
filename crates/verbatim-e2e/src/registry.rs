@@ -96,8 +96,10 @@
 //!   ([`terminal_review_grid`](crate::scenarios::terminal_review_grid)),
 //!   progress ([`terminal_progress`](crate::scenarios::terminal_progress)),
 //!   typing the terminal does not show plainly ([`terminal_typing`](crate::scenarios::terminal_typing)),
-//!   and short output
-//!   ([`terminal_short_output`](crate::scenarios::terminal_short_output)).
+//!   short output
+//!   ([`terminal_short_output`](crate::scenarios::terminal_short_output)),
+//!   and two windows of each terminal and two tabs of Windows Terminal
+//!   ([`terminal_windows`](crate::scenarios::terminal_windows)).
 //! - [`Group::Demo`]: demonstrations, recorded as videos for
 //!   `videos/demos` by `cargo xtask demo` and never part of the suite: a
 //!   selection with no `--scenario` or `--group` leaves them out
@@ -132,8 +134,8 @@ use crate::scenarios::{
     synth_host_crash_recovery, system_information_tree, terminal_commands, terminal_editing,
     terminal_flood, terminal_footer, terminal_lists, terminal_overflow, terminal_progress,
     terminal_review_grid, terminal_review_output, terminal_screens, terminal_settings_page,
-    terminal_short_output, terminal_typing, text_box_say_all, theme_panel, typed_words,
-    word_selection,
+    terminal_short_output, terminal_typing, terminal_windows, text_box_say_all, theme_panel,
+    typed_words, word_selection,
 };
 
 /// Environment variable that, set to `1`, says the run has no Windows 11
@@ -930,6 +932,36 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: terminal_short_output::setup_console_host,
         body: terminal_short_output::body_console_host,
         teardown: terminal_short_output::teardown,
+    },
+    ScenarioDef {
+        name: "windows_terminal_two_windows",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: terminal_windows::setup_windows_terminal,
+        body: terminal_windows::body_two_windows_terminal,
+        teardown: terminal_windows::teardown,
+    },
+    ScenarioDef {
+        name: "conhost_two_windows",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: terminal_windows::setup_console_host,
+        body: terminal_windows::body_two_console_host,
+        teardown: terminal_windows::teardown,
+    },
+    ScenarioDef {
+        name: "windows_terminal_tabs",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: terminal_windows::setup_tabs,
+        body: terminal_windows::body_tabs,
+        teardown: terminal_windows::teardown,
     },
     ScenarioDef {
         name: "object_navigation_over_uia",

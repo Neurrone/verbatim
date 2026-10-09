@@ -558,8 +558,11 @@ with Backspace, punctuation echoed by name, and the review cursor's
 current word down a column), review_grid (the review cursor down a
 column of a text table), progress (a line rewritten in place, each step
 written once the last was heard, spoken whole the first time and then
-by the word that changed), and short_output (one- and two-character
-lines of output, spoken like any other).
+by the word that changed), short_output (one- and two-character
+lines of output, spoken like any other), and two_windows (a second
+window, switched to and from as clicking its taskbar button does, and
+typed in), with `windows_terminal_tabs` (a second tab, switched to and
+from with Control+Tab and Control+Shift+Tab) in Windows Terminal alone.
 Each terminal scenario opens a window of its own titled
 `verbatim-e2e-<name>-<token>` and closes it by that title, so your own
 terminals are left alone, and runs its shell in a folder of the same name
