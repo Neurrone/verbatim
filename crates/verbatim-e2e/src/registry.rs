@@ -137,6 +137,7 @@ use crate::scenarios::{
     terminal_short_output, terminal_typing, terminal_windows, text_box_say_all, theme_panel,
     typed_words, word_selection,
 };
+use crate::speech::SpeechFailure;
 
 /// Environment variable that, set to `1`, says the run has no Windows 11
 /// Notepad, so the local-only scenarios ([`ScenarioDef::local_only`]) must
@@ -1237,6 +1238,22 @@ fn run(def: &ScenarioDef) {
     }
     problems.extend(scenario.clean_up());
     problems.extend(scenario.collect_run_artifacts(&dir));
+    // A failed speech assertion is reported once the logs holding its
+    // step's trace are collected.
+    let speech_report = body_outcome
+        .as_ref()
+        .err()
+        .and_then(|payload| payload.downcast_ref::<SpeechFailure>())
+        .map(|failure| {
+            let lines = failure.trace.map_or_else(
+                || Ok(Vec::new()),
+                |trace| artifacts::trace_lines(&dir, trace).map_err(|error| error.to_string()),
+            );
+            failure.report(
+                scenario.timeline(),
+                lines.as_deref().map_err(String::as_str),
+            )
+        });
     if let Err(error) = scenario.finish_recording(&dir.join(format!("{}.mp4", def.name))) {
         problems.push(format!("the recording could not be saved: {error}"));
     }
@@ -1282,6 +1299,9 @@ fn run(def: &ScenarioDef) {
                 def.name
             );
         }
+        if let Some(report) = speech_report {
+            panic!("{report}");
+        }
         panic::resume_unwind(payload);
     }
     assert!(
@@ -1303,6 +1323,11 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
             payload
                 .downcast_ref::<&str>()
                 .map(|text| (*text).to_owned())
+        })
+        .or_else(|| {
+            payload
+                .downcast_ref::<SpeechFailure>()
+                .map(|failure| failure.message.clone())
         })
         .unwrap_or_else(|| "(a panic with no message)".to_owned())
 }

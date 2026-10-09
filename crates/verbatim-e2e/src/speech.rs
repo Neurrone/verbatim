@@ -30,11 +30,12 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::io;
+use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use verbatim_control::client::{Client as ControlClient, ok_or_error};
 use verbatim_control::protocol::{Frame, Request};
-use verbatim_model::{UtteranceEnding, UtteranceId};
+use verbatim_model::{TraceId, UtteranceEnding, UtteranceId};
 
 use crate::timeline::Timeline;
 
@@ -153,6 +154,68 @@ pub struct LatencyRow {
     pub event_to_audio_ms: Option<u64>,
 }
 
+/// A failed speech assertion: the payload a [`SpeechCollector`]
+/// assertion unwinds with, which [`crate::registry`] reports with
+/// [`SpeechFailure::report`] once the run's logs are collected.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpeechFailure {
+    /// What failed: the expected and heard sequences, and where they first
+    /// differ, for a mismatch.
+    pub message: String,
+    /// The failing step's trace ID: the trace of the utterance the
+    /// assertion failed on, or, when it failed on none (an utterance never
+    /// queued), of the newest utterance heard in the step; `None` when the
+    /// step heard nothing with one.
+    pub trace: Option<TraceId>,
+    /// The failing step's entries on the timeline
+    /// ([`Timeline::current_step`]).
+    pub step: Range<usize>,
+}
+
+impl SpeechFailure {
+    /// The failure as printed: the message; `trace_lines`, every log line
+    /// carrying the failing step's trace in time order
+    /// ([`crate::artifacts::trace_lines`]), or why they could not be read;
+    /// and `timeline` with each earlier step on one line and the failing
+    /// step in full.
+    #[must_use]
+    pub fn report(&self, timeline: &Timeline, trace_lines: Result<&[String], &str>) -> String {
+        let mut out = format!("{}\n\n", self.message);
+        match (self.trace, trace_lines) {
+            (None, _) => out.push_str(
+                "the failing step's trace: none, since the step heard nothing that carries a trace ID\n",
+            ),
+            (Some(trace), Err(error)) => {
+                let _ = writeln!(
+                    out,
+                    "the failing step's trace, {trace}: the logs could not be read: {error}"
+                );
+            }
+            (Some(trace), Ok([])) => {
+                let _ = writeln!(
+                    out,
+                    "the failing step's trace, {trace}: no log line carries it"
+                );
+            }
+            (Some(trace), Ok(lines)) => {
+                let _ = writeln!(
+                    out,
+                    "the failing step's trace, {trace}, from Verbatim's log, Core's flight recorder and the outposts' logs, in time order:"
+                );
+                for line in lines {
+                    let _ = writeln!(out, "{line}");
+                }
+            }
+        }
+        let _ = write!(
+            out,
+            "\ntimeline, each earlier step on one line and the failing step in full:\n{}",
+            timeline.render_failed_step(self.step.clone())
+        );
+        out
+    }
+}
+
 /// One frame, as the collector reads it.
 enum Absorbed {
     Utterance(Utterance),
@@ -172,9 +235,9 @@ pub struct SpeechCollector {
     step_timeout: Duration,
     /// Utterances read and not yet matched by an assertion, oldest first.
     pending: VecDeque<Utterance>,
-    /// Every utterance matched so far, in order, for failure messages.
-    matched: Vec<String>,
     texts: HashMap<UtteranceId, String>,
+    /// The trace ID behind each utterance that has one.
+    traces: HashMap<UtteranceId, TraceId>,
     endings: HashMap<UtteranceId, UtteranceEnding>,
     unended: BTreeSet<UtteranceId>,
     started: BTreeSet<UtteranceId>,
@@ -218,8 +281,8 @@ impl SpeechCollector {
             read_timeout,
             step_timeout,
             pending: VecDeque::new(),
-            matched: Vec::new(),
             texts: HashMap::new(),
+            traces: HashMap::new(),
             endings: HashMap::new(),
             unended: BTreeSet::new(),
             started: BTreeSet::new(),
@@ -234,13 +297,14 @@ impl SpeechCollector {
         match frame {
             Frame::Speech {
                 utterance,
+                trace_id,
                 text,
                 event_observed_at_ms,
                 queued_at_ms,
-                ..
             } => {
-                self.timeline.push_utterance(&text);
+                self.timeline.push_utterance(&text, Some(trace_id));
                 self.texts.insert(utterance, text.clone());
+                self.traces.insert(utterance, trace_id);
                 if !self.endings.contains_key(&utterance) {
                     self.unended.insert(utterance);
                 }
@@ -278,7 +342,7 @@ impl SpeechCollector {
                 let text = format!("sound: {indication}");
                 let utterance = UtteranceId(self.next_sound);
                 self.next_sound -= 1;
-                self.timeline.push_utterance(&text);
+                self.timeline.push_utterance(&text, None);
                 self.texts.insert(utterance, text.clone());
                 self.started.insert(utterance);
                 self.endings.insert(utterance, UtteranceEnding::Completed);
@@ -346,14 +410,33 @@ impl SpeechCollector {
         }
     }
 
-    /// Panics with `message`, then the utterances matched so far and the
-    /// timeline.
+    /// Fails the assertion with `message`; the failing step's trace is
+    /// that of the newest utterance heard in the step under way.
     fn fail(&self, message: &str) -> ! {
-        panic!(
-            "{message}\nutterances matched so far, in order: {:?}\ntimeline:\n{}",
-            self.matched,
-            self.timeline.render()
-        );
+        self.fail_traced(message, None)
+    }
+
+    /// Fails the assertion with `message`; the failing step's trace is
+    /// that of `utterance`, the one the assertion failed on.
+    fn fail_at(&self, message: &str, utterance: UtteranceId) -> ! {
+        self.fail_traced(message, self.traces.get(&utterance).copied())
+    }
+
+    /// Unwinds with a [`SpeechFailure`]: `message`, `trace` or else the
+    /// newest trace heard in the step under way, and that step.
+    ///
+    /// It unwinds without the panic hook (`resume_unwind`), which would
+    /// print the message at once: [`crate::registry`] catches the failure
+    /// and reports it in full once the run's logs are collected, which
+    /// only then hold the step's trace.
+    fn fail_traced(&self, message: &str, trace: Option<TraceId>) -> ! {
+        let step = self.timeline.current_step();
+        let trace = trace.or_else(|| self.timeline.last_trace_in(step.clone()));
+        std::panic::resume_unwind(Box::new(SpeechFailure {
+            message: message.to_owned(),
+            trace,
+            step,
+        }))
     }
 
     /// Asserts that the next utterances are exactly `texts`, in order, each
@@ -404,7 +487,7 @@ impl SpeechCollector {
             };
             actual.push(got.clone());
             if got.text != want.text {
-                self.fail(&describe_mismatch(expected, &actual));
+                self.fail_at(&describe_mismatch(expected, &actual), got.utterance);
             }
         }
         for (want, got) in expected.iter().zip(&actual) {
@@ -416,19 +499,20 @@ impl SpeechCollector {
                     | (Ending::Cancelled, Some(UtteranceEnding::Cancelled))
             );
             if !ok {
-                self.fail(&format!(
-                    "the utterance {:?} was expected to end {:?}, but {}",
-                    want.text,
-                    want.ending,
-                    ending.map_or_else(
-                        || format!("had not ended after {timeout:?}"),
-                        |ending| format!("ended {ending:?}")
-                    )
-                ));
+                self.fail_at(
+                    &format!(
+                        "the utterance {:?} was expected to end {:?}, but {}",
+                        want.text,
+                        want.ending,
+                        ending.map_or_else(
+                            || format!("had not ended after {timeout:?}"),
+                            |ending| format!("ended {ending:?}")
+                        )
+                    ),
+                    got.utterance,
+                );
             }
         }
-        self.matched
-            .extend(actual.into_iter().map(|utterance| utterance.text));
     }
 
     /// Asserts that the next utterance is exactly `text` and that its audio
@@ -451,23 +535,31 @@ impl SpeechCollector {
             ));
         };
         if got.text != text {
-            self.fail(&describe_mismatch(&expected, &[got]));
+            self.fail_at(
+                &describe_mismatch(&expected, std::slice::from_ref(&got)),
+                got.utterance,
+            );
         }
         while !self.started.contains(&got.utterance) {
             if let Some(ending) = self.endings.get(&got.utterance) {
-                self.fail(&format!("{text:?} ended {ending:?} without playing"));
+                self.fail_at(
+                    &format!("{text:?} ended {ending:?} without playing"),
+                    got.utterance,
+                );
             }
             if Instant::now() >= deadline {
-                self.fail(&format!(
-                    "{text:?} did not start playing within {:?}",
-                    self.step_timeout
-                ));
+                self.fail_at(
+                    &format!(
+                        "{text:?} did not start playing within {:?}",
+                        self.step_timeout
+                    ),
+                    got.utterance,
+                );
             }
             if let Err(error) = self.read_one() {
                 self.fail(&format!("the speech connection failed: {error}"));
             }
         }
-        self.matched.push(got.text.clone());
         Heard {
             text: got.text,
             utterance: got.utterance,
@@ -497,11 +589,9 @@ impl SpeechCollector {
             };
             actual.push(got.clone());
             if got.text != want.text {
-                self.fail(&describe_mismatch(&expected, &actual));
+                self.fail_at(&describe_mismatch(&expected, &actual), got.utterance);
             }
         }
-        self.matched
-            .extend(actual.iter().map(|utterance| utterance.text.clone()));
         actual
             .into_iter()
             .map(|utterance| Heard {
@@ -527,14 +617,17 @@ impl SpeechCollector {
                 | (Ending::Cancelled, Some(UtteranceEnding::Cancelled))
         );
         if !ok {
-            self.fail(&format!(
-                "the utterance {:?} was expected to end {ending:?}, but {}",
-                heard.text,
-                ended.map_or_else(
-                    || "had not ended".to_owned(),
-                    |ended| format!("ended {ended:?}")
-                )
-            ));
+            self.fail_at(
+                &format!(
+                    "the utterance {:?} was expected to end {ending:?}, but {}",
+                    heard.text,
+                    ended.map_or_else(
+                        || "had not ended".to_owned(),
+                        |ended| format!("ended {ended:?}")
+                    )
+                ),
+                heard.utterance,
+            );
         }
     }
 
@@ -557,7 +650,6 @@ impl SpeechCollector {
                     taken.len()
                 ));
             };
-            self.matched.push(got.text.clone());
             let last = got.text == until;
             taken.push(Heard {
                 text: got.text,
@@ -593,11 +685,14 @@ impl SpeechCollector {
         for utterance in unended {
             let deadline = Instant::now() + self.step_timeout;
             if self.ending_by(utterance, deadline).is_none() {
-                self.fail(&format!(
-                    "{:?} had not ended {:?} after the scenario's last assertion",
-                    self.text_of(utterance),
-                    self.step_timeout
-                ));
+                self.fail_at(
+                    &format!(
+                        "{:?} had not ended {:?} after the scenario's last assertion",
+                        self.text_of(utterance),
+                        self.step_timeout
+                    ),
+                    utterance,
+                );
             }
         }
         self.require_all_asserted("while the last utterances ended");
@@ -623,8 +718,6 @@ impl SpeechCollector {
                 utterance: utterance.utterance,
             })
             .collect();
-        self.matched
-            .extend(taken.iter().map(|heard| heard.text.clone()));
         taken
     }
 
@@ -683,11 +776,14 @@ impl SpeechCollector {
         if let Err(error) = drained.and(restored) {
             self.fail(&format!("the speech connection failed: {error}"));
         }
-        if !self.pending.is_empty() {
+        if let Some(first) = self.pending.front() {
             let unmatched: Vec<&str> = self.pending.iter().map(|u| u.text.as_str()).collect();
-            self.fail(&format!(
-                "harness error: utterances no assertion matched were waiting {when}: {unmatched:?}"
-            ));
+            self.fail_at(
+                &format!(
+                    "harness error: utterances no assertion matched were waiting {when}: {unmatched:?}"
+                ),
+                first.utterance,
+            );
         }
     }
 
@@ -824,23 +920,53 @@ mod tests {
     }
 
     fn collector(frames: Vec<Frame>) -> SpeechCollector {
+        collector_on(Timeline::new(), frames)
+    }
+
+    fn collector_on(timeline: Timeline, frames: Vec<Frame>) -> SpeechCollector {
         SpeechCollector::from_source(
             Box::new(Scripted {
                 frames: frames.into(),
                 next_id: 0,
             }),
-            Timeline::new(),
+            timeline,
             SHORT,
             SHORT,
         )
     }
 
-    fn fails(run: impl FnOnce()) -> String {
+    fn traced(id: u64, text: &str, trace: TraceId) -> Frame {
+        Frame::Speech {
+            utterance: UtteranceId(id),
+            trace_id: trace,
+            text: text.to_owned(),
+            event_observed_at_ms: Some(1_000),
+            queued_at_ms: 1_005,
+        }
+    }
+
+    /// `report` with each timeline line's elapsed time removed, which
+    /// varies from run to run.
+    fn without_times(report: &str) -> String {
+        report
+            .lines()
+            .map(|line| match line.strip_prefix('+') {
+                Some(rest) => rest.split_once("ms ").map_or(line, |(_, text)| text),
+                None => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn failure(run: impl FnOnce()) -> SpeechFailure {
         let payload = catch_unwind(AssertUnwindSafe(run)).expect_err("the assertion fails");
-        payload
-            .downcast_ref::<String>()
-            .cloned()
-            .unwrap_or_default()
+        *payload
+            .downcast::<SpeechFailure>()
+            .expect("the assertion fails with a SpeechFailure")
+    }
+
+    fn fails(run: impl FnOnce()) -> String {
+        failure(run).message
     }
 
     #[test]
@@ -953,5 +1079,76 @@ mod tests {
                 event_to_audio_ms: Some(50),
             }]
         );
+    }
+
+    #[test]
+    fn a_failure_prints_the_sequences_the_steps_trace_and_the_failed_step_in_full() {
+        let timeline = Timeline::new();
+        let stray = TraceId::mint();
+        let mut speech = collector_on(
+            timeline.clone(),
+            vec![
+                queued(1, "first"),
+                ended(1, UtteranceEnding::Completed),
+                traced(2, "stray", stray),
+            ],
+        );
+        speech.expect(&["first"]);
+        timeline.push_keys(&["downarrow"]);
+        let failed = failure(move || speech.expect(&["second"]));
+        assert_eq!(failed.trace, Some(stray));
+
+        let lines = [format!(
+            "stderr.log: 2026-10-09T10:00:00.300000Z  INFO verbatim: gesture trace_id={stray}"
+        )];
+        assert_eq!(
+            without_times(&failed.report(&timeline, Ok(&lines))),
+            format!(
+                "speech did not match\n\
+                 expected: [\"second\"]\n\
+                 actual:   [\"stray\"]\n\
+                 first difference: utterance 0, character 1: expected \"second\", got \"stray\"\n\
+                 \n\
+                 the failing step's trace, {stray}, from Verbatim's log, Core's flight recorder and the outposts' logs, in time order:\n\
+                 stderr.log: 2026-10-09T10:00:00.300000Z  INFO verbatim: gesture trace_id={stray}\n\
+                 \n\
+                 timeline, each earlier step on one line and the failing step in full:\n\
+                 start, said \"first\"\n\
+                 keys [downarrow]\n\
+                 speech \"stray\""
+            )
+        );
+    }
+
+    #[test]
+    fn an_utterance_never_queued_is_traced_by_the_steps_newest_utterance_or_by_none() {
+        let timeline = Timeline::new();
+        let heard_first = TraceId::mint();
+        let mut speech = collector_on(
+            timeline.clone(),
+            vec![
+                traced(1, "first", heard_first),
+                ended(1, UtteranceEnding::Completed),
+            ],
+        );
+        timeline.push_keys(&["downarrow"]);
+        let failed = failure(move || speech.expect(&["first", "second"]));
+        assert_eq!(failed.trace, Some(heard_first));
+        assert!(failed.report(&timeline, Ok(&[])).contains(&format!(
+            "the failing step's trace, {heard_first}: no log line carries it"
+        )));
+
+        let timeline = Timeline::new();
+        let mut speech = collector_on(
+            timeline.clone(),
+            vec![queued(1, "before"), ended(1, UtteranceEnding::Completed)],
+        );
+        speech.expect(&["before"]);
+        timeline.push_keys(&["downarrow"]);
+        let failed = failure(move || speech.expect(&["after"]));
+        assert_eq!(failed.trace, None);
+        assert!(failed.report(&timeline, Ok(&[])).contains(
+            "the failing step's trace: none, since the step heard nothing that carries a trace ID"
+        ));
     }
 }

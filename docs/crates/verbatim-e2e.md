@@ -121,9 +121,18 @@ an utterance is named in its text.
   no assertion matched. A scenario never moves past speech it has not
   asserted.
 
-A mismatch prints the expected and actual sequences escaped (`{:?}`), the
-index of the first utterance that differs and the first character in it
-that differs, the utterances matched so far, and then the timeline.
+A failed assertion unwinds with a `SpeechFailure`, without the panic
+hook, and the run reports it once the logs are collected
+(`SpeechFailure::report`): the expected and actual sequences escaped
+(`{:?}`), the index of the first utterance that differs and the first
+character in it that differs; the failing step's trace, every line
+carrying its trace ID in Verbatim's log, Core's flight recorder and the
+outposts', listener's and synthesizer host's logs, merged in time order
+(`artifacts::trace_lines`); and the timeline, each earlier step on one
+line (its input and what it said) and the failing step in full. The
+failing step's trace ID is the one the speech frame of the utterance the
+assertion failed on carries; when it failed on none, an utterance never
+queued, it is the newest heard in the step.
 `latency_rows` gives one row per utterance with the time of the event
 behind it, which the run saves as `latency.csv`.
 
@@ -425,7 +434,10 @@ debug log can be larger than one read of the agent's.
   pipe over the connection and hands back a ready
   `verbatim_control::client::Client`.
 - `timeline`: injected gestures, keys, typed text, and speech (queued,
-  audio started, ended), printed in time order on failure and saved.
+  audio started, ended), saved whole in time order, and printed on
+  failure with each earlier step shortened to one line.
+- `artifacts::trace_lines`: every line carrying a trace ID in a run's
+  collected logs and flight recorder, in time order.
 - `artifacts`: `artifacts_root`, `scenario_dir`, `ScenarioSummary`, and
   `archive_run`, shared with `xtask vm test` without argument passing.
 - `latency`: `fetch` and `report` read the control plane's latency

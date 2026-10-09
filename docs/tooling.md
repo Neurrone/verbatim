@@ -686,7 +686,7 @@ overrides the root), whether run runner-direct or through `cargo xtask vm
 test`; `xtask vm test` reads this back to build its own run summary rather
 than parsing test output. Every scenario run, pass or fail, also writes into
 the same directory the interleaved timeline
-(`timeline.txt` — the same account an `expect_*` panic already prints),
+(`timeline.txt`, whole, where a failure prints its earlier steps shortened),
 what held the foreground before setup and after teardown (`foreground.txt`,
 so a failure can be read against the desktop it started from),
 Verbatim's captured stderr log (`stderr.log`), the per-process outpost,
@@ -719,13 +719,20 @@ only a failing one. None of this is a retry mechanism: a failed scenario is
 reported failed exactly once, with these artifacts left for root-causing,
 never re-run automatically by anything in this crate or by `xtask`.
 
-Reading a speech-assertion failure: the assertion prints the expected and
-actual sequences, escaped (`{:?}`), the index of the first utterance that
-differs and the first character in it that differs, the utterances
-matched so far, and then the run's timeline so far — every
-gesture and key the scenario injected and every utterance Verbatim spoke,
-interleaved in time order, one entry per line, each prefixed with the
-milliseconds elapsed since the first entry. Because the commands the test
+Reading a speech-assertion failure: once the run's logs are collected,
+the failure prints three things. First, the expected and actual
+sequences, escaped (`{:?}`), with the index of the first utterance that
+differs and the first character in it that differs. Second, the failing
+step's trace: every line carrying its trace ID in Verbatim's log, Core's
+flight recorder, and the outposts', listener's and synthesizer host's
+logs, merged in time order, each prefixed with its file's name. The
+trace ID is the one the utterance the assertion failed on carries, or,
+when the expected utterance never came, the newest one the step heard.
+Third, the run's timeline up to the failure: each earlier step on one
+line (when it started, the gesture, keys or text injected, and what was
+said), then the failing step in full, one entry per line, each prefixed
+with the milliseconds elapsed since the first entry; `timeline.txt` has
+every step in full. Because the commands the test
 sent appear alongside the speech they did or did not provoke, the last line
 before speech stopped is usually the whole diagnosis: you can see the exact
 gesture or keystroke that went out, and whether Verbatim said something

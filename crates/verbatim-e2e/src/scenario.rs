@@ -481,6 +481,12 @@ impl Scenario {
         &mut self.speech
     }
 
+    /// The scenario's timeline of injected input and speech.
+    #[must_use]
+    pub fn timeline(&self) -> &Timeline {
+        &self.timeline
+    }
+
     /// Verbatim's process id.
     #[must_use]
     pub fn verbatim_pid(&self) -> u32 {
