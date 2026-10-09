@@ -2544,38 +2544,12 @@ Made while raising the flood limit (2026-10-09, to be confirmed):
   the default takes many presses; End reaches it at once.
 
 Made while removing a new tab's extra "blank" (2026-10-09, to be
-confirmed):
+confirmed; the removal itself was reversed by Dickson the same day, in
+"Decisions on terminal openings, Shift, and Up with typing" below):
 
-- NVDA's source reads the caret's line for any focused terminal and
-  says "blank" for an empty one, yet in Windows Terminal it said no line
-  for a new window or tab in 17 of 19 captures, and in the console host
-  "blank" in all 14; returning to a tab with a prompt, it said the
-  prompt in some captures and nothing in others. The cause in NVDA was
-  not found, and looks like timing. Verbatim matches the usual result for
-  what is new: a Windows Terminal window or tab whose screen is all
-  blank as it takes the focus says no line, every other terminal focus
-  its caret's line, the console host's "blank" included. The outpost
-  sends this as `NoText` before the focus's caret, the answer for a focus
-  with nothing to read, so Core needs no new message.
-- A Windows Terminal tab whose screen was cleared and is all blank is
-  treated the same as a new one when it takes the focus.
 - Closing a tab, NVDA said the remaining tab's terminal without its line
   in its capture; Verbatim keeps saying the line, as NVDA does when its
   read of the line is not lost.
-
-Made while writing the dropped end-to-end tests (2026-10-09, to be
-confirmed):
-
-- Up Arrow and a character typed at once: Verbatim reads the line's
-  change once, the recalled command and the character in it, and says
-  it as the change ("echo onex"), without the character's own echo,
-  where NVDA says "x" and then the line. `*_up_typing` asserts it.
-- Shift pause and resume: speech reports no pause, so the scenarios
-  assert only that pausing and resuming during a flood cuts nothing off
-  and loses nothing.
-- A Windows Terminal window whose shell printed its PSReadLine notice
-  before the window took the focus says "blank" for its caret's blank
-  row: the rule of no line covers only a screen with nothing on it.
 
 ## Language audit (2026-10-08)
 
@@ -2788,7 +2762,7 @@ A read-only review of phase 6 against the dated decisions, docs/parity.md and do
 2. Delete speaks what it leaves at the caret, as NVDA does and as the code and docs/parity.md already have it. The 2026-10-08 "what a key did" decision listed Delete among the keys that speak the text removed by mistake; that list no longer includes Delete.
 3. "Lines spoken in full" may exceed the terminal's history, as decided on 2026-10-07; the cap of 100 is raised above the history size, the 10 MB bound protecting memory.
 4. Control+Tab announces the tab ("list", the tab's name, "1 of 2") as NVDA does; the recorded difference is withdrawn.
-5. Kept as deliberate differences: Escape forgetting typing not yet echoed, and closing a full-screen program speaking only what followed it. Fixed: a new tab's extra "blank", which NVDA does not say.
+5. Kept as deliberate differences: Escape forgetting typing not yet echoed, and closing a full-screen program speaking only what followed it. Fixed: a new tab's extra "blank", which NVDA does not say (reversed by Dickson the same day: a new tab says "blank", "Decisions on terminal openings, Shift, and Up with typing" below).
 6. Response-time budgets: the afternoon decision of 2026-10-08 stands. They are enforced by default in local runs, and recorded but not enforced on GitHub's runners.
 7. The waits not driven by events (the outpost's 10 ms foreground check for up to 250 ms, the watchdog's 500 ms foreground check, the one follow-up focus read): measure whether the foreground event comes before or after the window is in front, then remove every wait the measurement shows is not needed.
 8. The two-window scenarios switch windows with Alt+Tab, as a user does, so they test activating a window already open rather than restoring a minimized one.
@@ -2879,3 +2853,11 @@ Made while carrying out the coherence review's fixes, each recorded in its secti
 6. The outpost drops focus and foreground facts on the shell's staging windows, ported from NVDA's File Explorer app module, found when Alt+Tab said "pane" ("The two-window scenarios switch with Alt+Tab").
 7. The leave-during-a-flood scenarios keep bringing their windows forward as a taskbar button does: switched with Alt+Tab, Windows Terminal's spoke flood output read between Alt's press and the switch in 3 of 10 runs, more or less of it each time.
 8. The 250 ms foreground hold is removed against one older observation of Notepad's foreground event arriving 130 ms early, which the new measurements did not reproduce ("Foreground events against the foreground window").
+
+## Decisions on terminal openings, Shift, and Up with typing (Dickson, 2026-10-09)
+
+Decided on the decisions to confirm recorded while writing the dropped end-to-end tests and removing a new tab's extra "blank"; carried out on 2026-10-10:
+
+1. A new, empty terminal window or tab says "blank" for the empty line its caret is on, in Windows Terminal as in the console host, as an empty line says everywhere else. NVDA's silence in a new Windows Terminal window or tab is NVDA not recognising the terminal's focus: a bug, not something to copy. This reverses the part of the coherence review's decision 5 that fixed a new tab's extra "blank". The outpost no longer sends `NoText` before the caret of a Windows Terminal whose screen is all blank (4dba189), and the split between a scenario's first window, which said "blank", and its second window and tab, which said no line (132bf09), goes with it; `windows_terminal_two_windows`, `windows_terminal_leave_flood`, `windows_terminal_tabs` and `windows_terminal_close_tab` expect "blank" for the second window and tab again, and `docs/parity.md` records the difference from NVDA as deliberate.
+2. Pausing and resuming speech is reported as an event. The speech pipeline reports each pause and resume once the mixer has it (`SpeechEvents::speech_paused`, called on the queue thread for Shift's toggle and for a cancel that ends a pause), and the control plane sends it to speech subscribers as `Frame::SpeechPaused`. `conhost_shift_flood` and `windows_terminal_shift_flood` wait for the pause after the first Shift and the resume after the second and assert both, and the speech collector fails a scenario that injects input past a pause or resume no assertion matched, as it does for speech.
+3. Up Arrow and a character typed before the recalled line is read, heard only as the line's change ("echo onex") without the character's own echo, stays Verbatim's behaviour, since it does not occur in normal use. `docs/parity.md` keeps it as a deliberate difference.
