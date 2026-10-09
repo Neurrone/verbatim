@@ -877,7 +877,10 @@ verified.
   ("caret moves review cursor", on by default, toggled by Verbatim+6 with
   NVDA's messages) is **implemented in Core since 2026-10-06**,
   unverified until the outpost sends caret reports; `followMouse` is
-  **not yet**.
+  **not yet**. NVDA's "review cursor follows focus" setting (on by
+  default) has no counterpart yet: Verbatim always follows the focus, and
+  the setting is part of the settings package (decided 2026-10-08, not
+  yet built).
 - Report current object: report / spell / copy on 1st/2nd/3rd press.
   NVDA: script repeat counting ([Keyboard input](nvda/input.md)), reading
   the object live. Verbatim: **matched since 2026-10-03**; since
@@ -1490,8 +1493,9 @@ verified.
   is spoken; where the error ends only the words "out of spelling error"
   are spoken. NVDA's own default, read from `config/configSpec.py` on
   2026-10-07, is speech alone (`reportSpellingErrors2` defaults to 1, the
-  speech flag), so the default theme's sound is a **difference** still to
-  be decided. Line indentation tones are **not yet**: indentation is not
+  speech flag), so the default theme's sound is a deliberate
+  **difference** (Dickson, 2026-10-07: the default theme plays the error
+  sound for a spelling error). Line indentation tones are **not yet**: indentation is not
   reported yet. Which events produce earcons (start and exit, browse and
   focus mode, suggestions, progress bars, logged errors) is the shell's
   and later milestones' to wire; the reducer emits the progress
@@ -1667,7 +1671,9 @@ verified.
   with Left or Right Arrow, a word of one character (Notepad's full stop)
   by its name, as NVDA spells it; the line for Up and Down Arrow, the page keys,
   and Control with Home or End; the paragraph for Control with Up or Down
-  Arrow; what Backspace deleted; what Delete left at the caret. A newer key
+  Arrow; what Backspace deleted; what Delete left at the caret, as NVDA
+  does (confirmed by Dickson on 2026-10-09: Delete is not among the keys
+  that speak the text they removed). A newer key
   supersedes a watched one and a focus change drops it, NVDA's two
   short-circuits; a key's reply read after a later key was pressed is not
   spoken for it, since it may show that key's effect (the live caret
@@ -1813,10 +1819,14 @@ verified.
   Terminal's `TerminalTextOutput` notifications from a terminal are
   ignored, so nothing is spoken twice (as NVDA's diffing overlay blocks
   them, `winConsoleUIA.py` 474 to 476); a redraw with the same text
-  speaks nothing; blank lines are not spoken but count as lines, except
-  the blank lines a burst of output starts with, which are not output (a
-  cleared screen's rows above a footer drawn on its last row; since
-  2026-10-09); newer
+  speaks nothing; blank lines are not spoken but every line counts,
+  blank ones included (Dickson, 2026-10-07). Since 2026-10-09 the code
+  makes one exception, not counting the blank lines a burst of output
+  starts with (a cleared screen's rows above a footer drawn on its last
+  row); that exception is being removed (coherence review, Dickson,
+  2026-10-09), its cause fixed in the outpost, where rows not yet
+  written to are dropped from a screen read and come back as inserted
+  blank lines when a footer is drawn below them; newer
   output never cancels older; a key, or anything else that cuts speech
   off, drops output still waiting, as in NVDA, and output read before
   the key is never spoken after it. **Different:** the backlog is capped
@@ -1848,8 +1858,9 @@ verified.
   a new line. Held typing is forgotten on Enter and Tab, and on Escape,
   Control+C, Control+D, and Control+Break; NVDA forgets its queued
   characters on Enter, Tab, Control+C, Control+D, and Control+Pause
-  (`behaviors.py` 595 to 613). **Different, proposed (2026-10-09):**
-  Escape forgetting held typing is Verbatim's addition: captured live,
+  (`behaviors.py` 595 to 613). **Different, deliberate** (proposed
+  2026-10-09, kept by Dickson's decision of 2026-10-09 in the coherence
+  review): Escape forgetting held typing is Verbatim's addition: captured live,
   NVDA spoke the two characters typed at a prompt that showed nothing
   ("a", "b") when Escape then changed the line, before the line's new
   text, since it dispatches its queued characters on any text change
@@ -1900,7 +1911,9 @@ verified.
   "row 0" and "row 30" in both; closing the alternate screen, NVDA spoke
   the whole main screen again (PowerShell's notice, the command, then
   "closed"), where Verbatim speaks only "closed" and the prompt, the main
-  screen being as it was (**different, since 2026-10-09**). NVDA echoes
+  screen being as it was (**different, since 2026-10-09**; kept as a
+  deliberate difference by Dickson's decision of 2026-10-09 in the
+  coherence review). NVDA echoes
   each key a script reads without showing it ("space"); Verbatim does
   not, as for any typing the terminal does not show.
 
@@ -1925,12 +1938,18 @@ verified.
   tab, and "terminal" in the console host, whose text area's name both
   drop (matched; NVDA says the terminal and its line as one utterance,
   Verbatim as two). A second tab opened from the command line says
-  "<title> terminal" and then the prompt as output (matched). Typing and
+  "<title> terminal" and then the prompt as output; Verbatim says an
+  extra "blank" as well, which `windows_terminal_tabs` asserts today
+  (**different, known, being fixed** to match NVDA, Dickson, 2026-10-09,
+  coherence review). Typing and
   its output after a switch are echoed and spoken as in any terminal
   (matched). An earlier report that Verbatim left the window's title out
   of a console's terminal was not borne out: NVDA leaves it out too.
-  **Different:** switching tabs with Control+Tab or Control+Shift+Tab,
-  NVDA says "list" and the tab ("<title> 1 of 2", and on Control+Tab from
+  **Different, being fixed to match NVDA** (the difference had been
+  recorded as deliberate and was withdrawn by Dickson on 2026-10-09 in
+  the coherence review: Control+Tab is to announce the tab, "list", the
+  tab's name and "1 of 2", as NVDA does): switching tabs with Control+Tab
+  or Control+Shift+Tab, NVDA says "list" and the tab ("<title> 1 of 2", and on Control+Tab from
   the first tab sometimes the tab it left as well), then "<title>
   terminal" and the line; Verbatim says only "<title> terminal" and the
   line. Windows Terminal gives the tab the keyboard focus only until it
@@ -1945,7 +1964,8 @@ verified.
   focus lands. Whether a reader hears the tab depends on that race;
   NVDA's own capture heard a tab Control+Tab passed through. The end-to-end
   scenarios (`conhost_two_windows`, `windows_terminal_two_windows`,
-  `windows_terminal_tabs`) pin Verbatim's speech.
+  `windows_terminal_tabs`) pin Verbatim's speech as it is today, until
+  the fix lands.
 
   **Different:** Up and Down Arrow in a selection list a program draws in
   a terminal. Decision (Dickson, 2026-10-09): when the key makes the
@@ -2113,8 +2133,10 @@ verified.
   (`phase6-design.md`, "M4: text, editing, and terminals", Questions): a
   Terminal page in the settings dialog, after Theme, with "Report new
   output", the flood policy's two limits ("Lines spoken in full" and
-  "Last lines to speak", 1 to 100, sliders), which NVDA has no equivalent
-  of, and "Speak passwords typed in terminals". Its changes wait for OK
+  "Last lines to speak", 1 to 100, sliders; the upper limit is being
+  raised above the terminal's history size, Core's 10 MB bound on waiting
+  output protecting memory, per Dickson's coherence decision 3 of
+  2026-10-09), which NVDA has no equivalent of, and "Speak passwords typed in terminals". Its changes wait for OK
   or Apply, as NVDA's do, where the Speech and Theme pages apply live
   (`terminal_settings_page` verifies that an applied change reaches
   Core).

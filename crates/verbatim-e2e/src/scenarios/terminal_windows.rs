@@ -18,8 +18,10 @@
 //! together, the window's title is the first tab's or the second's
 //! depending on when Windows Terminal reports it in front. NVDA says the
 //! new tab's terminal, "<title> terminal", and then its prompt as output;
-//! Verbatim says the same, with "blank" for the empty line before the
-//! prompt, as when a window opens.
+//! Verbatim says the same with an extra "blank" for the empty line before
+//! the prompt, as when a window opens. NVDA says no "blank" there: a known
+//! difference being fixed (Dickson, 2026-10-09, coherence review), which
+//! this scenario asserts until the fix lands.
 //!
 //! Switching tabs with Control+Tab or Control+Shift+Tab, NVDA says "list"
 //! and the tab ("<title> 1 of 2"), which holds the keyboard focus until
@@ -28,7 +30,10 @@
 //! "<title> terminal" and the line: it judges a focus event by where the
 //! keyboard focus is when its outpost handles it, a few milliseconds
 //! later, where NVDA judges it as its event thread receives it, so the tab
-//! is already behind it (a deliberate difference, `docs/parity.md`).
+//! is already behind it. This difference was recorded as deliberate and is
+//! withdrawn (Dickson, 2026-10-09, coherence review): Control+Tab is being
+//! changed to announce the tab as NVDA does, and this scenario asserts
+//! today's speech until then (`docs/parity.md`).
 //! Typing after a switch is echoed and its output spoken as in any
 //! terminal.
 
