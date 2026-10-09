@@ -567,18 +567,24 @@ Implementation notes:
   to get its own live copy of the element, which also serves for the
   ancestors, the selected child, the element's window, and navigation.
   Without it the focus is emitted from the event alone, with
-  `ancestors_unknown`, and a queued `Item::ResolveFocus` follow-up, while
-  the focus is unchanged, reads the focused element once more; when that
-  is the focus's element, it moves the focus-following subscription to it,
-  and, for a focus that may have text, the caret and text subscription
-  too, and asks for its caret, whose line Core then speaks for the focus.
-  When the follow-up finds nothing, or another element, nothing reads
-  again: the element comes from the focus's own next event, keyed by its
-  runtime id. A focus event reads it as any focus does, and Core takes the
-  same node silently; a selection event of the focus reads the focused
-  element once (`element_from_selection`) and keeps it when it is the
-  focus's. The caret, text, and property subscriptions listen nowhere
-  until then. When the focused element
+  `ancestors_unknown`, and nothing reads again: the element comes from
+  the focus's own next event, keyed by its runtime id. Meanwhile the
+  focus-following property subscription and the caret and text
+  subscription listen in the focus's top-level window, else in each of
+  the application's (`follow_focus_window`), and the first of their
+  events that the focus raises itself brings its element
+  (`adopt_focus_element`), which is kept under the focus's node and
+  followed from then on, the subscriptions moving to it and, for a focus
+  that may have text, its caret asked for, whose line Core then speaks;
+  the event is then handled as any other, and the other elements' events
+  are dropped. A focus event reads the element as any focus does, and
+  Core takes the same node silently; a selection event of the focus reads
+  the focused element once (`element_from_selection`) and keeps it when
+  it is the focus's. Until 2026-10-09 a queued follow-up read the focused
+  element once more, and the subscriptions listened nowhere, so a focus
+  that raised neither a focus nor a selection event was never followed
+  (mockapp's
+  `a_focus_whose_element_was_not_found_is_followed_from_its_own_changes`). When the focused element
   read is in another application, the fact is out of date and dropped.
   When it is another element of this application, and the fact's element
   is a window of its own, that window's element is read

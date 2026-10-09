@@ -128,10 +128,6 @@ in the dated section named with each item.
   - The flood setting's cap of 100 is raised above the terminal's
     history size, Core's 10 MB bound protecting memory.
   - A new tab no longer says an extra "blank".
-  - The one follow-up focus read, the last wait not driven by events, is
-    removed once the focus's element is found from its own events (the
-    foreground checks went on 2026-10-09, `phase6-design.md`,
-    "Foreground events against the foreground window").
   - Rows and lines are no longer mixed in the terminal screen read.
   - Tests for Up Arrow followed by typing, a line key during a flood, and
     UIA text fields read by parts.

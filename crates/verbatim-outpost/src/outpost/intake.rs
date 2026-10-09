@@ -124,9 +124,6 @@ pub(super) enum Item {
     /// whose role says it may, just after it was reported: as `CaretMoved`,
     /// or as `NoText` when there is no caret to report.
     CaretOf { node_id: verbatim_model::NodeId },
-    /// The one follow-up read finding the live element of a focus reported
-    /// from its event alone, for the focus-following property subscription.
-    ResolveFocus { runtime_id: Vec<i32> },
     /// [`Outpost::settle`](super::Outpost::settle): answered once nothing
     /// else is waiting, the focus-following subscriptions have made every
     /// move asked of them, and every message published has been written.
@@ -689,9 +686,7 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         // Only the newest caret report for a node matters, and it is never
         // limited: the focus's caret.
         Item::CaretOf { node_id } => (Some(Key::CaretOf(node_id.number())), Category::Exempt, 0),
-        Item::Query { .. } | Item::ResolveFocus { .. } | Item::Settle(_) | Item::Wake => {
-            (None, Category::Exempt, 0)
-        }
+        Item::Query { .. } | Item::Settle(_) | Item::Wake => (None, Category::Exempt, 0),
     }
 }
 

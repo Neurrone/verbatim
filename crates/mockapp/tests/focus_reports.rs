@@ -485,13 +485,12 @@ fn assert_followed(
 }
 
 /// A UIA focus whose element the focused element read does not find is
-/// reported from its event alone, with its ancestors unknown, and one
-/// follow-up reads the focused element once more, which here finds nothing
-/// either. Nothing reads again: the outpost read up to three times more,
-/// with nothing between the reads to say the answer had changed. The
-/// focus's next focus event finds the element: the focus is reported again
-/// under its node, which Core takes silently, now with its ancestors, and
-/// its changes are followed from then on.
+/// reported from its event alone, with its ancestors unknown, and nothing
+/// reads again: a follow-up read once more, and before it up to three
+/// times more, with nothing between the reads to say the answer had
+/// changed. The focus's next focus event finds the element: the focus is
+/// reported again under its node, which Core takes silently, now with its
+/// ancestors, and its changes are followed from then on.
 fn a_focus_whose_element_was_not_found_is_followed_from_its_next_focus_event() {
     let title = common::unique_title("mockapp-focus-not-found");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -503,8 +502,8 @@ fn a_focus_whose_element_was_not_found_is_followed_from_its_next_focus_event() {
     let node = focus_not_found(&outpost, &button);
     assert_eq!(
         outpost.focus_reads(),
-        2,
-        "the focused element was read for the event and once more"
+        1,
+        "the focused element was read for the event alone"
     );
 
     let reported = outpost.uia_focus(&button);
@@ -512,7 +511,7 @@ fn a_focus_whose_element_was_not_found_is_followed_from_its_next_focus_event() {
         (reported.node.id, reported.node.name.as_deref()),
         (node.id, Some("Original Name"))
     );
-    assert_eq!(outpost.focus_reads(), 3, "read once for the next event");
+    assert_eq!(outpost.focus_reads(), 2, "read once for the next event");
     assert_followed(&mut app, &outpost, "btn1", &node);
 
     drop(outpost);
@@ -532,7 +531,7 @@ fn a_selection_of_a_focus_whose_element_was_not_found_finds_its_element() {
     app.send("set-focus item1");
     let item = client.focused();
     let node = focus_not_found(&outpost, &item);
-    assert_eq!(outpost.focus_reads(), 2);
+    assert_eq!(outpost.focus_reads(), 1);
 
     outpost.read_focus_as(&item);
     let ListenerFact { fact, .. } =
@@ -552,8 +551,32 @@ fn a_selection_of_a_focus_whose_element_was_not_found_finds_its_element() {
         other => panic!("the outpost said {other:?}, not the selection"),
     }
     outpost.settled();
-    assert_eq!(outpost.focus_reads(), 3, "read once for the selection");
+    assert_eq!(outpost.focus_reads(), 2, "read once for the selection");
     assert_followed(&mut app, &outpost, "item1", &node);
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A UIA focus whose element was not found, and which raises neither a
+/// focus nor a selection event afterwards, is still followed: its
+/// subscriptions listen in its window while its element is unknown, so its
+/// own change brings the element, and the change is reported. They had
+/// listened nowhere, and the focus's changes went unheard until its next
+/// focus or selection event.
+fn a_focus_whose_element_was_not_found_is_followed_from_its_own_changes() {
+    let title = common::unique_title("mockapp-focus-own-change");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(app.pid());
+
+    app.send("set-focus btn1");
+    let button = client.focused();
+    let node = focus_not_found(&outpost, &button);
+    assert_eq!(outpost.focus_reads(), 1, "read for the event alone");
+
+    assert_followed(&mut app, &outpost, "btn1", &node);
+    assert_eq!(outpost.focus_reads(), 1, "the change brought the element");
 
     drop(outpost);
     app.quit();
@@ -623,6 +646,10 @@ fn main() {
         (
             "a_focus_whose_element_was_not_found_is_followed_from_its_next_focus_event",
             a_focus_whose_element_was_not_found_is_followed_from_its_next_focus_event,
+        ),
+        (
+            "a_focus_whose_element_was_not_found_is_followed_from_its_own_changes",
+            a_focus_whose_element_was_not_found_is_followed_from_its_own_changes,
         ),
         (
             "a_selection_of_a_focus_whose_element_was_not_found_finds_its_element",

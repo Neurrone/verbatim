@@ -162,11 +162,10 @@ releases Alt. Notepad has no outpost yet.
      said, its element found in its window, as NVDA judges a focus event
      by its sender's focus as the event arrives; or **unresolved**, the
      read failed or timed out, and the focus is reported
-     from the fact alone with its ancestors unknown, while an
-     `Item::ResolveFocus` follow-up, while the focus is unchanged, reads
-     once more for the element, for navigation and property changes. When
-     that read does not find it, the focus's own next focus or selection
-     event supplies it.
+     from the fact alone with its ancestors unknown, and its
+     subscriptions listen in Notepad's window until the focus's own next
+     event, a focus, a selection, a property change, or a caret or text
+     change, supplies its element, for navigation and property changes.
    - The window it is reported with is the event's own window, else the
      live element's nearest window, else the listener's `focus_window`.
    - Arbitration decides which backend owns that window

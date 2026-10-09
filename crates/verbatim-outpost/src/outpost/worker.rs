@@ -743,7 +743,6 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
         Item::Fact(_)
         | Item::Msaa { .. }
         | Item::Uia(_)
-        | Item::ResolveFocus { .. }
         | Item::CaretOf { .. }
         | Item::Settle(_)
         | Item::Wake => (HANDLING_DEADLINE, None),
@@ -766,7 +765,6 @@ fn describe(item: &Item) -> String {
         Item::Fact(fact) => format!("fact {:?}", fact.key()),
         Item::Query { query, .. } => format!("query {query:?}"),
         Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
-        Item::ResolveFocus { .. } => "resolve focus".to_owned(),
         Item::CaretOf { node_id } => format!("caret of {node_id:?}"),
         Item::Settle(_) => "settle".to_owned(),
         Item::Wake => "wake".to_owned(),
@@ -852,7 +850,6 @@ impl Worker<'_> {
                 nodes,
                 acknowledged,
             } => self.release(&nodes, acknowledged),
-            Item::ResolveFocus { runtime_id } => self.resolve_focus(&runtime_id, trace),
             Item::CaretOf { node_id } => self.caret_of(node_id, trace, observed_at_ms, true),
             Item::Settle(done) => self.settle(done, trace),
             Item::Wake => self.wake(),
@@ -2015,6 +2012,9 @@ impl Worker<'_> {
         {
             return; // The diff of the terminal's text reports it.
         }
+        if !self.adopt_focus_element(&event, element.as_ref(), trace) {
+            return;
+        }
         if matches!(event.kind, UiaKind::Selection) && of_focus && element.is_none() {
             self.element_from_selection(&event.parts.runtime_id, trace);
         }
@@ -2619,8 +2619,9 @@ impl Worker<'_> {
     /// can leave that read unanswered for more than ten seconds, or answer
     /// with UIA's stand-in for its window (Windows 11 Notepad's text area as
     /// a nameless edit). Without it the focus is still reported, from the
-    /// event alone, with its ancestors unknown, and a follow-up finds the
-    /// element later for the focus-following property subscription.
+    /// event alone, with its ancestors unknown, and its subscriptions
+    /// listen in its window until its own next event brings the element
+    /// ([`follow_focus_window`](Self::follow_focus_window)).
     ///
     /// A fact whose element has lost the keyboard focus to another
     /// application is dropped: the newer focus's own event reports it, and
@@ -2716,9 +2717,7 @@ impl Worker<'_> {
                 object,
                 (None, None),
             );
-            if !moved_on {
-                self.resolve_focus_later(&fact.runtime_id, trace);
-            }
+            self.follow_focus_window(reported);
             return;
         };
         if let Some(held) = held {
@@ -3054,51 +3053,79 @@ impl Worker<'_> {
         Some(element)
     }
 
-    /// Queues the follow-up that reads once more for the live element of
-    /// the focus `runtime_id` names, reported from its event alone, for the
-    /// focus-following property subscription.
-    fn resolve_focus_later(&self, runtime_id: &[i32], trace: TraceId) {
-        self.context.intake.push(Entry {
-            item: Item::ResolveFocus {
-                runtime_id: runtime_id.to_vec(),
-            },
-            trace,
-            observed_at_ms: 0,
-            timing: crate::protocol::EventTiming::default(),
-        });
+    /// Points the focus-following subscriptions at the subtree of `window`'s
+    /// top-level window, else of each of the application's top-level
+    /// windows, for a focus reported from its event alone, whose element
+    /// was not found in time: its own events, from the property and the
+    /// caret and text subscriptions, then bring its element
+    /// ([`adopt_focus_element`](Self::adopt_focus_element)), as its next
+    /// focus or selection event does.
+    fn follow_focus_window(&self, window: Option<isize>) {
+        let windows = match window {
+            Some(window) => vec![top_level_of(window)],
+            None => super::window::top_level_windows(self.context.target_pid),
+        };
+        let scope = || verbatim_uia::Scope::Windows(windows.clone());
+        if let Some(subscription) = self.context.focus_properties.get() {
+            subscription.retarget(scope());
+        }
+        if let Some(subscription) = self.context.text_events.get() {
+            subscription.retarget(scope());
+        }
+        tracing::debug!(
+            ?windows,
+            "the focus's element was not found; its window's events are listened to for it"
+        );
     }
 
-    /// The follow-up [`resolve_focus_later`](Self::resolve_focus_later)
-    /// queued: while the focus is still the one it names, reads the focused
-    /// element once, with the full wait, and when it is that focus, keeps
-    /// it for navigation and follows its changes. When the read answers
-    /// nothing, or another element (an application still starting can
-    /// answer with a stand-in for its window), nothing reads again: the
-    /// focus's element comes from its own next event, keyed by its runtime
-    /// id. A focus event reads the focused element afresh
-    /// ([`uia_focus`](Self::uia_focus)), and so does a selection event
-    /// ([`element_from_selection`](Self::element_from_selection)); the
-    /// caret, text, and property subscriptions listen nowhere while the
-    /// focus has no element, so none of their events comes before then.
-    fn resolve_focus(&mut self, runtime_id: &[i32], trace: TraceId) {
-        let context = self.context;
-        if context.intake.focused() != Some(Object::Uia(runtime_id.to_vec())) {
-            return; // Focus has moved on.
+    /// Whether the focus this outpost last reported is a UIA focus whose
+    /// element is not known: its subscriptions listen in its window
+    /// ([`follow_focus_window`](Self::follow_focus_window)), and the runtime
+    /// id it names.
+    fn focus_without_element(&self) -> Option<Vec<i32>> {
+        let Some(Object::Uia(focus)) = self.context.intake.focused() else {
+            return None;
+        };
+        let registry = &self.context.uia_registry;
+        let known = registry
+            .existing_id(&focus)
+            .and_then(|id| registry.element_of(id))
+            .is_some();
+        (!known).then_some(focus)
+    }
+
+    /// An event from the focus-following subscriptions while the focus's
+    /// element is not known, so they listen in the focus's window: the
+    /// focus's own event brings its element, which is kept and followed
+    /// from then on, and the event is handled; another element's is
+    /// dropped, as the subscriptions follow the focus alone. Answers
+    /// whether the event is to be handled.
+    fn adopt_focus_element(
+        &mut self,
+        event: &UiaEvent,
+        element: Option<&IUIAutomationElement>,
+        trace: TraceId,
+    ) -> bool {
+        let followed = matches!(
+            event.kind,
+            UiaKind::Property(_)
+                | UiaKind::TextSelection
+                | UiaKind::TextChanged
+                | UiaKind::ActiveTextPosition(_)
+        );
+        if !followed {
+            return true;
         }
-        let element = self.client.uia().and_then(|uia| {
-            let cache = self.context.uia_cache(uia).ok()?;
-            (self.context.focused_element)(uia, &cache).ok()
-        });
-        if let Some(element) = element.filter(|element| {
-            // Built with the base cache request.
-            snapshot_parts_from_cached_element(element).runtime_id == runtime_id
-        }) {
-            self.follow_focus_element(runtime_id, &element, trace);
-        } else {
-            tracing::debug!(
-                "the focus's element was not found; it comes from the focus's next event"
-            );
+        let Some(focus) = self.focus_without_element() else {
+            return true;
+        };
+        if focus != event.parts.runtime_id {
+            return false;
         }
+        if let Some(element) = element {
+            self.follow_focus_element(&focus, element, trace);
+        }
+        true
     }
 
     /// A selection event of the focus `runtime_id` names, which was reported
