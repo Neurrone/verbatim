@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::{env, fs};
 
 fn main() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("set by cargo"));
     copy_sounds(&manifest_dir.join("../../sounds"));
 
     let manifest = manifest_dir.join("verbatim.exe.manifest");

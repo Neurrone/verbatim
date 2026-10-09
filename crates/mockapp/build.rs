@@ -3,10 +3,11 @@
 //! `verbatim-app`'s build script embeds Verbatim's.
 
 use std::env;
-use std::path::Path;
+use std::path::PathBuf;
 
 fn main() {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("mockapp.exe.manifest");
+    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("set by cargo"))
+        .join("mockapp.exe.manifest");
     println!("cargo:rerun-if-changed=mockapp.exe.manifest");
     if env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default() != "msvc" {
         return;
