@@ -960,18 +960,24 @@ impl ReducerThread<'_> {
                 reason,
             } => {
                 tracing::info!(%outpost, %target_pid, %reason, "outpost ended");
-                // A crashed or killed outpost of the attention application
-                // is replaced at once; ask the replacement for the focus,
-                // which is taken silently if the user already heard it. A
-                // retired outpost, or one whose application exited, is not
-                // replaced.
+                // A crashed or killed outpost of the attention application,
+                // or of the focus's when that is another (a Settings page's
+                // content, inside ApplicationFrameHost's window), is
+                // replaced at once; ask the replacement for the focus,
+                // which is taken silently if the user already heard it. The
+                // replacement is asked for here in both cases, by the
+                // reducer's own view of attention, rather than left to the
+                // supervisor's, which follows it by a message and may not
+                // name the same application yet; the supervisor starts
+                // none when its own replacement already runs, and tells
+                // the app the application is not watched when it stopped
+                // replacing it after repeated crashes. A retired outpost,
+                // or one whose application exited, is not replaced.
                 let replaced = !matches!(reason, EndReason::Retired | EndReason::TargetExited);
-                if replaced && self.state.attention() == Some(target_pid) {
-                    self.focus_now_wanted.insert(target_pid);
-                } else if replaced && self.state.focus_source() == Some(target_pid) {
-                    // The focus's application is not the attention one (a
-                    // Settings page's content, inside ApplicationFrameHost's
-                    // window): its outpost is replaced only when asked.
+                if replaced
+                    && (self.state.attention() == Some(target_pid)
+                        || self.state.focus_source() == Some(target_pid))
+                {
                     self.focus_now_wanted.insert(target_pid);
                     self.context.supervisor.ensure_spawned(target_pid);
                 }
