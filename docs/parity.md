@@ -1341,7 +1341,11 @@ verified.
   to the back; a batch is everything that arrived while the worker
   handled the previous one; per batch the newest 4 focus events and the
   newest 10 other events per application UI thread are kept, and the
-  focused object's events always; events from a window the system
+  focused object's events always; a foreground change counts among both
+  and is kept by either, as NVDA's limiter caches a foreground event with
+  its focus events and with its other events (since 2026-10-10: it had
+  counted among the focus events alone, and File Explorer's focus events
+  after a folder window's foreground event crowded the event out); events from a window the system
   reports hung are dropped before any read; within a batch only the
   newest foreground change and the newest focus are handled, falling
   back to up to three older focus events when the newest cannot be

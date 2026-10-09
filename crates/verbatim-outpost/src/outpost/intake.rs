@@ -8,8 +8,10 @@
 //! - A batch is everything that accumulated while the worker handled the
 //!   previous batch.
 //! - Per batch, the newest 4 focus events and the newest 10 other events per
-//!   application UI thread are kept; the focused object's events are always
-//!   kept, and so are queries and housekeeping entries. A newer list of the
+//!   application UI thread are kept; a foreground change counts among both
+//!   and is kept by either, as NVDA's limiter keeps it; the focused
+//!   object's events are always kept, and so are queries and housekeeping
+//!   entries. A newer list of the
 //!   nodes Core holds replaces a waiting one.
 //! - Events from a window the system reports as hung are dropped before any
 //!   read.
@@ -719,7 +721,19 @@ fn admit(
             _ if of_focus => true,
             Category::Focus => {
                 focus_kept += 1;
-                focus_kept <= FOCUS_EVENTS_PER_BATCH
+                let among_focus = focus_kept <= FOCUS_EVENTS_PER_BATCH;
+                if matches!(item.key, Some(Key::Foreground(_))) {
+                    // A foreground change is also one of its thread's other
+                    // events, as NVDA's limiter caches a foreground event
+                    // with both its focus events and its other events
+                    // (`orderedWinEventLimiter.py`, `addEvent`), so newer
+                    // focus events do not crowd it out.
+                    let count = per_thread.entry(item.thread).or_default();
+                    *count += 1;
+                    among_focus || *count <= EVENTS_PER_THREAD
+                } else {
+                    among_focus
+                }
             }
             Category::Other => {
                 let count = per_thread.entry(item.thread).or_default();
@@ -732,7 +746,16 @@ fn admit(
     waiting
         .into_iter()
         .zip(keep)
-        .filter_map(|(item, keep)| keep.then_some(item))
+        .filter_map(|(item, keep)| {
+            if !keep && item.category == Category::Focus {
+                tracing::debug!(
+                    trace = %item.entry.trace,
+                    key = ?item.key,
+                    "focus event dropped by the batch limits"
+                );
+            }
+            keep.then_some(item)
+        })
         .collect()
 }
 
@@ -1000,6 +1023,36 @@ mod tests {
             observed(&planned),
             vec![3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 50]
         );
+    }
+
+    #[test]
+    fn a_foreground_change_is_kept_behind_newer_focus_events() {
+        let focus = |child: i32, at: u64| {
+            fact(
+                DeliveredFact::MsaaFocus {
+                    hwnd: 9,
+                    id_object: -4,
+                    id_child: child,
+                },
+                at,
+            )
+        };
+        let waiting = vec![
+            focus(1, 1),
+            fact(DeliveredFact::Foreground { hwnd: 9 }, 2),
+            focus(3, 3),
+            focus(4, 4),
+            focus(5, 5),
+            focus(6, 6),
+        ];
+        let kept: Vec<u64> = admit(waiting, None, never_hung)
+            .iter()
+            .map(|item| item.entry.observed_at_ms)
+            .collect();
+        // Four newer focus events fill the focus limit; the foreground
+        // change is kept as one of its thread's other events, and the
+        // oldest focus is dropped.
+        assert_eq!(kept, vec![2, 3, 4, 5, 6]);
     }
 
     #[test]

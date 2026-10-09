@@ -132,7 +132,8 @@ Public API:
     kind, a newer one replacing it and moving to the back; a batch is
     everything that accumulated while the worker handled the previous one;
     per batch the newest 4 focus events and the newest 10 other events per
-    application UI thread are kept, the focused object's events always;
+    application UI thread are kept, the focused object's events always,
+    and a foreground change by either limit, since it counts among both;
     events from a window the system reports hung (`IsHungAppWindow`) are
     dropped before any read; and within a batch only the newest foreground
     change and the newest focus are handled, with the newest menu opening
@@ -467,7 +468,12 @@ Implementation notes:
   application itself, such as File Explorer's as it creates its window,
   which the system's own event follows (`docs/parity.md`, "Stale focus
   events"). The intake held such a batch for up to 250 ms, checking every
-  10 ms, until then. A foreground window not yet shown waits for its show
+  10 ms, until then. The batch limits keep a foreground fact as one of
+  its thread's other events as well as one of the focus events, as NVDA's
+  limiter does, so the focus events an application raises after it do
+  not crowd the system's event out (`phase6-design.md`, "A foreground
+  event before its window is in front"). A foreground window not yet
+  shown waits for its show
   event (`WinEventKind::WindowShown`, the outpost's own process-scoped
   hook, never dropped by the limiter) and is reported then, its name read
   then, or just before a focus inside it that comes first; a newer
