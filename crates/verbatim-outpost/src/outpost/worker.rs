@@ -485,6 +485,21 @@ fn is_terminal_output_notification(
 /// did not hear the clock's own name change each minute, which one on the
 /// clock and one on the taskbar's subtree did (`docs/parity.md`, "UIA
 /// event registration").
+/// Whether `hwnd` is one of the shell's windows that take the focus or the
+/// foreground only while a switch is staged: the Alt+Tab switcher's and
+/// Task View's staging windows, the Windows+X menu's host, and the desktop
+/// shell's application manager window. NVDA's File Explorer app module
+/// ignores focus on them (`appModules/explorer.py` lines 443 to 449,
+/// issues 5116 and 8137), and so does an outpost: on Alt+Tab, Explorer's
+/// `ForegroundStaging` window takes the focus with no name, and was said as
+/// "pane" before the window switched to.
+fn is_shell_transition_window(hwnd: isize) -> bool {
+    matches!(
+        window_class_name(hwnd).as_str(),
+        "ForegroundStaging" | "LauncherTipWnd" | "ApplicationManager_DesktopShellWindow"
+    )
+}
+
 fn following(
     element: Option<
         windows::core::AgileReference<windows::Win32::UI::Accessibility::IUIAutomationElement>,
@@ -2185,6 +2200,24 @@ impl Worker<'_> {
 
     /// A focus fact routed from the listener.
     fn fact(&mut self, fact: DeliveredFact, trace: TraceId, observed_at_ms: u64) {
+        let focus_window = match &fact {
+            DeliveredFact::Foreground { hwnd } | DeliveredFact::MsaaFocus { hwnd, .. } => {
+                Some(*hwnd)
+            }
+            DeliveredFact::UiaFocus {
+                hwnd, focus_window, ..
+            } => Some(if *hwnd != 0 { *hwnd } else { *focus_window }),
+            _ => None,
+        };
+        if let Some(hwnd) = focus_window
+            && is_shell_transition_window(hwnd)
+        {
+            tracing::debug!(
+                hwnd,
+                "focus dropped: a shell window that only stages a switch"
+            );
+            return;
+        }
         match fact {
             DeliveredFact::Foreground { hwnd } => self.foreground(hwnd, trace, observed_at_ms),
             DeliveredFact::MsaaFocus {

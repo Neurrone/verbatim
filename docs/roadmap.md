@@ -133,8 +133,6 @@ in the dated section named with each item.
     removed once the focus's element is found from its own events (the
     foreground checks went on 2026-10-09, `phase6-design.md`,
     "Foreground events against the foreground window").
-  - The two-window terminal scenarios switch windows with Alt+Tab, as a
-    user does.
   - Rows and lines are no longer mixed in the terminal screen read.
   - Tests for Up Arrow followed by typing, a line key during a flood, and
     UIA text fields read by parts.

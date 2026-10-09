@@ -866,6 +866,15 @@ verified.
   once, and when that names a child by id that has the focused state,
   reports the child instead, with the object as its ancestor (`mockapp`'s
   `focus_reports` test and the `theme_panel` scenario).
+- The shell's staging windows. On Alt+Tab, Task View, and the Windows+X
+  menu, File Explorer gives the focus or the foreground to windows that
+  only stage the switch (`ForegroundStaging`, `LauncherTipWnd`,
+  `ApplicationManager_DesktopShellWindow`), with no name. NVDA's File
+  Explorer app module ignores focus on them (`appModules/explorer.py`
+  lines 443 to 449). Verbatim: **matched since 2026-10-09**: the outpost
+  drops a focus or foreground fact on such a window; before, Alt+Tab
+  between two terminal windows was sometimes said as "pane" before the
+  window switched to (the two-window scenarios).
 
 ## Object navigation and review
 

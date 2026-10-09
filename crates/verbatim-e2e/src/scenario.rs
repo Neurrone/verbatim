@@ -880,6 +880,51 @@ impl Scenario {
         )
     }
 
+    /// Switches to the window titled with `marker`, one the scenario opened
+    /// that another has since taken the foreground from, with Alt+Tab, as a
+    /// user does, and waits on window events until it is in front: a user
+    /// activating a window already open (Dickson, 2026-10-09, coherence
+    /// review). Alt+Tab goes to the window behind the foreground window, so
+    /// that window, the first shown one behind it in Z order, must be the
+    /// one titled with `marker`, and nothing is pressed otherwise: the keys
+    /// never reach a window the scenario did not open.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a request fails, the window behind the
+    /// foreground window is not the one titled with `marker`, or it does
+    /// not take the foreground in time.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an utterance no assertion matched is waiting.
+    pub fn switch_with_alt_tab(&mut self, marker: &str) -> io::Result<()> {
+        let desktop = self.agent.foreground_info()?;
+        let behind = desktop.foreground.as_ref().and_then(|front| {
+            desktop
+                .windows
+                .iter()
+                .skip_while(|window| window.window != front.window)
+                .skip(1)
+                .find(|window| !window.cloaked)
+        });
+        if !behind.is_some_and(|window| window.title.contains(marker) && !window.minimized) {
+            return Err(io::Error::other(format!(
+                "Alt+Tab would not reach the window titled {marker:?}, which must be the restored window just behind the foreground window: {}",
+                describe_foreground(&desktop)
+            )));
+        }
+        self.send_keys(&["alt+tab"])?;
+        self.wait_for(
+            WindowCondition::Foreground {
+                title_contains: marker.to_owned(),
+                unsaved: None,
+            },
+            WINDOW_TIMEOUT,
+            &format!("{marker} to be in front after Alt+Tab"),
+        )
+    }
+
     /// Saves the harness document `name` with Control+S, as its window is
     /// in front with unsaved changes, and waits, on its title changing,
     /// until the title no longer marks them.

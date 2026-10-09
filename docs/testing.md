@@ -57,5 +57,5 @@ Where a scenario exists for two targets, each target's scenario is its own code:
 
 ## The harness does not change what it measures
 
-- The harness injects only the input the scenario is about. It never taps keys, or uses Alt+Tab, to bring a window forward; a window that refuses the foreground fails the test.
+- The harness injects only the input the scenario is about. It never taps keys, or uses Alt+Tab, to bring a window forward; a window that refuses the foreground fails the test. Where switching windows is what a scenario is about, as in the two-window scenarios, Alt+Tab is that scenario's input, pressed only once the harness has checked that the window it switches to is the one Alt+Tab reaches (Dickson, 2026-10-09).
 - Every scenario starts from the same state: all windows minimized to the desktop, whether the run is recorded or not. Recording and other instrumentation change nothing else about the desktop or the load a run sees.

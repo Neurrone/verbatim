@@ -5,13 +5,17 @@
 //! setup is described in the `terminal` module.
 //!
 //! NVDA was captured first on each (2026-10-09, an NVDA alpha build,
-//! alpha-57645, with the same start script). Switching to another window,
-//! as clicking its taskbar button does, NVDA says the window's title and
-//! "window", then the terminal with the line the caret is on: "<title>
-//! terminal ready>" in Windows Terminal, whose text area is named for its
-//! tab, and "terminal ready>" in the console host, whose text area's name
-//! NVDA drops. Verbatim says the same, the terminal and its line as two
-//! utterances.
+//! alpha-57645, with the same start script). The scenarios switch between
+//! the two windows with Alt+Tab, as a user does (Dickson, 2026-10-09,
+//! coherence review), once the harness has checked that the window Alt+Tab
+//! reaches is the scenario's other window (`Scenario::switch_with_alt_tab`).
+//! Switching with Alt+Tab, captured again the same day, NVDA says the
+//! window's title and "window", then the terminal with the line the caret
+//! is on: "<title> terminal ready>" in Windows Terminal, whose text area is
+//! named for its tab, and "terminal ready>" in the console host, whose text
+//! area's name NVDA drops; Windows Terminal's line it left out in two of
+//! three switches. Verbatim says the same, the terminal and its line as two
+//! utterances, the line always.
 //!
 //! The second tab is opened in the running window from the command line
 //! (`WindowsTerminal.exe -w 0 new-tab`), as the first window was: opened
@@ -123,8 +127,8 @@ fn leave_steps(
     let playing = scenario.speech().expect_started(&line(1));
     let queued = scenario.speech().expect_queued(&[&line(2), &line(3)]);
     scenario
-        .bring_window_forward(second)
-        .expect("brings the second window forward");
+        .switch_with_alt_tab(second)
+        .expect("switches to the second window with Alt+Tab");
     scenario.speech().expect_ended(&playing, Ending::Cancelled);
     for heard in &queued {
         scenario.speech().expect_ended(heard, Ending::Cancelled);
@@ -138,8 +142,8 @@ fn leave_steps(
         .expect("the flood writes the rest");
     scenario.expect_nothing_more();
     scenario
-        .bring_window_forward(first)
-        .expect("brings the first window back");
+        .switch_with_alt_tab(first)
+        .expect("switches back to the first window with Alt+Tab");
     scenario.speech().expect(first_back);
     scenario
         .write_agent_file(&format!(r"{directory}\end"), b"")
@@ -174,8 +178,8 @@ pub(crate) fn body_leave_console_host(scenario: &mut Scenario, state: &mut Scena
         &[&format!("{second} window"), "terminal", "blank"],
     );
     scenario
-        .bring_window_forward(&first)
-        .expect("brings the first window forward");
+        .switch_with_alt_tab(&first)
+        .expect("switches to the first window with Alt+Tab");
     scenario
         .speech()
         .expect(&[&format!("{first} window"), "terminal", PROMPT]);
@@ -212,8 +216,8 @@ pub(crate) fn body_leave_windows_terminal(scenario: &mut Scenario, state: &mut S
         &[&format!("{second} window"), &format!("{second} terminal")],
     );
     scenario
-        .bring_window_forward(&first)
-        .expect("brings the first window forward");
+        .switch_with_alt_tab(&first)
+        .expect("switches to the first window with Alt+Tab");
     scenario.speech().expect(&[
         &format!("{first} window"),
         &format!("{first} terminal"),
@@ -283,16 +287,16 @@ pub(crate) fn body_two_console_host(scenario: &mut Scenario, state: &mut Scenari
         &[&format!("{second} window"), "terminal", "blank"],
     );
     scenario
-        .bring_window_forward(&first)
-        .expect("brings the first window forward");
+        .switch_with_alt_tab(&first)
+        .expect("switches to the first window with Alt+Tab");
     scenario
         .speech()
         .expect(&[&format!("{first} window"), "terminal", PROMPT]);
     terminal::type_with_echo(scenario, "echo hi", terminal::Echo::Shown);
     scenario.speech().expect(&["hi", PROMPT]);
     scenario
-        .bring_window_forward(&second)
-        .expect("brings the second window forward");
+        .switch_with_alt_tab(&second)
+        .expect("switches to the second window with Alt+Tab");
     scenario
         .speech()
         .expect(&[&format!("{second} window"), "terminal", PROMPT]);
@@ -321,8 +325,8 @@ pub(crate) fn body_two_windows_terminal(scenario: &mut Scenario, state: &mut Sce
         &[&format!("{second} window"), &format!("{second} terminal")],
     );
     scenario
-        .bring_window_forward(&first)
-        .expect("brings the first window forward");
+        .switch_with_alt_tab(&first)
+        .expect("switches to the first window with Alt+Tab");
     scenario.speech().expect(&[
         &format!("{first} window"),
         &format!("{first} terminal"),
@@ -331,8 +335,8 @@ pub(crate) fn body_two_windows_terminal(scenario: &mut Scenario, state: &mut Sce
     terminal::type_with_echo(scenario, "echo hi", terminal::Echo::Shown);
     scenario.speech().expect(&["hi", PROMPT]);
     scenario
-        .bring_window_forward(&second)
-        .expect("brings the second window forward");
+        .switch_with_alt_tab(&second)
+        .expect("switches to the second window with Alt+Tab");
     scenario.speech().expect(&[
         &format!("{second} window"),
         &format!("{second} terminal"),
