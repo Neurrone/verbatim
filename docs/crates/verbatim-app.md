@@ -172,10 +172,16 @@ knowing for review:
   of its own, on a thread of its own, clears it when the session ends
   (`WM_ENDSESSION`). A crash or a process ended from outside leaves it
   set, as NVDA's does.
-- `single_instance::acquire_replacing` — NVDA's algorithm: find the old
-  instance's hidden window by title, post `WM_QUIT` so its loop exits and
-  its normal teardown runs, wait four seconds, `TerminateProcess` as the
-  fallback with a further wait; then serialize startup on a named mutex
+- `single_instance::acquire_replacing` — NVDA's algorithm, but for its
+  fallback: find the old instance's hidden window by title, post
+  `WM_QUIT` so its loop exits and its normal teardown runs, and wait for
+  its process to exit, however long the teardown takes, where NVDA ends
+  it with `TerminateProcess` after four seconds (`nvda.pyw` 110 to 137):
+  ending it cut its teardown short, killing its outposts rather than
+  shutting them down and leaving the screen reader flag set, and the exit
+  of its process is
+  the evidence the teardown finished (Dickson, 2026-10-09, coherence
+  review); then serialize startup on a named mutex
   (an abandoned mutex — a crashed predecessor — still grants ownership,
   with a warning). `ChangeWindowMessageFilter` lets a future
   lower-integrity replacer's quit message through.

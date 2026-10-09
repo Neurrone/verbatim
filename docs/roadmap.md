@@ -137,8 +137,6 @@ in the dated section named with each item.
     user does.
   - File Explorer is announced once its window is shown and titled, and
     launched without the agent's foreground right.
-  - A second Verbatim waits for the first one's clean shutdown instead of
-    ending it after 4 seconds.
   - Rows and lines are no longer mixed in the terminal screen read.
   - Tests for Up Arrow followed by typing, a line key during a flood, and
     UIA text fields read by parts.

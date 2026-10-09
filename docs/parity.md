@@ -2172,6 +2172,16 @@ verified.
   both terminals); `PSReadLine`'s keys, MenuComplete (Control+Space)
   among them, then need `Import-Module PSReadLine`, as the notice says,
   and behave as before once it is imported.
+- Replacing a running instance. NVDA finds the running NVDA's window,
+  posts it `WM_QUIT`, waits four seconds for its process to exit, and
+  ends it with `TerminateProcess` if it has not (`nvda.pyw` lines 110 to
+  137). Verbatim: **deliberately different since 2026-10-09** (coherence
+  review): it posts `WM_QUIT` the same way and then waits for the old
+  process to exit, however long its teardown takes, and never ends it:
+  ended, the old instance's teardown was cut short, so its outposts were
+  killed with it rather than shut down and the screen reader flag was
+  left set. A Verbatim whose teardown never finishes
+  keeps the new one waiting until it is ended by hand.
 - Vision framework (focus highlight, screen curtain, magnifier),
   OCR, secure screens, remote access: all **not yet** (M8 for OCR
   and secure desktop, M12 remote); references [The vision framework](nvda/vision.md),

@@ -1,13 +1,20 @@
 //! Single-instance startup: a newly started Verbatim replaces any running
-//! instance, following NVDA's algorithm (`nvda/source/nvda.pyw`).
+//! instance, following NVDA's algorithm (`nvda/source/nvda.pyw`) but for
+//! its fallback.
 //!
 //! Two mechanisms cooperate. First, the new process finds the old instance's
 //! hidden main window by title, checks that the window's process runs
 //! Verbatim's executable, posts `WM_QUIT` so its GUI loop exits and its
-//! normal teardown runs, waits up to four seconds, and falls back to
-//! `TerminateProcess` with a further two-second wait. Second, a named mutex
-//! serializes full startup, so the new instance does not proceed until the
-//! old one's teardown has released it (or abandoned it by dying).
+//! normal teardown runs, and waits for its process to exit, however long
+//! the teardown takes. NVDA ends a process that has not exited after four
+//! seconds with `TerminateProcess` (`nvda.pyw` lines 110 to 137); Verbatim
+//! never does, since that cut the old instance's teardown short, killing
+//! its outposts rather than shutting them down and leaving the screen
+//! reader flag set, and the process's exit is the evidence that the
+//! teardown finished (Dickson, 2026-10-09, coherence review). Second, a
+//! named mutex serializes full startup, so the new instance does not
+//! proceed until the old one's teardown has released it (or abandoned it by
+//! dying).
 //!
 //! The mutex name has no per-desktop suffix yet; the secure-desktop instance
 //! that needs one arrives in milestone M8.
@@ -20,9 +27,8 @@ use windows::Win32::Foundation::{
     CloseHandle, HANDLE, HWND, WAIT_ABANDONED, WAIT_OBJECT_0, WPARAM,
 };
 use windows::Win32::System::Threading::{
-    CreateMutexW, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-    PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, QueryFullProcessImageNameW, TerminateProcess,
-    WaitForSingleObject,
+    CreateMutexW, INFINITE, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    PROCESS_SYNCHRONIZE, QueryFullProcessImageNameW, WaitForSingleObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     ChangeWindowMessageFilter, FindWindowExW, GetWindowThreadProcessId, MSGFLT_ADD, PostMessageW,
@@ -38,10 +44,6 @@ const WINDOW_TITLE: &str = "Verbatim";
 /// The named mutex serializing startup.
 const MUTEX_NAME: PCWSTR = w!(r"Local\Verbatim");
 
-/// How long the old instance gets to exit cleanly after `WM_QUIT`.
-const GRACEFUL_EXIT_MS: u32 = 4000;
-/// How long the old instance gets after `TerminateProcess`.
-const TERMINATE_WAIT_MS: u32 = 2000;
 /// How long to wait for the startup mutex.
 const MUTEX_WAIT_MS: u32 = 2000;
 
@@ -95,7 +97,7 @@ pub fn acquire_replacing() -> io::Result<InstanceGuard> {
 }
 
 /// Finds a running instance's hidden main window and shuts that instance
-/// down: `WM_QUIT` first, `TerminateProcess` as the fallback. A no-op when no
+/// down with `WM_QUIT`, waiting for its process to exit. A no-op when no
 /// instance is running.
 ///
 /// The title alone is not Verbatim's: Windows matches it without regard to
@@ -141,7 +143,7 @@ fn shut_down_if_verbatim(hwnd: HWND, own_name: &std::ffi::OsStr) -> bool {
     // SAFETY: opening a process by id; the handle is closed on every path.
     let opened = unsafe {
         OpenProcess(
-            PROCESS_SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+            PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
             false,
             pid,
         )
@@ -165,14 +167,16 @@ fn shut_down_if_verbatim(hwnd: HWND, own_name: &std::ffi::OsStr) -> bool {
                 windows::Win32::Foundation::LPARAM(0),
             )
         };
-        // SAFETY: waiting on the process through its open handle.
-        if unsafe { WaitForSingleObject(process, GRACEFUL_EXIT_MS) } != WAIT_OBJECT_0 {
-            tracing::warn!(old_pid = pid, "old instance ignored WM_QUIT; terminating");
-            // SAFETY: the open handle, with terminate access, of the process
-            // just identified as a Verbatim.
-            let _ = unsafe { TerminateProcess(process, 1) };
-            // SAFETY: as for the wait above.
-            let _ = unsafe { WaitForSingleObject(process, TERMINATE_WAIT_MS) };
+        tracing::info!(
+            old_pid = pid,
+            "waiting for the running instance's teardown to finish"
+        );
+        // SAFETY: waiting on the process through its open handle, with
+        // synchronize access; it is signalled when the process exits.
+        if unsafe { WaitForSingleObject(process, INFINITE) } == WAIT_OBJECT_0 {
+            tracing::info!(old_pid = pid, "the running instance has exited");
+        } else {
+            tracing::warn!(old_pid = pid, "waiting for the running instance failed");
         }
     }
     // SAFETY: `process` is the handle opened above, closed once.
