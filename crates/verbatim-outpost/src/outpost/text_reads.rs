@@ -269,7 +269,7 @@ fn note_fallback(context: &Context, source: &mut UiaText) {
 
 /// Whether `node_id` is the focus and in a console window, the console
 /// host's text area.
-pub(super) fn console_focus(context: &Context, node_id: NodeId) -> bool {
+fn console_focus(context: &Context, node_id: NodeId) -> bool {
     let focus_is_node = context
         .uia_registry
         .runtime_id_of(node_id)

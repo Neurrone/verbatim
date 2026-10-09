@@ -1960,23 +1960,21 @@ verified.
   tab, and "terminal" in the console host, whose text area's name both
   drop (matched; NVDA says the terminal and its line as one utterance,
   Verbatim as two). A second tab opened from the command line says
-  "<title> terminal" and then the prompt as output. **Matched since
-  2026-10-09**: Verbatim said an extra "blank" there, and as every
-  Windows Terminal window opened. NVDA reads the caret's line for a
+  "<title> terminal" and then the prompt as output; Verbatim says
+  "blank" before the prompt (**different, deliberately**: NVDA's
+  behaviour judged a bug by Dickson on 2026-10-09). A new terminal
+  window or tab says "blank" for the empty line its caret is on as it
+  takes the focus, in Windows Terminal as in the console host, as an
+  empty line says everywhere else. NVDA reads the caret's line for a
   focused terminal, "blank" for an empty one (`speech/speech.py`
-  898-917 and 1929-1933), yet in Windows Terminal it said no line for a
-  window or tab with nothing written yet in 17 of 19 captures, while the
-  console host's said "blank" in all 14; the cause in NVDA was not
-  found. Verbatim now says no line for a Windows Terminal window or tab
-  whose screen is all blank as it takes the focus (the outpost answers
-  the focus's text as none, `NoText`, before its caret), and "blank" in
-  the console host, as before. `windows_terminal_two_windows` asserts it
-  for the second window and `windows_terminal_tabs` and
-  `windows_terminal_close_tab` for the second tab. A scenario's first
-  window shows Windows PowerShell's notice that it leaves PSReadLine out
-  (Windows' screen reader flag is set) above the blank row the caret is
-  on, so its screen is not blank and Verbatim says "blank", which every
-  Windows Terminal scenario asserts as it opens. Returning to a tab or window, NVDA said its prompt
+  898-917 and 1929-1933), and says it in the console host in all 14
+  captures, yet in Windows Terminal it said no line for a window or tab
+  with nothing written yet in 17 of 19: it does not recognise the
+  terminal's focus there, which is not something to copy.
+  `windows_terminal_two_windows`, `windows_terminal_tabs` and
+  `windows_terminal_close_tab` assert "blank" for the second window
+  and the second tab, and every Windows Terminal scenario for its first
+  window. Returning to a tab or window, NVDA said its prompt
   in some captures and no line in others; Verbatim says the prompt.
   Up Arrow and a character typed at once (`*_up_typing`, captured
   live on 2026-10-09): NVDA says the character, "x", as it is typed and

@@ -1132,39 +1132,12 @@ impl Worker<'_> {
             Backend::Msaa
         };
         let window = self.context.tracking().window;
-        let terminal = after_focus && self.focused_terminal(node_id);
-        if terminal {
+        self.emit(trace, observed_at_ms, backend, window, event);
+        if after_focus && self.focused_terminal(node_id) {
             // Where the terminal's text ends now: what it held before the
             // focus arrived is not new output.
             self.terminal_event(node_id, Event::Focused, None, (trace, observed_at_ms));
-            if matches!(event, NormalizedEvent::CaretMoved { .. }) && self.nothing_written(node_id)
-            {
-                // Windows Terminal with nothing written yet, a new window
-                // or tab: no line, as NVDA says none there, where the
-                // console host says "blank".
-                self.emit(
-                    trace,
-                    observed_at_ms,
-                    backend,
-                    window,
-                    NormalizedEvent::NoText { node_id },
-                );
-            }
         }
-        self.emit(trace, observed_at_ms, backend, window, event);
-    }
-
-    /// Whether the focused terminal `node_id` is Windows Terminal's control
-    /// and its screen, just read, has nothing written on it: every row is
-    /// blank. The console host's text area is known by its window.
-    fn nothing_written(&self, node_id: NodeId) -> bool {
-        !text_reads::console_focus(self.context, node_id)
-            && self
-                .context
-                .terminals()
-                .get(&node_id.number())
-                .and_then(crate::terminal::Terminal::memory)
-                .is_some_and(|memory| memory.screen.iter().all(|line| line.trim().is_empty()))
     }
 
     /// Whether `node_id` is the focus and a terminal read through UIA, whose

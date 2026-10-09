@@ -87,8 +87,9 @@ fn burst_from(first: u32, last: u32) -> Vec<String> {
 }
 
 /// The announcement as a terminal of this scenario takes the focus with
-/// nothing written yet: Windows Terminal's, named for its tab, says no
-/// line; the console host's, whose name is dropped, says "blank".
+/// nothing written yet: Windows Terminal's names its terminal for its tab,
+/// the console host's drops the name, and both say "blank" for the empty
+/// line.
 fn opening(title: &str, windows_terminal: bool) -> Vec<String> {
     if windows_terminal {
         vec![
