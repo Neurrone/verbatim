@@ -169,9 +169,12 @@ multiple_unsafe_ops_per_block = "warn"
 [profile.dev.package.rubato]
 opt-level = 3
 
-# Third-party crates keep line tables, enough for a backtrace through them,
-# but not full debug info: their full PDBs were half the size of every build
-# (`windows` alone runs to hundreds of megabytes). Workspace crates, which
-# "*" does not match, keep full debug info.
-[profile.dev.package."*"]
+# Every crate, the workspace's own included, keeps line tables, enough for
+# a backtrace with file and line, but not full debug info, which also
+# describes types and local variables for a debugger. Full debug info made
+# PDBs over half of every build: third-party crates' (`windows` alone runs
+# to hundreds of megabytes) and, linked into each of dozens of test
+# binaries, the workspace's own. To step through code with a debugger,
+# build with `CARGO_PROFILE_DEV_DEBUG=full` set.
+[profile.dev]
 debug = "line-tables-only"

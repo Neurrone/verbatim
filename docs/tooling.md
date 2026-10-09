@@ -59,9 +59,11 @@ command builds each dependency the same way. The `windows-rs` crates are
 left out of it (`.config/hakari.toml`), because the platform-neutral crates
 depend on it too and must never pull in the Windows bindings; the root
 `Cargo.toml` asks for `windows-core` and `windows-future` exactly as
-`windows` does, so they cannot split either. Third-party crates are also
-built with line tables only, not full debug info, which roughly halves a
-build.
+`windows` does, so they cannot split either. Every crate, the workspace's
+own included, is also built with line tables only, not full debug info:
+backtraces keep file and line, and the build is a fraction of the size.
+Set `CARGO_PROFILE_DEV_DEBUG=full` for a build to step through in a
+debugger.
 
 After adding a package or changing a third-party dependency or its
 features, run:
