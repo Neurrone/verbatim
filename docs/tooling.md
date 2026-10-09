@@ -780,8 +780,11 @@ utterance was cancelled usually means something cut it off: a key press
 focus change that left the focus it announced, or interrupting speech;
 the lines just above the `cancelled` line show what. A pause or resume of
 speech (Shift) comes as a `SpeechPaused` frame, recorded as a `speech
-paused` or `speech resumed` line; a scenario asserts it on its own, apart
-from the utterances, before its next input.
+paused` or `speech resumed` line; a scenario about pausing asserts it on
+its own, apart from the utterances, after the key that caused it. Every
+Shift pressed with another key, such as Shift+Tab, pauses speech and the
+key after it resumes it, as in NVDA, so one no step asserted is left
+behind at the next input.
 
 ### Hearing and recording a run
 

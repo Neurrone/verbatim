@@ -11,8 +11,10 @@
 //! that the utterance it interrupts has started to play. A pause or resume
 //! of speech, which Verbatim reports apart from utterances, is asserted
 //! with [`SpeechCollector::expect_paused`] and
-//! [`SpeechCollector::expect_resumed`], and, like an utterance, before
-//! the next input.
+//! [`SpeechCollector::expect_resumed`] after the input that caused it.
+//! Every Shift pressed with another key, such as Shift+Tab, pauses speech
+//! and the key after it resumes it, as in NVDA, so a pause or resume no
+//! step asserted is left behind, on the timeline, at the next input.
 //!
 //! A scenario ends with [`SpeechCollector::expect_nothing_more`]: Verbatim
 //! is asked, on this same connection, to answer once it has handled the
@@ -357,8 +359,7 @@ impl SpeechCollector {
                 Absorbed::Utterance(Utterance { utterance, text })
             }
             // A pause or resume is not an utterance: it is asserted on its
-            // own, and like an utterance must be asserted before the next
-            // input.
+            // own, after the input that caused it.
             Frame::SpeechPaused { paused, .. } => {
                 self.timeline.push_paused(paused);
                 self.pauses.push_back(paused);
@@ -821,8 +822,9 @@ impl SpeechCollector {
 
     /// Reads every frame already on its way, without waiting for any to
     /// happen, and fails if any utterance read so far is unmatched: a
-    /// scenario never moves on past speech it has not asserted. Called
-    /// before every input the harness injects.
+    /// scenario never moves on past speech it has not asserted. Pauses and
+    /// resumes no step asserted are left behind. Called before every input
+    /// the harness injects.
     ///
     /// # Panics
     ///
@@ -842,16 +844,12 @@ impl SpeechCollector {
         if let Err(error) = drained.and(restored) {
             self.fail(&format!("the speech connection failed: {error}"));
         }
-        if !self.pauses.is_empty() {
-            let unmatched: Vec<&str> = self
-                .pauses
-                .iter()
-                .map(|paused| if *paused { "paused" } else { "resumed" })
-                .collect();
-            self.fail(&format!(
-                "harness error: pauses and resumes no assertion matched were waiting {when}: {unmatched:?}"
-            ));
-        }
+        // A pause or resume no step asserted is left behind here, on the
+        // timeline: every Shift pressed with another key pauses speech,
+        // which the key after it resumes, as in NVDA, and only a step
+        // about pausing asserts it. So a pause asserted after an input
+        // is one that input caused.
+        self.pauses.clear();
         if let Some(first) = self.pending.front() {
             let unmatched: Vec<&str> = self.pending.iter().map(|u| u.text.as_str()).collect();
             self.fail_at(
@@ -1148,13 +1146,14 @@ mod tests {
     }
 
     #[test]
-    fn an_input_injected_past_an_unasserted_pause_is_a_harness_error() {
+    fn a_pause_no_step_asserted_is_left_behind_at_the_next_input() {
         let mut speech = collector(vec![Frame::SpeechPaused {
             paused: true,
             at_ms: 0,
         }]);
-        let message = fails(move || speech.require_all_asserted("before keys shift"));
-        assert!(message.contains("harness error"), "{message}");
+        speech.require_all_asserted("before keys tab");
+        let message = fails(move || speech.expect_paused());
+        assert!(message.contains("was not paused"), "{message}");
     }
 
     #[test]
