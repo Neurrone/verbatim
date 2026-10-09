@@ -13,11 +13,13 @@
 //!   nodes Core holds replaces a waiting one.
 //! - Events from a window the system reports as hung are dropped before any
 //!   read.
-//! - Within a batch only the newest foreground change and the newest focus
-//!   from each backend are handled (the worker's arbitration then drops the
-//!   one whose backend does not own the window, as NVDA's separate MSAA and
-//!   UIA limiters do), and the newest menu opening from each backend is
-//!   handled last.
+//! - Within a batch only the newest foreground change is handled; MSAA's
+//!   focus events are tried newest first until one is reported, as NVDA's
+//!   MSAA handler does, while every UIA focus event is handled in turn,
+//!   oldest first, as NVDA's UIA handler queues each one (the worker's
+//!   arbitration then drops a focus whose backend does not own the window,
+//!   as NVDA's separate MSAA and UIA paths do); and the newest menu opening
+//!   from each backend is handled last.
 //! - A focus change is never kept waiting behind reads of other objects
 //!   ([`overtaken`]): within a batch that holds a foreground change or a
 //!   focus, the events of objects that are neither the focus nor the
@@ -741,7 +743,8 @@ fn admit(
 
 /// Plans one batch from everything that was waiting, oldest first: drops
 /// events from hung windows, applies the batch limits, keeps only the newest
-/// foreground change and the newest focus from each backend, moves the
+/// foreground change, tries MSAA's focus events newest first until one is
+/// reported, handles each UIA focus event in turn, moves the
 /// newest menu opening after them, and, when the batch changes the focus,
 /// the events it overtakes after all of those ([`overtaken`]). A state
 /// change on an ancestor judged against the focus (`judged`) that was
@@ -812,8 +815,8 @@ fn plan(
             .filter_map(|&index| slots[index].take())
             .collect()
     };
-    let msaa_group = take_group(&msaa_candidates);
-    let uia_group = take_group(&uia_candidates);
+    let msaa_group = msaa_focus_plan(take_group(&msaa_candidates));
+    let uia_group = uia_focus_plan(take_group(&uia_candidates));
     let mut groups = vec![(msaa_focus, msaa_group), (uia_focus, uia_group)];
     for (index, item) in rest {
         let observed_before = change_observed
@@ -824,8 +827,8 @@ fn plan(
             continue;
         }
         for (newest, group) in &mut groups {
-            if newest.is_some_and(|newest| newest < index) && !group.is_empty() {
-                planned.push(Planned::Focus(std::mem::take(group)));
+            if newest.is_some_and(|newest| newest < index) {
+                planned.append(group);
             }
         }
         match &item.key {
@@ -853,14 +856,36 @@ fn plan(
             _ => planned.push(Planned::Run(item.entry)),
         }
     }
-    for (_, group) in groups {
-        if !group.is_empty() {
-            planned.push(Planned::Focus(group));
-        }
+    for (_, mut group) in groups {
+        planned.append(&mut group);
     }
     planned.extend(deferred.into_iter().map(Planned::Menu));
     planned.extend(after_focus.into_iter().map(Planned::Run));
     planned
+}
+
+/// How a batch's MSAA focus candidates, newest first, are handled: tried
+/// newest first until one is reported, as NVDA's MSAA handler processes a
+/// pump's focus events in reverse and stops at the first valid one.
+fn msaa_focus_plan(candidates: Vec<Entry>) -> Vec<Planned> {
+    if candidates.is_empty() {
+        Vec::new()
+    } else {
+        vec![Planned::Focus(candidates)]
+    }
+}
+
+/// How a batch's UIA focus candidates, newest first, are handled: each in
+/// turn, oldest first, as NVDA's UIA handler queues every focus event it
+/// accepts and its event pump runs them in order; the speech of a focus
+/// that has already moved on is culled as it expires (Windows Terminal's
+/// tabs, as Control+Tab moves the focus through them).
+fn uia_focus_plan(candidates: Vec<Entry>) -> Vec<Planned> {
+    candidates
+        .into_iter()
+        .rev()
+        .map(|entry| Planned::Focus(vec![entry]))
+        .collect()
 }
 
 #[cfg(test)]
@@ -1048,6 +1073,41 @@ mod tests {
             "the newest MSAA and UIA focus both survive, so the backend that owns the window reports"
         );
         assert!(matches!(planned.last(), Some(Planned::Menu(_))));
+    }
+
+    #[test]
+    fn every_uia_focus_of_a_batch_is_handled_oldest_first() {
+        // Control+Tab in Windows Terminal: the tab the focus leaves, the tab
+        // it moves to, and that tab's terminal, in one batch.
+        let uia = |runtime_id: i32, observed_at_ms: u64| {
+            fact(
+                DeliveredFact::UiaFocus {
+                    hwnd: 3,
+                    focus_window: 0,
+                    snapshot: UiaSnapshotFact {
+                        runtime_id: vec![42, runtime_id],
+                        role: verbatim_model::Role::ListItem,
+                        name: None,
+                        value: None,
+                        states: verbatim_model::StateSet::new(),
+                        details: verbatim_model::NodeDetails::default(),
+                    },
+                },
+                observed_at_ms,
+            )
+        };
+        let planned = plan(
+            vec![uia(1, 1), uia(2, 2), uia(3, 3)],
+            (None, &[]),
+            never_hung,
+        );
+        assert_eq!(observed(&planned), vec![1, 2, 3]);
+        assert!(
+            planned
+                .iter()
+                .all(|planned| matches!(planned, Planned::Focus(entries) if entries.len() == 1)),
+            "each is handled on its own, not as a fallback for a newer one"
+        );
     }
 
     #[test]

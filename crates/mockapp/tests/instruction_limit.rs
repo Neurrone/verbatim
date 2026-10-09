@@ -191,6 +191,7 @@ fn focus_and_navigation_execute_exactly() {
         depth_limit: 64,
         properties: CACHED_PROPERTIES,
         deadline: None,
+        require_focus: true,
     };
     let ancestry = |query: &FocusQuery<'_>| {
         let answer = focus_ancestry_remote(&fixture.uia, query).expect("the program runs");

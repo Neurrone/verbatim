@@ -16,9 +16,9 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationCondition, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationSelectionItemPattern, IUIAutomationSelectionPattern, IUIAutomationTogglePattern,
     IUIAutomationTreeWalker, TreeScope, TreeScope_Children, TreeScope_Element, TreeScope_Subtree,
-    UIA_InvokePatternId, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId,
-    UIA_Selection2FirstSelectedItemPropertyId, UIA_SelectionItemPatternId, UIA_SelectionPatternId,
-    UIA_TogglePatternId,
+    UIA_InvokePatternId, UIA_NamePropertyId, UIA_PROPERTY_ID, UIA_PositionInSetPropertyId,
+    UIA_RuntimeIdPropertyId, UIA_Selection2FirstSelectedItemPropertyId, UIA_SelectionItemPatternId,
+    UIA_SelectionPatternId, UIA_SizeOfSetPropertyId, UIA_TogglePatternId,
 };
 
 use windows::core::Interface;
@@ -307,6 +307,39 @@ impl Uia {
         let variant = unsafe { InitVariantFromInt32Array(runtime_id) }?;
         let condition = self.property_condition(UIA_RuntimeIdPropertyId, &variant)?;
         // The search walks the subtree under the caller's `root`.
+        root.find_first_build_cache(TreeScope_Subtree, &condition, cache)
+    }
+
+    /// The first element inside `root`'s subtree named `name` at
+    /// `position` of `size` in its set, rebuilt with `cache`; `Ok(None)`
+    /// when none is. For an element known only from an event that named it
+    /// so, whose runtime id no element of the tree has: Windows Terminal
+    /// raises its tabs' focus events from elements other than the tabs in
+    /// its tree. Cross-process; the outpost's worker only.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if building the condition or the search fails
+    /// for a reason other than finding nothing.
+    pub fn element_by_name_and_position(
+        &self,
+        root: &IUIAutomationElement,
+        name: &str,
+        (position, size): (i32, i32),
+        cache: &IUIAutomationCacheRequest,
+    ) -> windows::core::Result<Option<IUIAutomationElement>> {
+        let name = self.property_condition(
+            UIA_NamePropertyId,
+            &VARIANT::from(windows::core::BSTR::from(name)),
+        )?;
+        let position =
+            self.property_condition(UIA_PositionInSetPropertyId, &VARIANT::from(position))?;
+        let size = self.property_condition(UIA_SizeOfSetPropertyId, &VARIANT::from(size))?;
+        // SAFETY: `self.client` is a live IUIAutomation and the conditions
+        // live conditions from it, which the call keeps references to.
+        let placed = unsafe { self.client.CreateAndCondition(&position, &size) }?;
+        // SAFETY: as above.
+        let condition = unsafe { self.client.CreateAndCondition(&name, &placed) }?;
         root.find_first_build_cache(TreeScope_Subtree, &condition, cache)
     }
 

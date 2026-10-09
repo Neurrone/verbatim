@@ -1423,6 +1423,7 @@ fn uia_selected_children_cost_exactly() {
                     depth_limit: 64,
                     properties: CACHED_PROPERTIES,
                     deadline: None,
+                    require_focus: true,
                 },
                 true,
             )

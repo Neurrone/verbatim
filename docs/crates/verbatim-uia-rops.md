@@ -147,8 +147,11 @@ properties to cache on every returned element
 (`verbatim_uia::CACHED_PROPERTIES`, so they match what the snapshot code
 reads), and a deadline, which only the classic walk checks, between hops.
 Both answer `FocusAncestry::NotFocused` when a
-live read of the element's `HasKeyboardFocus` is false (NVDA's check
-that a focus event is not stale), and otherwise an `Ancestry`. A query
+live read of the element's `HasKeyboardFocus` is false and the query's
+`require_focus` asks for it (NVDA's check that a focus event is not
+stale), and otherwise an `Ancestry`; a query without `require_focus` is
+for an element whose focus event said it had the focus, which has moved
+on since, and reads its ancestry all the same. A query
 may also name `previous`, the element the caller holds under the focused
 element's runtime id, whose `HasKeyboardFocus` is read live too: an
 application can give a dead element's runtime id to a new one (File

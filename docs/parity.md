@@ -1987,27 +1987,39 @@ verified.
   its output after a switch are echoed and spoken as in any terminal
   (matched). An earlier report that Verbatim left the window's title out
   of a console's terminal was not borne out: NVDA leaves it out too.
-  **Different, being fixed to match NVDA** (the difference had been
-  recorded as deliberate and was withdrawn by Dickson on 2026-10-09 in
-  the coherence review: Control+Tab is to announce the tab, "list", the
-  tab's name and "1 of 2", as NVDA does): switching tabs with Control+Tab
-  or Control+Shift+Tab, NVDA says "list" and the tab ("<title> 1 of 2", and on Control+Tab from
-  the first tab sometimes the tab it left as well), then "<title>
-  terminal" and the line; Verbatim says only "<title> terminal" and the
-  line. Windows Terminal gives the tab the keyboard focus only until it
-  moves it to the tab's terminal, a few milliseconds later. NVDA judges a
-  UIA focus event by the sender's keyboard focus as its event thread
-  receives it (`IUIAutomationFocusChangedEventHandler_HandleFocusChangedEvent`
+  Switching tabs with Control+Tab or Control+Shift+Tab: **matched since
+  2026-10-09, but for two differences** (the earlier deliberate
+  difference was withdrawn by Dickson on 2026-10-09 in the coherence
+  review). Windows Terminal gives the tab the keyboard focus only until it
+  moves it to the tab's terminal, a few milliseconds later, and on
+  Control+Tab gives it first to the tab it leaves. NVDA, captured live
+  on 2026-10-09, queued "list" and the tab ("<title> 1 of 2"; on
+  Control+Tab the tab it left, then "<title> two 2 of 2"), then "<title>
+  terminal", and culls a focus's speech once the focus has moved on. NVDA
+  judges a UIA focus event by the sender's keyboard focus as its event
+  thread receives it (`IUIAutomationFocusChangedEventHandler_HandleFocusChangedEvent`
   and `shouldAllowUIAFocusEvent`, `nvda/source/UIAHandler/__init__.py`
   lines 948 to 953 and `nvda/source/NVDAObjects/UIA/__init__.py` lines
-  1632 to 1637), so the tab is still focused; Verbatim's outpost judges it
-  as it handles the event, by when the focus has moved on, and drops it
-  ("another element has the keyboard focus"), speaking only where the
-  focus lands. Whether a reader hears the tab depends on that race;
-  NVDA's own capture heard a tab Control+Tab passed through. The end-to-end
-  scenarios (`conhost_two_windows`, `windows_terminal_two_windows`,
-  `windows_terminal_tabs`) pin Verbatim's speech as it is today, until
-  the fix lands.
+  1632 to 1637), and queues every UIA focus event it accepts. Verbatim
+  now does the same: an outpost reports a UIA focus whose event said it
+  had the keyboard focus though another element of the application has
+  it by the time the outpost handles it, unless its element is gone, and
+  handles every UIA focus of a batch in turn, oldest first, where it had
+  handled only the newest; Core culls the speech of a focus no longer
+  current as it expires. Windows Terminal raises its tabs' focus events
+  from elements that are not in its tree, so the outpost finds the tab by
+  the name and position the event gave it, and takes its ancestors and
+  states from there, read as it handles the event, as NVDA reads them as
+  it speaks; a focus that has moved on is not followed by the
+  focus-following subscriptions. The differences that remain: the tab
+  found that way has the tab control above its list, where the event's
+  own element, as NVDA reads it, has the terminal's container, so
+  Verbatim says "tab control" before "list"; and on Control+Tab the tab
+  left is said "not selected", read after the selection has moved (both
+  to confirm with Dickson). Heard, either key says "tab control", "list",
+  "<title> terminal" and the line, the tabs' own names culled
+  (`windows_terminal_tabs`). The two-window scenarios switch windows with
+  Alt+Tab (see above).
 
   Up and Down Arrow in a terminal, a selection list a program draws
   among them: **matched since 2026-10-09** (Dickson, 2026-10-09,

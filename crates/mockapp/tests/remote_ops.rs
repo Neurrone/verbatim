@@ -132,6 +132,7 @@ fn query<'a>(element: &'a IUIAutomationElement, known: &'a [Vec<i32>]) -> FocusQ
         depth_limit: 50,
         properties: CACHED_PROPERTIES,
         deadline: None,
+        require_focus: true,
     }
 }
 

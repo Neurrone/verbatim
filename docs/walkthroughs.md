@@ -157,9 +157,11 @@ releases Alt. Notepad has no outpost yet.
      live copy. There are three outcomes (`LiveFocus`): **found**, the
      same runtime id; **in another application**, the fact is out of date
      because focus has moved on, and it is dropped, since the newer
-     focus's own event reports it; or **unresolved**, the read failed,
-     timed out, or answered with another element of Notepad (a starting
-     application can answer with a stand-in), and the focus is reported
+     focus's own event reports it; **elsewhere**, another element of
+     Notepad has the focus now, and the fact is reported as its event
+     said, its element found in its window, as NVDA judges a focus event
+     by its sender's focus as the event arrives; or **unresolved**, the
+     read failed or timed out, and the focus is reported
      from the fact alone with its ancestors unknown, while an
      `Item::ResolveFocus` follow-up, while the focus is unchanged, reads
      once more for the element, for navigation and property changes. When

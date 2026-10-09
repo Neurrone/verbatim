@@ -594,19 +594,28 @@ Implementation notes:
   (`consoleUIAWindow.shouldAllowUIAFocusEvent` is false,
   `NVDAObjects/UIA/winConsoleUIA.py` lines 356 to 358 and 446 to 447);
   taken, it was announced as a second focus beside the text area's.
-  Otherwise the focus has moved on and
-  the fact is dropped, as NVDA ignores a UIA focus event whose sender no
-  longer has the keyboard focus, read live (`shouldAllowUIAFocusEvent` in
-  `NVDAObjects/UIA/__init__.py`, lines 1632 to 1637, checked by
+  Otherwise the focus has moved on to another element of the
+  application since the event, and the fact is reported all the same, as
+  its event said (since 2026-10-09; it had been dropped): NVDA judges a
+  UIA focus event by its sender's keyboard focus as the event arrives
+  (`shouldAllowUIAFocusEvent` in `NVDAObjects/UIA/__init__.py`, lines
+  1632 to 1637, checked by
   `IUIAutomationFocusChangedEventHandler_HandleFocusChangedEvent` in
-  `UIAHandler/__init__.py`, lines 948 to 953, which returns without
-  queuing the focus); the application's next focus event reports where
-  the focus is. Until 2026-10-08 such a fact was held back and the focused
-  element read up to three times more, which could only find the stand-in
-  again; and since a held fact was looked for only while it named the
-  focus last reported, a fact for any other element was dropped at its
-  first follow-up anyway (mockapp's
-  `a_windowless_focus_that_lost_the_keyboard_focus_waits_for_the_next_focus_event`).
+  `UIAHandler/__init__.py`, lines 948 to 953), which the fact's cached
+  states carry, and the newer focus's own event follows. Its element is
+  found in its window (`element_of_moved_focus`): by its runtime id, else
+  by the name and position the event gave it, since Windows Terminal
+  raises its tabs' focus events from elements that are not in its tree;
+  its ancestors are read without requiring the keyboard focus
+  (`FocusQuery::require_focus`). It is not kept with its element, so the
+  focus-following subscriptions do not move to it; one found nowhere is
+  gone and is dropped, as File Explorer's "Working on it..." is as a
+  folder opens. The console host's window's own focus is still dropped.
+  Every
+  UIA focus of a batch is handled in turn, oldest first, as NVDA's UIA
+  handler queues each one, and Core culls the speech of those that have
+  expired (mockapp's
+  `a_focus_that_moved_on_since_its_event_is_reported_as_the_event_said`).
   For an
   element with no window of its own the listener also sends the keyboard
   focus window it found when it captured the event (`focus_window`, the

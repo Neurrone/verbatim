@@ -389,15 +389,17 @@ fn a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_
     app.quit();
 }
 
-/// A UIA focus event whose element has no window of its own and no longer
-/// has the keyboard focus when the outpost reads it is dropped, as NVDA
-/// ignores a focus event whose element no longer has the keyboard focus
-/// (`shouldAllowUIAFocusEvent`). Nothing reads it again: the application's
-/// next focus event is the evidence of where the focus is, and reports it.
-/// The event repeats the focus the outpost reported last, the one case in
-/// which the outpost held such a focus back and read the focused element
-/// up to three times more.
-fn a_windowless_focus_that_lost_the_keyboard_focus_waits_for_the_next_focus_event() {
+/// A UIA focus event whose element has no window of its own and has lost
+/// the keyboard focus to another element of the application by the time
+/// the outpost reads it is reported all the same, as its event said: NVDA
+/// judges a focus event by its sender's keyboard focus as the event
+/// arrives, which the fact carries, and announces the focus before the
+/// newer one, whose own event follows (Windows Terminal's tab, as
+/// Control+Tab moves the focus through it to the tab's terminal). The
+/// element is found by its runtime id in its window, so the focus comes
+/// with its ancestors, after one read of the focused element; the newer
+/// focus is reported from its own event.
+fn a_focus_that_moved_on_since_its_event_is_reported_as_the_event_said() {
     let title = common::unique_title("mockapp-lost-focus");
     let mut app = common::spawn("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
@@ -405,17 +407,15 @@ fn a_windowless_focus_that_lost_the_keyboard_focus_waits_for_the_next_focus_even
 
     app.send("set-focus btn1");
     let button = client.focused();
-    let reported = outpost.uia_focus(&button);
-    assert_eq!(reported.node.name.as_deref(), Some("Original Name"));
+    let ListenerFact { fact, .. } =
+        uia_focus_fact(&button).expect("mockapp's element has its process");
 
     app.send("set-focus slider1");
     let slider = client.focused();
     outpost.read_focus_as(&slider);
     let reads = outpost.focus_reads();
-    let ListenerFact { fact, .. } =
-        uia_focus_fact(&button).expect("mockapp's element has its process");
-    outpost.deliver(fact);
-    outpost.settled();
+    let reported = outpost.focus(fact);
+    assert_eq!(reported.node.name.as_deref(), Some("Original Name"));
     assert_eq!(
         outpost.focus_reads() - reads,
         1,
@@ -617,8 +617,8 @@ fn main() {
             a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_in,
         ),
         (
-            "a_windowless_focus_that_lost_the_keyboard_focus_waits_for_the_next_focus_event",
-            a_windowless_focus_that_lost_the_keyboard_focus_waits_for_the_next_focus_event,
+            "a_focus_that_moved_on_since_its_event_is_reported_as_the_event_said",
+            a_focus_that_moved_on_since_its_event_is_reported_as_the_event_said,
         ),
         (
             "a_focus_whose_element_was_not_found_is_followed_from_its_next_focus_event",

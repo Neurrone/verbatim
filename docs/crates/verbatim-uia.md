@@ -10,7 +10,10 @@ Public API:
   seconds rather than UIA's default two, so a busy application's read
   waits for its own answer instead of failing or returning UIA's stand-in
   for the window: `focused_element`,
-  `element_from_handle`, `element_by_runtime_id`, `base_cache_request`,
+  `element_from_handle`, `element_by_runtime_id`,
+  `element_by_name_and_position` (an element named so at a given position
+  in its set, for a focus event whose sender no element of the tree is, as
+  Windows Terminal's tabs' are), `base_cache_request`,
   `controlled_descendant` (the selected element, when it is inside an
   element the focus names in its ControllerFor relation), plus the M3
   node-relative operations `ancestor_chain`, `navigate`, and `activate`

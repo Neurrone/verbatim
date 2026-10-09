@@ -30,17 +30,17 @@
 //! tab start their shells without it (`-NonInteractive`) and say no
 //! line.
 //!
-//! Switching tabs with Control+Tab or Control+Shift+Tab, NVDA says "list"
-//! and the tab ("<title> 1 of 2"), which holds the keyboard focus until
-//! Windows Terminal moves it to the tab's terminal, and then "<title>
-//! terminal" with the line. Verbatim says only where the focus lands,
-//! "<title> terminal" and the line: it judges a focus event by where the
-//! keyboard focus is when its outpost handles it, a few milliseconds
-//! later, where NVDA judges it as its event thread receives it, so the tab
-//! is already behind it. This difference was recorded as deliberate and is
-//! withdrawn (Dickson, 2026-10-09, coherence review): Control+Tab is being
-//! changed to announce the tab as NVDA does, and this scenario asserts
-//! today's speech until then (`docs/parity.md`).
+//! Switching tabs with Control+Tab or Control+Shift+Tab, NVDA, captured
+//! live on 2026-10-09, queues "list" and the tab ("<title> 1 of 2"), which
+//! holds the keyboard focus until Windows Terminal moves it to the tab's
+//! terminal, then "<title> terminal"; on Control+Tab the tab left comes
+//! first, then the tab moved to ("<title> two 2 of 2"). Verbatim announces
+//! the tabs too (Dickson, 2026-10-09, coherence review): "tab control",
+//! "list" and the tab, the tab's own name culled once the terminal has the
+//! focus, then the terminal and its line; on Control+Tab the tab left says
+//! "not selected", its state once the selection has moved. "tab control"
+//! and that "not selected" are the differences that remain
+//! (`docs/parity.md`).
 //! Typing after a switch is echoed and its output spoken as in any
 //! terminal.
 //!
@@ -71,7 +71,7 @@ use super::terminal_flood::{FLOOD_STEP, line};
 use super::terminal_key_timing::FILE_SIGNALS;
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
-use crate::speech::Ending;
+use crate::speech::{Ending, cut_off, heard};
 
 /// The flood that waits halfway, and again at its end.
 const AWAY_SCRIPT: &str = "for ($line = 1; $line -le 100; $line++) { \"flood line $line\" }\r\n\
@@ -365,17 +365,26 @@ pub(crate) fn body_tabs(scenario: &mut Scenario, state: &mut ScenarioState) {
     scenario
         .send_keys(&["control+shift+tab"])
         .expect("switches to the first tab");
-    scenario
-        .speech()
-        .expect(&[&format!("{first} terminal"), PROMPT]);
+    scenario.speech().expect_sequence(&[
+        heard("tab control"),
+        heard("list"),
+        cut_off(&format!("{first} 1 of 2")),
+        heard(&format!("{first} terminal")),
+        heard(PROMPT),
+    ]);
     terminal::type_with_echo(scenario, "echo hi", terminal::Echo::Shown);
     scenario.speech().expect(&["hi", PROMPT]);
     scenario
         .send_keys(&["control+tab"])
         .expect("switches to the second tab");
-    scenario
-        .speech()
-        .expect(&[&format!("{second} terminal"), PROMPT]);
+    scenario.speech().expect_sequence(&[
+        heard("tab control"),
+        heard("list"),
+        cut_off(&format!("{first} not selected 1 of 2")),
+        cut_off(&format!("{second} 2 of 2")),
+        heard(&format!("{second} terminal")),
+        heard(PROMPT),
+    ]);
     terminal::type_with_echo(scenario, "echo yo", terminal::Echo::Shown);
     scenario.speech().expect(&["yo", PROMPT]);
 }

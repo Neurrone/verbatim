@@ -127,8 +127,7 @@ in the dated section named with each item.
     as inserted blank lines when a footer is drawn below them.
   - The flood setting's cap of 100 is raised above the terminal's
     history size, Core's 10 MB bound protecting memory.
-  - Control+Tab announces the tab ("list", the tab's name, "1 of 2") as
-    NVDA does, and a new tab no longer says an extra "blank".
+  - A new tab no longer says an extra "blank".
   - The one follow-up focus read, the last wait not driven by events, is
     removed once the focus's element is found from its own events (the
     foreground checks went on 2026-10-09, `phase6-design.md`,

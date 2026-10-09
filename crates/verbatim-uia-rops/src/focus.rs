@@ -48,13 +48,20 @@ pub struct FocusQuery<'a> {
     /// cut short ([`Ancestry::out_of_time`]). The remote program is one
     /// call and does not check it.
     pub deadline: Option<Instant>,
+    /// Whether the element must have the keyboard focus, read live, for
+    /// anything else to be read ([`FocusAncestry::NotFocused`]). False for
+    /// an element whose focus event said it had the focus when the event
+    /// was raised, as NVDA judges a focus event, though the focus has
+    /// moved on since: its ancestry is read all the same.
+    pub require_focus: bool,
 }
 
 /// The answer to a [`FocusQuery`].
 #[derive(Debug)]
 pub enum FocusAncestry {
-    /// The element no longer has the keyboard focus, read live: the focus
-    /// event is stale and nothing else was read.
+    /// The element no longer has the keyboard focus, read live, and the
+    /// query required it: the focus event is stale and nothing else was
+    /// read.
     NotFocused,
     /// The element has the focus.
     Focused(Ancestry),
@@ -249,8 +256,10 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
 
     let focused = b.property(element, UIA_HasKeyboardFocusPropertyId.0);
     let focused = b.add_to_results(focused.assume::<kind::Bool>());
-    let not_focused = b.not(focused);
-    b.if_(not_focused, Builder::halt);
+    if query.require_focus {
+        let not_focused = b.not(focused);
+        b.if_(not_focused, Builder::halt);
+    }
 
     // The element held under the same runtime id: its own live focus. A
     // held element that is gone fails the whole run before it starts
@@ -391,7 +400,7 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     );
 
     let outcome = b.finish().execute()?;
-    if !outcome.get(focused)? {
+    if query.require_focus && !outcome.get(focused)? {
         return Ok(FocusAncestry::NotFocused);
     }
     let ancestors = outcome
@@ -507,7 +516,7 @@ impl RemoteCache {
 /// ([`Uia::selected_element`]); a hop that finds no parent, or fails
 /// otherwise, ends the walk.
 pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<FocusAncestry, Error> {
-    if !query.element.has_keyboard_focus()? {
+    if query.require_focus && !query.element.has_keyboard_focus()? {
         return Ok(FocusAncestry::NotFocused);
     }
     // A failed read is an element that is gone, but a provider that did

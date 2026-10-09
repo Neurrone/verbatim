@@ -400,7 +400,11 @@ pub(super) enum RemoteEnrichment {
 /// ([`verbatim_uia_rops::focus_ancestry`]), with the same stops and the
 /// same continuation through MSAA as [`uia_enrichment`], and whether
 /// `held`, the element the registry holds under the focus's runtime id,
-/// still has the keyboard focus. `None`, having
+/// still has the keyboard focus. With `require_focus`, an element that no
+/// longer has the keyboard focus, read live, is answered
+/// [`RemoteEnrichment::NotFocused`] and nothing else is read; without it,
+/// for an element whose focus event said it had the focus, its ancestry is
+/// read all the same. `None`, having
 /// made no call, when remote operations are off or `window`, the window
 /// the focus is in, is read the classic way: the caller reads it as
 /// before.
@@ -418,7 +422,7 @@ pub(super) fn uia_remote_enrichment(
     element: &IUIAutomationElement,
     held: Option<&IUIAutomationElement>,
     previous: &[NodeSnapshot],
-    window: Option<isize>,
+    (window, require_focus): (Option<isize>, bool),
 ) -> Option<RemoteEnrichment> {
     if !context.tries_remote(window) {
         return None;
@@ -441,6 +445,7 @@ pub(super) fn uia_remote_enrichment(
         depth_limit: MAX_ANCESTOR_HOPS,
         properties: &properties,
         deadline: Some(deadline),
+        require_focus,
     };
     let answer = uia
         .within(ENRICHMENT_BUDGET, |uia| focus_ancestry(uia, &query, true))
@@ -707,13 +712,20 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
         );
         // A focus that has moved on since the focused element was read is
         // still this query's answer, read the classic way.
-        let (ancestors, selected_child) =
-            match uia_remote_enrichment(context, uia, &cache, &element, None, &[], Some(hwnd)) {
-                Some(RemoteEnrichment::Read { enrichment, .. }) => enrichment,
-                Some(RemoteEnrichment::NotFocused) | None => {
-                    uia_enrichment(context, uia, &cache, &element, node.role, &[])
-                }
-            };
+        let (ancestors, selected_child) = match uia_remote_enrichment(
+            context,
+            uia,
+            &cache,
+            &element,
+            None,
+            &[],
+            (Some(hwnd), true),
+        ) {
+            Some(RemoteEnrichment::Read { enrichment, .. }) => enrichment,
+            Some(RemoteEnrichment::NotFocused) | None => {
+                uia_enrichment(context, uia, &cache, &element, node.role, &[])
+            }
+        };
         let ancestors = ancestors.unwrap_or_default();
         Some(FocusedControl {
             node,
