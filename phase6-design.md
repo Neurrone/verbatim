@@ -2294,6 +2294,30 @@ Made while Dickson was away (2026-10-09), each to be confirmed:
   its rows, so a read made after a flood ends and before the prompt is
   written counts one more; it is left as it is, since Core's own request
   at the end of a group comes after the prompt in both scenarios.
+- Windows still opened in front: the Settings page now opens minimized
+  and inactive and is brought forward (`launch_titled`), and the agent's
+  `Present` condition no longer counts a cloaked window, so the Settings
+  app's closed, cloaked window is never taken for the new one. File
+  Explorer's folder window still opens in front with the agent's right,
+  against the decision of 2026-10-08, because nothing else was heard:
+  File Explorer raises its only foreground event as its window is
+  created, before it is shown and titled, and when Windows refuses it then
+  (the agent lacking the right), or the window opened minimized, the
+  window becomes the foreground with no event when it is restored and
+  brought forward later (measured with an out-of-context `WinEvent` hook
+  after a zero-pixel mouse move from another process: minimize, restore,
+  `SetForegroundWindow` and `SwitchToThisWindow` all left it in front
+  silently). Opening the folder through the desktop's shell
+  (`IShellDispatch2::ShellExecute` on the desktop's folder view, which runs
+  in the shell's process while the desktop holds the foreground) did bring
+  it forward with its foreground event, and NVDA, captured that way, said
+  "<folder> - File Explorer", "Items View list", "Inner not selected 1 of
+  4"; but Verbatim, reading the window's title at the event, said "File
+  Explorer", the title before File Explorer sets the folder's, where NVDA
+  reads it about 100 ms later as it speaks. That approach was set aside
+  rather than build on a second difference; reading a foreground window's
+  name only once it has been shown, or after its title settles, is a
+  follow-up.
 
 ## Language audit (2026-10-08)
 

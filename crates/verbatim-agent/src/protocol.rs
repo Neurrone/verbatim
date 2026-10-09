@@ -620,8 +620,9 @@ pub enum WindowCondition {
         /// Text the title contains.
         title_contains: String,
     },
-    /// A visible top-level window, minimized or not, is titled with
-    /// `title_contains`.
+    /// A visible top-level window, minimized or not but not cloaked (kept
+    /// by the window manager but not shown, as the Settings app keeps its
+    /// closed window), is titled with `title_contains`.
     Present {
         /// Text the title contains.
         title_contains: String,

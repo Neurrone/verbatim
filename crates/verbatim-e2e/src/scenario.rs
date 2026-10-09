@@ -708,10 +708,12 @@ impl Scenario {
             },
             WINDOW_TIMEOUT,
         )?;
+        // A cloaked window is not shown: the Settings app keeps its closed
+        // window so, and shows it again when opened.
         let window = desktop
             .windows
             .iter()
-            .find(|window| present && window.title.contains(title))
+            .find(|window| present && !window.cloaked && window.title.contains(title))
             .ok_or_else(|| {
                 io::Error::other(format!(
                     "no window titled {title:?} opened within {WINDOW_TIMEOUT:?}: {}",
@@ -872,7 +874,13 @@ impl Scenario {
     /// relative to the folder, empty contents) into a folder named
     /// [`DOCUMENT_MARKER`] plus `name` ([`Scenario::harness_folder`]),
     /// opens it, and waits for the window titled with that name to take
-    /// the foreground. The window is closed by its title at cleanup;
+    /// the foreground. It is the one launch that still opens its window in
+    /// front, needing the agent's right to let it take the foreground
+    /// (`docs/tooling.md`): File Explorer raises its only foreground event
+    /// as its window is created, before it is shown, so a window Windows
+    /// refused then, or one opened minimized, is never heard when brought
+    /// forward later (`phase6-design.md`, "Decisions to confirm with
+    /// Dickson"). The window is closed by its title at cleanup;
     /// `explorer.exe` is the shell, so its process stays. Returns the
     /// folder's name, which is the window's title.
     ///
@@ -906,8 +914,10 @@ impl Scenario {
         Ok(marker)
     }
 
-    /// Opens a page of the Settings app by its `ms-settings:` URI and waits
-    /// for the Settings window to take the foreground. No Settings window
+    /// Opens a page of the Settings app by its `ms-settings:` URI, minimized
+    /// and inactive, and brings the Settings window forward as
+    /// [`Scenario::launch_titled`] does, so it takes the foreground
+    /// whatever input came last. No Settings window
     /// may be open before, so the window is the scenario's own; it is
     /// closed by its title at cleanup. The Settings app's process may stay,
     /// suspended, with its window cloaked, as it does after a user closes
@@ -919,19 +929,7 @@ impl Scenario {
     /// fails, or the window does not take the foreground.
     pub fn open_settings_page(&mut self, uri: &str) -> io::Result<WindowInfo> {
         self.require_absent(SETTINGS_TITLE)?;
-        let launch =
-            self.agent
-                .launch_process("explorer.exe", &[uri.to_owned()], None, &[], None)?;
-        self.launched.push(Launched {
-            pid: launch.pid,
-            title: Some(SETTINGS_TITLE.to_owned()),
-            owners: Vec::new(),
-            owners_exit: false,
-            document: None,
-            notepad: false,
-            also_exit: Vec::new(),
-        });
-        self.require_in_front(SETTINGS_TITLE, launch)
+        self.launch_titled("explorer.exe", &[uri.to_owned()], SETTINGS_TITLE, false)
     }
 
     /// Has cleanup wait, once the window titled `title` that the scenario

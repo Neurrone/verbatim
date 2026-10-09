@@ -977,10 +977,16 @@ foreground (`AllowSetForegroundWindow`), which Windows permits while the
 agent injected the last input; every scenario's keys go through the agent,
 so within a run it does. After you type or click on the machine yourself,
 it does not until the agent has injected input again, and a scenario that
-opens a File Explorer folder or a Settings page first
-(`Scenario::open_folder`, `Scenario::open_settings_page`), the two
-launches that still open their windows in front, then fails saying Windows
-did not let the agent allow it. Run a scenario that sends keys first, such as
+opens a File Explorer folder first (`Scenario::open_folder`, the one
+launch that still opens its window in front) then fails saying Windows
+did not let the agent allow it. File Explorer raises its only foreground
+event as its window is created, before it is shown: refused then, or
+opened minimized, the window becomes the foreground with no event when it
+is brought forward later, so neither Verbatim nor NVDA hears it
+(measured 2026-10-09; `phase6-design.md`, "Decisions to confirm with
+Dickson"). A Settings page (`Scenario::open_settings_page`) opens
+minimized and inactive and is brought forward like the harness's own
+windows. Run a scenario that sends keys first, such as
 `lock_key_announcements`. Never tap keys by hand, or have a script send
 keys, to fix it, and note that the harness itself never injects a key to
 take the foreground: a window that refuses the foreground fails the test.
