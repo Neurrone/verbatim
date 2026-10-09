@@ -1748,4 +1748,40 @@ mod tests {
             .expect("there are local-only scenarios");
         assert_eq!(skips(local, Some("1")), Ok(true));
     }
+
+    /// The scenario names in the `scenario_tests!` blocks of the suite's
+    /// test binary, `tests/e2e.rs`, read as text: every identifier after
+    /// each block's reason, up to the block's end.
+    fn names_in_the_test_binary() -> Vec<String> {
+        let source = include_str!("../tests/e2e.rs");
+        let mut names = Vec::new();
+        for block in source.split("scenario_tests! {").skip(1) {
+            let (block, _) = block.split_once('}').expect("a scenario_tests! block ends");
+            let (_, listed) = block
+                .split_once("\":")
+                .expect("a scenario_tests! block starts with its reason");
+            names.extend(listed.split_whitespace().map(str::to_owned));
+        }
+        names
+    }
+
+    #[test]
+    fn the_test_binary_has_a_test_for_every_scenario_and_no_other() {
+        let tests = names_in_the_test_binary();
+        let registered: Vec<&str> = SCENARIOS.iter().map(|def| def.name).collect();
+        let untested: Vec<&str> = registered
+            .iter()
+            .copied()
+            .filter(|name| !tests.iter().any(|test| test == name))
+            .collect();
+        let unregistered: Vec<&str> = tests
+            .iter()
+            .map(String::as_str)
+            .filter(|test| !registered.contains(test))
+            .collect();
+        assert!(
+            untested.is_empty() && unregistered.is_empty(),
+            "registered scenarios with no test in tests/e2e.rs: {untested:?}; tests in tests/e2e.rs with no registered scenario: {unregistered:?}"
+        );
+    }
 }

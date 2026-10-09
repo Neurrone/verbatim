@@ -14,7 +14,10 @@ and how to read a failure.
   a `#[test]` per scenario named after it, so
   `cargo test -p verbatim-e2e --test e2e -- --ignored --exact <name> --test-threads=1`
   runs one scenario. One binary rather than one per scenario keeps the
-  build small: each test binary links the whole harness.
+  build small: each test binary links the whole harness. A unit test in
+  `registry.rs`, which `cargo xtask ci` runs, reads `tests/e2e.rs` as text
+  and fails, naming each, when a registered scenario has no test there or
+  a test there has no registered scenario.
 - Every live `#[test]` in it is
   `#[ignore]`d with the reason "live", so a workspace test run (and
   `cargo xtask ci`) lists them as ignored rather than reporting them as
