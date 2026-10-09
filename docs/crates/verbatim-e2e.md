@@ -386,7 +386,10 @@ which only "closed" and the prompt are new.
 The selection-list scenarios (`scenarios/terminal_lists.rs`) run a
 list whose ">" marker moves by two rewritten cells, and one redrawn whole
 on each move with the caret below it: Down, Down and Up say "> banana",
-"> cherry" and "> banana", once each.
+"> cherry" and "> banana", once each. The two-marker scenarios run two
+lists, fruits and colours, whose markers each key moves together: Down
+says "> banana" and "> green", both lines that gained a marker, top to
+bottom.
 
 The review-output scenarios (`scenarios/terminal_review_output.rs`)
 review a line above the caret, let a script print two lines, and hear the

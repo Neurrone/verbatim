@@ -2178,8 +2178,13 @@ The evidence is therefore the screen itself, compared with the screen
 before the key: the outpost reads the terminal on each of its text and
 caret changes while the key's watch is open, and a read answers the key
 only when it shows a finished effect. A line gained text that another
-line lost: the marker moved, whichever was written first, and that line is
-spoken (the caret's line, when it is that one). The caret's line gained
+line lost: the marker moved, whichever was written first, and every such
+line is spoken, top to bottom, the caret's line among them when it is
+one (Dickson, 2026-10-09; it was the first such line alone), unless more
+lines lost that text than gained it, a marker erased and not yet drawn
+again, which is a redraw under way. A program that finishes moving one
+marker before it starts erasing the next is answered with the first
+alone, since nothing on the screen says another is coming. The caret's line gained
 text: a line recalled from history. The caret's line was cut short with
 nothing else changed: a shorter line recalled. The caret moved to the next
 or previous line and no line only lost text: an editor's caret. A read
@@ -2194,7 +2199,9 @@ then spoken as output.
 
 Scenarios, each in both terminals, with exact speech:
 `windows_terminal_marker_list`, `conhost_marker_list`,
-`windows_terminal_redrawn_list` and `conhost_redrawn_list`.
+`windows_terminal_redrawn_list` and `conhost_redrawn_list`, and, for a
+key that moves two markers, `windows_terminal_two_markers` and
+`conhost_two_markers`.
 
 Escape on a typed line that had wrapped onto a second row (2026-10-09)
 says the text removed, as on a line of one row. The caret's line, as both
@@ -2241,6 +2248,23 @@ Confirmed by Dickson (2026-10-09):
   speaks the caret's line, as NVDA does.
 
 To be confirmed:
+
+- Every line that gained a marker (2026-10-09): each line is spoken as
+  an utterance of its own, as lines of output are. A read in which more
+  lines lost a marker's text than gained it is a redraw under way, since
+  without that rule a read made after the first marker had moved, and
+  before the second was erased, answered the key with the first line
+  alone. A program that moves one marker completely before it erases the
+  next is still answered with the first line alone, and the rest is
+  spoken as output; nothing on the screen says another marker is coming.
+  The two-marker scenarios' script erases both old markers before it
+  draws the new ones.
+- A failed speech assertion's trace (2026-10-09): the failing step's
+  trace ID is the one carried by the speech frame of the utterance the
+  assertion failed on, or, when the expected utterance never came, by the
+  newest utterance the step heard; a step that heard nothing has no trace
+  to show. The assertion unwinds without the panic hook, so its message
+  is printed once, in full, after the logs are collected.
 
 - The review cursor after new output: the plan's test read the same
   line after output written below it, but the review cursor follows the

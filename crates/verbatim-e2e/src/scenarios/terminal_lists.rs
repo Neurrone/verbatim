@@ -1,6 +1,7 @@
 //! Selection lists drawn in a terminal, as `windows_terminal_marker_list`,
-//! `conhost_marker_list`, `windows_terminal_redrawn_list` and
-//! `conhost_redrawn_list`, each its own code (`docs/testing.md`). The
+//! `conhost_marker_list`, `windows_terminal_redrawn_list`,
+//! `conhost_redrawn_list`, `windows_terminal_two_markers` and
+//! `conhost_two_markers`, each its own code (`docs/testing.md`). The
 //! shared setup is described in the `terminal` module.
 //!
 //! Each script prints "Pick a fruit:" and a five-item list with a ">"
@@ -15,6 +16,13 @@
 //! terminal"). NVDA, captured live on 2026-10-09, says the caret's line
 //! part-way through the redraw instead, or "blank" for the second script;
 //! the difference is recorded in `docs/parity.md`.
+//!
+//! `markers.ps1`, for the two-marker scenarios, prints a list of fruits
+//! and a list of colours, each with a ">" marker on its first item, and
+//! moves both markers with each Down and Up Arrow: it erases both old
+//! markers, then draws both new ones, leaving the caret after the second.
+//! Each move speaks both lines that gained a marker, top to bottom, the
+//! caret's line second.
 
 use std::io;
 
@@ -79,9 +87,52 @@ while ($true) {\r\n\
 [Console]::SetCursorPosition(0, $end)\r\n\
 \"chose $($items[$selected])\"\r\n";
 
+/// Two lists whose markers one key moves together: both old markers are
+/// erased, then both new ones drawn, leaving the caret after the second.
+const TWO_MARKERS_SCRIPT: &str = "$fruits = 'apple', 'banana', 'cherry'\r\n\
+$colours = 'red', 'green', 'blue'\r\n\
+[Console]::WriteLine('Fruit:')\r\n\
+$fruitTop = [Console]::CursorTop\r\n\
+for ($i = 0; $i -lt 3; $i++) {\r\n\
+\x20   $mark = if ($i -eq 0) { '> ' } else { '  ' }\r\n\
+\x20   [Console]::WriteLine($mark + $fruits[$i])\r\n\
+}\r\n\
+[Console]::WriteLine('Colour:')\r\n\
+$colourTop = [Console]::CursorTop\r\n\
+for ($i = 0; $i -lt 3; $i++) {\r\n\
+\x20   $mark = if ($i -eq 0) { '> ' } else { '  ' }\r\n\
+\x20   [Console]::WriteLine($mark + $colours[$i])\r\n\
+}\r\n\
+$end = [Console]::CursorTop\r\n\
+$selected = 0\r\n\
+while ($true) {\r\n\
+\x20   $key = [Console]::ReadKey($true)\r\n\
+\x20   if ($key.Key -eq 'Enter') { break }\r\n\
+\x20   $next = $selected\r\n\
+\x20   if ($key.Key -eq 'DownArrow' -and $selected -lt 2) { $next++ }\r\n\
+\x20   if ($key.Key -eq 'UpArrow' -and $selected -gt 0) { $next-- }\r\n\
+\x20   if ($next -ne $selected) {\r\n\
+\x20       [Console]::SetCursorPosition(0, $fruitTop + $selected)\r\n\
+\x20       [Console]::Write('  ')\r\n\
+\x20       [Console]::SetCursorPosition(0, $colourTop + $selected)\r\n\
+\x20       [Console]::Write('  ')\r\n\
+\x20       [Console]::SetCursorPosition(0, $fruitTop + $next)\r\n\
+\x20       [Console]::Write('> ')\r\n\
+\x20       [Console]::SetCursorPosition(0, $colourTop + $next)\r\n\
+\x20       [Console]::Write('> ')\r\n\
+\x20       $selected = $next\r\n\
+\x20   }\r\n\
+}\r\n\
+[Console]::SetCursorPosition(0, $end)\r\n\
+\"chose $($fruits[$selected]) and $($colours[$selected])\"\r\n";
+
 /// The scripts each scenario writes.
-fn scripts() -> [(&'static str, &'static str); 2] {
-    [("marker.ps1", MARKER_SCRIPT), ("redraw.ps1", REDRAW_SCRIPT)]
+fn scripts() -> [(&'static str, &'static str); 3] {
+    [
+        ("marker.ps1", MARKER_SCRIPT),
+        ("redraw.ps1", REDRAW_SCRIPT),
+        ("markers.ps1", TWO_MARKERS_SCRIPT),
+    ]
 }
 
 pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {
@@ -113,6 +164,20 @@ fn list_steps(scenario: &mut Scenario, script: &str) {
     key_hearing(scenario, "downarrow", &["> cherry"]);
     key_hearing(scenario, "uparrow", &["> banana"]);
     key_hearing(scenario, "enter", &["chose banana", PROMPT]);
+}
+
+/// Runs the two lists' script, moves both markers down twice and up once,
+/// and chooses: each key says both lines that gained a marker, top to
+/// bottom, the second being the caret's.
+fn two_marker_steps(scenario: &mut Scenario) {
+    terminal::type_with_echo(scenario, r".\markers.ps1", terminal::Echo::Shown);
+    scenario.speech().expect(&[
+        "Fruit:", "> apple", "  banana", "  cherry", "Colour:", "> red", "  green", "  blue",
+    ]);
+    key_hearing(scenario, "downarrow", &["> banana", "> green"]);
+    key_hearing(scenario, "downarrow", &["> cherry", "> blue"]);
+    key_hearing(scenario, "uparrow", &["> banana", "> green"]);
+    key_hearing(scenario, "enter", &["chose banana and green", PROMPT]);
 }
 
 /// The window, the terminal and its blank line, as the Windows Terminal
@@ -162,4 +227,19 @@ pub(crate) fn body_redrawn_windows_terminal(scenario: &mut Scenario, state: &mut
 pub(crate) fn body_redrawn_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
     console_host_opening(scenario, state);
     list_steps(scenario, r".\redraw.ps1");
+}
+
+/// `windows_terminal_two_markers`.
+pub(crate) fn body_two_markers_windows_terminal(
+    scenario: &mut Scenario,
+    state: &mut ScenarioState,
+) {
+    windows_terminal_opening(scenario, state);
+    two_marker_steps(scenario);
+}
+
+/// `conhost_two_markers`.
+pub(crate) fn body_two_markers_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
+    console_host_opening(scenario, state);
+    two_marker_steps(scenario);
 }

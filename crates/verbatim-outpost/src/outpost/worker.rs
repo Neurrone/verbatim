@@ -1264,7 +1264,7 @@ impl Worker<'_> {
     /// A read of the terminal `node_id` while a line key's watch is open on
     /// it: answers the watch once `memory`, the screen just read with
     /// `caret`, shows what the key did (`crate::terminal::keys`), and
-    /// returns what of `output` is still new, without the line the answer
+    /// returns what of `output` is still new, without the lines the answer
     /// says. Until then, nothing is new: the read compared with the screen
     /// before the key, and the next does too. Without such a watch,
     /// `output` as it is.
@@ -1303,14 +1303,16 @@ impl Worker<'_> {
         context.intake.wake_at(None);
         self.thaw(node_id, Some(memory.clone()));
         let redrawn = match effect {
-            KeyEffect::CaretLine => None,
-            KeyEffect::Redrawn(line) => {
-                if let Some(at) = output.above.iter().position(|said| *said == line) {
-                    output.above.remove(at);
-                } else if let Some(at) = output.lines.iter().position(|said| *said == line) {
-                    output.lines.remove(at);
+            KeyEffect::CaretLine => Vec::new(),
+            KeyEffect::Redrawn(lines) => {
+                for line in &lines {
+                    if let Some(at) = output.above.iter().position(|said| said == line) {
+                        output.above.remove(at);
+                    } else if let Some(at) = output.lines.iter().position(|said| said == line) {
+                        output.lines.remove(at);
+                    }
                 }
-                Some(line)
+                lines
             }
         };
         let calls = take_calls();

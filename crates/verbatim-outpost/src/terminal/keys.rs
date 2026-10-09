@@ -12,17 +12,19 @@
 //! key's effect when it shows one of these, compared with the screen
 //! before the key, and otherwise the key waits for the next read:
 //!
-//! - The marker moved: a line gained text that another line lost. That
-//!   line is the answer.
+//! - A marker moved: a line gained text that another line lost. Every
+//!   such line, top to bottom, is the answer, so a key that moves two
+//!   markers says both lines.
 //! - The caret's line gained text (a line recalled from history).
 //! - The caret's line was cut short, its end removed, and nothing else
 //!   changed (a shorter line recalled).
 //! - The caret moved to the line next to the one it was on, and no line
 //!   only lost text (an editor's caret, its status line perhaps redrawn).
 //!
-//! A read that shows only text removed, or the caret somewhere else over
-//! unchanged lines, is a redraw under way. A screen that scrolled, or was
-//! replaced, is not compared by line: the caret's line is the answer.
+//! A read that shows only text removed, a marker erased from more lines
+//! than it has been drawn on, or the caret somewhere else over unchanged
+//! lines, is a redraw under way. A screen that scrolled, or was replaced,
+//! is not compared by line: the caret's line is the answer.
 
 use super::Memory;
 
@@ -31,9 +33,9 @@ use super::Memory;
 pub enum KeyEffect {
     /// The caret's line shows it.
     CaretLine,
-    /// This other line shows it: a selection list's line that gained the
-    /// marker.
-    Redrawn(String),
+    /// These lines show it, top to bottom: each line that gained a marker
+    /// another line lost, the caret's line among them when it is one.
+    Redrawn(Vec<String>),
 }
 
 /// What changed on one line: the text removed and the text inserted in
@@ -96,17 +98,45 @@ pub fn line_key_effect(before: &Memory, now: &Memory) -> Option<KeyEffect> {
             edit(line(&before.screen, row), line(&now.screen, row)).map(|edit| (row, edit))
         })
         .collect();
-    let marker = edits.iter().find(|(row, edit)| {
-        edit.gained()
-            && edits.iter().any(|(other, lost)| {
-                other != row && lost.lost() && lost.removed.trim() == edit.inserted.trim()
-            })
-    });
-    if let Some(&(row, _)) = marker {
-        if now.caret == Some(row) {
+    // How many lines lost `text`, and how many gained it.
+    let losing = |text: &str| {
+        edits
+            .iter()
+            .filter(|(_, edit)| edit.lost() && edit.removed.trim() == text)
+            .count()
+    };
+    let gaining = |text: &str| {
+        edits
+            .iter()
+            .filter(|(_, edit)| edit.gained() && edit.inserted.trim() == text)
+            .count()
+    };
+    let marked: Vec<(usize, &str)> = edits
+        .iter()
+        .filter(|(row, edit)| {
+            edit.gained()
+                && edits.iter().any(|(other, lost)| {
+                    other != row && lost.lost() && lost.removed.trim() == edit.inserted.trim()
+                })
+        })
+        .map(|(row, edit)| (*row, edit.inserted.trim()))
+        .collect();
+    if !marked.is_empty() {
+        // A marker erased from more lines than it is drawn on yet.
+        if marked.iter().any(|(_, text)| losing(text) > gaining(text)) {
+            return None;
+        }
+        if let [(row, _)] = marked.as_slice()
+            && now.caret == Some(*row)
+        {
             return Some(KeyEffect::CaretLine);
         }
-        return Some(KeyEffect::Redrawn(line(&now.screen, row).to_owned()));
+        return Some(KeyEffect::Redrawn(
+            marked
+                .iter()
+                .map(|(row, _)| line(&now.screen, *row).to_owned())
+                .collect(),
+        ));
     }
     let caret_edit = now
         .caret
@@ -202,8 +232,45 @@ mod tests {
         let lines = with(&LIST, &[(1, "  apple"), (2, "> banana")]);
         assert_eq!(
             line_key_effect(&before, &screen(&lines, Some(5))),
-            Some(KeyEffect::Redrawn("> banana".to_owned()))
+            Some(KeyEffect::Redrawn(vec!["> banana".to_owned()]))
         );
+    }
+
+    /// Two lists, each with a marker on its first item.
+    const TWO_LISTS: [&str; 7] = [
+        "Fruit:", "> apple", "  banana", "Colour:", "> red", "  green", "",
+    ];
+
+    #[test]
+    fn every_line_that_gained_a_marker_is_said_top_to_bottom() {
+        let moved = with(
+            &TWO_LISTS,
+            &[
+                (1, "  apple"),
+                (2, "> banana"),
+                (4, "  red"),
+                (5, "> green"),
+            ],
+        );
+        // With the caret on neither, and on the second, which is said in
+        // its place.
+        for caret in [6, 5] {
+            assert_eq!(
+                line_key_effect(&screen(&TWO_LISTS, Some(6)), &screen(&moved, Some(caret))),
+                Some(KeyEffect::Redrawn(vec![
+                    "> banana".to_owned(),
+                    "> green".to_owned()
+                ]))
+            );
+        }
+    }
+
+    #[test]
+    fn a_marker_erased_from_more_lines_than_it_is_drawn_on_is_under_way() {
+        let before = screen(&TWO_LISTS, Some(6));
+        // Both markers erased, and one drawn again.
+        let half = with(&TWO_LISTS, &[(1, "  apple"), (2, "> banana"), (4, "  red")]);
+        assert_eq!(line_key_effect(&before, &screen(&half, Some(2))), None);
     }
 
     #[test]
