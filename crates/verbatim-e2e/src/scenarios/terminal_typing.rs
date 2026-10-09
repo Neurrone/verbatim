@@ -85,7 +85,11 @@ pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut Scenari
     terminal::expect_prompt_read(
         scenario,
         state,
-        &[&format!("{title} window"), &format!("{title} terminal")],
+        &[
+            &format!("{title} window"),
+            &format!("{title} terminal"),
+            "blank",
+        ],
     );
     // A password typed while its prompt's line changes.
     terminal::type_with_echo(scenario, r".\secret.ps1", terminal::Echo::Shown);

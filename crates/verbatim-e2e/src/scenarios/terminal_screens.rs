@@ -155,7 +155,11 @@ pub(crate) fn body_long_lines_windows_terminal(scenario: &mut Scenario, state: &
     terminal::expect_prompt_read(
         scenario,
         state,
-        &[&format!("{title} window"), &format!("{title} terminal")],
+        &[
+            &format!("{title} window"),
+            &format!("{title} terminal"),
+            "blank",
+        ],
     );
     long_line_steps(scenario);
 }
@@ -181,7 +185,11 @@ pub(crate) fn body_full_screen_windows_terminal(
     terminal::expect_prompt_read(
         scenario,
         state,
-        &[&format!("{title} window"), &format!("{title} terminal")],
+        &[
+            &format!("{title} window"),
+            &format!("{title} terminal"),
+            "blank",
+        ],
     );
     full_screen_steps(scenario);
 }

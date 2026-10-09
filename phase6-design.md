@@ -2557,6 +2557,20 @@ confirmed):
   in its capture; Verbatim keeps saying the line, as NVDA does when its
   read of the line is not lost.
 
+Made while writing the dropped end-to-end tests (2026-10-09, to be
+confirmed):
+
+- Up Arrow and a character typed at once: Verbatim reads the line's
+  change once, the recalled command and the character in it, and says
+  it as the change ("echo onex"), without the character's own echo,
+  where NVDA says "x" and then the line. `*_up_typing` asserts it.
+- Shift pause and resume: speech reports no pause, so the scenarios
+  assert only that pausing and resuming during a flood cuts nothing off
+  and loses nothing.
+- A Windows Terminal window whose shell printed its PSReadLine notice
+  before the window took the focus says "blank" for its caret's blank
+  row: the rule of no line covers only a screen with nothing on it.
+
 ## Language audit (2026-10-08)
 
 A read-only audit found these, ranked by how likely a user of the language is to hit them; each is fixed with exact tests in a language work package, together with the terminal's changed-word rule:

@@ -152,7 +152,11 @@ fn windows_terminal_opening(scenario: &mut Scenario, state: &mut ScenarioState) 
     terminal::expect_prompt_read(
         scenario,
         state,
-        &[&format!("{title} window"), &format!("{title} terminal")],
+        &[
+            &format!("{title} window"),
+            &format!("{title} terminal"),
+            "blank",
+        ],
     );
 }
 

@@ -20,7 +20,11 @@
 //! new tab's terminal, "<title> terminal", and then its prompt as output,
 //! and Verbatim the same: a Windows Terminal window or tab with nothing
 //! written yet says no line as it takes the focus, as in NVDA, where the
-//! console host's says "blank" in both.
+//! console host's says "blank" in both. A scenario's first window shows
+//! Windows PowerShell's notice that it leaves `PSReadLine` out above the
+//! caret's blank row, so it says "blank"; the second window and the second
+//! tab start their shells without it (`-NonInteractive`) and say no
+//! line.
 //!
 //! Switching tabs with Control+Tab or Control+Shift+Tab, NVDA says "list"
 //! and the tab ("<title> 1 of 2"), which holds the keyboard focus until
@@ -193,7 +197,11 @@ pub(crate) fn body_leave_windows_terminal(scenario: &mut Scenario, state: &mut S
     terminal::expect_prompt_read(
         scenario,
         state,
-        &[&format!("{first} window"), &format!("{first} terminal")],
+        &[
+            &format!("{first} window"),
+            &format!("{first} terminal"),
+            "blank",
+        ],
     );
     let second_state = terminal::open_windows_terminal_window(scenario, "leave-b", state)
         .expect("opens a second Windows Terminal window");
@@ -237,7 +245,11 @@ pub(crate) fn body_close_tab(scenario: &mut Scenario, state: &mut ScenarioState)
     terminal::expect_prompt_read(
         scenario,
         state,
-        &[&format!("{first} window"), &format!("{first} terminal")],
+        &[
+            &format!("{first} window"),
+            &format!("{first} terminal"),
+            "blank",
+        ],
     );
     let second_state = terminal::open_windows_terminal_tab(scenario, "close-tab-two", state)
         .expect("opens a second tab");
@@ -294,7 +306,11 @@ pub(crate) fn body_two_windows_terminal(scenario: &mut Scenario, state: &mut Sce
     terminal::expect_prompt_read(
         scenario,
         state,
-        &[&format!("{first} window"), &format!("{first} terminal")],
+        &[
+            &format!("{first} window"),
+            &format!("{first} terminal"),
+            "blank",
+        ],
     );
     let second_state = terminal::open_windows_terminal_window(scenario, "two-b", state)
         .expect("opens a second Windows Terminal window");
@@ -332,7 +348,11 @@ pub(crate) fn body_tabs(scenario: &mut Scenario, state: &mut ScenarioState) {
     terminal::expect_prompt_read(
         scenario,
         state,
-        &[&format!("{first} window"), &format!("{first} terminal")],
+        &[
+            &format!("{first} window"),
+            &format!("{first} terminal"),
+            "blank",
+        ],
     );
     let second_state = terminal::open_windows_terminal_tab(scenario, "tabs-two", state)
         .expect("opens a second tab");

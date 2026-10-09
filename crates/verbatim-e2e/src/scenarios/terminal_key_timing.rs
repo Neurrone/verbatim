@@ -27,10 +27,11 @@
 //!   .\long.ps1". NVDA, captured live on 2026-10-09, says the recalled line
 //!   too.
 //! - `*_up_typing`: `echo one` run, then Up Arrow and "x" pressed in one
-//!   batch, the second before the first's line is read: the recalled line
-//!   as Up Arrow's, then "x" as typing, then Enter runs `echo onex`,
-//!   answered "onex" and the prompt. NVDA, captured live, says "x" and
-//!   then the line, "echo onex".
+//!   batch, the second before the first's line is read. The line's change
+//!   is read once, with both in it, and spoken as the change: "echo onex";
+//!   then Enter runs it, answered "onex" and the prompt. NVDA, captured
+//!   live, says "x" as it is typed and then the line, "echo onex"; the
+//!   character's own echo is the difference (`docs/parity.md`).
 
 use std::io;
 
@@ -90,7 +91,11 @@ fn burst_from(first: u32, last: u32) -> Vec<String> {
 /// line; the console host's, whose name is dropped, says "blank".
 fn opening(title: &str, windows_terminal: bool) -> Vec<String> {
     if windows_terminal {
-        vec![format!("{title} window"), format!("{title} terminal")]
+        vec![
+            format!("{title} window"),
+            format!("{title} terminal"),
+            "blank".to_owned(),
+        ]
     } else {
         vec![
             format!("{title} window"),
@@ -276,7 +281,7 @@ fn up_typing_steps(scenario: &mut Scenario) {
     scenario
         .send_keys(&["uparrow", "x"])
         .expect("presses Up and types x at once");
-    scenario.speech().expect(&["ready> echo one", "x"]);
+    scenario.speech().expect(&["echo onex"]);
     scenario.send_keys(&["enter"]).expect("presses Enter");
     scenario.speech().expect(&["onex", PROMPT]);
 }

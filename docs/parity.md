@@ -1946,9 +1946,19 @@ verified.
   found. Verbatim now says no line for a Windows Terminal window or tab
   whose screen is all blank as it takes the focus (the outpost answers
   the focus's text as none, `NoText`, before its caret), and "blank" in
-  the console host, as before; every Windows Terminal scenario asserts
-  it as it opens. Returning to a tab or window, NVDA said its prompt
+  the console host, as before. `windows_terminal_two_windows` asserts it
+  for the second window and `windows_terminal_tabs` and
+  `windows_terminal_close_tab` for the second tab. A scenario's first
+  window shows Windows PowerShell's notice that it leaves PSReadLine out
+  (Windows' screen reader flag is set) above the blank row the caret is
+  on, so its screen is not blank and Verbatim says "blank", which every
+  Windows Terminal scenario asserts as it opens. Returning to a tab or window, NVDA said its prompt
   in some captures and no line in others; Verbatim says the prompt.
+  Up Arrow and a character typed at once (`*_up_typing`, captured
+  live on 2026-10-09): NVDA says the character, "x", as it is typed and
+  then the recalled line with it, "echo onex"; Verbatim reads the line's
+  change once, both in it, and says "echo onex" without the character's
+  own echo (**different**, a decision to confirm, `phase6-design.md`).
   Typing and
   its output after a switch are echoed and spoken as in any terminal
   (matched). An earlier report that Verbatim left the window's title out

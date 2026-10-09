@@ -81,7 +81,7 @@ fn opened(scenario: &mut Scenario, state: &ScenarioState, windows_terminal: bool
     let window = format!("{title} window");
     let named = format!("{title} terminal");
     if windows_terminal {
-        terminal::expect_prompt_read(scenario, state, &[&window, &named]);
+        terminal::expect_prompt_read(scenario, state, &[&window, &named, "blank"]);
     } else {
         // The console host's text area has no name.
         terminal::expect_prompt_read(scenario, state, &[&window, "terminal", "blank"]);
