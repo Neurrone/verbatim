@@ -1076,9 +1076,11 @@ still running is ended by its own handle (`EndLaunched`), harness windows
 are closed, and harness files and folders in `target/e2e-stage` are
 deleted, before the desktop is minimized. A launch that fails after
 opening its Notepad document closes that tab and deletes the document
-before it reports the failure. Minimizing sends each window a minimize of
-its own besides the taskbar's Minimize All, which misses a window the
-taskbar has not taken in yet, such as the document opened just before. A stray guest-side process is
+before it reports the failure. Minimizing sends the taskbar's Minimize
+All and waits for the taskbar to handle it, then logs and minimizes
+directly each window still restored: once, a document opened just before
+stayed restored, and the suspected cause, not confirmed, is that Minimize
+All skips a window the taskbar has not taken in yet. A stray guest-side process is
 also cleared by restoring a checkpoint (`cargo xtask vm restore`).
 
 **A gesture sent immediately after launch can silently do nothing.** The

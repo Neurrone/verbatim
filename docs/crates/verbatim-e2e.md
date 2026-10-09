@@ -56,9 +56,10 @@ every scenario, recorded or not, and recording changes nothing else:
    process are the scenario's own. Opened before Verbatim starts, the
    window's first-showing rename from "Notepad" to the document cannot
    race Verbatim's announcement of it.
-4. Minimizes every window, as the taskbar's Show Desktop does, and each
-   one directly too, since the taskbar misses a window it has not taken
-   in yet, such as the document opened in step 3; waits until
+4. Minimizes every window, as the taskbar's Show Desktop does, and then
+   directly each window still restored after it (once, the document
+   opened in step 3 stayed restored; the suspected cause, not confirmed,
+   is that the taskbar skips a window it has not taken in yet); waits until
    every window that can be minimized is (cloaked windows, which are not
    shown, aside), and brings the desktop, Program Manager, to the
    foreground, all through the agent and with no input injected.

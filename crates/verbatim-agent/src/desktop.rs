@@ -119,16 +119,14 @@ pub fn wait_for(condition: &WindowCondition, timeout: Duration) -> (bool, Foregr
 /// gives the desktop the foreground: the state every scenario starts from.
 /// Minimizing leaves the foreground on the window that had it, minimized,
 /// so the desktop's window, Program Manager, is then brought forward with
-/// `SetForegroundWindow`, injecting no input. The taskbar's command
-/// minimizes only the windows the taskbar has taken in, which a window
-/// opened moments before, such as the Notepad document a scenario opens
-/// just before, may not yet be (found 2026-10-08: that window stayed
-/// restored and the run failed), so each window the command is to minimize
-/// is also sent a minimize of its own (`ShowWindowAsync`, which never waits
-/// on the window's thread). The command is sent and waited for, so each
-/// window still restored once the taskbar has handled it is logged, at
-/// info, with its class and how long its process has run, before it is
-/// minimized directly. Waits up to `timeout` for
+/// `SetForegroundWindow`, injecting no input. Once (2026-10-08) a Notepad
+/// document a scenario had opened just before stayed restored after the
+/// taskbar's command and the run failed; the suspected cause, unconfirmed,
+/// is that the command skips a window the taskbar has not taken in yet.
+/// So the command is sent and waited for, and only each window still
+/// restored once the taskbar has handled it is logged, at info, with its
+/// class and how long its process has run, and then minimized directly
+/// (`ShowWindowAsync`, which never waits on the window's thread). Waits up to `timeout` for
 /// every window that can be minimized to be ([`WindowCondition::AllMinimized`]),
 /// and then for the desktop to hold the foreground. Returns whether both
 /// held, and the desktop then.
