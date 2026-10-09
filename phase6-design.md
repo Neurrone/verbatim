@@ -2215,34 +2215,43 @@ case.
 
 ## Decisions to confirm with Dickson
 
-Made while Dickson was away (2026-10-09), each to be confirmed:
+Made while Dickson was away (2026-10-09).
+
+Confirmed by Dickson (2026-10-09):
 
 - Selection lists: the rules above for when a redraw has finished. A list
   marked only by colour, with no marker in its text, changes no text, so
   Up and Down in it say nothing; a key that changes nothing (Up at the top
   of a list, or with no history) says nothing, as in a text field.
-- Selection lists: when more than one line gains a marker another line
-  lost, the first on the screen is spoken.
 - Selection lists: output the program writes while a line key's watch is
   open is held until the key is answered, or its watch ends, and is then
   spoken.
 - The outpost keeps the screens of the last eight reads of a terminal
   for finding the screen before a key; a key whose request arrives after
   more reads than that is judged by the caret alone.
+- The footer flood redraws its footer unchanged during the flood and
+  changed once after it, so its speech is the same however the reads
+  fall: a footer changed during a flood is heard, or not, as the reads
+  happen to find it. NVDA was captured with this script and, first, with
+  a footer changing every twenty lines.
+- Selection lists, changed: every line that gains a marker another line
+  lost is spoken, top to bottom, not only the first. The marker rule is
+  tried live against list-drawing programs already installed on the test
+  machine; if any shows a false match, the rule is removed and Verbatim
+  speaks the caret's line, as NVDA does.
+
+To be confirmed:
+
 - The review cursor after new output: the plan's test read the same
   line after output written below it, but the review cursor follows the
   caret by default, as NVDA's does, and both NVDA and Verbatim, captured
   live, move it to the prompt the output leaves the caret on. The
   scenarios pin that default; the case of the review cursor staying on
   its line needs following turned off, which is not tested.
-- The footer flood redraws its footer unchanged during the flood and
-  changed once after it, so its speech is the same however the reads
-  fall: a footer changed during a flood is heard, or not, as the reads
-  happen to find it. NVDA was captured with this script and, first, with
-  a footer changing every twenty lines.
 - The blank lines a burst of output starts with are not counted as lines
   (a cleared screen's rows above a footer used up the first group of
-  thirty), an exception to "every line counts".
+  thirty), an exception to "every line counts". Checked in the coherence
+  review (Dickson, 2026-10-09).
 - The full-screen scenarios use the terminal's own height (30 rows in
   both test windows) rather than the 40 rows the plan named, so the
   alternate screen is exactly the window: the script draws as many rows as
