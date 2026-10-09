@@ -23,6 +23,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use verbatim_control::protocol::LatencyRecord;
+use verbatim_model::TraceId;
 
 /// Environment variable overriding [`artifacts_root`]'s default. Read by both
 /// a scenario subprocess (`crates/verbatim-e2e`) and, when set in the same
@@ -284,6 +285,139 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (year, month, day)
 }
 
+/// Every line carrying `trace` in the run's logs collected into `dir`:
+/// Verbatim's captured log, the outposts', listener's and synthesizer
+/// host's logs (every `.log` file), and Core's flight recorder (the
+/// `.jsonl` dump), merged in time order, each prefixed with its file's
+/// name ([`lines_carrying`]).
+///
+/// # Errors
+///
+/// Returns an error if `dir` or a file in it cannot be read.
+pub fn trace_lines(dir: &Path, trace: TraceId) -> io::Result<Vec<String>> {
+    let mut sources = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let extension = path.extension().and_then(|extension| extension.to_str());
+        if matches!(extension, Some("log" | "jsonl")) {
+            let text = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
+            sources.push((name.to_owned(), text));
+        }
+    }
+    sources.sort();
+    Ok(lines_carrying(trace, &sources))
+}
+
+/// Every line of `sources` (each a file's name and text) carrying
+/// `trace` as a field, `trace_id=` or `trace=` in a log line and
+/// `"trace_id":` or `"trace":` in the flight recorder's JSON, with
+/// terminal colour codes removed, ordered by time: a log line's leading
+/// UTC timestamp, a flight recorder entry's `observed_at_ms` or
+/// `pressed_at_ms`. A line without a time of its own (a flight recorder
+/// entry Core made in reply to an outpost, a log message's continuation)
+/// takes the time of the line before it in its file, so it stays after
+/// that line.
+fn lines_carrying(trace: TraceId, sources: &[(String, String)]) -> Vec<String> {
+    let trace = trace.to_string();
+    let mut found: Vec<(Option<u64>, usize, usize, String)> = Vec::new();
+    for (order, (name, text)) in sources.iter().enumerate() {
+        let mut time = None;
+        for (index, raw) in text.lines().enumerate() {
+            let line = without_colours(raw);
+            time = line_time_us(&line).or(time);
+            if carries_trace(&line, &trace) {
+                found.push((time, order, index, format!("{name}: {line}")));
+            }
+        }
+    }
+    found.sort_by_key(|(time, order, index, _)| (*time, *order, *index));
+    found.into_iter().map(|(.., line)| line).collect()
+}
+
+/// `line` without the escape sequences a terminal colours text with.
+fn without_colours(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // `ESC [`, parameters, and a final letter.
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Whether `line` holds `trace` (its decimal form) as a trace field.
+fn carries_trace(line: &str, trace: &str) -> bool {
+    ["trace_id=", "trace=", "\"trace_id\":", "\"trace\":"]
+        .iter()
+        .any(|key| {
+            line.match_indices(key).any(|(at, _)| {
+                let value = &line[at + key.len()..];
+                value.starts_with(trace)
+                    && !value[trace.len()..].starts_with(|c: char| c.is_ascii_digit())
+            })
+        })
+}
+
+/// When `line` was written, in microseconds since the Unix epoch: a log
+/// line's leading timestamp (`2026-10-09T10:42:19.268605Z`), or a flight
+/// recorder entry's `observed_at_ms` or `pressed_at_ms`.
+fn line_time_us(line: &str) -> Option<u64> {
+    if let Some(stamp) = line.split_whitespace().next()
+        && let Some(time) = parse_utc_us(stamp)
+    {
+        return Some(time);
+    }
+    ["\"observed_at_ms\":", "\"pressed_at_ms\":"]
+        .iter()
+        .find_map(|key| {
+            let value = &line[line.find(key)? + key.len()..];
+            let digits = value.split(|c: char| !c.is_ascii_digit()).next()?;
+            digits.parse::<u64>().ok().map(|ms| ms * 1000)
+        })
+}
+
+/// `2026-10-09T10:42:19.268605Z` as microseconds since the Unix epoch.
+fn parse_utc_us(stamp: &str) -> Option<u64> {
+    let stamp = stamp.strip_suffix('Z')?;
+    let (date, time) = stamp.split_once('T')?;
+    let mut date = date.split('-').map(str::parse::<i64>);
+    let (year, month, day) = (date.next()?.ok()?, date.next()?.ok()?, date.next()?.ok()?);
+    let (clock, fraction) = time.split_once('.').unwrap_or((time, "0"));
+    let mut clock = clock.split(':').map(str::parse::<u64>);
+    let (hours, minutes, seconds) = (
+        clock.next()?.ok()?,
+        clock.next()?.ok()?,
+        clock.next()?.ok()?,
+    );
+    let micros: u64 = format!("{fraction:0<6}").get(..6)?.parse().ok()?;
+    let days = u64::try_from(days_from_civil(year, month, day)).ok()?;
+    Some((((days * 24 + hours) * 60 + minutes) * 60 + seconds) * 1_000_000 + micros)
+}
+
+/// The days from 1970-01-01 to the proleptic Gregorian date given, by
+/// Howard Hinnant's `days_from_civil` algorithm, the inverse of
+/// [`civil_from_days`].
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let year_of_era = year.rem_euclid(400);
+    let month_index = if month > 2 { month - 3 } else { month + 9 };
+    let day_of_year = (153 * month_index + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
 fn format_optional_count(value: Option<usize>) -> String {
     value.map_or_else(|| "unknown".to_owned(), |count| count.to_string())
 }
@@ -365,6 +499,48 @@ fn parse_summary(text: &str) -> Option<ScenarioSummary> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_lines_carrying_a_trace_are_merged_from_every_log_in_time_order() {
+        let trace = TraceId::mint();
+        let other = TraceId::mint();
+        let stderr = format!(
+            "2026-10-09T10:00:00.300000Z  INFO verbatim: gesture \u{1b}[3mtrace_id\u{1b}[0m={trace}\n\
+             2026-10-09T10:00:00.400000Z  INFO verbatim: gesture trace_id={other}\n\
+             2026-10-09T10:00:00.500000Z  INFO verbatim: gesture trace_id={trace}9\n"
+        );
+        let outpost = format!(
+            "2026-10-09T10:00:00.200000Z DEBUG verbatim_outpost: a watch is open trace={trace}\n"
+        );
+        // Pressed at 10:00:00.100; the second entry, with no time of its
+        // own, takes the first's.
+        let flight = format!(
+            "{{\"input\":{{\"CaretKey\":{{\"trace_id\":{trace},\"pressed_at_ms\":1791540000100}}}}}}\n\
+             {{\"input\":{{\"TextCompleted\":{{\"trace_id\":{trace}}}}}}}\n"
+        );
+        let sources = [
+            ("flight-recorder.jsonl".to_owned(), flight),
+            ("outpost-conhost-7.log".to_owned(), outpost),
+            ("stderr.log".to_owned(), stderr),
+        ];
+        assert_eq!(
+            lines_carrying(trace, &sources),
+            vec![
+                format!(
+                    "flight-recorder.jsonl: {{\"input\":{{\"CaretKey\":{{\"trace_id\":{trace},\"pressed_at_ms\":1791540000100}}}}}}"
+                ),
+                format!(
+                    "flight-recorder.jsonl: {{\"input\":{{\"TextCompleted\":{{\"trace_id\":{trace}}}}}}}"
+                ),
+                format!(
+                    "outpost-conhost-7.log: 2026-10-09T10:00:00.200000Z DEBUG verbatim_outpost: a watch is open trace={trace}"
+                ),
+                format!(
+                    "stderr.log: 2026-10-09T10:00:00.300000Z  INFO verbatim: gesture trace_id={trace}"
+                ),
+            ]
+        );
+    }
 
     #[test]
     fn a_utc_stamp_names_the_date_and_time() {

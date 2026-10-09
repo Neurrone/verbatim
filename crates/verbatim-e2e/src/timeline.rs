@@ -10,11 +10,11 @@
 //! a clone of the same handle — so a panic message can print, in order, the
 //! last command sent before speech stopped.
 
-use std::fmt::Write as _;
+use std::ops::Range;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use verbatim_model::UtteranceEnding;
+use verbatim_model::{TraceId, UtteranceEnding};
 
 /// One thing that happened during a scenario: an injected gesture, an
 /// injected key combination, typed text, or a heard utterance.
@@ -29,8 +29,10 @@ enum TimelineKind {
     /// Text typed as real key presses through the agent's `TypeText`.
     Text(String),
     /// An utterance's full rendered text, as heard on the speech
-    /// connection at queue time — the frame assertions match against.
-    Utterance(String),
+    /// connection at queue time — the frame assertions match against —
+    /// and the trace ID of the event or key behind it, when it has one (a
+    /// sound played at once has none).
+    Utterance(String, Option<TraceId>),
     /// An utterance already recorded as an
     /// [`Utterance`](TimelineKind::Utterance) began to play: its text again,
     /// for reading. Recorded so the rendered timeline shows real audio
@@ -91,9 +93,10 @@ impl Timeline {
         self.push(TimelineKind::Text(text.to_owned()));
     }
 
-    /// Records an utterance's full text at the current instant.
-    pub fn push_utterance(&self, text: &str) {
-        self.push(TimelineKind::Utterance(text.to_owned()));
+    /// Records an utterance's full text, and the trace ID behind it, at
+    /// the current instant.
+    pub fn push_utterance(&self, text: &str, trace: Option<TraceId>) {
+        self.push(TimelineKind::Utterance(text.to_owned(), trace));
     }
 
     /// Records an utterance's audio-start follow-up at the current instant.
@@ -147,7 +150,7 @@ impl Timeline {
         entries
             .iter()
             .filter_map(|entry| match &entry.kind {
-                TimelineKind::Utterance(text) => Some(text.clone()),
+                TimelineKind::Utterance(text, _) => Some(text.clone()),
                 TimelineKind::Gesture(_)
                 | TimelineKind::Keys(_)
                 | TimelineKind::Text(_)
@@ -159,52 +162,146 @@ impl Timeline {
 
     /// Renders every entry recorded so far, one per line and in time order,
     /// each tagged by kind and prefixed with elapsed time since the first
-    /// entry (for example `+634ms speech "Settings... menu item"`) — the
-    /// debugging artifact every `SpeechCollector::expect_*` panic message
-    /// prints, so a human reading a failure sees the injected commands and
-    /// the heard speech interleaved exactly as they happened.
+    /// entry (for example `+634ms speech "Settings... menu item"`): the
+    /// run's `timeline.txt`, so a human reading a failure sees the injected
+    /// commands and the heard speech interleaved exactly as they happened.
     #[must_use]
     pub fn render(&self) -> String {
         let entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
-        if entries.is_empty() {
+        let Some(first) = entries.first() else {
             return "(nothing recorded)".to_owned();
+        };
+        let start = first.at;
+        let lines: Vec<String> = entries.iter().map(|entry| entry.line(start)).collect();
+        lines.join("\n")
+    }
+
+    /// The entries of the step under way: from the last gesture, keys, or
+    /// typed text injected (or from the start, before any) to the newest
+    /// entry. Taken when an assertion fails, it is the step that failed.
+    #[must_use]
+    pub fn current_step(&self) -> Range<usize> {
+        let entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        let start = entries
+            .iter()
+            .rposition(|entry| entry.kind.is_input())
+            .unwrap_or(0);
+        start..entries.len()
+    }
+
+    /// The trace ID of the newest utterance in `step` that has one.
+    #[must_use]
+    pub fn last_trace_in(&self, step: Range<usize>) -> Option<TraceId> {
+        let entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        entries
+            .get(step)
+            .unwrap_or_default()
+            .iter()
+            .rev()
+            .find_map(|entry| match entry.kind {
+                TimelineKind::Utterance(_, trace) => trace,
+                _ => None,
+            })
+    }
+
+    /// The timeline up to the end of `failed`, a step
+    /// [`current_step`](Self::current_step) gave, for a failure message:
+    /// every earlier step on one line (when it started, what was injected,
+    /// or `start` before any input, and every utterance queued in it), then
+    /// the failed step's entries in full, as [`render`](Self::render)
+    /// gives them.
+    #[must_use]
+    pub fn render_failed_step(&self, failed: Range<usize>) -> String {
+        let entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(first) = entries.first() else {
+            return "(nothing recorded)".to_owned();
+        };
+        let start = first.at;
+        let end = failed.end.min(entries.len());
+        let failed_start = failed.start.min(end);
+        let mut lines = Vec::new();
+        let mut step_start = 0;
+        for index in 1..=failed_start {
+            if index == failed_start || entries[index].kind.is_input() {
+                if index > step_start {
+                    lines.push(summarize_step(&entries[step_start..index], start));
+                }
+                step_start = index;
+            }
         }
-        let start = entries[0].at;
-        let mut out = String::new();
-        for entry in entries.iter() {
-            let elapsed = entry.at.saturating_duration_since(start).as_millis();
-            let line = match &entry.kind {
-                TimelineKind::Gesture(identifier) => {
-                    format!("+{elapsed}ms gesture {identifier}")
-                }
-                TimelineKind::Keys(keys) => {
-                    format!("+{elapsed}ms keys [{}]", keys.join(", "))
-                }
-                TimelineKind::Text(text) => {
-                    format!("+{elapsed}ms text {text:?}")
-                }
-                TimelineKind::Utterance(text) => {
-                    format!("+{elapsed}ms speech {text:?}")
-                }
-                TimelineKind::AudioStarted(text) => {
-                    format!("+{elapsed}ms audio {text:?}")
-                }
-                TimelineKind::Ended(text, UtteranceEnding::Completed) => {
-                    format!("+{elapsed}ms completed {text:?}")
-                }
-                TimelineKind::Ended(text, UtteranceEnding::Cancelled) => {
-                    format!("+{elapsed}ms cancelled {text:?}")
-                }
-                TimelineKind::Ended(text, UtteranceEnding::Failed(reason)) => {
-                    format!("+{elapsed}ms failed {text:?}: {reason}")
-                }
-            };
-            let _ = writeln!(out, "{line}");
+        lines.extend(
+            entries[failed_start..end]
+                .iter()
+                .map(|entry| entry.line(start)),
+        );
+        lines.join("\n")
+    }
+}
+
+impl TimelineKind {
+    /// Whether this is something the scenario injected, which starts a
+    /// step.
+    fn is_input(&self) -> bool {
+        matches!(self, Self::Gesture(_) | Self::Keys(_) | Self::Text(_))
+    }
+
+    /// What was injected, as the rendered timeline describes it; `None`
+    /// for speech.
+    fn input(&self) -> Option<String> {
+        match self {
+            Self::Gesture(identifier) => Some(format!("gesture {identifier}")),
+            Self::Keys(keys) => Some(format!("keys [{}]", keys.join(", "))),
+            Self::Text(text) => Some(format!("text {text:?}")),
+            Self::Utterance(..) | Self::AudioStarted(_) | Self::Ended(..) => None,
         }
-        // Drop the trailing newline writeln! leaves so callers embedding
-        // this in a larger panic message control their own spacing.
-        out.pop();
-        out
+    }
+}
+
+impl TimelineEntry {
+    /// This entry as one line of the rendered timeline, its time counted
+    /// from `start`.
+    fn line(&self, start: Instant) -> String {
+        let elapsed = self.at.saturating_duration_since(start).as_millis();
+        let what = match &self.kind {
+            TimelineKind::Utterance(text, _) => format!("speech {text:?}"),
+            TimelineKind::AudioStarted(text) => format!("audio {text:?}"),
+            TimelineKind::Ended(text, UtteranceEnding::Completed) => {
+                format!("completed {text:?}")
+            }
+            TimelineKind::Ended(text, UtteranceEnding::Cancelled) => {
+                format!("cancelled {text:?}")
+            }
+            TimelineKind::Ended(text, UtteranceEnding::Failed(reason)) => {
+                format!("failed {text:?}: {reason}")
+            }
+            input => input.input().unwrap_or_default(),
+        };
+        format!("+{elapsed}ms {what}")
+    }
+}
+
+/// One step of the timeline on one line: when it started, what was
+/// injected (`start` for what came before any input), and every utterance
+/// queued in it.
+fn summarize_step(step: &[TimelineEntry], start: Instant) -> String {
+    let elapsed = step.first().map_or(0, |entry| {
+        entry.at.saturating_duration_since(start).as_millis()
+    });
+    let input = step
+        .first()
+        .and_then(|entry| entry.kind.input())
+        .unwrap_or_else(|| "start".to_owned());
+    let said: Vec<String> = step
+        .iter()
+        .filter_map(|entry| match &entry.kind {
+            TimelineKind::Utterance(text, _) => Some(format!("{text:?}")),
+            _ => None,
+        })
+        .collect();
+    if said.is_empty() {
+        format!("+{elapsed}ms {input}, nothing said")
+    } else {
+        format!("+{elapsed}ms {input}, said {}", said.join(", "))
     }
 }
 
@@ -238,7 +335,7 @@ mod tests {
         let timeline = Timeline::new();
         timeline.push_gesture("kb:verbatim+v");
         timeline.push_keys(&["downarrow"]);
-        timeline.push_utterance("Settings... menu item");
+        timeline.push_utterance("Settings... menu item", None);
 
         let rendered = timeline.render();
         let lines: Vec<&str> = rendered.lines().collect();
@@ -260,9 +357,9 @@ mod tests {
     fn utterances_filters_out_gestures_and_keys() {
         let timeline = Timeline::new();
         timeline.push_gesture("kb:verbatim+v");
-        timeline.push_utterance("one");
+        timeline.push_utterance("one", None);
         timeline.push_keys(&["tab"]);
-        timeline.push_utterance("two");
+        timeline.push_utterance("two", None);
 
         assert_eq!(
             timeline.utterances(),
@@ -273,7 +370,7 @@ mod tests {
     #[test]
     fn audio_start_followups_render_tagged_and_never_count_as_utterances() {
         let timeline = Timeline::new();
-        timeline.push_utterance("one");
+        timeline.push_utterance("one", None);
         timeline.push_audio_started("one");
 
         assert_eq!(timeline.utterances(), vec!["one".to_owned()]);
@@ -286,17 +383,61 @@ mod tests {
     fn typed_text_renders_tagged_and_never_counts_as_an_utterance() {
         let timeline = Timeline::new();
         timeline.push_text("echo hello");
-        timeline.push_utterance("hello");
+        timeline.push_utterance("hello", None);
 
         assert_eq!(timeline.utterances(), vec!["hello".to_owned()]);
         assert!(timeline.render().contains(r#"text "echo hello""#));
+    }
+
+    /// Each line with its elapsed time removed, which varies from run to
+    /// run.
+    fn without_times(rendered: &str) -> Vec<String> {
+        rendered
+            .lines()
+            .map(|line| {
+                line.split_once("ms ")
+                    .map_or(line, |(_, rest)| rest)
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_failed_step_is_shown_in_full_after_one_line_per_earlier_step() {
+        let timeline = Timeline::new();
+        timeline.push_utterance("Verbatim started", None);
+        timeline.push_keys(&["downarrow"]);
+        timeline.push_utterance("> banana", Some(TraceId::mint()));
+        timeline.push_audio_started("> banana");
+        timeline.push_ended("> banana", &UtteranceEnding::Completed);
+        timeline.push_gesture("kb:verbatim+v");
+        timeline.push_keys(&["uparrow"]);
+        let failed_trace = TraceId::mint();
+        timeline.push_utterance("> apple", Some(failed_trace));
+        timeline.push_ended("> apple", &UtteranceEnding::Cancelled);
+        let failed = timeline.current_step();
+        // Pushed after the failure: not part of the failure's timeline.
+        timeline.push_keys(&["enter"]);
+
+        assert_eq!(timeline.last_trace_in(failed.clone()), Some(failed_trace));
+        assert_eq!(
+            without_times(&timeline.render_failed_step(failed)),
+            vec![
+                r#"start, said "Verbatim started""#,
+                r#"keys [downarrow], said "> banana""#,
+                "gesture kb:verbatim+v, nothing said",
+                "keys [uparrow]",
+                r#"speech "> apple""#,
+                r#"cancelled "> apple""#,
+            ]
+        );
     }
 
     #[test]
     fn clones_share_the_same_underlying_log() {
         let timeline = Timeline::new();
         let clone = timeline.clone();
-        clone.push_utterance("from the clone");
+        clone.push_utterance("from the clone", None);
         assert_eq!(timeline.utterances(), vec!["from the clone".to_owned()]);
     }
 }

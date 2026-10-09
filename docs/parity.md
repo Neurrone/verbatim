@@ -1971,7 +1971,10 @@ verified.
   a terminal. Decision (Dickson, 2026-10-09): when the key makes the
   program rewrite lines and the caret is not on a changed line, Verbatim
   speaks the line that gained the marker, and it never speaks a redraw
-  read half done. NVDA reads the caret's line at the first caret or text
+  read half done. Changed the same day (Dickson): every line that gained
+  a marker another line lost is spoken, top to bottom, the caret's line
+  among them when it is one, so a key that moves two markers says both
+  lines (`windows_terminal_two_markers`, `conhost_two_markers`). NVDA reads the caret's line at the first caret or text
   change event, or the first change of the caret's position, after the key
   (`source/editableText.py`, lines 93 to 138 and 181 to 192; the line
   spoken by lines 165 to 178), so it speaks whatever line the caret is on

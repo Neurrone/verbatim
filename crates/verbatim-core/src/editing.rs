@@ -432,12 +432,10 @@ pub(crate) fn caret_reply(
                 state.reported_format = Some((pending.node, reported));
                 segments
             }
-            // A terminal program redrew another line to show the key's
-            // effect (a selection list's marker), which is spoken.
-            _ if redrawn.is_some() => {
-                let line = redrawn.as_deref().unwrap_or_default();
-                text::text_segments(text::line_content(line, grid), None)
-            }
+            // A terminal program redrew lines to show the key's effect
+            // (selection lists' markers): spoken below, each its own
+            // utterance, as lines of output are.
+            _ if !redrawn.is_empty() => Vec::new(),
             motion => {
                 let mut reported = reported_format(state, pending.node);
                 let segments =
@@ -448,7 +446,15 @@ pub(crate) fn caret_reply(
         }
     };
     update_caret(state, pending.node, caret, read_at_ms);
-    let mut effects = Vec::new();
+    let mut effects: Vec<Effect> = redrawn
+        .iter()
+        .map(|line| {
+            speak(
+                trace_id,
+                text::text_segments(text::line_content(line, grid), None),
+            )
+        })
+        .collect();
     if !segments.is_empty() {
         effects.push(speak(trace_id, segments));
     }

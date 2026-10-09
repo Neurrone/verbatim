@@ -333,9 +333,9 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   `previous_selection`. A watch marked `landing` (a key judged by where the
   caret landed) is answered with `same_line`, whether the caret is still on
   the line where it was. In a terminal, a line key's answer may carry
-  `redrawn`, the line a program redrew to show the key's effect when the
-  caret is not on it (a selection list's marker), which Core speaks in
-  place of the caret's line, and a key answered by where the caret landed
+  `redrawn`, the lines a program redrew to show the key's effect, top to
+  bottom (each line that gained a selection list's marker), which Core
+  speaks, each as its own utterance, in place of the caret's line, and a key answered by where the caret landed
   may carry `removed`, the text it removed from a typed line that had
   wrapped onto more rows, which Core speaks as removed text. The outpost checks for it when the request
   arrives and whenever the application reports a caret, text, or
