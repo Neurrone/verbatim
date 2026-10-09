@@ -129,8 +129,11 @@ screen reader in both rendered and source form.
   reducer never emits flattened strings: an `Utterance` is a sequence of
   semantic spans — label, role, value, state, description, attribute-tagged
   text runs — and a presentation stage at the end of the speech pipeline
-  flattens spans to text through a theme, where the default theme
-  reproduces plain speech. Rationale: earcons and voice styling for roles
+  flattens spans to text through a theme. The default theme matches
+  NVDA's defaults: everything is spoken as NVDA speaks it, and sounds play
+  where NVDA plays them by default, plus Verbatim's own cues and the error
+  sound for a spelling error (decided 2026-10-07; `phase6-design.md`,
+  "Themes: one model for verbosity, speech, and sounds"). Rationale: earcons and voice styling for roles
   and formatting (roadmap M11, in the Emacspeak audio-formatting tradition)
   become a theme swap rather than a pipeline rewrite, and dictionary and
   symbol processing operate on typed spans rather than undifferentiated
@@ -654,11 +657,23 @@ M13) for Java applications.
   the provider process in one cross-process round trip. Wrapped in a `verbatim-uia-rops`
   crate and used for: ancestor-chain retrieval on focus events, bulk text
   attribute runs, terminal text-range walking, and browse-mode buffer batch
-  fetches. Verify ARM64 behavior early (R3).
-- **Terminals.** TextPattern plus remote ops, with a diff-based change
-  announcer and an explicit flood policy: output is coalesced and speech for
-  superseded screenfuls is dropped, bounded queue, never unbounded backlog.
-  This is a headline scenario for the latency budget.
+  fetches. ARM64 behavior is still to be verified (R3, deferred on
+  2026-10-06).
+- **Terminals.** TextPattern plus remote ops. Each read diffs the visible
+  screen with the screen last read, and what was inserted is spoken, in
+  order, one line per utterance; newer output never cancels older output
+  still waiting (decided 2026-10-06, since that rule is what broke NVDA's
+  2026.3 beta). The flood policy works by groups: the first "Lines spoken
+  in full" lines of a burst (30 by default) are spoken whole, and once
+  that group has been heard, when more lines wait than the limit, all but
+  the newest "Last lines to speak" become one "skipped N lines", and the
+  decision repeats after each group. While Core's queue is full the
+  outpost only notes that the terminal changed and reads it on demand,
+  when Core asks as it hands a group's last line to speech. Core's waiting
+  output is bounded in bytes (10 MB), never an unbounded backlog. Details
+  are in `docs/crates/verbatim-core.md`, "Terminals", and
+  `docs/crates/verbatim-outpost.md`, "Terminals". This is a headline
+  scenario for the latency budget.
 - **Constraint: keep a remoted-UIA mode possible.** Windows can present a
   legitimate UIA tree whose process identity and embedded window handles
   are locally meaningless — Application Guard did exactly this (the tree
@@ -729,8 +744,9 @@ moved it.
 
 Pipeline stages, in order: structured utterance (semantic spans, per D12),
 dictionary and symbol processing (per span), presentation (a theme flattens
-spans to text, voice changes, and earcons; the default theme is plain
-speech), language tagging, synth driver, PCM, the mixer (D17), and the
+spans to text, voice changes, and earcons; the default theme speaks as
+NVDA does and plays sounds where NVDA plays them by default, per D12),
+language tagging, synth driver, PCM, the mixer (D17), and the
 `AudioDevice` it writes to.
 
 - **Speech manager**: priority lanes (interrupt/next/queued), index marks with
@@ -777,8 +793,11 @@ speech), language tagging, synth driver, PCM, the mixer (D17), and the
   event subscription, speech/braille output, gesture binding, config,
   namespaced storage, OCR; each is a separate grant surfaced to the user).
 - Extension kinds: **app modules** (activated per application, mirroring
-  outpost lifecycle — this is where Office/Terminal/browser-specific behavior
-  lives), **global extensions**, **synths**, later braille drivers and
+  outpost lifecycle — this is where Office- and browser-specific behavior
+  lives; terminal behavior is not here but generic, in the core, keyed by
+  the control's UIA class or the console's window class as NVDA's is, so
+  app modules adjust only one terminal application's quirks), **global
+  extensions**, **synths**, later braille drivers and
   OCR/recognition providers.
 - App modules hook the pipeline at defined points: adjust presentation of a
   node, add synthetic nodes, handle gestures, react to events. Hooks have
@@ -1005,7 +1024,10 @@ otherwise.
   VM profile; user reports drive any deeper investigation); consolidation
   into shared hosts as the fallback (D9).
 - **R3 — Remote-ops on ARM64.** API limits or behavior differences.
-  Mitigation: spike alongside first terminal work (M4).
+  Mitigation: verify on ARM64 before relying on remote operations there.
+  The verification was planned alongside the first terminal work (M4) and
+  was deferred on 2026-10-06: M4 is built and verified on x64 only, and
+  the ARM64 verification is not yet scheduled to a milestone.
 - **R4 — Eloquence complications.** DLL architecture or licensing issues.
   Mitigation: native host is already arch-flexible; PoC scoped to its own
   milestone (M7), off the critical path.
