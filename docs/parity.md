@@ -2003,7 +2003,8 @@ verified.
   1632 to 1637), and queues every UIA focus event it accepts. Verbatim
   now does the same: an outpost reports a UIA focus whose event said it
   had the keyboard focus though another element of the application has
-  it by the time the outpost handles it, unless its element is gone, and
+  it by the time the outpost handles it, unless its element is gone or
+  holds the element focused now (a container passing the focus on), and
   handles every UIA focus of a batch in turn, oldest first, where it had
   handled only the newest; Core culls the speech of a focus no longer
   current as it expires. Windows Terminal raises its tabs' focus events

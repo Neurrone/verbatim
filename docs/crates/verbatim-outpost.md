@@ -616,7 +616,9 @@ Implementation notes:
   (`FocusQuery::require_focus`). It is not kept with its element, so the
   focus-following subscriptions do not move to it; one found nowhere is
   gone and is dropped, as File Explorer's "Working on it..." is as a
-  folder opens. The console host's window's own focus is still dropped.
+  folder opens, and so is one that holds the element focused now, a
+  container that passed the focus to its content, which the newer focus
+  reports as an ancestor (File Explorer's file list pane). The console host's window's own focus is still dropped.
   Every
   UIA focus of a batch is handled in turn, oldest first, as NVDA's UIA
   handler queues each one, and Core culls the speech of those that have

@@ -808,10 +808,10 @@ enum LiveFocus {
     /// The keyboard focus is in another application now: the fact is out of
     /// date, and the newer focus's own event reports it.
     InAnotherApplication,
-    /// Another element of this application has the keyboard focus: the
-    /// fact is most likely out of date, unless the application is still
+    /// Another element of this application has the keyboard focus, the
+    /// one given: the fact is out of date, or the application is still
     /// starting and answered with a stand-in for its window.
-    Elsewhere,
+    Elsewhere(IUIAutomationElement),
     /// The read did not answer in time or failed.
     Unresolved,
 }
@@ -2155,7 +2155,9 @@ impl Worker<'_> {
             Some(element) => element,
             None => match self.live_focus_element(&focus_id, 0) {
                 LiveFocus::Found(element) => element,
-                LiveFocus::InAnotherApplication | LiveFocus::Elsewhere | LiveFocus::Unresolved => {
+                LiveFocus::InAnotherApplication
+                | LiveFocus::Elsewhere(_)
+                | LiveFocus::Unresolved => {
                     return None;
                 }
             },
@@ -2771,14 +2773,14 @@ impl Worker<'_> {
                 tracing::debug!("UIA focus dropped: the focus is in another application now");
                 Err(Dropped)
             }
-            LiveFocus::Elsewhere if window_class_name(fact_hwnd) == CONSOLE_WINDOW_CLASS => {
+            LiveFocus::Elsewhere(_) if window_class_name(fact_hwnd) == CONSOLE_WINDOW_CLASS => {
                 // The console host's window, the parent of its text area,
                 // whose focus events NVDA refuses whatever the element
                 // reports ([`own_element_focused`](Self::own_element_focused)).
                 tracing::debug!("UIA focus dropped: the console window's own focus");
                 Err(Dropped)
             }
-            LiveFocus::Elsewhere => {
+            LiveFocus::Elsewhere(focused) => {
                 // Focus has moved on within the application since the event
                 // was raised; the event said this element had it, and the
                 // newer focus's own event follows.
@@ -2788,12 +2790,20 @@ impl Worker<'_> {
                 // One whose element is found nowhere in its window is gone
                 // already, as File Explorer's "Working on it..." is as a
                 // folder opens, and is dropped.
-                if let Some(found) = self.element_of_moved_focus(fact, (fact_hwnd, focus_window)) {
-                    Ok((Some(found), true))
-                } else {
+                let Some(found) = self.element_of_moved_focus(fact, (fact_hwnd, focus_window))
+                else {
                     tracing::debug!("UIA focus dropped: moved on, and its element is gone");
-                    Err(Dropped)
+                    return Err(Dropped);
+                };
+                if self.holds_element(&found, &focused) {
+                    // A container that passed the focus to an element
+                    // inside it, as File Explorer's file list does to its
+                    // first item as a folder opens: the newer focus reports
+                    // it as an ancestor.
+                    tracing::debug!("UIA focus dropped: moved on to an element inside it");
+                    return Err(Dropped);
                 }
+                Ok((Some(found), true))
             }
             LiveFocus::Unresolved => Ok((None, false)),
         }
@@ -2936,6 +2946,33 @@ impl Worker<'_> {
         read.ok().flatten()
     }
 
+    /// Whether `inner`, the element that has the keyboard focus now, is
+    /// inside `outer`'s subtree, found by its runtime id within
+    /// [`FOCUS_READ_WAIT`]; a read that fails or does not answer in time is
+    /// taken as not.
+    fn holds_element(
+        &mut self,
+        outer: &IUIAutomationElement,
+        inner: &IUIAutomationElement,
+    ) -> bool {
+        let Some(uia) = self.client.uia() else {
+            return false;
+        };
+        let Ok(cache) = self.context.uia_cache(uia) else {
+            return false;
+        };
+        // `inner` was built with the base cache request.
+        let runtime_id = snapshot_parts_from_cached_element(inner).runtime_id;
+        matches!(
+            uia.within(FOCUS_READ_WAIT, |uia| uia.element_by_runtime_id(
+                outer,
+                &runtime_id,
+                &cache
+            )),
+            Ok(Ok(Some(_)))
+        )
+    }
+
     /// The element the registry holds under `runtime_id`, `None` when no
     /// node with an element has that id.
     fn held_element(&self, runtime_id: &[i32]) -> Option<Held> {
@@ -3015,7 +3052,7 @@ impl Worker<'_> {
         } else if let Some(own) = self.own_element_focused(runtime_id, own_window) {
             LiveFocus::Found(own)
         } else {
-            LiveFocus::Elsewhere
+            LiveFocus::Elsewhere(element)
         }
     }
 
