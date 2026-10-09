@@ -31,6 +31,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
+use verbatim_agent::protocol::WindowInfo;
 use verbatim_control::client::Client as ControlClient;
 use verbatim_control::protocol::{Frame, Request};
 use verbatim_e2e::agent_client::AgentClient;
@@ -531,19 +532,22 @@ fn capture(args: &[String]) -> io::Result<()> {
             }
         }
     };
-    // The process whose window the keys go to: the one in front when the
+    // The window the keys go to, by its handle: the one in front when the
     // capture starts, then the one each --front brings forward. A launch
     // leaves none until a --front names its window.
-    let mut target = agent.foreground_info()?.foreground.map(|window| window.pid);
+    let mut target = agent
+        .foreground_info()?
+        .foreground
+        .map(|window| window.window);
     for (index, step) in options.steps.iter().enumerate() {
         let sent_ms = source.now_ms();
-        if matches!(step, Step::Key(_) | Step::Type(_)) {
-            require_in_front(&mut agent, target, step)?;
-        }
         match step {
             Step::Key(keys) => {
-                let keys: Vec<String> = keys.split(',').map(str::to_owned).collect();
-                agent.send_keys(&keys)?;
+                // Each key of a batch is checked and pressed on its own.
+                for key in keys.split(',') {
+                    require_in_front(&mut agent, target, step)?;
+                    agent.send_keys(&[key.to_owned()])?;
+                }
             }
             Step::Launch { program, args } => {
                 agent.launch_process(program, args, None, &[], None)?;
@@ -563,7 +567,7 @@ fn capture(args: &[String]) -> io::Result<()> {
                     Some(window) => agent.set_foreground(window.window)?,
                     None => false,
                 };
-                target = window.filter(|_| taken).map(|window| window.pid);
+                target = window.filter(|_| taken).map(|window| window.window);
                 // The steps after it press keys in whatever is in front:
                 // without the window, none of them may run.
                 if !taken {
@@ -574,7 +578,11 @@ fn capture(args: &[String]) -> io::Result<()> {
             }
             Step::Gesture(identifier) => send_gesture(identifier)?,
             Step::Type(text) => {
-                agent.type_text(text)?;
+                // One character at a time, each checked just before it.
+                for character in text.chars() {
+                    require_in_front(&mut agent, target, step)?;
+                    agent.type_text(&character.to_string())?;
+                }
             }
         }
         if options.json {
@@ -604,34 +612,53 @@ fn capture(args: &[String]) -> io::Result<()> {
             }
         }
     }
-    Ok(())
+    // Keys the window has not read yet go to whichever window is in front
+    // when they are read, or when it closes: a capture that ends with its
+    // window behind another, or not responding, says so.
+    let foreground = agent.foreground_info()?.foreground;
+    in_front(target, foreground.as_ref()).map_err(|why| {
+        io::Error::other(format!(
+            "at the end of the capture {why}; keys it was sent may not have been read, and \
+             closing it would hand them to the window behind it"
+        ))
+    })
 }
 
-/// Fails, before `step` presses any key, unless the window in front
-/// belongs to `target`, the process the keys are meant for: a key pressed
-/// in any other window acts on whatever it is (`docs/tooling.md`,
-/// "Capturing NVDA").
-fn require_in_front(agent: &mut AgentClient, target: Option<u32>, step: &Step) -> io::Result<()> {
-    let Some(target) = target else {
-        return Err(io::Error::other(format!(
-            "no window was brought forward after the launch; {} and the steps after it were not run",
-            step.label()
-        )));
-    };
+/// Fails, just before one key or character of `step` is sent, unless the
+/// capture's window, `target` by its handle, is in front and responding
+/// (`docs/tooling.md`, "Recording what NVDA says").
+fn require_in_front(agent: &mut AgentClient, target: Option<u64>, step: &Step) -> io::Result<()> {
     let foreground = agent.foreground_info()?.foreground;
-    match foreground {
-        Some(window) if window.pid == target => Ok(()),
-        other => Err(io::Error::other(format!(
-            "the window in front is {}, not the capture's (pid {target}); {} and the steps after it were not run",
-            other.map_or_else(
-                || "none".to_owned(),
-                |window| format!(
-                    "{:?} of {} (pid {})",
-                    window.title, window.image, window.pid
-                )
-            ),
+    in_front(target, foreground.as_ref()).map_err(|why| {
+        io::Error::other(format!(
+            "{why}; the rest of {} and the steps after it were not run",
             step.label()
-        ))),
+        ))
+    })
+}
+
+/// Whether the window `target`, by its handle, is `foreground`, the window
+/// in front, and responding; why not, otherwise. A key sent to any other
+/// window acts on whatever it is. A key sent to a window that is not
+/// responding waits unread, and goes to whichever window is in front when
+/// it is read, or when that window closes.
+fn in_front(target: Option<u64>, foreground: Option<&WindowInfo>) -> Result<(), String> {
+    let Some(target) = target else {
+        return Err("no window was brought forward after the launch".to_owned());
+    };
+    match foreground {
+        Some(window) if window.window == target && !window.hung => Ok(()),
+        Some(window) if window.window == target => Err(format!(
+            "the capture's window, {:?} of {}, is not responding",
+            window.title, window.image
+        )),
+        Some(window) => Err(format!(
+            "the window in front is {:?} of {} (window {}), not the capture's (window {target})",
+            window.title, window.image, window.window
+        )),
+        None => Err(format!(
+            "no window is in front, not the capture's (window {target})"
+        )),
     }
 }
 
@@ -733,6 +760,29 @@ mod tests {
             Entry::Note("late".to_owned()).to_json(0, None),
             json!({"kind": "note", "text": "late", "step": 0})
         );
+    }
+
+    fn window(handle: u64, pid: u32, hung: bool) -> WindowInfo {
+        WindowInfo {
+            window: handle,
+            pid,
+            title: "capture".to_owned(),
+            class: "ConsoleWindowClass".to_owned(),
+            image: "conhost.exe".to_owned(),
+            cloaked: false,
+            minimized: false,
+            hung,
+        }
+    }
+
+    #[test]
+    fn keys_go_only_to_the_capture_s_window_in_front_and_responding() {
+        assert_eq!(in_front(Some(7), Some(&window(7, 10, false))), Ok(()));
+        // Another window of the same process is not the capture's.
+        assert!(in_front(Some(7), Some(&window(8, 10, false))).is_err());
+        assert!(in_front(Some(7), Some(&window(7, 10, true))).is_err());
+        assert!(in_front(Some(7), None).is_err());
+        assert!(in_front(None, Some(&window(7, 10, false))).is_err());
     }
 
     #[test]

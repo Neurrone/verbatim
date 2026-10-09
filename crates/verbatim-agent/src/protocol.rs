@@ -598,6 +598,12 @@ pub struct WindowInfo {
     pub cloaked: bool,
     /// Whether the window is minimized.
     pub minimized: bool,
+    /// Whether Windows judges the window not responding: its thread has
+    /// not taken a message for five seconds (`IsHungAppWindow`). Keys sent
+    /// to it wait unread, and go to whichever window is in front when they
+    /// are finally read, or when it closes.
+    #[serde(default)]
+    pub hung: bool,
 }
 
 /// What [`Request::WaitForWindow`] waits for. Titles are matched as

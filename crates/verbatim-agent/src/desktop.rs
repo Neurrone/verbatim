@@ -29,8 +29,8 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowW, GW_OWNER, GWL_STYLE, GetClassNameW, GetForegroundWindow, GetWindow,
-    GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-    PostMessageW, SMTO_ABORTIFHUNG, SW_MINIMIZE, SW_RESTORE, SendMessageTimeoutW,
+    GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsHungAppWindow, IsIconic,
+    IsWindowVisible, PostMessageW, SMTO_ABORTIFHUNG, SW_MINIMIZE, SW_RESTORE, SendMessageTimeoutW,
     SetForegroundWindow, ShowWindow, ShowWindowAsync, WM_CLOSE, WM_COMMAND, WS_MINIMIZEBOX,
 };
 use windows::core::{BOOL, PWSTR, w};
@@ -299,6 +299,8 @@ pub(crate) fn window_info(window: HWND) -> WindowInfo {
         image: image_name(pid).unwrap_or_default(),
         cloaked: is_cloaked(window),
         minimized: is_minimized(window),
+        // SAFETY: tolerates any handle.
+        hung: unsafe { IsHungAppWindow(window) }.as_bool(),
     }
 }
 
@@ -544,6 +546,7 @@ mod tests {
                     image,
                     cloaked: false,
                     minimized: false,
+                    hung: false,
                 }],
             }
         );

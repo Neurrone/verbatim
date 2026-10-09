@@ -60,12 +60,17 @@ A step is a key to press, or one of these:
   title, for a window whose program is not obvious, such as a console
   window, which belongs to the console host or to the shell it runs
   depending on how it was started. If no such window takes the
-  foreground, the capture stops with an error. Before every key and
-  typing step, the capture checks that the window in front still belongs
-  to the process the last `--front` brought forward (or, before any, to
-  the one in front when the capture started) and stops with an error
-  otherwise, so its keys never reach another window; after a `--launch`,
-  a `--front` must name the launched program's window before any key.
+  foreground, the capture stops with an error. Just before every key,
+  each key of a comma-joined batch on its own, and every character
+  typed, the capture checks that the window in front is the window the
+  last `--front` brought forward (or, before any, the one in front when
+  the capture started), by its handle, and that Windows does not judge it
+  not responding, and stops with an error otherwise, so its keys never
+  reach another window; after a `--launch`, a `--front` must name the
+  launched program's window before any key. It checks once more at its
+  end and fails when the window is no longer in front and responding,
+  since keys it has not read would go to the window behind it when it
+  closes (`docs/tooling.md`, "Recording what NVDA says").
 - `--gesture <identifier>` sends a gesture such as `kb:verbatim+v` to
   the Verbatim running on this machine through its control pipe, so
   Verbatim's own commands can be used without pressing a modifier key
