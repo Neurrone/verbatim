@@ -952,7 +952,12 @@ Implementation notes:
   element is not known yet, the provider did not answer, or the caret
   read failed), nothing is sent: Core speaks the line when the caret is
   next reported, and never the value, which for a document is all of its
-  text. The worker then follows its caret:
+  text. A focused terminal's screen is read first, as the baseline of its
+  output; when it is Windows Terminal's and every row of it is blank, a
+  new window or tab with nothing written yet, `NoText` goes just before
+  its `CaretMoved`, so Core says no line, as NVDA says none there, while
+  the console host's says "blank" (`docs/parity.md`). The worker then
+  follows its caret:
   a second focus-following UIA subscription, moved to the focus when it
   has text and to nothing otherwise, delivers `Text_TextSelectionChanged`,
   reported as `CaretMoved`, and `Text_TextChanged`, reported as

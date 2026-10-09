@@ -1936,10 +1936,20 @@ verified.
   tab, and "terminal" in the console host, whose text area's name both
   drop (matched; NVDA says the terminal and its line as one utterance,
   Verbatim as two). A second tab opened from the command line says
-  "<title> terminal" and then the prompt as output; Verbatim says an
-  extra "blank" as well, which `windows_terminal_tabs` asserts today
-  (**different, known, being fixed** to match NVDA, Dickson, 2026-10-09,
-  coherence review). Typing and
+  "<title> terminal" and then the prompt as output. **Matched since
+  2026-10-09**: Verbatim said an extra "blank" there, and as every
+  Windows Terminal window opened. NVDA reads the caret's line for a
+  focused terminal, "blank" for an empty one (`speech/speech.py`
+  898-917 and 1929-1933), yet in Windows Terminal it said no line for a
+  window or tab with nothing written yet in 17 of 19 captures, while the
+  console host's said "blank" in all 14; the cause in NVDA was not
+  found. Verbatim now says no line for a Windows Terminal window or tab
+  whose screen is all blank as it takes the focus (the outpost answers
+  the focus's text as none, `NoText`, before its caret), and "blank" in
+  the console host, as before; every Windows Terminal scenario asserts
+  it as it opens. Returning to a tab or window, NVDA said its prompt
+  in some captures and no line in others; Verbatim says the prompt.
+  Typing and
   its output after a switch are echoed and spoken as in any terminal
   (matched). An earlier report that Verbatim left the window's title out
   of a console's terminal was not borne out: NVDA leaves it out too.

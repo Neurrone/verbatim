@@ -168,11 +168,7 @@ fn windows_terminal_ready(scenario: &mut Scenario, state: &ScenarioState) {
     terminal::expect_prompt_read(
         scenario,
         state,
-        &[
-            &format!("{title} window"),
-            &format!("{title} terminal"),
-            "blank",
-        ],
+        &[&format!("{title} window"), &format!("{title} terminal")],
     );
 }
 

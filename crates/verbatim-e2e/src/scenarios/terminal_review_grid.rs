@@ -71,11 +71,7 @@ pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut Scenari
     terminal::expect_prompt_read(
         scenario,
         state,
-        &[
-            &format!("{title} window"),
-            &format!("{title} terminal"),
-            "blank",
-        ],
+        &[&format!("{title} window"), &format!("{title} terminal")],
     );
     terminal::type_with_echo(scenario, r".\grid.ps1", terminal::Echo::Shown);
     let mut printed: Vec<&str> = TABLE.iter().map(|(row, _)| *row).collect();

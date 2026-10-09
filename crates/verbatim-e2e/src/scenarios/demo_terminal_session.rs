@@ -35,11 +35,7 @@ pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
     terminal::expect_prompt_read(
         scenario,
         state,
-        &[
-            &format!("{title} window"),
-            &format!("{title} terminal"),
-            "blank",
-        ],
+        &[&format!("{title} window"), &format!("{title} terminal")],
     );
     terminal_editing::windows_terminal_steps(scenario);
     terminal_commands::windows_terminal_steps(scenario);

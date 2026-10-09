@@ -2537,6 +2537,26 @@ Made while raising the flood limit (2026-10-09, to be confirmed):
   arrow keys and ten for Page Up and Page Down, so reaching the top from
   the default takes many presses; End reaches it at once.
 
+Made while removing a new tab's extra "blank" (2026-10-09, to be
+confirmed):
+
+- NVDA's source reads the caret's line for any focused terminal and
+  says "blank" for an empty one, yet in Windows Terminal it said no line
+  for a new window or tab in 17 of 19 captures, and in the console host
+  "blank" in all 14; returning to a tab with a prompt, it said the
+  prompt in some captures and nothing in others. The cause in NVDA was
+  not found, and looks like timing. Verbatim matches the usual result for
+  what is new: a Windows Terminal window or tab whose screen is all
+  blank as it takes the focus says no line, every other terminal focus
+  its caret's line, the console host's "blank" included. The outpost
+  sends this as `NoText` before the focus's caret, the answer for a focus
+  with nothing to read, so Core needs no new message.
+- A Windows Terminal tab whose screen was cleared and is all blank is
+  treated the same as a new one when it takes the focus.
+- Closing a tab, NVDA said the remaining tab's terminal without its line
+  in its capture; Verbatim keeps saying the line, as NVDA does when its
+  read of the line is not lost.
+
 ## Language audit (2026-10-08)
 
 A read-only audit found these, ranked by how likely a user of the language is to hit them; each is fixed with exact tests in a language work package, together with the terminal's changed-word rule:

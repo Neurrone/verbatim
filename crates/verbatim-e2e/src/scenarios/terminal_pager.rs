@@ -102,11 +102,7 @@ pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut Scenari
     terminal::expect_prompt_read(
         scenario,
         state,
-        &[
-            &format!("{title} window"),
-            &format!("{title} terminal"),
-            "blank",
-        ],
+        &[&format!("{title} window"), &format!("{title} terminal")],
     );
     pager_steps(scenario);
 }

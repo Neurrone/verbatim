@@ -17,11 +17,10 @@
 //! (`WindowsTerminal.exe -w 0 new-tab`), as the first window was: opened
 //! together, the window's title is the first tab's or the second's
 //! depending on when Windows Terminal reports it in front. NVDA says the
-//! new tab's terminal, "<title> terminal", and then its prompt as output;
-//! Verbatim says the same with an extra "blank" for the empty line before
-//! the prompt, as when a window opens. NVDA says no "blank" there: a known
-//! difference being fixed (Dickson, 2026-10-09, coherence review), which
-//! this scenario asserts until the fix lands.
+//! new tab's terminal, "<title> terminal", and then its prompt as output,
+//! and Verbatim the same: a Windows Terminal window or tab with nothing
+//! written yet says no line as it takes the focus, as in NVDA, where the
+//! console host's says "blank" in both.
 //!
 //! Switching tabs with Control+Tab or Control+Shift+Tab, NVDA says "list"
 //! and the tab ("<title> 1 of 2"), which holds the keyboard focus until
@@ -98,11 +97,7 @@ pub(crate) fn body_two_windows_terminal(scenario: &mut Scenario, state: &mut Sce
     terminal::expect_prompt_read(
         scenario,
         state,
-        &[
-            &format!("{first} window"),
-            &format!("{first} terminal"),
-            "blank",
-        ],
+        &[&format!("{first} window"), &format!("{first} terminal")],
     );
     let second_state = terminal::open_windows_terminal_window(scenario, "two-b", state)
         .expect("opens a second Windows Terminal window");
@@ -110,11 +105,7 @@ pub(crate) fn body_two_windows_terminal(scenario: &mut Scenario, state: &mut Sce
     terminal::expect_prompt_read(
         scenario,
         &second_state,
-        &[
-            &format!("{second} window"),
-            &format!("{second} terminal"),
-            "blank",
-        ],
+        &[&format!("{second} window"), &format!("{second} terminal")],
     );
     scenario
         .bring_window_forward(&first)
@@ -144,20 +135,12 @@ pub(crate) fn body_tabs(scenario: &mut Scenario, state: &mut ScenarioState) {
     terminal::expect_prompt_read(
         scenario,
         state,
-        &[
-            &format!("{first} window"),
-            &format!("{first} terminal"),
-            "blank",
-        ],
+        &[&format!("{first} window"), &format!("{first} terminal")],
     );
     let second_state = terminal::open_windows_terminal_tab(scenario, "tabs-two", state)
         .expect("opens a second tab");
     let second = terminal::title(&second_state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        &second_state,
-        &[&format!("{second} terminal"), "blank"],
-    );
+    terminal::expect_prompt_read(scenario, &second_state, &[&format!("{second} terminal")]);
     scenario
         .send_keys(&["control+shift+tab"])
         .expect("switches to the first tab");
