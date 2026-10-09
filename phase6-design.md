@@ -2860,3 +2860,16 @@ What Verbatim says now (`windows_terminal_tabs`): Control+Shift+Tab "tab control
 ## A focus followed from its own events (2026-10-09)
 
 A UIA focus whose element the outpost could not read in time is reported from its event alone. Its element then came only from a follow-up read, queued at once (the last of the waits the coherence review's decision 7 named), or from the focus's next focus or selection event; until then its property, caret and text subscriptions listened nowhere, so a focus that raised neither event, such as a button whose name changed, was never followed. Now the subscriptions listen in the focus's top-level window while its element is unknown (`Worker::follow_focus_window`, the application's own top-level windows when no window is known), and the first event the focus raises itself brings its element, kept under the focus's node and followed from then on (`Worker::adopt_focus_element`); the other elements' events are dropped, as the subscriptions follow the focus alone. The follow-up read is removed: it was a second try with nothing to say the answer had changed, and none of the ten measured scenarios needed it. Test: mockapp's `a_focus_whose_element_was_not_found_is_followed_from_its_own_changes`, which fails with the subscriptions left listening nowhere; the two tests of a focus whose element was not found read the focused element once fewer.
+
+## Decisions to confirm with Dickson (coherence fixes, 2026-10-09)
+
+Made while carrying out the coherence review's fixes, each recorded in its section above:
+
+1. File Explorer is opened without the agent's foreground right but not minimized ("File Explorer opened without the foreground right"): launched minimized, its folder window takes the foreground while minimized and, restored, has no keyboard focus in its file list, in NVDA as in Verbatim.
+2. "Read once shown and titled" is read as "once shown": a foreground window in front but not yet shown is reported at its show event, its name read then. File Explorer sets the folder's title before it shows the window (measured), so the title it is shown with is the folder's. Waiting for a title as well would leave a window that is shown untitled never announced.
+3. A second Verbatim waits for the first one's process to exit with no limit; a first Verbatim whose teardown never finishes keeps it waiting until it is ended by hand.
+4. Control+Tab: Verbatim says "tab control" before "list", and "not selected" for the tab Control+Tab leaves (culled); NVDA says neither ("Control+Tab announces the tab").
+5. Every UIA focus of a batch is now handled in turn, oldest first, as NVDA's UIA handler queues them, rather than only the newest; a UIA focus that has moved on since its event is reported unless its element is gone. This reaches every UIA application, not only Windows Terminal.
+6. The outpost drops focus and foreground facts on the shell's staging windows, ported from NVDA's File Explorer app module, found when Alt+Tab said "pane" ("The two-window scenarios switch with Alt+Tab").
+7. The leave-during-a-flood scenarios count as two-window scenarios and switch with Alt+Tab too.
+8. The 250 ms foreground hold is removed against one older observation of Notepad's foreground event arriving 130 ms early, which the new measurements did not reproduce ("Foreground events against the foreground window").
