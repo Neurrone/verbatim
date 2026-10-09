@@ -240,7 +240,7 @@ mod tests {
         assert!(!page.report_output);
         assert_eq!((page.full_lines, page.last_lines), (50, 10));
         assert!(page.speak_passwords);
-        assert_eq!((page.min_lines, page.max_lines), (1, 100));
+        assert_eq!((page.min_lines, page.max_lines), (1, 10_000));
         for (label, name) in [
             (&page.report_output_label, &page.report_output_name),
             (&page.speak_passwords_label, &page.speak_passwords_name),
@@ -255,17 +255,23 @@ mod tests {
     }
 
     #[test]
-    fn the_limits_stay_between_1_and_100() {
+    fn the_limits_stay_between_1_and_10_000() {
         let host = FakeHost::new(ReaderSettings {
             terminal_full_lines: 0,
-            terminal_last_lines: 500,
+            terminal_last_lines: 20_000,
             ..ReaderSettings::default()
         });
         let mut panel = open(&host);
-        assert_eq!((panel.page().full_lines, panel.page().last_lines), (1, 100));
+        assert_eq!(
+            (panel.page().full_lines, panel.page().last_lines),
+            (1, 10_000)
+        );
         panel.set_full_lines(-4);
-        panel.set_last_lines(1_000);
-        assert_eq!((panel.page().full_lines, panel.page().last_lines), (1, 100));
+        panel.set_last_lines(100_000);
+        assert_eq!(
+            (panel.page().full_lines, panel.page().last_lines),
+            (1, 10_000)
+        );
         panel.set_full_lines(42);
         assert_eq!(panel.page().full_lines, 42);
     }

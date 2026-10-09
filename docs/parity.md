@@ -167,7 +167,7 @@ verified.
     the menu asserts both). The Terminal page's "Lines spoken in full"
     and "Last lines to speak" sliders read 29 for the setting's 30 in
     both screen readers: a standard trackbar's MSAA value is its position
-    as a percentage of its range, which is 1 to 100 there. **Fixed since
+    as a percentage of its range, which was 1 to 100 there then. **Fixed since
     2026-10-07**: each slider gives its position as its value, so both
     screen readers read 30 (the `terminal_settings_page` scenario). Every other
     control on the three pages reads the same in both, apart from the
@@ -2189,10 +2189,9 @@ verified.
   (`phase6-design.md`, "M4: text, editing, and terminals", Questions): a
   Terminal page in the settings dialog, after Theme, with "Report new
   output", the flood policy's two limits ("Lines spoken in full" and
-  "Last lines to speak", 1 to 100, sliders; the upper limit is being
-  raised above the terminal's history size, Core's 10 MB bound on waiting
-  output protecting memory, per Dickson's coherence decision 3 of
-  2026-10-09), which NVDA has no equivalent of, and "Speak passwords typed in terminals". Its changes wait for OK
+  "Last lines to speak", 1 to 10,000, sliders, more than either
+  terminal's history holds, Core's 10 MB bound on waiting output
+  protecting memory, per Dickson's coherence decision 3 of 2026-10-09), which NVDA has no equivalent of, and "Speak passwords typed in terminals". Its changes wait for OK
   or Apply, as NVDA's do, where the Speech and Theme pages apply live
   (`terminal_settings_page` verifies that an applied change reaches
   Core).

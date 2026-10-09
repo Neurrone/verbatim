@@ -40,8 +40,10 @@ Public API:
     spoken.
   - `terminal_last_lines`: "Last lines to speak", 30 by default: when more
     are waiting, the older ones become "skipped N lines" and this many of
-    the newest are kept. Both limits are kept between 1 and 100
-    (`MAX_TERMINAL_LINES`).
+    the newest are kept. Both limits are kept between 1 and 10,000
+    (`MAX_TERMINAL_LINES`), more than either terminal's history holds, so
+    "Lines spoken in full" may reach past it; Core's 10 MB bound on output
+    waiting protects memory.
 
   These four and `speak_terminal_passwords` are the Terminal settings of
   `phase6-design.md` ("M4: text, editing, and terminals", Questions),

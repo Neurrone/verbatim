@@ -13,7 +13,7 @@
 //! again, so the page opens on the value Verbatim+5 set. Tab to the two
 //! line-limit sliders and hear each read the setting, 30, not 29: a
 //! standard trackbar's MSAA value is its position as a percentage of its
-//! range, 1 to 100 here, so the page gives each slider its position as its
+//! range, 1 to 10,000 here, so the page gives each slider its position as its
 //! value. Right Arrow then moves the second to 31, heard as 31, and Escape
 //! closes the dialog without applying it.
 //!

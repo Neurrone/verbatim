@@ -2528,6 +2528,15 @@ confirmed):
   watcher that sets an event, which the writing loop checks without
   waiting.
 
+Made while raising the flood limit (2026-10-09, to be confirmed):
+
+- Both terminal limits now go up to 10,000 lines, the first round number
+  above either terminal's history (9,031 lines in Windows Terminal, 9,001
+  in the console host), so "Lines spoken in full" can cover everything a
+  terminal still holds. The sliders keep their steps, one line for the
+  arrow keys and ten for Page Up and Page Down, so reaching the top from
+  the default takes many presses; End reaches it at once.
+
 ## Language audit (2026-10-08)
 
 A read-only audit found these, ranked by how likely a user of the language is to hit them; each is fixed with exact tests in a language work package, together with the terminal's changed-word rule:

@@ -93,8 +93,12 @@ pub struct ReaderSettings {
 }
 
 /// The most lines either terminal limit may be set to, and so the most an
-/// outpost reads for one change.
-pub const MAX_TERMINAL_LINES: u16 = 100;
+/// outpost reads for one change: more than either terminal's history holds
+/// (9,031 lines in Windows Terminal, scrollback and screen; 9,001 in the
+/// console host), so "Lines spoken in full" may reach past it, as decided
+/// on 2026-10-07 and again in the coherence review of 2026-10-09; Core's
+/// 10 MB bound on output waiting protects memory.
+pub const MAX_TERMINAL_LINES: u16 = 10_000;
 
 /// The default of both terminal limits ("30 and 30", `phase6-design.md`,
 /// "The flood policy, reconsidered").
@@ -160,7 +164,7 @@ mod tests {
     fn the_terminal_limits_stay_in_range() {
         let settings = ReaderSettings {
             terminal_full_lines: 0,
-            terminal_last_lines: 500,
+            terminal_last_lines: 20_000,
             ..ReaderSettings::default()
         };
         assert_eq!(settings.full_lines(), 1);

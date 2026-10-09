@@ -256,7 +256,7 @@ failed file operation is reported in a message box with
 The Terminal page (milestone M4, `phase6-design.md`, "M4: text, editing,
 and terminals", Questions). From top to bottom, which is also the tab
 order: "Report new output", a check box; "Lines spoken in full" and "Last
-lines to speak", sliders from 1 to 100 (`MAX_TERMINAL_LINES`) that move by
+lines to speak", sliders from 1 to 10,000 (`MAX_TERMINAL_LINES`) that move by
 one with the arrow keys and by ten with Page Up and Page Down, so the
 limits cannot be set outside their range; and "Speak passwords typed in
 terminals", a check box. Sliders rather than spin controls, because
