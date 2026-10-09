@@ -7,19 +7,24 @@
 //!
 //! The screen is the text pattern's first visible range. The anchor is the
 //! top two rows of the screen as last read, as the provider gave them,
-//! padding and line breaks included. It is found again by its text, never
-//! by a range: once a terminal's history is full, a range keeps its row
-//! while the text moves up beneath it. `FindText` looks for the more
-//! distinctive of the two rows (not blank, then the longer), searching
+//! padding and line breaks included. It is found first by a range kept at
+//! the start of the top row as last read ([`ScreenAnchor::range`]), trusted
+//! only while nothing has been discarded from the text (its first row reads
+//! as it did, or the old screen had no history above it), since once a
+//! terminal's history is full a range keeps its row while the text moves up
+//! beneath it. Otherwise it is found by its text: `FindText` looks for the
+//! more distinctive of the two rows (not blank, then the longer), searching
 //! backward from the screen's second row toward the start of the text, and
 //! a match counts only when it starts its row, the row holds exactly the
 //! row sought, and the other row of the pair is next to it; at most
-//! [`SEARCH_MATCHES`] matches are checked. Windows Terminal's `FindText`
-//! matches neither a line break nor a row's padding, so the row is sought
-//! without them, which works in both terminals. Found, the rows from it to
-//! the screen's top are counted by moving by lines, which transfers no
-//! text; not found, the rows of the whole text are counted, for the size
-//! of a history the anchor has left.
+//! [`SEARCH_MATCHES`] matches are checked. A line break is never sought.
+//! A row's padding is sought only where the provider's `FindText` matches
+//! it ([`ScreenQuery::matches_padding`], the console host's), so a longer
+//! row starting with the same text does not match; Windows Terminal's
+//! throws on padding, so there the row is sought without it. Found, the
+//! rows from it to the screen's top are counted by moving by lines, which
+//! transfers no text; not found, the rows of the whole text are counted,
+//! for the size of a history the anchor has left.
 //!
 //! A screen read while the terminal wrote to it is marked unsettled: its
 //! top row read on its own differs from the screen's text, or changed by

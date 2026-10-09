@@ -610,7 +610,11 @@ screen and sends what is new as `NormalizedEvent::TerminalOutput`
   first line with text, are dropped and not counted
   (`TerminalSpeech::burst_written`): they are rows a program passed over,
   as a footer drawn at the bottom of an empty screen leaves, not lines it
-  printed. Two utterances are handed to speech ahead of
+  printed. That exception is being removed (Dickson, 2026-10-09,
+  coherence review): its cause is to be fixed in the outpost, where rows
+  not yet written to are dropped from a screen read and come back as
+  inserted blank lines when a footer is drawn below them, so every line
+  counts again. Two utterances are handed to speech ahead of
   playback (one playing, one ready behind it) and the rest wait in the
   state (`TerminalSpeech`), so the backlog not yet spoken is known. Each
   opening mark reached hands on the next. Newer output never cancels older

@@ -7,8 +7,9 @@
 //! screen as last seen ([`screen::diff`]): what was inserted is spoken,
 //! never what was only deleted, and a changed line speaks from the start of
 //! the word that changed. The screen's top two rows as last read are the
-//! anchor, found again by their text; how far up they now lie is how far
-//! the text scrolled, which lines the two screens up, and the rows that
+//! anchor, found again by a range kept at the top row while the terminal
+//! has discarded nothing, and otherwise by their text; how far up they now
+//! lie is how far the text scrolled, which lines the two screens up, and the rows that
 //! scrolled by beyond the old screen's lines went by unread: the first of
 //! them are read too, so a flood's start is heard, and the rest are
 //! counted as skipped. When the anchor has left a history it is not found;

@@ -360,4 +360,6 @@ knowing for review:
   listed surface. The GUI event thread speaks `GuiEvent::ShellItemGone`
   as queued text, when the list dialog finds its chosen item gone. When the loop exits — Exit item,
   control-plane quit, or a replacing instance's `WM_QUIT` — teardown drops
-  the hooks and lets job objects reclaim the outposts.
+  the hooks and shuts the outposts and the listener down cleanly through
+  `Supervisor::shutdown`, killing through its job only a child that has
+  not exited within the time limit (see "Shutting down" below).

@@ -6,8 +6,8 @@
 //! diffing the screen"): when Core reaches the end of a group it asks, and
 //! the outpost reads up to the end, so one read gives the count and the
 //! newest lines; when the anchor's line has left a full history, Verbatim
-//! says "skipped more than N lines". They wait for that package and are not
-//! part of the suite until it lands.
+//! says "skipped more than N lines". That package has landed, and these
+//! scenarios are part of the suite.
 //!
 //! The written script `phased.ps1` prints "before line 1" to "before line
 //! 30", then waits, on its folder's change notifications, for a go file,
