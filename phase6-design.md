@@ -2508,6 +2508,26 @@ decision 1 and the rows fix, 2026-10-09, to be confirmed):
   prompt, read before "report new output" was turned on, was spoken after
   it); ordering them by when each was queued is a follow-up.
 
+Made while fixing the trust rule's footer case (2026-10-09, to be
+confirmed):
+
+- A console host read whose view moved while it was read is trusted
+  whenever its anchor was found. When the old screen's last line is no
+  longer on its row and the read's lines do not end with it, it is taken
+  as a footer redrawn below the rows the read gives, and remembered as
+  the screen's last line: the rows read are still rows the console host
+  showed, and only the footer is outside them. Before, such a read was
+  set aside, and a flood above a footer, during which the view moves
+  under nearly every read, went unread until it ended. A read whose range
+  was taken after the footer was redrawn, the view moving again only
+  later, ends with the footer, and is diffed as it is.
+- `conhost_footer_overflow` writes its flood a line at a time until the
+  scenario has heard the first line, then the rest to line 12,000 in one
+  write, so the overflow lands while Core holds the terminal and the
+  count is exact; the script waits for the go file through a file-system
+  watcher that sets an event, which the writing loop checks without
+  waiting.
+
 ## Language audit (2026-10-08)
 
 A read-only audit found these, ranked by how likely a user of the language is to hit them; each is fixed with exact tests in a language work package, together with the terminal's changed-word rule:

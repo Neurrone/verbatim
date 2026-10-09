@@ -1192,15 +1192,21 @@ finds it.
   changed by the end of the read, or whose shift could not be found
   exactly (the text shrank, or grew and the screen's top was not found
   within the rows it grew by), was written to while it was read, and is
-  not trusted (`settled` false). Nor is one whose view moved while it was read
-  (`view_moved`) unless the old screen's last line is still on its row,
-  as it was or grown: output scrolling the view leaves every row where it
-  was, and the rows below the read are read next time, while a footer
-  below a scroll region in the console host is drawn a row lower as the
-  view moves and its old row written over, so such a read has lost the
-  footer. During a flood in the console host the view moves under nearly
-  every read, so distrusting every read whose view moved would leave a
-  flood unread until it ended, losing its first lines and the anchor.
+  not trusted (`settled` false). One whose view moved while it was read
+  (`view_moved`) is trusted when its anchor was found: output scrolling
+  the view leaves every row where it was, and the rows below the read are
+  read next time. A footer below a scroll region in the console host is
+  drawn a row lower as the view moves and its old row written over, so a
+  read whose range was taken before the move gives the rows above where
+  the footer was, without it: when the old screen's last line is no
+  longer on its row, as it was or grown, and the read's lines do not end
+  with it, it is a footer still on the screen below the rows read
+  (`footer_below`), left out of the diff and remembered as the screen's
+  last line, so the next read does not find it new. During a flood in
+  the console host the view moves under nearly every read, so setting
+  such reads aside left a flood above a footer unread until it ended,
+  losing its first lines and the anchor (the case 9b2aa65 still set
+  aside; `conhost_footer_overflow`).
 - `read_new` turns a read into a `TerminalOutput` with the pure screen
   diff (`terminal::screen`). The old screen's lines that scrolled off its
   top are set aside, and the rest are lined up with the new screen: where

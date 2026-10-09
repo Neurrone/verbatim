@@ -134,8 +134,12 @@ impl ScreenSource for Sim {
         seen_rows: u32,
         head_wanted: u32,
     ) -> Result<ScreenText, Self::Error> {
-        let start = self.screen_start();
-        let text: String = self.rows[start..].concat();
+        // A view that moves a row down while the screen is read: the range
+        // was taken where the screen started before the move.
+        let moved = std::mem::take(&mut self.view_moved);
+        let start = self.screen_start().saturating_sub(usize::from(moved));
+        let end = (start + self.height).min(self.rows.len());
+        let text: String = self.rows[start..end].concat();
         let mut screen = ScreenText {
             text,
             top_row: self.row(start),
@@ -146,7 +150,7 @@ impl ScreenSource for Sim {
             },
             alternate: self.alternate || start == 0,
             settled: !std::mem::take(&mut self.disturbed),
-            view_moved: std::mem::take(&mut self.view_moved),
+            view_moved: moved,
             ..ScreenText::default()
         };
         if let Some(memory) = anchor {
@@ -351,25 +355,43 @@ fn a_read_whose_view_output_scrolled_is_trusted() {
     let (_, memory) = read(&mut sim, None);
     sim.push(&["d", "e"]);
     sim.view_moved = true;
+    // The range was taken a row before the view's end: the rows below it
+    // are read next time.
+    let (output, memory) = read(&mut sim, Some(&memory));
+    assert_eq!(output.lines, ["d"]);
     let (output, _) = read(&mut sim, Some(&memory));
-    assert_eq!(output.lines, ["d", "e"]);
+    assert_eq!(output.lines, ["e"]);
 }
 
 #[test]
-fn a_read_whose_view_moved_over_a_footer_redrawn_lower_is_set_aside() {
+fn a_read_whose_view_moved_over_a_footer_redrawn_lower_keeps_the_footer() {
     let mut sim = Sim::new(3, 100, &["ready>", "one", "status: busy"]);
     let (_, memory) = read(&mut sim, None);
     // A line written into the scroll region above the footer: the view
     // moves down a row, the footer is drawn on the new last row, and the
-    // line is written over the row the footer left.
+    // line is written over the row the footer left. The read's range was
+    // taken before the move, so its rows end where the footer was.
     let footer = sim.rows.pop().expect("the footer");
     sim.push(&["a"]);
     sim.rows.push(footer);
     sim.view_moved = true;
+    let (output, memory) = read(&mut sim, Some(&memory));
+    let spoken: Vec<String> = output
+        .above
+        .into_iter()
+        .chain(output.changed.map(|change| change.text))
+        .chain(output.head)
+        .chain(output.lines)
+        .collect();
+    assert_eq!(spoken, strings(&["a"]));
+    // The footer is still on the screen, below the rows read.
     assert_eq!(
-        read_new(&mut sim, Some(&memory), ReadMode::Change, HEAD).unwrap(),
-        Found::Unsettled
+        memory.screen,
+        strings(&["ready>", "one", "a", "status: busy"])
     );
+    // The next read, with the view still, finds nothing new.
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert!(output.is_empty(), "{output:?}");
 }
 
 #[test]

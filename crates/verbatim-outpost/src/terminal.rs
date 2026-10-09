@@ -94,6 +94,27 @@ impl Memory {
         u32::try_from(rows).unwrap_or(u32::MAX)
     }
 
+    /// Remembers `footer`, when given, as the screen's last line: still on
+    /// the screen, below the rows a read gave ([`footer_below`]).
+    fn keep_below(&mut self, footer: Option<String>) {
+        if let Some(footer) = footer {
+            self.screen.push(footer.clone());
+            self.said.push(footer);
+            self.rows.push(1);
+            self.unwritten = 0;
+        }
+    }
+
+    /// The memory without its last line: the screen above a footer a read
+    /// did not reach ([`footer_below`]).
+    fn without_last(&self) -> Self {
+        let mut memory = self.clone();
+        memory.screen.pop();
+        memory.said.truncate(memory.screen.len());
+        memory.rows.truncate(memory.screen.len());
+        memory
+    }
+
     /// How many rows line `line` of the screen took: one when not known.
     fn rows_of(&self, line: usize) -> usize {
         self.rows.get(line).copied().unwrap_or(1)
@@ -269,6 +290,7 @@ pub fn read_new<S: ScreenSource>(
         return Ok(Found::Unsettled);
     }
     let new = screen_lines(&screen.text);
+    let below = earlier.and_then(|old| footer_below(old, &screen, &new));
     let new_rows = screen::line_rows(
         &screen.text,
         screen::row_width(&screen.top_row, &screen.text),
@@ -295,26 +317,19 @@ pub fn read_new<S: ScreenSource>(
     if let Some(output) = restored {
         return Ok(Found::Output(output, remembered));
     }
-    // The caret's line on the new screen, the last that reads as it does.
-    let caret_row = screen
-        .caret_line
-        .as_deref()
-        .map(|line| verbatim_text::trim_padding(line.trim_end_matches(['\r', '\n'])));
-    let cursor = caret_row.and_then(|line| new.iter().rposition(|row| row == line));
-    // The caret's row is one row of a line that wrapped onto more, which
-    // the screen's text gives whole: the last line holding that row.
-    remembered.caret = cursor.or_else(|| {
-        caret_row
-            .filter(|row| !row.is_empty())
-            .and_then(|row| new.iter().rposition(|line| line.contains(row)))
-    });
+    let (cursor, caret) = caret_lines(&screen, &new);
+    remembered.caret = caret;
     let output = match shift {
         Some(shift) => {
             let unread = shift.saturating_sub(seen);
             let mut head = block_lines(&screen.head, screen.head_rows);
             let counted = unread.saturating_sub(screen.head_rows);
-            // The shift counts rows, and the diff compares lines.
-            let (said, kept) = old.after_scroll(shift as usize, &new);
+            // The shift counts rows, and the diff compares lines. A footer
+            // below the rows read is no line of theirs.
+            let (said, kept) = match &below {
+                Some(_) => old.without_last().after_scroll(shift as usize, &new),
+                None => old.after_scroll(shift as usize, &new),
+            };
             // The rows not written to moved up with the rest: those that
             // scrolled past the old screen's lines are no longer below them.
             let unwritten = Unwritten {
@@ -364,7 +379,26 @@ pub fn read_new<S: ScreenSource>(
             }
         },
     };
+    remembered.keep_below(below);
     Ok(Found::Output(output, remembered))
+}
+
+/// The line of `new`, a screen just read, its caret's row reads as, the
+/// last that does: the line whose change typing shows in; and the line the
+/// caret is on, that one or, for a row of a line that wrapped onto more,
+/// which the screen's text gives whole, the last line holding that row.
+fn caret_lines(screen: &ScreenText, new: &[String]) -> (Option<usize>, Option<usize>) {
+    let caret_row = screen
+        .caret_line
+        .as_deref()
+        .map(|line| verbatim_text::trim_padding(line.trim_end_matches(['\r', '\n'])));
+    let cursor = caret_row.and_then(|line| new.iter().rposition(|row| row == line));
+    let caret = cursor.or_else(|| {
+        caret_row
+            .filter(|row| !row.is_empty())
+            .and_then(|row| new.iter().rposition(|line| line.contains(row)))
+    });
+    (cursor, caret)
 }
 
 /// For a screen whose rows all scrolled away since `old` was read, what
@@ -433,27 +467,37 @@ fn scroll(screen: &ScreenText, old: Option<&Memory>, new: &[String]) -> Option<u
 }
 
 /// Whether a read after `old` can be trusted: its text held still, and
-/// either its view did not move or the old screen's last line is still on
-/// the row it was on, or only grew there (output was being written to it).
-/// Output that scrolls the view leaves every row it scrolled where it was,
-/// so the rows read are rows the terminal showed, and those below them are
-/// read next time. The console host moving its view down a row for each
-/// line written into a scroll region above a footer redraws the footer
-/// lower and writes over the row it left, so a read whose range was taken
-/// before the move has lost the footer, which the next read would find as
-/// new. During a flood in the console host the view moves under nearly
-/// every read, so distrusting them all left the flood unread until it
-/// ended, losing its first lines and the anchor.
+/// either its view did not move or the anchor was found. Output that
+/// scrolls the view leaves every row it scrolled where it was, so the rows
+/// read are rows the terminal showed, and those below them are read next
+/// time. The console host moving its view down a row for each line written
+/// into a scroll region above a footer redraws the footer lower and writes
+/// over the row it left: the rows a read whose range was taken before the
+/// move gives are still rows the terminal showed, and the footer it lost
+/// is still below them ([`footer_below`]). During a flood in the console
+/// host the view moves under nearly every read, so distrusting them left
+/// the flood unread until it ended, losing its first lines and the anchor
+/// (9b2aa65 still set aside a flood above a footer that way).
 fn trusted(old: &Memory, screen: &ScreenText) -> bool {
-    if !screen.settled {
-        return false;
-    }
-    let Some(last) = old.screen.last().filter(|_| screen.view_moved) else {
-        return true;
-    };
-    screen.shift.is_some()
-        && verbatim_text::trim_padding(screen.old_last_row.trim_end_matches(['\r', '\n']))
-            .starts_with(last.as_str())
+    screen.settled && (!screen.view_moved || old.screen.is_empty() || screen.shift.is_some())
+}
+
+/// For a read whose view moved while it was read, the old screen's last
+/// line when it is no longer on its row, as it was or grown: a footer the
+/// console host redrew a row lower, below the rows the read gives, and
+/// wrote over where it was. It is still on the screen, so it is
+/// remembered as the screen's last line, not found as new by the next
+/// read. `None` otherwise, or when the read's lines, `new`, end with it: a
+/// range taken after the footer was redrawn, the view moving again only
+/// later.
+fn footer_below(old: &Memory, screen: &ScreenText, new: &[String]) -> Option<String> {
+    let last = old
+        .screen
+        .last()
+        .filter(|_| screen.view_moved && screen.shift.is_some())?;
+    let now = verbatim_text::trim_padding(screen.old_last_row.trim_end_matches(['\r', '\n']));
+    (!last.trim().is_empty() && !now.starts_with(last.as_str()) && new.last() != Some(last))
+        .then(|| last.clone())
 }
 
 /// A focused terminal's memory and reading state, kept by the worker

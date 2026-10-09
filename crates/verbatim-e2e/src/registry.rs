@@ -945,6 +945,16 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: terminal_footer::teardown,
     },
     ScenarioDef {
+        name: "conhost_footer_overflow",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: terminal_footer::setup_overflow_console_host,
+        body: terminal_footer::body_overflow_console_host,
+        teardown: terminal_footer::teardown,
+    },
+    ScenarioDef {
         name: "windows_terminal_short_output",
         group: Group::Text,
         settings: None,
