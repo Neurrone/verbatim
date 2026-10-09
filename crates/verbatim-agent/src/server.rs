@@ -263,6 +263,7 @@ fn launch(id: u64, request: Request) -> Frame {
         stderr_to,
         console_title,
         minimized,
+        withhold_foreground,
         ignore_foreign_terminals,
     } = request
     else {
@@ -289,7 +290,7 @@ fn launch(id: u64, request: Request) -> Frame {
         &env,
         stderr_to.as_deref(),
         console_title.as_deref(),
-        minimized,
+        (minimized, withhold_foreground),
     ) {
         Ok((pid, foreground_allowed)) => {
             process::keep_with_launch(pid, held.into_iter().map(|(_, handle)| handle));
@@ -727,6 +728,7 @@ mod tests {
             stderr_to: None,
             console_title: None,
             minimized: false,
+            withhold_foreground: false,
             ignore_foreign_terminals: false,
         });
         let Frame::Reply {

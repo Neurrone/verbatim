@@ -63,7 +63,7 @@ use super::text_reads::{self, CARET_WATCH_BOUND, CONSOLE_WINDOW_CLASS, OpenWatch
 use super::window::{
     focus_window_of, foreground_window_handle, front_is_another_thread_of_its_application, now_ms,
     top_level_of, window_belongs_to_hidden_frame, window_facts, window_is_foreground,
-    window_is_hidden_frame, window_owner,
+    window_is_hidden_frame, window_is_visible, window_owner,
 };
 use crate::arbitration::window_class_name;
 use crate::terminal::keys;
@@ -310,6 +310,11 @@ pub(super) struct Tracking {
     /// window as the focus entered it: the window NVDA holds the
     /// foreground object for ([`Worker::is_foreground_window`]).
     foreground_window: Option<isize>,
+    /// A foreground change whose window was the foreground window but not
+    /// yet shown when it was handled, with its trace and the time it was
+    /// observed: reported once the window is shown, or just before a focus
+    /// inside it, whichever comes first ([`Worker::foreground`]).
+    unshown_foreground: Option<(isize, TraceId, u64)>,
 }
 
 impl Tracking {
@@ -1508,6 +1513,7 @@ impl Worker<'_> {
         (ancestors, selected_child): read::Enrichment,
     ) {
         if !foreground && let Some(hwnd) = window {
+            self.report_unshown_foreground(top_level_of(hwnd));
             self.report_foreign_window(trace, observed_at_ms, hwnd);
         }
         let mut node = node;
@@ -1635,6 +1641,10 @@ impl Worker<'_> {
         trace: TraceId,
         observed_at_ms: u64,
     ) {
+        if kind == WinEventKind::WindowShown {
+            self.window_shown(hwnd);
+            return;
+        }
         if kind == WinEventKind::ConsoleUpdate {
             // The console host's text changed. Its UIA text changes stop
             // reaching a client now and then in the middle of a large write,
@@ -2319,7 +2329,20 @@ impl Worker<'_> {
     /// Explorer raises one as it creates its window and the system's own
     /// follows once the window is in front (`phase6-design.md`,
     /// "Foreground events against the foreground window").
+    ///
+    /// A window that is the foreground window but not yet shown is reported
+    /// once it is shown, its name read then, rather than at once: File
+    /// Explorer raises the foreground event of a folder window it opens in
+    /// front before showing it, and a window's title is the one it is shown
+    /// with (`phase6-design.md`, "File Explorer opened without the
+    /// foreground right"). Its show event brings it
+    /// ([`window_shown`](Self::window_shown)); a focus inside it that comes
+    /// first has it reported just before
+    /// ([`report_unshown_foreground`](Self::report_unshown_foreground)),
+    /// since a window reported after a focus inside it is not announced.
     fn foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_ms: u64) {
+        // A newer foreground change replaces one still waiting to be shown.
+        self.context.tracking().unshown_foreground = None;
         if window_belongs_to_hidden_frame(hwnd) {
             tracing::debug!(hwnd, "foreground dropped: Core's hidden frame");
             return;
@@ -2328,6 +2351,56 @@ impl Worker<'_> {
             tracing::debug!(hwnd, "foreground dropped: not the foreground window");
             return;
         }
+        if !window_is_visible(hwnd) {
+            tracing::debug!(hwnd, "foreground waits for its window to be shown");
+            self.context.tracking().unshown_foreground = Some((hwnd, trace, observed_at_ms));
+            return;
+        }
+        self.report_foreground(hwnd, trace, observed_at_ms);
+    }
+
+    /// A top-level window of the application was shown: the foreground
+    /// change waiting for it, if any, is reported now, while the window is
+    /// still the foreground window.
+    fn window_shown(&mut self, hwnd: isize) {
+        let waiting = {
+            let mut tracking = self.context.tracking();
+            match tracking.unshown_foreground {
+                Some((waiting, ..)) if waiting == hwnd => tracking.unshown_foreground.take(),
+                _ => None,
+            }
+        };
+        if let Some((hwnd, trace, observed_at_ms)) = waiting {
+            if window_is_foreground(hwnd) {
+                self.report_foreground(hwnd, trace, observed_at_ms);
+            } else {
+                tracing::debug!(hwnd, "foreground dropped: shown no longer in front");
+            }
+        }
+    }
+
+    /// Reports the foreground change waiting for its window, `top`, to be
+    /// shown, just before a focus inside it is reported, if it is still the
+    /// foreground window.
+    fn report_unshown_foreground(&mut self, top: isize) {
+        let waiting = {
+            let mut tracking = self.context.tracking();
+            match tracking.unshown_foreground {
+                Some((waiting, ..)) if waiting == top => tracking.unshown_foreground.take(),
+                _ => None,
+            }
+        };
+        if let Some((hwnd, trace, observed_at_ms)) = waiting
+            && window_is_foreground(hwnd)
+        {
+            tracing::debug!(hwnd, "foreground reported before a focus inside its window");
+            self.report_foreground(hwnd, trace, observed_at_ms);
+        }
+    }
+
+    /// Reads the foreground window `hwnd`'s name and reports it, unless it
+    /// is no longer the foreground window by then.
+    fn report_foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_ms: u64) {
         let (backend, node) = read::foreground_window(self.context, self.client, hwnd);
         if !window_is_foreground(hwnd) {
             tracing::info!(

@@ -36,8 +36,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_SELECTIONWITHIN, EVENT_OBJECT_SHOW, EVENT_OBJECT_STATECHANGE,
     EVENT_OBJECT_TEXTSELECTIONCHANGED, EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT,
     EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND, EVENT_SYSTEM_MENUPOPUPEND,
-    EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, OBJID_ALERT, OBJID_CARET, OBJID_CLIENT,
-    OBJID_MENU, OBJID_SYSMENU, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT,
+    EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, GA_ROOT, GetAncestor, OBJID_ALERT,
+    OBJID_CARET, OBJID_CLIENT, OBJID_MENU, OBJID_SYSMENU, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT,
 };
 
 /// Which MSAA change a `WinEvent` reports. Events outside this set are dropped
@@ -92,6 +92,12 @@ pub enum WinEventKind {
     /// balloons it reports. Every other show event is dropped at the hook,
     /// as it would flood.
     Show,
+    /// `EVENT_OBJECT_SHOW` on a top-level window itself: the window was
+    /// shown. An outpost reports a foreground window raised hidden once it
+    /// is shown, its name read then, as File Explorer's folder window is
+    /// raised before it is shown. Every show event of another object is
+    /// dropped at the hook.
+    WindowShown,
     /// `EVENT_CONSOLE_UPDATE_REGION`, `EVENT_CONSOLE_UPDATE_SIMPLE`,
     /// `EVENT_CONSOLE_UPDATE_SCROLL`, or `EVENT_CONSOLE_LAYOUT`: the console
     /// host's text changed, scrolled, or was laid out anew.
@@ -100,11 +106,13 @@ pub enum WinEventKind {
 
 /// Every raw `WinEvent` id Verbatim subscribes to, paired with its normalized
 /// kind. An install subscribes to the subset whose kind the caller asked for;
-/// [`kind_of`] maps a delivered event id back to its kind against this whole
-/// table. `StateChange` maps four raw ids to the one kind, so a caller that
-/// wants state changes also gets the selection add, remove, and within
-/// hooks.
-const SUBSCRIPTIONS: [(u32, WinEventKind); 23] = [
+/// [`kind_of`] maps a delivered event id back to its kind among the kinds
+/// the install asked for. `StateChange` maps four raw ids to the one kind,
+/// so a caller that wants state changes also gets the selection add,
+/// remove, and within hooks; `EVENT_OBJECT_SHOW` is `Show` for the listener
+/// and `WindowShown` for an outpost, and an install asking for both hooks
+/// the event once, as `Show`.
+const SUBSCRIPTIONS: [(u32, WinEventKind); 24] = [
     (EVENT_OBJECT_FOCUS, WinEventKind::Focus),
     (EVENT_SYSTEM_FOREGROUND, WinEventKind::Foreground),
     (EVENT_OBJECT_VALUECHANGE, WinEventKind::ValueChange),
@@ -128,6 +136,7 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 23] = [
     (EVENT_OBJECT_DESTROY, WinEventKind::Destroy),
     (EVENT_SYSTEM_ALERT, WinEventKind::Alert),
     (EVENT_OBJECT_SHOW, WinEventKind::Show),
+    (EVENT_OBJECT_SHOW, WinEventKind::WindowShown),
     (EVENT_OBJECT_LOCATIONCHANGE, WinEventKind::Caret),
     (
         EVENT_OBJECT_TEXTSELECTIONCHANGED,
@@ -142,8 +151,8 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 23] = [
 /// The per-application outpost's subscription set (decision D13): the
 /// process-scoped name, description, value, state, and selection events,
 /// the caret
-/// and text selection (milestone M4), and object destruction (for windows
-/// going away). Focus, menu-popup, and the end of a menu are not here — the
+/// and text selection (milestone M4), object destruction (for windows
+/// going away), and its top-level windows being shown. Focus, menu-popup, and the end of a menu are not here — the
 /// focus listener owns them globally.
 pub const APP_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::ValueChange,
@@ -155,6 +164,7 @@ pub const APP_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::Caret,
     WinEventKind::TextSelectionChange,
     WinEventKind::ConsoleUpdate,
+    WinEventKind::WindowShown,
 ];
 
 /// The focus listener's subscription set (decisions D13 and D14): the
@@ -181,6 +191,8 @@ pub type WinEventCallback = Box<dyn Fn(WinEventKind, isize, i32, i32, u32)>;
 
 thread_local! {
     static CALLBACK: RefCell<Option<WinEventCallback>> = const { RefCell::new(None) };
+    /// The kinds this thread's hooks were installed for.
+    static KINDS: RefCell<Vec<WinEventKind>> = const { RefCell::new(Vec::new()) };
 }
 
 /// A set of live out-of-context `WinEvent` hooks. Dropping it unhooks them and
@@ -219,11 +231,14 @@ impl WinEventHook {
         if !installed {
             return Err("this thread already has a set of WinEvent hooks".to_owned());
         }
+        KINDS.with(|slot| *slot.borrow_mut() = kinds.to_vec());
         let mut hooks = Vec::with_capacity(SUBSCRIPTIONS.len());
+        let mut hooked: Vec<u32> = Vec::new();
         for (event, kind) in SUBSCRIPTIONS {
-            if !kinds.contains(&kind) {
+            if !kinds.contains(&kind) || hooked.contains(&event) {
                 continue;
             }
+            hooked.push(event);
             // SAFETY: a null module and out-of-context flag are the documented
             // combination for a hook with a same-process proc; `win_event_proc`
             // has the required signature.
@@ -246,6 +261,7 @@ impl WinEventHook {
                     }
                 }
                 CALLBACK.with(|slot| *slot.borrow_mut() = None);
+                KINDS.with(|slot| slot.borrow_mut().clear());
                 return Err(format!("SetWinEventHook failed for event {event}"));
             }
             hooks.push(hook);
@@ -263,6 +279,7 @@ impl Drop for WinEventHook {
             }
         }
         CALLBACK.with(|slot| *slot.borrow_mut() = None);
+        KINDS.with(|slot| slot.borrow_mut().clear());
     }
 }
 
@@ -271,9 +288,14 @@ pub const TOOLTIP_CLASS: &str = "tooltips_class32";
 
 /// Maps a raw event id to a [`WinEventKind`], `None` for events we do not want.
 fn kind_of(event: u32) -> Option<WinEventKind> {
+    KINDS.with(|kinds| kind_among(event, &kinds.borrow()))
+}
+
+/// Maps a raw event id to the first [`WinEventKind`] it has among `kinds`.
+fn kind_among(event: u32, kinds: &[WinEventKind]) -> Option<WinEventKind> {
     SUBSCRIPTIONS
         .iter()
-        .find_map(|&(id, kind)| (id == event).then_some(kind))
+        .find_map(|&(id, kind)| (id == event && kinds.contains(&kind)).then_some(kind))
 }
 
 /// NVDA's early filters for `WinEvent`s, all local checks: a location
@@ -307,6 +329,12 @@ fn is_wanted(kind: WinEventKind, hwnd: HWND, id_object: i32, id_child: i32) -> b
         WinEventKind::Show => {
             (id_object == OBJID_CLIENT.0 || id_object == OBJID_WINDOW.0 || id_object > 0)
                 && class() == TOOLTIP_CLASS
+        }
+        WinEventKind::WindowShown => {
+            id_object == OBJID_WINDOW.0
+                && id_child == CHILDID_SELF
+                // SAFETY: GetAncestor tolerates any handle.
+                && unsafe { GetAncestor(hwnd, GA_ROOT) } == hwnd
         }
         _ => true,
     }
@@ -354,7 +382,7 @@ mod tests {
     #[test]
     fn only_a_plain_selection_announces_a_newly_selected_item() {
         assert_eq!(
-            kind_of(EVENT_OBJECT_SELECTION),
+            kind_among(EVENT_OBJECT_SELECTION, APP_SUBSCRIPTIONS),
             Some(WinEventKind::Selection)
         );
         for removed_or_added in [
@@ -362,7 +390,10 @@ mod tests {
             EVENT_OBJECT_SELECTIONREMOVE,
             EVENT_OBJECT_SELECTIONWITHIN,
         ] {
-            assert_eq!(kind_of(removed_or_added), Some(WinEventKind::StateChange));
+            assert_eq!(
+                kind_among(removed_or_added, APP_SUBSCRIPTIONS),
+                Some(WinEventKind::StateChange)
+            );
         }
     }
 
@@ -370,7 +401,7 @@ mod tests {
     fn only_the_carets_location_changes_are_wanted() {
         let any = HWND::default();
         assert_eq!(
-            kind_of(EVENT_OBJECT_LOCATIONCHANGE),
+            kind_among(EVENT_OBJECT_LOCATIONCHANGE, APP_SUBSCRIPTIONS),
             Some(WinEventKind::Caret)
         );
         assert!(is_wanted(
@@ -383,6 +414,26 @@ mod tests {
             WinEventKind::Caret,
             any,
             OBJID_WINDOW.0,
+            CHILDID_SELF
+        ));
+    }
+
+    #[test]
+    fn a_show_is_a_tooltip_for_the_listener_and_a_window_shown_for_an_outpost() {
+        assert_eq!(
+            kind_among(EVENT_OBJECT_SHOW, LISTENER_SUBSCRIPTIONS),
+            Some(WinEventKind::Show)
+        );
+        assert_eq!(
+            kind_among(EVENT_OBJECT_SHOW, APP_SUBSCRIPTIONS),
+            Some(WinEventKind::WindowShown)
+        );
+        // A window shown is the window's own show event, never a child
+        // object's.
+        assert!(!is_wanted(
+            WinEventKind::WindowShown,
+            HWND::default(),
+            OBJID_CLIENT.0,
             CHILDID_SELF
         ));
     }

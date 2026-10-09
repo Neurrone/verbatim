@@ -101,7 +101,9 @@ use crate::protocol::{KillOutcome, ProcessInfo, ProcessState};
 /// windows of its own, such as Notepad or Windows Terminal itself, is not
 /// affected. With `minimized`, the program's first window opens
 /// minimized and inactive (`SW_SHOWMINNOACTIVE`), for a caller that brings
-/// it forward itself once it is ready.
+/// it forward itself once it is ready. With `withhold_foreground`, the
+/// agent does not allow the process the foreground at all, whatever right
+/// it has itself.
 ///
 /// # Errors
 ///
@@ -115,7 +117,7 @@ pub fn launch(
     env: &[(String, String)],
     stderr_to: Option<&str>,
     console_title: Option<&str>,
-    minimized: bool,
+    (minimized, withhold_foreground): (bool, bool),
 ) -> io::Result<(u32, bool)> {
     let capture = stderr_to
         .map(|path| std::fs::File::create(path).and_then(|file| inheritable(&file)))
@@ -184,7 +186,8 @@ pub fn launch(
     let thread = unsafe { OwnedHandle::from_raw_handle(info.hThread.0) };
     let pid = info.dwProcessId;
     // SAFETY: a plain call taking a process id; failure is its answer.
-    let foreground_allowed = unsafe { AllowSetForegroundWindow(pid) }.is_ok();
+    let foreground_allowed =
+        !withhold_foreground && unsafe { AllowSetForegroundWindow(pid) }.is_ok();
     if let Err(error) = crate::jobs::watch_job(&job, pid)
         .and_then(|()| assign_to_job(&job, &child))
         .and_then(|()| resume(&thread))
@@ -849,7 +852,7 @@ mod tests {
             &[],
             None,
             None,
-            false,
+            (false, false),
         )
         .expect("spawns powershell")
         .0
@@ -918,7 +921,7 @@ mod tests {
             &[],
             Some(&path_str),
             None,
-            false,
+            (false, false),
         )
         .expect("spawns cmd with a stderr capture path");
         assert_eq!(
@@ -977,7 +980,7 @@ mod tests {
             &[],
             Some(&path_str),
             None,
-            false,
+            (false, false),
         )
         .expect("spawns powershell with a capture file");
         drop(accepted);
@@ -1010,7 +1013,7 @@ mod tests {
             &[],
             None,
             None,
-            false,
+            (false, false),
         )
         .expect("spawns cmd");
         assert_eq!(
@@ -1034,7 +1037,7 @@ mod tests {
             &[],
             None,
             None,
-            false,
+            (false, false),
         )
         .expect("spawns cmd");
         // cmd, the console host of the window-less console it was started

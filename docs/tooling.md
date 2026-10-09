@@ -1022,15 +1022,17 @@ then rightly says nothing about it. The agent allows each launch the
 foreground (`AllowSetForegroundWindow`), which Windows permits while the
 agent injected the last input; every scenario's keys go through the agent,
 so within a run it does. After you type or click on the machine yourself,
-it does not until the agent has injected input again, and a scenario that
-opens a File Explorer folder first (`Scenario::open_folder`, the one
-launch that still opens its window in front) then fails saying Windows
-did not let the agent allow it. File Explorer raises its only foreground
-event as its window is created, before it is shown: refused then, or
-opened minimized, the window becomes the foreground with no event when it
-is brought forward later, so neither Verbatim nor NVDA hears it
-(measured 2026-10-09; `phase6-design.md`, "Decisions to confirm with
-Dickson"). A Settings page (`Scenario::open_settings_page`) opens
+it does not until the agent has injected input again. No scenario needs
+the right any more. File Explorer (`Scenario::open_folder`) is launched
+without it (the launch's `withhold_foreground`): the desktop's shell,
+which holds the foreground as a scenario starts, opens the folder window
+in front by its own right, and when it does not, the window opens
+restored and inactive and is brought forward as msinfo32's is. It is not
+opened minimized: a folder window the shell opens minimized takes the
+foreground while minimized, and once restored its file list has no
+keyboard focus, so arrow keys say nothing in NVDA or Verbatim (measured
+2026-10-09; `phase6-design.md`, "File Explorer opened without the
+foreground right"). A Settings page (`Scenario::open_settings_page`) opens
 minimized and inactive and is brought forward like the harness's own
 windows. Run a scenario that sends keys first, such as
 `lock_key_announcements`. Never tap keys by hand, or have a script send
@@ -1066,10 +1068,9 @@ one zero-pixel mouse move injected from another process, the agent's
 `SetForeground` on msinfo32's restored, inactive window answered `false`
 before this change and `true` after it, every time; before it, the window
 took the foreground a moment after the `false` answer, which the harness
-had already failed on. `SetForeground` therefore no longer reads the
-foreground straight after `SetForegroundWindow`: it waits on window
-events, the foreground event among them, for the window to be in front,
-for at most five seconds (2026-10-09).
+had already failed on. A window restored from minimized and set as the
+foreground is in front when `SetForegroundWindow` returns (37 of 37,
+measured 2026-10-09), so `SetForeground` reads the foreground then.
 `phase6-design.md`, "Test isolation and the foreground lock (2026-10-08)",
 has the evidence.
 

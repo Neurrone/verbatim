@@ -109,7 +109,8 @@ Public API:
 - `Outpost`, `run_pipe`, `run_attach` — the per-application outpost (the
   `outpost` module; outpost redesign, "Inside an outpost"). Its parts:
   - Intake (`outpost::intake`): the MSAA hook callbacks (`APP_SUBSCRIPTIONS`:
-    value, state, name, selection, and destroy, for the fixed pid),
+    value, state, name, selection, destroy, and a top-level window
+    shown, for the fixed pid),
     the focus-following UIA property callback, and the reader's routed facts
     (focus, foreground, menus, and the listener's desktop-wide selections,
     notifications, and alerts) and queries only add an entry to the queue and
@@ -466,7 +467,13 @@ Implementation notes:
   application itself, such as File Explorer's as it creates its window,
   which the system's own event follows (`docs/parity.md`, "Stale focus
   events"). The intake held such a batch for up to 250 ms, checking every
-  10 ms, until then. Otherwise a foreground fact is reported at once,
+  10 ms, until then. A foreground window not yet shown waits for its show
+  event (`WinEventKind::WindowShown`, the outpost's own process-scoped
+  hook, never dropped by the limiter) and is reported then, its name read
+  then, or just before a focus inside it that comes first; a newer
+  foreground change replaces it (`Tracking::unshown_foreground`;
+  `phase6-design.md`, "File Explorer opened without the foreground
+  right"). Otherwise a foreground fact is reported at once,
   stamped with the time its window was confirmed as the foreground, after
   its name is read, rather than the time Windows raised the event,
   named or not, as a focus on the window, since the foreground change is what

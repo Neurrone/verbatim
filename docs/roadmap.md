@@ -135,8 +135,6 @@ in the dated section named with each item.
     "Foreground events against the foreground window").
   - The two-window terminal scenarios switch windows with Alt+Tab, as a
     user does.
-  - File Explorer is announced once its window is shown and titled, and
-    launched without the agent's foreground right.
   - Rows and lines are no longer mixed in the terminal screen read.
   - Tests for Up Arrow followed by typing, a line key during a flood, and
     UIA text fields read by parts.

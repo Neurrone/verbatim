@@ -2820,3 +2820,18 @@ What was removed:
 - The agent's wait after `SetForegroundWindow`: the answer is read when the call returns.
 
 One older observation disagrees: on 2026-10-05 an observer saw Notepad's foreground event arrive about 130 ms before Notepad was in front, after Alt+Tab from the desktop. It did not reproduce in these measurements, and the related scenarios pass without the hold; a foreground event that does come early is now dropped, as NVDA drops one that stays early past its two deferrals, and Notepad's focus event still reports the window's focus.
+
+## File Explorer opened without the foreground right (2026-10-09)
+
+The coherence review's fix: File Explorer is announced once its window is shown and titled, and launched without the agent's foreground right.
+
+What was measured, with the scratch probe of "Foreground events against the foreground window" and a UIA focus logger:
+
+- File Explorer creates a folder window hidden, titled "File Explorer", raises a foreground event of its own while the window is not yet in front, sets the folder's title about 125 ms later, takes the foreground (the system's foreground event, the window still hidden), and shows the window about 240 ms after that. The desktop's shell, which holds the foreground as every scenario starts, gives the new window the foreground whether the agent allows it or not.
+- Launched minimized (`SW_SHOWMINNOACTIVE`), the folder window still takes the foreground, hidden, and is then shown minimized while it is the foreground window. Restored, it raises no foreground event and no focus event (4 of 4 with the UIA focus logger), and its file list has no keyboard focus: NVDA, captured live, said nothing as it was restored and nothing for Down Arrow or Up Arrow. Giving the desktop the foreground before restoring it, so the window would be activated anew, needs the foreground right the launch is meant to do without.
+
+What was done:
+
+- An outpost reports a foreground window that is in front but not yet shown once it is shown: its show event (a new `WinEventKind::WindowShown`, the process-scoped `EVENT_OBJECT_SHOW` of a top-level window) brings the report, its name read then, so the name is the one the window is shown with. A focus inside the window that comes first has the window reported just before it, since Core does not announce a window reported after a focus inside it. A newer foreground change replaces one still waiting.
+- `Scenario::open_folder` launches File Explorer with the agent's new `withhold_foreground`, which keeps the agent from allowing the launch the foreground, and brings the window forward as every launch is brought forward: it is already in front when the shell opened it so, and is restored from minimized and set as the foreground when it opened behind. It is not launched minimized, against the item's wording, for the reason above (to confirm with Dickson).
+- In the runs since, the folder window's outpost, started by Explorer's early foreground event, handled one foreground fact for the window and dropped it as not in front, as NVDA drops such an event; why the system's own event did not follow as a second fact is not established (it may be folded into the first while the outpost starts, one fact per object and kind, or handled while `GetForegroundWindow` names Explorer's tab window, `ShellTabWindowClass`, a child of the folder window that the measurement saw in front for a moment as Explorer built the window). It is a follow-up. The window was announced as the first ancestor of the file list's focus, read once the window was shown, with the folder's title. The speech is the same either way: "<folder> - File Explorer", "Items View list", "Inner not selected 1 of 4", as NVDA said it when the folder was opened in front.

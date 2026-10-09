@@ -183,7 +183,9 @@ and the input methods above:
 - `bring_document_forward(name)` brings the Notepad document opened
   before launch to the foreground, as its taskbar button does;
   `save_document` and `expect_unsaved` wait on its title.
-- `open_folder` opens a File Explorer window on a harness folder;
+- `open_folder` opens a File Explorer window on a harness folder,
+  launched without the agent's foreground right and brought forward like
+  every other launch;
   `open_settings_page` opens a page of the Settings app.
 - `subscribe_events` opens a connection subscribed to the normalized
   events Core receives, for evidence no speech shows: a caret report, a

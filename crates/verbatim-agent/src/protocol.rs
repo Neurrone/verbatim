@@ -36,10 +36,11 @@ use serde::{Deserialize, Serialize};
 /// read by the Verbatim under test; version 12 answered
 /// [`Request::MinimizeAll`] with [`ReplyPayload::Minimized`], which tells
 /// windows left restored from a desktop that did not take the foreground,
-/// and added `hung` to [`WindowInfo`]. A test run against an older agent is
-/// refused at `Hello` instead of losing its connection mid-run, or running
-/// without the exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 12;
+/// and added `hung` to [`WindowInfo`]; version 13 added
+/// `withhold_foreground` to [`Request::LaunchProcess`]. A test run against
+/// an older agent is refused at `Hello` instead of losing its connection
+/// mid-run, or running without the exclusion.
+pub const AGENT_PROTOCOL_VERSION: u32 = 13;
 
 /// The environment variable that names, to the Verbatim under test, the
 /// processes it ignores entirely (`ignore_foreign_terminals` in
@@ -119,6 +120,12 @@ pub enum Request {
         /// inactive, for a caller that brings it forward once it is ready.
         #[serde(default)]
         minimized: bool,
+        /// Whether the agent withholds the right it may have to let the
+        /// program take the foreground with its first window
+        /// (`AllowSetForegroundWindow`), for a program brought forward by
+        /// the caller, as File Explorer's folder window is.
+        #[serde(default)]
+        withhold_foreground: bool,
         /// For a launch of Verbatim: whether to name, in its
         /// `VERBATIM_IGNORE_PIDS`, every `WindowsTerminal.exe` process the
         /// agent did not launch, and the `OpenConsole.exe` processes they
@@ -738,6 +745,7 @@ mod tests {
                 stderr_to: Some(r"C:\VerbatimLab\verbatim\stderr-e2e.log".to_owned()),
                 console_title: Some("A console".to_owned()),
                 minimized: true,
+                withhold_foreground: false,
                 ignore_foreign_terminals: true,
             },
         };

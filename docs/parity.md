@@ -526,7 +526,14 @@ verified.
   is), or Core's hidden frame's, 14 ms early once, which the outpost drops
   whatever the foreground. In the outposts of ten scenarios, the 250 ms
   hold this replaced waited only for File Explorer's early event and for
-  the hidden frame. A focus event is
+  the hidden frame. A foreground window that is in front but not yet
+  shown is reported once it is shown, its name read then, or just before
+  a focus inside it that comes first: NVDA reads the name as it speaks,
+  later than its event, and Verbatim, reading it as it reports it, read
+  File Explorer's "File Explorer" where NVDA read the folder's title
+  (deliberately different in timing since 2026-10-09, to say the same
+  name; `phase6-design.md`, "File Explorer opened without the foreground
+  right"). A focus event is
   attended only when its window was in the system's foreground window
   when its outpost read it, topmost, or a `Windows.UI.Core` window under
   the input thread's active window, as NVDA tests it against the real

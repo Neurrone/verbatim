@@ -924,16 +924,19 @@ impl Scenario {
     /// Opens a harness folder in File Explorer: writes `files` (paths
     /// relative to the folder, empty contents) into a folder named
     /// [`DOCUMENT_MARKER`] plus `name` ([`Scenario::harness_folder`]),
-    /// opens it, and waits for the window titled with that name to take
-    /// the foreground. It is the one launch that still opens its window in
-    /// front, needing the agent's right to let it take the foreground
-    /// (`docs/tooling.md`): File Explorer raises its only foreground event
-    /// as its window is created, before it is shown, so a window Windows
-    /// refused then, or one opened minimized, is never heard when brought
-    /// forward later (`phase6-design.md`, "Decisions to confirm with
-    /// Dickson"). The window is closed by its title at cleanup;
-    /// `explorer.exe` is the shell, so its process stays. Returns the
-    /// folder's name, which is the window's title.
+    /// opens it without the agent's right to take the foreground, and
+    /// brings its window, titled with that name, forward as
+    /// [`Scenario::launch_titled`] does. The desktop's shell, which holds
+    /// the foreground as every scenario starts, opens the folder window in
+    /// front by its own right, raising its foreground event before the
+    /// window is shown; when it does not, the window opens restored and
+    /// inactive and is brought forward. It is not opened minimized: a
+    /// folder window the shell opens minimized takes the foreground while
+    /// minimized, and once restored its file list has no keyboard focus,
+    /// in NVDA as in Verbatim (`phase6-design.md`, "File Explorer opened
+    /// without the foreground right"). The window is closed by its title
+    /// at cleanup; `explorer.exe` is the shell, so its process stays.
+    /// Returns the folder's name, which is the window's title.
     ///
     /// # Errors
     ///
@@ -945,23 +948,10 @@ impl Scenario {
         for file in files {
             self.agent.write_file(&format!(r"{folder}\{file}"), b"")?;
         }
-        let launch = self.agent.launch_process(
-            "explorer.exe",
-            std::slice::from_ref(&folder),
-            None,
-            &[],
-            None,
-        )?;
-        self.launched.push(Launched {
-            pid: launch.pid,
-            title: Some(marker.clone()),
-            owners: Vec::new(),
-            owners_exit: false,
-            document: None,
-            notepad: false,
-            also_exit: Vec::new(),
-        });
-        self.require_in_front(&marker, launch)?;
+        let launch = self
+            .agent
+            .launch_without_foreground_right("explorer.exe", std::slice::from_ref(&folder))?;
+        self.bring_forward(launch, &marker, false, None)?;
         Ok(marker)
     }
 
