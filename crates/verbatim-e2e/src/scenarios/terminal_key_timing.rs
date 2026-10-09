@@ -237,8 +237,11 @@ pub(crate) fn setup_line_key_console_host(scenario: &mut Scenario) -> io::Result
 /// Up Arrow while the long flood's first line plays, once the prompt is
 /// shown.
 fn line_key_steps(scenario: &mut Scenario) {
+    terminal::type_hearing(scenario, r".\long.ps1", terminal::Echo::Shown);
+    // Watched from here, so the prompt shown before the command, which
+    // Core may report again, is not taken for the one after the flood.
     let watch = watch_for_prompt(scenario);
-    terminal::type_with_echo(scenario, r".\long.ps1", terminal::Echo::Shown);
+    scenario.send_keys(&["enter"]).expect("presses enter");
     let first = scenario.speech().expect_started(&long_line(1));
     let queued = scenario
         .speech()

@@ -171,7 +171,9 @@ pub(crate) fn heard_flood(scenario: &mut Scenario, run: u32) {
 /// Step 2: Verbatim+5 during the second flood cuts its first group off and
 /// stops the rest.
 /// Starts watching, on a thread of its own, for Core receiving the caret
-/// on the prompt after the flood whose command is typed next: the flood's
+/// on the prompt after the flood whose command has just been typed, Enter
+/// not yet pressed (watched any earlier, the caret Core may report on the
+/// prompt as typing starts would be taken for it): the flood's
 /// script finishing is no evidence that the terminal has shown all of its
 /// output, and output it shows after reporting is turned back on is new
 /// output, rightly spoken. The subscription is read as events arrive, since
@@ -194,8 +196,9 @@ pub(crate) fn wait_for_prompt(watch: std::thread::JoinHandle<()>) {
 }
 
 fn output_off_during_flood(scenario: &mut Scenario, directory: &str) {
+    terminal::type_hearing(scenario, r".\flood.ps1 2", terminal::Echo::Shown);
     let watch = watch_for_prompt(scenario);
-    terminal::type_with_echo(scenario, r".\flood.ps1 2", terminal::Echo::Shown);
+    scenario.send_keys(&["enter"]).expect("presses enter");
     let first = scenario.speech().expect_started(&line(1));
     let queued = scenario.speech().expect_queued(&[&line(2), &line(3)]);
     scenario
@@ -213,8 +216,9 @@ fn output_off_during_flood(scenario: &mut Scenario, directory: &str) {
 
 /// Step 3: the third flood, silent, then output reporting back on.
 fn silent_flood(scenario: &mut Scenario, directory: &str) -> Duration {
+    terminal::type_hearing(scenario, r".\flood.ps1 3", terminal::Echo::Shown);
     let watch = watch_for_prompt(scenario);
-    terminal::type_with_echo(scenario, r".\flood.ps1 3", terminal::Echo::Shown);
+    scenario.send_keys(&["enter"]).expect("presses enter");
     let unreported = elapsed(scenario, directory, 3);
     wait_for_prompt(watch);
     scenario.expect_nothing_more();
