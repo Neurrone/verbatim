@@ -2019,11 +2019,17 @@ verified.
   focus-following subscriptions. The differences that remain: the tab
   found that way has the tab control above its list, where the event's
   own element, as NVDA reads it, has the terminal's container, so
-  Verbatim says "tab control" before "list"; and on Control+Tab the tab
-  left is said "not selected", read after the selection has moved (both
-  to confirm with Dickson). Heard, either key says "tab control", "list",
-  "<title> terminal" and the line, the tabs' own names culled
-  (`windows_terminal_tabs`). The two-window scenarios switch windows with
+  Verbatim says "tab control" before "list" (accepted by Dickson for now,
+  2026-10-10); and on Control+Tab Verbatim does not announce the tab
+  left, which NVDA queues: **deliberately different since 2026-10-10**
+  (Dickson: when a new tab is selected, only that tab is announced). A
+  focus that has moved on since its event, whose event said it was
+  selected and which is no longer selected when the outpost handles it,
+  is dropped, as the tab left is: Windows Terminal gives the focus first
+  to the tab already selected and then moves the selection and the focus
+  to the next tab, so by then the tab left has lost both. Heard, either
+  key says "tab control", "list", "<title> terminal" and the line, the
+  tab's own name culled (`windows_terminal_tabs`). The two-window scenarios switch windows with
   Alt+Tab (see above).
 
   Up and Down Arrow in a terminal, a selection list a program draws

@@ -3,8 +3,9 @@
 //! with which states, when they changed after the focus event, how soon,
 //! when the application is slow to answer the reads queued before it, when
 //! the focused element read answers a stand-in for a windowed focus, when
-//! a windowless focus's element no longer has the keyboard focus, and when
-//! a focus's element is not found until its next focus or selection event.
+//! a windowless focus's element no longer has the keyboard focus, when a
+//! focus has moved on and lost its selection since its event, and when a
+//! focus's element is not found until its next focus or selection event.
 //!
 //! The outpost runs in this process and reads the focused element from the
 //! test (`common::outpost`), as `call_counts.rs` describes; mockapp's focus
@@ -484,6 +485,42 @@ fn assert_followed(
     outpost.settled();
 }
 
+/// A UIA focus event on an item its event said was selected, which has
+/// since lost both the keyboard focus and the selection to another item,
+/// is dropped: the user has left it, as Windows Terminal's Control+Tab
+/// leaves the tab it gives the focus first. The item moved to is reported.
+fn a_focus_that_moved_on_and_lost_its_selection_is_dropped() {
+    let title = common::unique_title("mockapp-left-selection");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(app.pid());
+
+    app.send("select item1");
+    app.send("set-focus item1");
+    let first = client.focused();
+    let ListenerFact { fact, .. } =
+        uia_focus_fact(&first).expect("mockapp's element has its process");
+
+    app.send("select item2");
+    app.send("set-focus item2");
+    let second = client.focused();
+    outpost.read_focus_as(&second);
+    let reads = outpost.focus_reads();
+    outpost.deliver(fact);
+    outpost.settled();
+    assert_eq!(
+        outpost.focus_reads() - reads,
+        1,
+        "the focused element was read once, for the event"
+    );
+
+    let reported = outpost.uia_focus(&second);
+    assert_eq!(reported.node.name.as_deref(), Some("Second"));
+
+    drop(outpost);
+    app.quit();
+}
+
 /// A UIA focus whose element the focused element read does not find is
 /// reported from its event alone, with its ancestors unknown, and nothing
 /// reads again: a follow-up read once more, and before it up to three
@@ -642,6 +679,10 @@ fn main() {
         (
             "a_focus_that_moved_on_since_its_event_is_reported_as_the_event_said",
             a_focus_that_moved_on_since_its_event_is_reported_as_the_event_said,
+        ),
+        (
+            "a_focus_that_moved_on_and_lost_its_selection_is_dropped",
+            a_focus_that_moved_on_and_lost_its_selection_is_dropped,
         ),
         (
             "a_focus_whose_element_was_not_found_is_followed_from_its_next_focus_event",

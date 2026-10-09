@@ -624,7 +624,11 @@ Implementation notes:
   gone and is dropped, as File Explorer's "Working on it..." is as a
   folder opens, and so is one that holds the element focused now, a
   container that passed the focus to its content, which the newer focus
-  reports as an ancestor (File Explorer's file list pane). The console host's window's own focus is still dropped.
+  reports as an ancestor (File Explorer's file list pane), and so is one
+  whose event said it was selected and which is no longer selected, an
+  item the selection left with the focus (the tab Windows Terminal's
+  Control+Tab leaves; Dickson, 2026-10-10; mockapp's
+  `a_focus_that_moved_on_and_lost_its_selection_is_dropped`). The console host's window's own focus is still dropped.
   Every
   UIA focus of a batch is handled in turn, oldest first, as NVDA's UIA
   handler queues each one, and Core culls the speech of those that have

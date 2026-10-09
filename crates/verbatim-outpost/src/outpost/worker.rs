@@ -2776,6 +2776,20 @@ impl Worker<'_> {
                     tracing::debug!("UIA focus dropped: moved on to an element inside it");
                     return Err(Dropped);
                 }
+                // One whose event said it was selected, and which is no
+                // longer selected, was left: the selection moved on with the
+                // focus, as it does from the tab Windows Terminal's
+                // Control+Tab starts on, the tab being left, to the tab it
+                // selects. Only the item selected now is announced (Dickson,
+                // 2026-10-10; `docs/parity.md`, switching tabs).
+                if fact.states.contains(State::Selected)
+                    && !snapshot_parts_from_cached_element(&found)
+                        .states
+                        .contains(State::Selected)
+                {
+                    tracing::debug!("UIA focus dropped: moved on, and no longer selected");
+                    return Err(Dropped);
+                }
                 Ok((Some(found), true))
             }
             LiveFocus::Unresolved => Ok((None, false)),
