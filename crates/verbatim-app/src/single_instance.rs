@@ -5,16 +5,18 @@
 //! Two mechanisms cooperate. First, the new process finds the old instance's
 //! hidden main window by title, checks that the window's process runs
 //! Verbatim's executable, posts `WM_QUIT` so its GUI loop exits and its
-//! normal teardown runs, and waits for its process to exit, however long
-//! the teardown takes. NVDA ends a process that has not exited after four
-//! seconds with `TerminateProcess` (`nvda.pyw` lines 110 to 137); Verbatim
-//! never does, since that cut the old instance's teardown short, killing
-//! its outposts rather than shutting them down and leaving the screen
-//! reader flag set, and the process's exit is the evidence that the
-//! teardown finished (Dickson, 2026-10-09, coherence review). Second, a
+//! normal teardown runs, and waits up to five seconds for its process to
+//! exit (Dickson, 2026-10-10). NVDA ends a process that has not exited
+//! after four seconds with `TerminateProcess` (`nvda.pyw` lines 110 to
+//! 137); Verbatim never does, since that cut the old instance's teardown
+//! short, killing its outposts rather than shutting them down and leaving
+//! the screen reader flag set, and the process's exit is the evidence that
+//! the teardown finished (Dickson, 2026-10-09, coherence review). Second, a
 //! named mutex serializes full startup, so the new instance does not
 //! proceed until the old one's teardown has released it (or abandoned it by
-//! dying).
+//! dying). An old instance still running when the five seconds pass still
+//! holds the mutex, so the new instance's startup fails with an error and
+//! the old one is left running.
 //!
 //! The mutex name has no per-desktop suffix yet; the secure-desktop instance
 //! that needs one arrives in milestone M8.
@@ -24,10 +26,10 @@ use std::io;
 use std::path::Path;
 
 use windows::Win32::Foundation::{
-    CloseHandle, HANDLE, HWND, WAIT_ABANDONED, WAIT_OBJECT_0, WPARAM,
+    CloseHandle, HANDLE, HWND, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT, WPARAM,
 };
 use windows::Win32::System::Threading::{
-    CreateMutexW, INFINITE, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    CreateMutexW, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
     PROCESS_SYNCHRONIZE, QueryFullProcessImageNameW, WaitForSingleObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -43,6 +45,10 @@ const WINDOW_TITLE: &str = "Verbatim";
 
 /// The named mutex serializing startup.
 const MUTEX_NAME: PCWSTR = w!(r"Local\Verbatim");
+
+/// How long a running instance gets to exit after `WM_QUIT` (Dickson,
+/// 2026-10-10).
+const REPLACED_EXIT_MS: u32 = 5000;
 
 /// How long to wait for the startup mutex.
 const MUTEX_WAIT_MS: u32 = 2000;
@@ -97,8 +103,8 @@ pub fn acquire_replacing() -> io::Result<InstanceGuard> {
 }
 
 /// Finds a running instance's hidden main window and shuts that instance
-/// down with `WM_QUIT`, waiting for its process to exit. A no-op when no
-/// instance is running.
+/// down with `WM_QUIT`, waiting up to [`REPLACED_EXIT_MS`] for its process
+/// to exit. A no-op when no instance is running.
 ///
 /// The title alone is not Verbatim's: Windows matches it without regard to
 /// case, and a File Explorer window on a folder named "verbatim" has it too.
@@ -173,8 +179,15 @@ fn shut_down_if_verbatim(hwnd: HWND, own_name: &std::ffi::OsStr) -> bool {
         );
         // SAFETY: waiting on the process through its open handle, with
         // synchronize access; it is signalled when the process exits.
-        if unsafe { WaitForSingleObject(process, INFINITE) } == WAIT_OBJECT_0 {
+        let wait = unsafe { WaitForSingleObject(process, REPLACED_EXIT_MS) };
+        if wait == WAIT_OBJECT_0 {
             tracing::info!(old_pid = pid, "the running instance has exited");
+        } else if wait == WAIT_TIMEOUT {
+            tracing::warn!(
+                old_pid = pid,
+                limit_ms = REPLACED_EXIT_MS,
+                "the running instance did not exit in time; it is left running"
+            );
         } else {
             tracing::warn!(old_pid = pid, "waiting for the running instance failed");
         }
