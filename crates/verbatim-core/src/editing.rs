@@ -382,6 +382,7 @@ pub(crate) fn caret_reply(
         return Vec::new();
     };
     let grid = is_grid(focus.snapshot.role);
+    let terminal = focus.snapshot.role == verbatim_model::Role::Terminal;
     let CaretReply {
         moved,
         caret,
@@ -389,7 +390,6 @@ pub(crate) fn caret_reply(
         unit,
         selection_changes,
         same_line,
-        redrawn,
         removed,
     } = *reply;
     let segments = if pending.key.select || pending.key.motion == CaretMotion::SelectAll {
@@ -432,10 +432,6 @@ pub(crate) fn caret_reply(
                 state.reported_format = Some((pending.node, reported));
                 segments
             }
-            // A terminal program redrew lines to show the key's effect
-            // (selection lists' markers): spoken below, each its own
-            // utterance, as lines of output are.
-            _ if !redrawn.is_empty() => Vec::new(),
             motion => {
                 let mut reported = reported_format(state, pending.node);
                 let segments =
@@ -446,15 +442,12 @@ pub(crate) fn caret_reply(
         }
     };
     update_caret(state, pending.node, caret, read_at_ms);
-    let mut effects: Vec<Effect> = redrawn
-        .iter()
-        .map(|line| {
-            speak(
-                trace_id,
-                text::text_segments(text::line_content(line, grid), None),
-            )
-        })
-        .collect();
+    // The key's answer says what it did to the caret's line, so that line's
+    // change is not spoken again as output (`terminal::caret_key`).
+    if terminal {
+        state.terminal.key_owns_line = true;
+    }
+    let mut effects: Vec<Effect> = Vec::new();
     if !segments.is_empty() {
         effects.push(speak(trace_id, segments));
     }

@@ -15,6 +15,9 @@
 //! counted as skipped. When the anchor has left a history it is not found;
 //! with history above both screens that means the history overflowed, and
 //! the skipped lines are "more than" the history's rows left unspoken.
+//! On a screen with no history above it the range stays on its row while
+//! a full-screen program scrolls the text through the rows, so there the
+//! scroll is found from the text ([`screen::alternate_scroll`]).
 //! Otherwise (the screen cleared, a full-screen program's alternate screen
 //! opened or closed) the screens are lined up by their common lines.
 //!
@@ -218,6 +221,7 @@ pub fn read_new<S: ScreenSource>(
         return Ok(Found::Unsettled);
     }
     let new = screen_lines(&screen.text);
+    let shift = scroll(&screen, earlier, &new);
     let mut remembered = Memory {
         screen: new.clone(),
         said: new.clone(),
@@ -227,7 +231,7 @@ pub fn read_new<S: ScreenSource>(
         first_row: screen.first_row.clone(),
         main: None,
         caret: None,
-        scrolled: screen.shift,
+        scrolled: shift,
     };
     let Some(old) = earlier.filter(|_| !unsettled) else {
         return Ok(Found::Output(TerminalOutput::default(), remembered));
@@ -250,7 +254,7 @@ pub fn read_new<S: ScreenSource>(
             .filter(|row| !row.is_empty())
             .and_then(|row| new.iter().rposition(|line| line.contains(row)))
     });
-    let output = match screen.shift {
+    let output = match shift {
         Some(shift) => {
             let unread = shift.saturating_sub(seen);
             let head = block_lines(&screen.head, screen.head_rows);
@@ -306,17 +310,39 @@ pub fn read_new<S: ScreenSource>(
             }
         },
     };
-    if let Some(shift) = screen.shift {
-        let kept = old.said.get(shift as usize..).unwrap_or_default();
-        for (row, was) in remembered.said.iter_mut().zip(kept) {
-            // A row erased whole is drawn again, not rewritten: what is
-            // written to it next is new.
-            if !row.trim().is_empty() && was.starts_with(row.as_str()) && was != row {
-                row.clone_from(was);
-            }
-        }
+    if let Some(shift) = shift {
+        keep_said(&mut remembered.said, &old.said, shift as usize);
     }
     Ok(Found::Output(output, remembered))
+}
+
+/// Gives each line of `said`, the screen just read, what the same line of
+/// `old`, the screen before, said, when it has only got shorter since
+/// ([`Memory::said`]); the old screen's top row now lies `shift` rows above.
+fn keep_said(said: &mut [String], old: &[String], shift: usize) {
+    let kept = old.get(shift..).unwrap_or_default();
+    for (row, was) in said.iter_mut().zip(kept) {
+        // A row erased whole is drawn again, not rewritten: what is
+        // written to it next is new.
+        if !row.trim().is_empty() && was.starts_with(row.as_str()) && was != row {
+            row.clone_from(was);
+        }
+    }
+}
+
+/// How far the text scrolled since `old` was read, the screen's lines now
+/// being `new`: the read's own shift, except on a screen with no history
+/// above it, before and now, where the range the read found its top row by
+/// stays on its row while a full-screen program scrolls the text through
+/// the rows, so the text says how far ([`screen::alternate_scroll`]).
+fn scroll(screen: &ScreenText, old: Option<&Memory>, new: &[String]) -> Option<u32> {
+    match (screen.shift, old) {
+        (Some(0), Some(old)) if screen.alternate && old.alternate => Some(
+            screen::alternate_scroll(&old.screen, new)
+                .map_or(0, |by| u32::try_from(by).unwrap_or(u32::MAX)),
+        ),
+        (shift, _) => shift,
+    }
 }
 
 /// Whether a read after `old` can be trusted: its text held still, and
@@ -367,99 +393,24 @@ pub struct Terminal {
     /// When the read that `memory` holds ended: a key pressed after that
     /// cannot show in it, where one pressed while it was under way can.
     memory_read_ms: u64,
-    /// What was remembered before the last read, from up to [`KEPT_READS`]
-    /// reads before it, oldest first, each with when its read ended, for a
-    /// key pressed before the last read ([`Terminal::screen_before`]): a
-    /// program's answer to a key can be read several times before the
-    /// key's request reaches the outpost.
-    previous: std::collections::VecDeque<Kept>,
-    /// While a line key's watch is open (`keys`), reads do not advance the
-    /// memory: each compares with the screen before the key, so a redraw
-    /// read half done is never taken as new output, and what the key
-    /// redrew is said once, by its answer.
-    pub frozen: bool,
-}
-
-/// How many earlier reads [`Terminal`] keeps.
-const KEPT_READS: usize = 8;
-
-/// A memory kept from an earlier read.
-struct Kept {
-    read_ms: u64,
-    memory: Memory,
-    top: Option<AgileReference<IUIAutomationTextRange>>,
 }
 
 impl Terminal {
-    /// Makes the memory the screen as it was before a key pressed at
-    /// `pressed_at_ms` (Unix milliseconds): the memory itself when its read
-    /// ended before then, else the newest kept from a read that did, the
-    /// reads after it forgotten. Returns that screen, or `None` when no
-    /// read kept ended before the key.
-    pub fn screen_before(&mut self, pressed_at_ms: u64) -> Option<Memory> {
-        let memory = self.memory.as_ref()?;
-        if self.memory_read_ms < pressed_at_ms {
-            return Some(memory.clone());
-        }
-        let at = self
-            .previous
-            .iter()
-            .rposition(|kept| kept.read_ms < pressed_at_ms)?;
-        tracing::debug!(
-            later = self.previous.len() - at,
-            "a line key's screen before it is from a read before the last"
-        );
-        self.previous.truncate(at + 1);
-        let kept = self.previous.pop_back()?;
-        self.memory = Some(kept.memory.clone());
-        self.memory_read_ms = kept.read_ms;
-        self.top = kept.top;
-        Some(kept.memory)
-    }
-
-    /// Keeps the memory as an earlier read's, with `top` as its range,
-    /// before `memory` takes its place.
-    fn keep(&mut self, memory: Memory, top: Option<AgileReference<IUIAutomationTextRange>>) {
-        if let Some(kept) = self.memory.replace(memory) {
-            if self.previous.len() == KEPT_READS {
-                self.previous.pop_front();
-            }
-            self.previous.push_back(Kept {
-                read_ms: self.memory_read_ms,
-                memory: kept,
-                top,
-            });
-        }
-        self.memory_read_ms = crate::protocol::now_us() / 1_000;
-    }
-
-    /// The screen as it was before a key pressed at `pressed_at_ms`, as
-    /// [`Terminal::screen_before`] finds it, without changing what is
-    /// remembered.
+    /// The screen as it was before a key pressed at `pressed_at_ms` (Unix
+    /// milliseconds): the memory, when its read ended before then; `None`
+    /// when it did not, since the read may show what the key did.
     #[must_use]
     pub fn screen_at(&self, pressed_at_ms: u64) -> Option<&Memory> {
-        let memory = self.memory.as_ref()?;
-        if self.memory_read_ms < pressed_at_ms {
-            return Some(memory);
-        }
-        self.previous
-            .iter()
-            .rev()
-            .find(|kept| kept.read_ms < pressed_at_ms)
-            .map(|kept| &kept.memory)
+        self.memory
+            .as_ref()
+            .filter(|_| self.memory_read_ms < pressed_at_ms)
     }
 
-    /// Ends a line key's watch (`frozen`) with `memory`, the screen read
-    /// that answered it, as what is remembered from now on; or, with none,
-    /// keeps the screen before the key, so the next read finds what the
-    /// key did as new.
-    pub fn thaw(&mut self, memory: Option<Memory>) {
-        self.frozen = false;
-        let Some(memory) = memory else {
-            return;
-        };
-        let top = self.top.take();
-        self.keep(memory, top);
+    /// Remembers `memory`, read just now, with `top` as its range.
+    fn remember(&mut self, memory: Memory, top: Option<AgileReference<IUIAutomationTextRange>>) {
+        self.memory = Some(memory);
+        self.top = top;
+        self.memory_read_ms = crate::protocol::now_us() / 1_000;
     }
 }
 
@@ -601,15 +552,12 @@ pub fn read<'a>(
         path: None,
     };
     let found = read_new(&mut source, terminal.memory.as_ref(), mode, head_wanted)?;
-    if let Found::Output(_, memory) = &found
-        && !terminal.frozen
-    {
+    if let Found::Output(_, memory) = &found {
         let top = source
             .top_found
             .as_ref()
             .and_then(|range| AgileReference::new(range).ok());
-        let kept_top = std::mem::replace(&mut terminal.top, top);
-        terminal.keep(memory.clone(), kept_top);
+        terminal.remember(memory.clone(), top);
     }
     Ok(ReadAnswer {
         found,

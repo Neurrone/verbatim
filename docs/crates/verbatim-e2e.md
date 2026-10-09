@@ -385,12 +385,15 @@ and back up ("row 0", "row 30"), and the alternate screen closed, after
 which only "closed" and the prompt are new.
 
 The selection-list scenarios (`scenarios/terminal_lists.rs`) run a
-list whose ">" marker moves by two rewritten cells, and one redrawn whole
-on each move with the caret below it: Down, Down and Up say "> banana",
-"> cherry" and "> banana", once each. The two-marker scenarios run two
-lists, fruits and colours, whose markers each key moves together: Down
-says "> banana" and "> green", both lines that gained a marker, top to
-bottom.
+list whose ">" marker moves with the caret, each move one write, and one
+redrawn whole in one write on each move with the caret left below it:
+Down, Down and Up say "> banana", "> cherry" and "> banana", once each,
+the first as the caret's line, as NVDA says it, and the second as output,
+where NVDA says the caret's line, "blank", once its wait for the caret
+times out. The pager scenarios (`scenarios/terminal_pager.rs`) open a
+pager on the alternate screen, its twenty-nine lines and prompt heard in
+full, and move it down a line and back up: each move says only the line
+it brought onto the screen, "page line 30" and then "page line 1".
 
 The review-output scenarios (`scenarios/terminal_review_output.rs`)
 review a line above the caret, let a script print two lines, and hear the

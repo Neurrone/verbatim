@@ -2162,6 +2162,12 @@ Outcome of the terminal package (2026-10-08):
 
 ### Selection lists in a terminal (Dickson, 2026-10-09)
 
+Superseded the same day by "Terminal line keys as NVDA has them" below:
+the rules for a finished redraw, the output held while a line key's
+watch was open and the kept earlier screens are removed. What follows is
+the record of what was built and why it was taken out; the wrapped
+Escape at its end stands, judged from the terminal's memory alone.
+
 When Up or Down Arrow makes a program rewrite other lines and the caret is
 not on a changed line, Verbatim speaks the line that gained the marker,
 a deliberate difference from NVDA recorded in `docs/parity.md`. Reading a
@@ -2383,6 +2389,57 @@ To be confirmed:
 - The Settings page's "Windows isn't activated" banner was read once in
   five `settings_system_page` runs in place of the search box's "blank";
   left as it is and reported.
+
+Made while carrying out "Terminal line keys as NVDA has them" (2026-10-09,
+to be confirmed):
+
+- The list scenarios' scripts now write each move in one write (escape
+  sequences, with the console's processing of them turned on as the
+  full-screen script does): NVDA, captured with the earlier scripts, read
+  their cell-by-cell writes part-way and said different things from run
+  to run, so no exact test could say what NVDA says. NVDA was captured
+  again with the new scripts in both terminals: "greater banana",
+  "greater cherry", "greater banana" for the marker that the caret
+  follows, every run, and "blank" for each key of the list redrawn with
+  the caret below it.
+- The redrawn list's scenarios assert Verbatim's own speech there, the
+  line that gained the marker as output ("> banana"), not NVDA's "blank":
+  matching it would take reversing two deliberate differences, a key
+  that does not move the caret being silent and a rewritten line being
+  spoken from the word that changed. Recorded in `docs/parity.md`.
+- The two-marker scenarios are deleted. With line keys answered by the
+  caret's line and the rest spoken as output, they tested the marker
+  scenario's answer and the redrawn scenario's output together, and the
+  order of those two depends on whether the program's write or Core's
+  request reaches the outpost first.
+- A line's change belongs to the caret key that changed it only once the
+  key's answer has said what it did (`key_owns_line`), not from the key
+  press: a key that changes the caret's line without moving the caret
+  (PSReadLine's menu after its first move) would otherwise have its
+  change dropped as the key's and never spoken, its watch ending without
+  evidence.
+- The caret key's watch is checked before the console host's own update
+  events are read, as it already was for UIA's text changes, and again
+  after any read of a terminal that read its caret: the read's caret
+  counts as read, so the change that caused it would show the watch
+  nothing, and Windows Terminal raised no caret event when PSReadLine's
+  menu moved its caret after the text.
+- On a screen with no history above it, before a read and after it, how
+  far the text scrolled is found from the text (`alternate_scroll`): the
+  range kept at the top row stays on its row while a pager scrolls the
+  text through it, so it always said 0. The diff's alignment of a scroll
+  was already right in most cases through its longest common run of
+  lines; what the shift corrects is what each row is remembered to have
+  said.
+- The wrapped Escape, which judged a key against the newest of the last
+  eight screens read before it, now has only the terminal's memory, when
+  the read behind it ended before the key; otherwise the key is judged
+  by the caret alone, as for a key whose request came after more reads
+  than were kept.
+- The pager scenarios run a script pager on the alternate screen
+  (`pager.ps1`), written in one write a move, rather than Git's `less`,
+  which a test machine need not have and which writes a move in pieces in
+  the console host.
 
 ## Language audit (2026-10-08)
 

@@ -130,11 +130,14 @@ pub(crate) struct TerminalSpeech {
     /// to echo typing.
     #[serde(default)]
     pub(crate) cut_at_ms: u64,
-    /// Whether the newest key is a caret key: until another key, the change
-    /// of the line it edits or recalls (Delete, Control+Backspace, Up
-    /// through the shell's history) is that key's, spoken by its answer,
-    /// and not spoken again as output (the live caret checks of
-    /// 2026-10-08, where the redrawn line was heard twice).
+    /// Whether the newest key is a caret key whose answer has said what it
+    /// did: until another key, the change of the line it edits or recalls
+    /// (Delete, Control+Backspace, Up through the shell's history) is that
+    /// key's, and not spoken again as output (the live caret checks of
+    /// 2026-10-08, where the redrawn line was heard twice). Until the
+    /// answer comes, and when the key moves no caret (a list a program
+    /// redraws in place), the change is output like any other (Dickson,
+    /// 2026-10-09: screen changes are spoken at once).
     #[serde(default)]
     pub(crate) key_owns_line: bool,
 }
@@ -187,15 +190,11 @@ pub(crate) fn caret_shows_typing(
     editing::echo(state, trace_id, &typed)
 }
 
-/// A caret key was pressed: the line it changes is its own.
+/// A caret key was pressed: the line an earlier key changed is no longer
+/// that key's. The line becomes this key's once its answer says what it
+/// did ([`editing::caret_reply`]).
 pub(crate) fn caret_key(state: &mut SrState) {
-    if state
-        .focus
-        .as_ref()
-        .is_some_and(|focus| focus.snapshot.role == verbatim_model::Role::Terminal)
-    {
-        state.terminal.key_owns_line = true;
-    }
+    state.terminal.key_owns_line = false;
 }
 
 /// One piece of output waiting to be spoken.

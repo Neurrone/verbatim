@@ -45,6 +45,7 @@ pub(crate) mod terminal_flood;
 pub(crate) mod terminal_footer;
 pub(crate) mod terminal_lists;
 pub(crate) mod terminal_overflow;
+pub(crate) mod terminal_pager;
 pub(crate) mod terminal_progress;
 pub(crate) mod terminal_review_grid;
 pub(crate) mod terminal_review_output;

@@ -460,13 +460,6 @@ pub struct CaretReply {
     /// it was before the key; `None` when not asked or not known.
     #[serde(default)]
     pub same_line: Option<bool>,
-    /// In a terminal, the lines a program redrew to show a line key's
-    /// effect, top to bottom: each selection list's line that gained a
-    /// marker, the caret's line among them when it is one. Each is spoken,
-    /// in place of the caret's line; empty when the caret's line alone
-    /// shows the effect.
-    #[serde(default)]
-    pub redrawn: Vec<String>,
     /// In a terminal, the text a key judged by where the caret landed
     /// removed from a typed line that had wrapped onto more rows, which
     /// the caret's line alone does not show. Spoken as removed text;

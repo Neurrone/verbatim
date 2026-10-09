@@ -132,6 +132,13 @@ impl ScreenSource for Sim {
             ..ScreenText::default()
         };
         if let Some(memory) = anchor {
+            // With no history, before or now, the range kept at the top row
+            // finds it at once: the rows stay put, whatever text moved
+            // through them.
+            if memory.alternate && screen.alternate {
+                screen.shift = Some(0);
+                return Ok(screen);
+            }
             match self.find(memory) {
                 Some(found) if found <= start => {
                     let shift = start - found;
@@ -688,4 +695,60 @@ fn a_footer_kept_below_a_scroll_region_is_said_only_as_it_changed() {
         .chain(output.lines)
         .collect();
     assert_eq!(spoken, strings(&["a", "b", "c", "d", "e", "done"]));
+}
+
+/// A pager's alternate screen, `rows` content lines from `first`, and its
+/// prompt on the last row.
+fn pager(first: usize, rows: usize) -> Vec<String> {
+    let mut screen: Vec<String> = (first..first + rows).map(|n| format!("p{n}")).collect();
+    screen.push(":".to_owned());
+    screen
+}
+
+#[test]
+fn a_pager_moving_down_and_up_a_line_speaks_only_the_new_line() {
+    let mut sim = Sim::new(6, 100, &["ready> less"]);
+    let (_, memory) = read(&mut sim, None);
+    let page = |first| pager(first, 5);
+    sim.replace(
+        &page(1).iter().map(String::as_str).collect::<Vec<_>>(),
+        true,
+    );
+    let (_, memory) = read(&mut sim, Some(&memory));
+    // Down: the text scrolls up through the rows, which stay put.
+    sim.replace(
+        &page(2).iter().map(String::as_str).collect::<Vec<_>>(),
+        true,
+    );
+    let (output, memory) = read(&mut sim, Some(&memory));
+    assert_eq!(memory.scrolled, Some(1));
+    assert_eq!(output.changed, None);
+    assert_eq!([output.above, output.lines].concat(), strings(&["p6"]));
+    // Up: the text scrolls down a row again.
+    sim.replace(
+        &page(1).iter().map(String::as_str).collect::<Vec<_>>(),
+        true,
+    );
+    let (output, memory) = read(&mut sim, Some(&memory));
+    assert_eq!(memory.scrolled, Some(0));
+    assert_eq!(output.changed, None);
+    assert_eq!([output.above, output.lines].concat(), strings(&["p1"]));
+}
+
+#[test]
+fn a_line_cut_short_keeps_what_it_said_on_its_own_row_after_a_scroll() {
+    // A pager's rows, the first one's end being rewritten as the screen
+    // scrolls: what a row said goes with the text, not with the row.
+    let mut sim = Sim::new(4, 100, &["ready> less"]);
+    let (_, memory) = read(&mut sim, None);
+    sim.replace(&["abc def", "abc", "xyz", ":"], true);
+    let (_, memory) = read(&mut sim, Some(&memory));
+    sim.replace(&["abc", "xyz", "uvw", ":"], true);
+    let (_, memory) = read(&mut sim, Some(&memory));
+    assert_eq!(memory.said, strings(&["abc", "xyz", "uvw", ":"]));
+    // Had the row kept the "abc def" it said before the scroll, only "x"
+    // would be new.
+    sim.replace(&["abc defx", "xyz", "uvw", ":"], true);
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert_eq!(output.above, strings(&["defx"]));
 }

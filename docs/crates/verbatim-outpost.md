@@ -1182,7 +1182,13 @@ finds it.
   read as it is now; and the first rows past the old screen's lines,
   which went by unread, are read too, up to the read limit, so a flood's
   start is heard. Not found by its text, the rows of the whole text are
-  counted. A screen whose top row read differently from its text, or
+  counted. On a screen with no history above it, before the read and
+  after it, the range stays on its row while a full-screen program
+  scrolls its text through the rows (a pager moving a line), so there
+  how far the text scrolled up is found from the text instead
+  (`screen::alternate_scroll`): the scroll at which most of the old
+  screen's lines that are not blank stand on the new screen as they
+  were, when that is most of the lines the two share. A screen whose top row read differently from its text, or
   changed by the end of the read, or whose shift could not be found
   exactly (the text shrank, or grew and the screen's top was not found
   within the rows it grew by), was written to while it was read, and is
@@ -1252,33 +1258,25 @@ finds it.
   as scrolled away, the last allowed to have grown), the main screen is
   back, and only what follows it is new.
 
-- `terminal::keys` judges a line key (Up or Down Arrow) in a terminal
-  from the screen before the key and the screen as read now, since a
-  program answers it by redrawing and a read can find the redraw half
-  done. Every line that gained text another line lost is a marker moved
-  (`KeyEffect::Redrawn`, the lines top to bottom, the caret's line among
-  them when it is one; the caret's line alone when it is the only one),
-  unless more lines lost that text than gained it, a marker erased and
-  not yet drawn again; the caret's line gaining text, being cut short
-  with nothing else changed, or the caret moving to the next or previous
-  line with no line only losing text, is the caret's line
-  (`KeyEffect::CaretLine`); anything else is a redraw under way, and the
-  key waits for the next read. The
-  worker opens such a key's watch with the terminal's memory frozen at
-  the screen before the key (`Terminal::screen_before`, `frozen`), checks
-  it on every read of the terminal's text and caret changes instead of by
-  the caret, answers it with `CaretReply::redrawn` for redrawn lines, and
-  then remembers the answering read (`Terminal::thaw`), whose output
-  leaves out the lines the answer speaks. `keys::wrapped_removal` judges a
-  key answered by where the caret landed (Escape) whose caret left its
-  row: the screen's text gives a line that wrapped whole, so when the
-  caret is on the same line of the screen and that line was cut short,
-  the rest of it is the answer's `CaretReply::removed`; the next line
-  still showing that rest is a redraw under way, and the watch stays open.
-  The screen before a key is the newest of the last eight reads
-  (`Terminal::screen_at`, `Terminal::screen_before`) that ended before
-  the key was pressed, a read under way when it was pressed possibly
-  showing part of what it did.
+- A line key (Up or Down Arrow) in a terminal is watched as in a text
+  field (Dickson, 2026-10-09, `phase6-design.md`, "Terminal line keys as
+  NVDA has them"): the caret moving is the evidence, and the answer is
+  the caret's line. What the key made the program redraw elsewhere on
+  the screen is spoken at once as output, through the screen diff. The
+  watch is checked before each read of the terminal, the console host's
+  own update events included, and again after each read that read the
+  caret, since a terminal can move its caret after the text change that
+  caused the read and raise no event for it (Windows Terminal under
+  PSReadLine's menu).
+- `terminal::keys::wrapped_removal` judges a key answered by where the
+  caret landed (Escape) whose caret left its row: the screen's text gives
+  a line that wrapped whole, so when the caret is on the same line of the
+  screen and that line was cut short, the rest of it is the answer's
+  `CaretReply::removed`; the next line still showing that rest is a
+  redraw under way, and the watch stays open. The screen before the key
+  is the terminal's memory when the read behind it ended before the key
+  was pressed (`Terminal::screen_at`); otherwise the key is judged by
+  the caret alone.
 - On-demand reading (`terminal::reading`, `phase6-design.md`, "Terminal
   decisions"), a pure transition function the worker drives. Live, the
   default, a text change of the focused terminal (`Text_TextChanged`) is

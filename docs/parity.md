@@ -1967,26 +1967,60 @@ verified.
   `windows_terminal_tabs`) pin Verbatim's speech as it is today, until
   the fix lands.
 
-  **Different:** Up and Down Arrow in a selection list a program draws in
-  a terminal. Decision (Dickson, 2026-10-09): when the key makes the
-  program rewrite lines and the caret is not on a changed line, Verbatim
-  speaks the line that gained the marker, and it never speaks a redraw
-  read half done. Changed the same day (Dickson): every line that gained
-  a marker another line lost is spoken, top to bottom, the caret's line
-  among them when it is one, so a key that moves two markers says both
-  lines (`windows_terminal_two_markers`, `conhost_two_markers`). NVDA reads the caret's line at the first caret or text
-  change event, or the first change of the caret's position, after the key
-  (`source/editableText.py`, lines 93 to 138 and 181 to 192; the line
-  spoken by lines 165 to 178), so it speaks whatever line the caret is on
-  part-way through the redraw. Captured live on 2026-10-09 with two
-  scripts, one moving a ">" marker by rewriting two cells and one
-  redrawing the whole list: for the first, NVDA said "greater banana",
-  "greater cherry" and "greater banana" in Windows Terminal but "greater
-  banana", "greater banana" and "cherry" in the console host; for the
-  second, "blank" for every key in both, the caret being on the row below
-  the list. Verbatim says "> banana", "> cherry" and "> banana" for both
-  scripts in both terminals (`terminal::keys` in
-  `docs/crates/verbatim-outpost.md`).
+  Up and Down Arrow in a terminal, a selection list a program draws
+  among them: **matched since 2026-10-09** (Dickson, 2026-10-09,
+  `phase6-design.md`, "Terminal line keys as NVDA has them", reversing
+  the earlier deliberate difference). NVDA reads the caret's line at the
+  first change of the caret's position after the key, or, finding none
+  within its wait, at the end of it (`source/editableText.py`, lines 70
+  to 163 and 181 to 192, the line spoken by lines 165 to 178; a
+  terminal's caret events are not used, `NVDAObjects/behaviors.py` lines
+  527 to 530); what the program redraws elsewhere is new output to its
+  diff. Verbatim answers the key with the caret's line once the caret
+  has moved, as in a text field, and speaks what the program redrew
+  elsewhere at once as output, through the screen diff; a key whose
+  answer said what it did to the caret's line keeps that line's change
+  from being spoken again as output, and until the answer comes the
+  change is output like any other. Captured live on 2026-10-09 with
+  scripts that move a list's ">" marker in one write: when the caret
+  follows the marker, both say "> banana", "> cherry" and "> banana"
+  (NVDA "greater banana") in both terminals (`windows_terminal_marker_list`,
+  `conhost_marker_list`); when the program redraws the list and leaves
+  the caret below it, NVDA says "blank" for each key, the caret's line at
+  the end of its wait, and drops the marker's change as a single
+  character inserted on one line, where Verbatim says the line that
+  gained the marker as output, from the word that changed, and nothing
+  for the key, which did not move the caret (`windows_terminal_redrawn_list`,
+  `conhost_redrawn_list`; **different**, by the two deliberate
+  differences recorded above and below). A program that redraws a little
+  at a time is read part-way, by both: with the earlier scripts, which
+  wrote each cell on its own, NVDA said "greater banana", "greater
+  banana" and "cherry" in the console host and, for a list redrawn row by
+  row, "apple" and "blank" by turns. A pager moving a line on its
+  alternate screen (`windows_terminal_pager`, `conhost_pager`, captured
+  the same day): NVDA says the prompt, ":", at the end of its wait and
+  then the line the move brought onto the screen; Verbatim says that
+  line alone. The alternate screen's text scrolls through rows that stay
+  put, so Verbatim finds how far it scrolled from the text.
+
+  Live trials on 2026-10-09 in both terminals, each against NVDA captured
+  the same day (the pager of `git log`, Git's `less.exe`, `vim --clean`
+  with and without `:set relativenumber`, tig, Microsoft Edit's file list,
+  the prompt of `gh repo create`, PSReadLine's MenuComplete and nano's
+  file browser): where a program writes each move in one go, both say the
+  caret's line or the new line as above. The differences left: Verbatim
+  speaks a rewritten status line from the word that changed (vim's ruler,
+  "2,1 Top"; tig's commit count), where NVDA drops a change of one or two
+  characters on one line as probably typed (`behaviors.py` 559 to 566);
+  Verbatim says nothing for a key that leaves the caret where it was (the
+  pagers' ":" prompt, tig's and Microsoft Edit's lists, PSReadLine's menu
+  after its first move), where NVDA says the caret's line at the end of
+  its wait; with `relativenumber` every visible line changes on each
+  move, which NVDA speaks as a run of numbers and Verbatim as the changed
+  lines from their numbers, both within their limits; and programs that
+  write a move a little at a time (the pagers' prompt in the console
+  host, the prompt of `gh`, nano's browser) are read part-way by both,
+  differently.
 
   **Different:** a line the
   terminal rewrites in place speaks from the start of the word where it

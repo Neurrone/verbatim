@@ -826,35 +826,108 @@ fn waiting_output_past_ten_megabytes_skips_its_oldest_lines() {
     assert_eq!(heard, expected);
 }
 
-#[test]
-fn the_line_a_caret_key_redraws_is_the_keys_and_not_output() {
-    let mut state = terminal();
-    let mut playback = Playback::default();
-    // Up recalls a command from the shell's history: the key's own answer
-    // speaks the line, so the line's change is not spoken again.
-    let _ = reduce(&mut state, &Input::SpeechCancelled { at_ms: 10 });
-    let _ = reduce(
-        &mut state,
+/// Presses Up in the terminal, and returns the query its caret watch
+/// is answered under.
+fn press_up(state: &mut SrState, at_ms: u64) -> QueryId {
+    let _ = reduce(state, &Input::SpeechCancelled { at_ms });
+    let effects = reduce(
+        state,
         &Input::CaretKey {
             trace_id: TraceId::mint(),
             key: verbatim_model::CaretKey {
                 motion: verbatim_model::CaretMotion::PreviousLine,
                 select: false,
             },
-            pressed_at_ms: 10,
+            pressed_at_ms: at_ms,
         },
     );
+    let queries: Vec<QueryId> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Text(TextRequest {
+                query_id,
+                op: TextOp::AwaitCaret(_),
+                ..
+            }) => Some(*query_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(queries.len(), 1, "one caret watch in {effects:?}");
+    queries[0]
+}
+
+/// The answer to a caret key whose caret moved onto `line`.
+fn moved_onto(line: &str) -> TextReply {
+    TextReply::Caret(Box::new(verbatim_model::CaretReply {
+        moved: true,
+        caret: verbatim_model::CaretReport {
+            line: verbatim_model::TextChunk {
+                unit: verbatim_model::TextUnit::Line,
+                text: line.to_owned(),
+                start: verbatim_model::TextAnchor(100),
+                offset: u32::try_from(line.len()).expect("a short line"),
+                languages: Vec::new(),
+                first: false,
+                last: false,
+                truncated: false,
+                formats: Vec::new(),
+            },
+            selection: None,
+        },
+        read_at_ms: 11,
+        unit: None,
+        selection_changes: Vec::new(),
+        same_line: None,
+        removed: None,
+    }))
+}
+
+#[test]
+fn the_line_a_caret_key_redraws_is_the_keys_once_its_answer_says_it() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    // Up recalls a command from the shell's history: the key's own answer
+    // speaks the line, so the line's change is not spoken again.
+    let query_id = press_up(&mut state, 10);
+    playback.reply(&mut state, query_id, moved_onto("ready> echo one"));
     let mut recalled = appended("echo one", "ready> echo one");
     recalled.uncertain = 0;
     playback.feed(
         &mut state,
         &output_from(TERMINAL, Some(recalled), None, Vec::new()),
     );
-    assert_eq!(playback.play_all(&mut state), Vec::<String>::new());
+    assert_eq!(playback.play_all(&mut state), ["ready> echo one"]);
     // Enter, a key of its own, and the command's output is spoken.
     let _ = reduce(&mut state, &Input::SpeechCancelled { at_ms: 20 });
     playback.feed(&mut state, &output(vec!["one".to_owned()]));
     assert_eq!(playback.play_all(&mut state), ["one"]);
+}
+
+#[test]
+fn the_line_a_caret_key_changes_without_moving_the_caret_is_output() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    // Up in a menu a program redraws on the caret's line, the caret staying
+    // where it was: no answer says what the key did, so the line's change
+    // is spoken as output, and the watch ends saying nothing.
+    let query_id = press_up(&mut state, 10);
+    let change = LineChange {
+        text: "CertificateAutoEnrollmentPolicy".to_owned(),
+        line: "ready> Get-CertificateAutoEnrollmentPolicy".to_owned(),
+        appended: false,
+        uncertain: 0,
+        inserted: "AutoEnrollmentPolicy".to_owned(),
+        since_read: None,
+    };
+    playback.feed(
+        &mut state,
+        &output_from(TERMINAL, Some(change), None, Vec::new()),
+    );
+    playback.reply(&mut state, query_id, TextReply::WatchEnded);
+    assert_eq!(
+        playback.play_all(&mut state),
+        ["CertificateAutoEnrollmentPolicy"]
+    );
 }
 
 #[test]

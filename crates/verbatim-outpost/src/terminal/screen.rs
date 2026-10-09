@@ -73,6 +73,38 @@ pub fn screen_lines(text: &str) -> Vec<String> {
     lines
 }
 
+/// How many rows the text of a screen with no history above it scrolled up
+/// between `old` and `new`, both as [`screen_lines`] gives them, found from
+/// the text alone: a full-screen program scrolling on its alternate screen
+/// (a pager moving down a line) moves the text through rows that stay put,
+/// so no range kept on a row follows it, where on a screen with history
+/// the rows themselves move. It is the scroll by which more lines of `old`
+/// that are not blank stand on `new` exactly as they were, in their order
+/// and side by side, than at any other scroll, none included; and they
+/// must be most of the lines the two screens share at that scroll. `None`
+/// when the text did not scroll up, or no scroll stands out.
+#[must_use]
+pub fn alternate_scroll(old: &[String], new: &[String]) -> Option<usize> {
+    let matching = |by: usize| {
+        old.iter()
+            .skip(by)
+            .zip(new)
+            .filter(|(old, new)| old == new && !old.trim().is_empty())
+            .count()
+    };
+    let (by, matched) =
+        (1..old.len())
+            .map(|by| (by, matching(by)))
+            .fold(
+                (0, matching(0)),
+                |best, next| {
+                    if next.1 > best.1 { next } else { best }
+                },
+            );
+    let shared = old.len().saturating_sub(by).min(new.len());
+    (by > 0 && matched >= 2 && matched * 2 > shared).then_some(by)
+}
+
 /// What changed from `old` to `new`, both as [`screen_lines`] gives them.
 /// `cursor`, when known, is the line of `new` the caret is on: its change
 /// is the one `changed` reports, where typing shows, wherever it is (a
