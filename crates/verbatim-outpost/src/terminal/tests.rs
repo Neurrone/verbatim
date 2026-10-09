@@ -52,6 +52,24 @@ impl Sim {
         self.rows.drain(..excess);
     }
 
+    /// Writes a line wider than the screen at the end: rows of `WIDTH`
+    /// cells, joined without a line break, as a terminal gives a line that
+    /// wrapped onto more rows.
+    fn push_wrapped(&mut self, text: &str) {
+        let chars: Vec<char> = text.chars().collect();
+        let rows: Vec<String> = chars
+            .chunks(WIDTH)
+            .map(|row| row.iter().collect())
+            .collect();
+        let last = rows.len() - 1;
+        for (index, row) in rows.into_iter().enumerate() {
+            self.rows
+                .push(if index == last { padded(&row) } else { row });
+        }
+        let excess = self.rows.len().saturating_sub(self.capacity);
+        self.rows.drain(..excess);
+    }
+
     /// Rewrites row `index` from the end (0 is the last).
     fn rewrite(&mut self, from_end: usize, text: &str) {
         let index = self.rows.len() - 1 - from_end;
@@ -751,4 +769,105 @@ fn a_line_cut_short_keeps_what_it_said_on_its_own_row_after_a_scroll() {
     sim.replace(&["abc defx", "xyz", "uvw", ":"], true);
     let (output, _) = read(&mut sim, Some(&memory));
     assert_eq!(output.above, strings(&["defx"]));
+}
+
+#[test]
+fn rows_not_yet_written_and_still_blank_above_a_footer_are_not_lines() {
+    // A screen with rows not yet written to below the prompt, cleared and
+    // given a footer on its last row: the rows between were blank before
+    // and are blank now, and are not inserted lines.
+    let mut sim = Sim::new(6, 100, &["ready> footer", "", "", "", "", ""]);
+    let (_, memory) = read(&mut sim, None);
+    assert_eq!(memory.screen, strings(&["ready> footer"]));
+    assert_eq!(memory.unwritten, 5);
+    sim.replace(&["", "", "", "", "", "status: busy"], false);
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert_eq!(output.above, Vec::<String>::new());
+    assert_eq!(output.changed, None);
+    assert_eq!(output.lines, strings(&["status: busy"]));
+}
+
+#[test]
+fn a_blank_line_on_a_row_that_scrolled_into_view_counts() {
+    // The screen full, so every row the output writes scrolls in: a blank
+    // line among them was never a row of the old screen.
+    let mut sim = Sim::new(3, 100, &["one", "two", "ready>"]);
+    let (_, memory) = read(&mut sim, None);
+    assert_eq!(memory.unwritten, 0);
+    sim.push(&["a", "", "b"]);
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert_eq!(output.lines, strings(&["a", "", "b"]));
+}
+
+#[test]
+fn a_screen_cleared_into_the_history_keeps_its_unwritten_rows_out() {
+    // The console host clears its screen by scrolling it into the history:
+    // the prompt goes up a row, and the rows not yet written to, still
+    // blank above the footer drawn on the last row, are not lines.
+    let mut sim = Sim::new(6, 100, &["ready> footer", "", "", "", "", ""]);
+    let (_, memory) = read(&mut sim, None);
+    sim.push(&["status: busy"]);
+    let (output, memory) = read(&mut sim, Some(&memory));
+    assert_eq!(memory.scrolled, Some(1));
+    assert_eq!(output.above, Vec::<String>::new());
+    assert_eq!(output.lines, strings(&["status: busy"]));
+}
+
+#[test]
+fn a_flood_after_a_wrapped_line_counts_the_rows_it_took() {
+    // A line that wrapped onto two rows is on the screen as a flood starts:
+    // the rows the old screen held are four, not its three lines, so only
+    // the rows past them went by unread.
+    let mut sim = Sim::new(4, 100, &["one"]);
+    sim.push_wrapped("a line of thirty characters!!!");
+    sim.push(&["ready>"]);
+    let (_, memory) = read(&mut sim, None);
+    assert_eq!(memory.screen.len(), 3);
+    assert_eq!(memory.rows, [1, 2, 1]);
+    assert_eq!(memory.rows_held(), 4);
+    let lines: Vec<String> = (1..=6).map(|line| format!("l{line}")).collect();
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    sim.push(&lines);
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert_eq!(output.head, strings(&["l1", "l2"]));
+    assert_eq!(output.skipped, None);
+    assert_eq!(output.lines, strings(&["l3", "l4", "l5", "l6"]));
+    assert_eq!(output.changed, None);
+}
+
+#[test]
+fn a_wrapped_line_scrolled_part_way_off_the_top_is_not_new() {
+    // Two rows scrolled away: the first line and the first row of the
+    // wrapped line, whose second row is now the screen's top.
+    let mut sim = Sim::new(4, 100, &["one"]);
+    sim.push_wrapped("a line of thirty characters!!!");
+    sim.push(&["ready>"]);
+    let (_, memory) = read(&mut sim, None);
+    sim.push(&["x", "y"]);
+    let (output, memory) = read(&mut sim, Some(&memory));
+    assert_eq!(memory.scrolled, Some(2));
+    assert_eq!(output.above, Vec::<String>::new());
+    assert_eq!(output.lines, strings(&["x", "y"]));
+}
+
+#[test]
+fn a_footer_row_a_flood_wrote_over_is_a_new_line_not_the_footer_changed() {
+    // A flood above a footer kept on the last row, read twice: by the
+    // second read the row the footer was on holds a line of the flood,
+    // which is new, the first after the old screen, and not the footer
+    // rewritten (which Core would put in place of the newest line waiting).
+    let mut sim = Sim::new(3, 100, &["ready>", "one", "status: busy"]);
+    let (_, memory) = read(&mut sim, None);
+    let footer = sim.rows.pop().expect("the footer");
+    sim.push(&["a", "b", "c", "d", "e"]);
+    sim.rows.push(footer.clone());
+    let (_, memory) = read(&mut sim, Some(&memory));
+    sim.rows.pop();
+    sim.push(&["f", "g", "h", "i", "j"]);
+    sim.rows.push(footer);
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert_eq!(output.changed, None);
+    assert_eq!(output.head, strings(&["f", "g", "h"]));
+    assert_eq!(output.skipped, None);
+    assert_eq!(output.lines, strings(&["i", "j"]));
 }

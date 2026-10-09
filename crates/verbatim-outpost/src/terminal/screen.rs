@@ -16,7 +16,13 @@
 //! - Lines only deleted say nothing, as NVDA speaks only insertions.
 //!
 //! Every line is a line, blank ones included; whether a blank line is
-//! spoken is Core's business (it is not).
+//! spoken is Core's business (it is not). A row the old screen had not
+//! written to yet (one of the blank rows at its end, which
+//! [`screen_lines`] leaves out) that is still blank is not a line inserted
+//! below the old screen's last line: it was blank before and is blank
+//! now, a row a program passed over (to draw a footer on the last row, or
+//! a screen cleared), not a line it printed (coherence review, Dickson,
+//! 2026-10-09).
 
 use std::ops::Range;
 
@@ -73,6 +79,71 @@ pub fn screen_lines(text: &str) -> Vec<String> {
     lines
 }
 
+/// How many rows at the end of a screen's text are blank, which
+/// [`screen_lines`] leaves out: rows the terminal has not written to yet.
+#[must_use]
+pub fn unwritten_rows(text: &str) -> usize {
+    let body = text.strip_suffix('\n').unwrap_or(text);
+    if body.is_empty() {
+        return 0;
+    }
+    body.split('\n')
+        .rev()
+        .take_while(|line| {
+            verbatim_text::trim_padding(line.strip_suffix('\r').unwrap_or(line)).is_empty()
+        })
+        .count()
+}
+
+/// How many rows each line of a screen's text takes, in the order
+/// [`screen_lines`] gives them: the text gives a line that wrapped onto more
+/// rows whole, and a terminal's rows are `width` cells wide (its top row's
+/// cells, padding included, as the provider gave it), so a line takes as
+/// many rows as its cells fill, padding included, and at least one. A width
+/// of nothing counts every line as one row.
+#[must_use]
+pub fn line_rows(text: &str, width: usize) -> Vec<usize> {
+    let lines = screen_lines(text).len();
+    let body = text.strip_suffix('\n').unwrap_or(text);
+    body.split('\n')
+        .take(lines)
+        .map(|line| {
+            let cells = verbatim_text::cell_width(line.strip_suffix('\r').unwrap_or(line));
+            if width == 0 {
+                1
+            } else {
+                cells.div_ceil(width).max(1)
+            }
+        })
+        .collect()
+}
+
+/// A terminal's width in cells, from its screen's `text` and its top `row`
+/// as the provider gave them: the row's cells, when the provider pads its
+/// rows to the width, as both terminals do (the row ends with padding, or
+/// every line of the text takes whole rows of it). Nothing (0) when it does
+/// not, or the row is narrower than any terminal (20 cells), as a scripted
+/// provider's rows are: a line's rows cannot then be told.
+#[must_use]
+pub fn row_width(row: &str, text: &str) -> usize {
+    /// Narrower than any terminal's screen.
+    const NARROWEST: usize = 20;
+    let row = row.trim_end_matches(['\r', '\n']);
+    let width = verbatim_text::cell_width(row);
+    if width < NARROWEST {
+        return 0;
+    }
+    let padded = row.ends_with(char::is_whitespace);
+    let whole_rows = text
+        .strip_suffix('\n')
+        .unwrap_or(text)
+        .split('\n')
+        .all(|line| {
+            verbatim_text::cell_width(line.strip_suffix('\r').unwrap_or(line)).is_multiple_of(width)
+        });
+    if padded || whole_rows { width } else { 0 }
+}
+
 /// How many rows the text of a screen with no history above it scrolled up
 /// between `old` and `new`, both as [`screen_lines`] gives them, found from
 /// the text alone: a full-screen program scrolling on its alternate screen
@@ -112,15 +183,61 @@ pub fn alternate_scroll(old: &[String], new: &[String]) -> Option<usize> {
 /// last line's is.
 #[must_use]
 pub fn diff(old: &[String], new: &[String], shift: Shift, cursor: Option<usize>) -> ScreenDiff {
+    diff_after(old, new, shift, cursor, Unwritten::default())
+}
+
+/// The rows the old screen had not written to yet, just below its last
+/// line ([`unwritten_rows`]), for [`diff_after`]: a blank line inserted on
+/// one of them was blank before as it is now, a row a program passed over,
+/// and is left out.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Unwritten<'a> {
+    /// How many rows, from the row below the old screen's last line (from
+    /// the screen's top, when none of its lines is left).
+    pub rows: usize,
+    /// How many rows each line of the new screen takes ([`line_rows`]);
+    /// a line missing here takes one.
+    pub line_rows: &'a [usize],
+}
+
+impl Unwritten<'_> {
+    /// Whether line `index` of `new`, `first` being the first line below
+    /// the old screen's last line, is on a row not written to before and is
+    /// still blank.
+    fn holds(&self, new: &[String], first: usize, index: usize) -> bool {
+        if index < first || !new[index].trim().is_empty() {
+            return false;
+        }
+        let rows_before: usize = (first..index)
+            .map(|line| self.line_rows.get(line).copied().unwrap_or(1))
+            .sum();
+        rows_before < self.rows
+    }
+}
+
+/// [`diff`], leaving out the blank lines on the rows the old screen had not
+/// written to yet ([`Unwritten`]).
+#[must_use]
+pub fn diff_after(
+    old: &[String],
+    new: &[String],
+    shift: Shift,
+    cursor: Option<usize>,
+    unwritten: Unwritten<'_>,
+) -> ScreenDiff {
     let old = match shift {
-        Shift::Known(rows) => &old[rows.min(old.len())..],
+        Shift::Known(lines) => &old[lines.min(old.len())..],
         Shift::Unknown => old,
     };
     let mut result = ScreenDiff::default();
     let Some(last) = old.len().checked_sub(1) else {
-        // Nothing of the old screen is left on it: everything is new, and
-        // comes after whatever went by unread.
-        result.below = new.to_vec();
+        // Nothing of the old screen's lines is left on it: everything is
+        // new, and comes after whatever went by unread, but for the rows it
+        // had not written to that are still blank.
+        result.below = (0..new.len())
+            .filter(|&index| !unwritten.holds(new, 0, index))
+            .map(|index| new[index].clone())
+            .collect();
         return result;
     };
     // The old screen's last line is the one the terminal was writing to.
@@ -136,6 +253,7 @@ pub fn diff(old: &[String], new: &[String], shift: Shift, cursor: Option<usize>)
             &new[..last],
             None,
             cursor.filter(|&cursor| cursor < last),
+            Unwritten::default(),
         );
         result.above = above.above;
         let last_change = line_change(&old[last], &new[last]);
@@ -149,10 +267,14 @@ pub fn diff(old: &[String], new: &[String], shift: Shift, cursor: Option<usize>)
         } else {
             result.changed = last_change;
         }
-        result.below.extend(new[last + 1..].iter().cloned());
+        result.below.extend(
+            (last + 1..new.len())
+                .filter(|&index| !unwritten.holds(new, last + 1, index))
+                .map(|index| new[index].clone()),
+        );
         return result;
     }
-    diff_lines(old, new, Some(last), cursor)
+    diff_lines(old, new, Some(last), cursor, unwritten)
 }
 
 /// The diff of `old` and `new` lined up by their longest common run of
@@ -165,6 +287,7 @@ fn diff_lines(
     new: &[String],
     last: Option<usize>,
     cursor: Option<usize>,
+    unwritten: Unwritten<'_>,
 ) -> ScreenDiff {
     let hunks = hunks(old, new);
     // Where the old last line is in the new screen: its match, or its place
@@ -216,6 +339,11 @@ fn diff_lines(
                 }
                 change.map(|change| change.text.trim_start().to_owned())
             } else {
+                // A row below the old last line that was not written to yet
+                // and is still blank was not printed.
+                if boundary.is_some_and(|boundary| unwritten.holds(new, boundary + 1, new_index)) {
+                    continue;
+                }
                 Some(new[new_index].clone())
             };
             if let Some(text) = spoken {

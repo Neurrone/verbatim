@@ -2474,6 +2474,40 @@ confirmed):
   with a tab opened the same way, spoke the notice as output when its
   read of the tab came before it was printed, and missed it otherwise.
 
+Made while fixing blank lines and rows in the screen read (coherence
+decision 1 and the rows fix, 2026-10-09, to be confirmed):
+
+- A blank line on a row the old screen had not written to yet, the rows
+  just below its last line, is not inserted, as the decision says; it
+  follows that a blank line a program prints onto such a row (`echo ""`
+  on a screen not yet full) is not counted either, where one printed as
+  the screen scrolls, or read from the history, is. Nothing in the text
+  tells a blank row a line feed passed through from one a program jumped
+  over.
+- A line's rows are worked out from its cells and the terminal's width,
+  its top row's cells padding included: the console host pads every row
+  to the width, so a wrapped line's text is a whole number of rows, and a
+  line whose text is shorter takes the rows its cells fill. Wide
+  characters count two cells (`verbatim_text::cell_width`).
+- A wrapped line straddling the screen's top after a scroll is taken as
+  what is left of it, the new screen's first line, so it is neither new
+  nor a rewrite.
+- When the screen scrolled away whole and the row the old screen's last
+  line was on now holds something other than that line, as it was or
+  grown, that row is the first new line, not a change of the old last
+  line: Core put such a change in place of the newest line still waiting,
+  which dropped one line of a flood above a footer (the footer flood said
+  "skipped 40 lines" in place of 41 in both terminals once the blank rows
+  above its footer were no longer counted).
+- The order Core takes a key's report and an outpost's message in is
+  left as it is: the reducer picks either channel when both wait, so a
+  terminal's echo of a typed character is now and then read as output
+  before the typed character is known (seen in `conhost_typing` and
+  `conhost_flood`, once each in about thirty runs). Preferring the key's
+  channel fixed that but let a key overtake older output (the flood's
+  prompt, read before "report new output" was turned on, was spoken after
+  it); ordering them by when each was queued is a follow-up.
+
 ## Language audit (2026-10-08)
 
 A read-only audit found these, ranked by how likely a user of the language is to hit them; each is fixed with exact tests in a language work package, together with the terminal's changed-word rule:

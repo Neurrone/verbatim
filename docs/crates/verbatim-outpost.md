@@ -1230,7 +1230,27 @@ finds it.
   the screens are lined up by their common lines. Lines lose their
   trailing padding, every trailing character with Unicode's `White_Space`
   property (`verbatim_text::trim_padding`), and blank rows at the end of
-  the screen are rows not yet written to.
+  the screen are rows not yet written to (`Memory::unwritten`). A blank
+  line on one of those rows, the first below the old screen's last line,
+  is not inserted: it was blank before and is blank now, a row a program
+  passed over (to draw a footer on the last row, or a screen cleared), not
+  a line it printed (coherence review, Dickson, 2026-10-09;
+  `screen::Unwritten`). Every other line counts, blank ones included.
+- Rows and lines. A read counts rows (the shift, the rows that went by
+  unread, the history's rows), and the text gives a line that wrapped onto
+  more rows whole, so the diff compares lines. Each line's rows are known
+  from its cells and the terminal's width, its top row's cells padding
+  included (`screen::line_rows`, `Memory::rows`); the rows the old screen
+  held (`Memory::rows_held`) are what the next read counts from, its last
+  line's rows are read whole as the row it was on now (`old_last_row`,
+  `ScreenQuery::last_rows`), and a shift in rows becomes the lines still
+  on the screen (`Memory::after_scroll`), a wrapped line that straddles
+  the screen's top being what is left of it, the new screen's first line.
+  When the screen scrolled away whole and the row the old screen's last
+  line was on now holds something else than that line, as it was or
+  grown, that row is a line of its own, the first after the old screen
+  (the first of `head`), not a change of that line: a footer's row a
+  flood scrolled through is so a line of the flood.
 - A line changed in place also reports what it gained where it changed
   (`LineChange::inserted`), which Core matches with typing held. The
   memory keeps each line twice: as read (`Memory::screen`) and as said

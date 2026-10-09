@@ -41,7 +41,7 @@ use verbatim_uia_rops::{
 
 use crate::text::TextError;
 use reading::Reading;
-use screen::{Shift, diff, screen_lines};
+use screen::{Shift, Unwritten, diff, diff_after, screen_lines, unwritten_rows};
 
 /// What the outpost remembers of a terminal's screen between reads.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -76,6 +76,55 @@ pub struct Memory {
     /// How far up the screen before had scrolled when this one was read,
     /// when that was found: 0 when the two line up row for row.
     pub scrolled: Option<u32>,
+    /// How many blank rows ended the screen, which `screen` leaves out:
+    /// rows not yet written to ([`screen::unwritten_rows`]).
+    pub unwritten: usize,
+    /// How many rows each line of `screen` takes ([`screen::line_rows`]):
+    /// more than one for a line that wrapped. The reads count rows, and the
+    /// diff compares lines.
+    pub rows: Vec<usize>,
+}
+
+impl Memory {
+    /// How many rows the screen's lines took, which the next read's rows
+    /// are counted from.
+    #[must_use]
+    pub fn rows_held(&self) -> u32 {
+        let rows: usize = (0..self.screen.len()).map(|line| self.rows_of(line)).sum();
+        u32::try_from(rows).unwrap_or(u32::MAX)
+    }
+
+    /// How many rows line `line` of the screen took: one when not known.
+    fn rows_of(&self, line: usize) -> usize {
+        self.rows.get(line).copied().unwrap_or(1)
+    }
+
+    /// The lines of the screen, as it said them and as it read, still on
+    /// the screen read after `shift` of its rows scrolled away, `new`: a
+    /// line that wrapped onto more rows and straddles the new screen's top
+    /// is the new screen's first line, what is left of it.
+    fn after_scroll(&self, shift: usize, new: &[String]) -> (Vec<String>, Vec<String>) {
+        let mut gone = 0;
+        let mut first = 0;
+        while first < self.screen.len() && gone + self.rows_of(first) <= shift {
+            gone += self.rows_of(first);
+            first += 1;
+        }
+        if first < self.screen.len() && gone < shift {
+            let left = new.first().cloned().unwrap_or_default();
+            let said = std::iter::once(left.clone())
+                .chain(self.said.iter().skip(first + 1).cloned())
+                .collect();
+            let screen = std::iter::once(left)
+                .chain(self.screen.iter().skip(first + 1).cloned())
+                .collect();
+            return (said, screen);
+        }
+        (
+            self.said.iter().skip(first).cloned().collect(),
+            self.screen.iter().skip(first).cloned().collect(),
+        )
+    }
 }
 
 /// A read of a terminal's screen, as text: [`Screen`] without its caret,
@@ -142,8 +191,8 @@ pub trait ScreenSource {
     type Error;
 
     /// Reads the screen, finding `anchor`'s rows when given, and reading up
-    /// to `head_wanted` of the rows past the old screen's `seen_rows` that
-    /// went by unread.
+    /// to `head_wanted` of the rows past the old screen's `seen_rows` (rows,
+    /// [`Memory::rows_held`]) that went by unread.
     ///
     /// # Errors
     ///
@@ -212,15 +261,18 @@ pub fn read_new<S: ScreenSource>(
     head_wanted: u32,
 ) -> Result<Found, S::Error> {
     let earlier = memory.filter(|_| mode != ReadMode::Baseline);
-    let seen = earlier.map_or(0, |memory| {
-        u32::try_from(memory.screen.len()).unwrap_or(u32::MAX)
-    });
+    // Rows, as the read counts them: a line that wrapped took more.
+    let seen = earlier.map_or(0, Memory::rows_held);
     let screen = source.read(earlier, seen, head_wanted)?;
     let unsettled = earlier.is_some_and(|old| !trusted(old, &screen));
     if unsettled && mode != ReadMode::Cancel {
         return Ok(Found::Unsettled);
     }
     let new = screen_lines(&screen.text);
+    let new_rows = screen::line_rows(
+        &screen.text,
+        screen::row_width(&screen.top_row, &screen.text),
+    );
     let shift = scroll(&screen, earlier, &new);
     let mut remembered = Memory {
         screen: new.clone(),
@@ -232,6 +284,8 @@ pub fn read_new<S: ScreenSource>(
         main: None,
         caret: None,
         scrolled: shift,
+        unwritten: unwritten_rows(&screen.text),
+        rows: new_rows.clone(),
     };
     let Some(old) = earlier.filter(|_| !unsettled) else {
         return Ok(Found::Output(TerminalOutput::default(), remembered));
@@ -257,27 +311,29 @@ pub fn read_new<S: ScreenSource>(
     let output = match shift {
         Some(shift) => {
             let unread = shift.saturating_sub(seen);
-            let head = block_lines(&screen.head, screen.head_rows);
+            let mut head = block_lines(&screen.head, screen.head_rows);
             let counted = unread.saturating_sub(screen.head_rows);
-            let shift_rows = Shift::Known(shift as usize);
-            let mut found = diff(&old.said, &new, shift_rows, cursor);
-            let since_read = diff(&old.screen, &new, shift_rows, cursor).changed;
+            // The shift counts rows, and the diff compares lines.
+            let (said, kept) = old.after_scroll(shift as usize, &new);
+            // The rows not written to moved up with the rest: those that
+            // scrolled past the old screen's lines are no longer below them.
+            let unwritten = Unwritten {
+                rows: old.unwritten.saturating_sub(unread as usize),
+                line_rows: &new_rows,
+            };
+            let mut found = diff_after(&said, &new, Shift::Known(0), cursor, unwritten);
+            let since_read = diff_after(&kept, &new, Shift::Known(0), cursor, unwritten).changed;
             found.changed = with_since_read(found.changed, since_read);
-            // The old screen scrolled away whole: its last line, which
-            // output may have been written to, is read where it is now.
+            keep_said(&mut remembered.said, &said);
             let old_last_row =
                 verbatim_text::trim_padding(screen.old_last_row.trim_end_matches(['\r', '\n']));
+            let mut lines = found.below;
             let changed = if shift >= seen {
-                old.screen
-                    .last()
-                    .and_then(|last| screen::line_change(last, old_last_row))
+                keep_footer(&mut lines, &old.screen, old_last_row);
+                last_line_now(&old.screen, old_last_row, &mut head)
             } else {
                 found.changed
             };
-            let mut lines = found.below;
-            if shift >= seen {
-                keep_footer(&mut lines, &old.screen, old_last_row);
-            }
             TerminalOutput {
                 above: found.above,
                 changed,
@@ -288,19 +344,17 @@ pub fn read_new<S: ScreenSource>(
         }
         None => match screen.document_rows {
             // The anchor left a history above both screens: it overflowed.
-            Some(rows) if !screen.alternate && !old.alternate => TerminalOutput {
-                // With no history beyond the screen, no count is possible.
-                skipped: Some(
-                    match rows.saturating_sub(u32::try_from(new.len()).unwrap_or(u32::MAX)) {
-                        0 => Skipped::Uncounted,
-                        beyond => Skipped::MoreThan(beyond),
-                    },
-                ),
-                lines: new,
-                ..TerminalOutput::default()
-            },
+            Some(rows) if !screen.alternate && !old.alternate => overflowed(
+                rows,
+                new_rows.iter().sum::<usize>() + remembered.unwritten,
+                new,
+            ),
             _ => {
-                let found = diff(&old.screen, &new, Shift::Unknown, cursor);
+                let unwritten = Unwritten {
+                    rows: old.unwritten,
+                    line_rows: &new_rows,
+                };
+                let found = diff_after(&old.screen, &new, Shift::Unknown, cursor, unwritten);
                 TerminalOutput {
                     above: found.above,
                     changed: found.changed,
@@ -310,18 +364,49 @@ pub fn read_new<S: ScreenSource>(
             }
         },
     };
-    if let Some(shift) = shift {
-        keep_said(&mut remembered.said, &old.said, shift as usize);
-    }
     Ok(Found::Output(output, remembered))
 }
 
+/// For a screen whose rows all scrolled away since `old` was read, what
+/// its last line, which output may have been written to, says where it is
+/// now, `old_last_row`: what it gained, as it was or grown. A row now
+/// holding something else was written over, as the row of a footer drawn
+/// lower is when a flood scrolls through it: it is a line of its own, the
+/// first after the old screen, put first in `head`, not a change of the
+/// line, which Core would put in place of the newest line still waiting.
+fn last_line_now(old: &[String], old_last_row: &str, head: &mut Vec<String>) -> Option<LineChange> {
+    let last = old.last()?;
+    if old_last_row.starts_with(last.as_str()) {
+        return screen::line_change(last, old_last_row);
+    }
+    if !old_last_row.trim().is_empty() {
+        head.insert(0, old_last_row.to_owned());
+    }
+    None
+}
+
+/// What a read says when the anchor left a history above both screens,
+/// which overflowed: the screen's lines, `new`, after the history's `rows`
+/// less those of the screen, `on_screen` (its lines' and those not written
+/// to), skipped; with no history beyond the screen, no count is possible.
+fn overflowed(rows: u32, on_screen: usize, new: Vec<String>) -> TerminalOutput {
+    TerminalOutput {
+        skipped: Some(
+            match rows.saturating_sub(u32::try_from(on_screen).unwrap_or(u32::MAX)) {
+                0 => Skipped::Uncounted,
+                beyond => Skipped::MoreThan(beyond),
+            },
+        ),
+        lines: new,
+        ..TerminalOutput::default()
+    }
+}
+
 /// Gives each line of `said`, the screen just read, what the same line of
-/// `old`, the screen before, said, when it has only got shorter since
-/// ([`Memory::said`]); the old screen's top row now lies `shift` rows above.
-fn keep_said(said: &mut [String], old: &[String], shift: usize) {
-    let kept = old.get(shift..).unwrap_or_default();
-    for (row, was) in said.iter_mut().zip(kept) {
+/// `old`, what the screen before said of its lines still on it, said, when
+/// it has only got shorter since ([`Memory::said`]).
+fn keep_said(said: &mut [String], old: &[String]) {
+    for (row, was) in said.iter_mut().zip(old) {
         // A row erased whole is drawn again, not rewritten: what is
         // written to it next is new.
         if !row.trim().is_empty() && was.starts_with(row.as_str()) && was != row {
@@ -337,10 +422,12 @@ fn keep_said(said: &mut [String], old: &[String], shift: usize) {
 /// the rows, so the text says how far ([`screen::alternate_scroll`]).
 fn scroll(screen: &ScreenText, old: Option<&Memory>, new: &[String]) -> Option<u32> {
     match (screen.shift, old) {
-        (Some(0), Some(old)) if screen.alternate && old.alternate => Some(
-            screen::alternate_scroll(&old.screen, new)
-                .map_or(0, |by| u32::try_from(by).unwrap_or(u32::MAX)),
-        ),
+        (Some(0), Some(old)) if screen.alternate && old.alternate => {
+            // Lines, which took the rows they took.
+            let lines = screen::alternate_scroll(&old.screen, new).unwrap_or(0);
+            let rows: usize = (0..lines).map(|line| old.rows_of(line)).sum();
+            Some(u32::try_from(rows).unwrap_or(u32::MAX))
+        }
         (shift, _) => shift,
     }
 }
@@ -462,6 +549,15 @@ impl ScreenSource for UiaScreen<'_> {
         let query = ScreenQuery {
             element: self.element,
             pattern: self.pattern,
+            last_rows: anchor
+                .and_then(|memory| {
+                    memory
+                        .screen
+                        .len()
+                        .checked_sub(1)
+                        .map(|last| memory.rows_of(last))
+                })
+                .map_or(1, |rows| u32::try_from(rows).unwrap_or(u32::MAX)),
             anchor: anchor.map(|memory| ScreenAnchor {
                 top: &memory.top_row,
                 next: &memory.next_row,

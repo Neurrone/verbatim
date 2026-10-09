@@ -1195,18 +1195,19 @@ fn a_change_since_read_that_is_not_the_typing_is_never_spoken() {
 }
 
 #[test]
-fn the_blank_lines_a_burst_starts_with_are_not_counted() {
+fn the_blank_lines_a_burst_starts_with_count_like_any_other() {
     let mut state = terminal();
     let mut playback = Playback::default();
-    // A footer drawn on the last row of an empty screen: the rows above it
-    // are blank, and not output.
-    let mut drawn: Vec<String> = (0..28).map(|_| String::new()).collect();
-    drawn.extend(lines(1..=30));
+    // Every line counts, blank ones included (coherence review, 2026-10-09):
+    // two blank lines first use up two of the first group's thirty, which
+    // are not spoken, and the backlog's count includes the blank ones.
+    let mut drawn: Vec<String> = vec![String::new(), String::new()];
+    drawn.extend(lines(1..=40));
     drawn.extend((0..10).map(|_| String::new()));
     drawn.extend(lines(41..=70));
     playback.feed(&mut state, &output(drawn));
-    let mut expected = lines(1..=30);
-    expected.push("skipped 10".to_owned());
+    let mut expected = lines(1..=28);
+    expected.push("skipped 22".to_owned());
     expected.extend(lines(41..=70));
     assert_eq!(playback.play_all(&mut state), expected);
 }

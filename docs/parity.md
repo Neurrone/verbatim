@@ -1820,13 +1820,11 @@ verified.
   ignored, so nothing is spoken twice (as NVDA's diffing overlay blocks
   them, `winConsoleUIA.py` 474 to 476); a redraw with the same text
   speaks nothing; blank lines are not spoken but every line counts,
-  blank ones included (Dickson, 2026-10-07). Since 2026-10-09 the code
-  makes one exception, not counting the blank lines a burst of output
-  starts with (a cleared screen's rows above a footer drawn on its last
-  row); that exception is being removed (coherence review, Dickson,
-  2026-10-09), its cause fixed in the outpost, where rows not yet
-  written to are dropped from a screen read and come back as inserted
-  blank lines when a footer is drawn below them; newer
+  blank ones included (Dickson, 2026-10-07, confirmed in the coherence
+  review of 2026-10-09): rows a program passed over without writing (a
+  cleared screen's rows above a footer drawn on its last row) are not
+  lines, being blank before as they are now, and a line that wrapped is
+  one line however many rows it took; newer
   output never cancels older; a key, or anything else that cuts speech
   off, drops output still waiting, as in NVDA, and output read before
   the key is never spoken after it. **Different:** the backlog is capped

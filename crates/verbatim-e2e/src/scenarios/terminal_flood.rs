@@ -35,6 +35,12 @@
 //!    output slows it down, is recorded in the run's artifacts as
 //!    `wall-time-ratio.txt`, for trends; it varies by machine, so it is not
 //!    asserted.
+//!
+//! `conhost_wrapped_flood` floods the console host while a line that
+//! wrapped onto three rows is on its screen: `long.ps1` prints forty
+//! numbered words, heard whole, then the first flood is heard exactly as
+//! above. The screen's rows are counted as rows, not as its lines, so no
+//! row the screen held is read again as one that went by unread.
 
 use std::io;
 use std::time::Duration;
@@ -77,6 +83,38 @@ pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<Scen
 
 pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     terminal::open_console_host(scenario, "flood", &[("flood.ps1", SCRIPT)])
+}
+
+/// Forty numbered words on one line, which wraps onto three rows.
+const LONG_SCRIPT: &str = "$words = foreach ($i in 1..40) { \"word$i\" }\r\n\
+$words -join ' '\r\n";
+
+pub(crate) fn setup_wrapped_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    terminal::open_console_host(
+        scenario,
+        "wrapped-flood",
+        &[("flood.ps1", SCRIPT), ("long.ps1", LONG_SCRIPT)],
+    )
+}
+
+/// `conhost_wrapped_flood`.
+pub(crate) fn body_wrapped_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
+    let title = terminal::title(state).to_owned();
+    // The console host's text area has no name.
+    terminal::expect_prompt_read(
+        scenario,
+        state,
+        &[&format!("{title} window"), "terminal", "blank"],
+    );
+    terminal::type_with_echo(scenario, r".\long.ps1", terminal::Echo::Shown);
+    let long = (1..=40)
+        .map(|n| format!("word{n}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    scenario
+        .speech()
+        .expect_within(&[long.as_str(), PROMPT], FLOOD_STEP);
+    heard_flood(scenario, 1);
 }
 
 /// "flood line `line`".

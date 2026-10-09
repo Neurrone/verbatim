@@ -105,6 +105,7 @@ fn query<'a>(
         }),
         matches_padding: false,
         seen_rows,
+        last_rows: 1,
         head_wanted: WANTED,
         caret: None,
     }

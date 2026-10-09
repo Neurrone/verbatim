@@ -425,6 +425,7 @@ fn terminal_screens_execute_exactly() {
         }),
         matches_padding: false,
         seen_rows: 30,
+        last_rows: 1,
         head_wanted: 30,
         caret: Some(CaretLineQuery {
             element: &terminal,

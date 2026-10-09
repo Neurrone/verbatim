@@ -149,7 +149,11 @@ pub struct ScreenQuery<'a> {
     pub matches_padding: bool,
     /// How many rows of the screen as last read held its text: rows past
     /// these, found between the anchor and the screen now, went by unread.
+    /// Rows, not lines: a line that wrapped onto more rows counts each.
     pub seen_rows: u32,
+    /// How many of those rows the old screen's last line took, read whole
+    /// as [`Screen::old_last_row`]: more than one for a line that wrapped.
+    pub last_rows: u32,
     /// The most of those unread rows to read, from the first, so the start
     /// of a flood can be heard.
     pub head_wanted: u32,
@@ -180,8 +184,9 @@ pub struct Screen {
     pub head: String,
     /// How many rows `head` holds.
     pub head_rows: u32,
-    /// With the anchor found, the row the old screen's last line was on
-    /// (the query's `seen_rows` from the anchor's top row), as it is now.
+    /// With the anchor found, the rows the old screen's last line was on
+    /// (the query's `last_rows` ending `seen_rows` from the anchor's top
+    /// row), as they are now.
     pub old_last_row: String,
     /// How many rows the whole text holds, counted when an anchor was
     /// sought and not found (an anchor of two blank rows is not sought).
@@ -593,13 +598,24 @@ pub fn terminal_screen_remote(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Scr
                     );
                 });
                 let seen = b.int(i32::try_from(query.seen_rows).unwrap_or(i32::MAX));
-                // The old screen's last row as it is now, which may have
-                // changed since (the line output was being written to).
+                // The old screen's last line as it is now, which may have
+                // changed since (the line output was being written to):
+                // its row, or its rows when it wrapped onto more.
+                let last_rows = query.last_rows.clamp(1, query.seen_rows.max(1));
                 if query.seen_rows > 0 {
                     let last = c.collapsed(b, found_top);
-                    let down = b.int(i32::try_from(query.seen_rows - 1).unwrap_or(i32::MAX));
+                    let down =
+                        b.int(i32::try_from(query.seen_rows - last_rows).unwrap_or(i32::MAX));
                     let _ = b.text_range_move(last, c.line, down);
                     let row = c.row(b, last);
+                    if last_rows > 1 {
+                        // To the end of the line's last row.
+                        let end = c.collapsed(b, last);
+                        let further = b.int(i32::try_from(last_rows - 1).unwrap_or(i32::MAX));
+                        let _ = b.text_range_move(end, c.line, further);
+                        let end = c.row(b, end);
+                        b.text_range_move_endpoint_by_range(row, c.end, end, c.end);
+                    }
                     let text = b.text_range_get_text(row, c.all);
                     b.set(old_last_row, text);
                 }
@@ -849,9 +865,17 @@ pub fn terminal_screen_classic(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Sc
                 answer.shift = (shift >= 0).then(|| count_of(shift));
                 let seen = i32::try_from(query.seen_rows).unwrap_or(i32::MAX);
                 if seen > 0 {
+                    let last_rows = i32::try_from(query.last_rows.clamp(1, query.seen_rows))
+                        .unwrap_or(i32::MAX);
                     let last = collapsed(&found_top)?;
-                    last.move_by(TextUnit_Line, seen - 1)?;
-                    answer.old_last_row = text_of(&row(&last)?)?;
+                    last.move_by(TextUnit_Line, seen - last_rows)?;
+                    let rows = row(&last)?;
+                    if last_rows > 1 {
+                        let end = collapsed(&last)?;
+                        end.move_by(TextUnit_Line, last_rows - 1)?;
+                        rows.move_endpoint_to(Endpoint::End, &row(&end)?, Endpoint::End)?;
+                    }
+                    answer.old_last_row = text_of(&rows)?;
                 }
                 let unread =
                     (shift - seen).min(i32::try_from(query.head_wanted).unwrap_or(i32::MAX));

@@ -635,6 +635,16 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: terminal_flood::teardown,
     },
     ScenarioDef {
+        name: "conhost_wrapped_flood",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: terminal_flood::setup_wrapped_console_host,
+        body: terminal_flood::body_wrapped_console_host,
+        teardown: terminal_flood::teardown,
+    },
+    ScenarioDef {
         name: "windows_terminal_history_flood",
         group: Group::Text,
         settings: None,

@@ -288,7 +288,9 @@ text as the provider gave it, a range at the start of the top row, the
 text's first row as last read, and whether that screen had history above
 it), whether the provider's `FindText` matches a row's padding
 (`matches_padding`, the console host's does), how many rows of the old
-screen held its text (`seen_rows`), and how many of the rows that went by
+screen held its text (`seen_rows`, rows: a line that wrapped counts each
+of its rows), how many of those its last line took (`last_rows`), and how
+many of the rows that went by
 unread to read (`head_wanted`). With `caret` (a `CaretLineQuery`), the
 caret and its line are read too, in the same program or, classically,
 after the text, and come back as `Screen::caret`: a terminal raises no
@@ -328,8 +330,9 @@ are exact and the caller trims:
   the rows from the anchor to the text's end less those from the screen's
   top to the end, the second walk made before and after the first, so
   output written meanwhile is caught.
-- `old_last_row`: with the anchor found, the row the old screen's last
-  line was on (`seen_rows` from the anchor's top row), as it is now.
+- `old_last_row`: with the anchor found, the rows the old screen's last
+  line was on (its `last_rows` rows, ending `seen_rows` from the anchor's
+  top row), as they are now: the whole line, when it wrapped.
 - `head` and `head_rows`: the first of the rows past the old screen's
   `seen_rows` that went by unread, up to `head_wanted`, in one read.
 - `document_rows`: the rows of the whole text, counted (a walk from its
