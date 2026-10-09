@@ -15,6 +15,7 @@ mod harness;
 mod latency;
 mod live;
 mod requests;
+mod screen_reader_flag;
 mod single_instance;
 mod speech_events;
 mod terminal_settings;
@@ -115,6 +116,11 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    // Windows' screen reader flag, set while this instance runs and cleared
+    // as it goes, before the startup mutex is released, so an instance
+    // replacing this one sets it again after it is cleared.
+    let _screen_reader = screen_reader_flag::ScreenReaderFlag::raise();
 
     load_locales(&exe_dir, &config);
 

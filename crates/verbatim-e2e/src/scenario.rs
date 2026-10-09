@@ -684,20 +684,42 @@ impl Scenario {
         title: &str,
         owner_exits: bool,
     ) -> io::Result<WindowInfo> {
+        self.launch_titled_once(command, args, title, owner_exits, None)
+    }
+
+    /// [`Scenario::launch_titled`], bringing the window forward only once
+    /// the file `ready` exists, when given: the evidence that the program
+    /// has written what it writes as it starts, which is then on screen
+    /// before its window is announced and not new to the user.
+    ///
+    /// # Errors
+    ///
+    /// As [`Scenario::launch_titled`], and when `ready` is not written in
+    /// time.
+    pub fn launch_titled_once(
+        &mut self,
+        command: &str,
+        args: &[String],
+        title: &str,
+        owner_exits: bool,
+        ready: Option<&str>,
+    ) -> io::Result<WindowInfo> {
         let launch = self.agent.launch_minimized(command, args)?;
-        self.bring_forward(launch, title, owner_exits)
+        self.bring_forward(launch, title, owner_exits, ready)
     }
 
     /// Records `launch` for cleanup, its window titled with `title` and its
     /// owner exiting at cleanup when `owner_exits`, waits for that window,
     /// opened minimized and inactive, to appear, restores it and sets it as
     /// the foreground, injecting nothing, and waits for it to take the
-    /// foreground ([`Scenario::launch_titled`]).
+    /// foreground ([`Scenario::launch_titled`]); with `ready`, only once
+    /// that file exists ([`Scenario::launch_titled_once`]).
     fn bring_forward(
         &mut self,
         launch: AgentLaunch,
         title: &str,
         owner_exits: bool,
+        ready: Option<&str>,
     ) -> io::Result<WindowInfo> {
         self.launched.push(Launched {
             pid: launch.pid,
@@ -726,6 +748,13 @@ impl Scenario {
                     describe_foreground(&desktop)
                 ))
             })?;
+        if let Some(ready) = ready
+            && !self.agent.wait_for_file(ready, WINDOW_TIMEOUT)?
+        {
+            return Err(io::Error::other(format!(
+                "{ready} was not written within {WINDOW_TIMEOUT:?}, so the window titled {title:?} was not brought forward"
+            )));
+        }
         if !self.agent.set_foreground(window.window)? {
             return Err(io::Error::other(format!(
                 "the window titled {title:?} could not be brought to the foreground: {}",
@@ -741,21 +770,25 @@ impl Scenario {
     /// unless the process the agent launched owns it: for a program that
     /// could otherwise hand its command line to an instance already
     /// running, such as Windows Terminal. The window is closed by its title
-    /// at cleanup, and the process must exit then.
+    /// at cleanup, and the process must exit then. With `ready`, the window
+    /// is brought forward only once that file exists
+    /// ([`Scenario::launch_titled_once`]).
     ///
     /// # Errors
     ///
-    /// Returns an error if the agent cannot start `command`, the window
-    /// does not take the foreground, or another process owns it.
+    /// Returns an error if the agent cannot start `command`, `ready` is not
+    /// written in time, the window does not take the foreground, or
+    /// another process owns it.
     pub fn launch_owning_window(
         &mut self,
         command: &str,
         args: &[String],
         title: &str,
+        ready: Option<&str>,
     ) -> io::Result<WindowInfo> {
         let launch = self.agent.launch_minimized(command, args)?;
         let launched = launch.pid;
-        let window = self.bring_forward(launch, title, true)?;
+        let window = self.bring_forward(launch, title, true, ready)?;
         if window.pid != launched {
             return Err(io::Error::other(format!(
                 "the window titled {title:?} belongs to {} (pid {}), not to the process the harness launched, pid {launched}: {}",
@@ -780,20 +813,22 @@ impl Scenario {
     /// Launches the console program `command` with `args`, its console
     /// window titled `title` from its first frame and opened minimized and
     /// inactive, and brings it forward as [`Scenario::launch_titled`]
-    /// does.
+    /// does; with `ready`, only once that file exists
+    /// ([`Scenario::launch_titled_once`]).
     ///
     /// # Errors
     ///
-    /// Returns an error if the agent cannot start `command`, or the window
-    /// does not take the foreground.
+    /// Returns an error if the agent cannot start `command`, `ready` is not
+    /// written in time, or the window does not take the foreground.
     pub fn launch_console(
         &mut self,
         command: &str,
         args: &[String],
         title: &str,
+        ready: Option<&str>,
     ) -> io::Result<WindowInfo> {
         let launch = self.agent.launch_console(command, args, title)?;
-        self.bring_forward(launch, title, true)
+        self.bring_forward(launch, title, true, ready)
     }
 
     /// Brings the harness document `name`, which Notepad opened before

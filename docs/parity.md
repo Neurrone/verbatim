@@ -2125,6 +2125,27 @@ verified.
   foreground's announcement cut off or not depending on how soon the
   foreground's outpost answered, a race. The slow-start message is **not
   yet**.
+- Windows' screen reader flag (`SPI_SETSCREENREADER`). NVDA sets it as it
+  starts and clears it as it exits, saving it in the user's profile and
+  telling every window (`nvda.pyw` lines 285 and 286, and 308 and 309;
+  `winUser.setSystemScreenReaderFlag`, `winUser.py` lines 460 and 461),
+  unless started with `--no-sr-flag` (`argsParsing.py` lines 179 to 185)
+  or on a secure desktop (`nvda.pyw` line 267). Verbatim: **matched since
+  2026-10-09**; it has no such option yet, nor a secure-desktop instance
+  (M8): set as it starts, after
+  replacing a running instance, and cleared as it exits, before the
+  startup mutex is released, on a normal exit, a failed start, a panic
+  on the main thread, the console's Control+C, Control+Break or close,
+  and the session ending (`verbatim-app`'s `screen_reader_flag`); a crash
+  or a process ended from outside leaves it set, as it leaves NVDA's.
+  Programs change their behaviour by it: Windows PowerShell, started
+  while either runs, leaves `PSReadLine` out and prints "PowerShell
+  detected that you might be using a screen reader and has disabled
+  PSReadLine for compatibility purposes", which both then speak as output
+  (captured live with NVDA, and tried with Verbatim, on 2026-10-09 in
+  both terminals); `PSReadLine`'s keys, MenuComplete (Control+Space)
+  among them, then need `Import-Module PSReadLine`, as the notice says,
+  and behave as before once it is imported.
 - Vision framework (focus highlight, screen curtain, magnifier),
   OCR, secure screens, remote access: all **not yet** (M8 for OCR
   and secure desktop, M12 remote); references [The vision framework](nvda/vision.md),

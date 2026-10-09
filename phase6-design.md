@@ -2441,6 +2441,39 @@ to be confirmed):
   which a test machine need not have and which writes a move in pieces in
   the console host.
 
+Made while setting Windows' screen reader flag (2026-10-09, to be
+confirmed):
+
+- The flag is saved in the user's profile and every window told
+  (`SPIF_UPDATEINIFILE | SPIF_SENDCHANGE`), as NVDA does, so a Verbatim
+  that crashes or is ended from outside leaves it set until a screen
+  reader next clears it, as NVDA's crash does. Not saving it would clear
+  it at the next sign-in, at the cost of differing from NVDA.
+- It is set after a running instance has been replaced and cleared before
+  the startup mutex is released, so the replacing instance's flag is
+  never cleared by the instance it replaced. NVDA's `--no-sr-flag` has no
+  Verbatim option yet.
+- The exits that clear it besides a normal one: a failed start, a panic
+  unwinding through `main`, the console's control events (Control+C,
+  Control+Break, the console closed) through a console control handler,
+  and the session ending, through a hidden window of its own that
+  handles `WM_ENDSESSION`, since none of the GUI's windows clears it
+  first. Checked live: a normal quit and Control+Break clear it, and the
+  process ended from outside leaves it set. Closing the console window
+  and signing out were not tried live: a console window opened for a
+  test can be handed to the owner's Windows Terminal, and signing out
+  ends the session the run is in.
+- With the flag set, Windows PowerShell prints a notice that it leaves
+  `PSReadLine` out as its interactive host starts, before the shell runs
+  its script. The terminal scenarios now bring a window forward only once
+  its shell has written its process id, so the notice is on screen before
+  the terminal is announced and is not new output; a second Windows
+  Terminal window or tab, which opens in front at once, runs its shell
+  with `-NonInteractive`, which leaves the notice out (the password prompt
+  that needs an interactive host is in a first window). NVDA, captured
+  with a tab opened the same way, spoke the notice as output when its
+  read of the tab came before it was printed, and missed it otherwise.
+
 ## Language audit (2026-10-08)
 
 A read-only audit found these, ranked by how likely a user of the language is to hit them; each is fixed with exact tests in a language work package, together with the terminal's changed-word rule:

@@ -164,10 +164,14 @@ and the input methods above:
   "Windows' foreground lock keeps launched applications behind"); a
   window that ignores the minimized show state, as msinfo32's does, is
   minimized by the agent before it is restored;
-  `launch_console(command, args, title)` starts a console program with its
+  `launch_titled_once(command, args, title, owner_exits, ready)` does the
+  same, bringing the window forward only once the agent sees the file
+  `ready`, the program's evidence that it has written what it writes as it
+  starts, which is then on screen before the window is announced;
+  `launch_console(command, args, title, ready)` starts a console program with its
   console window titled from its first frame (the launch's console title),
   which the console host scenarios use, opened minimized and inactive and
-  brought forward as `launch_titled` does; `require_absent(title)` fails
+  brought forward as `launch_titled_once` does; `require_absent(title)` fails
   when a window so titled is already open, for a program whose title is
   not the run's own, such as msinfo32; `launched_children` lists what the
   last launched program started.
@@ -351,8 +355,14 @@ The groups:
   `-w new --size 120,30 new-tab --title <title>
   --suppressApplicationTitle`, through `Scenario::launch_owning_window`,
   which opens it minimized and inactive and brings it forward as
-  `launch_titled` does, and fails unless the launched process owns the
-  window. The scenario
+  `launch_titled_once` does, and fails unless the launched process owns the
+  window. Each window is brought forward only once its shell has written
+  its process id, so what Windows PowerShell prints as it starts is on
+  screen before the terminal is announced: with Verbatim running,
+  Windows' screen reader flag is set, and the interactive host prints a
+  notice that it leaves `PSReadLine` out. A second window, or a second
+  tab, which the running Windows Terminal opens in front at once, runs
+  its shell with `-NonInteractive`, which leaves the notice out. The scenario
   also fails if any other Windows Terminal process opened a window
   meanwhile (`Scenario::top_level_windows`, before and after), and the
   copy's process must exit once its window closes at cleanup. The

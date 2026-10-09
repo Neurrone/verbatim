@@ -8,7 +8,12 @@
 //! is the caller's.
 //!
 //! Each scenario opens a window of its own, titled with a marker unique to
-//! the run ([`harness_marker`]), waits for it to take the foreground, and
+//! the run ([`harness_marker`]), brings it forward once its shell has
+//! started (the shell's process id written), so that what Windows
+//! PowerShell prints as it starts is on screen before the terminal is
+//! announced (with Verbatim running, Windows' screen reader flag is set,
+//! and the interactive host prints a notice that it leaves `PSReadLine`
+//! out), waits for it to take the foreground, and
 //! closes it by that title at cleanup, never by class or program, so the
 //! user's own terminals are never touched. Each scenario names its
 //! terminal, and gets that one or fails. Windows Terminal is the harness's
@@ -167,6 +172,7 @@ fn open_with(
     };
     let title = harness_marker(&name);
     let (directory, start) = prepare_shell(scenario, &name, &title, scripts)?;
+    let started = format!(r"{directory}\{SHELL_PID_FILE}");
     let window = match terminal {
         Terminal::WindowsTerminal => {
             let (folder, executable) = windows_terminal_paths(scenario);
@@ -179,13 +185,14 @@ fn open_with(
             let others_before = other_terminal_windows(scenario, None)?;
             let mut args = new_window();
             args.extend(new_tab(&title, &start));
-            let window = scenario.launch_owning_window(&executable, &args, &title)?;
+            let window =
+                scenario.launch_owning_window(&executable, &args, &title, Some(&started))?;
             require_no_other_terminal_window(scenario, &others_before, window.pid)?;
             window
         }
         Terminal::ConsoleHost => {
             let args = shell_command(&start, terminal);
-            scenario.launch_console("conhost.exe", &args, &title)?
+            scenario.launch_console("conhost.exe", &args, &title, Some(&started))?
         }
     };
     match terminal {
@@ -268,6 +275,20 @@ fn new_tab(title: &str, start: &str) -> Vec<String> {
     args
 }
 
+/// Marks the shell in `args` as not interactive (`-NonInteractive`), for a
+/// window or tab the running Windows Terminal opens in front at once,
+/// before its shell has started: the interactive host's start-up, with a
+/// screen reader running, prints a notice that `PSReadLine` is left out,
+/// which would then be new output. These shells need nothing interactive
+/// beyond the prompt, which `-NoExit` keeps.
+fn non_interactive(args: &mut Vec<String>) {
+    let shell = args
+        .iter()
+        .position(|arg| arg == "powershell.exe")
+        .expect("the arguments run the shell");
+    args.insert(shell + 1, "-NonInteractive".to_owned());
+}
+
 /// The harness's Windows Terminal's folder and executable.
 fn windows_terminal_paths(scenario: &Scenario) -> (String, String) {
     let folder = format!(r"{}\{}", scenario.run_directory(), windows_terminal::FOLDER);
@@ -319,11 +340,13 @@ pub(crate) fn open_windows_terminal_window(
     let running = *running;
     let title = harness_marker(name);
     let (directory, start) = prepare_shell(scenario, name, &title, &[])?;
+    let started = format!(r"{directory}\{SHELL_PID_FILE}");
     let (_, executable) = windows_terminal_paths(scenario);
     let others_before = other_terminal_windows(scenario, Some(running))?;
     let mut args = new_window();
     args.extend(new_tab(&title, &start));
-    let window = scenario.launch_titled(&executable, &args, &title, false)?;
+    non_interactive(&mut args);
+    let window = scenario.launch_titled_once(&executable, &args, &title, false, Some(&started))?;
     if window.pid != running {
         return Err(io::Error::other(format!(
             "the second window {title:?} belongs to {} pid {}, not to the harness's running Windows Terminal, pid {running}",
@@ -390,6 +413,7 @@ pub(crate) fn open_windows_terminal_tab(
     let (_, executable) = windows_terminal_paths(scenario);
     let mut args: Vec<String> = vec!["-w".to_owned(), "0".to_owned()];
     args.extend(new_tab(&title, &start));
+    non_interactive(&mut args);
     scenario.run_handing_off(&executable, &args)?;
     let window = scenario.wait_for_window_in_front(&title, STEP_TIMEOUT)?;
     if window.pid != *pid {

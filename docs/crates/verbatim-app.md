@@ -161,7 +161,17 @@ knowing for review:
   missing files), start tracing, refuse a session that is not interactive
   (`verbatim_process::session`; a launch from WinRM, PowerShell Direct, or
   a service exits with a diagnosis, before it could replace a working
-  instance), replace any running instance, load locales, then `run`.
+  instance), replace any running instance, set Windows' screen reader
+  flag, load locales, then `run`.
+- `screen_reader_flag::ScreenReaderFlag` — sets `SPI_SETSCREENREADER` as
+  NVDA does (saved in the user's profile, every window told) and clears
+  it when dropped, as `main` returns, before the startup mutex is
+  released, so a replacing instance's flag is never cleared by the
+  instance it replaced. A console control handler clears it on
+  Control+C, Control+Break and the console closed, and a hidden window
+  of its own, on a thread of its own, clears it when the session ends
+  (`WM_ENDSESSION`). A crash or a process ended from outside leaves it
+  set, as NVDA's does.
 - `single_instance::acquire_replacing` — NVDA's algorithm: find the old
   instance's hidden window by title, post `WM_QUIT` so its loop exits and
   its normal teardown runs, wait four seconds, `TerminateProcess` as the
