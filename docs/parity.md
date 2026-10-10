@@ -433,14 +433,33 @@ verified.
   Core announces the focus. **matched since 2026-10-07**; mockapp's
   `focus_reports` tests and Core's
   `a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows`
-  check it.
+  check it. NVDA makes the comparison against the last focus it queued,
+  from any application, before it judges anything else about the event,
+  so a duplicate is never queued. Since 2026-10-11 Core does the same
+  (`docs/design/focus-pipeline.md`, section 4.2): a focus on the node of
+  the live focus it holds, which is the last focus it queued, is dropped
+  before the stale and foreground checks, so it no longer moves attention
+  or counts as the newest focus a later-arriving focus from another
+  application is judged stale against; its newer reading is still kept.
+  The evidence of "still focused" is the outpost's live read above, which
+  a UIA focus whose element the outpost could not find lacks: its node id
+  alone stands for it until step 6 of stage A has the outpost mark the
+  event from its own element. **matched since 2026-10-11** (Core's
+  `a_duplicate_focus_does_not_make_a_later_focus_stale` and
+  `the_same_focus_after_another_applications_focus_is_announced`).
 - Stale focus events: NVDA has no timestamp arbitration; it relies on
   queue-time freshness plus cancellable speech
   ([Event handling](nvda/events.md), [Speech](nvda/speech.md)), and its
   one queue handles every application's events in the order observed.
   Verbatim: snapshot versions are gone, and order within an application
   comes from its outpost's single queue and worker, as in NVDA. Across
-  outposts, events can arrive out of the order they were observed in, so
+  outposts, events can arrive out of the order they were observed in.
+  Since 2026-10-11 Core takes the outposts' messages and its keys and
+  commands from one channel, in the order they reached it, as NVDA queues
+  keys with events (`docs/design/focus-pipeline.md`, section 4.1); it had
+  picked at random between two channels, so a typed character's echo and
+  the output after it could come in either order. Arrival order, not
+  observation time, orders them, as in NVDA. Across outposts, then,
   since 2026-10-02 the reducer drops a focus event from one outpost
   observed before the newest focus it applied from another (found live:
   a late focus from Notepad, then from Verbatim's closed menu, broke
@@ -561,7 +580,14 @@ verified.
   other (since 2026-10-03; Verbatim had judged them by the attended
   application, which differs in Settings, where ApplicationFrameHost
   holds attention and the focus is in SystemSettings). Accepted background events
-  never move focus or the navigator and are spoken queued.
+  never move focus or the navigator and are spoken queued. NVDA handles
+  events in one queue, so a background event queued before a foreground
+  change has its speech cancelled by that change; since 2026-10-11 Core
+  drops a background event observed before the newest foreground change
+  it applied but reaching it afterwards, from another outpost
+  (`docs/design/focus-pipeline.md`, section 7). **matched since
+  2026-10-11** (Core's
+  `a_toast_observed_before_a_foreground_change_is_dropped`).
   **matched (unverified)** for these. A help balloon, shown in a
   standard tooltip window (`tooltips_class32`), is spoken from any
   application as NVDA speaks it by default (the listener hooks the show

@@ -2322,6 +2322,99 @@ fn observed_at(mut input: Input, ms: u64) -> Input {
     input
 }
 
+/// NVDA's duplicate rule drops a repeated focus on the element Core queued
+/// last before anything else judges it, so it never stands as the newest
+/// focus: a focus from another application observed before the duplicate,
+/// but after the first report, is not stale.
+#[test]
+fn a_duplicate_focus_does_not_make_a_later_focus_stale() {
+    let edit = node(
+        1,
+        Role::EditableText,
+        Some("Text editor"),
+        None,
+        StateSet::new(),
+    );
+    let (state, _) = reduce(
+        &SrState::new(),
+        &observed_at(focus_in(Pid(1), window(10), edit.clone(), vec![]), 1_000),
+    );
+    let (state, effects) = reduce(
+        &state,
+        &observed_at(focus_in(Pid(1), window(10), edit, vec![]), 2_000),
+    );
+    assert!(effects.is_empty(), "the same element, still focused");
+    let button = node(1, Role::Button, Some("OK"), None, StateSet::new());
+    let (_, effects) = reduce(
+        &state,
+        &observed_at(focus_in(Pid(2), window(20), button, vec![]), 1_500),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(2), 1, &[], None)),
+            Heard::Stop,
+            queued(vec![UtteranceSegment::label("OK"), role(Role::Button)]),
+        ]
+    );
+}
+
+/// The duplicate rule compares with the last focus Core queued, of any
+/// application: once another application's focus came between, a focus
+/// on the earlier element is no duplicate and is announced.
+#[test]
+fn the_same_focus_after_another_applications_focus_is_announced() {
+    let edit = node(
+        1,
+        Role::EditableText,
+        Some("Text editor"),
+        None,
+        StateSet::new(),
+    );
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(Pid(1), window(10), edit.clone(), vec![]),
+    );
+    let button = node(1, Role::Button, Some("OK"), None, StateSet::new());
+    let (state, _) = reduce(&state, &focus_in(Pid(2), window(20), button, vec![]));
+    let (_, effects) = reduce(&state, &focus_in(Pid(1), window(10), edit, vec![]));
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(1), 1, &[], None)),
+            Heard::Stop,
+            queued(vec![
+                UtteranceSegment::label("Text editor"),
+                role(Role::EditableText)
+            ]),
+        ]
+    );
+}
+
+/// Speech from elsewhere observed before a foreground change, but reaching
+/// Core after it, is dropped, as NVDA's foreground change cancels speech
+/// queued before it; the same speech observed after the change is spoken.
+#[test]
+fn a_toast_observed_before_a_foreground_change_is_dropped() {
+    let notepad = node(1000, Role::Window, Some("Notepad"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &observed_at(foreground_in(Pid(1), window(1000), notepad), 1_000),
+    );
+
+    let (_, effects) = reduce(&state, &observed_at(toast_in(Pid(2), window(20)), 990));
+    assert!(effects.is_empty(), "observed before the foreground change");
+
+    let (_, effects) = reduce(&state, &observed_at(toast_in(Pid(2), window(20)), 1_010));
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![
+            UtteranceSegment::label("Download complete"),
+            role(Role::Window)
+        ])]
+    );
+}
+
 #[test]
 fn a_focus_observed_before_the_latest_from_another_outpost_is_stale() {
     // Notepad's outpost delivers a focus observed before Verbatim's menu

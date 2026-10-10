@@ -249,6 +249,71 @@ fn is_stale_focus(
         })
 }
 
+/// NVDA's duplicate-focus rule (`docs/design/focus-pipeline.md`, section
+/// 4.2; `docs/parity.md`, "Duplicate focus suppression"): a focus whose
+/// element is the same as the last focus Core queued, while that element
+/// still has the keyboard focus, is dropped before anything else judges
+/// it, so it neither moves attention nor orders later focus events.
+///
+/// The last focus Core queued is the focus it holds: every focus Core
+/// accepts becomes it, and a focus it refuses (stale, not in the
+/// foreground, or a foreground report for the window that already holds
+/// the focus) changes nothing, as NVDA never queues those. A focus from
+/// another application in between is a different focus, so the one after
+/// it is announced.
+///
+/// The evidence of "same element, still focused" is the node id, which
+/// names one element in one outpost incarnation. An outpost reports a UIA
+/// focus under the node its runtime id already has only when it read,
+/// live, that the element that node stands for still has the keyboard
+/// focus, and otherwise issues a new node; it reports an MSAA focus only
+/// once the object or an ancestor has the focused state, read live, and
+/// drops an event naming the address of its last focus itself. A focus
+/// the outpost could not find its element for keeps its runtime id's node
+/// with no such read, so for it the node id alone is the evidence. When
+/// the outpost marks a focus as its last focus still focused, read from
+/// the event's own element (section 4.2's outpost half), that mark
+/// replaces the node id here.
+fn is_duplicate_focus(state: &SrState, node: &NodeSnapshot) -> bool {
+    state
+        .focus
+        .as_ref()
+        .is_some_and(|focus| focus.alive && focus.snapshot.id == node.id)
+}
+
+/// Keeps a duplicate focus's newer reading, unspoken: its states and name,
+/// which an earlier report can have read mid-change, and its ancestors when
+/// they were read in time. The selected item already announced is kept, so
+/// a selection event for a new one is still spoken; a navigator the user
+/// moved away stays where it is.
+fn keep_newer_reading(
+    state: &mut SrState,
+    node: &NodeSnapshot,
+    ancestors: &[NodeSnapshot],
+    ancestors_unknown: bool,
+) {
+    let Some(focus) = state.focus.as_mut() else {
+        return;
+    };
+    focus.reported_focused |= node.states.contains(State::Focused);
+    focus.snapshot = node.clone();
+    if !ancestors_unknown {
+        focus.ancestors = Arc::from(ancestors);
+    }
+}
+
+/// Whether an event from elsewhere, observed at `observed_at_ms`, was
+/// observed before the newest foreground change Core applied: its speech
+/// would have been queued before that change, which cancels it in NVDA
+/// (`docs/design/focus-pipeline.md`, section 7). An event with no
+/// observation time (0) is never judged so.
+fn observed_before_foreground_change(state: &SrState, observed_at_ms: u64) -> bool {
+    observed_at_ms != 0
+        && state
+            .foreground_changed_at
+            .is_some_and(|changed_at| observed_at_ms < changed_at)
+}
+
 /// Whether an event's window was in the system's foreground when its outpost
 /// read it, by NVDA's test for accepting an event: inside the foreground
 /// window or sharing its root owner, a topmost window, or a
@@ -357,10 +422,21 @@ fn reduce_event(
     window: Option<WindowFacts>,
     event: &NormalizedEvent,
 ) -> Vec<Effect> {
-    if let NormalizedEvent::FocusChanged { node, .. } = event
-        && is_stale_focus(state, node.id.outpost(), observed_at_ms, window)
+    if let NormalizedEvent::FocusChanged {
+        node,
+        ancestors,
+        ancestors_unknown,
+        ..
+    } = event
     {
-        return Vec::new();
+        if is_duplicate_focus(state, node) {
+            keep_newer_reading(state, node, ancestors, *ancestors_unknown);
+            sync_navigator_with_focus(state);
+            return Vec::new();
+        }
+        if is_stale_focus(state, node.id.outpost(), observed_at_ms, window) {
+            return Vec::new();
+        }
     }
     match classify(
         state.attention.as_ref(),
@@ -370,6 +446,9 @@ fn reduce_event(
         event,
     ) {
         Acceptance::Dropped => return Vec::new(),
+        Acceptance::Background if observed_before_foreground_change(state, observed_at_ms) => {
+            return Vec::new();
+        }
         Acceptance::Background => return reduce_background(trace_id, event),
         Acceptance::Attended => {}
     }
@@ -397,6 +476,7 @@ fn reduce_event(
             window,
             &FocusReport {
                 node,
+                observed_at_ms,
                 foreground: *foreground,
                 ancestors,
                 ancestors_unknown: *ancestors_unknown,
@@ -484,6 +564,8 @@ fn sync_navigator_with_focus(state: &mut SrState) {
 /// Speaks an event accepted from outside the attention record. Background
 /// events never move focus or the navigator and always queue behind current
 /// speech: a toast alert, and the shell's window-snap results notification.
+/// One observed before the newest foreground change is dropped before this
+/// ([`observed_before_foreground_change`]).
 fn reduce_background(trace_id: TraceId, event: &NormalizedEvent) -> Vec<Effect> {
     if let NormalizedEvent::Alert { node, .. } = event {
         return reduce_alert(trace_id, node);
@@ -511,6 +593,8 @@ fn reduce_background(trace_id: TraceId, event: &NormalizedEvent) -> Vec<Effect> 
 /// The parts of a `FocusChanged` event the focus handling reads.
 struct FocusReport<'a> {
     node: &'a NodeSnapshot,
+    /// When its outpost observed it; 0 when not known.
+    observed_at_ms: u64,
     foreground: bool,
     ancestors: &'a [NodeSnapshot],
     /// The outpost could not read the ancestors in time.
@@ -532,9 +616,8 @@ struct FocusReport<'a> {
 ///   "window" says nothing, and the window is not announced later.
 /// - While the focus is dead (its outpost ended), a report of the same focus
 ///   from a replacement outpost is taken silently.
-/// - A focus identical to the one already announced is not spoken again
-///   (NVDA's already-the-focus early return): the UIA focus callback and a
-///   delivered fact can both report one control.
+/// - A focus the same as the one already announced has been dropped before
+///   this, by NVDA's duplicate rule ([`is_duplicate_focus`]).
 /// - Otherwise the newly entered containers, the node, and a selection
 ///   container's selected item are spoken, queued behind current speech
 ///   (which the key press that moved focus has already cut off), and the
@@ -597,35 +680,17 @@ fn reduce_focus_changed(
         reported_focused: report.node.states.contains(State::Focused),
     };
 
-    if let Some(focus) = state.focus.as_ref() {
-        if focus.alive {
-            // Already the focus: nothing is spoken, and a navigator the user
-            // moved away stays where it is. As in NVDA, the focus is compared
-            // by identity: not its states or name, which a second report can
-            // read mid-change, and not its ancestors, which can read
-            // differently from one report to the next (a window title still
-            // being filled in, or a parent object read afresh through MSAA),
-            // and not the selected item inside a list, which a selection
-            // event announces. The newer reading is kept, except the
-            // selected item already announced, so a selection event for a
-            // new one is still spoken.
-            if focus.snapshot.id == report.node.id {
-                let mut kept = focus.clone();
-                kept.snapshot = new_focus.snapshot;
-                kept.ancestors = new_focus.ancestors;
-                kept.reported_focused |= new_focus.reported_focused;
-                state.focus = Some(kept);
-                return Vec::new();
-            }
-        } else if reads_the_same(focus, report.node, report.ancestors) {
-            // The silent re-read: the replacement outpost reports the focus
-            // the user already heard, so take its ids without speaking.
-            state.focus = Some(new_focus);
-            if state.navigator.is_none() {
-                state.navigator = Some(Navigator::on(report.node.clone()));
-            }
-            return Vec::new();
+    if let Some(focus) = state.focus.as_ref()
+        && !focus.alive
+        && reads_the_same(focus, report.node, report.ancestors)
+    {
+        // The silent re-read: the replacement outpost reports the focus the
+        // user already heard, so take its ids without speaking.
+        state.focus = Some(new_focus);
+        if state.navigator.is_none() {
+            state.navigator = Some(Navigator::on(report.node.clone()));
         }
+        return Vec::new();
     }
 
     // The review cursor follows focus (roadmap M3): every focus change snaps
@@ -642,6 +707,9 @@ fn reduce_focus_changed(
     // entering a menu; speech for a focus the user has since left is
     // dropped by the speech manager, which is told where the focus now is.
     let foreground_changed = foreground_changed(state.focus.as_ref(), report, focus_window);
+    if foreground_changed && report.observed_at_ms != 0 {
+        state.foreground_changed_at = Some(report.observed_at_ms);
+    }
     if report.foreground {
         state.foreground = Some(report.node.id);
     }

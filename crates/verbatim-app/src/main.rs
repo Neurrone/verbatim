@@ -210,11 +210,14 @@ fn run(
     // The reader settings the reducer reads, handed to it first.
     let reader_settings = config.settings().reader;
 
-    // Review and object-navigation commands from the router, the keys and
-    // typing the keyboard hook reports, the index marks speech reaches, and
-    // tree dumps from the control plane reach the reducer thread over this
-    // channel; it selects on it alongside the outpost stream (see
-    // `reducer_loop`). Unbounded, so no sender ever waits.
+    // The reducer thread's one input channel: every outpost's messages
+    // (through the supervisor's sink, below), review and object-navigation
+    // commands from the router, the keys and typing the keyboard hook
+    // reports, the index marks speech reaches, and tree dumps from the
+    // control plane. One channel is first in, first out across all its
+    // senders, so the reducer takes its inputs in the order they reached it,
+    // as NVDA queues keys with events (`docs/design/focus-pipeline.md`,
+    // section 4.1). Unbounded, so no sender ever waits.
     let (command_tx, command_rx) = unbounded::<ShellCommand>();
 
     // Speech pipeline: eSpeak NG through WASAPI by default, observed by the
@@ -252,12 +255,15 @@ fn run(
     // runs its own foreground hook — the listener absorbs it, and a foreground
     // change reaches the reducer as a focus on the window, which moves its
     // attention.
-    let (outpost_tx, outpost_rx) = unbounded::<OutpostMessage>();
     // The processes the end-to-end harness names in `VERBATIM_IGNORE_PIDS`
     // (the owner's own Windows Terminal), ignored entirely: nothing is ever
     // read from them. Unset for real users, so nothing is ignored.
     let ignored = Arc::new(verbatim_outpost::supervisor::IgnoredProcesses::from_env());
-    let supervisor = Arc::new(Supervisor::new(outpost_tx, outpost_options, ignored)?);
+    let supervisor = Arc::new(Supervisor::new(
+        outpost_sink(command_tx.clone()),
+        outpost_options,
+        ignored,
+    )?);
     let outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>> = Arc::new(Mutex::new(HashMap::new()));
     // Set once the focus listener first reports ready; part of the
     // readiness the control plane's status reports.
@@ -295,7 +301,7 @@ fn run(
         };
         thread::Builder::new()
             .name("verbatim-reducer".to_owned())
-            .spawn(move || reducer_loop(&outpost_rx, &command_rx, &context, reader_settings))?;
+            .spawn(move || reducer_loop(&command_rx, &context, reader_settings))?;
     }
 
     // The gesture router: bound gestures become GUI commands, direct speech,
@@ -862,11 +868,15 @@ struct ReducerContext {
     idle_line: Arc<harness::IdleLine>,
 }
 
-/// Work handed to the reducer thread by other threads: a reducer input (a
-/// review or object-navigation command from the router, a caret key, typed
-/// text, or a cancelled speech from the keyboard hook, a mark speech
-/// reached), or a control-plane tree dump, answered on the given channel.
+/// Everything handed to the reducer thread, on its one channel and so in
+/// the order it arrived: a message from the supervisor (an outpost's event
+/// or reply, or an outpost's start or end), a reducer input (a review or
+/// object-navigation command from the router, a caret key, typed text, or a
+/// cancelled speech from the keyboard hook, a mark speech reached), or a
+/// control-plane tree dump, answered on the given channel.
 pub(crate) enum ShellCommand {
+    /// A message from the supervisor, put in line by [`outpost_sink`].
+    Outpost(OutpostMessage),
     Input(Box<Input>),
     /// A caret key the hook passed, an `Input::CaretKey`, with when the hook
     /// saw it in microseconds since the Unix epoch, where its latency line
@@ -1217,6 +1227,7 @@ impl ReducerThread<'_> {
     /// Handles work handed over by another thread.
     fn on_command(&mut self, command: ShellCommand) {
         match command {
+            ShellCommand::Outpost(message) => self.on_outpost_message(message),
             ShellCommand::Input(input) => self.apply(*input),
             ShellCommand::CaretKey {
                 input,
@@ -1259,7 +1270,7 @@ impl ReducerThread<'_> {
     /// outpost is outstanding: the speech queue answers each, once it has
     /// taken in everything the reducer gave it. Called between steps, so
     /// the reducer is never in the middle of one.
-    fn answer_idle_waiters(&mut self, outposts: usize, commands: usize) {
+    fn answer_idle_waiters(&mut self, queued: usize) {
         if self.idle_waiters.is_empty() {
             return;
         }
@@ -1274,10 +1285,10 @@ impl ReducerThread<'_> {
             .outstanding
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = format!(
-            "handled input {}, {outposts} outpost messages and {commands} commands queued, {requests} outpost requests outstanding, {starting} outposts starting, focus wanted from {focus_wanted} applications",
+            "handled input {}, {queued} inputs queued, {requests} outpost requests outstanding, {starting} outposts starting, focus wanted from {focus_wanted} applications",
             self.handled_input
         );
-        if outposts > 0 || commands > 0 || requests > 0 || starting > 0 || focus_wanted > 0 {
+        if queued > 0 || requests > 0 || starting > 0 || focus_wanted > 0 {
             return;
         }
         let handled = self.handled_input;
@@ -1575,12 +1586,21 @@ impl ReducerThread<'_> {
     }
 }
 
-/// The reducer thread body: drains outpost messages and commands from other
-/// threads, feeds the pure reducer, and executes its effects. Selects on
-/// both sources so a review or object-navigation gesture is handled with the
-/// same reduce-and-execute step as an accessibility event.
+/// Puts the supervisor's messages on the reducer thread's one input channel,
+/// in line with its keys and commands, so the reducer takes them all in the
+/// order they arrived (`docs/design/focus-pipeline.md`, section 4.1).
+fn outpost_sink(command_tx: Sender<ShellCommand>) -> verbatim_outpost::EventSink {
+    verbatim_outpost::EventSink::new(move |message| {
+        command_tx.send(ShellCommand::Outpost(message)).is_ok()
+    })
+}
+
+/// The reducer thread body: takes outpost messages and commands from other
+/// threads off its one channel, in the order they arrived, feeds the pure
+/// reducer, and executes its effects, so a key, a review or
+/// object-navigation gesture, and an accessibility event are each handled
+/// by the same reduce-and-execute step, in turn.
 fn reducer_loop(
-    outpost_rx: &Receiver<OutpostMessage>,
     command_rx: &Receiver<ShellCommand>,
     context: &ReducerContext,
     settings: ReaderSettings,
@@ -1598,19 +1618,10 @@ fn reducer_loop(
     // The settings come first, before anything they govern.
     thread.apply(Input::Settings(settings));
     thread.send_views();
-    loop {
-        crossbeam_channel::select! {
-            recv(outpost_rx) -> message => {
-                let Ok(message) = message else { break };
-                thread.on_outpost_message(message);
-            }
-            recv(command_rx) -> command => {
-                let Ok(command) = command else { break };
-                thread.on_command(command);
-            }
-        }
+    while let Ok(command) = command_rx.recv() {
+        thread.on_command(command);
         thread.send_views();
-        thread.answer_idle_waiters(outpost_rx.len(), command_rx.len());
+        thread.answer_idle_waiters(command_rx.len());
     }
 }
 
@@ -2028,5 +2039,33 @@ mod tests {
         // Any repeat selects the taskbar list.
         assert_eq!(shell_list_kind(1), ShellItemKind::Taskbar);
         assert_eq!(shell_list_kind(3), ShellItemKind::Taskbar);
+    }
+
+    /// The supervisor's messages and the reducer's other inputs share one
+    /// channel, so the reducer takes them in the order they arrived: a key
+    /// handled between two outpost messages comes out between them.
+    #[test]
+    fn outpost_messages_and_commands_reach_the_reducer_in_arrival_order() {
+        let (command_tx, command_rx) = unbounded();
+        let sink = outpost_sink(command_tx.clone());
+        assert!(sink.send(OutpostMessage::NotWatched { target_pid: Pid(1) }));
+        command_tx
+            .send(ShellCommand::InputHandled(7))
+            .expect("the receiver is held");
+        assert!(sink.send(OutpostMessage::NotWatched { target_pid: Pid(2) }));
+        let arrived: Vec<String> = command_rx
+            .try_iter()
+            .map(|command| match command {
+                ShellCommand::Outpost(OutpostMessage::NotWatched { target_pid }) => {
+                    format!("outpost message for {}", target_pid.0)
+                }
+                ShellCommand::InputHandled(input) => format!("key {input}"),
+                _ => "something else".to_owned(),
+            })
+            .collect();
+        assert_eq!(
+            arrived,
+            ["outpost message for 1", "key 7", "outpost message for 2"]
+        );
     }
 }

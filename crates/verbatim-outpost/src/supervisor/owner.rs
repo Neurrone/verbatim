@@ -27,7 +27,7 @@ use super::process::{self, Launched, Role, Target};
 use super::retire::{Ending, ShutdownSummary, retire};
 use super::writer::{self, Outgoing, WriterHandle};
 use super::{
-    ABANDONED_WORKER_LIMIT, CRASH_LIMIT, CRASH_WINDOW, EndReason, IDLE_RETIREMENT,
+    ABANDONED_WORKER_LIMIT, CRASH_LIMIT, CRASH_WINDOW, EndReason, EventSink, IDLE_RETIREMENT,
     MISSED_PONG_THRESHOLD, OutpostMessage, PING_INTERVAL, SWEEP_INTERVAL, Writers,
 };
 
@@ -88,7 +88,7 @@ pub(super) struct Setup {
     pub(super) exe_path: PathBuf,
     pub(super) options: crate::OutpostOptions,
     pub(super) shutdown_limit: Duration,
-    pub(super) events_tx: Sender<OutpostMessage>,
+    pub(super) events_tx: EventSink,
     pub(super) writers: Writers,
     pub(super) own_tx: Sender<OwnerEvent>,
     pub(super) events: Receiver<OwnerEvent>,
@@ -127,7 +127,7 @@ struct Owner {
     exe_path: PathBuf,
     /// What every outpost is launched with.
     options: crate::OutpostOptions,
-    events_tx: Sender<OutpostMessage>,
+    events_tx: EventSink,
     writers: Writers,
     own_tx: Sender<OwnerEvent>,
     /// Numbers every launch, outposts and listener alike; never reused.
@@ -922,7 +922,7 @@ fn launch_child(
     (options, ignored): (crate::OutpostOptions, &str),
     outpost: OutpostId,
     role: Role,
-    events_tx: &Sender<OutpostMessage>,
+    events_tx: &EventSink,
     writers: &Writers,
 ) -> io::Result<(Child, File)> {
     let (launched, pipes) = process::launch(exe_path, role, options, ignored)?;
@@ -956,7 +956,7 @@ fn start_reader(
     outpost: OutpostId,
     role: Role,
     from_child: File,
-    events_tx: &Sender<OutpostMessage>,
+    events_tx: &EventSink,
     own_tx: &Sender<OwnerEvent>,
 ) -> io::Result<()> {
     let events_tx = events_tx.clone();
@@ -982,7 +982,7 @@ fn read_outpost(
     outpost: OutpostId,
     pid: Pid,
     from_child: File,
-    events_tx: &Sender<OutpostMessage>,
+    events_tx: &EventSink,
     own_tx: &Sender<OwnerEvent>,
 ) {
     let mut reader = BufReader::new(from_child);
@@ -1021,15 +1021,12 @@ fn read_outpost(
             }
             _ => {}
         }
-        if events_tx
-            .send(OutpostMessage::Event {
-                pid,
-                outpost,
-                position,
-                message: Box::new(message),
-            })
-            .is_err()
-        {
+        if !events_tx.send(OutpostMessage::Event {
+            pid,
+            outpost,
+            position,
+            message: Box::new(message),
+        }) {
             return; // The app is gone.
         }
     }

@@ -355,7 +355,7 @@ Public API:
   also registers globally, are not subscribed yet: the reducer speaks values
   only for the focus, and live regions are milestone M6's.
 - `Supervisor` (the `supervisor` module; outpost redesign, "The
-  supervisor") — `new(events_tx)` starts the lifecycle owner thread, which
+  supervisor") — `new(events)` starts the lifecycle owner thread, which
   starts the focus listener at once (`with_executable` launches every
   child from a given executable with a given shutdown time limit, for the
   test that launches a stand-in); `shutdown()` shuts every outpost and the
@@ -375,6 +375,11 @@ Public API:
   `OutpostMessage`: `Started` before
   any of its messages, `Event(pid, outpost_id, message)` for each message,
   and `Ended` with a reason (exited, killed, retired, or target exited).
+  Every one is delivered through the `EventSink` given to `new`: a channel
+  of `OutpostMessage`s converts into one (the tests use that), and
+  `EventSink::new` takes a function, which the app uses to put the
+  messages on the reducer thread's one input channel, in line with its
+  keys and commands.
   - The lifecycle owner (`owner`) is one thread that makes every lifecycle
     decision and owns the per-application records and the listener record.
     Readers, the heartbeat and sweep timers (`crossbeam_channel::tick`

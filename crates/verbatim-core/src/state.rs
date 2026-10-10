@@ -460,6 +460,14 @@ pub struct SrState {
     /// same top-level window. The window is this focus's top-level window,
     /// when known.
     pub(crate) latest_focus: Option<(OutpostId, u64, Option<WindowHandle>)>,
+    /// When the newest foreground change applied was observed, in
+    /// milliseconds since the Unix epoch: a focus with a known observation
+    /// time that brought a new foreground window and cut speech off. Speech
+    /// from elsewhere observed before it, but reaching the reducer after it,
+    /// is dropped, as NVDA's foreground change cancels speech queued before
+    /// it (`docs/design/focus-pipeline.md`, section 7).
+    #[serde(default)]
+    pub(crate) foreground_changed_at: Option<u64>,
     /// The node of the window most recently reported as the foreground,
     /// whose speech stays valid while it is in front (`FocusNow`).
     pub(crate) foreground: Option<NodeId>,

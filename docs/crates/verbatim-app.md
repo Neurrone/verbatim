@@ -19,10 +19,15 @@ application's `EmptyClipboard` waiting), and frees its global memory
 whenever the clipboard did not take it. The gesture router also
 announces a lock key's new state ("caps lock on") 30 ms after the keyboard
 hook reports it reached the operating system, waiting for its channel
-with a deadline rather than starting a thread per key. The reducer thread selects on both the outpost stream and a
-command channel the gesture router feeds, so a review or object-navigation
-gesture is reduced and its effects executed by the same path as an
-accessibility event; `Effect::Activate` is executed there alongside
+with a deadline rather than starting a thread per key. The reducer thread
+takes everything from one channel, in the order it arrived: the
+supervisor's messages (through an `EventSink` that wraps each in
+`ShellCommand::Outpost`), the router's commands, and the keyboard hook's
+keys and typing, so a key is reduced before an application's reaction that
+reached Core after it, as NVDA queues keys with events
+(`docs/design/focus-pipeline.md`, section 4.1), and a review or
+object-navigation gesture is reduced and its effects executed by the same
+path as an accessibility event; `Effect::Activate` is executed there alongside
 `Speak` and `Fetch`, and so are
 `Effect::StopSpeech` and `Effect::DropExpiredSpeech`, through the speech
 manager's `SpeechControl` (`cancel` and `drop_expired`), while
@@ -196,9 +201,11 @@ knowing for review:
   parameters. `ChangeWindowMessageFilter` lets a future
   lower-integrity replacer's quit message through.
 - `ReducerThread` — owns the reducer state, the request table, and the
-  live-outpost set, and is the only thread that touches them. It selects on
-  the supervisor's stream and on a `ShellCommand` channel (router inputs and
-  control-plane tree dumps). Every outpost message arrives tagged with the
+  live-outpost set, and is the only thread that touches them. It takes
+  every input from one `ShellCommand` channel, first in, first out across
+  all its senders: the supervisor's messages (`ShellCommand::Outpost`),
+  router inputs, the keyboard hook's keys, speech marks, and control-plane
+  requests. The idle barrier counts that one channel's length. Every outpost message arrives tagged with the
   outpost incarnation whose pipe carried it; an outpost joins the live set
   on `OutpostMessage::Started`, which precedes all its messages, and leaves
   it on `OutpostMessage::Ended`, and a message from an outpost not in the

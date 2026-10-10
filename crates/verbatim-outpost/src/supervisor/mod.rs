@@ -100,6 +100,45 @@ impl std::fmt::Display for EndReason {
     }
 }
 
+/// Where the supervisor delivers its [`OutpostMessage`]s. Every reader
+/// thread and the owner deliver through the same sink, so a sink that puts
+/// each message on one channel gives the app every outpost's messages in
+/// the order they reached the supervisor. The app's sink puts them on the
+/// reducer thread's one input channel, among its keys and commands
+/// (`docs/design/focus-pipeline.md`, section 4.1); a channel of
+/// [`OutpostMessage`]s converts into a sink, for tests.
+#[derive(Clone)]
+pub struct EventSink(Arc<dyn Fn(OutpostMessage) -> bool + Send + Sync>);
+
+impl EventSink {
+    /// A sink that hands each message to `deliver`, which returns whether
+    /// the app is still there to take it: once it returns false, readers
+    /// stop forwarding.
+    #[must_use]
+    pub fn new(deliver: impl Fn(OutpostMessage) -> bool + Send + Sync + 'static) -> Self {
+        Self(Arc::new(deliver))
+    }
+
+    /// Delivers `message`, returning whether the app took it: false means
+    /// the app has gone.
+    #[must_use]
+    pub fn send(&self, message: OutpostMessage) -> bool {
+        (self.0)(message)
+    }
+}
+
+impl From<Sender<OutpostMessage>> for EventSink {
+    fn from(events_tx: Sender<OutpostMessage>) -> Self {
+        Self::new(move |message| events_tx.send(message).is_ok())
+    }
+}
+
+impl std::fmt::Debug for EventSink {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("EventSink")
+    }
+}
+
 /// A message from the supervisor to the app.
 #[derive(Debug)]
 pub enum OutpostMessage {
@@ -176,7 +215,7 @@ pub struct Supervisor {
 
 impl Supervisor {
     /// Starts the supervisor: its lifecycle owner thread and the focus
-    /// listener. Outpost messages and lifecycle notices go to `events_tx`.
+    /// listener. Outpost messages and lifecycle notices go to `events`.
     /// The outpost executable is resolved next to the current executable.
     /// Every outpost is launched with `options`. The processes `ignored`
     /// holds are ignored entirely: the listener drops their facts, and no
@@ -187,7 +226,7 @@ impl Supervisor {
     /// Returns an error if the current executable path cannot be determined
     /// or the owner thread cannot be started.
     pub fn new(
-        events_tx: Sender<OutpostMessage>,
+        events: impl Into<EventSink>,
         options: crate::OutpostOptions,
         ignored: Arc<IgnoredProcesses>,
     ) -> io::Result<Self> {
@@ -195,13 +234,7 @@ impl Supervisor {
             .parent()
             .ok_or_else(|| io::Error::other("current exe has no parent directory"))?
             .join("verbatim-outpost.exe");
-        Self::with_executable(
-            events_tx,
-            options,
-            exe_path,
-            retire::SHUTDOWN_LIMIT,
-            ignored,
-        )
+        Self::with_executable(events, options, exe_path, retire::SHUTDOWN_LIMIT, ignored)
     }
 
     /// [`Supervisor::new`], launching every child from `exe_path` and giving
@@ -214,7 +247,7 @@ impl Supervisor {
     ///
     /// Returns an error if the owner thread cannot be started.
     pub fn with_executable(
-        events_tx: Sender<OutpostMessage>,
+        events: impl Into<EventSink>,
         options: crate::OutpostOptions,
         exe_path: std::path::PathBuf,
         shutdown_limit: Duration,
@@ -228,7 +261,7 @@ impl Supervisor {
             exe_path,
             options,
             shutdown_limit,
-            events_tx,
+            events_tx: events.into(),
             writers: Arc::clone(&writers),
             own_tx: owner_tx.clone(),
             events: owner_rx,

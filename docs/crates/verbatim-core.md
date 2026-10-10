@@ -296,13 +296,28 @@ Implementation notes, `reduce`:
   `Notification` event speaks its display string when it carries one,
   interrupting for `MostRecent`/`ImportantMostRecent` processing and
   queuing otherwise (NVDA's `event_UIA_notification`; snap-layout hints are
-  the motivating case), from the focus's application only. A
-  focus event identical to the one already announced from the same
-  application, back to back, is dropped — NVDA's already-the-focus early
-  return, which removes the double-fire when the UIA callback and a
-  foreground re-announcement both report one control; it never suppresses a
-  genuine return to a window after visiting another, since that focuses a
-  different control in between.
+  the motivating case), from the focus's application only. NVDA's
+  duplicate-focus rule (`docs/design/focus-pipeline.md`, section 4.2): a
+  focus on the same node as the last focus Core queued, which is the live
+  focus it holds, is dropped before anything else judges it, so it
+  neither moves attention nor counts as the newest focus for the stale
+  rule; its newer reading (states, name, ancestors read in time) is kept
+  unspoken. The node id is the evidence of "same element, still focused",
+  since an outpost reuses a node for a UIA focus only after reading live
+  that its element still has the keyboard focus, and reports an MSAA focus
+  only once the focused state is read live; a UIA focus whose element the
+  outpost could not find keeps its runtime id's node without that read.
+  Step 6 of stage A replaces the node id with the outpost's own mark. The
+  rule never suppresses a genuine return to a control after visiting
+  another application, since that application's focus comes between.
+- Background speech across a foreground change
+  (`docs/design/focus-pipeline.md`, section 7): Core keeps the observation
+  time of the newest foreground change it applied (a focus that brought a
+  new foreground window and cut speech off), and an event accepted as
+  background (a toast, the snap results) observed before it is dropped, as
+  NVDA's foreground change cancels speech queued before it. Background
+  events observed after it, events with no observation time, and attended
+  events are unaffected.
 - A `ControlledSelection` (a search suggestion or result selected while
   the focus stays in the search box that controls the list) is spoken as
   a focus, interrupting, and moves the navigator to the item, but only
