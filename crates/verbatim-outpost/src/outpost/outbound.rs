@@ -223,6 +223,7 @@ fn merged(
                 observed_at_ms,
                 backend,
                 window,
+                application,
                 timing,
                 event: NormalizedEvent::TerminalOutput { node_id, output },
             },
@@ -231,6 +232,7 @@ fn merged(
             observed_at_ms,
             backend,
             window,
+            application,
             timing,
             event: NormalizedEvent::TerminalOutput {
                 node_id,
@@ -428,6 +430,7 @@ fn within_limit(message: OutpostToSupervisor) -> Vec<OutpostToSupervisor> {
             observed_at_ms,
             backend,
             window,
+            application,
             timing,
             event: NormalizedEvent::TerminalOutput { node_id, output },
         } => crate::terminal::split(output, crate::terminal::MESSAGE_TEXT_BUDGET)
@@ -437,6 +440,7 @@ fn within_limit(message: OutpostToSupervisor) -> Vec<OutpostToSupervisor> {
                 observed_at_ms,
                 backend,
                 window,
+                application,
                 timing,
                 event: NormalizedEvent::TerminalOutput { node_id, output },
             })
@@ -462,6 +466,7 @@ mod tests {
             observed_at_ms: 0,
             backend: Backend::Uia,
             window: None,
+            application: None,
             timing: EventTiming::default(),
             event,
         }

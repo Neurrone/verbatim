@@ -183,11 +183,15 @@ pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
 ];
 
 /// Called on the installing thread for each in-scope event, with the event
-/// kind, its MSAA address `(hwnd, id_object, id_child)`, and how many
-/// milliseconds ago Windows raised it (delivery to an out-of-context hook
-/// waits for this thread's message loop). It must not block: its job is to
-/// enqueue the address for handling elsewhere.
-pub type WinEventCallback = Box<dyn Fn(WinEventKind, isize, i32, i32, u32)>;
+/// kind, its MSAA address `(hwnd, id_object, id_child)`, the thread that
+/// raised it, and how many milliseconds ago Windows raised it (delivery to
+/// an out-of-context hook waits for this thread's message loop). The thread
+/// is the window's real one even for a console window, whose
+/// `GetWindowThreadProcessId` names its client's thread instead (NVDA's
+/// `consoleWindowsToThreadIDs`, `IAccessibleHandler/internalWinEventHandler.py`).
+/// It must not block: its job is to enqueue the address for handling
+/// elsewhere.
+pub type WinEventCallback = Box<dyn Fn(WinEventKind, isize, i32, i32, u32, u32)>;
 
 thread_local! {
     static CALLBACK: RefCell<Option<WinEventCallback>> = const { RefCell::new(None) };
@@ -346,7 +350,7 @@ unsafe extern "system" fn win_event_proc(
     hwnd: HWND,
     id_object: i32,
     id_child: i32,
-    _thread: u32,
+    thread: u32,
     time: u32,
 ) {
     // SAFETY: GetTickCount has no preconditions; `time` is on the same clock.
@@ -370,7 +374,14 @@ unsafe extern "system" fn win_event_proc(
         };
     CALLBACK.with(|slot| {
         if let Some(callback) = slot.borrow().as_ref() {
-            callback(kind, hwnd.0 as isize, id_object, id_child, raised_ms_ago);
+            callback(
+                kind,
+                hwnd.0 as isize,
+                id_object,
+                id_child,
+                thread,
+                raised_ms_ago,
+            );
         }
     });
 }

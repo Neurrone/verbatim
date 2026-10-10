@@ -284,7 +284,7 @@ fn console_focus(context: &Context, node_id: NodeId) -> bool {
 }
 
 /// The console host's window class.
-pub(super) const CONSOLE_WINDOW_CLASS: &str = "ConsoleWindowClass";
+pub(crate) const CONSOLE_WINDOW_CLASS: &str = "ConsoleWindowClass";
 
 /// Whether a focused node may have text, and so gets a caret report:
 /// through UIA, an edit field, a document, or a terminal (whose text

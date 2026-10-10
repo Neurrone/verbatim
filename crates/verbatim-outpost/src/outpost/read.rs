@@ -13,7 +13,8 @@ use verbatim_model::{
     ActionName, Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, StateSet,
 };
 use verbatim_uia::map::{
-    cached_native_window_handle, snapshot_from_cached_element, with_legacy_checked_state,
+    cached_native_window_handle, cached_process_id, snapshot_from_cached_element,
+    with_legacy_checked_state,
 };
 use verbatim_uia::{AncestorWalk, ElementExt, Uia, probe_server_side_provider};
 use verbatim_uia_rops::{
@@ -25,10 +26,11 @@ use crate::arbitration::{PostProbeCheck, WindowClasses, post_probe_check, window
 use crate::protocol::{DumpedTree, FocusNow, FocusedControl};
 
 use super::Context;
+use super::text_reads::CONSOLE_WINDOW_CLASS;
 use super::window::{
-    desktop_window, focus_window_of, foreground_window_of, main_window_of, now_ms, top_level_of,
-    top_level_windows, window_belongs_to_hidden_frame, window_facts, window_is_hidden_frame,
-    window_text,
+    desktop_window, focus_window, focus_window_of, foreground_window_handle, foreground_window_of,
+    main_window_of, now_ms, top_level_of, top_level_windows, window_belongs_to_hidden_frame,
+    window_facts, window_is_hidden_frame, window_owner, window_text,
 };
 
 /// Depth cap for a tree dump (the root is depth 0).
@@ -700,7 +702,8 @@ fn dialog_text_of(context: &Context, node: &NodeSnapshot) -> Option<String> {
 /// and window, through the focus window's backend. `None` when the keyboard
 /// focus is not in this application, or is on Core's hidden frame.
 pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<FocusedControl> {
-    let hwnd = focus_window_of(context.target_pid)?;
+    let hwnd = focus_window_of(context.target_pid)
+        .or_else(|| focus_window().filter(|&hwnd| hosts_console_window(context, client, hwnd)))?;
     if window_belongs_to_hidden_frame(hwnd) {
         return None;
     }
@@ -748,11 +751,40 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
     }
 }
 
+/// Whether `hwnd` is a console window this application, a console host,
+/// hosts. Windows names the console's client as a console window's owner,
+/// so the window is not this application's by `GetWindowThreadProcessId`,
+/// but its UIA element is the console host's and says so, as NVDA found
+/// (`UIA._get_processID`, `NVDAObjects/UIA/__init__.py` 2336 to 2346, NVDA
+/// issue 10115). One UIA call, made only for a console window that is not
+/// this application's by its owner.
+fn hosts_console_window(context: &Context, client: &mut Client, hwnd: isize) -> bool {
+    if hwnd == 0
+        || window_class_name(hwnd) != CONSOLE_WINDOW_CLASS
+        || window_owner(hwnd).1 == context.target_pid
+    {
+        return false;
+    }
+    let Ok((uia, cache)) = client.uia_and_cache(context) else {
+        return false;
+    };
+    // Built with the base cache request, which carries the process id.
+    uia.element_from_handle(hwnd, &cache)
+        .ok()
+        .and_then(|element| cached_process_id(&element))
+        == Some(context.target_pid)
+}
+
 /// The answer to a focus-now query: the application's foreground window, if
-/// it holds the system foreground, and its focused control.
+/// it holds the system foreground, and its focused control. A console host's
+/// is its console window ([`hosts_console_window`]).
 pub(super) fn focus_now(context: &Context, client: &mut Client) -> FocusNow {
     let observed_at_ms = now_ms();
     let window = foreground_window_of(context.target_pid)
+        .or_else(|| {
+            Some(foreground_window_handle())
+                .filter(|&hwnd| hosts_console_window(context, client, hwnd))
+        })
         .filter(|&hwnd| !window_is_hidden_frame(hwnd))
         .map(|hwnd| {
             (

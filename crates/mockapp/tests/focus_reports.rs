@@ -688,19 +688,19 @@ fn another_elements_change_heard_for_the_focus_costs_nothing() {
 
 /// The console host's window is the parent of its text area, reports the
 /// keyboard focus whenever the text area has it, and raises focus events
-/// around the text area's; those are never the focus (NVDA refuses them,
-/// `consoleUIAWindow` in `NVDAObjects/UIA/winConsoleUIA.py`). So a UIA
-/// focus on a console window's own element, while the focused element read
-/// answers its text area, is not reported, though the window's element has
-/// the keyboard focus: the text area's own focus is the one reported.
-fn a_console_windows_own_focus_is_not_reported_when_its_text_area_is_focused() {
+/// around the text area's; those are never the focus (NVDA refuses them
+/// whatever the element reports, `consoleUIAWindow` in
+/// `NVDAObjects/UIA/winConsoleUIA.py`). So a UIA focus on a console
+/// window's own element is not reported, even while the focused element
+/// read answers that element itself: the text area's own focus is the one
+/// reported.
+fn a_console_windows_own_focus_is_never_reported() {
     let title = common::unique_title("mockapp-console-window");
     let mut app = common::spawn("console_window.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let outpost = OutpostUnderTest::new(&app);
 
-    let text_area = client.named("Text Area");
     app.send("set-focus root");
     let cache = client.uia.base_cache_request().expect("a cache request");
     let window = client
@@ -709,7 +709,7 @@ fn a_console_windows_own_focus_is_not_reported_when_its_text_area_is_focused() {
         .expect("mockapp's root element");
     let ListenerFact { pid: _, fact } =
         uia_focus_fact(&window).expect("mockapp's element has its process");
-    outpost.read_focus_as(&text_area);
+    outpost.read_focus_as(&window);
     outpost.deliver(fact);
     outpost.settled();
 
@@ -768,8 +768,8 @@ fn main() {
             a_selection_of_a_focus_whose_element_was_not_found_finds_its_element,
         ),
         (
-            "a_console_windows_own_focus_is_not_reported_when_its_text_area_is_focused",
-            a_console_windows_own_focus_is_not_reported_when_its_text_area_is_focused,
+            "a_console_windows_own_focus_is_never_reported",
+            a_console_windows_own_focus_is_never_reported,
         ),
     ]);
 }

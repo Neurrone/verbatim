@@ -924,8 +924,10 @@ struct ReducerThread<'a> {
     live: LiveOutposts,
     /// Applications to ask for their current focus as soon as their outpost
     /// is ready: the startup foreground application, and the attention
-    /// application after its outpost or the listener was replaced.
-    focus_now_wanted: HashSet<Pid>,
+    /// application after its outpost or the listener was replaced: by the
+    /// process whose outpost is awaited, the application to ask for, which
+    /// differs for a console host, asked for its console's client.
+    focus_now_wanted: HashMap<Pid, Pid>,
     /// The views last sent to the supervisor.
     views: (Option<Pid>, BTreeSet<OutpostId>),
     /// The highest numbered harness key handled so far.
@@ -991,13 +993,15 @@ impl ReducerThread<'_> {
                 // none when its own replacement already runs, and tells
                 // the app the application is not watched when it stopped
                 // replacing it after repeated crashes. A retired outpost,
-                // or one whose application exited, is not replaced.
+                // or one whose application exited, is not replaced. A
+                // console host's outpost reports for the console's client.
                 let replaced = !matches!(reason, EndReason::Retired | EndReason::TargetExited);
+                let application = self.live.application_of(outpost).unwrap_or(target_pid);
                 if replaced
-                    && (self.state.attention() == Some(target_pid)
-                        || self.state.focus_source() == Some(target_pid))
+                    && (self.state.attention() == Some(application)
+                        || self.state.focus_source() == Some(application))
                 {
-                    self.focus_now_wanted.insert(target_pid);
+                    self.focus_now_wanted.insert(target_pid, application);
                     self.context.supervisor.ensure_spawned(target_pid);
                 }
                 if self.live.ended(outpost) {
@@ -1108,8 +1112,12 @@ impl ReducerThread<'_> {
         ignored
     }
 
-    /// Asks `pid`'s outpost for the current focus now if it is ready, or as
-    /// soon as it is, starting one if there is none.
+    /// Asks the outpost serving the application `pid` for the current focus
+    /// now if it is ready, or as soon as it is, starting one if there is
+    /// none. A console's client is served by its console host's outpost
+    /// once that outpost has reported for it; until then by its own, which
+    /// answers for its console window by its owner, as NVDA falls back to
+    /// the window's own thread for a console it has seen no event from.
     fn want_focus_now(&mut self, pid: Pid) {
         if self.context.supervisor.is_ignored(pid) {
             return; // Nothing is asked of a process Verbatim ignores.
@@ -1117,8 +1125,9 @@ impl ReducerThread<'_> {
         if let Some(outpost) = self.live.ready(pid) {
             self.focus_now(outpost, pid);
         } else {
-            self.focus_now_wanted.insert(pid);
-            self.context.supervisor.ensure_spawned(pid);
+            let target = self.live.target_for(pid);
+            self.focus_now_wanted.insert(target, pid);
+            self.context.supervisor.ensure_spawned(target);
         }
     }
 
@@ -1148,6 +1157,7 @@ impl ReducerThread<'_> {
                 observed_at_ms,
                 backend,
                 window,
+                application,
                 timing,
                 event,
             } => {
@@ -1157,6 +1167,16 @@ impl ReducerThread<'_> {
                 // foreground, later than Windows raised it.
                 // An event read is the outpost's application answering.
                 self.live.answered(outpost);
+                // An event in a console window, reported by the console
+                // host's outpost, belongs to the console's client, and so
+                // does that outpost from now on.
+                let source = match application {
+                    Some(application) => {
+                        self.live.reports_for(outpost, application);
+                        application
+                    }
+                    None => source,
+                };
                 if self.in_ignored_window(&event, window) {
                     return;
                 }
@@ -1203,8 +1223,13 @@ impl ReducerThread<'_> {
             } => {
                 tracing::info!(%outpost, %outpost_pid, %target_pid, "outpost ready");
                 self.live.mark_ready(outpost);
-                if self.focus_now_wanted.remove(&target_pid) {
-                    self.focus_now(outpost, target_pid);
+                if let Some(application) = self.focus_now_wanted.remove(&target_pid) {
+                    if application != target_pid {
+                        // A console host's replacement, asked for its
+                        // console's client.
+                        self.live.reports_for(outpost, application);
+                    }
+                    self.focus_now(outpost, application);
                 }
                 self.context.outposts.lock().expect("outposts lock").insert(
                     target_pid,
@@ -1384,8 +1409,12 @@ impl ReducerThread<'_> {
     fn send_views(&mut self) {
         let held = self.state.held_nodes();
         let anchors = self.state.held_anchors();
+        // The supervisor keeps outposts by the process they watch: a
+        // console's client holding attention keeps its console host's.
         let views = (
-            self.state.attention(),
+            self.state
+                .attention()
+                .map(|application| self.live.target_for(application)),
             held.keys().copied().collect::<BTreeSet<_>>(),
         );
         if views != self.views {
@@ -1610,7 +1639,7 @@ fn reducer_loop(
         state: SrState::new(),
         requests: RequestTable::default(),
         live: LiveOutposts::default(),
-        focus_now_wanted: HashSet::new(),
+        focus_now_wanted: HashMap::new(),
         views: (None, BTreeSet::new()),
         handled_input: 0,
         idle_waiters: Vec::new(),

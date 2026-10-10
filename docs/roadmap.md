@@ -134,7 +134,10 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    came after the steps, three recordings shorter than the capture and one
    flight recorder save that timed out, and are investigated separately.
 3. Console windows: every event to the console host's outpost, with the
-   client process as identity; the console special cases removed.
+   client process as identity; the console special cases removed. Built,
+   pending live checks (`phase6-design.md`, "Console windows as one
+   application"): not yet built or tested; then `cargo xtask ci`, every
+   `conhost_` scenario, `settings_system_page`, and the full suite.
 4. Arrival order in the outposts: 42d9caa and ce53dbc removed; NVDA's MSAA
    focus collapsing (consecutive runs, up to four) and limits by the
    event's own thread, for MSAA only; `msaa_focus_waiting` removed.
@@ -213,6 +216,10 @@ Provisional decisions awaiting Dickson:
   rather than add another signal; and a flood of identical lines cannot be
   counted whenever the history is full, not only when it overflows, which is
   documented as a limitation.
+- The console window's own UIA focus is always dropped, before any read,
+  as NVDA's `consoleUIAWindow` refuses it (2026-10-11, stage A step 3):
+  before, it was reported when the focused element read answered the
+  console window itself. No scenario shows that case.
 
 For a later milestone (Dickson, 2026-10-10): Verbatim echoes a typed
 character from its keyboard hook, before the application handles the key,
@@ -380,7 +387,9 @@ Other open items, taken after the steps above unless they fold into one:
   runner, run 38031529579, `conhost_raised_flood` heard the prefix while
   25 other console scenarios did not. Capture what NVDA says for an
   elevated console window (needs an elevation prompt Dickson approves),
-  then make Verbatim read one name consistently.
+  then make Verbatim read one name consistently. Since stage A step 3, one
+  outpost reads the window once; which of the two names that read gives
+  is still to be checked.
 - Decided by Dickson (2026-10-10, later):
   - Control+Tab follows NVDA: 8be2223's rule goes; the tab being left is
     announced and its speech cut once focus moves on.

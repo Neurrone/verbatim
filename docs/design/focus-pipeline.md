@@ -231,6 +231,7 @@ Decided by Dickson (`docs/roadmap.md` 276 to 280): every event for a console win
 - The console host's outpost already receives the console's UIA events (its provider is in the console host). Whether its process-scoped WinEvent hook receives the console window's focus and foreground events (Windows raises them from the console host's thread, knowledge) needs a live check before this step; mockapp cannot show it.
 - Each event the outpost reports for a console window carries the client's process id (`GetWindowThreadProcessId` on the window) as its application identity for Core.
 - Then `report_foreign_window` for consoles (54f9a26, worker.rs 2632 to 2656), 3f4dbb4's console rule, and the worker's and judge's console rules go (audit section 4). `report_foreign_window` stays for `ApplicationFrameHost` and Settings. The elevated console's two names (`docs/roadmap.md` 267 to 272) should become one name, read by one outpost.
+- Built on 2026-10-11, pending live checks (`phase6-design.md`, "Console windows as one application"), which also lists which special cases went and which stayed: 3f4dbb4's fallback stays, since the text area is still windowless.
 
 ## 6. Time limits
 

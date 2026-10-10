@@ -21,8 +21,29 @@ event carries (a UIA element's cached properties, an MSAA event's raw
 address) plus the hang-safe `GetWindowThreadProcessId`, and forwards each
 captured focus fact to Core. The supervisor routes every fact to the target
 application's own outpost, which acquires, arbitrates, enriches, and
-announces it exactly as it does for the events it still hooks itself. A
-fact for an application with no outpost starts one
+announces it exactly as it does for the events it still hooks itself.
+
+A console window is one application in one outpost, its console host's,
+as NVDA gives it and its text area the client's app module
+(`docs/design/focus-pipeline.md`, section 5.4). Windows names the console's
+client (such as `powershell.exe`) as a console window's owner, while its
+UIA facts, the text area's and the window element's, come from the
+console host's provider and so go to the console host. The listener sends
+each `WinEvent` for a `ConsoleWindowClass` window to the process of the
+event's own thread, the console host, read with `OpenThread` and
+`GetProcessIdOfThread`, local calls (`listener::routed_process`, as NVDA's
+`consoleWindowsToThreadIDs` learns the real thread); when the thread
+cannot be opened, to the owner, as NVDA falls back. The console host's
+outpost marks each event in a console window with the client as its
+`application` (`OutpostToSupervisor::Event`), which Core takes as the
+event's source, and answers a focus-now query for its console window,
+which it recognizes by its UIA element's process id
+(`read::hosts_console_window`). A focus whose top-level window belongs to
+another process is reported with that window first
+(`report_foreign_window`, for the Settings app's frame), never for a
+console window, whose own foreground event reaches the same outpost.
+
+A fact for an application with no outpost starts one
 (`DeliveredFact::may_start_outpost`) unless it is a selection or a
 notification other than the shell's window-snap results: Core speaks no
 other notification from an application that cannot hold the focus. Node
@@ -635,13 +656,16 @@ Implementation notes:
   NVDA accepts a UIA focus event whose own element has the keyboard focus
   (`shouldAllowUIAFocusEvent`), where the outpost had held the focus back
   and read again (`phase6-design.md`, "Notepad at launch and the
-  outposts' loose ends"). The console host's window is never taken this
-  way: its element is the parent of the text area, reports the keyboard
-  focus whenever the text area has it, and raises focus events around
-  the text area's, which NVDA refuses whatever the element reports
+  outposts' loose ends"). The console host's window never gets this far:
+  its element is the parent of the text area, reports the keyboard focus
+  whenever the text area has it, and raises focus events around the text
+  area's, which NVDA refuses whatever the element reports
   (`consoleUIAWindow.shouldAllowUIAFocusEvent` is false,
-  `NVDAObjects/UIA/winConsoleUIA.py` lines 356 to 358 and 446 to 447);
-  taken, it was announced as a second focus beside the text area's.
+  `NVDAObjects/UIA/winConsoleUIA.py` lines 356 to 358 and 446 to 447), so
+  a UIA focus whose own window is a console window is dropped before any
+  read, one rule since 2026-10-11 where there were two (mockapp's
+  `a_console_windows_own_focus_is_never_reported`); taken, it was
+  announced as a second focus beside the text area's.
   Otherwise the focus has moved on to another element of the
   application since the event, and the fact is reported all the same, as
   its event said (since 2026-10-09; it had been dropped): NVDA judges a
@@ -664,7 +688,7 @@ Implementation notes:
   whose event said it was selected and which is no longer selected, an
   item the selection left with the focus (the tab Windows Terminal's
   Control+Tab leaves; Dickson, 2026-10-10; mockapp's
-  `a_focus_that_moved_on_and_lost_its_selection_is_dropped`). The console host's window's own focus is still dropped.
+  `a_focus_that_moved_on_and_lost_its_selection_is_dropped`).
   Every
   UIA focus of a batch is handled in turn, oldest first, as NVDA's UIA
   handler queues each one, and Core culls the speech of those that have

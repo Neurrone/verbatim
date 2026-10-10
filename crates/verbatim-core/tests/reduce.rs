@@ -3159,42 +3159,6 @@ fn spoken_by(inputs: &[Input]) -> Vec<Vec<UtteranceSegment>> {
 }
 
 #[test]
-fn a_console_window_is_announced_before_its_focus_whichever_outpost_reports_first() {
-    // Windows names a console window's owner as its shell, whose outpost
-    // reports the window on the foreground change; the console host's
-    // outpost reports the focus, and the window just before it, as the
-    // window of another process (`docs/parity.md`, "A window and its
-    // content in two processes"). Either outpost can reach Core first.
-    let shell = Pid(1);
-    let console_host = Pid(2);
-    let title = || node(1, Role::Window, Some("Build"), None, StateSet::new());
-    let from_shell = foreground_in(shell, foreground_window(10), title());
-    let from_host = foreground_in(console_host, foreground_window(10), title());
-    let text_area = || {
-        focus_in(
-            console_host,
-            foreground_window(10),
-            node(2, Role::Terminal, None, None, StateSet::new()),
-            Vec::new(),
-        )
-    };
-    let expected = vec![
-        vec![UtteranceSegment::label("Build"), role(Role::Window)],
-        vec![role(Role::Terminal)],
-    ];
-    assert_eq!(
-        spoken_by(&[from_shell.clone(), from_host.clone(), text_area()]),
-        expected,
-        "the shell's report first"
-    );
-    assert_eq!(
-        spoken_by(&[from_host, text_area(), from_shell]),
-        expected,
-        "the console host's focus first"
-    );
-}
-
-#[test]
 fn a_settings_page_is_announced_before_its_focus_whichever_outpost_reports_first() {
     // The Settings app: the frame window is `ApplicationFrameHost`'s, the
     // page and its focus `SystemSettings`'s, whose outpost reports the frame

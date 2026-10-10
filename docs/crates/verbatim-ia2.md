@@ -42,8 +42,11 @@ Public API:
   identical node its foreground-announce fallback produces for a menu-class
   window, so the reducer's duplicate-focus suppression drops whichever path
   announces second. Callbacks are delivered on the installing thread's
-  message loop and must never make blocking calls into the target.
-  `WinEventKind` names the event; drop unhooks.
+  message loop and must never make blocking calls into the target. The
+  callback receives the event's kind, its MSAA address, the thread that
+  raised it, which is a console window's real thread in the console host
+  where `GetWindowThreadProcessId` names the client's, and how long ago
+  it was raised. `WinEventKind` names the event; drop unhooks.
 - `dialog` — `DialogObject`, the objects a dialog's own text is gathered
   from (`docs/nvda/object-model.md`, "A dialog's own text"; the gathering
   is `verbatim-outpost`'s `dialog_text`). `DialogObject::of_node(node,

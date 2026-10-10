@@ -257,7 +257,15 @@ knowing for review:
   (asking the supervisor to start a new one first, since nothing else
   would), and when the supervisor reports
   `OutpostMessage::ListenerReplaced`; each waits for the outpost's `Ready`
-  if it is still starting. When the supervisor reports
+  if it is still starting. These, the tree dump, and the attention view
+  sent to the supervisor go by application, which for a console's client
+  is its console host's outpost: an event carrying an `application`
+  (an event in a console window, reported by the console host's outpost)
+  enters the reducer with that application as its source, and
+  `LiveOutposts` records that the outpost serves it (`reports_for`,
+  `target_for`), so its queries go there and the supervisor keeps it
+  (`docs/design/focus-pipeline.md`, section 5.4). Before the console host's
+  outpost has reported for a console, the client's own outpost answers. When the supervisor reports
   `OutpostMessage::NotWatched` (the application has exited, so no outpost
   was started for it), the wish for its focus is dropped, along with a
   status entry that was only waiting for its outpost, so nothing, the idle

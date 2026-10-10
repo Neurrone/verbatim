@@ -514,28 +514,30 @@ impl Outpost {
         let hook_context = Arc::clone(&context);
         let make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync> = Arc::new(move || {
             let context = Arc::clone(&hook_context);
-            Box::new(move |kind, hwnd, id_object, id_child, raised_ms_ago| {
-                if kind == verbatim_ia2::WinEventKind::Destroy
-                    && (id_object != windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0
-                        || id_child != verbatim_ia2::CHILDID_SELF)
-                {
-                    return;
-                }
-                context.take_in(
-                    Item::Msaa {
-                        kind,
-                        hwnd,
-                        id_object,
-                        id_child,
-                    },
-                    Heard::Msaa(kind),
-                    EventTiming {
-                        raised_ms_ago: Some(raised_ms_ago),
-                        observed_at_us: now_us(),
-                        ..EventTiming::default()
-                    },
-                );
-            })
+            Box::new(
+                move |kind, hwnd, id_object, id_child, _thread, raised_ms_ago| {
+                    if kind == verbatim_ia2::WinEventKind::Destroy
+                        && (id_object != windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0
+                            || id_child != verbatim_ia2::CHILDID_SELF)
+                    {
+                        return;
+                    }
+                    context.take_in(
+                        Item::Msaa {
+                            kind,
+                            hwnd,
+                            id_object,
+                            id_child,
+                        },
+                        Heard::Msaa(kind),
+                        EventTiming {
+                            raised_ms_ago: Some(raised_ms_ago),
+                            observed_at_us: now_us(),
+                            ..EventTiming::default()
+                        },
+                    );
+                },
+            )
         });
         let event_thread = EventThread::spawn(target_pid, APP_SUBSCRIPTIONS, make_callback);
 

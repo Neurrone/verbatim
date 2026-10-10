@@ -16,8 +16,11 @@ use verbatim_model::{Fetches, OutpostId, Pid};
 
 /// A live outpost incarnation.
 pub(crate) struct Live {
-    /// The application it watches.
+    /// The process it watches.
     pub(crate) target_pid: Pid,
+    /// The application it reports for when that is not its target: a
+    /// console host's console's client, which its events name.
+    application: Option<Pid>,
     /// Whether it has sent `Ready`.
     pub(crate) ready: bool,
     /// The position of the last of its messages handled here.
@@ -48,6 +51,7 @@ impl LiveOutposts {
             outpost,
             Live {
                 target_pid,
+                application: None,
                 ready: false,
                 position: 0,
                 held_sent: (BTreeSet::new(), BTreeSet::new(), 0),
@@ -105,22 +109,55 @@ impl LiveOutposts {
         self.outposts.values().filter(|live| !live.ready).count()
     }
 
-    /// `pid`'s newest live incarnation, ready or not.
+    /// Records that `outpost`'s events belong to `application`, which is not
+    /// its target: the console's client, for a console host's outpost
+    /// (`docs/design/focus-pipeline.md`, section 5.4).
+    pub(crate) fn reports_for(&mut self, outpost: OutpostId, application: Pid) {
+        if let Some(live) = self.outposts.get_mut(&outpost) {
+            live.application = Some(application);
+        }
+    }
+
+    /// The application `outpost` reports for: the one its events last
+    /// named, else its target.
+    pub(crate) fn application_of(&self, outpost: OutpostId) -> Option<Pid> {
+        self.outposts
+            .get(&outpost)
+            .map(|live| live.application.unwrap_or(live.target_pid))
+    }
+
+    /// The process whose outpost serves the application `pid`: the target
+    /// of the newest live incarnation reporting for it, else `pid` itself.
+    pub(crate) fn target_for(&self, pid: Pid) -> Pid {
+        self.newest(pid)
+            .and_then(|outpost| self.outposts.get(&outpost))
+            .map_or(pid, |live| live.target_pid)
+    }
+
+    /// The newest live incarnation serving the application `pid`, ready or
+    /// not.
     pub(crate) fn newest(&self, pid: Pid) -> Option<OutpostId> {
         self.of(pid, false)
     }
 
-    /// `pid`'s newest incarnation that is ready.
+    /// The newest ready incarnation serving the application `pid`.
     pub(crate) fn ready(&self, pid: Pid) -> Option<OutpostId> {
         self.of(pid, true)
     }
 
+    /// An incarnation serving `pid`: one whose events name `pid` as their
+    /// application, a console host's for its console's client, else one
+    /// watching `pid` itself; the newest of them.
     fn of(&self, pid: Pid, must_be_ready: bool) -> Option<OutpostId> {
-        self.outposts
-            .iter()
-            .filter(|(_, live)| live.target_pid == pid && (live.ready || !must_be_ready))
-            .map(|(outpost, _)| *outpost)
-            .max()
+        let newest = |serves: &dyn Fn(&Live) -> bool| {
+            self.outposts
+                .iter()
+                .filter(|(_, live)| serves(live) && (live.ready || !must_be_ready))
+                .map(|(outpost, _)| *outpost)
+                .max()
+        };
+        newest(&|live| live.application == Some(pid))
+            .or_else(|| newest(&|live| live.target_pid == pid))
     }
 
     /// Every live incarnation, for sending the nodes held in each.
@@ -169,6 +206,26 @@ mod tests {
         assert_eq!(live.newest(Pid(40)), Some(OutpostId(6)));
         live.mark_ready(OutpostId(6));
         assert_eq!(live.ready(Pid(40)), Some(OutpostId(6)));
+    }
+
+    #[test]
+    fn a_console_hosts_outpost_serves_its_consoles_client() {
+        // The console host, 30, hosts the console of the client, 20, which
+        // also has an outpost of its own.
+        let mut live = LiveOutposts::default();
+        live.started(OutpostId(3), Pid(30));
+        live.mark_ready(OutpostId(3));
+        live.started(OutpostId(4), Pid(20));
+        live.mark_ready(OutpostId(4));
+        assert_eq!(live.ready(Pid(20)), Some(OutpostId(4)), "not yet known");
+
+        live.reports_for(OutpostId(3), Pid(20));
+        assert_eq!(live.ready(Pid(20)), Some(OutpostId(3)));
+        assert_eq!(live.newest(Pid(20)), Some(OutpostId(3)));
+        assert_eq!(live.target_for(Pid(20)), Pid(30));
+        assert_eq!(live.application_of(OutpostId(3)), Some(Pid(20)));
+        assert_eq!(live.application_of(OutpostId(4)), Some(Pid(20)));
+        assert_eq!(live.target_for(Pid(41)), Pid(41), "no outpost serves it");
     }
 
     #[test]

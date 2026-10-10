@@ -62,7 +62,7 @@ use super::intake::{Entry, Item, Object, Planned, UiaEvent, UiaKind, window_of};
 use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, CONSOLE_WINDOW_CLASS, OpenWatch};
 use super::window::{
-    event_window_unreadable, focus_window_of, foreground_window_handle,
+    console_client, event_window_unreadable, focus_window_of, foreground_window_handle,
     front_is_another_thread_of_its_application, now_ms, top_level_of,
     window_belongs_to_hidden_frame, window_facts, window_is_foreground, window_is_hidden_frame,
     window_is_visible, window_owner,
@@ -1499,6 +1499,7 @@ impl Worker<'_> {
                 observed_at_ms,
                 backend,
                 window: window.map(window_facts),
+                application: window.and_then(|hwnd| console_client(hwnd, self.context.target_pid)),
                 timing: EventTiming {
                     published_at_us: now_us(),
                     calls: take_calls(),
@@ -2621,20 +2622,24 @@ impl Worker<'_> {
 
     /// Reports the top-level window of `hwnd`, a focus's window, as the
     /// foreground, read as a foreground report reads it, when another
-    /// process owns that window and it is the foreground window: a console
-    /// window, which Windows names as its shell's, around the console
-    /// host's text area, or the Settings app's frame, `ApplicationFrameHost`'s,
-    /// around its content. The window's own outpost reports it on the
-    /// foreground change, but nothing orders the two outposts, and a window
-    /// reported after a focus inside it is not announced: reported here,
-    /// just before the focus, it reaches Core first whichever outpost is
-    /// quicker, and the reducer announces it once (`reduce_focus_changed`,
-    /// a foreground report for the window already holding the focus says
-    /// nothing).
+    /// process owns that window and it is the foreground window: the
+    /// Settings app's frame, `ApplicationFrameHost`'s, around its content.
+    /// The window's own outpost reports it on the foreground change, but
+    /// nothing orders the two outposts, and a window reported after a focus
+    /// inside it is not announced: reported here, just before the focus, it
+    /// reaches Core first whichever outpost is quicker, and the reducer
+    /// announces it once (`reduce_focus_changed`, a foreground report for
+    /// the window already holding the focus says nothing).
+    ///
+    /// Never a console window, though Windows names its client as its
+    /// owner: every event for it comes to its console host's outpost, which
+    /// reports it on its own foreground event, in order with its text
+    /// area's focus (`docs/design/focus-pipeline.md`, section 5.4).
     fn report_foreign_window(&mut self, trace: TraceId, observed_at_ms: u64, hwnd: isize) {
         let top = top_level_of(hwnd);
         if top == 0
             || window_owner(top).1 == self.context.target_pid
+            || window_class_name(top) == CONSOLE_WINDOW_CLASS
             || window_belongs_to_hidden_frame(top)
             || !window_is_foreground(top)
         {
@@ -2823,6 +2828,19 @@ impl Worker<'_> {
             tracing::debug!("UIA focus dropped: the element does not have the keyboard focus");
             return;
         }
+        // The console host's window element, the parent of its text area,
+        // reports the keyboard focus whenever the text area has it, and its
+        // focus events, which come around the text area's, are never the
+        // focus: NVDA refuses them whatever the element reports
+        // (`consoleUIAWindow.shouldAllowUIAFocusEvent` is false,
+        // `NVDAObjects/UIA/winConsoleUIA.py` 356 to 358, given to the element
+        // whose automation id is "Console Window", 446 and 447; checked in
+        // `UIAHandler/__init__.py` 948 to 953). It is the one element whose
+        // own window is the console window; the text area has none.
+        if fact_hwnd != 0 && window_class_name(fact_hwnd) == CONSOLE_WINDOW_CLASS {
+            tracing::debug!("UIA focus dropped: the console window's own focus");
+            return;
+        }
         let reading = Instant::now();
         let Ok((element, moved_on)) = self.uia_focus_element(fact, (fact_hwnd, focus_window))
         else {
@@ -2941,13 +2959,6 @@ impl Worker<'_> {
             LiveFocus::Found(element) => Ok((Some(element), false)),
             LiveFocus::InAnotherApplication => {
                 tracing::debug!("UIA focus dropped: the focus is in another application now");
-                Err(Dropped)
-            }
-            LiveFocus::Elsewhere(_) if window_class_name(fact_hwnd) == CONSOLE_WINDOW_CLASS => {
-                // The console host's window, the parent of its text area,
-                // whose focus events NVDA refuses whatever the element
-                // reports ([`own_element_focused`](Self::own_element_focused)).
-                tracing::debug!("UIA focus dropped: the console window's own focus");
                 Err(Dropped)
             }
             LiveFocus::Elsewhere(focused) => {
@@ -3237,21 +3248,15 @@ impl Worker<'_> {
     /// The element of `own_window`, the window of the focus `runtime_id`
     /// names, when it is that element and has the keyboard focus, read in
     /// two calls, each of which UIA ends after its call timeout; `None`
-    /// otherwise, for no window, and for
-    /// the console host's window. The console window's element is the
-    /// parent of its text area and reports the keyboard focus whenever the
-    /// text area has it, and its focus events, which come around the text
-    /// area's, are never the focus: NVDA refuses them whatever the element
-    /// reports (`consoleUIAWindow.shouldAllowUIAFocusEvent` is false,
-    /// `NVDAObjects/UIA/winConsoleUIA.py` 356 to 358, given to the element
-    /// whose automation id is "Console Window", 446 and 447; checked in
-    /// `UIAHandler/__init__.py` 948 to 953).
+    /// otherwise, and for no window. The console host's window never gets
+    /// here: its focus is dropped before any read
+    /// ([`uia_focus`](Self::uia_focus)).
     fn own_element_focused(
         &mut self,
         runtime_id: &[i32],
         own_window: isize,
     ) -> Option<IUIAutomationElement> {
-        if own_window == 0 || window_class_name(own_window) == CONSOLE_WINDOW_CLASS {
+        if own_window == 0 {
             return None;
         }
         let uia = self.client.uia()?;

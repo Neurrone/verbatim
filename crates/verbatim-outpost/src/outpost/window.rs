@@ -17,8 +17,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{BOOL, HSTRING, s, w};
 
-use verbatim_model::{HIDDEN_FRAME_WINDOW_PROP, WindowFacts, WindowHandle};
+use verbatim_model::{HIDDEN_FRAME_WINDOW_PROP, Pid, WindowFacts, WindowHandle};
 
+use super::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::arbitration::window_class_name;
 
 /// Milliseconds since the Unix epoch, the observation timestamp that anchors
@@ -113,6 +114,26 @@ pub(crate) fn top_level_of(handle: isize) -> isize {
     // SAFETY: GetAncestor tolerates any handle, returning null for an invalid
     // one.
     unsafe { GetAncestor(hwnd(handle), GA_ROOT) }.0 as isize
+}
+
+/// The application an event in `handle` belongs to when it is not
+/// `target_pid`, the outpost's target: for a window in a console window,
+/// which only the console host's outpost reports, the console's client,
+/// which Windows names as the console window's owner, as NVDA gives a
+/// console window and its text area the client's app module
+/// (`UIA._get_processID`, `NVDAObjects/UIA/__init__.py` 2336 to 2346;
+/// `appModuleHandler.getAppModuleForNVDAObject`, `appModuleHandler.py` 227
+/// to 238). `None` for every other window.
+pub(super) fn console_client(handle: isize, target_pid: u32) -> Option<Pid> {
+    let top = top_level_of(handle);
+    client_of(&window_class_name(top), window_owner(top).1, target_pid).map(Pid)
+}
+
+/// The client of a top-level window of class `class` that
+/// `GetWindowThreadProcessId` says `owner` owns, reported by `target_pid`'s
+/// outpost: the owner, for a console window that is not the target's own.
+fn client_of(class: &str, owner: u32, target_pid: u32) -> Option<u32> {
+    (class == CONSOLE_WINDOW_CLASS && owner != 0 && owner != target_pid).then_some(owner)
 }
 
 /// The class name of `handle`'s parent window, or `None` when it has none.
@@ -473,6 +494,28 @@ mod tests {
         destroy_window(window);
         assert_eq!(event_window_unreadable(window), Some("no window"));
         assert_eq!(event_window_unreadable(0), Some("no window"));
+    }
+
+    #[test]
+    fn an_event_in_a_console_window_belongs_to_the_consoles_client() {
+        // The console host's outpost, 30, reports the window Windows says
+        // its client, 20, owns.
+        assert_eq!(client_of(CONSOLE_WINDOW_CLASS, 20, 30), Some(20));
+    }
+
+    #[test]
+    fn an_event_in_any_other_window_belongs_to_the_target() {
+        assert_eq!(client_of("Notepad", 20, 30), None);
+        assert_eq!(
+            client_of(CONSOLE_WINDOW_CLASS, 30, 30),
+            None,
+            "a console window that is the target's own"
+        );
+        assert_eq!(
+            client_of(CONSOLE_WINDOW_CLASS, 0, 30),
+            None,
+            "a window whose owner cannot be told"
+        );
     }
 
     #[test]

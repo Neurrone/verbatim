@@ -969,22 +969,44 @@ verified.
   - An alert-role object's alert event, as above.
 - Live regions (browsers). NVDA: in-process IA2 machinery
   ([IA2 usage](nvda/ia2.md)). Verbatim: **not yet (M6)**.
-- A window and its content in two processes. A console window, which
-  Windows names as its shell's, holds the console host's text area, and
-  the Settings app's frame, `ApplicationFrameHost`'s, holds
-  `SystemSettings`'s page. NVDA handles the frame's foreground event and
-  the content's focus event in one queue, in the order they were raised,
-  so it announces the window and then the focus. Verbatim's two outposts,
-  one for each process, report them with nothing ordering them, and the
-  reducer says nothing for a window reported after a focus inside it, so
-  the window went unannounced whenever the content's outpost was
-  quicker. **Matched since 2026-10-08, by another route**: an outpost
-  reporting a focus whose top-level window belongs to another process
-  and is the foreground window reports that window first, read as a
-  foreground report reads it, so the window reaches Core before the focus
-  whichever outpost is quicker, and its second report says nothing
-  (reducer tests feeding both orders, for a console window and for a
-  Settings page).
+- A window and its content in two processes. The Settings app's frame,
+  `ApplicationFrameHost`'s, holds `SystemSettings`'s page. NVDA handles
+  the frame's foreground event and the content's focus event in one
+  queue, in the order they were raised, so it announces the window and
+  then the focus. Verbatim's two outposts, one for each process, report
+  them with nothing ordering them, and the reducer says nothing for a
+  window reported after a focus inside it, so the window went unannounced
+  whenever the content's outpost was quicker. **Matched since 2026-10-08,
+  by another route**: an outpost reporting a focus whose top-level window
+  belongs to another process and is the foreground window reports that
+  window first, read as a foreground report reads it, so the window
+  reaches Core before the focus whichever outpost is quicker, and its
+  second report says nothing (a reducer test feeding both orders). A
+  console window was handled the same way until 2026-10-11; it is now
+  one application, below.
+- Console windows. Windows names a console window's owner, by
+  `GetWindowThreadProcessId`, as the console's client (such as
+  `powershell.exe`), while the window, its UIA provider and its text
+  area are the console host's. NVDA gives the window and its text area
+  the client's app module (`UIA._get_processID`,
+  `NVDAObjects/UIA/__init__.py` 2336 to 2346;
+  `appModuleHandler.getAppModuleForNVDAObject`, `appModuleHandler.py` 227
+  to 238) and learns the console host's real thread from the console's
+  `WinEvents` (`consoleWindowsToThreadIDs`,
+  `IAccessibleHandler/internalWinEventHandler.py` 266 to 273). **Matched
+  since 2026-10-11, pending live checks**: the focus listener sends every
+  `WinEvent` for a console window to the console host's outpost, the
+  process of the event's own thread (`GetProcessIdOfThread`), where its
+  UIA events already went, and that outpost reports its events in a
+  console window with the client as the application, so one outpost
+  reports the window, once, with one name. Before, the client's outpost
+  reported the window and the console host's outpost reported it again
+  before the text area's focus, so the window could be read twice, and
+  an elevated console's two reads gave two names. When the event's
+  thread cannot be opened, the event goes to the client's outpost, as
+  NVDA falls back to the window's own thread; and before any event from
+  a console, the client's outpost answers for it (at start-up, when the
+  console is in front).
 - A control's own focus with a focused child. A Win32 control taking
   the focus, such as a tree view (`SysTreeView32`) or a tab control
   (`SysTabControl32`), raises a focus event on itself (child id 0) and
@@ -1298,7 +1320,10 @@ verified.
     host's window element never gives the focus, whatever it reports, as
     NVDA's `consoleUIAWindow` refuses its focus events
     (`NVDAObjects/UIA/winConsoleUIA.py` 356 to 358 and 446 to 447;
-    **matched since 2026-10-08**). Verbatim first
+    **matched since 2026-10-08**; since 2026-10-11 as NVDA does it, one
+    rule, before any read: before then the outpost reported the window's
+    focus when the focused element read answered the window itself,
+    provisional, awaiting Dickson). Verbatim first
     requires the delivered properties to say so; the outpost then reads
     the focused element live, when its worker reaches the fact, and drops
     the fact when the focus is in another application now. **Different

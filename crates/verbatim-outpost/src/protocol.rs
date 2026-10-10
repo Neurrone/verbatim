@@ -96,7 +96,8 @@ pub struct UiaSnapshotFact {
 /// properties, an MSAA fact forwards the raw `WinEvent` address untouched.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ListenerFact {
-    /// The application the fact concerns.
+    /// The process whose outpost handles the fact: the application it
+    /// concerns, or, for a console window, its console host.
     pub pid: Pid,
     /// The fact itself, as the target outpost receives it.
     pub fact: DeliveredFact,
@@ -545,6 +546,15 @@ pub enum OutpostToSupervisor {
         /// when the event was observed; `None` when it had no window.
         #[serde(default)]
         window: Option<WindowFacts>,
+        /// The application the event belongs to when it is not the
+        /// outpost's target: for an event in a console window, which the
+        /// console host's outpost reports, the console's client, the
+        /// window's owner by `GetWindowThreadProcessId`, as NVDA gives a
+        /// console window and its text area the client's app module
+        /// (`docs/design/focus-pipeline.md`, section 5.4). `None` for the
+        /// target itself.
+        #[serde(default)]
+        application: Option<Pid>,
         /// When the event reached each point in the outpost, for the
         /// latency log.
         #[serde(default)]
@@ -782,6 +792,7 @@ mod tests {
             observed_at_ms: 1_752_000_000_000,
             backend: Backend::Msaa,
             window: None,
+            application: Some(Pid(20)),
             event: NormalizedEvent::FocusChanged {
                 foreground: false,
                 ancestors: Vec::new(),
@@ -837,6 +848,7 @@ mod tests {
             observed_at_ms: 0,
             backend: Backend::Uia,
             window: None,
+            application: None,
             event: NormalizedEvent::FocusChanged {
                 node: snapshot(1),
                 foreground: false,

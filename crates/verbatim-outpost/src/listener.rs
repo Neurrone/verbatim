@@ -17,9 +17,11 @@
 //! building a fact is local memory reads (plus `GetRuntimeId`, a local read
 //! on a cached element); an MSAA `WinEvent` delivers a raw window and object
 //! address, forwarded untouched; the only other reads are hang-safe local
-//! ones: `GetWindowThreadProcessId`, which names the owning process, and,
-//! for a UIA focus on an element with no window of its own,
-//! `GetGUIThreadInfo`, which names the keyboard focus window. A foreground
+//! ones: `GetWindowThreadProcessId`, which names the owning process;
+//! `GetProcessIdOfThread` on the event's own thread, which names a console
+//! window's console host ([`routed_process`]); and, for a UIA focus on an
+//! element with no window of its own, `GetGUIThreadInfo`, which names the
+//! keyboard focus window. A foreground
 //! event is forwarded unchecked; the outpost's worker checks that its
 //! window is the foreground when it handles it, as NVDA's
 //! `processForegroundWinEvent` does. No cross-process calls means no
@@ -61,8 +63,10 @@ use verbatim_uia::map::{
 };
 use verbatim_uia::{FocusRegistration, Registration, Scope, Subscription};
 
+use crate::arbitration::window_class_name;
 use crate::event_thread::EventThread;
 use crate::outpost::now_ms;
+use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::protocol::{
     DeliveredFact, EventTiming, FactKey, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
     UiaSnapshotFact, now_us, read_message, write_message,
@@ -239,9 +243,17 @@ impl Listener {
         let msaa_outgoing = Arc::clone(&outgoing);
         let make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync> = Arc::new(move || {
             let outgoing = Arc::clone(&msaa_outgoing);
-            Box::new(move |kind, hwnd, id_object, id_child, raised_ms_ago| {
-                forward_msaa_event(&outgoing, kind, hwnd, id_object, id_child, raised_ms_ago);
-            })
+            Box::new(
+                move |kind, hwnd, id_object, id_child, thread, raised_ms_ago| {
+                    forward_msaa_event(
+                        &outgoing,
+                        kind,
+                        (hwnd, id_object, id_child),
+                        thread,
+                        raised_ms_ago,
+                    );
+                },
+            )
         });
         let event_thread = EventThread::spawn(0, LISTENER_SUBSCRIPTIONS, make_callback);
 
@@ -450,16 +462,15 @@ fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Option<Registratio
     }
 }
 
-/// Forwards one global MSAA `WinEvent` as a fact. Reads the owning pid with
-/// `GetWindowThreadProcessId` (a hang-safe local call) and drops a null
-/// window or a pid-zero owner; the raw object address is forwarded untouched,
-/// and the app outpost does the acquisition.
+/// Forwards one global MSAA `WinEvent`, raised on `thread`, as a fact for
+/// the process [`routed_process`] names. Drops a null window or a pid-zero
+/// owner; the raw object address is forwarded untouched, and the app
+/// outpost does the acquisition.
 fn forward_msaa_event(
     outgoing: &Outgoing,
     kind: WinEventKind,
-    hwnd: isize,
-    id_object: i32,
-    id_child: i32,
+    (hwnd, id_object, id_child): (isize, i32, i32),
+    thread: u32,
     raised_ms_ago: u32,
 ) {
     if matches!(kind, WinEventKind::MenuEnd | WinEventKind::SwitchEnd) {
@@ -472,9 +483,26 @@ fn forward_msaa_event(
     if hwnd == 0 {
         return;
     }
-    let pid = window_pid(hwnd);
-    if pid == 0 {
+    let owner = window_pid(hwnd);
+    if owner == 0 {
         return;
+    }
+    let pid = routed_process(&window_class_name(hwnd), owner, || {
+        process_of_thread(thread)
+    });
+    if pid != owner {
+        if outgoing.ignored.contains(Pid(owner)) {
+            // The console of a process Verbatim ignores, whose events were
+            // dropped by its owner before they went to its console host.
+            return;
+        }
+        tracing::debug!(
+            hwnd,
+            ?kind,
+            console_host = pid,
+            client = owner,
+            "a console window's event goes to its console host"
+        );
     }
     let fact = match kind {
         WinEventKind::Focus => DeliveredFact::MsaaFocus {
@@ -511,6 +539,55 @@ fn forward_msaa_event(
 /// The owning process id of `hwnd`, or 0 for an invalid or ownerless window.
 fn window_pid(hwnd: isize) -> u32 {
     crate::outpost::window::window_owner(hwnd).1
+}
+
+/// The process whose outpost a `WinEvent` goes to, for a window of class
+/// `class` that `GetWindowThreadProcessId` says `owner` owns. For a console
+/// window it is the console host, the process of the thread that raised
+/// the event, which `host` reads: Windows names the console's client (such
+/// as `powershell.exe`) as a console window's owner, but the window, its
+/// UIA provider and its text area are the console host's, and a `WinEvent`
+/// always names the window's real thread (NVDA's
+/// `consoleWindowsToThreadIDs`, `IAccessibleHandler/internalWinEventHandler.py`
+/// 266 to 273; `UIA._get_processID`, `NVDAObjects/UIA/__init__.py` 2336 to
+/// 2346). Every event for a console window then reaches the outpost that
+/// receives its UIA events, which reports the client as the application
+/// (`docs/design/focus-pipeline.md`, section 5.4). When the host cannot be
+/// read, the owner, as NVDA falls back to the window's own thread for a
+/// console window it has seen no event from.
+fn routed_process(class: &str, owner: u32, host: impl FnOnce() -> Option<u32>) -> u32 {
+    if class == CONSOLE_WINDOW_CLASS {
+        host().unwrap_or(owner)
+    } else {
+        owner
+    }
+}
+
+/// The process `thread` belongs to, read with `GetProcessIdOfThread`, a
+/// local call; `None` when the thread cannot be opened, such as one that
+/// has ended.
+fn process_of_thread(thread: u32) -> Option<u32> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        GetProcessIdOfThread, OpenThread, THREAD_QUERY_LIMITED_INFORMATION,
+    };
+    // SAFETY: OpenThread has no preconditions; the handle is owned here and
+    // closed below.
+    let handle = match unsafe { OpenThread(THREAD_QUERY_LIMITED_INFORMATION, false, thread) } {
+        Ok(handle) => handle,
+        Err(error) => {
+            tracing::warn!(thread, %error, "a console window's thread could not be opened");
+            return None;
+        }
+    };
+    // SAFETY: `handle` is an open thread handle with the access the call
+    // needs.
+    let pid = unsafe { GetProcessIdOfThread(handle) };
+    // SAFETY: `handle` was opened above and is closed once.
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
+    (pid != 0).then_some(pid)
 }
 
 /// Runs the focus listener driven by the Core pipes: reads commands from
@@ -574,6 +651,33 @@ mod tests {
             id_object: -4,
             id_child: 0,
         }
+    }
+
+    #[test]
+    fn a_console_windows_event_goes_to_the_process_of_its_thread() {
+        // Windows names the client, 20, as the console window's owner; the
+        // event's thread is the console host's, in 30.
+        assert_eq!(routed_process(CONSOLE_WINDOW_CLASS, 20, || Some(30)), 30);
+    }
+
+    #[test]
+    fn a_console_windows_event_whose_thread_cannot_be_read_goes_to_its_owner() {
+        assert_eq!(routed_process(CONSOLE_WINDOW_CLASS, 20, || None), 20);
+    }
+
+    #[test]
+    fn any_other_windows_event_goes_to_its_owner_without_reading_its_thread() {
+        assert_eq!(
+            routed_process("Notepad", 20, || panic!("the thread is not read")),
+            20
+        );
+    }
+
+    #[test]
+    fn a_threads_process_is_read_from_the_thread() {
+        // SAFETY: GetCurrentThreadId has no preconditions.
+        let thread = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+        assert_eq!(process_of_thread(thread), Some(std::process::id()));
     }
 
     #[test]
