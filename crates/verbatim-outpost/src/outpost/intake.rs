@@ -509,77 +509,82 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
             };
             (key, Category::Uncounted, event.hwnd)
         }
-        Item::Fact(fact) => match fact {
-            // Selections and notifications routed from the listener are
-            // UIA events, never counted.
-            DeliveredFact::UiaSelection { hwnd, snapshot, .. } => (
-                Some(Key::Uia(1, 0, snapshot.runtime_id.clone())),
-                Category::Uncounted,
-                *hwnd,
-            ),
-            DeliveredFact::UiaNotification { hwnd, .. } => (None, Category::Uncounted, *hwnd),
-            // Alerts and shows routed from the listener are ordinary MSAA
-            // events, limited per thread.
-            DeliveredFact::Alert {
-                hwnd,
-                id_object,
-                id_child,
-            }
-            | DeliveredFact::Show {
-                hwnd,
-                id_object,
-                id_child,
-            } => {
-                let kind = if matches!(fact, DeliveredFact::Show { .. }) {
-                    WinEventKind::Show
-                } else {
-                    WinEventKind::Alert
-                };
-                let key = Key::Msaa(kind as u8, *hwnd, *id_object, *id_child);
-                (Some(key), Category::Other, *hwnd)
-            }
-            DeliveredFact::UiaMenuOpened { hwnd, snapshot } => (
-                Some(Key::UiaMenuOpened(snapshot.runtime_id.clone())),
-                Category::Uncounted,
-                *hwnd,
-            ),
-            DeliveredFact::Foreground { hwnd } => {
-                (Some(Key::Foreground(*hwnd)), Category::Focus, *hwnd)
-            }
-            DeliveredFact::MsaaFocus {
-                hwnd,
-                id_object,
-                id_child,
-            } => (
-                Some(Key::MsaaFocus(*hwnd, *id_object, *id_child)),
-                Category::Focus,
-                *hwnd,
-            ),
-            DeliveredFact::UiaFocus {
-                hwnd,
-                focus_window,
-                snapshot,
-            } => (
-                Some(Key::UiaFocus(snapshot.runtime_id.clone())),
-                Category::Uncounted,
-                if *hwnd == 0 { *focus_window } else { *hwnd },
-            ),
-            DeliveredFact::MenuPopup {
-                hwnd,
-                id_object,
-                id_child,
-            } => (
-                Some(Key::MenuPopup(*hwnd, *id_object, *id_child)),
-                Category::Uncounted,
-                *hwnd,
-            ),
-        },
+        Item::Fact(fact) => classify_fact(fact),
         // Only the newest list of held nodes matters.
         Item::NodesHeld { .. } => (Some(Key::NodesHeld), Category::Exempt, 0),
         // Only the newest caret report for a node matters, and it is never
         // limited: the focus's caret.
         Item::CaretOf { node_id } => (Some(Key::CaretOf(node_id.number())), Category::Exempt, 0),
         Item::Query { .. } | Item::Settle(_) | Item::Wake => (None, Category::Exempt, 0),
+    }
+}
+
+/// The key, category, and window of a fact routed from the listener.
+fn classify_fact(fact: &DeliveredFact) -> (Option<Key>, Category, isize) {
+    match fact {
+        // Selections and notifications routed from the listener are
+        // UIA events, never counted.
+        DeliveredFact::UiaSelection { hwnd, snapshot, .. } => (
+            Some(Key::Uia(1, 0, snapshot.runtime_id.clone())),
+            Category::Uncounted,
+            *hwnd,
+        ),
+        DeliveredFact::UiaNotification { hwnd, .. } => (None, Category::Uncounted, *hwnd),
+        // Alerts and shows routed from the listener are ordinary MSAA
+        // events, limited per thread.
+        DeliveredFact::Alert {
+            hwnd,
+            id_object,
+            id_child,
+        }
+        | DeliveredFact::Show {
+            hwnd,
+            id_object,
+            id_child,
+        } => {
+            let kind = if matches!(fact, DeliveredFact::Show { .. }) {
+                WinEventKind::Show
+            } else {
+                WinEventKind::Alert
+            };
+            let key = Key::Msaa(kind as u8, *hwnd, *id_object, *id_child);
+            (Some(key), Category::Other, *hwnd)
+        }
+        DeliveredFact::UiaMenuOpened { hwnd, snapshot } => (
+            Some(Key::UiaMenuOpened(snapshot.runtime_id.clone())),
+            Category::Uncounted,
+            *hwnd,
+        ),
+        DeliveredFact::Foreground { hwnd } => {
+            (Some(Key::Foreground(*hwnd)), Category::Focus, *hwnd)
+        }
+        DeliveredFact::MsaaFocus {
+            hwnd,
+            id_object,
+            id_child,
+        } => (
+            Some(Key::MsaaFocus(*hwnd, *id_object, *id_child)),
+            Category::Focus,
+            *hwnd,
+        ),
+        DeliveredFact::UiaFocus {
+            hwnd,
+            focus_window,
+            snapshot,
+        } => (
+            Some(Key::UiaFocus(snapshot.runtime_id.clone())),
+            Category::Uncounted,
+            if *hwnd == 0 { *focus_window } else { *hwnd },
+        ),
+        DeliveredFact::MenuPopup {
+            hwnd,
+            id_object,
+            id_child,
+        } => (
+            Some(Key::MenuPopup(*hwnd, *id_object, *id_child)),
+            Category::Uncounted,
+            *hwnd,
+        ),
     }
 }
 
