@@ -144,7 +144,8 @@ Dickson first.
    full only when it will be spoken; the controlled selection in one
    remote operation; smaller UIA cache requests for text and caret
    events; no outpost started for a background notification (approved
-   2026-10-10). Measure again after steps 3 and 4.
+   2026-10-10). Measure again after steps 3 and 4, from then on in both
+   debug and release builds (Dickson, 2026-10-10).
 5. Events handled in arrival order, removing the focus-first reordering
    (42d9caa, ce53dbc).
 6. A UIA focus judged as it arrives at the outpost, ahead of its queue,
@@ -219,10 +220,20 @@ Other open items, taken after the steps above unless they fold into one:
   most-recently-used order, and a measurement run's Alt+Tab activated the
   owner's own Windows Terminal. This replaces coherence decision 8's
   Alt+Tab in the two-window scenarios. Done with step 2's remaining work.
-- Awaiting Dickson's confirmation: the shell's staging windows are
-  ignored for focus and foreground, as NVDA does; the leave-during-a-flood
-  scenarios keep the direct switch, now the suite's only one; and the 250 ms
-  foreground hold stays removed.
+- Confirmed by Dickson (2026-10-10): the shell's staging windows stay
+  ignored for focus and foreground (NVDA moves its focus to them and says
+  nothing; nothing is heard differently); the 250 ms foreground hold stays
+  removed; the leave-during-a-flood scenarios keep the direct switch and
+  no longer test Alt's cancelling of flood speech, which other scenarios
+  cover; and lists a program redraws in two writes are decided in step 9,
+  whose scenario controls when each piece is written.
+- After step 6 (Dickson, 2026-10-10): the harness's idle barrier
+  (`Request::AwaitIdle`) answers only once every outpost's work in flight
+  is done, events not yet published and caret watches included; the
+  measurement runs heard speech arrive after it.
+- To investigate, then bring to Dickson: after Shift pauses speech, NVDA's
+  next key cancels speech, clearing the pause, where Verbatim reports a
+  resume; whether anything is heard differently.
 
 To resume: read this list, then `phase6-design.md`'s dated sections from
 2026-10-09 on. `docs/tooling.md` covers building in parallel worktrees,
