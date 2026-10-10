@@ -127,10 +127,12 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    `phase6-design.md`, "Time limits that hold"): `CoCancelCall` for MSAA
    calls is left as a recommendation there.
 2. Core: one input channel in arrival order; NVDA's duplicate-focus rule;
-   background speech dropped across a foreground change. Built, pending
-   live checks (`phase6-design.md`, "Core's inputs in arrival order, the
-   duplicate rule, and background speech"): `cargo xtask ci` passes; the
-   related scenarios have not yet been run.
+   background speech dropped across a foreground change. Done (2026-10-11,
+   `phase6-design.md`, "Core's inputs in arrival order, the duplicate rule,
+   and background speech"): every scenario's steps passed in the full suite
+   and in nine further runs of twelve related scenarios; the four failures
+   came after the steps, three recordings shorter than the capture and one
+   flight recorder save that timed out, and are investigated separately.
 3. Console windows: every event to the console host's outpost, with the
    client process as identity; the console special cases removed.
 4. Arrival order in the outposts: 42d9caa and ce53dbc removed; NVDA's MSAA
@@ -342,7 +344,7 @@ Other open items, taken after the steps above unless they fold into one:
   expired.
 - Core picks between the outpost's events and its commands at random, so
   a typed character's echo and the output after it can come in either
-  order. Built in stage A, step 2 (one channel), pending live checks.
+  order. Fixed in stage A, step 2 (one channel).
 - A Windows Terminal terminal was once announced twice: a second UIA focus
   event for the same terminal, about 110 ms after the first, was not taken
   as a duplicate. The cause is not known; reproduce it with logging.
