@@ -420,10 +420,26 @@ Other open items, taken after the steps above unless they fold into one:
   outside NVDA's rule that drops MSAA alert and show events from windows
   that use UIA. Check how Verbatim reads toasts; if it also gets them
   through UIA, adopt NVDA's rule, the expected outcome; if only through
-  MSAA, keep the difference and record it in `docs/parity.md`.
+  MSAA, keep the difference and record it in `docs/parity.md`. Checked
+  from code (2026-10-11): only through MSAA, the alert from a window whose
+  parent is `ToastChildWindowClass`; Verbatim subscribes to no UIA
+  window-opened or tooltip-opened event, NVDA's toast path since Windows
+  10. The difference is recorded in `docs/parity.md`, "Toasts". Question,
+  with a recommendation: whether Windows 11's toasts raise that MSAA
+  alert at all. Recommended: capture a toast live with NVDA and with
+  Verbatim; if Verbatim is silent, follow NVDA, speaking a
+  `Windows.UI.Core.CoreWindow` whose automation id contains `ToastView`
+  on UIA's window-opened event (a desktop-wide subscription in the focus
+  listener, ignoring the same toast again within a second), and then
+  adopt NVDA's rule dropping MSAA alert and show events from native UIA
+  windows. Set aside until that capture.
 - To investigate, then bring to Dickson: after Shift pauses speech, NVDA's
   next key cancels speech, clearing the pause, where Verbatim reports a
-  resume; whether anything is heard differently.
+  resume; whether anything is heard differently. Done from code
+  (2026-10-11): nothing is heard differently, except that NVDA can stay
+  paused when a second Shift comes before its main thread applied the
+  first, a timing artefact not worth copying; recorded in
+  `docs/parity.md`, "When speech is cut off". No change.
 
 To resume: read this list, then `phase6-design.md`'s dated sections from
 2026-10-09 on. `docs/tooling.md` covers building in parallel worktrees,

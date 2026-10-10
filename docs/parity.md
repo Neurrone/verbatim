@@ -679,6 +679,23 @@ verified.
     as a typed character ([Keyboard input](nvda/input.md)), and wired from
     the settings into the running hook since 2026-10-06. NVDA's advanced setting
     to turn the culling of expired focus speech off is not offered.
+  - Shift's pause, compared from code on 2026-10-11. NVDA decides at the
+    key whether Shift pauses or resumes, from whether speech is paused
+    then (`keyboardHandler.py` 736 to 737), and applies it later on its
+    main thread (`inputCore.py` 607 to 612); a cancel stops the synth's
+    player, which ends its pause, and clears the paused state
+    (`speech/speech.py`, `cancelSpeech`), and speaking while paused
+    cancels first. Verbatim toggles the pause on the speech queue thread,
+    in order with cancels, and a cancel or speech arriving while paused
+    ends the pause the same way, reported on the control plane as a
+    resume. Heard the same in every case checked: Shift and then a
+    command key (the key cancels the paused speech, and what it causes is
+    spoken); Shift and then a typed character with speech interrupt for
+    typed characters on (the same) and off (Shift does not pause, and the
+    character does not cancel, in both); Shift alone twice (paused, then
+    resumed where it was). **Different only in a race:** a second Shift
+    pressed before NVDA's main thread has applied the first pause pauses
+    again, so speech stays paused, where Verbatim always resumes.
 - Menu popup announcements. NVDA: menu events with fake-focus
   fallback ([MSAA and winevent handling](nvda/msaa.md)). Verbatim:
   NVDA's menu rules run in the outpost's worker. Within a batch, focus
@@ -878,6 +895,26 @@ verified.
   reducer speaks the object queued from anywhere, never moving focus.
   **matched (unverified)**; the setting to turn toast reporting off is
   **not yet**.
+  **Different** (checked from code on 2026-10-11): NVDA drops every
+  WinEvent, alert and show included, from a window that is native UIA
+  (`IAccessibleHandler/__init__.py`, `winEventToNVDAEvent`, the
+  `isUIAWindow` check), and an MSAA alert is spoken only for an object
+  whose role is alert; the toasts it speaks come through UIA instead:
+  since Windows 10 a toast is a `Windows.UI.Core.CoreWindow` whose
+  automation id contains `ToastView`, spoken on UIA's window-opened event
+  (`Toast_win10` in `NVDAObjects/UIA/__init__.py`, the `Notification`
+  behavior), with a repeat of the same toast within a second ignored;
+  Windows 8's `ToastContentHost` tooltip on UIA's tooltip-opened event.
+  Verbatim subscribes to neither UIA event, and receives toasts only
+  through the MSAA alert, which it takes from any window whose parent is
+  `ToastChildWindowClass`, native UIA or not, and speaks whatever the
+  object's role. A UIA notification event is not a toast path in either:
+  both speak those only from the focus's application. Whether Windows 11
+  raises that MSAA alert for its toasts at all is unverified; if it does
+  not, Verbatim says nothing for a toast that NVDA speaks. Help balloons
+  are not affected: a `tooltips_class32` window is a standard Win32
+  control, not native UIA, so NVDA's rule leaves its show event alone and
+  the two match.
 - Other alerts. NVDA speaks an alert at once when the object's role is
   alert, it has a name, description, or children, and it is not already
   among the focus's ancestors (`event_alert` on IAccessible objects).
@@ -1237,12 +1274,19 @@ verified.
     (`NVDAObjects/UIA/winConsoleUIA.py` 356 to 358 and 446 to 447;
     **matched since 2026-10-08**). Verbatim first
     requires the delivered properties to say so; the outpost then reads
-    the focused element live and drops a fact whose element is not the
-    one focused, as NVDA's handler returns without queuing the focus
-    (`UIAHandler/__init__.py`, lines 948 to 953), leaving the next focus
-    event to report the focus; and the remote operation that reads the
-    ancestors reads `HasKeyboardFocus` live again in the same round trip,
-    dropping the fact the same way when it is false. Until 2026-10-08 the
+    the focused element live, when its worker reaches the fact, and drops
+    the fact when the focus is in another application now. **Different
+    since 2026-10-09** (corrected 2026-10-11): when the read names another
+    element of the same application, the fact is not dropped as NVDA's
+    handler drops it (`UIAHandler/__init__.py`, lines 948 to 953) but
+    reported as its event said, unless one of Verbatim's own rules drops
+    it (see the switching of Windows Terminal's tabs under terminals);
+    NVDA judges much earlier, as the event arrives, so the two drop
+    different focus events. When the element is the one focused, the
+    remote operation that reads the ancestors reads `HasKeyboardFocus`
+    live again in the same round trip and drops the fact when it is
+    false. `docs/design/focus-pipeline.md` (approved, not built) moves the
+    live check to the listener, on the event's own element. Until 2026-10-08 the
     outpost held such a fact back and read the focused element again, up
     to three times. With remote operations off, the
     focused-element read is the live check. Since 2026-10-08, when the
@@ -1405,11 +1449,24 @@ verified.
   before).
 - MSAA winevent flood control (per-thread caps, focus coalescing,
   latest-menu-only). NVDA: `OrderedWinEventLimiter`
-  ([MSAA and winevent handling](nvda/msaa.md)). Verbatim: **matched**,
-  in each outpost's intake, which applies NVDA's limiter rules to its
-  MSAA events and its UIA events alike
+  ([MSAA and winevent handling](nvda/msaa.md)); NVDA's limits of 4 focus
+  events and 10 events per thread apply to WinEvents only
+  (`IAccessibleHandler/orderedWinEventLimiter.py`), and its UIA events
+  are only coalesced, one per element and kind per flush, with no count
+  limit (`nvdaHelper/local/UIAEventLimiter/rateLimitedEventHandler.cpp`).
+  Verbatim: **matched for MSAA, different for UIA** (corrected
+  2026-10-11; this entry had called it matched for both). Each outpost's
+  intake applies the limiter's rules to its MSAA events and its UIA
+  events alike, so a UIA focus, menu opening, selection or notification
+  counts against the same limits, and in a burst UIA events NVDA would
+  queue are dropped
   ([verbatim-outpost](crates/verbatim-outpost.md), the queue under
-  `Outpost`): one
+  `Outpost`). The per-thread count is keyed by the thread of the event's
+  window, where NVDA keys it by the thread the event came from; the two
+  differ for console windows. The approved design,
+  `docs/design/focus-pipeline.md` section 5.1, changes both: the limits
+  count MSAA events only, by the event's own thread, and the UIA focus
+  candidate limit below goes. What it does today: one
   waiting entry per object and kind, a newer one replacing it and moving
   to the back; a batch is everything that arrived while the worker
   handled the previous one; per batch the newest 4 focus events and the
@@ -1420,9 +1477,12 @@ verified.
   counted among the focus events alone, and File Explorer's focus events
   after a folder window's foreground event crowded the event out); events from a window the system
   reports hung are dropped before any read; within a batch only the
-  newest foreground change and the newest focus are handled, falling
-  back to up to three older focus events when the newest cannot be
-  reported, and the newest menu opening is handled last. Before an
+  newest foreground change is handled; of MSAA's focus events the newest
+  is tried first, falling back to the two older ones before it when it
+  cannot be reported (three in all, across the whole batch), where NVDA
+  collapses only consecutive runs and tries up to four; the newest three UIA focus events are each handled, oldest
+  first, and older ones dropped; and the newest menu opening is handled
+  last. Before an
   outpost hears them, the focus listener coalesces its facts by the same
   one-per-object-and-kind rule, and the supervisor holds the facts that
   arrive while an outpost starts by that rule too, and lets a newer fact
@@ -2079,14 +2139,25 @@ verified.
   thread receives it (`IUIAutomationFocusChangedEventHandler_HandleFocusChangedEvent`
   and `shouldAllowUIAFocusEvent`, `nvda/source/UIAHandler/__init__.py`
   lines 948 to 953 and `nvda/source/NVDAObjects/UIA/__init__.py` lines
-  1632 to 1637), and queues every UIA focus event it accepts. Verbatim
-  now does the same: an outpost reports a UIA focus whose event said it
-  had the keyboard focus though another element of the application has
-  it by the time the outpost handles it, unless its element is gone or
-  holds the element focused now (a container passing the focus on), and
-  handles every UIA focus of a batch in turn, oldest first, where it had
-  handled only the newest; Core culls the speech of a focus no longer
-  current as it expires. Windows Terminal raises its tabs' focus events
+  1632 to 1637), on its UIA flusher thread a few milliseconds after the
+  event, and queues every UIA focus event it accepts. Verbatim does not
+  judge at receipt (corrected 2026-10-11; this entry had said Verbatim
+  does the same). Its focus listener makes no call into the application,
+  so the outpost judges the focus when its worker reaches the fact, after
+  the relay and whatever the worker was handling, by reading the
+  system's focused element rather than the event's own element, which
+  stays in the listener's process. When that read names another element
+  of the application, the outpost reports the focus as its event said,
+  unless the element is gone, holds the element focused now (a container
+  passing the focus on), or is the tab left (below): so a focus that has
+  moved on, which NVDA would drop if it had already moved when NVDA
+  judged it, is announced and then culled, and the rules that drop one
+  are Verbatim's, not NVDA's. Each batch's newest three UIA focus events
+  are handled in turn, oldest first, and older ones dropped; Core culls
+  the speech of a focus no longer current as it expires. The approved
+  design, `docs/design/focus-pipeline.md`, moves the judgement to the
+  listener, reading the event's own element as it arrives, as NVDA does,
+  and removes these rules; it is not built yet. Windows Terminal raises its tabs' focus events
   from elements that are not in its tree, so the outpost finds the tab by
   the name and position the event gave it, and takes its ancestors and
   states from there, read as it handles the event, as NVDA reads them as
