@@ -1928,7 +1928,9 @@ verified.
   one line however many rows it took; newer
   output never cancels older; a key, or anything else that cuts speech
   off, drops output still waiting, as in NVDA, and output read before
-  the key is never spoken after it. **Different:** the backlog is capped
+  the key is never spoken after it, while output read after the key is
+  spoken, as in NVDA (Dickson, 2026-10-10; the `*_control_flood`
+  scenarios). **Different:** the backlog is capped
   ("30 and 30", `phase6-design.md`, "The flood policy, reconsidered"):
   with more than "Lines spoken in full" (30) lines waiting once a
   group's last line has been heard, the older ones become "skipped N

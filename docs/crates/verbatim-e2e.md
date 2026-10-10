@@ -457,9 +457,11 @@ full, and move it down a line and back up: each move says only the line
 it brought onto the screen, "page line 30" and then "page line 1".
 
 Keys during output (`scenarios/terminal_key_timing.rs`), each in both
-terminals: Control while a flood's first line plays cuts it and drops
-what waits, and the flood's later part, let go by a file the scenario
-writes, is a burst of its own (`*_control_flood`); Shift twice pauses
+terminals: Control, pressed once the flood's last line is queued (the
+evidence that the whole flood was read), cuts off everything still
+queued and nothing more is said, and the lines the script writes after
+Control, let go by a file the scenario writes, are spoken, as in NVDA
+(`*_control_flood`); Shift twice pauses
 and resumes with nothing lost, each change waited for and asserted as
 Verbatim reports it (`SpeechCollector::expect_paused` and
 `expect_resumed`) (`*_shift_flood`); Up Arrow once a flood

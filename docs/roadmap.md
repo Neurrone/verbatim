@@ -153,7 +153,9 @@ the diff's work on a 9,000-line overflow and a 2,000-line flood.
 
 Stage B, needing no decision: the control-flood scenarios follow NVDA
 (Control cancels what is queued; output read after it is spoken, and the
-scenarios wait on evidence instead of the race); a Settings search
+scenarios wait on evidence instead of the race; done, pending live runs:
+Control is pressed once the flood's last line is queued, and the lines
+written after it are spoken); a Settings search
 suggestions scenario with an NVDA capture; toasts, adopting NVDA's rule if
 UIA delivers them; Shift's pause compared with NVDA's; the missing "blank"
 in `conhost_leave_flood`; the wrong `docs/parity.md` entries the audit

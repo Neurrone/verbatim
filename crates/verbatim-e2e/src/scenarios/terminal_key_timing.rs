@@ -4,15 +4,19 @@
 //! terminals as its own code (`docs/testing.md`). The shared setup is
 //! described in the `terminal` module.
 //!
-//! - `*_control_flood`: Control while a flood's first line plays.
-//!   `gated.ps1` writes "flood line 1" to "flood line 100", then writes the
-//!   file `half` and waits for the file `more` before it writes lines 101
-//!   to 2000, so Control comes while the shell is waiting and everything it
-//!   wrote is on screen. Control cuts the playing line and the two queued
-//!   behind it off, and drops everything waiting; nothing more is said.
-//!   Once `more` is written, lines 101 to 2000 and the prompt are a burst
-//!   of their own, heard as any flood: lines 101 to 130, "skipped 1841
-//!   lines", lines 1972 to 2000 and the prompt.
+//! - `*_control_flood`: Control while a flood is being spoken, as in NVDA
+//!   (`docs/parity.md`, "New terminal output"). `gated.ps1` writes "flood
+//!   line 1" to "flood line 100" and waits for the file `more` before it
+//!   writes lines 101 to 103. Which bursts Verbatim reads the hundred
+//!   lines in depends on timing, so their speech is not asserted line by
+//!   line (`docs/testing.md`, "Exact assertions", the owner's exceptions):
+//!   the scenario asserts that "flood line 1" starts to play and waits for
+//!   "flood line 100" to be queued, the evidence that the whole flood was
+//!   read, then presses Control. Everything still queued is cut off: the
+//!   utterances end as some, possibly none, heard in full before Control
+//!   and then the rest, "flood line 100" always among them, cut off; and
+//!   nothing more is said. Once `more` is written, the output read after
+//!   Control is spoken: lines 101 to 103 and the prompt, exactly.
 //! - `*_shift_flood`: Shift while a flood's first line plays pauses
 //!   speech, and Shift again resumes it: each waits for Verbatim to report
 //!   speech paused, then resumed, and asserts it. Nothing is cut off or
@@ -36,12 +40,11 @@
 use std::io;
 
 use super::terminal::{self, PROMPT};
-use super::terminal_flood::{
-    FLOOD_STEP, GROUP, flood_speech, line, wait_for_prompt, watch_for_prompt,
-};
+use super::terminal_flood::{FLOOD_STEP, flood_speech, line, wait_for_prompt, watch_for_prompt};
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 use crate::speech::Ending;
+use verbatim_model::UtteranceEnding;
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -55,11 +58,11 @@ pub(crate) const FILE_SIGNALS: &str = "function Wait-For([string]$Name) {\r\n\
 }\r\n\
 function Mark([string]$Name) { [IO.File]::WriteAllText(\"$PSScriptRoot\\$Name\", '') }\r\n";
 
-/// The flood that waits halfway, for the Control scenarios.
+/// The flood that waits for Control, then writes a few lines more, for
+/// the Control scenarios.
 const GATED_SCRIPT: &str = "for ($line = 1; $line -le 100; $line++) { \"flood line $line\" }\r\n\
-Mark half\r\n\
 Wait-For more\r\n\
-for ($line = 101; $line -le 2000; $line++) { \"flood line $line\" }\r\n";
+for ($line = 101; $line -le 103; $line++) { \"flood line $line\" }\r\n";
 
 /// Two hundred lines of twenty words.
 const LONG_SCRIPT: &str = "for ($line = 1; $line -le 200; $line++) { \"flood line $line one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen\" }\r\n";
@@ -70,20 +73,6 @@ fn long_line(n: u32) -> String {
         "flood line {n} one two three four five six seven eight nine ten eleven twelve \
          thirteen fourteen fifteen sixteen seventeen"
     )
-}
-
-/// What a burst of the flood lines `first` to `last`, and the prompt after
-/// them, says: its first group, the skipped lines, and its last group.
-fn burst_from(first: u32, last: u32) -> Vec<String> {
-    let total = last - first + 2;
-    let mut speech: Vec<String> = (first..first + GROUP).map(line).collect();
-    speech.push(format!(
-        "sound: skipped-lines skipped {} lines",
-        total - 2 * GROUP
-    ));
-    speech.extend((last - GROUP + 2..=last).map(line));
-    speech.push(PROMPT.to_owned());
-    speech
 }
 
 /// The announcement as a terminal of this scenario takes the focus with
@@ -142,26 +131,44 @@ pub(crate) fn setup_control_console_host(scenario: &mut Scenario) -> io::Result<
     )
 }
 
-/// Control while the gated flood's first line plays, then the rest.
+/// Control once the whole gated flood is queued, then the lines written
+/// after it.
 fn control_steps(scenario: &mut Scenario, directory: &str) {
     terminal::type_with_echo(scenario, r".\gated.ps1", terminal::Echo::Shown);
-    scenario
-        .wait_for_agent_file(&format!(r"{directory}\half"), FLOOD_STEP)
-        .expect("the flood writes its first hundred lines");
     let first = scenario.speech().expect_started(&line(1));
-    let queued = scenario.speech().expect_queued(&[&line(2), &line(3)]);
+    // Everything queued for the flood up to its last line, in whichever
+    // bursts it was read: the evidence that all of it was read.
+    let mut flood = vec![first];
+    flood.extend(scenario.speech().take_until(&line(100), FLOOD_STEP));
     scenario.send_keys(&["control"]).expect("presses Control");
-    scenario.speech().expect_ended(&first, Ending::Cancelled);
-    for heard in &queued {
+    // Speech plays in order, so the utterances heard in full before
+    // Control come first; from the first one cut off, every one is cut
+    // off, and the flood's last line always is.
+    let mut heard_in_full = true;
+    for heard in &flood {
+        if heard_in_full
+            && matches!(
+                scenario.speech().ending_of(heard, FLOOD_STEP),
+                Some(UtteranceEnding::Completed)
+            )
+        {
+            continue;
+        }
+        heard_in_full = false;
         scenario.speech().expect_ended(heard, Ending::Cancelled);
     }
+    assert!(
+        !heard_in_full,
+        "Control cut nothing off: all {} utterances of the flood were heard in full",
+        flood.len()
+    );
     scenario.expect_nothing_more();
     scenario
         .write_agent_file(&format!(r"{directory}\more"), b"")
-        .expect("lets the flood go on");
-    let rest = burst_from(101, 2000);
-    let rest: Vec<&str> = rest.iter().map(String::as_str).collect();
-    scenario.speech().expect_within(&rest, FLOOD_STEP);
+        .expect("lets the script write more");
+    scenario
+        .speech()
+        .expect(&[&line(101), &line(102), &line(103), PROMPT]);
 }
 
 /// `windows_terminal_control_flood`.
@@ -307,18 +314,6 @@ pub(crate) fn body_up_typing_console_host(scenario: &mut Scenario, state: &mut S
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_burst_after_control_is_counted_from_line_101() {
-        let speech = burst_from(101, 2000);
-        assert_eq!(speech.len(), 2 * GROUP as usize + 1);
-        assert_eq!(speech[0], "flood line 101");
-        assert_eq!(speech[29], "flood line 130");
-        assert_eq!(speech[30], "sound: skipped-lines skipped 1841 lines");
-        assert_eq!(speech[31], "flood line 1972");
-        assert_eq!(speech[59], "flood line 2000");
-        assert_eq!(speech[60], PROMPT);
-    }
 
     #[test]
     fn a_long_line_is_what_the_script_prints() {
