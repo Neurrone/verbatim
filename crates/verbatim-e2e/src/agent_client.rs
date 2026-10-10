@@ -29,12 +29,24 @@ use verbatim_agent::protocol::{
 use verbatim_control::client::Client as ControlClient;
 use verbatim_control::protocol::{MessageReader, write_message};
 
-/// Read timeout applied to the socket once it becomes a control-plane
-/// tunnel, so a Verbatim that stops answering fails the caller's next read
-/// instead of hanging the test suite forever. A read that times out is not
-/// a failure by itself: the speech collector reads with it and checks its
-/// own deadline for what it waits for.
-pub const CONTROL_READ_TIMEOUT: Duration = Duration::from_secs(2);
+/// Read timeout of a control-plane tunnel that is waiting for the reply
+/// to a request, such as `Status`, `DumpFocus` or `DumpRecorder`: every
+/// tunnel reads with it from when it opens, and the primary connection
+/// always does. It exists only to detect a Verbatim that has hung, so a
+/// failure is a named timeout rather than a suite that never ends, and it
+/// is the same bound [`AGENT_REPLY_TIMEOUT`] puts on the agent's replies,
+/// far above how long any reply takes. A tighter bound would fail a
+/// scenario over a reply that is merely slow on a loaded machine, as
+/// writing out the flight recorder once was at over two seconds.
+pub const CONTROL_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Read timeout of a control-plane tunnel once it is subscribed to frames:
+/// how often a reader waiting for speech or events gets the chance to
+/// check its own deadline for what it waits for. A read that times out is
+/// not a failure by itself. Set by the speech collector and by
+/// `Scenario::subscribe_events` after their subscribe request, whose reply
+/// is read with [`CONTROL_REPLY_TIMEOUT`].
+pub const CONTROL_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Bounds every reply and write on the agent's own protocol for a request
 /// that does not wait, so an agent that stops answering fails the caller's
@@ -954,7 +966,7 @@ impl AgentClient {
     /// Asks the agent to stop speaking its own protocol on this connection
     /// and relay Verbatim's control-plane pipe instead, then completes the
     /// control protocol's own `Hello` on the same socket and returns a
-    /// ready [`ControlClient`], reading with [`CONTROL_READ_TIMEOUT`].
+    /// ready [`ControlClient`], reading with [`CONTROL_REPLY_TIMEOUT`].
     ///
     /// # Errors
     ///
@@ -977,7 +989,7 @@ impl AgentClient {
         // reader before handing the plain stream to the control client, so
         // nothing it wrote is left stranded in this reader's own buffer.
         drop(self.reader);
-        self.stream.set_read_timeout(Some(CONTROL_READ_TIMEOUT))?;
+        self.stream.set_read_timeout(Some(CONTROL_REPLY_TIMEOUT))?;
         ControlClient::from_tcp_stream(self.stream)
     }
 }

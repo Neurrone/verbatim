@@ -263,17 +263,23 @@ impl SpeechCollector {
     /// Subscribes to speech on `control`, which becomes exclusively owned
     /// by the collector, pushing every utterance it reads to `timeline`.
     /// The first speech subscription to a Verbatim also receives the
-    /// speech it queued before anyone subscribed, its startup speech.
+    /// speech it queued before anyone subscribed, its startup speech. The
+    /// connection then reads with the poll interval
+    /// ([`crate::agent_client::CONTROL_POLL_INTERVAL`]), so the collector
+    /// can check its own deadlines.
     ///
     /// # Errors
     ///
-    /// Returns an error if the subscribe request fails.
+    /// Returns an error if the subscribe request fails, or the read timeout
+    /// cannot be set.
     pub fn subscribe(mut control: ControlClient, timeline: Timeline) -> io::Result<Self> {
         ok_or_error(control.request(Request::SubscribeSpeech)?)?;
+        let poll = crate::agent_client::CONTROL_POLL_INTERVAL;
+        control.set_read_timeout(Some(poll))?;
         Ok(Self::from_source(
             Box::new(control),
             timeline,
-            crate::agent_client::CONTROL_READ_TIMEOUT,
+            poll,
             STEP_TIMEOUT,
         ))
     }

@@ -14,7 +14,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use verbatim_core::{ReducerRecorder, dump};
 use windows::Win32::Foundation::{FILETIME, SYSTEMTIME};
@@ -110,6 +110,9 @@ fn to_utc_systemtime(unix_ms: u64) -> Option<SYSTEMTIME> {
 /// Returns an error if the `dumps` folder cannot be created or the file
 /// cannot be written.
 pub fn dump_now(recorder: &Arc<Mutex<ReducerRecorder>>, dumps_dir: &Path) -> io::Result<PathBuf> {
+    // Timed in two parts, so a slow dump shows whether it waited on the
+    // reducer's lock or on the disk.
+    let started = Instant::now();
     let (base, inputs): (_, Vec<_>) = {
         let recorder = recorder.lock().unwrap_or_else(PoisonError::into_inner);
         (
@@ -117,6 +120,7 @@ pub fn dump_now(recorder: &Arc<Mutex<ReducerRecorder>>, dumps_dir: &Path) -> io:
             recorder.entries().cloned().collect(),
         )
     };
+    let copied = started.elapsed();
 
     fs::create_dir_all(dumps_dir)?;
     let now = utc_now();
@@ -129,6 +133,13 @@ pub fn dump_now(recorder: &Arc<Mutex<ReducerRecorder>>, dumps_dir: &Path) -> io:
         &base,
         &inputs,
     )?;
+    tracing::debug!(
+        path = %path.display(),
+        entries = inputs.len(),
+        copy_ms = copied.as_secs_f64() * 1_000.0,
+        total_ms = started.elapsed().as_secs_f64() * 1_000.0,
+        "flight-recorder dump written"
+    );
     Ok(path)
 }
 

@@ -434,18 +434,23 @@ impl Scenario {
     /// Opens one more connection to Verbatim's control plane, subscribed to
     /// the normalized events Core receives and to the inputs it has
     /// handled: for a scenario that waits for an application event no
-    /// speech shows. Events from before the call are not on it.
+    /// speech shows. Events from before the call are not on it. It reads
+    /// with the poll interval
+    /// ([`crate::agent_client::CONTROL_POLL_INTERVAL`]), so its reader can
+    /// check its own deadline.
     ///
     /// # Errors
     ///
     /// Returns an error if the agent cannot be reached, the tunnel cannot
-    /// be opened, or the subscription is refused.
+    /// be opened, the subscription is refused, or the read timeout cannot
+    /// be set.
     pub fn subscribe_events(&mut self) -> io::Result<ControlClient> {
         let agent_addr =
             endpoint().ok_or_else(|| io::Error::other(format!("{ENDPOINT_ENV} is not set")))?;
         let mut events =
             AgentClient::connect(&agent_addr).and_then(AgentClient::open_control_tunnel)?;
         ok_or_error(events.request(Request::SubscribeEvents)?)?;
+        events.set_read_timeout(Some(crate::agent_client::CONTROL_POLL_INTERVAL))?;
         Ok(events)
     }
 

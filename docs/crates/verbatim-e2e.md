@@ -532,7 +532,13 @@ debug log can be larger than one read of the agent's.
   wait, set on the socket handle replies are read from, so a failure is a
   named timeout. `open_control_tunnel` relays Verbatim's control-plane
   pipe over the connection and hands back a ready
-  `verbatim_control::client::Client`.
+  `verbatim_control::client::Client`, reading with `CONTROL_REPLY_TIMEOUT`
+  (30 seconds, the same hang bound as the agent's own replies), so a
+  slow reply to a request such as `DumpRecorder` is not a failure. A
+  tunnel subscribed to speech or events, once its subscribe is answered,
+  reads with `CONTROL_POLL_INTERVAL` (2 seconds) instead, so its reader
+  can check its own deadline; a read that times out there is not a
+  failure.
 - `timeline`: injected gestures, keys, typed text, and speech (queued,
   audio started, ended), saved whole in time order, and printed on
   failure with each earlier step shortened to one line.
