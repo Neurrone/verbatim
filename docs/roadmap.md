@@ -165,8 +165,19 @@ Dickson first.
    background events per File Explorer run, but focus waits are unchanged,
    since the time is Explorer answering the focus's own reads (one UIA
    focus took 795 ms over 5 calls). A 3-second wait behind an MSAA focus
-   in File Explorer recurs in both builds; its call is not yet known.
-5. Events handled in arrival order, removing the focus-first reordering
+   in File Explorer recurs in both builds. Found after step 4:
+   `UiaHasServerSideProvider` (`verbatim-uia` `probe.rs`) takes 3.0 to
+   3.08 seconds on a new File Explorer window that answers a plain
+   message at once, then reports no provider. NVDA makes the same call
+   (`UIAHandler/__init__.py` 1279), cancelled only once its core has been
+   unresponsive for about 10 seconds. Awaiting Dickson: probe each new
+   window in the background and remember its answer, recognise known
+   classes as NVDA's good and bad class lists do, or both (recommended).
+5. Done after step 6 (reordered 2026-10-10: in arrival order a focus would
+   wait behind every queued event, including a 3-second
+   `UiaHasServerSideProvider` probe of a new File Explorer window; judging
+   the focus on arrival first removes that). Events handled in arrival
+   order, removing the focus-first reordering
    (42d9caa, ce53dbc).
 6. A UIA focus judged as it arrives at the outpost, ahead of its queue,
    with the one read that finds the focused element; then the rules for
