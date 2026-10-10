@@ -417,6 +417,16 @@ impl Intake {
         if key.as_ref().is_some_and(Key::is_focus_change) {
             state.take_back_overtaken();
         }
+        // Logged, with what is queued around it, so an entry that waits
+        // long in the intake can be told from one that arrived late.
+        tracing::debug!(
+            trace = %entry.trace,
+            key = ?key,
+            waiting = state.waiting.len() + 1,
+            in_batch = state.batch.len(),
+            batch = state.batch_number,
+            "intake pushed"
+        );
         state.waiting.push_back(Waiting {
             key,
             category,
@@ -442,6 +452,7 @@ impl Intake {
             }
             if !state.waiting.is_empty() {
                 let waiting: Vec<Waiting> = state.waiting.drain(..).collect();
+                let taken = waiting.len();
                 let focused = state.focused.clone();
                 let judged = state.judged.clone();
                 let batch = plan(
@@ -451,6 +462,12 @@ impl Intake {
                 );
                 state.batch = batch.into();
                 state.batch_number += 1;
+                tracing::debug!(
+                    batch = state.batch_number,
+                    taken,
+                    planned = state.batch.len(),
+                    "intake planned a batch"
+                );
                 continue;
             }
             if state.closed {

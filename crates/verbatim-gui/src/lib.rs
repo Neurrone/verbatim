@@ -325,13 +325,23 @@ impl GuiCore {
         let (x, y) = (at.x, at.y);
         self.pre_popup();
         // The menu's nested loop dispatches the chosen item (which may open
-        // settings) before this returns.
+        // settings) before this returns. Its start is logged, and how long
+        // it was held, so a menu that reaches the outposts late can be told
+        // from one the GUI showed late.
+        tracing::debug!(x, y, "popping the Verbatim menu");
+        let popped = std::time::Instant::now();
         let shown = self.gui.popup_menu();
         // Info, not debug: whether the popup actually showed is the first
         // fact needed when diagnosing a menu that opened silently or not at
         // all, and it fires only on an explicit user gesture, so it cannot
         // flood the log.
-        tracing::info!(shown, x, y, "popped the Verbatim menu");
+        tracing::info!(
+            shown,
+            x,
+            y,
+            held_ms = popped.elapsed().as_secs_f64() * 1_000.0,
+            "popped the Verbatim menu"
+        );
         let after = self.lifecycle.borrow_mut().menu_closed();
         self.post_popup(after);
     }
