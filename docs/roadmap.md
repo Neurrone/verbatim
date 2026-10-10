@@ -130,15 +130,18 @@ Dickson first.
    4405c84, which never end it). Done (0033e93), and checked live on
    2026-10-10: a running instance that exits was replaced in 1.4 seconds,
    and a suspended one was ended after 5 seconds, its outposts and focus
-   listener ending with it. The rest (Dickson, 2026-10-10) is done,
-   pending live checks: when the running one cannot be ended, or does not
+   listener ending with it. The rest (Dickson, 2026-10-10) is done
+   (a40d321): when the running one cannot be ended, or does not
    exit once ended, NVDA's message box, worded for Verbatim ("Couldn't
    end the running Verbatim, abandoning start."), and no start; never
    shown when the running one was ended. A running instance being
    replaced, told so through a named event the new one sets before its
    `WM_QUIT`, plays no exit sound and stops at once, unlike NVDA, which
    plays its exit sound to the end; it took 1.08 of the 1.4 seconds
-   measured. Every other quit still plays it.
+   measured. Every other quit still plays it. Checked live: a
+   replacement now takes 0.33 seconds, the old instance exiting 59 ms
+   after it is asked. The message box was not triggered live, since that
+   needs an instance the new one may not end, such as an elevated one.
 3. NVDA's event filtering in the outposts, before any call into the
    application: its acceptance test, its order of checks for MSAA events,
    and the same test for UIA events (approved 2026-10-10). Done
@@ -213,8 +216,6 @@ Other open items, taken after the steps above unless they fold into one:
 - A Windows Terminal terminal was once announced twice: a second UIA focus
   event for the same terminal, about 110 ms after the first, was not taken
   as a duplicate. The cause is not known; reproduce it with logging.
-- Alt+Tab's "Task Switching" window twice stayed in front for 30 seconds
-  in `windows_terminal_two_windows`; not seen since.
 - mockapp's `uia_event_registrations_cost_exactly` failed once.
 - `settings_system_page` once heard "Windows isn't activated"; the
   settings package above says 14 settings but names 13.
@@ -226,11 +227,11 @@ Other open items, taken after the steps above unless they fold into one:
   of the window behind the foreground in z-order did not predict Alt+Tab's
   most-recently-used order, and a measurement run's Alt+Tab activated the
   owner's own Windows Terminal. This replaces coherence decision 8's
-  Alt+Tab in the two-window scenarios. Done with step 2's remaining work,
-  pending live runs of `conhost_two_windows` and
-  `windows_terminal_two_windows`, whose expectations are unchanged:
-  nothing is playing when they switch, so Alt's press had nothing to
-  cancel.
+  Alt+Tab in the two-window scenarios. Done (f7556c8):
+  `conhost_two_windows` and `windows_terminal_two_windows` passed ten
+  runs each with their expectations unchanged, since nothing is playing
+  when they switch. The open item about Alt+Tab's "Task Switching"
+  window staying in front no longer applies.
 - Confirmed by Dickson (2026-10-10): the shell's staging windows stay
   ignored for focus and foreground (NVDA moves its focus to them and says
   nothing; nothing is heard differently); the 250 ms foreground hold stays
