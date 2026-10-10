@@ -95,6 +95,10 @@ name = "text"
 harness = false
 
 [[test]]
+name = "time_limits"
+harness = false
+
+[[test]]
 name = "uia_tree"
 harness = false
 
