@@ -75,8 +75,8 @@ use verbatim_outpost::text::{
 };
 use verbatim_uia::map::snapshot_from_cached_element;
 use verbatim_uia::{
-    CACHED_PROPERTIES, ElementExt, FOCUS_PROPERTIES, NodeIdRegistry, Registration, Scope,
-    Subscription, Uia,
+    CACHED_PROPERTIES, ElementExt, FOCUS_EVENT_PROPERTIES, FOCUS_PROPERTIES, NodeIdRegistry,
+    Registration, Scope, Subscription, TEXT_EVENT_PROPERTIES, Uia,
 };
 use verbatim_uia_rops::{Attributes, FocusAncestry, FocusQuery, TextAttribute, focus_ancestry};
 use windows::Win32::Foundation::HWND;
@@ -1612,6 +1612,76 @@ fn uia_selected_children_cost_exactly() {
     app.quit();
 }
 
+/// The provider work each event of the outpost's focus-following
+/// registrations asks of mockapp for its element's cache, measured as UIA
+/// fills that cache request on demand (`BuildUpdatedCache`): a text focus's
+/// caret and text change events carry little more than their window, since
+/// nothing is spoken from them (`TEXT_EVENT_PROPERTIES`), and a property
+/// change of the focus carries what its name, value, and states are read
+/// from (`FOCUS_EVENT_PROPERTIES`); every event was registered with the base
+/// cache request before. Measured on demand because the calls UIA makes to
+/// route an event to its registration vary from one delivery to another
+/// with how busy the machine is, while a cache request's calls do not.
+fn uia_event_caches_cost_exactly() {
+    let title = common::unique_title("mockapp-counts-uia-event-caches");
+    let app = common::spawn("text.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let mut ratchet = Ratchet::default();
+    let notes = under_test.element("Notes");
+    for (operation, properties, expected) in [
+        (
+            "UIA event cache, the base request",
+            CACHED_PROPERTIES,
+            &[
+                ("ProviderOptions", 5),
+                ("GetPatternProvider", 11),
+                ("GetPropertyValue", 22),
+                ("HostRawElementProvider", 3),
+                ("GetRuntimeId", 2),
+                ("BoundingRectangle", 1),
+                ("FragmentRoot", 3),
+            ][..],
+        ),
+        (
+            "UIA event cache, a text focus's caret and text changes",
+            TEXT_EVENT_PROPERTIES,
+            &[
+                ("ProviderOptions", 5),
+                ("GetPropertyValue", 3),
+                ("HostRawElementProvider", 3),
+                ("GetRuntimeId", 2),
+                ("FragmentRoot", 3),
+            ][..],
+        ),
+        (
+            "UIA event cache, the focus's property changes",
+            FOCUS_EVENT_PROPERTIES,
+            &[
+                ("ProviderOptions", 5),
+                ("GetPatternProvider", 11),
+                ("GetPropertyValue", 13),
+                ("HostRawElementProvider", 3),
+                ("GetRuntimeId", 2),
+                ("FragmentRoot", 3),
+            ][..],
+        ),
+    ] {
+        let cache = under_test
+            .uia
+            .cache_request(properties)
+            .expect("a cache request");
+        let (_, cost) = under_test.measure(hwnd, |_| {
+            notes
+                .build_updated_cache(&cache)
+                .expect("the element's cache is filled")
+        });
+        ratchet.check(operation, &cost, calls(1, 0, 0), expected);
+    }
+    ratchet.finish();
+    app.quit();
+}
+
 /// The active text position changed event: registering for it, with a text
 /// focus's caret and text changes, as one group on the focus, and handling
 /// one, which keeps the event's range as a position in the focus's text and
@@ -3001,6 +3071,10 @@ fn main() {
         (
             "uia_active_text_position_costs_exactly",
             uia_active_text_position_costs_exactly,
+        ),
+        (
+            "uia_event_caches_cost_exactly",
+            uia_event_caches_cost_exactly,
         ),
     ]);
 }

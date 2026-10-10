@@ -122,8 +122,10 @@ Public API:
     the focused element only, since the reducer acts on no other element's
     changes (NVDA's scope also names the focus's ancestors, but UIA
     delivers no ancestor's event to it; `docs/parity.md`, "UIA event
-    registration"). The worker moves it each
-    time it reports a focus, without waiting. This replaces the
+    registration"). Its events' elements arrive with
+    `verbatim_uia::FOCUS_EVENT_PROPERTIES` cached, everything a name,
+    value, or state set is read from and no detail. The worker moves it
+    each time it reports a focus, without waiting. This replaces the
     subscriptions on the top-level windows that existed at spawn, under
     which a dialog or window opened later received no UIA events at all,
     and, since 2026-10-07, the registrations on each of the focus's
@@ -1014,7 +1016,9 @@ Implementation notes:
   Terminal as in the console host (`docs/parity.md`). The worker then
   follows its caret:
   a second focus-following UIA subscription, moved to the focus when it
-  has text and to nothing otherwise, delivers `Text_TextSelectionChanged`,
+  has text and to nothing otherwise, its events' elements arriving with
+  only `verbatim_uia::TEXT_EVENT_PROPERTIES` cached (nothing is spoken
+  from them), delivers `Text_TextSelectionChanged`,
   reported as `CaretMoved`, and `Text_TextChanged`, reported as
   `TextChanged`, and, in the same event handler group, the active text
   position changed event, reported as `ActiveTextPositionChanged` with the

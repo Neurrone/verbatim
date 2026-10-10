@@ -251,7 +251,9 @@ Public API:
   focus listener, which watches every application at once; the per-application
   pid filter this module once carried is gone with that move (the sealed
   module made the relocation a change of caller, not a rewrite).
-- `Registration::new(subscriptions, scope)` and `retarget(scope)` — one
+- `Registration::new(subscriptions, scope)`,
+  `Registration::with_cache(subscriptions, scope, properties)`, and
+  `retarget(scope)` — one
   subscription type for everything but focus: `Subscription::Properties`
   (a list of property ids, such as `FOCUS_PROPERTIES`: name, value,
   toggle state, enabled, and expand/collapse), `Subscription::Event` (an
@@ -278,7 +280,17 @@ Public API:
   to the group, which is local, and the group is registered on each
   element of the scope with one `AddEventHandlerGroup` call. Each
   registration owns its thread, apartment, client, and handlers and
-  registers with the base cache request; `retarget` hands the new scope to
+  registers with one cache request: the base one from `new`, or exactly
+  the given properties from `with_cache`, for events whose callers read
+  fewer, so the provider is asked for no more with each event. The
+  outpost registers a text focus's caret, text, and active text position
+  events with `TEXT_EVENT_PROPERTIES` (process id, native window handle,
+  and class name: nothing is spoken from them, and the class name of an
+  element one brings, which may become the node's kept element, says
+  whether its text is a terminal's) and the focus's property changes with
+  `FOCUS_EVENT_PROPERTIES` (the base set without the details and focus
+  context properties, since a change of states carries the whole state
+  set); `retarget` hands the new scope to
   that thread, which removes everything its client registered and registers
   the group again, so the caller never waits on UIA's removal (which waits
   for running callbacks). Elements that fail to resolve, or on which the

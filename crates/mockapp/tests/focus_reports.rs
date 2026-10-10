@@ -646,7 +646,9 @@ fn a_focus_whose_element_was_not_found_is_followed_from_its_own_changes() {
 /// `WinEvent` raised alongside it. Looking for the nearest window first,
 /// as the outpost did before, cost 1 `WM_GETOBJECT`, 10 `ProviderOptions`,
 /// 4 `GetPropertyValue`, 3 `HostRawElementProvider`, 3 `Navigate`, and 1
-/// `FragmentRoot` more.
+/// `FragmentRoot` more. The event's cache, the focus events' request,
+/// has asked for 9 `GetPropertyValue` and 1 `BoundingRectangle` fewer
+/// since it left out the details nothing reads from a change.
 fn another_elements_change_heard_for_the_focus_costs_nothing() {
     let title = common::unique_title("mockapp-window-wide-other-element");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -670,11 +672,10 @@ fn another_elements_change_heard_for_the_focus_costs_nothing() {
             ("WM_GETOBJECT", 6),
             ("ProviderOptions", 49),
             ("GetPatternProvider", 11),
-            ("GetPropertyValue", 25),
+            ("GetPropertyValue", 16),
             ("HostRawElementProvider", 18),
             ("Navigate", 12),
             ("GetRuntimeId", 6),
-            ("BoundingRectangle", 1),
             ("FragmentRoot", 8),
             ("Value", 1),
             ("IsReadOnly", 1),

@@ -839,7 +839,12 @@ verified.
   proxy is told never to raise, from `WinEvent`s, the UIA events Verbatim
   subscribes to, as NVDA's `ignoreWinEventsMap` tells it (issue 7345);
   focus changes keep their mapping, as in NVDA.
-  **matched (unverified)**.
+  **matched (unverified)**. Each registration's cache request differs
+  from NVDA's twelve base properties: the listener's and the focus
+  property changes' carry what a node is spoken or its states are read
+  from, a text focus's caret and text events only their process, window,
+  and class name (since 2026-10-10), from which nothing is spoken; a
+  difference in the provider's work only.
 - What an accepted MSAA change reads. NVDA: a name, description, value,
   or state change on its focus or an ancestor reads only the property its
   event names, of the object it already holds, whose class was chosen

@@ -14,9 +14,11 @@
 //! on whoever moves the subscription. [`Registration::settle`] waits for
 //! every move asked for so far to be made, for a caller that measures what
 //! the moves cost the application. Dropping a registration unregisters
-//! and ends its thread. Every handler is registered with the base cache
-//! request, so the element arrives with its properties prefetched and the
-//! callback reads them without a cross-process call.
+//! and ends its thread. Every handler is registered with one cache request,
+//! the base one unless the registration names its properties
+//! ([`Registration::with_cache`]), so the element arrives with its
+//! properties prefetched and the callback reads them without a
+//! cross-process call.
 
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -34,6 +36,7 @@ use windows::Win32::UI::Accessibility::{
 use windows::core::AgileReference;
 use windows_core::Interface;
 
+use crate::cache::CACHED_PROPERTIES;
 use crate::client::Uia;
 
 /// Invoked on a UIA callback thread for a property change, with the cached
@@ -152,11 +155,27 @@ impl Registration {
     /// or on which the group cannot be registered, is skipped rather than
     /// failing the registration.
     pub fn new(subscriptions: Vec<Subscription>, scope: Scope) -> windows::core::Result<Self> {
+        Self::with_cache(subscriptions, scope, CACHED_PROPERTIES)
+    }
+
+    /// [`new`](Self::new), each event's element arriving with exactly
+    /// `properties` prefetched rather than the base cache request's
+    /// ([`CACHED_PROPERTIES`]): for events whose callers read fewer, so the
+    /// provider is asked for no more with each event.
+    ///
+    /// # Errors
+    ///
+    /// As for [`new`](Self::new).
+    pub fn with_cache(
+        subscriptions: Vec<Subscription>,
+        scope: Scope,
+        properties: &'static [UIA_PROPERTY_ID],
+    ) -> windows::core::Result<Self> {
         let (retarget_tx, retarget_rx) = mpsc::channel::<Command>();
         let (ready_tx, ready_rx) = mpsc::channel::<windows::core::Result<()>>();
         let join = thread::Builder::new()
             .name("verbatim-uia-subscription".to_owned())
-            .spawn(move || run(subscriptions, &scope, &ready_tx, &retarget_rx))
+            .spawn(move || run(subscriptions, properties, &scope, &ready_tx, &retarget_rx))
             .map_err(|e| {
                 windows::core::Error::new(windows::Win32::Foundation::E_FAIL, e.to_string())
             })?;
@@ -329,6 +348,7 @@ struct Parts {
 
 fn run(
     subscriptions: Vec<Subscription>,
+    properties: &[UIA_PROPERTY_ID],
     scope: &Scope,
     ready: &mpsc::Sender<windows::core::Result<()>>,
     retarget: &mpsc::Receiver<Command>,
@@ -337,7 +357,7 @@ fn run(
         let uia = Uia::new()?;
         Ok(Parts {
             client: uia.client().cast()?,
-            cache: uia.base_cache_request()?,
+            cache: uia.cache_request(properties)?,
             handlers: subscriptions.into_iter().map(Handler::of).collect(),
             uia,
         })

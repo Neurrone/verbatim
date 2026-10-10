@@ -791,7 +791,9 @@ fn unstamped(query: &Query) -> Query {
 
 /// What a UIA callback captures: the element's cached parts, its cached
 /// window handle, and an agile reference for anything the worker must ask
-/// it. No call reaches the application: both reads are cached.
+/// it. No call reaches the application: both reads are cached. The parts
+/// are as complete as the registration's cache request: a text event's
+/// carry its runtime id alone, which is all its handling reads.
 fn capture(element: &IUIAutomationElement, kind: UiaKind) -> UiaEvent {
     let (parts, hwnd) = (
         snapshot_parts_from_cached_element(element),
@@ -836,7 +838,13 @@ fn register_focus_properties(context: &Arc<Context>) -> Option<Registration> {
         properties: FOCUS_PROPERTIES.to_vec(),
         callback,
     };
-    match Registration::new(vec![subscription], Scope::Nothing) {
+    // The element arrives with what the focus's changes are read from, and
+    // nothing that only feeds a node's details.
+    match Registration::with_cache(
+        vec![subscription],
+        Scope::Nothing,
+        verbatim_uia::FOCUS_EVENT_PROPERTIES,
+    ) {
         Ok(registration) => Some(registration),
         Err(error) => {
             fault(
@@ -895,7 +903,13 @@ fn register_text_events(context: &Arc<Context>) -> Option<Registration> {
             },
         ),
     };
-    match Registration::new(vec![subscription, position], Scope::Nothing) {
+    // Nothing is spoken from these events' elements: the worker reads the
+    // text itself, so they arrive with little more than their window.
+    match Registration::with_cache(
+        vec![subscription, position],
+        Scope::Nothing,
+        verbatim_uia::TEXT_EVENT_PROPERTIES,
+    ) {
         Ok(registration) => Some(registration),
         Err(error) => {
             fault(context, format!("UIA text subscription failed: {error}"));

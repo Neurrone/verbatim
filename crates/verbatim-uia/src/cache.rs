@@ -97,6 +97,51 @@ pub const CACHED_PROPERTIES: &[windows::Win32::UI::Accessibility::UIA_PROPERTY_I
     UIA_IsControlElementPropertyId,
 ];
 
+/// The properties prefetched with a text focus's caret, text, and active
+/// text position events, from which nothing is spoken: the worker reads
+/// the text itself, and takes from the event only the element's runtime id
+/// (which every element carries), its process, and its window. Its class
+/// name too, since the element such an event brings can become the node's
+/// kept element, whose class name says whether its text is a terminal's.
+pub const TEXT_EVENT_PROPERTIES: &[windows::Win32::UI::Accessibility::UIA_PROPERTY_ID] = &[
+    UIA_ProcessIdPropertyId,
+    UIA_NativeWindowHandlePropertyId,
+    UIA_ClassNamePropertyId,
+];
+
+/// The properties prefetched with the focus-following property change
+/// events: [`CACHED_PROPERTIES`] without those that feed only a node's
+/// details (its description, shortcut, position, level, and location) or
+/// its standing as focus context, which no property change reports. A
+/// change of states carries the node's whole state set, so every property
+/// a state, the role, the name, or the value is mapped from stays.
+pub const FOCUS_EVENT_PROPERTIES: &[windows::Win32::UI::Accessibility::UIA_PROPERTY_ID] = &[
+    UIA_NamePropertyId,
+    UIA_ControlTypePropertyId,
+    UIA_ValueValuePropertyId,
+    UIA_ProcessIdPropertyId,
+    UIA_NativeWindowHandlePropertyId,
+    UIA_IsEnabledPropertyId,
+    UIA_HasKeyboardFocusPropertyId,
+    UIA_IsKeyboardFocusablePropertyId,
+    UIA_IsOffscreenPropertyId,
+    UIA_IsTogglePatternAvailablePropertyId,
+    UIA_ToggleToggleStatePropertyId,
+    UIA_IsExpandCollapsePatternAvailablePropertyId,
+    UIA_ExpandCollapseExpandCollapseStatePropertyId,
+    UIA_IsSelectionItemPatternAvailablePropertyId,
+    UIA_SelectionItemIsSelectedPropertyId,
+    UIA_ClassNamePropertyId,
+    UIA_IsDialogPropertyId,
+    UIA_IsPasswordPropertyId,
+    UIA_IsRequiredForFormPropertyId,
+    UIA_IsDataValidForFormPropertyId,
+    UIA_IsValuePatternAvailablePropertyId,
+    UIA_ValueIsReadOnlyPropertyId,
+    UIA_IsRangeValuePatternAvailablePropertyId,
+    UIA_RangeValueValuePropertyId,
+];
+
 /// Builds the base cache request: every [`CACHED_PROPERTIES`] entry, prefetched
 /// so the mapping in [`crate::map`] reads only cached values and never blocks.
 ///
@@ -213,5 +258,27 @@ mod tests {
         ] {
             assert!(properties.contains(&kept), "{kept:?}");
         }
+    }
+
+    #[test]
+    fn the_focus_events_cache_the_base_properties_but_details_and_context() {
+        let left_out = [
+            UIA_FullDescriptionPropertyId,
+            UIA_HelpTextPropertyId,
+            UIA_AccessKeyPropertyId,
+            UIA_AcceleratorKeyPropertyId,
+            UIA_PositionInSetPropertyId,
+            UIA_SizeOfSetPropertyId,
+            UIA_LevelPropertyId,
+            UIA_BoundingRectanglePropertyId,
+            UIA_IsContentElementPropertyId,
+            UIA_IsControlElementPropertyId,
+        ];
+        let expected: Vec<_> = CACHED_PROPERTIES
+            .iter()
+            .copied()
+            .filter(|property| !left_out.contains(property))
+            .collect();
+        assert_eq!(FOCUS_EVENT_PROPERTIES, expected);
     }
 }

@@ -54,7 +54,10 @@ mod registry;
 mod subscribe;
 pub mod text;
 
-pub use cache::{CACHED_PROPERTIES, base_cache_request, cache_request_for, cached_properties};
+pub use cache::{
+    CACHED_PROPERTIES, FOCUS_EVENT_PROPERTIES, TEXT_EVENT_PROPERTIES, base_cache_request,
+    cache_request_for, cached_properties,
+};
 pub use checks::{console_reports_formatting, is_windows_forms};
 pub use client::{AncestorStops, AncestorWalk, Uia, release_mta_usage};
 pub use com::{

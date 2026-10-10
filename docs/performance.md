@@ -1214,6 +1214,29 @@ the same provider calls as the focus alone.
   reaches the outpost, which read it, mapped it, and sent it to Core,
   which dropped it.
 
+### Smaller caches for the focus's events
+
+The outpost's two focus-following registrations asked the provider for
+the base cache request's 34 properties with every event, a text focus's
+caret moves and text changes included, from which nothing is spoken: the
+worker reads the text itself. The text registration now asks for 3
+(`TEXT_EVENT_PROPERTIES`) and the property registration for 24
+(`FOCUS_EVENT_PROPERTIES`), leaving out only what feeds a node's details
+or its standing as focus context, since a change of states carries the
+whole state set. This saves work in the application on every keystroke
+and caret move, not round trips in Verbatim. Measured on demand, as UIA
+fills each request (`uia_event_caches_cost_exactly`): the base request
+costs mockapp 22 `GetPropertyValue`, 11 `GetPatternProvider`, and 1
+`BoundingRectangle`; the text events' 3 `GetPropertyValue`, and the
+property changes' 13 `GetPropertyValue` and the 11 `GetPatternProvider`;
+each also costs the same 5 `ProviderOptions`, 3
+`HostRawElementProvider`, 3 `FragmentRoot`, and 2 `GetRuntimeId`. On
+demand because the calls UIA makes to route an event to its registration
+vary from one delivery to another with how busy the machine is, while a
+request's do not. A property change delivered to the outpost
+(`another_elements_change_heard_for_the_focus_costs_nothing`) costs 9
+`GetPropertyValue` and 1 `BoundingRectangle` fewer.
+
 ### Several text attributes in one call
 
 The classic reads of a stretch's formatting fetch all its attributes in
