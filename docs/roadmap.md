@@ -134,8 +134,8 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    came after the steps, three recordings shorter than the capture and one
    flight recorder save that timed out, and are investigated separately.
 3. Console windows: every event to the console host's outpost, with the
-   client process as identity; the console special cases removed. Built,
-   pending live checks (`phase6-design.md`, "Console windows as one
+   client process as identity; the console special cases removed. Done
+   (2026-10-11, `phase6-design.md`, "Console windows as one
    application"): `cargo xtask ci` passes; the first live run failed every
    `conhost_` scenario (the window never announced), fixed by keeping an
    early foreground event for the next focus (provisional, below);
