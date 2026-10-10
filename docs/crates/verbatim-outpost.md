@@ -1049,8 +1049,11 @@ Implementation notes:
   and UIA notifications emit `NormalizedEvent::Notification`. A UIA
   selection inside an element the focused element names in its
   ControllerFor relation emits `NormalizedEvent::ControlledSelection`
-  instead, carrying the focus's id, as NVDA reports a search suggestion
-  (`Uia::controlled_descendant`). The reducer
+  instead, carrying the focus's id, as NVDA reports a search suggestion:
+  the relation is read live for each selection, as NVDA reads it, and it
+  and the search for the selected element under what it names are one
+  remote operation where the focus's window allows one
+  (`verbatim_uia_rops::controlled_selection`). The reducer
   announces both ([verbatim-core](verbatim-core.md)).
 - `OutpostMessage::Event` carries the target pid, the outpost id, the
   message's position, and the boxed `OutpostToSupervisor` payload: the

@@ -16,8 +16,9 @@ The crate has three layers: the instruction set and a typed builder,
 execution, and algorithms. The algorithms are the focus ancestry, for
 milestone M4's terminals `terminal_screen`, for caret reports `caret_read`,
 for the text protocol's other requests `text_units`, `text_range`, and
-`text_location`, and for object navigation `navigation_step` (layer 3
-below). Every UIA path in the outpost that makes a sequence of calls to
+`text_location`, for object navigation `navigation_step`, and for a
+selection inside an element the focus controls `controlled_selection`
+(layer 3 below). Every UIA path in the outpost that makes a sequence of calls to
 the application runs through one of them; "Where remote operations are
 not used" lists the rest and why.
 
@@ -571,6 +572,33 @@ ancestry fixture (`crates/mockapp/tests/remote_ops.rs`), both give the
 same neighbor with the same cached properties and snapshot, and the same
 window, for every direction and at an edge.
 
+## Layer 3: a selection the focus controls
+
+`controlled_selection(uia, query, remote)`, with
+`controlled_selection_remote` and `controlled_selection_classic` behind it
+(`ControlledSelectionFn`), answers NVDA's test for a selection inside an
+element the focus controls (its base `event_selection` reads the focus's
+`controllerFor` live for each selection event): the selected element,
+with the query's properties cached, when the element a selection event
+named by its runtime id (`ControlledQuery::selected`) is a descendant of
+one of the elements the focus names in its `ControllerFor` relation. The
+program reads the relation, then walks each controlled element's
+raw-view descendants depth first (first child, else next sibling, else
+the nearest ancestor's next sibling, counting depth so the walk ends back
+at the controlled element, which is not its own descendant), comparing
+each one's stringified runtime id with the selected one's
+(`runtime_id_key`), and fills the found element's cache inside the
+provider. The classic implementation is `Uia::controlled_descendant`: the
+relation, then a `FindFirstBuildCache` under each controlled element.
+There is no `FindFirst` instruction, so the program walks; each element
+it passes costs about 35 instructions, so a run reaches the instruction
+limit after about 280, and a list that large is answered classically for
+that call. Against mockapp's controller fixture
+(`crates/mockapp/tests/controller_for.rs`) both answer the same, the
+program in one call, for a result one level down and one inside a group
+of the list, and neither finds the controlled list itself, an item
+outside it, or anything from an element that controls nothing.
+
 ## Fallback rules
 
 How the outpost chooses, per UIA focus (`uia_remote_enrichment` in its
@@ -701,12 +729,6 @@ runs as a named operation above, except these:
   classic reads need the pattern objects, and the programs get the
   pattern from the element themselves. Making the fetch lazy, so a
   remote read never makes it, is a possible follow-up.
-- A selection event in a list the focus controls
-  (`Uia::controlled_descendant`): the `ControllerFor` relation and a
-  `FindFirst` for the element under each controlled root, two calls for
-  the usual one root. There is no `FindFirst` instruction, and a program
-  walking the list to find the element would cost the provider more than
-  the search does.
 - Activation (`Uia::activate`): each pattern is fetched live and its
   method called, two calls for an `Invoke`. The pattern methods
   (`Invoke`, `Toggle`, `Select`) have no instructions.

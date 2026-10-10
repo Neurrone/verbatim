@@ -519,6 +519,19 @@ the focus or an ancestor as a change of its state.
   as before; the focus selected, 2 MSAA calls, the acquisition and its
   states.
 
+### A selection inside a list the focus controls, UIA
+
+A search box whose ControllerFor relation names a list, and an item of
+the list selected (`crates/mockapp/tests/controller_for.rs`).
+
+- Before the controlled selection's remote operation (2026-10-10): the
+  relation read (1 UIA call), the controlled element's runtime id read
+  (a call the ledger does not count), and a `FindFirstBuildCache` under
+  it (1 UIA call): three round trips for one controlled list, more for
+  each further controlled element.
+- Today: 1 UIA call, one remote operation, whatever the number of
+  controlled elements, and the same answer as the classic calls.
+
 ### An event from a window not related to the foreground window, MSAA
 
 A state change on the focus while another application's window is in
@@ -1434,6 +1447,14 @@ share of the limit in brackets:
 - The navigation step: 875 (9 percent) from an item sixty-two levels
   below its window, 144 from right under it, about 12 for each level
   walked.
+- The controlled selection: 168 for a result inside a group of the
+  controlled list, 200 for the list's second child, and 215 for an item
+  outside the list, all three of the list's elements walked; about 35 for
+  each element passed, so about 140 elements fit under half the limit and
+  about 280 under the limit, past which the call is answered classically.
+  The walk is bounded by the controlled list, not by the query, the one
+  program whose worst case is the application's to set; the Settings
+  app's search suggestions, checked live on 2026-10-03, were 25.
 - The caret read: 4,425 (44 percent) for a line of 64 stretches reached by
   walking one mixed format stretch by words and a mixed word by
   characters, every attribute read (eleven since 2026-10-07, ten of them

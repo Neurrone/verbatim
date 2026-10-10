@@ -2288,12 +2288,26 @@ impl Worker<'_> {
                 }
             },
         };
+        // NVDA reads the relation live for each selection event; the
+        // relation and the search under what it names are one remote
+        // operation where the focus's window allows one.
+        let window = self.context.tracking().window;
         let uia = self.client.uia()?;
-        let cache = self.context.uia_cache(uia).ok()?;
-        let selected = uia
-            .controlled_descendant(&focused, runtime_id, &cache)
-            .ok()
-            .flatten()?;
+        let properties = verbatim_uia::cached_properties(self.context.fetches());
+        let query = verbatim_uia_rops::ControlledQuery {
+            focused: &focused,
+            selected: runtime_id,
+            properties: &properties,
+        };
+        let remote = self.context.tries_remote(window);
+        let (selected, path) = verbatim_uia_rops::controlled_selection(uia, &query, remote).ok()?;
+        if let verbatim_uia_rops::Path::Fallback(error) = &path {
+            tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
+            if let (verbatim_uia_rops::Error::Import(_), Some(hwnd)) = (error, window) {
+                self.context.read_classically(top_level_of(hwnd));
+            }
+        }
+        let selected = selected?;
         let registry = &self.context.uia_registry;
         // Both elements were built with the base cache request.
         let controller = snapshot_parts_from_cached_element(&focused).runtime_id;

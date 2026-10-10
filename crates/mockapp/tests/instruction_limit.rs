@@ -19,11 +19,11 @@ mod harness;
 use verbatim_uia::text::{Endpoint, TextPatternExt};
 use verbatim_uia::{CACHED_PROPERTIES, ElementExt, Uia, runtime_id};
 use verbatim_uia_rops::{
-    Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, Error, FocusAncestry, FocusQuery,
-    FormatSpan, Movement, NavigationDirection, Position, RangeEnd, ScreenAnchor, ScreenQuery,
-    Status, StepQuery, TextAttribute, TextFrom, TextTarget, UnitsQuery, caret_read_remote,
-    counting, focus_ancestry_remote, navigation_step_remote, terminal_screen_remote,
-    text_units_remote,
+    Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, ControlledQuery, Error,
+    FocusAncestry, FocusQuery, FormatSpan, Movement, NavigationDirection, Position, RangeEnd,
+    ScreenAnchor, ScreenQuery, Status, StepQuery, TextAttribute, TextFrom, TextTarget, UnitsQuery,
+    caret_read_remote, controlled_selection_remote, counting, focus_ancestry_remote,
+    navigation_step_remote, terminal_screen_remote, text_units_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
@@ -240,6 +240,41 @@ fn focus_and_navigation_execute_exactly() {
         "focus ancestry worst, at depth limit 30, typical; navigation far and near"
     );
     assert!(worst < LIMIT / 2 && far < LIMIT / 2);
+}
+
+/// A selection inside the list a search box controls
+/// (`tests/fixtures/controller.json`), found inside a group of the list,
+/// found as the list's second child, and not found, every element of the
+/// list walked: the program walks the controlled list depth first, so its
+/// count grows with the elements it passes before the selected one.
+fn controlled_selections_execute_exactly() {
+    common::init_com();
+    let fixture = Fixture::start("controller.json", "mockapp-instructions-controlled");
+    let search = fixture.find("Search box");
+    let selected = |name: &str| runtime_id(&fixture.find(name));
+    let run = |selected: &[i32]| {
+        let query = ControlledQuery {
+            focused: &search,
+            selected,
+            properties: CACHED_PROPERTIES,
+        };
+        controlled_selection_remote(&fixture.uia, &query)
+            .expect("the program runs")
+            .is_some()
+    };
+    let grouped = selected("Display settings");
+    let deep = counted(|| assert!(run(&grouped)));
+    let second = selected("Sound settings");
+    let near = counted(|| assert!(run(&second)));
+    let outside = selected("Elsewhere");
+    let missing = counted(|| assert!(!run(&outside)));
+    fixture.app.quit();
+
+    assert_eq!(
+        [deep, near, missing],
+        [168, 200, 215],
+        "controlled selection inside a group, second child, not found"
+    );
 }
 
 /// A caret read of the line at the caret with every attribute, the
@@ -481,6 +516,10 @@ fn main() {
         (
             "focus_and_navigation_execute_exactly",
             focus_and_navigation_execute_exactly,
+        ),
+        (
+            "controlled_selections_execute_exactly",
+            controlled_selections_execute_exactly,
         ),
         ("caret_reads_execute_exactly", caret_reads_execute_exactly),
         (

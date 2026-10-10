@@ -777,7 +777,10 @@ verified.
   2026-10-03** for UIA, verified live on the Settings app's search
   suggestions ("Display settings 1 of 25" and so on as the user arrows,
   with the focus staying in the search box), with reducer tests. Found
-  on 2026-10-02, when Verbatim read neither while NVDA read both. Start's
+  on 2026-10-02, when Verbatim read neither while NVDA read both. The
+  ControllerFor relation is read live for each selection event, as NVDA
+  reads it (Dickson, 2026-10-10), in one remote operation with the search
+  for the selected element since 2026-10-10. Start's
   results are partly in a Chromium document NVDA reads through IA2,
   which belongs to the phase that implements IA2 (browsers).
 - Value change on focused node speaks bare value (slider drag), not

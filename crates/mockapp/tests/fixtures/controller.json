@@ -17,10 +17,17 @@
       "name": "Suggestions",
       "children": [
         {
-          "id": "result1",
-          "role": "list_item",
-          "name": "Display settings",
-          "states": ["focusable", "selectable"]
+          "id": "system",
+          "role": "group",
+          "name": "System",
+          "children": [
+            {
+              "id": "result1",
+              "role": "list_item",
+              "name": "Display settings",
+              "states": ["focusable", "selectable"]
+            }
+          ]
         },
         {
           "id": "result2",

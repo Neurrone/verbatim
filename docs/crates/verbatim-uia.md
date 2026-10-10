@@ -15,7 +15,9 @@ Public API:
   in its set, for a focus event whose sender no element of the tree is, as
   Windows Terminal's tabs' are), `base_cache_request`,
   `controlled_descendant` (the selected element, when it is inside an
-  element the focus names in its ControllerFor relation), plus the M3
+  element the focus names in its ControllerFor relation; the classic
+  implementation behind `verbatim_uia_rops::controlled_selection`), plus
+  the M3
   node-relative operations `ancestor_chain`, `navigate`, and `activate`
   described below, `children_with(element, properties)` (an element's
   raw-view children with `properties` cached, in one `BuildUpdatedCache`

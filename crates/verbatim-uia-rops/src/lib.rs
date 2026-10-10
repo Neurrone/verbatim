@@ -32,8 +32,10 @@
 //!   how the selection changed; for the text protocol's other requests,
 //!   [`text_units`] (a unit read after a movement, or several ahead for
 //!   say-all), [`text_range`] (the text between two points, or selecting
-//!   it), and [`text_location`]; and, for object navigation,
-//!   [`navigation_step`]: the neighbor and the nearest window.
+//!   it), and [`text_location`]; for object navigation,
+//!   [`navigation_step`]: the neighbor and the nearest window; and, for a
+//!   selection inside an element the focus controls,
+//!   [`controlled_selection`].
 //!
 //! The crate is Windows-specific and GPL like NVDA, from which the
 //! instruction table and builder design are ported.
@@ -41,6 +43,7 @@
 
 mod builder;
 mod caret;
+mod controlled;
 mod error;
 mod focus;
 mod instruction;
@@ -56,6 +59,10 @@ pub use caret::{
     CaretQuery, CaretReadFn, FormatSpan, MAX_RUNS, RangeEnd, Run, RunAttributes,
     SelectionTextChange, TextAttribute, UnitRead, caret_read, caret_read_classic,
     caret_read_remote,
+};
+pub use controlled::{
+    ControlledQuery, ControlledSelectionFn, controlled_selection, controlled_selection_classic,
+    controlled_selection_remote,
 };
 pub use error::{Error, Failure};
 pub use focus::{
