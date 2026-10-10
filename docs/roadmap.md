@@ -150,8 +150,8 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
 4. Arrival order in the outposts: 42d9caa and ce53dbc removed; NVDA's MSAA
    focus collapsing (consecutive runs, up to four) and limits by the
    event's own thread, for MSAA only; `msaa_focus_waiting` removed.
-   Written (2026-10-11) and awaiting its first build, `cargo xtask ci`
-   and its scenarios (`menu_and_settings_dialog`,
+   Built (2026-10-11): `cargo xtask ci` passes; its mockapp tests and
+   scenarios are still to run (`menu_and_settings_dialog`,
    `system_information_tree`, `rapid_tabbing_in_settings`,
    `explorer_folder_window`, `settings_dialog_keys`, `theme_panel`).
    Every UIA focus of a batch is now handled, as the design's section 5.1
