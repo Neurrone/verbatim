@@ -119,7 +119,7 @@ pub struct Recording {
     muxed: String,
     mux_log: String,
     check_log: String,
-    check_progress: String,
+    check_frames: String,
 }
 
 impl Recording {
@@ -147,7 +147,7 @@ impl Recording {
             muxed: format!(r"{dir}\recording.mp4"),
             mux_log: format!(r"{dir}\recording-mux.log"),
             check_log: format!(r"{dir}\recording-check.log"),
-            check_progress: format!(r"{dir}\recording-check-progress.txt"),
+            check_frames: format!(r"{dir}\recording-check-frames.txt"),
         };
         // A previous run's start time must not be taken for this one's, nor
         // its capture for the evidence of this one's first frame.
@@ -269,7 +269,7 @@ impl Recording {
 
     /// Decodes the muxed recording and checks it with [`verify`].
     fn check(&self, agent: &mut AgentClient) -> io::Result<()> {
-        let args = check_args(&self.muxed, &self.check_progress);
+        let args = check_args(&self.muxed, &self.check_frames);
         self.run_ffmpeg(agent, "checking the recording", &args, &self.check_log)?;
         let mut read = |path: &str| {
             agent
@@ -278,14 +278,14 @@ impl Recording {
         };
         let mux_log = read(&self.mux_log)?;
         let check_log = read(&self.check_log)?;
-        let progress = read(&self.check_progress)?;
+        let frames = read(&self.check_frames)?;
         let captured = self.captured.ok_or_else(|| {
             io::Error::other("the recording was checked before the capture stopped")
         })?;
         verify(
             &mux_log,
             &check_log,
-            &progress,
+            &frames,
             captured,
             framerate(self.demo),
         )
@@ -374,8 +374,18 @@ fn framerate(demo: bool) -> u32 {
 
 /// ffmpeg's arguments capturing the desktop into fragmented MP4 at
 /// `output`, a fragment starting at each keyframe, one a second, with the
-/// zero-latency tuning keeping the encoder from holding frames back. The
-/// file is complete only once ffmpeg is told to stop and exits
+/// zero-latency tuning keeping the encoder from holding frames back.
+///
+/// Every frame keeps the time `gdigrab` captured it at, to the
+/// millisecond, so the video keeps real time however many frames the
+/// capture misses. `gdigrab` aims for `framerate` frames a second, stamps
+/// each with the wall-clock time it was taken, and skips a frame's slot
+/// when it is more than a frame late, which it is on a loaded machine.
+/// ffmpeg's default would round each time to a multiple of the frame
+/// interval and drop a late frame that rounds onto the next one's time:
+/// a flood scenario lost 62 of its 1629 frames that way.
+///
+/// The file is complete only once ffmpeg is told to stop and exits
 /// ([`Recording::stop`]): a fragment reaches the disk only once the next
 /// keyframe arrives, and then not all of it until ffmpeg flushes its file
 /// buffer. `demo` captures twice the frames, losslessly, for [`mux_args`]
@@ -410,6 +420,10 @@ fn capture_args(output: &str, demo: bool) -> Vec<String> {
         "yuv420p",
         "-g",
         &framerate,
+        "-fps_mode",
+        "passthrough",
+        "-enc_time_base",
+        "1:1000",
         "-movflags",
         "+frag_keyframe+empty_moov+default_base_moof",
         output,
@@ -422,8 +436,8 @@ fn capture_args(output: &str, demo: bool) -> Vec<String> {
 /// ffmpeg's arguments muxing `video` with `audio`, delayed by
 /// `audio_offset` seconds (negative skips its start), into `output` with
 /// AAC audio; video alone when `audio_offset` is `None`. The video is
-/// copied as captured, or for a `demo` encoded with libx264's slow preset.
-/// Each line of the log is tagged with its level, such as `[error]`, for
+/// copied as captured, or for a `demo` encoded with libx264's slow preset,
+/// each frame keeping its time as [`capture_args`] does. Each line of the log is tagged with its level, such as `[error]`, for
 /// [`verify`].
 fn mux_args(
     video: &str,
@@ -459,7 +473,18 @@ fn mux_args(
     }
     let video_codec: &[&str] = if demo {
         &[
-            "-c:v", "libx264", "-preset", "slow", "-crf", "20", "-pix_fmt", "yuv420p",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "slow",
+            "-crf",
+            "20",
+            "-pix_fmt",
+            "yuv420p",
+            "-fps_mode",
+            "passthrough",
+            "-enc_time_base",
+            "1:1000",
         ]
     } else {
         &["-c:v", "copy"]
@@ -474,21 +499,33 @@ fn mux_args(
 }
 
 /// ffmpeg's arguments decoding every stream of `recording` and discarding
-/// the result, logging errors alone, and writing its progress, with the
-/// count of video frames decoded, to `progress`.
-fn check_args(recording: &str, progress: &str) -> Vec<String> {
+/// the result, logging errors alone, and listing each video frame with its
+/// time and duration in `frames` (ffmpeg's `framecrc` format). The decoded
+/// frames keep their times, which ffmpeg's default would round to the
+/// frame interval, logging an error for two frames rounded onto one time.
+fn check_args(recording: &str, frames: &str) -> Vec<String> {
     [
         "-hide_banner",
         "-nostats",
         "-v",
         "error",
-        "-progress",
-        progress,
+        "-y",
         "-i",
         recording,
+        "-fps_mode",
+        "passthrough",
+        "-enc_time_base",
+        "demux",
         "-f",
         "null",
         "-",
+        "-map",
+        "0:v",
+        "-c:v",
+        "copy",
+        "-f",
+        "framecrc",
+        frames,
     ]
     .into_iter()
     .map(str::to_owned)
@@ -496,15 +533,24 @@ fn check_args(recording: &str, progress: &str) -> Vec<String> {
 }
 
 /// Checks a muxed recording, from the mux's log (`mux_log`), the log of
-/// decoding it with [`check_args`] (`check_log`), and that decoding's
-/// `progress`. Fails when the mux logged an error or a corrupt packet,
+/// decoding it with [`check_args`] (`check_log`), and the video's `frames`
+/// that wrote. Fails when the mux logged an error or a corrupt packet,
 /// which it does without failing; when decoding logged anything; or when
-/// the video is shorter than the capture ran (`captured`), by more than
-/// one frame at `framerate` frames a second. Returns the problem found.
+/// the video, from its first frame's time to its last frame's end, is
+/// shorter than the capture ran (`captured`) by more than one frame at
+/// `framerate` frames a second. Returns the problem found.
+///
+/// `captured` is measured on this machine from seeing the first frame's
+/// evidence to sending `q`, so it falls short of the capture, which began
+/// before the evidence and ends once ffmpeg reads the `q`. The capture's
+/// last frame was taken no more than a frame's slot before ffmpeg stopped
+/// capturing, unless the capture fell behind at its very end, and it
+/// lasts a frame; so a whole capture is never shorter than `captured`
+/// less one frame.
 fn verify(
     mux_log: &str,
     check_log: &str,
-    progress: &str,
+    frames: &str,
     captured: Duration,
     framerate: u32,
 ) -> Result<(), String> {
@@ -530,31 +576,54 @@ fn verify(
     if !check_log.trim().is_empty() {
         return Err(format!("does not decode cleanly: {}", tail(check_log)));
     }
-    let frames = decoded_frames(progress)
-        .ok_or_else(|| format!("has no count of decoded frames in: {}", tail(progress)))?;
+    let (length, count) = video_length(frames)
+        .ok_or_else(|| format!("lists no video frames that can be read: {}", tail(frames)))?;
     let frame = 1.0 / f64::from(framerate);
-    let length = f64::from(frames) * frame;
     if length + frame < captured.as_secs_f64() {
         return Err(format!(
-            "lasts {length:.3} s ({frames} frames), but the capture ran for at least {:.3} s",
+            "lasts {length:.3} s ({count} frames), but the capture ran for at least {:.3} s",
             captured.as_secs_f64()
         ));
     }
     Ok(())
 }
 
-/// The count of video frames decoded, from ffmpeg's `-progress` output: the
-/// last report's `frame=`, once the last report says `progress=end`.
-fn decoded_frames(progress: &str) -> Option<u32> {
-    let mut frames = None;
-    for line in progress.lines() {
-        match line.trim().split_once('=') {
-            Some(("frame", count)) => frames = count.parse().ok(),
-            Some(("progress", "end")) => return frames,
-            _ => {}
+/// The length in seconds of the video `frames` lists, in ffmpeg's
+/// `framecrc` format, from its first frame's time to its last frame's end,
+/// with the count of frames; `None` when it lists none.
+fn video_length(frames: &str) -> Option<(f64, usize)> {
+    let mut time_base = None;
+    let mut span: Option<(i64, i64)> = None;
+    let mut count = 0;
+    for line in frames.lines() {
+        if let Some(base) = line.strip_prefix("#tb 0: ") {
+            let (numerator, denominator) = base.trim().split_once('/')?;
+            time_base = Some((
+                numerator.parse::<i64>().ok()?,
+                denominator.parse::<i64>().ok()?,
+            ));
+            continue;
         }
+        if line.starts_with('#') {
+            continue;
+        }
+        let fields: Vec<&str> = line.split(',').map(str::trim).collect();
+        let [_stream, _dts, pts, duration, ..] = fields.as_slice() else {
+            continue;
+        };
+        let pts: i64 = pts.parse().ok()?;
+        let end = pts + duration.parse::<i64>().ok()?;
+        span = Some(span.map_or((pts, end), |(first, last)| (first.min(pts), last.max(end))));
+        count += 1;
     }
-    None
+    let (numerator, denominator) = time_base?;
+    let (first, last) = span?;
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a video's length in its time base is far below 2^52"
+    )]
+    let length = (last - first) as f64 * numerator as f64 / denominator as f64;
+    Some((length, count))
 }
 
 /// The wall-clock time of `gdigrab`'s first frame, which ffmpeg logs as
@@ -609,26 +678,39 @@ mod tests {
         assert!(demo.contains("-crf 0 -pix_fmt yuv420p -g 30 "), "{demo}");
     }
 
-    /// The end of ffmpeg's `-progress` output for a clean four-second
-    /// capture, as ffmpeg 9 writes it.
-    const PROGRESS: &str =
-        "frame=30\nprogress=continue\nframe=63\nfps=0.00\nout_time_us=4200000\nprogress=end\n";
+    #[test]
+    fn keeps_each_frame_at_the_time_it_was_captured() {
+        let capture = capture_args("v.mp4", false).join(" ");
+        assert!(
+            capture.contains("-fps_mode passthrough -enc_time_base 1:1000 "),
+            "{capture}"
+        );
+        let demo = mux_args("v.mp4", "a.wav", None, "out.mp4", true).join(" ");
+        assert!(
+            demo.contains("-fps_mode passthrough -enc_time_base 1:1000 "),
+            "{demo}"
+        );
+    }
+
+    /// ffmpeg 9's `framecrc` list of a 4.2-second capture of four frames,
+    /// the third taken 3.9 s before the fourth because the capture fell
+    /// behind.
+    const FRAMES: &str = "#extradata 0:       37, 0xda620af1\n#software: Lavf63.1.102\n#tb 0: 1/16000\n#media_type 0: video\n#codec_id 0: h264\n#dimensions 0: 1280x800\n#sar 0: 0/1\n0,          0,          0,     1360,   230363, 0xedcabc3e\n0,       1360,       1360,     1648,      152, 0xbd631c51, F=0x0\n0,       3008,       3008,    63125,     2109, 0x2c90f08b, F=0x0\n0,      66133,      66133,     1067,     2985, 0x1977aa9c, F=0x0\n";
 
     #[test]
-    fn counts_the_frames_decoded_once_decoding_ended() {
-        assert_eq!(decoded_frames(PROGRESS), Some(63));
-        assert_eq!(decoded_frames("frame=30\nprogress=continue\n"), None);
-        assert_eq!(decoded_frames(""), None);
+    fn measures_the_video_from_its_frames_times() {
+        assert_eq!(video_length(FRAMES), Some((4.2, 4)));
+        assert_eq!(video_length("#tb 0: 1/16000\n"), None);
+        assert_eq!(video_length(""), None);
     }
 
     #[test]
     fn passes_a_clean_recording_as_long_as_the_capture() {
         let mux_log =
             "[info] Output #0, mp4, to 'recording.mp4':\n[info] [out#0/mp4 @ 0] video:1954KiB\n";
-        // 63 frames at 15 a second last 4.2 s; a capture of 4.25 s is
-        // within one frame of that.
+        // A capture of 4.25 s is within one frame of the video's 4.2 s.
         assert_eq!(
-            verify(mux_log, "", PROGRESS, Duration::from_millis(4_250), 15),
+            verify(mux_log, "", FRAMES, Duration::from_millis(4_250), 15),
             Ok(())
         );
     }
@@ -636,8 +718,8 @@ mod tests {
     #[test]
     fn fails_a_recording_shorter_than_the_capture_by_more_than_a_frame() {
         assert_eq!(
-            verify("", "", PROGRESS, Duration::from_millis(4_300), 15),
-            Err("lasts 4.200 s (63 frames), but the capture ran for at least 4.300 s".to_owned())
+            verify("", "", FRAMES, Duration::from_millis(4_300), 15),
+            Err("lasts 4.200 s (4 frames), but the capture ran for at least 4.300 s".to_owned())
         );
     }
 
@@ -645,14 +727,14 @@ mod tests {
     fn fails_a_recording_muxed_from_a_cut_keyframe() {
         let mux_log = "[info] Stream mapping:\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0] [warning] Packet corrupt (stream = 0, dts = 153600).\n[in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 0] [warning] corrupt input packet in stream 0\n";
         assert_eq!(
-            verify(mux_log, "", PROGRESS, Duration::from_secs(4), 15),
+            verify(mux_log, "", FRAMES, Duration::from_secs(4), 15),
             Err("was muxed from a damaged capture: [mov,mp4,m4a,3gp,3g2,mj2 @ 0] [warning] Packet corrupt (stream = 0, dts = 153600). | [in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 0] [warning] corrupt input packet in stream 0".to_owned())
         );
         assert_eq!(
             verify(
                 "[aac @ 0] [error] Too many bits\n",
                 "",
-                PROGRESS,
+                FRAMES,
                 Duration::from_secs(4),
                 15
             ),
@@ -664,7 +746,7 @@ mod tests {
     fn fails_a_recording_that_does_not_decode_cleanly() {
         let check_log = "[h264 @ 0] Invalid NAL unit size (46141 > 26830).\n[h264 @ 0] Error splitting the input into NAL units.\n";
         assert_eq!(
-            verify("", check_log, PROGRESS, Duration::from_secs(4), 15),
+            verify("", check_log, FRAMES, Duration::from_secs(4), 15),
             Err("does not decode cleanly: [h264 @ 0] Invalid NAL unit size (46141 > 26830). | [h264 @ 0] Error splitting the input into NAL units.".to_owned())
         );
     }

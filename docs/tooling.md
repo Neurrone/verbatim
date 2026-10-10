@@ -901,9 +901,18 @@ agent's `ReadFileChunk` request to the scenario's artifacts directory,
 with ffmpeg's logs (`recording-video.log`, `recording-mux.log`, and
 `recording-check.log`). It then checks the video: decoding it with
 `ffmpeg -v error -f null` must log nothing, the mux log must have no error
-and no corrupt packet (that ffmpeg exits 0 regardless), and the video must
-last as long as the capture ran, from the evidence of the first frame to
-the request to stop, within one frame. A recording that fails the check
+and no corrupt packet (that ffmpeg exits 0 regardless), and the video,
+from its first frame's time to its last frame's end, must last as long as
+the capture ran, from the evidence of the first frame to the request to
+stop, within one frame. The frames' times are what keep the video in real
+time, not their count: `gdigrab` stamps each frame with the wall-clock
+time it was taken and skips a frame's slot when it is more than a frame
+late, which it is when the machine is loaded (a flood scenario beside a
+debug Verbatim and other builds captured 14 frames a second of the 15 it
+aimed for). The capture keeps every frame at its own time, to the
+millisecond (`-fps_mode passthrough -enc_time_base 1:1000`), where
+ffmpeg's default would round each time to the frame interval and drop a
+late frame that rounds onto the next one's time. A recording that fails the check
 fails the scenario, and its video is still copied, to be watched.
 The recording covers the scenario's launch, setup, body, and teardown,
 since setup and teardown are where a target application appears or

@@ -322,9 +322,14 @@ scenario's `Drop` when `finish` was never reached.
 back with ffmpeg's logs, and checks it (`verify`). The check decodes the
 recording with `ffmpeg -v error -f null`, and fails when that logs
 anything, when the mux log has an error or a corrupt packet (the mux
-exits 0 on both), or when the video is shorter than the capture ran, from
-the evidence of its first frame to the request to stop, by more than one
-frame. A recording that cannot start or be finished, or fails the check,
+exits 0 on both), or when the video, from its first frame's time to its
+last frame's end as a `framecrc` list of its frames gives them, is
+shorter than the capture ran, from the evidence of its first frame to the
+request to stop, by more than one frame. Every frame keeps the time
+`gdigrab` captured it at, to the millisecond (`-fps_mode passthrough`),
+so the video keeps real time when a loaded machine makes the capture
+miss frames; ffmpeg's default rounds each time to the frame interval and
+drops a late frame that rounds onto the next one's time. A recording that cannot start or be finished, or fails the check,
 is a failure.
 
 ## The registry
