@@ -129,7 +129,7 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
 2. Core: one input channel in arrival order; NVDA's duplicate-focus rule;
    background speech dropped across a foreground change. Built, pending
    live checks (`phase6-design.md`, "Core's inputs in arrival order, the
-   duplicate rule, and background speech"): `cargo xtask ci` passes; the
+   duplicate rule, and background speech"): `cargo xtask ci` not yet run; the
    related scenarios have not yet been run.
 3. Console windows: every event to the console host's outpost, with the
    client process as identity; the console special cases removed.
