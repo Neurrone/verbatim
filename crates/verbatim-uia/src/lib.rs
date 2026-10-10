@@ -15,6 +15,11 @@
 //!   round trip per hop; M4's remote-ops work replaces the per-hop walk with
 //!   a single batched round trip), and activates a node through the
 //!   `Invoke`/`Toggle`/legacy-`DoDefaultAction` pattern ladder.
+//! - [`BoundedClient`] — a client on a thread of its own, for an operation
+//!   made of many provider calls (a search, a dialog's text) that needs a
+//!   deadline of its own: UIA's timeouts ([`CALL_TIMEOUT`]) bound each call,
+//!   not the operation, and a call cannot be cancelled, so an operation
+//!   that passes its deadline is abandoned with its thread.
 //! - [`FocusRegistration`] — the self-contained global focus-change handler
 //!   (its narrow seam is what the M3 sentinel split relocates).
 //! - [`Registration`] — a property-change, automation-event, or notification
@@ -39,6 +44,7 @@
 //! - [`text`] — the same kind of wrappers over the text pattern and its
 //!   ranges (milestone M4), which the outpost's text protocol reads with.
 
+mod bounded;
 mod cache;
 pub mod calls;
 mod checks;
@@ -54,12 +60,13 @@ mod registry;
 mod subscribe;
 pub mod text;
 
+pub use bounded::{BoundedClient, Unanswered};
 pub use cache::{
     CACHED_PROPERTIES, FOCUS_EVENT_PROPERTIES, TEXT_EVENT_PROPERTIES, base_cache_request,
     cache_request_for, cached_properties,
 };
 pub use checks::{console_reports_formatting, is_windows_forms};
-pub use client::{AncestorStops, AncestorWalk, Uia, release_mta_usage};
+pub use client::{AncestorStops, AncestorWalk, CALL_TIMEOUT, Uia, release_mta_usage};
 pub use com::{
     element_is_gone, init_mta, is_mixed, is_not_supported, leave_mta, runtime_id, timed_out,
     variant_element, variant_f64, variant_i32, variant_i32_array, variant_optional_bool,
@@ -71,7 +78,7 @@ pub use nearest::nearest_window_handle;
 pub use probe::{PROBE_BUDGET, Probe, has_server_side_provider, probe, probe_server_side_provider};
 pub use registry::{NodeIdRegistry, Released};
 pub use subscribe::{
-    ActiveTextPositionCallback, ElementCallback, EventCallback, FOCUS_PROPERTIES,
+    ActiveTextPositionCallback, ElementCallback, EventCallback, FOCUS_PROPERTIES, MOVE_DEADLINE,
     NotificationCallback, PropertyCallback, Registration, Scope, Subscription,
 };
 

@@ -42,7 +42,11 @@ pub(super) const MAX_ANCESTOR_HOPS: u32 = 64;
 
 /// How long reading a focus's containers may take before the focus is
 /// reported with them unknown: a focus is spoken late at worst, never lost
-/// because its containers took too long to read.
+/// because its containers took too long to read. Checked between the
+/// walk's calls, each of which UIA ends after its call timeout
+/// ([`verbatim_uia::CALL_TIMEOUT`]), so a walk ends within this budget and
+/// one call; the worker's deadline for the entry, enforced by abandonment,
+/// bounds the rest.
 const ENRICHMENT_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// A focus's ancestors, outermost first, or `None` when they could not be
@@ -249,10 +253,10 @@ fn wants_selected_child(role: Role) -> bool {
 /// A focused UIA element's ancestors and, for a selection container, its
 /// selected child, read from the element already in hand. The walk stops
 /// at a container of `previous` (the last focus's ancestors and the focus
-/// itself) and reuses the rest; within [`ENRICHMENT_BUDGET`], each call to
-/// the application waiting no longer than that. Failures degrade to no
-/// containers or no selected child; running out of time to containers
-/// unknown. Enrichment never turns a focus into an error.
+/// itself) and reuses the rest; within [`ENRICHMENT_BUDGET`], checked
+/// between its calls. Failures degrade to no containers or no selected
+/// child; running out of time to containers unknown. Enrichment never
+/// turns a focus into an error.
 pub(super) fn uia_enrichment(
     context: &Context,
     uia: &Uia,
@@ -262,25 +266,22 @@ pub(super) fn uia_enrichment(
     previous: &[NodeSnapshot],
 ) -> Enrichment {
     let deadline = std::time::Instant::now() + ENRICHMENT_BUDGET;
-    uia.within(ENRICHMENT_BUDGET, |uia| {
-        let ancestors = uia_ancestors(context, uia, cache, element, previous, Some(deadline));
-        let selected = if wants_selected_child(role) {
-            match uia.selected_child(element, cache, &context.uia_registry) {
-                Ok(selected) => selected,
-                // The application did not answer in time, or the list is
-                // gone: there is no selected child to report, and the log
-                // says it was not read rather than that none was selected.
-                Err(error) => {
-                    tracing::debug!(%error, "the selected child could not be read");
-                    None
-                }
+    let ancestors = uia_ancestors(context, uia, cache, element, previous, Some(deadline));
+    let selected = if wants_selected_child(role) {
+        match uia.selected_child(element, cache, &context.uia_registry) {
+            Ok(selected) => selected,
+            // The application did not answer in time, or the list is
+            // gone: there is no selected child to report, and the log
+            // says it was not read rather than that none was selected.
+            Err(error) => {
+                tracing::debug!(%error, "the selected child could not be read");
+                None
             }
-        } else {
-            None
-        };
-        (ancestors, selected)
-    })
-    .unwrap_or((None, None))
+        }
+    } else {
+        None
+    };
+    (ancestors, selected)
 }
 
 /// A UIA element's ancestors, outermost first, or `None` when the walk ran
@@ -447,11 +448,10 @@ pub(super) fn uia_remote_enrichment(
         deadline: Some(deadline),
         require_focus,
     };
-    let answer = uia
-        .within(ENRICHMENT_BUDGET, |uia| focus_ancestry(uia, &query, true))
-        .map_err(verbatim_uia_rops::Error::Uia)
-        .and_then(|answer| answer);
-    let (ancestry, path) = match answer {
+    // One remote operation, one transaction, which UIA's transaction
+    // timeout bounds; the classic walk it falls back to checks the
+    // deadline between its calls.
+    let (ancestry, path) = match focus_ancestry(uia, &query, true) {
         Ok((FocusAncestry::Focused(ancestry), path)) => (ancestry, path),
         Ok((FocusAncestry::NotFocused, _)) => return Some(RemoteEnrichment::NotFocused),
         Err(error) => {
@@ -577,9 +577,10 @@ fn msaa_ancestors(
 
 /// An MSAA node's ancestors and, for a selection container, its selected
 /// child, stopping at a container of `previous` and reusing the rest, within
-/// [`ENRICHMENT_BUDGET`] (checked between calls; an MSAA call cannot be
-/// given a shorter wait). Failures degrade to no containers or no selected
-/// child; running out of time to containers unknown.
+/// [`ENRICHMENT_BUDGET`] (checked between calls; an MSAA call has no bound
+/// of its own, and a UIA call in the walk ends after UIA's call timeout).
+/// Failures degrade to no containers or no selected child; running out of
+/// time to containers unknown.
 pub(super) fn msaa_enrichment(
     context: &Context,
     client: &mut Client,
@@ -593,12 +594,9 @@ pub(super) fn msaa_enrichment(
     // role.
     let deadline = std::time::Instant::now() + ENRICHMENT_BUDGET;
     let ancestors = match client.uia_and_cache(context) {
-        // A UIA read in the walk waits no longer than the budget.
-        Ok((uia, cache)) => uia
-            .within(ENRICHMENT_BUDGET, |uia| {
-                msaa_ancestors(context, Some((uia, &cache)), node, previous, Some(deadline))
-            })
-            .unwrap_or(None),
+        Ok((uia, cache)) => {
+            msaa_ancestors(context, Some((uia, &cache)), node, previous, Some(deadline))
+        }
         Err(_) => msaa_ancestors(context, None, node, previous, Some(deadline)),
     };
     let selected = if wants_selected_child(node.role) {
@@ -609,9 +607,11 @@ pub(super) fn msaa_enrichment(
     (ancestors, selected)
 }
 
-/// How long gathering a dialog's own text through UI Automation waits for
-/// the application at each call: the text is worth a short wait, but the
-/// focus it is announced with must not be held back long.
+/// How long gathering a dialog's own text through UI Automation may take,
+/// all its calls together: the text is worth a short wait, but the focus it
+/// is announced with must not be held back long. Gathering reads the
+/// dialog's descendants, many calls, so it has this deadline of its own,
+/// enforced by abandonment ([`verbatim_uia::BoundedClient`]).
 const DIALOG_TEXT_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// The dialog this outpost last gathered text for in a foreground report,
@@ -631,7 +631,6 @@ pub(super) type DialogMemo = Option<(NodeId, Option<String>)>;
 /// inside it.
 pub(super) fn describe_dialogs<'a>(
     context: &Context,
-    client: &mut Client,
     nodes: impl IntoIterator<Item = &'a mut NodeSnapshot>,
     (previous, memo, remember): (&[NodeSnapshot], &mut DialogMemo, bool),
 ) {
@@ -654,7 +653,7 @@ pub(super) fn describe_dialogs<'a>(
             Some((id, text)) if *id == node.id => text.clone(),
             _ => {
                 let started = std::time::Instant::now();
-                let text = dialog_text_of(context, client, node);
+                let text = dialog_text_of(context, node);
                 tracing::debug!(
                     found = text.is_some(),
                     elapsed_us = started.elapsed().as_micros(),
@@ -675,7 +674,7 @@ pub(super) fn describe_dialogs<'a>(
 
 /// The own text of the dialog `node`, through the backend that reported it;
 /// `None` when it has none or cannot be read.
-fn dialog_text_of(context: &Context, client: &mut Client, node: &NodeSnapshot) -> Option<String> {
+fn dialog_text_of(context: &Context, node: &NodeSnapshot) -> Option<String> {
     use crate::dialog_text::{UiaObject, dialog_text};
     match node.backend {
         Backend::Msaa => {
@@ -683,14 +682,16 @@ fn dialog_text_of(context: &Context, client: &mut Client, node: &NodeSnapshot) -
                 .and_then(|dialog| dialog_text(&dialog))
         }
         Backend::Uia => {
-            let element = context.uia_registry.element_of(node.id)?.resolve().ok()?;
+            let element = context.uia_registry.element_of(node.id)?;
             let properties = verbatim_uia::cached_properties(context.fetches());
-            let uia = client.uia()?;
-            uia.within(DIALOG_TEXT_WAIT, |uia| {
+            let gathered = context.bounded.run(DIALOG_TEXT_WAIT, move |uia| {
+                let element = element.resolve().ok()?;
                 dialog_text(&UiaObject::new(uia, &properties, element))
+            });
+            gathered.unwrap_or_else(|unanswered| {
+                tracing::debug!(?unanswered, "a dialog's text was not gathered");
+                None
             })
-            .ok()
-            .flatten()
         }
     }
 }

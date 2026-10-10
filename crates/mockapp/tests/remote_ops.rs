@@ -414,10 +414,10 @@ fn execution_failure(error: &Error) -> Option<windows::core::HRESULT> {
 }
 
 /// The finding that decides where the outpost may run a program: against a
-/// stalled provider, `Execute` waits exactly as a classic call does. The
-/// connection timeout (`Uia::within`) does not bound it; UIA's transaction
-/// timeout, which is process-wide, does, and the run then ends with an
-/// execution failure carrying `UIA_E_TIMEOUT`.
+/// stalled provider, `Execute` waits exactly as a classic call does. UIA's
+/// connection timeout does not bound it; its transaction timeout does, and
+/// the run then ends with an execution failure carrying `UIA_E_TIMEOUT`.
+/// Both are process-wide.
 fn a_stalled_provider_holds_execute_until_the_transaction_timeout() {
     const STALL: Duration = Duration::from_millis(4000);
     // The transaction timeout is process-wide, so no other test in this
@@ -429,13 +429,10 @@ fn a_stalled_provider_holds_execute_until_the_transaction_timeout() {
     // Each run starts once mockapp has acknowledged that its window thread
     // is stalled, and is judged by when it returned against when mockapp
     // says the stall ended.
+    let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
+    let connection = ProcessTimeout::set(&client, Kind::Connection, TIMEOUT);
     fixture.app.stall(STALL);
-    let answer = fixture
-        .uia
-        .within(TIMEOUT, |uia| {
-            focus_ancestry_remote(uia, &query(&deep, &[]))
-        })
-        .expect("within");
+    let answer = focus_ancestry_remote(&fixture.uia, &query(&deep, &[]));
     let returned = common::now_us();
     assert!(
         matches!(answer, Ok(FocusAncestry::Focused(_))),
@@ -446,9 +443,9 @@ fn a_stalled_provider_holds_execute_until_the_transaction_timeout() {
         returned >= ended,
         "the run waited for the stalled provider: it returned at {returned} us, before the stall ended at {ended} us"
     );
+    drop(connection);
 
-    let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
-    let _restored = TransactionTimeout::set(&client, TIMEOUT);
+    let _restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
     for (label, ancestry) in BOTH {
         fixture.app.stall(STALL);
         let answer = ancestry(&fixture.uia, &query(&deep, &[]));
@@ -497,7 +494,7 @@ fn a_focus_walk_that_times_out_fails() {
     let mut fixture = Fixture::start_alone("mockapp-rops-timed-out");
     let deep = fixture.focus("deep", "Deep button");
     let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
-    let _restored = TransactionTimeout::set(&client, TIMEOUT);
+    let _restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
 
     fixture.app.send(&format!("slow {}", SLOW_CALL.as_millis()));
     let classic = focus_ancestry_classic(&fixture.uia, &query(&deep, &[]));
@@ -559,7 +556,7 @@ fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
             uia_focus_fact(&deep).expect("mockapp's element has its process");
         outpost.read_focus_as(&deep);
         let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
-        let restored = TransactionTimeout::set(&client, TIMEOUT);
+        let restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
 
         fixture.app.send(&format!("slow {}", SLOW_CALL.as_millis()));
         outpost.deliver(fact);
@@ -620,7 +617,7 @@ fn a_selection_read_that_times_out_or_finds_the_list_gone_fails() {
         "no Selection pattern"
     );
     let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
-    let restored = TransactionTimeout::set(&client, TIMEOUT);
+    let restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
 
     fixture.app.send(&format!("slow {}", SLOW_CALL.as_millis()));
     for container in &containers {
@@ -665,33 +662,58 @@ fn a_selection_read_that_times_out_or_finds_the_list_gone_fails() {
     }
 }
 
-/// UIA's transaction timeout, set for a while and restored when dropped,
+/// Which of UIA's process-wide timeouts a [`ProcessTimeout`] sets.
+#[derive(Clone, Copy)]
+enum Kind {
+    Connection,
+    Transaction,
+}
+
+/// One of UIA's timeouts, set for a while and restored when dropped,
 /// whether the test passed or not.
-struct TransactionTimeout {
+struct ProcessTimeout {
     client: IUIAutomation2,
+    kind: Kind,
     usual: u32,
 }
 
-impl TransactionTimeout {
-    fn set(client: &IUIAutomation2, timeout: Duration) -> Self {
-        // SAFETY: reading and setting a timeout take plain integers.
-        let usual = unsafe { client.TransactionTimeout() }.expect("transaction timeout");
+impl ProcessTimeout {
+    fn set(client: &IUIAutomation2, kind: Kind, timeout: Duration) -> Self {
+        let usual = Self::read(client, kind);
         let timeout = u32::try_from(timeout.as_millis()).expect("milliseconds");
-        // SAFETY: as above.
-        unsafe { client.SetTransactionTimeout(timeout) }.expect("set transaction timeout");
+        Self::write(client, kind, timeout).expect("set the timeout");
         Self {
             client: client.clone(),
+            kind,
             usual,
+        }
+    }
+
+    fn read(client: &IUIAutomation2, kind: Kind) -> u32 {
+        match kind {
+            // SAFETY: reading a timeout returns a plain integer.
+            Kind::Connection => unsafe { client.ConnectionTimeout() },
+            // SAFETY: as above.
+            Kind::Transaction => unsafe { client.TransactionTimeout() },
+        }
+        .expect("the timeout")
+    }
+
+    fn write(client: &IUIAutomation2, kind: Kind, timeout: u32) -> windows::core::Result<()> {
+        match kind {
+            // SAFETY: setting a timeout takes a plain integer.
+            Kind::Connection => unsafe { client.SetConnectionTimeout(timeout) },
+            // SAFETY: as above.
+            Kind::Transaction => unsafe { client.SetTransactionTimeout(timeout) },
         }
     }
 }
 
-impl Drop for TransactionTimeout {
+impl Drop for ProcessTimeout {
     fn drop(&mut self) {
-        // SAFETY: setting a timeout takes a plain integer.
-        let restored = unsafe { self.client.SetTransactionTimeout(self.usual) };
+        let restored = Self::write(&self.client, self.kind, self.usual);
         if !std::thread::panicking() {
-            restored.expect("restore the transaction timeout");
+            restored.expect("restore the timeout");
         }
     }
 }

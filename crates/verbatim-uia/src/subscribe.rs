@@ -19,10 +19,21 @@
 //! ([`Registration::with_cache`]), so the element arrives with its
 //! properties prefetched and the callback reads them without a
 //! cross-process call.
+//!
+//! A registration's thread calls into applications as it moves, and a
+//! caller can wait on it ([`Registration::new`] for its first registration,
+//! [`Registration::settle`]), so it has a watchdog, the outpost worker's
+//! rule: a move that has not finished within [`MOVE_DEADLINE`] when the
+//! registration is next moved or settled has its thread abandoned and
+//! replaced by a new one, with its own client, that registers on the
+//! newest scope. The abandoned thread's handlers call back no more, and
+//! once its call returns it removes what its client registered and ends.
 
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomation6, IUIAutomationActiveTextPositionChangedEventHandler, IUIAutomationCacheRequest,
@@ -87,7 +98,14 @@ pub const FOCUS_PROPERTIES: [UIA_PROPERTY_ID; 6] = [
     UIA_ExpandCollapseExpandCollapseStatePropertyId,
 ];
 
+/// How long a registration's thread may take over one move (removing its
+/// handlers and registering them on a new scope) before it is abandoned and
+/// replaced: two of UIA's call timeouts ([`crate::CALL_TIMEOUT`]), so a move
+/// whose calls each answer within the timeout is never abandoned.
+pub const MOVE_DEADLINE: Duration = Duration::from_secs(10);
+
 /// Where a registration listens.
+#[derive(Clone)]
 pub enum Scope {
     /// Nowhere, until retargeted.
     Nothing,
@@ -100,6 +118,7 @@ pub enum Scope {
 }
 
 /// What a registration listens for.
+#[derive(Clone)]
 pub enum Subscription {
     /// Changes to these properties.
     Properties {
@@ -139,9 +158,95 @@ pub enum Subscription {
 /// A live subscription: one or more [`Subscription`]s registered together
 /// as one event handler group. Dropping it unregisters and ends its thread.
 pub struct Registration {
-    /// The registration's thread and the channel to it, until
-    /// [`Registration::close`] takes them.
-    live: Mutex<Option<(mpsc::Sender<Command>, JoinHandle<()>)>>,
+    /// What each of its threads registers, for a replacement.
+    subscriptions: Vec<Subscription>,
+    /// The properties each event's element arrives with.
+    properties: &'static [UIA_PROPERTY_ID],
+    state: Mutex<State>,
+}
+
+/// A registration's threads and the scope it was last asked to move to.
+struct State {
+    /// The thread in charge, until [`Registration::close`] takes it.
+    current: Option<Incarnation>,
+    /// Threads abandoned past [`MOVE_DEADLINE`] and not yet waited for.
+    abandoned: Vec<JoinHandle<()>>,
+    /// The newest scope asked for, where a replacement registers.
+    scope: Scope,
+}
+
+/// One of a registration's threads.
+struct Incarnation {
+    commands: mpsc::Sender<Command>,
+    join: JoinHandle<()>,
+    /// Cleared when the thread is abandoned: its handlers call back no
+    /// more, and it ends once its call returns.
+    live: Arc<AtomicBool>,
+    /// When the move the thread is making began, while it makes one.
+    moving: Arc<Mutex<Option<Instant>>>,
+}
+
+/// What [`Incarnation::start`] gives: the thread, and the way to hear that
+/// its first registration is made.
+type Started = (Incarnation, mpsc::Receiver<windows::core::Result<()>>);
+
+impl Incarnation {
+    /// Starts a thread that registers `subscriptions` on `scope`.
+    fn start(
+        subscriptions: Vec<Subscription>,
+        properties: &'static [UIA_PROPERTY_ID],
+        scope: Scope,
+    ) -> windows::core::Result<Started> {
+        let (commands, received) = mpsc::channel::<Command>();
+        let (ready_tx, ready_rx) = mpsc::channel::<windows::core::Result<()>>();
+        let live = Arc::new(AtomicBool::new(true));
+        let moving = Arc::new(Mutex::new(Some(Instant::now())));
+        let thread = Thread {
+            live: Arc::clone(&live),
+            moving: Arc::clone(&moving),
+        };
+        let join = thread::Builder::new()
+            .name("verbatim-uia-subscription".to_owned())
+            .spawn(move || {
+                run(
+                    subscriptions,
+                    properties,
+                    &scope,
+                    &thread,
+                    &ready_tx,
+                    &received,
+                );
+            })
+            .map_err(|e| {
+                windows::core::Error::new(windows::Win32::Foundation::E_FAIL, e.to_string())
+            })?;
+        Ok((
+            Self {
+                commands,
+                join,
+                live,
+                moving,
+            },
+            ready_rx,
+        ))
+    }
+
+    /// Whether the move the thread is making began [`MOVE_DEADLINE`] or
+    /// more ago.
+    fn overdue(&self) -> bool {
+        self.moving
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some_and(|began| began.elapsed() >= MOVE_DEADLINE)
+    }
+
+    /// Abandons the thread: its handlers call back no more, it is asked for
+    /// nothing more, and it ends once its call returns.
+    fn abandon(self) -> JoinHandle<()> {
+        self.live.store(false, Ordering::Release);
+        drop(self.commands);
+        self.join
+    }
 }
 
 impl Registration {
@@ -151,9 +256,11 @@ impl Registration {
     /// # Errors
     ///
     /// Returns the COM error if the client, cache request, or a handler
-    /// cannot be created. An element of the scope that cannot be resolved,
-    /// or on which the group cannot be registered, is skipped rather than
-    /// failing the registration.
+    /// cannot be created, or `UIA_E_TIMEOUT` if the first registration is
+    /// not made within [`MOVE_DEADLINE`], when its thread is abandoned. An
+    /// element of the scope that cannot be resolved, or on which the group
+    /// cannot be registered, is skipped rather than failing the
+    /// registration.
     pub fn new(subscriptions: Vec<Subscription>, scope: Scope) -> windows::core::Result<Self> {
         Self::with_cache(subscriptions, scope, CACHED_PROPERTIES)
     }
@@ -171,24 +278,33 @@ impl Registration {
         scope: Scope,
         properties: &'static [UIA_PROPERTY_ID],
     ) -> windows::core::Result<Self> {
-        let (retarget_tx, retarget_rx) = mpsc::channel::<Command>();
-        let (ready_tx, ready_rx) = mpsc::channel::<windows::core::Result<()>>();
-        let join = thread::Builder::new()
-            .name("verbatim-uia-subscription".to_owned())
-            .spawn(move || run(subscriptions, properties, &scope, &ready_tx, &retarget_rx))
-            .map_err(|e| {
-                windows::core::Error::new(windows::Win32::Foundation::E_FAIL, e.to_string())
-            })?;
-        match ready_rx.recv() {
+        let (incarnation, ready) =
+            Incarnation::start(subscriptions.clone(), properties, scope.clone())?;
+        match ready.recv_timeout(MOVE_DEADLINE) {
             Ok(Ok(())) => Ok(Self {
-                live: Mutex::new(Some((retarget_tx, join))),
+                subscriptions,
+                properties,
+                state: Mutex::new(State {
+                    current: Some(incarnation),
+                    abandoned: Vec::new(),
+                    scope,
+                }),
             }),
             Ok(Err(error)) => {
-                let _ = join.join();
+                let _ = incarnation.join.join();
                 Err(error)
             }
-            Err(_) => {
-                let _ = join.join();
+            Err(RecvTimeoutError::Timeout) => {
+                // Not waited for: it ends once its call returns.
+                drop(incarnation.abandon());
+                tracing::warn!("a UIA subscription's first registration passed its deadline");
+                Err(windows::core::Error::new(
+                    UIA_E_TIMEOUT,
+                    "the subscription's first registration passed its deadline",
+                ))
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                let _ = incarnation.join.join();
                 Err(windows::core::Error::new(
                     windows::Win32::Foundation::E_FAIL,
                     "subscription thread ended before signalling readiness",
@@ -198,25 +314,42 @@ impl Registration {
     }
 
     /// Moves the subscription to `scope`, without waiting: the registration's
-    /// own thread removes the old handlers and registers the new ones.
+    /// own thread removes the old handlers and registers the new ones. A
+    /// thread whose move has passed [`MOVE_DEADLINE`] is abandoned instead,
+    /// and a new one registers on `scope`.
     pub fn retarget(&self, scope: Scope) {
-        if let Some(sender) = self.sender() {
-            let _ = sender.send(Command::Retarget(scope));
+        let mut state = self.lock();
+        state.scope = scope.clone();
+        if state.current.as_ref().is_some_and(Incarnation::overdue) {
+            self.replace(&mut state);
+        } else if let Some(current) = &state.current {
+            let _ = current.commands.send(Command::Retarget(scope));
         }
     }
 
     /// Waits until every move [`retarget`](Self::retarget) was asked for
     /// before this call has been made: the old handlers removed and the new
     /// ones registered, so every call those make into an application has
-    /// returned. Returns at once if the registration's thread has ended.
+    /// returned. Returns at once if the registration is closed. A thread
+    /// that has not made them within [`MOVE_DEADLINE`] is abandoned and
+    /// replaced, and this returns: the replacement registers on the newest
+    /// scope on its own.
     pub fn settle(&self) {
-        let Some(sender) = self.sender() else {
-            return;
-        };
         let (done_tx, done_rx) = mpsc::channel();
-        if sender.send(Command::Settle(done_tx)).is_ok() {
-            // An error means the thread ended, with nothing left to move.
-            let _ = done_rx.recv();
+        {
+            let state = self.lock();
+            let Some(current) = &state.current else {
+                return;
+            };
+            if current.commands.send(Command::Settle(done_tx)).is_err() {
+                return;
+            }
+        }
+        // A disconnection means the thread ended, with nothing left to
+        // move.
+        if let Err(RecvTimeoutError::Timeout) = done_rx.recv_timeout(MOVE_DEADLINE) {
+            let mut state = self.lock();
+            self.replace(&mut state);
         }
     }
 
@@ -224,31 +357,65 @@ impl Registration {
     /// everything its client registered is removed
     /// (`RemoveAllEventHandlers`, which waits for any callback in progress
     /// to return), its objects are released, its thread leaves COM's
-    /// multithreaded apartment, and the thread ends. Returns once all of
-    /// that is done. Moving or settling a closed registration does
-    /// nothing; closing it again returns at once. Dropping a registration
-    /// closes it.
+    /// multithreaded apartment, and the thread ends. Every thread abandoned
+    /// before is waited for as well, each returning from its call however
+    /// long UIA takes to end it. Returns once all of that is done. Moving
+    /// or settling a closed registration does nothing; closing it again
+    /// returns at once. Dropping a registration closes it.
     pub fn close(&self) {
-        let live = self
-            .live
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        if let Some((sender, join)) = live {
-            drop(sender);
-            let _ = join.join();
+        let (current, abandoned) = {
+            let mut state = self.lock();
+            (state.current.take(), std::mem::take(&mut state.abandoned))
+        };
+        if let Some(current) = current {
+            drop(current.commands);
+            let _ = current.join.join();
+        }
+        for thread in abandoned {
+            let _ = thread.join();
         }
     }
 
-    /// The channel to the registration's thread, unless it is closed.
-    fn sender(&self) -> Option<mpsc::Sender<Command>> {
-        self.live
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .as_ref()
-            .map(|(sender, _)| sender.clone())
+    /// How many of this registration's threads have been abandoned and not
+    /// yet waited for.
+    #[must_use]
+    pub fn abandoned(&self) -> usize {
+        self.lock().abandoned.len()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Abandons the thread in charge, if the registration is not closed,
+    /// and starts a replacement registering on the newest scope, without
+    /// waiting for it.
+    fn replace(&self, state: &mut State) {
+        let Some(current) = state.current.take() else {
+            return;
+        };
+        state.abandoned.retain(|thread| !thread.is_finished());
+        state.abandoned.push(current.abandon());
+        tracing::warn!(
+            abandoned = state.abandoned.len(),
+            "a UIA subscription's move passed its deadline; its thread is abandoned and replaced"
+        );
+        match Incarnation::start(
+            self.subscriptions.clone(),
+            self.properties,
+            state.scope.clone(),
+        ) {
+            // Its first registration is made on its own thread.
+            Ok((incarnation, _ready)) => state.current = Some(incarnation),
+            Err(error) => {
+                tracing::warn!(%error, "a UIA subscription could not be replaced");
+            }
+        }
     }
 }
+
+/// UIA's error for a provider that did not answer in time.
+const UIA_E_TIMEOUT: windows::core::HRESULT = windows::core::HRESULT(0x8013_1505_u32.cast_signed());
 
 /// What a registration's thread is asked to do.
 enum Command {
@@ -277,28 +444,69 @@ enum Handler {
 }
 
 impl Handler {
-    fn of(subscription: Subscription) -> Self {
+    /// The handler for `subscription`, calling back only while `live` is
+    /// set: an abandoned thread's handlers stay registered until its call
+    /// returns, and must not repeat what its replacement's report.
+    fn of(subscription: Subscription, live: &Arc<AtomicBool>) -> Self {
+        let live = Arc::clone(live);
+        let is_live = move || live.load(Ordering::Acquire);
         match subscription {
             Subscription::Properties {
                 properties,
                 callback,
-            } => Self::Properties(handlers::PropertyHandler { callback }.into(), properties),
+            } => Self::Properties(
+                handlers::PropertyHandler {
+                    callback: Arc::new(move |element, property| {
+                        if is_live() {
+                            callback(element, property);
+                        }
+                    }),
+                }
+                .into(),
+                properties,
+            ),
             Subscription::Event { event, callback } => Self::Event(
                 handlers::EventHandler {
-                    callback: Arc::new(move |element, _| callback(element)),
+                    callback: Arc::new(move |element, _| {
+                        if is_live() {
+                            callback(element);
+                        }
+                    }),
                 }
                 .into(),
                 event,
             ),
-            Subscription::Events { events, callback } => {
-                Self::Events(handlers::EventHandler { callback }.into(), events)
-            }
-            Subscription::Notifications { callback } => {
-                Self::Notifications(handlers::NotificationHandler { callback }.into())
-            }
-            Subscription::ActiveTextPosition { callback } => {
-                Self::ActiveTextPosition(handlers::ActiveTextPositionHandler { callback }.into())
-            }
+            Subscription::Events { events, callback } => Self::Events(
+                handlers::EventHandler {
+                    callback: Arc::new(move |element, event| {
+                        if is_live() {
+                            callback(element, event);
+                        }
+                    }),
+                }
+                .into(),
+                events,
+            ),
+            Subscription::Notifications { callback } => Self::Notifications(
+                handlers::NotificationHandler {
+                    callback: Arc::new(move |element, kind, processing, display, activity| {
+                        if is_live() {
+                            callback(element, kind, processing, display, activity);
+                        }
+                    }),
+                }
+                .into(),
+            ),
+            Subscription::ActiveTextPosition { callback } => Self::ActiveTextPosition(
+                handlers::ActiveTextPositionHandler {
+                    callback: Arc::new(move |element, range| {
+                        if is_live() {
+                            callback(element, range);
+                        }
+                    }),
+                }
+                .into(),
+            ),
         }
     }
 
@@ -346,10 +554,30 @@ struct Parts {
     handlers: Vec<Handler>,
 }
 
+/// What a registration's thread shares with the registration.
+struct Thread {
+    /// Whether the thread is still the one in charge.
+    live: Arc<AtomicBool>,
+    /// When its current move began, while it makes one.
+    moving: Arc<Mutex<Option<Instant>>>,
+}
+
+impl Thread {
+    fn is_live(&self) -> bool {
+        self.live.load(Ordering::Acquire)
+    }
+
+    /// Notes when a move begins (`Some`) or ends (`None`).
+    fn moving(&self, began: Option<Instant>) {
+        *self.moving.lock().unwrap_or_else(PoisonError::into_inner) = began;
+    }
+}
+
 fn run(
     subscriptions: Vec<Subscription>,
     properties: &[UIA_PROPERTY_ID],
     scope: &Scope,
+    thread: &Thread,
     ready: &mpsc::Sender<windows::core::Result<()>>,
     retarget: &mpsc::Receiver<Command>,
 ) {
@@ -358,7 +586,10 @@ fn run(
         Ok(Parts {
             client: uia.client().cast()?,
             cache: uia.cache_request(properties)?,
-            handlers: subscriptions.into_iter().map(Handler::of).collect(),
+            handlers: subscriptions
+                .into_iter()
+                .map(|subscription| Handler::of(subscription, &thread.live))
+                .collect(),
             uia,
         })
     })();
@@ -370,8 +601,12 @@ fn run(
         }
     };
     register(&parts, scope);
+    thread.moving(None);
     let _ = ready.send(Ok(()));
     while let Ok(command) = retarget.recv() {
+        if !thread.is_live() {
+            break;
+        }
         let mut scope = match command {
             Command::Retarget(scope) => scope,
             Command::Settle(done) => {
@@ -386,7 +621,9 @@ fn run(
             match newer {
                 Command::Retarget(newer) if settled.is_empty() => scope = newer,
                 Command::Retarget(newer) => {
+                    thread.moving(Some(Instant::now()));
                     move_to(&parts, &scope);
+                    thread.moving(None);
                     for done in settled.drain(..) {
                         let _ = done.send(());
                     }
@@ -395,7 +632,12 @@ fn run(
                 Command::Settle(done) => settled.push(done),
             }
         }
+        if !thread.is_live() {
+            break;
+        }
+        thread.moving(Some(Instant::now()));
         move_to(&parts, &scope);
+        thread.moving(None);
         for done in settled {
             let _ = done.send(());
         }

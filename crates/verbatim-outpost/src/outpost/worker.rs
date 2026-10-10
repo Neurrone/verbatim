@@ -83,10 +83,13 @@ use windows::Win32::UI::Accessibility::IUIAutomationElement;
 /// a shorter deadline here dropped it for good.
 const HANDLING_DEADLINE: Duration = Duration::from_secs(10);
 
-/// How long a UIA focus waits to find its element live, for ancestors and
-/// navigation, before it is reported from the event alone. Such a read
+/// How long a search for a UIA focus's element in its window may take, all
+/// its calls together, before it is given up: a `FindFirst` over the
+/// window's subtree makes many provider calls, each of which UIA would wait
+/// its full call timeout for, so the search has this deadline of its own,
+/// enforced by abandonment ([`verbatim_uia::BoundedClient`]). Such a search
 /// normally answers in 10 to 100 ms.
-const FOCUS_READ_WAIT: Duration = Duration::from_secs(1);
+const SEARCH_DEADLINE: Duration = Duration::from_secs(1);
 
 /// How long the watchdog waits on an entry before abandoning it because the
 /// user has moved on to a window of the same application on another UI
@@ -1546,7 +1549,6 @@ impl Worker<'_> {
         let mut memo = self.context.tracking().dialog.take();
         read::describe_dialogs(
             self.context,
-            self.client,
             ancestors
                 .iter_mut()
                 .flatten()
@@ -3078,7 +3080,7 @@ impl Worker<'_> {
 
     /// The element of a UIA focus `fact` whose event said it had the
     /// keyboard focus, which another element of this application has taken
-    /// since, found within [`FOCUS_READ_WAIT`] in the top-level window of
+    /// since, found within [`SEARCH_DEADLINE`] in the top-level window of
     /// the event's window, else of the application's keyboard focus window
     /// when the listener captured the event, else in each of the
     /// application's top-level windows: by its runtime id, else by its
@@ -3101,9 +3103,7 @@ impl Worker<'_> {
             Some(window) => vec![top_level_of(window)],
             None => super::window::top_level_windows(self.context.target_pid),
         };
-        let uia = self.client.uia()?;
-        let cache = self.context.uia_cache(uia).ok()?;
-        let placed = fact.name.as_deref().zip(
+        let placed = fact.name.clone().zip(
             fact.details
                 .position_in_set
                 .zip(fact.details.set_size)
@@ -3111,48 +3111,48 @@ impl Worker<'_> {
                     Some((i32::try_from(position).ok()?, i32::try_from(size).ok()?))
                 }),
         );
-        let read = uia.within(FOCUS_READ_WAIT, |uia| {
-            roots.iter().find_map(|&top| {
+        let (fetches, runtime_id) = (self.context.fetches(), fact.runtime_id.clone());
+        let found = self.context.bounded.run(SEARCH_DEADLINE, move |uia| {
+            let cache = uia.cache_request_for(fetches).ok()?;
+            let element = roots.iter().find_map(|&top| {
                 let root = uia.element_from_handle(top, &cache).ok()?;
-                if let Ok(Some(element)) =
-                    uia.element_by_runtime_id(&root, &fact.runtime_id, &cache)
-                {
+                if let Ok(Some(element)) = uia.element_by_runtime_id(&root, &runtime_id, &cache) {
                     return Some(element);
                 }
-                let (name, placed) = placed?;
-                uia.element_by_name_and_position(&root, name, placed, &cache)
+                let (name, placed) = placed.as_ref()?;
+                uia.element_by_name_and_position(&root, name, *placed, &cache)
                     .ok()
                     .flatten()
-            })
+            })?;
+            windows::core::AgileReference::new(&element).ok()
         });
-        read.ok().flatten()
+        match found {
+            Ok(found) => found.and_then(|element| element.resolve().ok()),
+            Err(unanswered) => {
+                tracing::debug!(?unanswered, "the moved focus's element search was given up");
+                None
+            }
+        }
     }
 
     /// Whether `inner`, the element that has the keyboard focus now, is
     /// inside `outer`'s subtree, found by its runtime id within
-    /// [`FOCUS_READ_WAIT`]; a read that fails or does not answer in time is
-    /// taken as not.
-    fn holds_element(
-        &mut self,
-        outer: &IUIAutomationElement,
-        inner: &IUIAutomationElement,
-    ) -> bool {
-        let Some(uia) = self.client.uia() else {
-            return false;
-        };
-        let Ok(cache) = self.context.uia_cache(uia) else {
+    /// [`SEARCH_DEADLINE`]; a search that fails or does not answer in time
+    /// is taken as not.
+    fn holds_element(&self, outer: &IUIAutomationElement, inner: &IUIAutomationElement) -> bool {
+        let Ok(outer) = windows::core::AgileReference::new(outer) else {
             return false;
         };
         // `inner` was built with the base cache request.
         let runtime_id = snapshot_parts_from_cached_element(inner).runtime_id;
-        matches!(
-            uia.within(FOCUS_READ_WAIT, |uia| uia.element_by_runtime_id(
-                outer,
-                &runtime_id,
-                &cache
-            )),
-            Ok(Ok(Some(_)))
-        )
+        let fetches = self.context.fetches();
+        let found = self.context.bounded.run(SEARCH_DEADLINE, move |uia| {
+            let cache = uia.cache_request_for(fetches)?;
+            let outer = outer.resolve()?;
+            uia.element_by_runtime_id(&outer, &runtime_id, &cache)
+                .map(|found| found.is_some())
+        });
+        matches!(found, Ok(Ok(true)))
     }
 
     /// The element the registry holds under `runtime_id`, `None` when no
@@ -3179,7 +3179,7 @@ impl Worker<'_> {
         held_focused: Option<bool>,
     ) {
         let keeps = match held {
-            Held::Element(held) => held_focused.unwrap_or_else(|| self.held_has_focus(&held)),
+            Held::Element(held) => held_focused.unwrap_or_else(|| Self::held_has_focus(&held)),
             Held::Unresolved => false,
         };
         if !keeps {
@@ -3190,21 +3190,17 @@ impl Worker<'_> {
         }
     }
 
-    /// Whether `held` has the keyboard focus, read live within
-    /// [`FOCUS_READ_WAIT`]: the classic path's check, where no remote
-    /// operation read it. A read that fails or does not answer in time is
-    /// an element that is gone.
-    fn held_has_focus(&mut self, held: &IUIAutomationElement) -> bool {
-        self.client.uia().is_some_and(|uia| {
-            matches!(
-                uia.within(FOCUS_READ_WAIT, |_| held.has_keyboard_focus()),
-                Ok(Ok(true))
-            )
-        })
+    /// Whether `held` has the keyboard focus, read live: the classic
+    /// path's check, where no remote operation read it. One call, which UIA
+    /// ends after its call timeout ([`verbatim_uia::CALL_TIMEOUT`]). A read
+    /// that fails or does not answer in time is an element that is gone.
+    fn held_has_focus(held: &IUIAutomationElement) -> bool {
+        matches!(held.has_keyboard_focus(), Ok(true))
     }
 
     /// The live element for the focus `runtime_id` names, read as the
-    /// focused element within [`FOCUS_READ_WAIT`]. When the focused element
+    /// focused element, one call that UIA ends after its call timeout
+    /// ([`verbatim_uia::CALL_TIMEOUT`]). When the focused element
     /// read is another element of this application and the focus's element
     /// is a window of its own, `own_window` (0 for a windowless element),
     /// that window's element is read and is the focus if it is the same
@@ -3219,7 +3215,7 @@ impl Worker<'_> {
             return LiveFocus::Unresolved;
         };
         let read = &self.context.focused_element;
-        let Ok(Ok(element)) = uia.within(FOCUS_READ_WAIT, |uia| read(uia, &cache)) else {
+        let Ok(element) = read(uia, &cache) else {
             return LiveFocus::Unresolved;
         };
         // `element` was built with the base cache request.
@@ -3239,8 +3235,9 @@ impl Worker<'_> {
     }
 
     /// The element of `own_window`, the window of the focus `runtime_id`
-    /// names, when it is that element and has the keyboard focus, read
-    /// within [`FOCUS_READ_WAIT`]; `None` otherwise, for no window, and for
+    /// names, when it is that element and has the keyboard focus, read in
+    /// two calls, each of which UIA ends after its call timeout; `None`
+    /// otherwise, for no window, and for
     /// the console host's window. The console window's element is the
     /// parent of its text area and reports the keyboard focus whenever the
     /// text area has it, and its focus events, which come around the text
@@ -3259,13 +3256,12 @@ impl Worker<'_> {
         }
         let uia = self.client.uia()?;
         let cache = self.context.uia_cache(uia).ok()?;
-        let read = uia.within(FOCUS_READ_WAIT, |uia| {
-            let element = uia.element_from_handle(own_window, &cache).ok()?;
-            // Built with the base cache request.
-            let same = snapshot_parts_from_cached_element(&element).runtime_id == runtime_id;
-            (same && matches!(element.has_keyboard_focus(), Ok(true))).then_some(element)
-        });
-        let element = read.ok().flatten()?;
+        let element = uia.element_from_handle(own_window, &cache).ok()?;
+        // Built with the base cache request.
+        let same = snapshot_parts_from_cached_element(&element).runtime_id == runtime_id;
+        if !(same && matches!(element.has_keyboard_focus(), Ok(true))) {
+            return None;
+        }
         tracing::debug!(
             "UIA focus: the focused element read named another element, but the event's own element has the keyboard focus"
         );
@@ -3350,7 +3346,8 @@ impl Worker<'_> {
     /// A selection event of the focus `runtime_id` names, which was reported
     /// from its event alone and whose element has not been found since: the
     /// event is evidence that the application answers for the element, so
-    /// the focused element is read once, within [`FOCUS_READ_WAIT`], and
+    /// the focused element is read once, one call that UIA ends after its
+    /// call timeout, and
     /// kept and followed when it is that focus. Nothing is read for a focus
     /// whose element is known.
     fn element_from_selection(&mut self, runtime_id: &[i32], trace: TraceId) {
@@ -3373,7 +3370,7 @@ impl Worker<'_> {
             return;
         };
         let read = &context.focused_element;
-        let Ok(Ok(element)) = uia.within(FOCUS_READ_WAIT, |uia| read(uia, &cache)) else {
+        let Ok(element) = read(uia, &cache) else {
             return;
         };
         // Built with the base cache request.
@@ -3576,12 +3573,7 @@ impl Worker<'_> {
                     } = focus;
                     ancestors.iter_mut().chain(std::iter::once(node))
                 });
-                read::describe_dialogs(
-                    context,
-                    client,
-                    window.chain(focus),
-                    (&previous, &mut None, false),
-                );
+                read::describe_dialogs(context, window.chain(focus), (&previous, &mut None, false));
                 // Core takes the answer's control as its focus, and a caret
                 // key there is answered by the control's caret events, so
                 // they are followed as a reported focus's are.

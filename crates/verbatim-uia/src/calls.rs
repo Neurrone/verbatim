@@ -54,6 +54,14 @@ pub fn take() -> CallCounts {
     COUNTS.with(Cell::take)
 }
 
+/// Adds `counts`, calls made for this thread by another, to this thread's
+/// count: an operation run with a deadline of its own on a
+/// [`BoundedClient`](crate::BoundedClient)'s thread is counted for the
+/// thread that waited for its answer.
+pub fn add(counts: CallCounts) {
+    COUNTS.with(|current| current.set(current.get() + counts));
+}
+
 /// This thread's calls since the last take, leaving them counted: for
 /// logging the calls one step of an entry made, by the difference between
 /// two looks.

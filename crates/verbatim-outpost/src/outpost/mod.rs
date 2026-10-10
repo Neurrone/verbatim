@@ -119,6 +119,9 @@ pub(crate) struct Context {
     msaa_registry: MsaaRegistry,
     arbitrator: Mutex<Arbitrator>,
     tracking: Mutex<Tracking>,
+    /// The client on a thread of its own for the worker's operations with a
+    /// deadline of their own: searches and a dialog's text.
+    bounded: verbatim_uia::BoundedClient,
     /// The focus-following UIA property subscription, which the worker moves.
     focus_properties: OnceLock<Registration>,
     /// Whether UIA reads may use remote operations ([`OutpostOptions`]).
@@ -474,6 +477,7 @@ impl Outpost {
             msaa_registry: MsaaRegistry::new(id_counter),
             arbitrator: Mutex::new(Arbitrator::new(&[])),
             tracking: Mutex::new(Tracking::default()),
+            bounded: verbatim_uia::BoundedClient::default(),
             focus_properties: OnceLock::new(),
             remote_operations: options.remote_operations,
             classic_windows: Mutex::new(HashMap::new()),
@@ -578,7 +582,9 @@ impl Outpost {
     /// 4. The worker finishes the entry in hand, and every abandoned worker
     ///    returns from its call, however long the application takes to
     ///    answer or UIA takes to end the call (its connection and
-    ///    transaction timeouts). No call is cut off.
+    ///    transaction timeouts). So does every thread of the client for
+    ///    operations with a deadline of their own, abandoned or not. No
+    ///    call is cut off.
     /// 5. Every object held is released: the registries' UIA elements and
     ///    MSAA objects, and the text patterns and ranges kept for text and
     ///    terminals.
@@ -609,6 +615,7 @@ impl Outpost {
         }
         let handlers_removed = started.elapsed();
         let workers = worker::stop(&context);
+        let bounded = context.bounded.close();
         let calls_finished = started.elapsed();
         let objects = context.release_everything();
         verbatim_uia::release_thread_state();
@@ -624,6 +631,7 @@ impl Outpost {
             calls_finished_ms = calls_finished.as_millis(),
             elapsed_ms = started.elapsed().as_millis(),
             workers,
+            bounded,
             objects,
             "the outpost shut down"
         );

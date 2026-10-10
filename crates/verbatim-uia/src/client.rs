@@ -61,20 +61,27 @@ pub enum AncestorWalk {
     OutOfTime,
 }
 
-/// How long a call waits for an application's UIA provider to answer
-/// before UIA gives up on it, in milliseconds: the deadline the outpost's
-/// watchdog already holds each read to (NVDA's `NORMAL_CORE_ALIVE_TIMEOUT`).
-/// UIA's default of two seconds made a busy application's read fail, or,
-/// for the focused element, come back as UIA's own stand-in for the window
-/// (Windows 11 Notepad's text area read as a nameless edit instead of its
-/// "Text editor" document while Notepad was starting); with this, the read
-/// waits for the application's answer, and the watchdog decides when it
-/// has waited too long.
-pub(crate) const CONNECTION_TIMEOUT_MS: u32 = 10_000;
+/// How long one call waits for an application's provider before UIA ends
+/// it with `UIA_E_TIMEOUT`: both UIA's connection timeout, which bounds
+/// connecting to a provider (`ElementFromHandle`, a first call on an
+/// element), and its transaction timeout, which bounds each call into a
+/// provider already connected (a property read, a cache build, a remote
+/// operation). Both are settings of the process, not of a client, so they
+/// are set once per process, by UIA's first-time setup ([`ensure_ready`]),
+/// and creating a client leaves them as they are (measured 2026-10-11).
+/// Five seconds is under the outpost worker's ten-second deadline, so a
+/// slow call fails and the worker carries on rather than being abandoned,
+/// and over the two to three seconds an application that is starting up
+/// can take to answer (`docs/design/focus-pipeline.md`, section 6.1;
+/// Dickson, 2026-10-10). It bounds each provider call, not an operation:
+/// a search such as `FindFirst` waits a full timeout for each call it
+/// makes that the application does not answer, so the outpost gives such
+/// operations a deadline of their own.
+pub const CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl Uia {
     /// Joins the multithreaded apartment and creates a UIA client on the
-    /// current thread, waiting up to [`CONNECTION_TIMEOUT_MS`] for an
+    /// current thread. Each of its calls waits up to [`CALL_TIMEOUT`] for an
     /// application's provider to answer.
     ///
     /// # Errors
@@ -194,28 +201,6 @@ impl Uia {
         // SAFETY: `cache` is a live cache request from this client; the call is
         // a normal cross-process fetch.
         unsafe { self.client.GetFocusedElementBuildCache(cache) }
-    }
-
-    /// Runs `read` with this client waiting at most `wait` for an
-    /// application's provider to answer, then restores the usual
-    /// [`CONNECTION_TIMEOUT_MS`]: for a read whose answer is only an extra,
-    /// worth a short wait but not a long one.
-    ///
-    /// # Errors
-    ///
-    /// Returns the COM error if the timeout cannot be set; `read`'s own
-    /// result is returned inside `Ok`.
-    pub fn within<T>(
-        &self,
-        wait: std::time::Duration,
-        read: impl FnOnce(&Self) -> T,
-    ) -> windows::core::Result<T> {
-        let client = self.client.cast::<IUIAutomation2>()?;
-        let wait = u32::try_from(wait.as_millis()).unwrap_or(u32::MAX);
-        set_connection_timeout(&client, wait)?;
-        let result = read(self);
-        set_connection_timeout(&client, CONNECTION_TIMEOUT_MS)?;
-        Ok(result)
     }
 
     /// `element`'s children in the raw view, in order, each with
@@ -876,9 +861,12 @@ pub(crate) fn ensure_ready() -> windows::core::Result<()> {
                     )
                 }
                 // Configured as every other client is, though it lives only
-                // for the setup.
+                // for the setup; the process's timeouts are set through it,
+                // once, before any other client exists.
                 .and_then(|client| {
                     enable_recovery_and_coalescing(&client.cast::<IUIAutomation6>()?)?;
+                    // CUIAutomation8 objects implement IUIAutomation2.
+                    set_process_timeouts(&client.cast::<IUIAutomation2>()?)?;
                     Ok(client)
                 })
                 // SAFETY: a local call on the client just created, released
@@ -898,15 +886,17 @@ pub(crate) fn ensure_ready() -> windows::core::Result<()> {
 }
 
 /// Creates a UIA client on this thread, in the multithreaded apartment,
-/// waiting at most [`CONNECTION_TIMEOUT_MS`] for an application's provider,
-/// once UIA's first-time setup has finished ([`ensure_ready`]), with its
-/// proxies told not to raise the events Verbatim handles from `WinEvent`s
-/// ([`crate::proxy::ignore_win_events`]).
+/// once UIA's first-time setup has finished ([`ensure_ready`]), which set
+/// the process's timeouts ([`CALL_TIMEOUT`]), with its proxies told not to
+/// raise the events Verbatim handles from `WinEvent`s
+/// ([`crate::proxy::ignore_win_events`]). Nothing here changes the
+/// timeouts, which belong to the process: a test that shortens them keeps
+/// its setting while other threads create clients.
 ///
 /// # Errors
 ///
-/// Returns the COM error if the setup, the client, its timeout, or its
-/// proxy mapping fails.
+/// Returns the COM error if the setup, the client, or its proxy mapping
+/// fails.
 pub(crate) fn create_client() -> windows::core::Result<IUIAutomation> {
     ensure_ready()?;
     init_mta()?;
@@ -919,8 +909,6 @@ pub(crate) fn create_client() -> windows::core::Result<IUIAutomation> {
     // live; NVDA likewise creates CUIAutomation8).
     let client: IUIAutomation =
         unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)? };
-    // CUIAutomation8 objects implement IUIAutomation2.
-    set_connection_timeout(&client.cast::<IUIAutomation2>()?, CONNECTION_TIMEOUT_MS)?;
     enable_recovery_and_coalescing(&client.cast::<IUIAutomation6>()?)?;
     crate::proxy::ignore_win_events(&client)?;
     Ok(client)
@@ -942,11 +930,16 @@ fn enable_recovery_and_coalescing(client: &IUIAutomation6) -> windows::core::Res
     unsafe { client.SetConnectionRecoveryBehavior(ConnectionRecoveryBehaviorOptions_Enabled) }
 }
 
-/// Sets how long `client` waits for an application's provider to answer.
-fn set_connection_timeout(client: &IUIAutomation2, wait_ms: u32) -> windows::core::Result<()> {
-    // SAFETY: `client` is a live IUIAutomation2; the timeout is a plain
+/// Sets the process's connection and transaction timeouts to
+/// [`CALL_TIMEOUT`] through `client`: process-wide settings, though made
+/// through a client (`docs/design/focus-pipeline.md`, experiment E1).
+fn set_process_timeouts(client: &IUIAutomation2) -> windows::core::Result<()> {
+    let timeout = u32::try_from(CALL_TIMEOUT.as_millis()).unwrap_or(u32::MAX);
+    // SAFETY: `client` is a live IUIAutomation2; each timeout is a plain
     // integer.
-    unsafe { client.SetConnectionTimeout(wait_ms) }
+    unsafe { client.SetConnectionTimeout(timeout) }?;
+    // SAFETY: as above.
+    unsafe { client.SetTransactionTimeout(timeout) }
 }
 
 /// The per-walk parameters threaded through every level of
@@ -1145,7 +1138,8 @@ mod presentation_tests {
 #[cfg(test)]
 mod client_tests {
     use windows::Win32::UI::Accessibility::{
-        CoalesceEventsOptions_Enabled, ConnectionRecoveryBehaviorOptions_Enabled, IUIAutomation6,
+        CoalesceEventsOptions_Enabled, ConnectionRecoveryBehaviorOptions_Enabled, IUIAutomation2,
+        IUIAutomation6,
     };
     use windows::core::Interface;
 
@@ -1160,5 +1154,16 @@ mod client_tests {
             unsafe { client.ConnectionRecoveryBehavior() }.expect("the recovery setting");
         assert_eq!(coalesce, CoalesceEventsOptions_Enabled);
         assert_eq!(recovery, ConnectionRecoveryBehaviorOptions_Enabled);
+    }
+
+    #[test]
+    fn a_client_waits_the_call_timeout_for_connections_and_transactions() {
+        let uia = super::Uia::new().expect("a client");
+        let client: IUIAutomation2 = uia.client().cast().expect("IUIAutomation2");
+        // SAFETY: reading the process's settings through a live client.
+        let connection = unsafe { client.ConnectionTimeout() }.expect("the connection timeout");
+        // SAFETY: as above.
+        let transaction = unsafe { client.TransactionTimeout() }.expect("the transaction timeout");
+        assert_eq!((connection, transaction), (5000, 5000));
     }
 }
