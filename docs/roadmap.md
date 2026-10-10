@@ -303,8 +303,8 @@ Other open items, taken after the steps above unless they fold into one:
   own, in both directions, with the fix. A warning over 2 ms, and failing a
   scenario over it, are deferred to the response-time budgets above.
 - Screen recordings were truncated in every run: ffmpeg was killed rather
-  than told to stop, losing the last 1 to 2 seconds. Fixed (af91a5f,
-  9672234): ffmpeg is stopped with "q", Verbatim starts after the first
+  than told to stop, losing the last 1 to 2 seconds. Fixed (bae57d1,
+  4c89d36): ffmpeg is stopped with "q", Verbatim starts after the first
   frame, every frame keeps its capture time, and a scenario fails if its
   recording does not decode cleanly or is shorter than the capture. All 90
   scenarios' recordings passed the check.
