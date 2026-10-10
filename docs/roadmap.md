@@ -163,6 +163,21 @@ UIA delivers them; Shift's pause compared with NVDA's; the missing "blank"
 in `conhost_leave_flood`; the wrong `docs/parity.md` entries the audit
 found; medium integrity tried on GitHub's runner.
 
+Corrections to `docs/design/terminal-reading.md` from its review, folded
+in when step 9 is built: key attribution uses each read's own start and end
+times, carried in the outpost's message on a monotonic clock shared with
+the key's press time (not Core's receipt time; Core's arrival order from
+step A2 already puts a key ahead of anything showing its effect); the
+whole-document fallback gets its own alignment bound; the work-bound test
+asserts exact counts; the NVDA details the review lists. A bug found in
+today's code, for step 9: the caret read with a terminal's text is stamped
+with the change event's time, not the read's, so Core can take a caret
+already showing a key's effect as the caret before it (a likely cause of
+`conhost_typing` step 5 failing). The console host's scroll events cannot
+count a flood of identical lines (their count mixes buffer and view
+scrolls, PowerShell's output raises none, Windows Terminal raises none):
+stage C's question is closed.
+
 Stage C, evidence and proposals, not building: step 7's File Explorer
 evidence pass with written recommendations; step 8 as a throwaway
 prototype of holding keys, measured, with a written analysis (holding keys
@@ -186,6 +201,13 @@ Provisional decisions awaiting Dickson:
   off), and the utterances between are not read. Everything after Control
   is asserted exactly. The alternative is an assertion on every utterance
   that does not depend on the burst split, if one can be found.
+- Terminal redesign, from its review (`docs/design/terminal-reading-review.md`,
+  2026-10-11): if measurement 5 confirms the console host raises no text
+  change while a full history scrolls whole lines (it raises one only when
+  its cursor moves), follow NVDA, which has the same gap, and accept it
+  rather than add another signal; and a flood of identical lines cannot be
+  counted whenever the history is full, not only when it overflows, which is
+  documented as a limitation.
 
 For a later milestone (Dickson, 2026-10-10): Verbatim echoes a typed
 character from its keyboard hook, before the application handles the key,
