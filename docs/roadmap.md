@@ -150,6 +150,16 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
 4. Arrival order in the outposts: 42d9caa and ce53dbc removed; NVDA's MSAA
    focus collapsing (consecutive runs, up to four) and limits by the
    event's own thread, for MSAA only; `msaa_focus_waiting` removed.
+   Written (2026-10-11) and awaiting its first build, `cargo xtask ci`
+   and its scenarios (`menu_and_settings_dialog`,
+   `system_information_tree`, `rapid_tabbing_in_settings`,
+   `explorer_folder_window`, `settings_dialog_keys`, `theme_panel`).
+   Every UIA focus of a batch is now handled, as the design's section 5.1
+   says. Until step 5, an MSAA focus still comes from the listener while
+   other MSAA events come from the outpost's own hook, so a change raised
+   just before a focus can reach the outpost after it and be judged
+   against the new focus; and until step 6, a focus waits behind what
+   arrived before it, as File Explorer's first focus did before 42d9caa.
 5. MSAA focus, foreground and menu events in each outpost's own hook,
    with the listener's "forwarding ended" hand-over and duplicates matched
    by counting.
@@ -259,6 +269,15 @@ Provisional decisions awaiting Dickson:
   follows, and 54f9a26's report for consoles had hidden that. It applies
   to every application, which phase 6's "A foreground event before its
   window is in front" left for Dickson; this is its second choice.
+- Three details of NVDA's MSAA limiter that the focus-pipeline design
+  does not name, followed in stage A step 4 (2026-10-11), each heard
+  only in a burst of events: a menu opening no longer takes one of a
+  batch's 4 focus places, since NVDA keeps its newest menu event apart
+  from both limits; a focus event on the object already focused counts
+  among the 4 like any other, as NVDA's do, where it had been kept
+  always; and the focused object's other events count toward their
+  thread's 10 while still always kept, as NVDA counts them, where they
+  had not counted.
 
 For a later milestone (Dickson, 2026-10-10): Verbatim echoes a typed
 character from its keyboard hook, before the application handles the key,
