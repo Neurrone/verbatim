@@ -14,7 +14,16 @@
 //! named mutex serializes full startup, so the new instance does not
 //! proceed until the old one has released it, or abandoned it by being
 //! ended. An old instance that cannot be ended, or does not exit once
-//! ended, is left running and the new instance's startup fails.
+//! ended, is left running, and the new instance shows NVDA's message box
+//! saying so, worded for Verbatim, and does not start.
+//!
+//! Before posting `WM_QUIT`, the new process sets a named event that the
+//! old instance created for itself, `Local\Verbatim.Replacing.<pid>`, so
+//! the old instance knows it is being replaced rather than quit in any
+//! other way: then it plays no exit sound and stops at once (Dickson,
+//! 2026-10-10; NVDA plays its exit sound to the end). `WM_QUIT` cannot
+//! carry this itself, since wxWidgets' event loop ends on it without
+//! keeping its parameters.
 //!
 //! The mutex name has no per-desktop suffix yet; the secure-desktop instance
 //! that needs one arrives in milestone M8.
@@ -27,13 +36,13 @@ use windows::Win32::Foundation::{
     CloseHandle, HANDLE, HWND, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT, WPARAM,
 };
 use windows::Win32::System::Threading::{
-    CreateMutexW, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-    PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, QueryFullProcessImageNameW, TerminateProcess,
-    WaitForSingleObject,
+    CreateEventW, CreateMutexW, EVENT_MODIFY_STATE, OpenEventW, OpenProcess, PROCESS_NAME_WIN32,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+    QueryFullProcessImageNameW, SetEvent, TerminateProcess, WaitForSingleObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    ChangeWindowMessageFilter, FindWindowExW, GetWindowThreadProcessId, MSGFLT_ADD, PostMessageW,
-    WM_QUIT,
+    ChangeWindowMessageFilter, FindWindowExW, GetWindowThreadProcessId, MB_OK, MSGFLT_ADD,
+    MessageBoxW, PostMessageW, WM_QUIT,
 };
 use windows::core::{HSTRING, PCWSTR, PWSTR, w};
 
@@ -61,6 +70,21 @@ const MUTEX_WAIT_MS: u32 = 2000;
 /// the thread that acquired it.
 pub struct InstanceGuard {
     mutex: windows::Win32::Foundation::HANDLE,
+    /// This instance's replacement event, set by an instance replacing it;
+    /// `None` if it could not be created.
+    replacing: Option<HANDLE>,
+}
+
+impl InstanceGuard {
+    /// Whether a newly started instance is replacing this one, that is, has
+    /// set this instance's replacement event. Asked once the GUI loop has
+    /// ended: the replacing instance sets the event before it posts the
+    /// `WM_QUIT` that ends the loop.
+    pub fn being_replaced(&self) -> bool {
+        // SAFETY: polling the event handle this guard owns, without waiting.
+        self.replacing
+            .is_some_and(|event| unsafe { WaitForSingleObject(event, 0) } == WAIT_OBJECT_0)
+    }
 }
 
 impl Drop for InstanceGuard {
@@ -70,22 +94,78 @@ impl Drop for InstanceGuard {
         let _ = unsafe { windows::Win32::System::Threading::ReleaseMutex(self.mutex) };
         // SAFETY: as above; closed once, here.
         let _ = unsafe { CloseHandle(self.mutex) };
+        if let Some(event) = self.replacing {
+            // SAFETY: the event handle this guard owns, closed once, here.
+            let _ = unsafe { CloseHandle(event) };
+        }
     }
+}
+
+/// The name of the event an instance replacing process `pid` sets.
+fn replacing_event_name(pid: u32) -> HSTRING {
+    HSTRING::from(format!(r"Local\Verbatim.Replacing.{pid}"))
+}
+
+/// Creates this process's replacement event, unset. Without it, a
+/// replacing instance cannot say so, and this one plays its exit sound as
+/// on any other quit.
+fn create_replacing_event() -> Option<HANDLE> {
+    let name = replacing_event_name(std::process::id());
+    // SAFETY: a manual-reset event, initially unset, with default security
+    // and a borrowed name; the handle is owned by the guard.
+    match unsafe { CreateEventW(None, true, false, &name) } {
+        Ok(event) => Some(event),
+        Err(error) => {
+            tracing::warn!(%error, "creating the replacement event failed");
+            None
+        }
+    }
+}
+
+/// Tells process `pid` that it is being replaced, by setting its
+/// replacement event. An instance without one is not told, and plays its
+/// exit sound.
+fn tell_being_replaced(pid: u32) {
+    // SAFETY: opens an existing named event for setting; the handle is
+    // checked and closed below.
+    match unsafe { OpenEventW(EVENT_MODIFY_STATE, false, &replacing_event_name(pid)) } {
+        Ok(event) => {
+            // SAFETY: `event` was just opened with EVENT_MODIFY_STATE.
+            if let Err(error) = unsafe { SetEvent(event) } {
+                tracing::warn!(old_pid = pid, %error, "setting the replacement event failed");
+            }
+            // SAFETY: the handle just opened, closed once.
+            let _ = unsafe { CloseHandle(event) };
+        }
+        Err(error) => {
+            tracing::warn!(old_pid = pid, %error, "opening the replacement event failed");
+        }
+    }
+}
+
+/// Says that a running instance could not be ended and this one will not
+/// start, as NVDA does (`nvda.pyw` lines 157 to 166), and returns once the
+/// box is dismissed.
+fn show_not_ended() {
+    let text = HSTRING::from(verbatim_i18n::messages::replace_failed());
+    let title = HSTRING::from(verbatim_i18n::messages::replace_failed_title());
+    // SAFETY: a modal message box with no owner and borrowed strings that
+    // outlive the call.
+    unsafe { MessageBoxW(None, &text, &title, MB_OK) };
 }
 
 /// Replaces any running instance, then acquires the startup mutex.
 ///
 /// # Errors
 ///
-/// Returns an error when a running instance could not be ended, when the
-/// mutex cannot be created, or when another instance still holds it after
-/// the wait.
+/// Returns an error when a running instance could not be ended, after
+/// saying so in a message box, when the mutex cannot be created, or when
+/// another instance still holds it after the wait.
 pub fn acquire_replacing() -> io::Result<InstanceGuard> {
     if replace_running_instance() == Replacement::StillRunning {
-        // Undecided (Dickson, 2026-10-10): NVDA shows a message box here,
-        // "Couldn't terminate existing NVDA process, abandoning start".
-        // Until that is decided, the error is reported and startup ends,
-        // as before.
+        // NVDA's message box, then no start (Dickson, 2026-10-10). Never
+        // shown when the running instance exited or was ended.
+        show_not_ended();
         return Err(io::Error::other(
             "another Verbatim instance is still running and could not be ended",
         ));
@@ -105,7 +185,10 @@ pub fn acquire_replacing() -> io::Result<InstanceGuard> {
         if wait == WAIT_ABANDONED {
             tracing::warn!("previous instance abandoned the startup mutex (crashed or ended)");
         }
-        Ok(InstanceGuard { mutex })
+        Ok(InstanceGuard {
+            mutex,
+            replacing: create_replacing_event(),
+        })
     } else {
         // SAFETY: the handle created above, not returned, closed once.
         let _ = unsafe { CloseHandle(mutex) };
@@ -188,6 +271,9 @@ fn shut_down_if_verbatim(hwnd: HWND, own_name: &std::ffi::OsStr) -> Option<Repla
     let mut replacement = None;
     if is_verbatim {
         tracing::info!(old_pid = pid, "replacing running Verbatim instance");
+        // Set before WM_QUIT, so it is set by the time the old instance's
+        // GUI loop has ended and it asks.
+        tell_being_replaced(pid);
         // SAFETY: a message with no pointer parameters, posted to a window
         // of the process just identified.
         let _ = unsafe {

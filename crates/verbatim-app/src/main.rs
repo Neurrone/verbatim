@@ -107,8 +107,12 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    // Locales come first: a running instance that cannot be ended is
+    // reported in a message box.
+    load_locales(&exe_dir, &config);
+
     // Replace a running instance before creating anything it might still own.
-    let _instance = match single_instance::acquire_replacing() {
+    let instance = match single_instance::acquire_replacing() {
         Ok(guard) => guard,
         Err(error) => {
             tracing::error!(%error, "single-instance startup failed");
@@ -122,9 +126,7 @@ fn main() -> ExitCode {
     // replacing this one sets it again after it is cleared.
     let _screen_reader = screen_reader_flag::ScreenReaderFlag::raise();
 
-    load_locales(&exe_dir, &config);
-
-    match run(config) {
+    match run(config, &instance) {
         Ok(()) => {
             tracing::info!("verbatim exiting");
             ExitCode::SUCCESS
@@ -162,7 +164,10 @@ fn check_interactive_session() -> Result<(), String> {
     clippy::too_many_lines,
     reason = "the composition root wires every subsystem together in one place; splitting it would scatter the startup order this function exists to make legible"
 )]
-fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
+fn run(
+    config: ConfigStore,
+    instance: &single_instance::InstanceGuard,
+) -> Result<(), Box<dyn std::error::Error>> {
     let own_pid = std::process::id();
 
     // The control server is created late (it needs the other pieces'
@@ -472,7 +477,9 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     // sound plays, which is heard before Verbatim goes, within a bound:
     // each is asked to shut down and killed through its job only if it
     // has not exited in time. Job objects still kill anything left when
-    // the process exits.
+    // the process exits. An instance being replaced plays no exit sound
+    // and stops at once, unlike NVDA (Dickson, 2026-10-10; `docs/parity.md`,
+    // "Replacing a running instance").
     drop(hook);
     let shutdown = {
         let supervisor = Arc::clone(&supervisor);
@@ -480,7 +487,9 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
             .name("verbatim-shutdown".to_owned())
             .spawn(move || supervisor.shutdown())?
     };
-    if !manager.play_earcon_to_end(Earcon::Exit, EXIT_SOUND_TIMEOUT) {
+    if instance.being_replaced() {
+        tracing::info!("being replaced by a new instance; no exit sound");
+    } else if !manager.play_earcon_to_end(Earcon::Exit, EXIT_SOUND_TIMEOUT) {
         tracing::warn!(
             timeout = ?EXIT_SOUND_TIMEOUT,
             "the exit sound was not heard in time; exiting anyway"
@@ -500,8 +509,8 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// The longest Verbatim waits for its exit sound to be heard before it
-/// exits: NVDA's exit sound plays for about half a second, and a replacing
-/// instance ends this one if it has not exited within five seconds.
+/// exits on any quit but being replaced: NVDA's exit sound plays for about
+/// half a second.
 const EXIT_SOUND_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Names a WAV file to record everything Verbatim plays into.

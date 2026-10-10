@@ -4,6 +4,10 @@
 # file line by line and multiline patterns would evade it.
 
 startup-message = Verbatim is starting.
+# NVDA's wording, for Verbatim, when a running Verbatim could not be ended
+# and this one does not start, and the title of the message box that says so.
+replace-failed = Couldn't end the running Verbatim, abandoning start.
+replace-failed-title = Error
 
 ## The Verbatim menu and tray icon.
 

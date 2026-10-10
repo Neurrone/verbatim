@@ -259,6 +259,20 @@ pub mod messages {
         }
     }
 
+    /// Said when a running Verbatim could not be ended and this one does
+    /// not start, in NVDA's words.
+    #[must_use]
+    pub fn replace_failed() -> String {
+        fl!(loader(), "replace-failed")
+    }
+
+    /// Title of the message box that says a running Verbatim could not be
+    /// ended.
+    #[must_use]
+    pub fn replace_failed_title() -> String {
+        fl!(loader(), "replace-failed-title")
+    }
+
     /// Spoken notice that a clipboard copy failed.
     #[must_use]
     pub fn clipboard_copy_failed() -> String {
@@ -1443,6 +1457,15 @@ mod tests {
             "Copied to clipboard: 1500 characters"
         );
         assert_eq!(messages::clipboard_copy_failed(), "Unable to copy");
+    }
+
+    #[test]
+    fn the_failed_replacement_box_is_nvdas() {
+        assert_eq!(
+            messages::replace_failed(),
+            "Couldn't end the running Verbatim, abandoning start."
+        );
+        assert_eq!(messages::replace_failed_title(), "Error");
     }
 
     #[test]

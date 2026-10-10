@@ -139,7 +139,8 @@ Milestone M4's themes and earcons are wired here too (`phase6-design.md`,
   shell produces three events of its own: the start sound with the
   startup announcement; the exit sound once the GUI loop has ended, played
   with `play_earcon_to_end` so it is heard before the process exits, for
-  at most two seconds; and "application not responding" when the
+  at most two seconds, except in an instance being replaced, which plays
+  none and stops at once; and "application not responding" when the
   outpost's watchdog abandons a query that passed its deadline
   (`QueryOutcome::Abandoned`), once per stall: `LiveOutposts` marks the
   outpost stalled and clears the mark when it answers a query or reports
@@ -161,8 +162,8 @@ knowing for review:
   missing files), start tracing, refuse a session that is not interactive
   (`verbatim_process::session`; a launch from WinRM, PowerShell Direct, or
   a service exits with a diagnosis, before it could replace a working
-  instance), replace any running instance, set Windows' screen reader
-  flag, load locales, then `run`.
+  instance), load locales, replace any running instance, set Windows'
+  screen reader flag, then `run`.
 - `screen_reader_flag::ScreenReaderFlag` — sets `SPI_SETSCREENREADER` as
   NVDA does (saved in the user's profile, every window told) and clears
   it when dropped, as `main` returns, before the startup mutex is
@@ -183,9 +184,16 @@ knowing for review:
   again by the new instance. Then serialize startup on a named mutex (an
   abandoned mutex, from a crashed or ended predecessor, still grants
   ownership, with a warning). An old instance that cannot be opened to
-  be ended, or does not exit once ended, is left running and startup
-  fails with an error; whether to show NVDA's message box there is not
-  yet decided. `ChangeWindowMessageFilter` lets a future
+  be ended, or does not exit once ended, is left running, and NVDA's
+  message box says so ("Couldn't end the running Verbatim, abandoning
+  start.", titled "Error") before startup fails. Before posting
+  `WM_QUIT`, the new instance sets the old one's replacement event,
+  `Local\Verbatim.Replacing.<pid>`, which every instance creates for
+  itself as it acquires the mutex and keeps in its `InstanceGuard`;
+  `InstanceGuard::being_replaced` reads it once the GUI loop has ended,
+  and an instance being replaced skips its exit sound. `WM_QUIT` cannot
+  carry this, since wxWidgets' loop ends on it without keeping its
+  parameters. `ChangeWindowMessageFilter` lets a future
   lower-integrity replacer's quit message through.
 - `ReducerThread` — owns the reducer state, the request table, and the
   live-outpost set, and is the only thread that touches them. It selects on

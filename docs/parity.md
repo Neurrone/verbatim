@@ -2258,11 +2258,17 @@ verified.
   since 2026-10-10**, but for the first wait, five seconds where NVDA's
   is four (Dickson, 2026-10-10). An ended Verbatim's outposts, focus
   listener and synthesizer hosts end with it, and the new one sets the
-  screen reader flag again, as NVDA does. When the old process cannot be
-  opened to be ended, NVDA shows a message box ("Couldn't terminate
-  existing NVDA process, abandoning start"); Verbatim instead reports
-  that another Verbatim is still running and exits, which is not yet
-  decided.
+  screen reader flag again, as NVDA does. When ending the old process
+  fails, both show a message box and do not start (Verbatim also when it
+  does not exit once ended): NVDA's says "Couldn't terminate existing NVDA process, abandoning
+  start" followed by the exception (`nvda.pyw` lines 157 to 166), and
+  Verbatim's says "Couldn't end the running Verbatim, abandoning start.",
+  without the exception, which is logged; neither shows it when the old
+  one was ended. A deliberate difference (Dickson, 2026-10-10): NVDA
+  being replaced plays its exit sound to the end, and Verbatim being
+  replaced plays none and stops at once, which saves about a second (the
+  exit sound took 1.08 of the 1.4 seconds a replacement took, measured on
+  2026-10-10). Every other way Verbatim quits still plays it.
 - Vision framework (focus highlight, screen curtain, magnifier),
   OCR, secure screens, remote access: all **not yet** (M8 for OCR
   and secure desktop, M12 remote); references [The vision framework](nvda/vision.md),

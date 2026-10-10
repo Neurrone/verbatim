@@ -130,13 +130,15 @@ Dickson first.
    4405c84, which never end it). Done (0033e93), and checked live on
    2026-10-10: a running instance that exits was replaced in 1.4 seconds,
    and a suspended one was ended after 5 seconds, its outposts and focus
-   listener ending with it. Still to do (Dickson, 2026-10-10): when the
-   running one cannot be ended, show NVDA's message box ("Couldn't
-   terminate existing NVDA process, abandoning start", worded for
-   Verbatim) and do not start, as NVDA does; never show it when the
-   running one was ended. A running instance being replaced plays no exit
-   sound, so it stops at once, unlike NVDA, which plays its exit sound to
-   the end; it took 1.08 of the 1.4 seconds measured.
+   listener ending with it. The rest (Dickson, 2026-10-10) is done,
+   pending live checks: when the running one cannot be ended, or does not
+   exit once ended, NVDA's message box, worded for Verbatim ("Couldn't
+   end the running Verbatim, abandoning start."), and no start; never
+   shown when the running one was ended. A running instance being
+   replaced, told so through a named event the new one sets before its
+   `WM_QUIT`, plays no exit sound and stops at once, unlike NVDA, which
+   plays its exit sound to the end; it took 1.08 of the 1.4 seconds
+   measured. Every other quit still plays it.
 3. NVDA's event filtering in the outposts, before any call into the
    application: its acceptance test, its order of checks for MSAA events,
    and the same test for UIA events (approved 2026-10-10). Done
