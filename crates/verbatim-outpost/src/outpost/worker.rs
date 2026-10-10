@@ -773,6 +773,27 @@ fn describe(item: &Item) -> String {
     }
 }
 
+/// The name NVDA's acceptance test knows a UIA event of `kind` by, or `None`
+/// for one it does not test: a notification, and a text focus's caret,
+/// text, and active text position, which are Verbatim's own events of the
+/// focus (`docs/parity.md`, "Event acceptance in the outpost").
+fn uia_event_name(kind: &UiaKind) -> Option<EventName> {
+    match kind {
+        UiaKind::Property(id) if *id == UIA_NamePropertyId.0 => Some(EventName::NameChange),
+        UiaKind::Property(id)
+            if *id == UIA_ValueValuePropertyId.0 || *id == UIA_RangeValueValuePropertyId.0 =>
+        {
+            Some(EventName::ValueChange)
+        }
+        UiaKind::Property(_) => Some(EventName::StateChange),
+        UiaKind::Selection => Some(EventName::Selection),
+        UiaKind::Notification(_)
+        | UiaKind::TextSelection
+        | UiaKind::TextChanged
+        | UiaKind::ActiveTextPosition(_) => None,
+    }
+}
+
 /// A UIA focus's parts as NVDA reads them when it announces the focus: its
 /// name and role from the event, whose cache NVDA reads them from, and its
 /// value, states, and details from `element`, the focused element the
@@ -1999,12 +2020,23 @@ impl Worker<'_> {
             .collect()
     }
 
-    /// A UIA event from this outpost's own subscriptions.
+    /// A UIA event from this outpost's own subscriptions, or a selection or
+    /// notification fact from the listener. NVDA's order: whether the event
+    /// is the focus's, then whether its window is UIA's, then the acceptance
+    /// test against the foreground window, and only then the event's own
+    /// handling (`IUIAutomationPropertyChangedEventHandler_HandlePropertyChangedEvent`
+    /// and its siblings, `source/UIAHandler/__init__.py`).
     fn uia_event(&mut self, event: UiaEvent, trace: TraceId, observed_at_ms: u64) {
         let element = event
             .element
             .as_ref()
             .and_then(|agile| agile.resolve().ok());
+        // An event the subscriptions that follow the focus's whole window
+        // bring from another element is dropped first, before its nearest
+        // window is looked for.
+        if !self.adopt_focus_element(&event, element.as_ref(), trace) {
+            return;
+        }
         // The event's window: its own, else the recorded window of the focus
         // it concerns, else its element's. Never the system's focus window,
         // which can belong to another application.
@@ -2017,21 +2049,25 @@ impl Worker<'_> {
         } else {
             element.as_ref().and_then(nearest_window_handle)
         };
-        // NVDA does not arbitrate notifications; every other event is
-        // dropped when MSAA owns its window.
-        if !matches!(event.kind, UiaKind::Notification(_))
-            && let Some(hwnd) = hwnd
-            && !read::window_uses_uia(self.context, hwnd)
-        {
-            return; // MSAA owns this window.
-        }
-        if let UiaKind::Notification(notification) = &event.kind
-            && is_terminal_output_notification(event.parts.role, notification)
-        {
-            return; // The diff of the terminal's text reports it.
-        }
-        if !self.adopt_focus_element(&event, element.as_ref(), trace) {
-            return;
+        if let UiaKind::Notification(notification) = &event.kind {
+            // NVDA neither arbitrates nor tests a notification: it is
+            // spoken only from the focus's application, which Core judges.
+            if is_terminal_output_notification(event.parts.role, notification) {
+                return; // The diff of the terminal's text reports it.
+            }
+        } else {
+            if let Some(hwnd) = hwnd
+                && !read::window_uses_uia(self.context, hwnd)
+            {
+                return; // MSAA owns this window.
+            }
+            // A windowless element with no window found is tested with its
+            // application's focus window when the listener captured it.
+            if let Some(name) = uia_event_name(&event.kind)
+                && !self.accepts(name, hwnd.unwrap_or(event.focus_window))
+            {
+                return;
+            }
         }
         if matches!(event.kind, UiaKind::Selection) && of_focus && element.is_none() {
             self.element_from_selection(&event.parts.runtime_id, trace);
@@ -2252,11 +2288,16 @@ impl Worker<'_> {
             } => {
                 self.uia_focus((hwnd, focus_window), &snapshot, trace, observed_at_ms);
             }
-            DeliveredFact::UiaSelection { hwnd, snapshot } => self.uia_event(
+            DeliveredFact::UiaSelection {
+                hwnd,
+                focus_window,
+                snapshot,
+            } => self.uia_event(
                 UiaEvent {
                     kind: UiaKind::Selection,
                     parts: snapshot,
                     hwnd,
+                    focus_window,
                     element: None,
                 },
                 trace,
@@ -2271,6 +2312,7 @@ impl Worker<'_> {
                     kind: UiaKind::Notification(notification),
                     parts: snapshot,
                     hwnd,
+                    focus_window: 0,
                     element: None,
                 },
                 trace,
@@ -2685,6 +2727,10 @@ impl Worker<'_> {
         observed_at_ms: u64,
     ) {
         let context = self.context;
+        let window = Some(fact_hwnd).filter(|&hwnd| hwnd != 0);
+        if !self.accepts(EventName::GainFocus, window.unwrap_or(focus_window)) {
+            return;
+        }
         if !fact.states.contains(State::Focused) {
             tracing::debug!("UIA focus dropped: the element does not have the keyboard focus");
             return;
@@ -3364,6 +3410,10 @@ impl Worker<'_> {
         if let Some(hwnd) = hwnd
             && !read::window_uses_uia(self.context, hwnd)
         {
+            return;
+        }
+        // NVDA treats a menu opening as a focus on the menu.
+        if !self.accepts(EventName::GainFocus, hwnd.unwrap_or(0)) {
             return;
         }
         let node = Self::uia_node(self.context, parts, None);

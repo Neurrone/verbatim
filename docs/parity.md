@@ -815,6 +815,18 @@ verified.
   acquired: before, the window's UIA test, which can probe it, came
   first, and no check was made on the event's own window. The intake's
   hung test on the top-level window, for the batch limits, stays.
+  UIA events take the same test in NVDA's order: whether the event is the
+  focus's, then its window's UIA test, then acceptance with the event's
+  window, the focus's recorded window for the focus's own events, or, for
+  a windowless element not found, its application's focus window as the
+  listener captured it, where NVDA walks to the nearest window. Tested so:
+  the UIA focus and menu opening (as gain focus), property changes, and
+  selections. Not tested, as in NVDA: notifications (spoken only from the
+  focus's application, which Core judges) and the active text position;
+  Verbatim's own, kept: a text focus's caret and text changes. UIA's MSAA
+  proxy is told never to raise, from `WinEvent`s, the UIA events Verbatim
+  subscribes to, as NVDA's `ignoreWinEventsMap` tells it (issue 7345);
+  focus changes keep their mapping, as in NVDA.
   **matched (unverified)**.
 - State-change diff announcements (gained states; lost states spoken
   by their absence, including half checked becoming "not checked").

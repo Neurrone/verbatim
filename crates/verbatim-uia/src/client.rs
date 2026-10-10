@@ -899,11 +899,14 @@ pub(crate) fn ensure_ready() -> windows::core::Result<()> {
 
 /// Creates a UIA client on this thread, in the multithreaded apartment,
 /// waiting at most [`CONNECTION_TIMEOUT_MS`] for an application's provider,
-/// once UIA's first-time setup has finished ([`ensure_ready`]).
+/// once UIA's first-time setup has finished ([`ensure_ready`]), with its
+/// proxies told not to raise the events Verbatim handles from `WinEvent`s
+/// ([`crate::proxy::ignore_win_events`]).
 ///
 /// # Errors
 ///
-/// Returns the COM error if the setup, the client, or its timeout fails.
+/// Returns the COM error if the setup, the client, its timeout, or its
+/// proxy mapping fails.
 pub(crate) fn create_client() -> windows::core::Result<IUIAutomation> {
     ensure_ready()?;
     init_mta()?;
@@ -919,6 +922,7 @@ pub(crate) fn create_client() -> windows::core::Result<IUIAutomation> {
     // CUIAutomation8 objects implement IUIAutomation2.
     set_connection_timeout(&client.cast::<IUIAutomation2>()?, CONNECTION_TIMEOUT_MS)?;
     enable_recovery_and_coalescing(&client.cast::<IUIAutomation6>()?)?;
+    crate::proxy::ignore_win_events(&client)?;
     Ok(client)
 }
 

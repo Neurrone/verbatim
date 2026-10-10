@@ -180,6 +180,12 @@ pub enum DeliveredFact {
     UiaSelection {
         /// The element's cached native window handle, or 0.
         hwnd: isize,
+        /// For an element that is not a window, its process's keyboard
+        /// focus window when the listener captured the event, as for a
+        /// [`DeliveredFact::UiaFocus`], else 0: the window the outpost tests
+        /// the selection's acceptance with.
+        #[serde(default)]
+        focus_window: isize,
         /// The selected element's cached snapshot parts.
         snapshot: UiaSnapshotFact,
     },
@@ -985,6 +991,7 @@ mod tests {
         };
         let selection = DeliveredFact::UiaSelection {
             hwnd: 0,
+            focus_window: 0,
             snapshot: snapshot.clone(),
         };
         assert!(!selection.may_start_outpost());

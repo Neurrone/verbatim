@@ -654,7 +654,16 @@ Implementation notes:
   of them. Intake also uses it as the entry's window, so a hung focus
   window drops the fact and the watchdog's moved-on check applies to it.
   Only a fact with neither is reported without window facts, arbitrated
-  against this application's own focus window. An MSAA focus fact is
+  against this application's own focus window. A UIA selection fact
+  carries the same `focus_window` (since 2026-10-10), the window its
+  acceptance is tested with when its element has no window of its own;
+  a menu opening uses the application's focus window when it is handled,
+  as before. The UIA focus, selection, menu opening, and the outpost's
+  own UIA property events pass NVDA's acceptance test after the window's
+  UIA test; a notification does not, as NVDA tests none, and neither do a
+  text focus's caret, text, and active text position. An event from the
+  subscriptions that listen in the focus's whole window is told from the
+  focus's own before its nearest window is looked for. An MSAA focus fact is
   acquired with NVDA's child-0-on-a-list redirect, and the redirect of any
   control's own focus to a focused child its `accFocus` names
   (`focus_candidate`), and checked as NVDA checks it before anything else

@@ -238,6 +238,19 @@ pub(crate) unsafe fn take_f64_safearray(array: *mut SAFEARRAY) -> Vec<f64> {
     unsafe { take_safearray(array) }
 }
 
+/// Copies a one-dimensional `SAFEARRAY` of 4-byte integers into a `Vec`,
+/// destroying the array afterward, as [`take_f64_safearray`] does for
+/// 8-byte reals.
+///
+/// # Safety
+///
+/// `array` must be null or a valid `SAFEARRAY` owned by the caller; this
+/// function takes ownership and destroys it.
+pub(crate) unsafe fn take_i32_safearray(array: *mut SAFEARRAY) -> Vec<i32> {
+    // SAFETY: the caller's guarantee.
+    unsafe { take_safearray(array) }
+}
+
 /// Copies a one-dimensional `SAFEARRAY` of `VARIANT`s (a text range's
 /// attribute values, from `GetAttributeValues`) into a `Vec`, each element
 /// copied as its own `VARIANT` (`SafeArrayGetElement` copies a variant

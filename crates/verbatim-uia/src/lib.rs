@@ -49,6 +49,7 @@ mod focus;
 pub mod map;
 mod nearest;
 mod probe;
+mod proxy;
 mod registry;
 mod subscribe;
 pub mod text;

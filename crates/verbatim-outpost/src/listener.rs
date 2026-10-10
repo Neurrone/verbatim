@@ -333,11 +333,7 @@ fn capture(element: &IUIAutomationElement) -> Option<(Pid, isize, UiaSnapshotFac
 #[must_use]
 pub fn uia_focus_fact(element: &IUIAutomationElement) -> Option<ListenerFact> {
     let (pid, hwnd, snapshot) = capture(element)?;
-    let focus_window = if hwnd == 0 {
-        crate::outpost::window::focus_window_of(pid.0).unwrap_or(0)
-    } else {
-        0
-    };
+    let focus_window = focus_window_for(pid, hwnd);
     Some(ListenerFact {
         pid,
         fact: DeliveredFact::UiaFocus {
@@ -346,6 +342,19 @@ pub fn uia_focus_fact(element: &IUIAutomationElement) -> Option<ListenerFact> {
             snapshot,
         },
     })
+}
+
+/// The window that stands in for a windowless element's own, for the
+/// outpost's acceptance test against the foreground window: the keyboard
+/// focus window of the element's process `pid` now, a local read, when the
+/// element's cached window handle `hwnd` is 0 and the process has the
+/// keyboard focus; else 0.
+fn focus_window_for(pid: Pid, hwnd: isize) -> isize {
+    if hwnd == 0 {
+        crate::outpost::window::focus_window_of(pid.0).unwrap_or(0)
+    } else {
+        0
+    }
 }
 
 /// Installs the desktop-global UIA focus registration. A failure is reported
@@ -377,7 +386,16 @@ fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Option<Registratio
         callback: Arc::new(move |element: &IUIAutomationElement| {
             // A cached element from the registration's cache request.
             if let Some((pid, hwnd, snapshot)) = capture(element) {
-                selection_outgoing.fact(pid, DeliveredFact::UiaSelection { hwnd, snapshot }, None);
+                let focus_window = focus_window_for(pid, hwnd);
+                selection_outgoing.fact(
+                    pid,
+                    DeliveredFact::UiaSelection {
+                        hwnd,
+                        focus_window,
+                        snapshot,
+                    },
+                    None,
+                );
             }
         }),
     };

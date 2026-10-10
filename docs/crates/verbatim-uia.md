@@ -35,7 +35,15 @@ Public API:
   does whenever Windows has them; Verbatim's minimum, Windows 11 24H2,
   always does, so there is no check. Neither changed a call count or a
   wait measured against mockapp (`docs/performance.md`, "Newer UIA
-  features").
+  features"). Since 2026-10-10 every client made by `Uia::new` also tells
+  UIA's proxies never to raise, from an application's `WinEvent`s, the
+  UIA events Verbatim subscribes to: property changes of the
+  focus-following properties, an element selected, a menu opened, a
+  notification, and a text focus's caret, text, and active text position
+  (the `proxy` module, as NVDA's `ignoreWinEventsMap`, NVDA issue 7345).
+  Focus changes keep their mapping, as in NVDA. Each proxy entry whose
+  mapping changed is put back in the client's proxy factory mapping, and
+  a mapping is cleared with a null array, since UIA refuses an empty one.
   Every client in the crate, and the provider probe, first wait for UIA's
   first-time setup, which creates a client and builds a cache request
   from it once, under a lock, on a thread of its own (so a thread that only

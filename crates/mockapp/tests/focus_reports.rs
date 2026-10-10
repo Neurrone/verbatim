@@ -4,8 +4,9 @@
 //! when the application is slow to answer the reads queued before it, when
 //! the focused element read answers a stand-in for a windowed focus, when
 //! a windowless focus's element no longer has the keyboard focus, when a
-//! focus has moved on and lost its selection since its event, and when a
-//! focus's element is not found until its next focus or selection event.
+//! focus has moved on and lost its selection since its event, when a
+//! focus's element is not found until its next focus or selection event,
+//! and what another element's change costs meanwhile.
 //!
 //! The outpost runs in this process and reads the focused element from the
 //! test (`common::outpost`), as `call_counts.rs` describes; mockapp's focus
@@ -284,9 +285,18 @@ fn a_focus_is_handled_before_slow_reads_queued_ahead_of_it() {
             let element = client.named(&format!("File {n}"));
             match uia_focus_fact(&element).expect("mockapp's element has its process") {
                 ListenerFact {
-                    fact: DeliveredFact::UiaFocus { hwnd, snapshot, .. },
+                    fact:
+                        DeliveredFact::UiaFocus {
+                            hwnd,
+                            focus_window,
+                            snapshot,
+                        },
                     ..
-                } => DeliveredFact::UiaSelection { hwnd, snapshot },
+                } => DeliveredFact::UiaSelection {
+                    hwnd,
+                    focus_window,
+                    snapshot,
+                },
                 other => panic!("the listener's fact for a list item was {other:?}"),
             }
         })
@@ -573,10 +583,19 @@ fn a_selection_of_a_focus_whose_element_was_not_found_finds_its_element() {
     outpost.read_focus_as(&item);
     let ListenerFact { fact, .. } =
         uia_focus_fact(&item).expect("mockapp's element has its process");
-    let DeliveredFact::UiaFocus { hwnd, snapshot, .. } = fact else {
+    let DeliveredFact::UiaFocus {
+        hwnd,
+        focus_window,
+        snapshot,
+    } = fact
+    else {
         panic!("a focus fact, not {fact:?}");
     };
-    outpost.deliver(DeliveredFact::UiaSelection { hwnd, snapshot });
+    outpost.deliver(DeliveredFact::UiaSelection {
+        hwnd,
+        focus_window,
+        snapshot,
+    });
     match outpost.next() {
         OutpostToSupervisor::Event {
             event: NormalizedEvent::SelectionChanged { node: selected },
@@ -614,6 +633,53 @@ fn a_focus_whose_element_was_not_found_is_followed_from_its_own_changes() {
 
     assert_followed(&mut app, &outpost, "btn1", &node);
     assert_eq!(outpost.focus_reads(), 1, "the change brought the element");
+
+    drop(outpost);
+    app.quit();
+}
+
+/// While a focus's element is not known, its subscriptions listen in its
+/// whole window, so another element's change reaches the outpost too: it
+/// is dropped as not the focus's before anything is asked of mockapp, its
+/// nearest window not looked for, as NVDA tells the focus's events first.
+/// mockapp answers only UIA's own delivery of the event and of the
+/// `WinEvent` raised alongside it. Looking for the nearest window first,
+/// as the outpost did before, cost 1 `WM_GETOBJECT`, 10 `ProviderOptions`,
+/// 4 `GetPropertyValue`, 3 `HostRawElementProvider`, 3 `Navigate`, and 1
+/// `FragmentRoot` more.
+fn another_elements_change_heard_for_the_focus_costs_nothing() {
+    let title = common::unique_title("mockapp-window-wide-other-element");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let button = client.focused();
+    let _ = focus_not_found(&outpost, &button);
+    common::reset_hits(hwnd);
+    app.send("set-name slider1 Volume");
+    outpost.heard(&[
+        Heard::UiaProperty(UIA_NamePropertyId.0),
+        Heard::Msaa(WinEventKind::NameChange),
+    ]);
+    outpost.settled();
+    assert_eq!(
+        common::read_hits(hwnd),
+        [
+            ("WM_GETOBJECT", 6),
+            ("ProviderOptions", 49),
+            ("GetPatternProvider", 11),
+            ("GetPropertyValue", 25),
+            ("HostRawElementProvider", 18),
+            ("Navigate", 12),
+            ("GetRuntimeId", 6),
+            ("BoundingRectangle", 1),
+            ("FragmentRoot", 8),
+            ("Value", 1),
+            ("IsReadOnly", 1),
+        ]
+    );
 
     drop(outpost);
     app.quit();
@@ -691,6 +757,10 @@ fn main() {
         (
             "a_focus_whose_element_was_not_found_is_followed_from_its_own_changes",
             a_focus_whose_element_was_not_found_is_followed_from_its_own_changes,
+        ),
+        (
+            "another_elements_change_heard_for_the_focus_costs_nothing",
+            another_elements_change_heard_for_the_focus_costs_nothing,
         ),
         (
             "a_selection_of_a_focus_whose_element_was_not_found_finds_its_element",

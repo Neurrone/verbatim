@@ -101,6 +101,10 @@ pub(super) struct UiaEvent {
     pub(super) parts: UiaSnapshotFact,
     /// The element's cached window handle, 0 when it is not a window itself.
     pub(super) hwnd: isize,
+    /// For a listener's fact on an element that is not a window itself, its
+    /// process's keyboard focus window when the listener captured it, else
+    /// 0: the window its acceptance is tested with.
+    pub(super) focus_window: isize,
     pub(super) element: Option<AgileReference<IUIAutomationElement>>,
 }
 
@@ -630,7 +634,7 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
             let (key, hwnd) = match fact {
                 // Selections, notifications, and alerts routed from the
                 // listener are ordinary events, limited per UI thread.
-                DeliveredFact::UiaSelection { hwnd, snapshot } => {
+                DeliveredFact::UiaSelection { hwnd, snapshot, .. } => {
                     return (
                         Some(Key::Uia(1, 0, snapshot.runtime_id.clone())),
                         Category::Other,

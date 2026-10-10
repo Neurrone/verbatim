@@ -808,6 +808,7 @@ fn capture(element: &IUIAutomationElement, kind: UiaKind) -> UiaEvent {
             details: parts.details,
         },
         hwnd,
+        focus_window: 0,
         element: AgileReference::new(element).ok(),
     }
 }
