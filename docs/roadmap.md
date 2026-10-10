@@ -109,6 +109,78 @@ in the dated section named with each item.
   runs; on GitHub's runners an explicit setting turns enforcement off and
   the numbers are recorded. Today the suite records them and asserts
   none.
+The work queue (Dickson, 2026-10-10, for a long absence; this replaces
+the order of the numbered steps below where they differ). Each item is one
+change: `cargo xtask ci`, its related scenarios ten times, the full suite
+where every scenario is affected, and a push only after the full suite
+passes locally. The designs of record are `docs/design/focus-pipeline.md`
+(option (b), decision list in its section 15, approved) and
+`docs/design/terminal-reading.md` (approved, with open questions 1 to 12
+answered as recommended).
+
+Stage A, the focus pipeline, option (b) and the focus fixes:
+
+1. Time limits that hold: UIA's transaction and connection timeouts at 5
+   seconds, set once per process; `Uia::within` retired; watchdogs on every
+   thread others wait on; multi-call searches given a deadline of their own
+   or made one remote operation.
+2. Core: one input channel in arrival order; NVDA's duplicate-focus rule;
+   background speech dropped across a foreground change.
+3. Console windows: every event to the console host's outpost, with the
+   client process as identity; the console special cases removed.
+4. Arrival order in the outposts: 42d9caa and ce53dbc removed; NVDA's MSAA
+   focus collapsing (consecutive runs, up to four) and limits by the
+   event's own thread, for MSAA only; `msaa_focus_waiting` removed.
+5. MSAA focus, foreground and menu events in each outpost's own hook,
+   with the listener's "forwarding ended" hand-over and duplicates matched
+   by counting.
+6. The listener judges and reads each UIA focus from the event's own
+   element, on a thread per application, with the marker wait; the outpost
+   finds its own element afterwards; the moved-on rules, name-and-position
+   lookups and `GetFocusedElement` on the focus path removed; Control+Tab
+   follows NVDA (8be2223's rule goes); D13 amended.
+7. The UIA probe asks once.
+8. Two reserved spare outposts.
+9. verbatim.exe's relay: fewer hand-offs, its own stage in the latency
+   ledger, and the platform's floor measured under Balanced.
+10. The harness's idle barrier covers outposts' and the listener's work in
+    flight.
+11. Measure again (debug and release), full suite, push.
+
+Then step 9, the terminal redesign, built from `docs/design/terminal-reading.md`
+in its small steps, after its measurements; it includes a test bounding
+the diff's work on a 9,000-line overflow and a 2,000-line flood.
+
+Stage B, needing no decision: the control-flood scenarios follow NVDA
+(Control cancels what is queued; output read after it is spoken, and the
+scenarios wait on evidence instead of the race); a Settings search
+suggestions scenario with an NVDA capture; toasts, adopting NVDA's rule if
+UIA delivers them; Shift's pause compared with NVDA's; the missing "blank"
+in `conhost_leave_flood`; the wrong `docs/parity.md` entries the audit
+found; medium integrity tried on GitHub's runner.
+
+Stage C, evidence and proposals, not building: step 7's File Explorer
+evidence pass with written recommendations; step 8 as a throwaway
+prototype of holding keys, measured, with a written analysis (holding keys
+is Dickson's decision); whether the console host's scroll events can count
+a flood of identical lines that overflows its history.
+
+Left for Dickson's return: an NVDA capture of an elevated console window
+(needs an elevation prompt), and the decisions of steps 7 and 8.
+
+Decisions while Dickson is away: a change in what is heard that nothing
+above decides follows NVDA where NVDA's behaviour is clear, recorded as
+"provisional, awaiting Dickson" in the list below; otherwise the question
+is recorded with a recommendation and that item is set aside for the next.
+
+Provisional decisions awaiting Dickson: none yet.
+
+For a later milestone (Dickson, 2026-10-10): Verbatim echoes a typed
+character from its keyboard hook, before the application handles the key,
+where NVDA echoes from the application's typed-character event; a letter
+typed within about 40 ms of Tab is not echoed (measured: 0 of 100 when
+sent with Tab, 100 of 100 once the application had moved focus).
+
 Phase 6's remaining work is done in the order below, one step at a time,
 each one change checked with `cargo xtask ci` and the related scenarios
 (Dickson, 2026-10-10). It follows an audit of phase 6's commits, which
