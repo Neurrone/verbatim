@@ -140,8 +140,13 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    `conhost_` scenario (the window never announced), fixed by keeping an
    early foreground event for the next focus (provisional, below);
    `conhost_typing`, `conhost_two_windows`, `conhost_commands` and
-   `conhost_leave_flood` then passed once each. The other scenarios and
-   the full suite are still to run.
+   `conhost_leave_flood` then passed once each. Then every `conhost_`
+   scenario and `settings_system_page` passed, and the full suite 90 of
+   90; a repeat failed once after an outpost crash in UI Automation, whose
+   replacement read the console's text area without the console rule,
+   now applied on the focus-now path too. With that, `cargo xtask ci`
+   passes and `conhost_leave_flood` passed ten of ten, `conhost_typing`,
+   `conhost_two_windows` and `conhost_commands` once each.
 4. Arrival order in the outposts: 42d9caa and ce53dbc removed; NVDA's MSAA
    focus collapsing (consecutive runs, up to four) and limits by the
    event's own thread, for MSAA only; `msaa_focus_waiting` removed.
@@ -369,6 +374,14 @@ Other open items, taken after the steps above unless they fold into one:
   event for the same terminal, about 110 ms after the first, was not taken
   as a duplicate. The cause is not known; reproduce it with logging.
 - mockapp's `uia_event_registrations_cost_exactly` failed once.
+- Outpost crashes (2026-10-11, stage A step 3): a console host's outpost
+  crashed once in `conhost_leave_flood` with an access violation inside
+  UI Automation's own event delivery (`SavedEvent::OnMessage`,
+  `ProtobufHelper::GetCacheResponse`, a null element in an event's cached
+  response; `phase6-design.md`, "Console windows as one application"). Keep
+  a full dump of every outpost crash, so the event that carried it can be
+  found, since a minidump holds no heap; and count outpost crashes across
+  runs, in the suite's summary, so how often it happens is known.
 - `settings_system_page` once heard "Windows isn't activated"; the
   settings package above says 14 settings but names 13.
 - `verbatim-gui`'s rlib is 375 MB.
