@@ -155,9 +155,17 @@ Dickson first.
    remote operation; smaller UIA cache requests for text and caret
    events; no outpost started for a background notification (approved
    2026-10-10). Measure again after steps 3 and 4, from then on in both
-   debug and release builds (Dickson, 2026-10-10). Built, pending the
-   live checks of the related scenarios (`phase6-design.md`, "Cheaper
-   reads in the outposts"); the measurement is still to be made.
+   debug and release builds (Dickson, 2026-10-10). Done (9ef9215 to
+   12d5ea4; `phase6-design.md`, "Cheaper reads in the outposts"): the 14
+   related scenarios passed, seven of them ten runs each, and the full
+   suite passed 90 of 90 locally. The measurement after step 4 is still to
+   be made. Selecting inside a list the focus controls, such as Settings'
+   search suggestions, has no scenario and was not checked live.
+   Measured after step 3 (debug and release): the filter drops about 280
+   background events per File Explorer run, but focus waits are unchanged,
+   since the time is Explorer answering the focus's own reads (one UIA
+   focus took 795 ms over 5 calls). A 3-second wait behind an MSAA focus
+   in File Explorer recurs in both builds; its call is not yet known.
 5. Events handled in arrival order, removing the focus-first reordering
    (42d9caa, ce53dbc).
 6. A UIA focus judged as it arrives at the outpost, ahead of its queue,
@@ -245,6 +253,12 @@ Other open items, taken after the steps above unless they fold into one:
   (`Request::AwaitIdle`) answers only once every outpost's work in flight
   is done, events not yet published and caret watches included; the
   measurement runs heard speech arrive after it.
+- An elevated console window is named "Administrator: <title>" or just
+  "<title>" depending on when it is first read: on GitHub's elevated
+  runner, run 38031529579, `conhost_raised_flood` heard the prefix while
+  25 other console scenarios did not. Capture what NVDA says for an
+  elevated console window (needs an elevation prompt Dickson approves),
+  then make Verbatim read one name consistently.
 - Help balloons and toasts (Dickson, 2026-10-10): step 3 leaves them
   outside NVDA's rule that drops MSAA alert and show events from windows
   that use UIA. Check how Verbatim reads toasts; if it also gets them
