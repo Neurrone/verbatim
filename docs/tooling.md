@@ -901,10 +901,23 @@ agent's `ReadFileChunk` request to the scenario's artifacts directory,
 with ffmpeg's logs (`recording-video.log`, `recording-mux.log`, and
 `recording-check.log`). It then checks the video: decoding it with
 `ffmpeg -v error -f null` must log nothing, the mux log must have no error
-and no corrupt packet (that ffmpeg exits 0 regardless), and the video,
-from its first frame's time to its last frame's end, must last as long as
-the capture ran, from the evidence of the first frame to the request to
-stop, within one frame. The frames' times are what keep the video in real
+and no corrupt packet (that ffmpeg exits 0 regardless), every frame the
+capture encoded must be in the video, and the video must reach the end of
+the scenario's body. The capture is stopped with `q` on ffmpeg's standard
+input, which ffmpeg reads only once per stats period; on `q` its threaded
+scheduler stops at once rather than draining, and drops the frames still
+queued between the `gdigrab` input (whose queue holds 512) and the scale
+and encode stages. So the video loses a random tail, from a few frames to
+about a second, while ffmpeg still exits cleanly with code 0. That tail is
+the desktop after Verbatim has quit and the scenario's teardown and
+artifact collection have run, so the video is not expected to last as
+long as the capture ran. Instead the frame count on the final stats line
+of `recording-video.log` must equal the number of frames in the video,
+and its `time=` must match the last frame's time within one frame, which
+catches a killed capture that lost fragments it had encoded; and the
+wall-clock time of the first frame plus the last frame's time must be at
+or after the moment `registry::run` recorded when the scenario's body
+ended. The frames' times are what keep the video in real
 time, not their count: `gdigrab` stamps each frame with the wall-clock
 time it was taken and skips a frame's slot when it is more than a frame
 late, which it is when the machine is loaded (a flood scenario beside a

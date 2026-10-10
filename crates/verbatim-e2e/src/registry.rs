@@ -1398,6 +1398,10 @@ fn run(def: &ScenarioDef) {
             panic::resume_unwind(payload);
         }
     }));
+    // When the body ended, on the wall clock `gdigrab` stamps the video's
+    // first frame with, so the recording's check can tell that the video
+    // reaches it.
+    let body_end_ms = crate::timeline::unix_ms();
 
     let latency = match scenario.latency_snapshot(LATENCY_RECORDS) {
         Ok(latency) => Some(latency),
@@ -1464,7 +1468,9 @@ fn run(def: &ScenarioDef) {
                 lines.as_deref().map_err(String::as_str),
             )
         });
-    if let Err(error) = scenario.finish_recording(&dir.join(format!("{}.mp4", def.name))) {
+    if let Err(error) =
+        scenario.finish_recording(&dir.join(format!("{}.mp4", def.name)), body_end_ms)
+    {
         problems.push(format!("the recording could not be saved: {error}"));
     }
     match scenario.foreign_terminal_windows() {

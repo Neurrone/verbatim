@@ -309,23 +309,32 @@ or not, so recording changes nothing about Verbatim's run.
 `stop` ends the capture as a user ends ffmpeg: the capture is launched
 with a stdin pipe (the agent's `stdin_piped`), and `stop` writes `q` to it
 (`WriteStdin`) and waits for ffmpeg to exit with code 0 within
-`STOP_TIMEOUT` (15 seconds), so ffmpeg encodes what it holds and writes
-its last fragment. Killing ffmpeg instead loses its last one to two
-seconds, not just the fragment being written: the muxer holds every frame
+`STOP_TIMEOUT` (15 seconds). ffmpeg reads its stdin only once per stats
+period, and on `q` its threaded scheduler stops without draining: the
+frames still queued between the `gdigrab` input and the scale and encode
+stages are dropped, so the video loses a random tail of a few frames, up
+to about a second, while every frame ffmpeg encoded reaches the file and
+it exits with code 0. The capture is stopped only after Verbatim has quit
+and the teardown and artifact collection have run, so that tail is never
+the scenario's. Killing ffmpeg instead loses frames it encoded, its last
+one to two seconds, not just the fragment being written: the muxer holds every frame
 since the last keyframe in memory, and up to 32 KB of the fragment before
 that waits in a file buffer that is never flushed, so the video ends in a
 cut keyframe. ffmpeg is killed only when the bound passes, and that is a
 failure. A scenario that panicked is stopped the same way, by the
 scenario's `Drop` when `finish` was never reached.
 
-`finish` stops the capture, muxes it with the audio, copies the result
-back with ffmpeg's logs, and checks it (`verify`). The check decodes the
-recording with `ffmpeg -v error -f null`, and fails when that logs
-anything, when the mux log has an error or a corrupt packet (the mux
-exits 0 on both), or when the video, from its first frame's time to its
-last frame's end as a `framecrc` list of its frames gives them, is
-shorter than the capture ran, from the evidence of its first frame to the
-request to stop, by more than one frame. Every frame keeps the time
+`finish` takes the wall-clock time the scenario's body ended, which
+`registry::run` records, stops the capture, muxes it with the audio,
+copies the result back with ffmpeg's logs, and checks it (`verify`). The
+check decodes the recording with `ffmpeg -v error -f null`, and fails
+when that logs anything; when the mux log has an error or a corrupt
+packet (the mux exits 0 on both); when the frame count on the final
+stats line of the capture's log differs from the number of frames a
+`framecrc` list of the video gives, or that line's `time=` is more than
+one frame from the last frame's time, either of which means frames
+ffmpeg encoded are missing; or when the first frame's wall-clock time
+plus the last frame's time is before the body ended. Every frame keeps the time
 `gdigrab` captured it at, to the millisecond (`-fps_mode passthrough`),
 so the video keeps real time when a loaded machine makes the capture
 miss frames; ffmpeg's default rounds each time to the frame interval and

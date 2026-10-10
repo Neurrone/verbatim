@@ -1593,16 +1593,19 @@ impl Scenario {
     }
 
     /// Finishes this run's video and saves it, with Verbatim's audio, to
-    /// `to`. Does nothing when the run is not recording.
+    /// `to`, checking that it reaches `body_end_ms`, when the scenario's
+    /// body ended, in milliseconds since the Unix epoch. Does nothing when
+    /// the run is not recording.
     ///
     /// # Errors
     ///
-    /// Returns an error if the video cannot be finished or saved.
-    pub fn finish_recording(&mut self, to: &Path) -> io::Result<()> {
+    /// Returns an error if the video cannot be finished or saved, or fails
+    /// its check.
+    pub fn finish_recording(&mut self, to: &Path, body_end_ms: u64) -> io::Result<()> {
         let Some(mut recording) = self.recording.take() else {
             return Ok(());
         };
-        recording.finish(&mut self.agent, to)?;
+        recording.finish(&mut self.agent, to, body_end_ms)?;
         println!("recording saved to {}", to.display());
         Ok(())
     }

@@ -17,14 +17,25 @@
 //! its first frame), muxes them into one MP4 with AAC audio on the agent's
 //! machine, copies that here with ffmpeg's logs, and checks it
 //! ([`verify`]). The capture is stopped as a user stops ffmpeg, with `q` on
-//! its standard input, so it encodes the frames it holds, writes its last
-//! fragment, and exits. Killing it loses far more than the fragment being
-//! written: the muxer holds every frame since the last keyframe in memory,
-//! and the file output holds up to 32 KB of the fragment before that in a
-//! buffer that is never flushed, so a killed capture loses its last one to
-//! two seconds and ends in a cut keyframe. ffmpeg is killed only when it
-//! does not exit within [`STOP_TIMEOUT`] of being told to stop, and that
-//! fails the scenario.
+//! its standard input. ffmpeg reads its standard input only once per stats
+//! period, and on `q` its threaded scheduler stops at once rather than
+//! draining: the frames still queued between the `gdigrab` input, whose
+//! queue holds up to 512, and the scale and encode stages are dropped. So
+//! the video loses a tail of a few frames, up to about a second, at
+//! random. Every frame ffmpeg did encode reaches the file: it writes its
+//! last fragment, closes the file, and exits with code 0. The lost tail is
+//! of no consequence, since the capture is stopped only after Verbatim has
+//! quit, the scenario's teardown has run and its artifacts are collected,
+//! so it shows the desktop after the scenario. The check therefore asks
+//! that every encoded frame reached the file and that the video reaches
+//! the end of the scenario's body, not that it lasts as long as the
+//! capture ran. Killing ffmpeg loses frames it did encode: the muxer holds
+//! every frame since the last keyframe in memory, and the file output
+//! holds up to 32 KB of the fragment before that in a buffer that is never
+//! flushed, so a killed capture loses its last one to two seconds of
+//! encoded frames and ends in a cut keyframe. ffmpeg is killed only when
+//! it does not exit within [`STOP_TIMEOUT`] of being told to stop, and
+//! that fails the scenario.
 //!
 //! Every scenario, recorded or not, starts from the desktop with every
 //! window minimized (`crate::scenario::Scenario::launch`), so the video
@@ -37,7 +48,7 @@
 
 use std::io;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use verbatim_agent::protocol::ProcessState;
 
@@ -85,9 +96,9 @@ const DEMO_MUX_TIMEOUT: Duration = Duration::from_mins(15);
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long ffmpeg may take to exit once told to stop. It took 0.4 s,
-/// encoding the frames it held and writing its last fragment; the bound
-/// leaves room for a loaded machine whose encoder has fallen seconds
-/// behind the capture.
+/// reading the `q`, finishing the encoder and writing its last fragment;
+/// the bound leaves room for a loaded machine whose encoder has fallen
+/// seconds behind the capture.
 pub const STOP_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// How long a killed ffmpeg may take to exit.
@@ -108,11 +119,6 @@ pub struct Recording {
     video_pid: Option<u32>,
     /// The wall-clock time of the first frame, as ffmpeg logged it.
     video_start: f64,
-    /// When this machine saw the evidence of the first frame.
-    first_frame_seen: Instant,
-    /// The least the capture ran for: from `first_frame_seen` to the
-    /// request to stop. Set by [`Recording::stop`].
-    captured: Option<Duration>,
     video: String,
     video_log: String,
     audio: String,
@@ -139,8 +145,6 @@ impl Recording {
             demo,
             video_pid: None,
             video_start: 0.0,
-            first_frame_seen: Instant::now(),
-            captured: None,
             video: format!(r"{dir}\recording-video.mp4"),
             video_log: format!(r"{dir}\recording-video.log"),
             audio: audio_path(dir),
@@ -164,7 +168,6 @@ impl Recording {
         match recording.first_frame(agent) {
             Ok(video_start) => {
                 recording.video_start = video_start;
-                recording.first_frame_seen = Instant::now();
                 Ok(recording)
             }
             Err(error) => match recording.stop(agent) {
@@ -202,16 +205,23 @@ impl Recording {
 
     /// Stops the capture, muxes video and audio, copies the result to `to`
     /// on this machine with ffmpeg's logs beside it, and checks the result
-    /// ([`verify`]). A video that was made is copied whatever the check
-    /// finds, so a failed run can be watched.
+    /// ([`verify`]), which must reach `body_end_ms`, when the scenario's
+    /// body ended, in milliseconds since the Unix epoch. A video that was
+    /// made is copied whatever the check finds, so a failed run can be
+    /// watched.
     ///
     /// # Errors
     ///
     /// Returns an error if the capture did not stop cleanly, muxing failed,
     /// a copy failed, or the result fails the check.
-    pub fn finish(&mut self, agent: &mut AgentClient, to: &Path) -> io::Result<()> {
+    pub fn finish(
+        &mut self,
+        agent: &mut AgentClient,
+        to: &Path,
+        body_end_ms: u64,
+    ) -> io::Result<()> {
         let mut problems: Vec<String> = self
-            .finish_video(agent, to)
+            .finish_video(agent, to, body_end_ms)
             .err()
             .into_iter()
             .map(|error| error.to_string())
@@ -231,7 +241,12 @@ impl Recording {
     }
 
     /// What [`Recording::finish`] does before it copies the logs.
-    fn finish_video(&mut self, agent: &mut AgentClient, to: &Path) -> io::Result<()> {
+    fn finish_video(
+        &mut self,
+        agent: &mut AgentClient,
+        to: &Path,
+        body_end_ms: u64,
+    ) -> io::Result<()> {
         // A capture that had to be killed is still muxed, for what it shows.
         let stopped = self.stop(agent);
         let audio_start = agent
@@ -252,7 +267,7 @@ impl Recording {
         self.mux(agent, offset)?;
         agent.copy_file(&self.muxed, to)?;
         stopped?;
-        self.check(agent)
+        self.check(agent, body_end_ms)
     }
 
     /// Muxes the capture, with the audio at `offset`.
@@ -267,8 +282,9 @@ impl Recording {
         self.run_ffmpeg(agent, "muxing the recording", &args, &self.mux_log)
     }
 
-    /// Decodes the muxed recording and checks it with [`verify`].
-    fn check(&self, agent: &mut AgentClient) -> io::Result<()> {
+    /// Decodes the muxed recording and checks it with [`verify`], against
+    /// the end of the scenario's body, `body_end_ms`.
+    fn check(&self, agent: &mut AgentClient, body_end_ms: u64) -> io::Result<()> {
         let args = check_args(&self.muxed, &self.check_frames);
         self.run_ffmpeg(agent, "checking the recording", &args, &self.check_log)?;
         let mut read = |path: &str| {
@@ -276,17 +292,24 @@ impl Recording {
                 .read_file(path)
                 .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
         };
+        let video_log = read(&self.video_log)?;
         let mux_log = read(&self.mux_log)?;
         let check_log = read(&self.check_log)?;
         let frames = read(&self.check_frames)?;
-        let captured = self.captured.ok_or_else(|| {
-            io::Error::other("the recording was checked before the capture stopped")
-        })?;
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a Unix time in milliseconds is exact in an f64 for millennia"
+        )]
+        let body_end = body_end_ms as f64 / 1_000.0;
         verify(
-            &mux_log,
-            &check_log,
-            &frames,
-            captured,
+            &Logs {
+                video: &video_log,
+                mux: &mux_log,
+                check: &check_log,
+                frames: &frames,
+            },
+            self.video_start,
+            body_end,
             framerate(self.demo),
         )
         .map_err(|problem| io::Error::other(format!("the recording {}: {problem}", self.muxed)))
@@ -335,7 +358,6 @@ impl Recording {
         let Some(pid) = self.video_pid.take() else {
             return Ok(());
         };
-        self.captured = Some(self.first_frame_seen.elapsed());
         let stopped = agent
             .write_stdin(pid, "q")
             .and_then(|()| agent.wait_for_exit(pid, STOP_TIMEOUT));
@@ -532,29 +554,42 @@ fn check_args(recording: &str, frames: &str) -> Vec<String> {
     .collect()
 }
 
-/// Checks a muxed recording, from the mux's log (`mux_log`), the log of
-/// decoding it with [`check_args`] (`check_log`), and the video's `frames`
-/// that wrote. Fails when the mux logged an error or a corrupt packet,
-/// which it does without failing; when decoding logged anything; or when
-/// the video, from its first frame's time to its last frame's end, is
-/// shorter than the capture ran (`captured`) by more than one frame at
-/// `framerate` frames a second. Returns the problem found.
+/// The logs and frame list [`verify`] checks a recording from, as ffmpeg
+/// wrote them on the agent's machine.
+struct Logs<'a> {
+    /// The capture's log, which ends with ffmpeg's final stats line.
+    video: &'a str,
+    /// The mux's log, each line tagged with its level ([`mux_args`]).
+    mux: &'a str,
+    /// The log of decoding the muxed recording ([`check_args`]).
+    check: &'a str,
+    /// The muxed recording's video frames, in ffmpeg's `framecrc` format.
+    frames: &'a str,
+}
+
+/// Checks a muxed recording from its [`Logs`]. Fails when the mux logged
+/// an error or a corrupt packet, which it does without failing; when
+/// decoding logged anything; when the recording lacks a frame ffmpeg
+/// encoded; or when it ends before the scenario's body did. Returns the
+/// problem found.
 ///
-/// `captured` is measured on this machine from seeing the first frame's
-/// evidence to sending `q`, so it falls short of the capture, which began
-/// before the evidence and ends once ffmpeg reads the `q`. The capture's
-/// last frame was taken no more than a frame's slot before ffmpeg stopped
-/// capturing, unless the capture fell behind at its very end, and it
-/// lasts a frame; so a whole capture is never shorter than `captured`
-/// less one frame.
-fn verify(
-    mux_log: &str,
-    check_log: &str,
-    frames: &str,
-    captured: Duration,
-    framerate: u32,
-) -> Result<(), String> {
-    let mux_problems: Vec<&str> = mux_log
+/// That every frame ffmpeg encoded reached the file is checked against
+/// the final stats line of the capture's log: its frame count must equal
+/// the number of frames the recording lists, and its `time=`, the last
+/// encoded frame's time since the first, printed to the hundredth of a
+/// second, must be within one frame at `framerate` frames a second of the
+/// last listed frame's time. A capture killed before it wrote its last
+/// fragments fails this. The frames ffmpeg drops when told to stop, as the
+/// module's documentation explains, were never encoded, so neither count
+/// includes them.
+///
+/// That the recording covers the scenario is checked on the wall clock:
+/// `video_start`, the time ffmpeg logged for the first frame, plus the
+/// last frame's time must be at or after `body_end`, when the scenario's
+/// body ended, both in seconds since the Unix epoch.
+fn verify(logs: &Logs, video_start: f64, body_end: f64, framerate: u32) -> Result<(), String> {
+    let mux_problems: Vec<&str> = logs
+        .mux
         .lines()
         .filter(|line| {
             [
@@ -573,25 +608,44 @@ fn verify(
             mux_problems.join(" | ")
         ));
     }
-    if !check_log.trim().is_empty() {
-        return Err(format!("does not decode cleanly: {}", tail(check_log)));
+    if !logs.check.trim().is_empty() {
+        return Err(format!("does not decode cleanly: {}", tail(logs.check)));
     }
-    let (length, count) = video_length(frames)
-        .ok_or_else(|| format!("lists no video frames that can be read: {}", tail(frames)))?;
+    let (last, count) = video_frames(logs.frames).ok_or_else(|| {
+        format!(
+            "lists no video frames that can be read: {}",
+            tail(logs.frames)
+        )
+    })?;
+    let (encoded, encoded_last) = final_stats(logs.video).ok_or_else(|| {
+        format!(
+            "cannot be compared with the capture, whose log has no final stats line: {}",
+            tail(logs.video)
+        )
+    })?;
+    if count != encoded {
+        return Err(format!("has {count} frames, but ffmpeg encoded {encoded}"));
+    }
     let frame = 1.0 / f64::from(framerate);
-    if length + frame < captured.as_secs_f64() {
+    if (last - encoded_last).abs() > frame {
         return Err(format!(
-            "lasts {length:.3} s ({count} frames), but the capture ran for at least {:.3} s",
-            captured.as_secs_f64()
+            "ends with a frame at {last:.3} s, but ffmpeg's last encoded frame was at {encoded_last:.2} s"
+        ));
+    }
+    let end = video_start + last;
+    if end < body_end {
+        return Err(format!(
+            "ends {:.3} s before the scenario's body did",
+            body_end - end
         ));
     }
     Ok(())
 }
 
-/// The length in seconds of the video `frames` lists, in ffmpeg's
-/// `framecrc` format, from its first frame's time to its last frame's end,
-/// with the count of frames; `None` when it lists none.
-fn video_length(frames: &str) -> Option<(f64, usize)> {
+/// The time in seconds of the last video frame `frames` lists, in ffmpeg's
+/// `framecrc` format, since its first frame, with the count of frames;
+/// `None` when it lists none.
+fn video_frames(frames: &str) -> Option<(f64, usize)> {
     let mut time_base = None;
     let mut span: Option<(i64, i64)> = None;
     let mut count = 0;
@@ -608,12 +662,11 @@ fn video_length(frames: &str) -> Option<(f64, usize)> {
             continue;
         }
         let fields: Vec<&str> = line.split(',').map(str::trim).collect();
-        let [_stream, _dts, pts, duration, ..] = fields.as_slice() else {
+        let [_stream, _dts, pts, ..] = fields.as_slice() else {
             continue;
         };
         let pts: i64 = pts.parse().ok()?;
-        let end = pts + duration.parse::<i64>().ok()?;
-        span = Some(span.map_or((pts, end), |(first, last)| (first.min(pts), last.max(end))));
+        span = Some(span.map_or((pts, pts), |(first, last)| (first.min(pts), last.max(pts))));
         count += 1;
     }
     let (numerator, denominator) = time_base?;
@@ -622,8 +675,31 @@ fn video_length(frames: &str) -> Option<(f64, usize)> {
         clippy::cast_precision_loss,
         reason = "a video's length in its time base is far below 2^52"
     )]
-    let length = (last - first) as f64 * numerator as f64 / denominator as f64;
-    Some((length, count))
+    let last = (last - first) as f64 * numerator as f64 / denominator as f64;
+    Some((last, count))
+}
+
+/// The frame count, and the time in seconds of the last encoded frame
+/// since the first, from ffmpeg's final stats line in `log`, such as
+/// `frame=   77 fps= 15 q=26.0 Lsize=    1955KiB time=00:00:05.07`, which
+/// ffmpeg writes as it exits even with `-nostats`; `None` when the log
+/// has none.
+fn final_stats(log: &str) -> Option<(usize, f64)> {
+    let line = log
+        .split(['\r', '\n'])
+        .rfind(|line| line.trim_start().starts_with("frame="))?;
+    let value = |name: &str| line.split_once(name)?.1.split_whitespace().next();
+    let frames = value("frame=")?.parse::<usize>().ok()?;
+    let mut clock = value("time=")?.split(':');
+    let (hours, minutes, seconds) = (
+        clock.next()?.parse::<u32>().ok()?,
+        clock.next()?.parse::<u32>().ok()?,
+        clock.next()?.parse::<f64>().ok()?,
+    );
+    if clock.next().is_some() {
+        return None;
+    }
+    Some((frames, f64::from(hours * 3_600 + minutes * 60) + seconds))
 }
 
 /// The wall-clock time of `gdigrab`'s first frame, which ffmpeg logs as
@@ -692,34 +768,82 @@ mod tests {
         );
     }
 
-    /// ffmpeg 9's `framecrc` list of a 4.2-second capture of four frames,
-    /// the third taken 3.9 s before the fourth because the capture fell
-    /// behind.
+    /// ffmpeg 9's `framecrc` list of a capture of four frames, the last at
+    /// 4.133 s, the third taken 3.9 s before the fourth because the capture
+    /// fell behind.
     const FRAMES: &str = "#extradata 0:       37, 0xda620af1\n#software: Lavf63.1.102\n#tb 0: 1/16000\n#media_type 0: video\n#codec_id 0: h264\n#dimensions 0: 1280x800\n#sar 0: 0/1\n0,          0,          0,     1360,   230363, 0xedcabc3e\n0,       1360,       1360,     1648,      152, 0xbd631c51, F=0x0\n0,       3008,       3008,    63125,     2109, 0x2c90f08b, F=0x0\n0,      66133,      66133,     1067,     2985, 0x1977aa9c, F=0x0\n";
 
-    #[test]
-    fn measures_the_video_from_its_frames_times() {
-        assert_eq!(video_length(FRAMES), Some((4.2, 4)));
-        assert_eq!(video_length("#tb 0: 1/16000\n"), None);
-        assert_eq!(video_length(""), None);
+    /// The end of the capture's log for [`FRAMES`], as ffmpeg 9 writes it
+    /// when told to stop.
+    const VIDEO_LOG: &str = "[q] command received. Exiting.\n\n[out#0/mp4 @ 0] video:1952KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.152643%\nframe=    4 fps= 15 q=26.0 Lsize=    1955KiB time=00:00:04.13 bitrate=3153.7kbits/s speed=0.982x elapsed=0:00:04.20    \n[libx264 @ 0] frame I:1     Avg QP:17.33  size:282568\n";
+
+    /// The wall-clock time of [`FRAMES`]' first frame.
+    const START: f64 = 1_791_097_373.0;
+
+    /// [`verify`] on [`FRAMES`] at 15 frames a second, with the logs given.
+    fn verify_frames(video: &str, mux: &str, check: &str, body_end: f64) -> Result<(), String> {
+        let logs = Logs {
+            video,
+            mux,
+            check,
+            frames: FRAMES,
+        };
+        verify(&logs, START, body_end, 15)
     }
 
     #[test]
-    fn passes_a_clean_recording_as_long_as_the_capture() {
+    fn measures_the_video_from_its_frames_times() {
+        assert_eq!(video_frames(FRAMES), Some((4.133_312_5, 4)));
+        assert_eq!(video_frames("#tb 0: 1/16000\n"), None);
+        assert_eq!(video_frames(""), None);
+    }
+
+    #[test]
+    fn reads_ffmpegs_final_stats() {
+        assert_eq!(final_stats(VIDEO_LOG), Some((4, 4.13)));
+        assert_eq!(
+            final_stats("frame=   77 fps= 15 time=01:02:05.07 bitrate=N/A\n"),
+            Some((77, 3_725.07))
+        );
+        assert_eq!(final_stats("frame=   77 fps= 15 time=N/A\n"), None);
+        assert_eq!(final_stats("[q] command received. Exiting.\n"), None);
+    }
+
+    #[test]
+    fn passes_a_clean_recording_that_covers_the_body() {
         let mux_log =
             "[info] Output #0, mp4, to 'recording.mp4':\n[info] [out#0/mp4 @ 0] video:1954KiB\n";
-        // A capture of 4.25 s is within one frame of the video's 4.2 s.
+        // The last frame, at 4.133 s, is after the body ended at 4.1 s.
+        assert_eq!(verify_frames(VIDEO_LOG, mux_log, "", START + 4.1), Ok(()));
+    }
+
+    #[test]
+    fn fails_a_recording_without_every_frame_ffmpeg_encoded() {
+        let one_more = VIDEO_LOG.replace("frame=    4 ", "frame=    5 ");
         assert_eq!(
-            verify(mux_log, "", FRAMES, Duration::from_millis(4_250), 15),
-            Ok(())
+            verify_frames(&one_more, "", "", START),
+            Err("has 4 frames, but ffmpeg encoded 5".to_owned())
+        );
+        // A last frame more than a frame (0.067 s) from 4.133 s.
+        let later = VIDEO_LOG.replace("time=00:00:04.13", "time=00:00:04.21");
+        assert_eq!(
+            verify_frames(&later, "", "", START),
+            Err(
+                "ends with a frame at 4.133 s, but ffmpeg's last encoded frame was at 4.21 s"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            verify_frames("[q] command received. Exiting.\n", "", "", START),
+            Err("cannot be compared with the capture, whose log has no final stats line: [q] command received. Exiting.".to_owned())
         );
     }
 
     #[test]
-    fn fails_a_recording_shorter_than_the_capture_by_more_than_a_frame() {
+    fn fails_a_recording_that_ends_before_the_body() {
         assert_eq!(
-            verify("", "", FRAMES, Duration::from_millis(4_300), 15),
-            Err("lasts 4.200 s (4 frames), but the capture ran for at least 4.300 s".to_owned())
+            verify_frames(VIDEO_LOG, "", "", START + 4.25),
+            Err("ends 0.117 s before the scenario's body did".to_owned())
         );
     }
 
@@ -727,17 +851,11 @@ mod tests {
     fn fails_a_recording_muxed_from_a_cut_keyframe() {
         let mux_log = "[info] Stream mapping:\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0] [warning] Packet corrupt (stream = 0, dts = 153600).\n[in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 0] [warning] corrupt input packet in stream 0\n";
         assert_eq!(
-            verify(mux_log, "", FRAMES, Duration::from_secs(4), 15),
+            verify_frames(VIDEO_LOG, mux_log, "", START),
             Err("was muxed from a damaged capture: [mov,mp4,m4a,3gp,3g2,mj2 @ 0] [warning] Packet corrupt (stream = 0, dts = 153600). | [in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 0] [warning] corrupt input packet in stream 0".to_owned())
         );
         assert_eq!(
-            verify(
-                "[aac @ 0] [error] Too many bits\n",
-                "",
-                FRAMES,
-                Duration::from_secs(4),
-                15
-            ),
+            verify_frames(VIDEO_LOG, "[aac @ 0] [error] Too many bits\n", "", START),
             Err("was muxed from a damaged capture: [aac @ 0] [error] Too many bits".to_owned())
         );
     }
@@ -746,7 +864,7 @@ mod tests {
     fn fails_a_recording_that_does_not_decode_cleanly() {
         let check_log = "[h264 @ 0] Invalid NAL unit size (46141 > 26830).\n[h264 @ 0] Error splitting the input into NAL units.\n";
         assert_eq!(
-            verify("", check_log, FRAMES, Duration::from_secs(4), 15),
+            verify_frames(VIDEO_LOG, "", check_log, START),
             Err("does not decode cleanly: [h264 @ 0] Invalid NAL unit size (46141 > 26830). | [h264 @ 0] Error splitting the input into NAL units.".to_owned())
         );
     }
