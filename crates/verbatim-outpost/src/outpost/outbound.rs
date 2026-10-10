@@ -66,9 +66,9 @@ fn key(message: &OutpostToSupervisor) -> Option<Key> {
             node_id, change, ..
         } => (*node_id, Detail::Property(std::mem::discriminant(change))),
         NormalizedEvent::SelectionChanged { node }
-        | NormalizedEvent::ProgressChanged { node }
         | NormalizedEvent::ControlledSelection { node, .. }
         | NormalizedEvent::Alert { node } => (node.id, Detail::None),
+        NormalizedEvent::ProgressChanged { bar } => (bar.id, Detail::None),
         NormalizedEvent::ValueChanged { node_id, .. }
         | NormalizedEvent::CaretMoved { node_id, .. }
         | NormalizedEvent::NoText { node_id }

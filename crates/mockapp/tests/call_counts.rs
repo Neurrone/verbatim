@@ -401,8 +401,8 @@ fn msaa_focus_changes_cost_exactly() {
     // focus by its identity, and only its role is read, to know whether it
     // is a progress bar, whose changes are reported off the focus too: its
     // acquisition and role are counted before the focus's own value
-    // change, which comes after it from the same hook and is read and
-    // reported.
+    // change, which comes after it from the same hook and has its value
+    // read alone and reported.
     common::reset_hits(hwnd);
     app.send("set-value first Changed");
     app.send("set-value item2 Picked");
@@ -424,18 +424,13 @@ fn msaa_focus_changes_cost_exactly() {
             calls: calls_made,
             hits: common::read_hits(hwnd),
         },
-        calls(0, 11, 0),
+        calls(0, 2, 0),
         &[
             ("WM_GETOBJECT", 2),
             ("accParent", 2),
             ("get_accChild", 2),
-            ("get_accName", 1),
             ("get_accValue", 1),
-            ("get_accDescription", 1),
-            ("get_accRole", 3),
-            ("get_accState", 1),
-            ("get_accKeyboardShortcut", 1),
-            ("accLocation", 1),
+            ("get_accRole", 1),
         ],
     );
 
@@ -476,7 +471,8 @@ fn another_applications_window() -> HWND {
 /// test before any call into mockapp, before even probing its window, whose
 /// verdict of no UIA provider has run out. The same change with mockapp's
 /// window in front probes the window, acquires the object, and reads the
-/// focus.
+/// focus's states alone; a name and a description change on the focus read
+/// that property alone, as NVDA reads only the property its event names.
 fn msaa_state_change_costs_exactly() {
     use verbatim_ia2::WinEventKind;
     use verbatim_outpost::Heard;
@@ -498,42 +494,79 @@ fn msaa_state_change_costs_exactly() {
     assert_eq!(common::read_hits(hwnd), [], "mockapp answered nothing");
 
     outpost.set_foreground(hwnd);
-    common::reset_hits(hwnd);
-    app.send("set-states item2 focusable selectable");
-    let calls_made = match outpost.next() {
-        OutpostToSupervisor::Event {
-            event:
-                NormalizedEvent::PropertyChanged {
-                    change: verbatim_model::PropertyChange::States(states),
-                    ..
-                },
-            timing,
-            ..
-        } => {
-            assert!(!states.contains(verbatim_model::State::Selected));
-            timing.calls
-        }
-        other => panic!("the outpost said {other:?}, not the focus's state change"),
-    };
-    outpost.settled();
-    ratchet.check(
-        "MSAA state change on the focus, the probe renewed",
-        &Cost {
+    // The focus's change, which must be the next thing the outpost says,
+    // and what it cost.
+    let mut change = |command: &str| {
+        common::reset_hits(hwnd);
+        app.send(command);
+        let (change, calls_made) = match outpost.next() {
+            OutpostToSupervisor::Event {
+                event: NormalizedEvent::PropertyChanged { change, .. },
+                timing,
+                ..
+            } => (change, timing.calls),
+            other => panic!("the outpost said {other:?}, not the focus's change"),
+        };
+        outpost.settled();
+        let cost = Cost {
             calls: calls_made,
             hits: common::read_hits(hwnd),
-        },
-        calls(0, 11, 1),
+        };
+        (change, cost)
+    };
+    let (states, cost) = change("set-states item2 focusable selectable");
+    assert_eq!(
+        states,
+        verbatim_model::PropertyChange::States(
+            [
+                verbatim_model::State::Focusable,
+                verbatim_model::State::Selectable
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+    ratchet.check(
+        "MSAA state change on the focus, the probe renewed",
+        &cost,
+        calls(0, 2, 1),
         &[
             ("WM_GETOBJECT", 2),
             ("accParent", 1),
             ("get_accChild", 1),
-            ("get_accName", 1),
-            ("get_accValue", 1),
-            ("get_accDescription", 1),
-            ("get_accRole", 2),
             ("get_accState", 1),
-            ("get_accKeyboardShortcut", 1),
-            ("accLocation", 1),
+        ],
+    );
+    let (name, cost) = change("set-name item2 Renamed");
+    assert_eq!(
+        name,
+        verbatim_model::PropertyChange::Name(Some("Renamed".to_owned()))
+    );
+    ratchet.check(
+        "MSAA name change on the focus",
+        &cost,
+        calls(0, 2, 0),
+        &[
+            ("WM_GETOBJECT", 1),
+            ("accParent", 1),
+            ("get_accChild", 1),
+            ("get_accName", 1),
+        ],
+    );
+    let (description, cost) = change("set-description item2 Second choice");
+    assert_eq!(
+        description,
+        verbatim_model::PropertyChange::Description(Some("Second choice".to_owned()))
+    );
+    ratchet.check(
+        "MSAA description change on the focus",
+        &cost,
+        calls(0, 2, 0),
+        &[
+            ("WM_GETOBJECT", 1),
+            ("accParent", 1),
+            ("get_accChild", 1),
+            ("get_accDescription", 1),
         ],
     );
 
@@ -674,11 +707,11 @@ fn msaa_tree_view_costs_exactly() {
     let (count, states, calls_made) = state_change(TVE_EXPAND.0);
     assert!(states.contains(verbatim_model::State::Expanded));
     assert_eq!(count, Some(3), "Software holds three items");
-    ratchet.check_calls("MSAA tree view item expanded", calls_made, calls(0, 13, 7));
+    ratchet.check_calls("MSAA tree view item expanded", calls_made, calls(0, 2, 7));
     let (count, states, calls_made) = state_change(TVE_COLLAPSE.0);
     assert!(states.contains(verbatim_model::State::Collapsed));
     assert_eq!(count, None, "nothing is counted for a collapse");
-    ratchet.check_calls("MSAA tree view item collapsed", calls_made, calls(0, 13, 2));
+    ratchet.check_calls("MSAA tree view item collapsed", calls_made, calls(0, 2, 2));
 
     ratchet.finish();
     app.quit();

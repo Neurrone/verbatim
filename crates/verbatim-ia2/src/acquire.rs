@@ -34,7 +34,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use verbatim_model::{
-    Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, State, TreeNode,
+    Backend, NodeDetails, NodeId, NodeSnapshot, ProgressReading, QueryKind, Role, State, TreeNode,
 };
 
 use crate::accessible::{Accessible, Related};
@@ -190,17 +190,23 @@ impl EventObject {
     /// same window. `None` when it is none of them.
     #[must_use]
     pub fn which_of(&self, nodes: &[NodeId], registry: &NodeIdRegistry) -> Option<NodeId> {
-        if let Some(&node) = nodes
+        let found = if let Some(&node) = nodes
             .iter()
             .find(|&&node| registry.key_of(node) == Some(self.key))
         {
-            return Some(node);
+            Some(node)
+        } else {
+            let identity = self.acc.canonical()?;
+            match registry.find(self.key, Some(identity), self.acc.child(), false) {
+                Found::Object(node, _) if nodes.contains(&node) => Some(node),
+                _ => None,
+            }
+        };
+        // Looked up, as a full read would record it.
+        if let Some(node) = found {
+            registry.touch(node);
         }
-        let identity = self.acc.canonical()?;
-        match registry.find(self.key, Some(identity), self.acc.child(), false) {
-            Found::Object(node, _) if nodes.contains(&node) => Some(node),
-            _ => None,
-        }
+        found
     }
 
     /// The object's role, one call, kept for the read that may follow.
@@ -210,36 +216,130 @@ impl EventObject {
         role.map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()))
     }
 
+    /// The object's name, read alone, as a full read of an object of
+    /// `role` gives it: a list view item named by its columns, an edit field
+    /// in a labelled combo box with none of its own, and bidirectional
+    /// formatting characters stripped. `role` is the role the object was
+    /// last read with, which decides how it is named, as the class NVDA
+    /// chose for its object when it made it does.
+    #[must_use]
+    pub fn name(&self, role: Role, registry: &NodeIdRegistry) -> Option<String> {
+        let fetches = registry.fetches();
+        let columns = is_list_view_item(&self.acc, self.key, role)
+            .then(|| {
+                crate::list_view::column_name(self.key.0, self.acc.child(), || {
+                    fetches
+                        .description
+                        .then(|| non_empty(self.acc.description()))
+                        .flatten()
+                })
+                .ok()
+                .flatten()
+            })
+            .flatten();
+        let mut name = columns.or_else(|| {
+            visible_text(self.acc.name())
+                .filter(|_| role != Role::EditableText || !in_labelled_combo_box(&self.acc))
+        });
+        if let Some(name) = &mut name {
+            verbatim_text::strip_bidi_controls(name);
+        }
+        name
+    }
+
+    /// The object's description, read alone, as a full read of an object of
+    /// `role` gives it: none when the active theme does not report
+    /// descriptions or the object is a list view item, and bidirectional
+    /// formatting characters stripped.
+    #[must_use]
+    pub fn description(&self, role: Role, registry: &NodeIdRegistry) -> Option<String> {
+        if !registry.fetches().description || is_list_view_item(&self.acc, self.key, role) {
+            return None;
+        }
+        let mut description = non_empty(self.acc.description());
+        if let Some(description) = &mut description {
+            verbatim_text::strip_bidi_controls(description);
+        }
+        description
+    }
+
+    /// The object's states, read alone, as a full read of an object of
+    /// `role` gives them.
+    #[must_use]
+    pub fn states(&self, role: Role) -> verbatim_model::StateSet {
+        role_and_states(&self.acc, self.key, role, self.acc.state()).1
+    }
+
+    /// The object's value, read alone, as a full read of an object of
+    /// `role` gives it; not read at all for an object whose value is never
+    /// reported, a `SysTreeView32` item or a list view item.
+    #[must_use]
+    pub fn value(&self, role: Role) -> Option<String> {
+        let reported = match role {
+            Role::TreeItem => !is_systreeview32(self.key.0),
+            Role::ListItem => !is_list_view_item(&self.acc, self.key, role),
+            _ => true,
+        };
+        let mut value = reported
+            .then(|| value_for(&self.acc, self.key, role, visible_text(self.acc.value())))
+            .flatten();
+        if let Some(value) = &mut value {
+            verbatim_text::strip_bidi_controls(value);
+        }
+        value
+    }
+
+    /// The object, a progress bar whose value changed, read for what its
+    /// report uses, as NVDA's progress bar behavior reads it: its states,
+    /// then its value and location. `known` is its node and the role it was
+    /// last read with when it is already known, as the focus is; else its
+    /// role is read and its node issued or looked up as a full read would.
+    /// `None`, with nothing more read, when its states make it a busy
+    /// indicator or say it is invisible: neither reports progress.
+    pub fn progress(
+        &mut self,
+        known: Option<(NodeId, Role)>,
+        registry: &NodeIdRegistry,
+    ) -> Option<ProgressReading> {
+        let role = known.map_or_else(|| self.role(), |(_, role)| role);
+        let state = self.acc.state();
+        let invisible = state
+            .is_some_and(|state| state.cast_unsigned() & crate::map::STATE_SYSTEM_INVISIBLE != 0);
+        let (role, states, _) = role_and_states(&self.acc, self.key, role, state);
+        if role != Role::ProgressBar || invisible {
+            return None;
+        }
+        let mut value = visible_text(self.acc.value());
+        if let Some(value) = &mut value {
+            verbatim_text::strip_bidi_controls(value);
+        }
+        let rect = self.acc.location();
+        let id = known.map_or_else(
+            || node_for(registry, self.key, true, &self.acc, role),
+            |(node, _)| node,
+        );
+        Some(ProgressReading {
+            id,
+            value,
+            offscreen: states.contains(State::Offscreen),
+            rect,
+        })
+    }
+
     /// Reads the object for `purpose`, as [`snapshot_from_event`] does.
     #[must_use]
     pub fn read(self, registry: &NodeIdRegistry, purpose: Purpose) -> NodeSnapshot {
-        self.read_with_visibility(registry, purpose).0
-    }
-
-    /// [`read`](Self::read), and whether the object is visible: MSAA's
-    /// invisible state, which the model has no state for, read with the
-    /// rest.
-    #[must_use]
-    pub fn read_with_visibility(
-        self,
-        registry: &NodeIdRegistry,
-        purpose: Purpose,
-    ) -> (NodeSnapshot, bool) {
-        let state = self.acc.state();
-        let visible = state
-            .is_none_or(|state| state.cast_unsigned() & crate::map::STATE_SYSTEM_INVISIBLE == 0);
-        let node = read_snapshot_with(
+        read_snapshot_with(
             &self.acc,
             self.key,
             Reading {
                 at_address: true,
                 purpose,
                 role: self.role,
-                state: Prefetched::Read(state),
+                state: Prefetched::Unread,
             },
             registry,
-        );
-        (node, visible)
+        )
     }
 }
 
@@ -1418,30 +1518,8 @@ fn read_snapshot_with(
         .role
         .or_read(|| acc.role())
         .map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()));
-    let states = reading
-        .state
-        .or_read(|| acc.state())
-        .map(|s| states_from_msaa(s.cast_unsigned()))
-        .unwrap_or_default();
-    let (role, mut states) = adjust_role_and_states(role, states);
-    // An edit control's client object says whether it edits more than one
-    // line, as NVDA's edit control class does, from the window's style.
-    if role == Role::EditableText
-        && key.1 == OBJID_CLIENT.0
-        && key.2 == CHILDID_SELF
-        && window::is_multiline_edit(key.0)
-    {
-        states.insert(verbatim_model::State::Multiline);
-    }
-    // A `SysTreeView32` item's own handle, for its check state and its
-    // position.
-    let tree_item =
-        (role == Role::TreeItem && acc.child() != CHILDID_SELF && is_systreeview32(key.0))
-            .then(|| htreeitem_for_acc_id(key.0, acc.child()))
-            .filter(|&item| item != 0);
-    if let Some(item) = tree_item {
-        add_tree_view_check_states(&mut states, key.0, item);
-    }
+    let (role, states, tree_item) =
+        role_and_states(acc, key, role, reading.state.or_read(|| acc.state()));
     // A detail the active theme reports as off is not read at all, saving
     // its cross-process call (`NodeIdRegistry::fetches`).
     let fetches = registry.fetches();
@@ -1464,9 +1542,7 @@ fn read_snapshot_with(
     } else {
         (None, None)
     };
-    let list_view_item = role == Role::ListItem
-        && acc.child() != CHILDID_SELF
-        && normalized_class_of(key.0) == "SysListView32";
+    let list_view_item = is_list_view_item(acc, key, role);
     let (value, level) = match role {
         Role::TreeItem if is_systreeview32(key.0) => {
             let level = raw_value
@@ -1475,22 +1551,13 @@ fn read_snapshot_with(
                 .filter(|_| fetches.level);
             (None, level)
         }
-        // Any other tree item's value is dropped only when it is a number,
-        // which some providers report as the item's depth, and gives no
-        // level, as NVDA's outline item reads it.
-        Role::TreeItem => (
-            raw_value.filter(|value| value.trim().parse::<i64>().is_err()),
-            None,
-        ),
-        // A list view item has no value, as NVDA's list view item has none.
-        Role::ListItem if list_view_item => (None, None),
-        _ => (raw_value, None),
+        _ => (value_for(acc, key, role, raw_value), None),
     };
     // A list view item has no description either, as NVDA's has none, and
     // one that shows columns is named by them ("content; Header:
     // content"), as NVDA names it.
     let (mut name, mut description) = if list_view_item {
-        let columns = crate::list_view::column_name(key.0, acc.child(), description.as_deref())
+        let columns = crate::list_view::column_name(key.0, acc.child(), || description.clone())
             .ok()
             .flatten();
         (columns.or(name), None)
@@ -1535,6 +1602,69 @@ fn read_snapshot_with(
             level,
             rect,
         },
+    }
+}
+
+/// The role and states `acc`, addressed at `key`, is read with, from its
+/// role and its state word: a progress bar in the mixed state is a busy
+/// indicator; an edit control's client object says whether it edits more
+/// than one line, as NVDA's edit control class does, from the window's
+/// style; and a `SysTreeView32` item has its check state added from its
+/// state image. With the item's own handle, for its position, when it is
+/// such an item.
+fn role_and_states(
+    acc: &Accessible,
+    key: MsaaKey,
+    role: Role,
+    state: Option<i32>,
+) -> (Role, verbatim_model::StateSet, Option<isize>) {
+    let states = state
+        .map(|s| states_from_msaa(s.cast_unsigned()))
+        .unwrap_or_default();
+    let (role, mut states) = adjust_role_and_states(role, states);
+    if role == Role::EditableText
+        && key.1 == OBJID_CLIENT.0
+        && key.2 == CHILDID_SELF
+        && window::is_multiline_edit(key.0)
+    {
+        states.insert(State::Multiline);
+    }
+    let tree_item =
+        (role == Role::TreeItem && acc.child() != CHILDID_SELF && is_systreeview32(key.0))
+            .then(|| htreeitem_for_acc_id(key.0, acc.child()))
+            .filter(|&item| item != 0);
+    if let Some(item) = tree_item {
+        add_tree_view_check_states(&mut states, key.0, item);
+    }
+    (role, states, tree_item)
+}
+
+/// Whether `acc`, of `role`, addressed at `key`, is an item of a comctl32
+/// list view, which NVDA names by its columns and gives no value or
+/// description.
+fn is_list_view_item(acc: &Accessible, key: MsaaKey, role: Role) -> bool {
+    role == Role::ListItem
+        && acc.child() != CHILDID_SELF
+        && normalized_class_of(key.0) == "SysListView32"
+}
+
+/// The value of `acc`, of `role`, addressed at `key`, from `raw_value`, its
+/// `accValue`, as it is reported: a `SysTreeView32` item and a list view
+/// item have none, the first's being its level and the second having none
+/// in NVDA; any other tree item's is dropped only when it is a number,
+/// which some providers report as the item's depth, as NVDA's outline item
+/// reads it.
+fn value_for(
+    acc: &Accessible,
+    key: MsaaKey,
+    role: Role,
+    raw_value: Option<String>,
+) -> Option<String> {
+    match role {
+        Role::TreeItem if is_systreeview32(key.0) => None,
+        Role::TreeItem => raw_value.filter(|value| value.trim().parse::<i64>().is_err()),
+        Role::ListItem if is_list_view_item(acc, key, role) => None,
+        _ => raw_value,
     }
 }
 

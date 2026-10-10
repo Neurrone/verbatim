@@ -828,6 +828,19 @@ verified.
   subscribes to, as NVDA's `ignoreWinEventsMap` tells it (issue 7345);
   focus changes keep their mapping, as in NVDA.
   **matched (unverified)**.
+- What an accepted MSAA change reads. NVDA: a name, description, value,
+  or state change on its focus or an ancestor reads only the property its
+  event names, of the object it already holds, whose class was chosen
+  when the object was made; a progress bar's value change reads its
+  states, value, and location. Verbatim (since 2026-10-10): the same, once
+  the object is known by its identity to be the focus or an ancestor; the
+  rules of a full read that depend on the object's role (a list view item
+  named by its columns, an edit field in a labelled combo box nameless, a
+  tree view item's check state, a multi-line edit control) take the role
+  the outpost last read it with. Before, the whole object was read and
+  one property used. A provider that changes two properties under one
+  event is heard as NVDA hears it, the second change only with its own
+  event. **matched (unverified)**.
 - State-change diff announcements (gained states; lost states spoken
   by their absence, including half checked becoming "not checked").
   Verbatim: **matched since 2026-10-02** (source-checked).

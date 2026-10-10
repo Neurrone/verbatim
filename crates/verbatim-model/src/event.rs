@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::settings::ReaderSettings;
 use crate::speech::{SpeechMark, Utterance};
 use crate::text::{CaretKey, CaretReport, TextPosition, TextReply, TextRequest};
-use crate::tree::{Backend, NodeSnapshot, StateSet};
+use crate::tree::{Backend, NodeSnapshot, Rect, StateSet};
 use crate::{NodeId, OutpostId, TraceId};
 
 /// A Windows process identifier, used to name the application an outpost
@@ -166,10 +166,10 @@ pub enum NormalizedEvent {
     /// value"); reported in place of [`NormalizedEvent::ValueChanged`] for
     /// a visible progress bar.
     ProgressChanged {
-        /// Snapshot of the progress bar, with its new value, its states,
-        /// and its location, by whose centre the last report is
-        /// remembered.
-        node: NodeSnapshot,
+        /// The progress bar as its value change reads it: its new value,
+        /// whether it is off screen, and its location, by whose centre
+        /// the last report is remembered.
+        bar: ProgressReading,
     },
     /// A node was selected inside an element the focus controls (its UIA
     /// `ControllerFor` relation), such as a search result while the focus
@@ -281,10 +281,11 @@ impl NormalizedEvent {
                     selected.assign_outpost(outpost);
                 }
             }
-            NormalizedEvent::SelectionChanged { node }
-            | NormalizedEvent::ProgressChanged { node }
-            | NormalizedEvent::Alert { node } => {
+            NormalizedEvent::SelectionChanged { node } | NormalizedEvent::Alert { node } => {
                 node.assign_outpost(outpost);
+            }
+            NormalizedEvent::ProgressChanged { bar } => {
+                bar.id = bar.id.with_outpost(outpost);
             }
             NormalizedEvent::ControlledSelection { controller, node } => {
                 *controller = controller.with_outpost(outpost);
@@ -302,6 +303,22 @@ impl NormalizedEvent {
             }
         }
     }
+}
+
+/// A progress bar as a change of its value reads it, for
+/// [`NormalizedEvent::ProgressChanged`]: only the properties a progress
+/// bar's report uses, so a property that was not read is never mistaken
+/// for one that is empty, as it would be in a [`NodeSnapshot`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProgressReading {
+    /// The progress bar.
+    pub id: NodeId,
+    /// Its new value.
+    pub value: Option<String>,
+    /// Whether it is off screen, when its percentage is not indicated.
+    pub offscreen: bool,
+    /// Its location on the screen, when it has one.
+    pub rect: Option<Rect>,
 }
 
 /// What kind of change a [`NormalizedEvent::Notification`] reports —

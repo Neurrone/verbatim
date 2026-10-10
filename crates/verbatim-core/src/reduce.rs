@@ -15,9 +15,9 @@ use std::sync::Arc;
 
 use verbatim_model::{
     ActionName, Earcon, Effect, FetchResult, Input, Message, NodeId, NodeSnapshot, NormalizedEvent,
-    Notification, NotificationProcessing, OutpostId, Phrase, Pid, PropertyChange, Query, QueryId,
-    QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority, State, StateSet, TraceId,
-    Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
+    Notification, NotificationProcessing, OutpostId, Phrase, Pid, ProgressReading, PropertyChange,
+    Query, QueryId, QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority, State,
+    StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
 };
 use verbatim_model::{FocusNow, FocusValidity};
 
@@ -406,7 +406,7 @@ fn reduce_event(
         NormalizedEvent::SelectionChanged { node } => {
             reduce_selection_changed(state, trace_id, node)
         }
-        NormalizedEvent::ProgressChanged { node } => reduce_progress_changed(state, trace_id, node),
+        NormalizedEvent::ProgressChanged { bar } => reduce_progress_changed(state, trace_id, bar),
         NormalizedEvent::ControlledSelection { controller, node } => {
             reduce_controlled_selection(state, trace_id, *controller, node)
         }
@@ -1650,19 +1650,18 @@ fn progress_percentage(value: Option<&str>) -> Option<f64> {
 fn reduce_progress_changed(
     state: &mut SrState,
     trace_id: TraceId,
-    node: &NodeSnapshot,
+    progress: &ProgressReading,
 ) -> Vec<Effect> {
-    let percentage = progress_percentage(node.value.as_deref())
-        .filter(|_| !node.states.contains(State::Offscreen));
+    let percentage = progress_percentage(progress.value.as_deref()).filter(|_| !progress.offscreen);
     let Some(percentage) = percentage else {
-        return reduce_value_changed(state, trace_id, node.id, node.value.clone());
+        return reduce_value_changed(state, trace_id, progress.id, progress.value.clone());
     };
-    if state.focus_matches(node.id)
+    if state.focus_matches(progress.id)
         && let Some(focus) = state.focus.as_mut()
     {
-        focus.snapshot.value.clone_from(&node.value);
+        focus.snapshot.value.clone_from(&progress.value);
     }
-    let place = node.details.rect.map_or((0, 0), |rect| {
+    let place = progress.rect.map_or((0, 0), |rect| {
         (rect.left + rect.width / 2, rect.top + rect.height / 2)
     });
     #[expect(

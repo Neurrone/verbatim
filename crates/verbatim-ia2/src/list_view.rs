@@ -97,9 +97,10 @@ fn is_multi_column(hwnd: isize) -> Result<bool, EditError> {
 
 /// The name NVDA gives item `child_id` (1-based) of the list view `hwnd`
 /// from its columns, or `None` when the list view does not show columns,
-/// or is owner drawn with no column text (`description` empty, NVDA's
-/// sign that it has none), so the item keeps its own name. Columns that
-/// cannot be read are left out.
+/// or is owner drawn with no column text (the item's description, which
+/// `description` reads and only an owner-drawn list view asks for, empty:
+/// NVDA's sign that it has none), so the item keeps its own name. Columns
+/// that cannot be read are left out.
 ///
 /// # Errors
 ///
@@ -107,9 +108,9 @@ fn is_multi_column(hwnd: isize) -> Result<bool, EditError> {
 pub(crate) fn column_name(
     hwnd: isize,
     child_id: i32,
-    description: Option<&str>,
+    description: impl FnOnce() -> Option<String>,
 ) -> Result<Option<String>, EditError> {
-    if window::style(hwnd) & LVS_OWNERDRAWFIXED != 0 && description.is_none_or(str::is_empty) {
+    if window::style(hwnd) & LVS_OWNERDRAWFIXED != 0 && description().is_none_or(|d| d.is_empty()) {
         return Ok(None);
     }
     if !is_multi_column(hwnd)? {

@@ -61,8 +61,10 @@ Public API:
   `States` set, with a `child_count` the outpost reads only for a state
   change that newly expands the focus, a Win32 tree view item),
   `ValueChanged`, `ProgressChanged` (a visible progress bar's value
-  changed, focused or not, with its snapshot, whose location the reducer
-  remembers the last indication by), `SelectionChanged` (a node was selected within its
+  changed, focused or not, carrying a `ProgressReading`: its node, new
+  value, whether it is off screen, and its location, by which the reducer
+  remembers the last indication; only what is read for it, so a property
+  not read is never taken for an empty one), `SelectionChanged` (a node was selected within its
   container, carrying its snapshot), `ControlledSelection` (a node was
   selected inside an element the focus controls through UIA's
   ControllerFor relation, carrying the controlling focus's id and the

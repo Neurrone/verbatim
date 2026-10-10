@@ -443,11 +443,14 @@ The focused tree view item's own state change, raised by the control.
 
 - Before the MSAA work package (2026-10-07): every state change that left
   any tree item expanded, the focus or not, counted the item's children.
-- Today: 13 MSAA calls and 7 window messages for the change that expands
-  the focus: its child count (mapping its child id, then its first child
-  and each next sibling, 5) and its check state and item (2); 2 window
-  messages for a collapse, which counts nothing. A change on an object
-  that is not the focus is not read at all (below).
+- Before reading only the property that changed (2026-10-10): 13 MSAA
+  calls for either change, the item read in full.
+- Today: 2 MSAA calls, the acquisition and the item's state, and 7
+  window messages for the change that expands the focus: its child count
+  (mapping its child id, then its first child and each next sibling, 5)
+  and its check state and item (2); 2 window messages for a collapse,
+  which counts nothing. A change on an object that is not the focus is
+  not read at all (below).
 
 ### An event on an object that is not the focus, MSAA
 
@@ -459,12 +462,33 @@ reading any of its properties.
 
 - Before the MSAA work package (2026-10-07): every such event read the
   object in full, 7 MSAA calls and its acquisition.
+- Before reading only the property that changed (2026-10-10): the
+  focus's change was read in full, 11 MSAA calls, and a progress bar off
+  the focus too.
 - Today: its acquisition and its role only, the role read to know
   whether it is a progress bar, whose value changes are reported off the
   focus too (mockapp answers `get_accChild`, `accParent`, and
-  `get_accRole` once each for it), and the focus's change 11 MSAA calls.
-  A progress bar off the focus is then read in full, as NVDA reads one.
-  mockapp answers a `WM_GETOBJECT` for each event's acquisition, 2.
+  `get_accRole` once each for it), and the focus's change 2 MSAA calls,
+  its acquisition and its value. A progress bar off the focus then has
+  its states, value, and location read, what NVDA's progress bar behavior
+  reads, and nothing else. mockapp answers a `WM_GETOBJECT` for each
+  event's acquisition, 2.
+
+### A name, description, or state change on the focus, MSAA
+
+NVDA reads only the property its event names, of the focus object it
+already holds. So does the outpost, once the object is known to be the
+focus or one of its ancestors, with the rules of a full read that depend
+on the object's role, taken from the role it was last read with: a list
+view item named by its columns, an edit field in a labelled combo box
+with no name of its own, a tree view item's check state, an edit control
+that edits more than one line (`msaa_state_change_costs_exactly`).
+
+- Before reading only the property that changed (2026-10-10): the object
+  read in full, 11 MSAA calls with its acquisition.
+- Today: 2 MSAA calls each, the acquisition and the one property;
+  mockapp answers its `WM_GETOBJECT`, `accParent` and `get_accChild` for
+  the acquisition and the one property's method, nothing else.
 
 The window's verdict of no UIA provider is renewed by time, every half
 second, as NVDA renews it: nothing tells a client that a window has begun
@@ -492,8 +516,8 @@ NVDA's acceptance test against the foreground window before anything else
 - Today: dropped before any call; mockapp answers nothing, not even a
   `WM_GETOBJECT` for a probe of its window, whose verdict has run out. With
   the focus's window in front, the change costs the probe, the
-  acquisition, and the focus's read, 11 MSAA calls and 1 window message,
-  and mockapp answers 2 `WM_GETOBJECT` and 10 provider calls.
+  acquisition, and the focus's states, 2 MSAA calls and 1 window message,
+  and mockapp answers 2 `WM_GETOBJECT` and 3 provider calls.
 
 ### A repeated or unfocused focus event, MSAA
 

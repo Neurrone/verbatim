@@ -301,6 +301,9 @@ pub(super) struct Tracking {
     /// That focus's states, as last read, so a state change tells whether
     /// it newly expanded the focus.
     focus_states: Option<StateSet>,
+    /// That focus's role, as last read, which decides how a change of one
+    /// of its properties is read.
+    focus_role: Option<Role>,
     /// Whether a foreground change was reported after the last focus: the
     /// focus may then have been elsewhere meanwhile, so a focus event that
     /// repeats it is not a duplicate.
@@ -1609,6 +1612,7 @@ impl Worker<'_> {
                 tracking.reported += 1;
                 tracking.focus = Some(node_id);
                 tracking.focus_states = Some(states);
+                tracking.focus_role = Some(role);
                 // NVDA makes its foreground object when the focus enters a
                 // top-level window, so the window keeps the verdict it had
                 // then while the focus moves within it.
@@ -1758,31 +1762,36 @@ impl Worker<'_> {
             self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
             return;
         }
-        let focus = self.focus_if_spoken(kind, &object);
+        let spoken = self.spoken_node(kind, &object);
         if kind == WinEventKind::ValueChange {
-            self.value_change(object, focus, (hwnd, trace, observed_at_ms));
+            self.value_change(object, spoken, (hwnd, trace, observed_at_ms));
             return;
         }
-        let Some(focus) = focus else {
+        let Some((node_id, role)) = spoken else {
             return;
         };
-        let node = object.read(registry, Purpose::Context);
+        // Only the property the event names is read, as NVDA reads only
+        // that property of its focus or ancestor object.
         let event = match kind {
             WinEventKind::NameChange => NormalizedEvent::PropertyChanged {
-                node_id: node.id,
-                change: PropertyChange::Name(node.name),
+                node_id,
+                change: PropertyChange::Name(object.name(role, registry)),
                 child_count: None,
             },
             WinEventKind::DescriptionChange => NormalizedEvent::PropertyChanged {
-                node_id: node.id,
-                change: PropertyChange::Description(node.details.description),
+                node_id,
+                change: PropertyChange::Description(object.description(role, registry)),
                 child_count: None,
             },
-            WinEventKind::StateChange => NormalizedEvent::PropertyChanged {
-                node_id: node.id,
-                child_count: self.expanded_child_count(&node, focus, (hwnd, id_child)),
-                change: PropertyChange::States(node.states),
-            },
+            WinEventKind::StateChange => {
+                let states = object.states(role);
+                NormalizedEvent::PropertyChanged {
+                    node_id,
+                    child_count: self
+                        .expanded_child_count((node_id, role, states), (hwnd, id_child)),
+                    change: PropertyChange::States(states),
+                }
+            }
             _ => return,
         };
         self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
@@ -1845,72 +1854,91 @@ impl Worker<'_> {
         }
     }
 
-    /// The number of children of `node`, a Win32 tree view item at
-    /// `(hwnd, id_child)`, when its state change newly expands it and it is
-    /// the focus, for Core to say how many it holds ("How many items an
-    /// expanded tree view item holds" in `docs/nvda/speech.md`). Whether it
-    /// was expanded is known from the focus's states as last read, which
-    /// this change then updates.
+    /// The number of children of `node`, of `role` and now with `states`, a
+    /// Win32 tree view item at `(hwnd, id_child)`, when its state change
+    /// newly expands it and it is the focus, for Core to say how many it
+    /// holds ("How many items an expanded tree view item holds" in
+    /// `docs/nvda/speech.md`). Whether it was expanded is known from the
+    /// focus's states as last read, which this change then updates.
     fn expanded_child_count(
         &self,
-        node: &NodeSnapshot,
-        focus: NodeId,
+        (node, role, states): (NodeId, Role, StateSet),
         (hwnd, id_child): (isize, i32),
     ) -> Option<u32> {
-        if node.id != focus {
-            return None;
-        }
-        let was_expanded = self
-            .context
-            .tracking()
-            .focus_states
-            .replace(node.states)
-            .is_some_and(|states| states.contains(State::Expanded));
-        (node.role == Role::TreeItem && node.states.contains(State::Expanded) && !was_expanded)
+        let was_expanded = {
+            let mut tracking = self.context.tracking();
+            if tracking.focus != Some(node) {
+                return None;
+            }
+            tracking
+                .focus_states
+                .replace(states)
+                .is_some_and(|states| states.contains(State::Expanded))
+        };
+        (role == Role::TreeItem && states.contains(State::Expanded) && !was_expanded)
             .then(|| verbatim_ia2::acquire::tree_view_child_count(hwnd, id_child))
             .flatten()
     }
 
-    /// A value change on `object`, the focus when `focus` says so: spoken
-    /// as a value change only for the focus, and reported as a progress
-    /// bar's whether or not it is the focus, as NVDA's progress bar
-    /// behavior reports one (`docs/nvda/object-model.md`, "How a progress
-    /// bar reports its value"). An object that is not the focus has its
-    /// role read alone first, and is read only when it is a progress bar.
+    /// A value change on `object`, the focus when `focus` names its node and
+    /// the role it was last read with: spoken as a value change only for the
+    /// focus, and reported as a progress bar's whether or not it is the
+    /// focus, as NVDA's progress bar behavior reports one
+    /// (`docs/nvda/object-model.md`, "How a progress bar reports its
+    /// value"). The focus has only its value read, or, when it is a progress
+    /// bar, what a progress bar's report uses; an object that is not the
+    /// focus has its role read alone first, and only a progress bar is read
+    /// further.
     fn value_change(
         &mut self,
         mut object: verbatim_ia2::acquire::EventObject,
-        focus: Option<NodeId>,
+        focus: Option<(NodeId, Role)>,
         (hwnd, trace, observed_at_ms): (isize, TraceId, u64),
     ) {
-        if focus.is_none() && object.role() != Role::ProgressBar {
-            return;
-        }
-        let (node, visible) =
-            object.read_with_visibility(&self.context.msaa_registry, Purpose::Context);
-        let event = if node.role == Role::ProgressBar && visible {
-            NormalizedEvent::ProgressChanged { node }
-        } else if focus.is_some() {
-            NormalizedEvent::ValueChanged {
-                node_id: node.id,
-                value: node.value,
-            }
-        } else {
-            return;
+        let registry = &self.context.msaa_registry;
+        let progress_bar = match focus {
+            Some((_, role)) => role == Role::ProgressBar,
+            None => object.role() == Role::ProgressBar,
+        };
+        let progress = progress_bar
+            .then(|| object.progress(focus, registry))
+            .flatten();
+        let event = match (progress, focus) {
+            (Some(bar), _) => NormalizedEvent::ProgressChanged { bar },
+            (None, Some((node_id, role))) => NormalizedEvent::ValueChanged {
+                node_id,
+                value: object.value(role),
+            },
+            (None, None) => return,
         };
         self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
     }
 
-    /// The focus's node, when a change of `kind` on `object` is spoken: a
-    /// name, description, or value change only for the focus, and a state
-    /// change for the focus or one of its ancestors, as NVDA speaks them.
-    /// Any other object is not read: it is told from those by its identity
-    /// first, without reading any of its properties.
-    fn focus_if_spoken(
+    /// The role a node of the focus's chain was last read with: the focus,
+    /// or one of its ancestors as last reported.
+    fn known_role(&self, node: NodeId) -> Option<Role> {
+        let tracking = self.context.tracking();
+        if tracking.focus == Some(node) {
+            return tracking.focus_role;
+        }
+        tracking
+            .chain
+            .iter()
+            .find(|known| known.id == node)
+            .map(|known| known.role)
+    }
+
+    /// The node `object` is, with the role it was last read with, when a
+    /// change of `kind` on it is spoken: a name, description, or value
+    /// change only for the focus, and a state change for the focus or one
+    /// of its ancestors, as NVDA speaks them. Any other object is not read:
+    /// it is told from those by its identity first, without reading any of
+    /// its properties.
+    fn spoken_node(
         &self,
         kind: WinEventKind,
         object: &verbatim_ia2::acquire::EventObject,
-    ) -> Option<NodeId> {
+    ) -> Option<(NodeId, Role)> {
         let (focus, mut candidates) = {
             let tracking = self.context.tracking();
             // The ancestors NVDA has are those reached through `accParent`,
@@ -1935,9 +1963,8 @@ impl Worker<'_> {
             (tracking.focus?, ancestors)
         };
         candidates.push(focus);
-        object
-            .which_of(&candidates, &self.context.msaa_registry)
-            .map(|_| focus)
+        let node = object.which_of(&candidates, &self.context.msaa_registry)?;
+        Some((node, self.known_role(node)?))
     }
 
     /// Whether `node`, one of the focus's ancestors, was reached through a

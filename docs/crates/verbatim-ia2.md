@@ -133,8 +133,14 @@ Public API:
   `event_object` (an event's object acquired and nothing read:
   `which_of(nodes, registry)` tells whether it is one of the given nodes by
   the address the node was issued for or by the same COM object and child
-  id, reading no property; `role()` reads its role alone; `read(registry,
-  purpose)` reads it), `Purpose` (`Announce` or `Context`, passed to
+  id, reading no property; `role()` reads its role alone; `name`,
+  `description`, `states`, and `value` read that one property alone, as
+  a full read of an object of the given role would give it, for a change
+  of the focus or an ancestor whose role is known; `progress` reads what
+  a progress bar's report uses, its states, value, and location, into a
+  `ProgressReading`, and nothing more for a busy indicator or an
+  invisible bar; `read(registry, purpose)` reads it in full),
+  `Purpose` (`Announce` or `Context`, passed to
   `snapshot_from_event` and `EventObject::read`: an object read for
   context, such as an ancestor or the object of a change, has no list view
   or tree view position counted, as NVDA counts it only when it speaks the

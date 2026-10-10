@@ -818,24 +818,22 @@ fn visited_is_said_of_a_link_and_linked_only_as_a_change() {
 fn a_progress_bar_indicates_its_percentage() {
     let source = Pid(1);
     let at = |id: u64, value: &str, left: i32, offscreen: bool| {
-        let mut bar = node(
-            id,
-            Role::ProgressBar,
-            Some("Copying"),
-            Some(value),
-            if offscreen {
-                states(&[State::Offscreen])
-            } else {
-                StateSet::new()
-            },
-        );
-        bar.details.rect = Some(verbatim_model::Rect {
-            left,
-            top: 0,
-            width: 100,
-            height: 10,
-        });
-        event_in(source, None, NormalizedEvent::ProgressChanged { node: bar })
+        let progress = verbatim_model::ProgressReading {
+            id: node(id, Role::ProgressBar, None, None, StateSet::new()).id,
+            value: Some(value.to_owned()),
+            offscreen,
+            rect: Some(verbatim_model::Rect {
+                left,
+                top: 0,
+                width: 100,
+                height: 10,
+            }),
+        };
+        event_in(
+            source,
+            None,
+            NormalizedEvent::ProgressChanged { bar: progress },
+        )
     };
     let bar = node(
         51,
