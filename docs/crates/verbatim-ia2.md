@@ -12,7 +12,12 @@ Public API:
   since its hooks share one callback; a second install on the same thread
   fails. Two constant sets name the two
   callers (decision D13): `APP_SUBSCRIPTIONS`, what a per-application outpost
-  installs — value, state, name, description, and selection changes
+  installs — since stage A step 5 of phase 6, the application's focus,
+  foreground, menu-popup opens, alerts, and tooltip windows shown, the
+  same kinds as the listener's below but scoped to the one process, so
+  every MSAA event of the application reaches its outpost by one route
+  (`docs/design/focus-pipeline.md`, section 12.4); value, state, name,
+  description, and selection changes
   (`EVENT_OBJECT_SELECTION` is `WinEventKind::Selection`; the selection add,
   remove, and within events are reported as `WinEventKind::StateChange`, as
   NVDA handles them), and since milestone M4 the caret
@@ -25,7 +30,8 @@ Public API:
   of a top-level window, every other object's show dropped at the hook),
   for a foreground window raised before it is shown; and
   `LISTENER_SUBSCRIPTIONS`, what the focus listener installs
-  globally — focus (`EVENT_OBJECT_FOCUS`), foreground
+  globally, forwarding an application's events only until its outpost's
+  own hook is in — focus (`EVENT_OBJECT_FOCUS`), foreground
   (`EVENT_SYSTEM_FOREGROUND`, the `WinEventKind::Foreground` variant that
   absorbs Core's old foreground trigger), menu-popup opens
   (`EVENT_SYSTEM_MENUPOPUPSTART`), and the end of a menu or of the Alt+Tab
@@ -35,18 +41,23 @@ Public API:
   `EVENT_OBJECT_SHOW` from a `tooltips_class32` window on its client or a
   custom object, every other show event dropped at the hook, as NVDA
   accepts no others from a standard control). The one raw event,
-  `EVENT_OBJECT_SHOW`, is `Show` or `WindowShown` by which of the two the
-  install asked for. A popup menu opening announces the menu
+  `EVENT_OBJECT_SHOW`, is hooked once and reported as each of `Show` and
+  `WindowShown` that the install asked for and that it is wanted as: a
+  tooltip window's own show event reaches an outpost as both. A popup menu opening announces the menu
   itself the moment it opens, NVDA's menu-start behavior — the app outpost
   emits it as focus on the menu's client object with no ancestry, the
   identical node its foreground-announce fallback produces for a menu-class
   window, so the reducer's duplicate-focus suppression drops whichever path
   announces second. Callbacks are delivered on the installing thread's
   message loop and must never make blocking calls into the target. The
-  callback receives the event's kind, its MSAA address, the thread that
-  raised it, which is a console window's real thread in the console host
-  where `GetWindowThreadProcessId` names the client's, and how long ago
-  it was raised. `WinEventKind` names the event; drop unhooks.
+  callback receives a `WinEvent`: the event's kind, its MSAA address, the
+  thread that raised it, which is a console window's real thread in the
+  console host where `GetWindowThreadProcessId` names the client's, the
+  time Windows raised it (`dwmsEventTime`), and how long ago that was.
+  Every hook that receives one event is given the same kind, address,
+  thread, and time, which is how an outpost tells the listener's copy of
+  an event from its own hook's. `event_clock()` reads the clock that time
+  is on (`GetTickCount`). `WinEventKind` names the event; drop unhooks.
 - `dialog` — `DialogObject`, the objects a dialog's own text is gathered
   from (`docs/nvda/object-model.md`, "A dialog's own text"; the gathering
   is `verbatim-outpost`'s `dialog_text`). `DialogObject::of_node(node,

@@ -559,6 +559,18 @@ Core to app outpost) costs well under a millisecond against the tens of
 milliseconds acquisition already costs, and removes the zero-to-seconds
 discovery latency of polling.
 
+Amended 2026-10-11 (phase 6, stage A step 5, `docs/design/focus-pipeline.md`
+section 12.4, approved as decision 2 of its section 15): the per-app
+outposts take back the MSAA focus, foreground, menu-popup, alert, and
+tooltip events in their process-scoped hooks, so all of an application's
+MSAA events reach its outpost by one route in the order Windows raised
+them. The listener keeps its global hooks and forwards those events only
+for an application whose outpost's hook is not yet in; once told the hook
+is in, it says "forwarding ended" behind its last forwarded fact, and the
+outpost matches the two hooks' copies of an event by counting, so each
+event is handled once and none is dropped. The UIA focus stays with the
+listener.
+
 ### Why one process per app
 
 A blocking COM call parks only its calling thread, so thread pools inside a

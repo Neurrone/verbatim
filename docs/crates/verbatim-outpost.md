@@ -23,6 +23,52 @@ captured focus fact to Core. The supervisor routes every fact to the target
 application's own outpost, which acquires, arbitrates, enriches, and
 announces it exactly as it does for the events it still hooks itself.
 
+Since stage A step 5 of phase 6 (`docs/design/focus-pipeline.md`, section
+12.4, and decision 2 of its section 15), an outpost's own process-scoped
+hook takes in its application's MSAA focus, foreground, menu-popup,
+alert, and tooltip events too, so every MSAA event of the application
+reaches it by one route, in the order Windows raised them. The listener
+forwards those events only for an application whose outpost's hook is not
+yet in, so that an application's first events start its outpost. The
+hand-over, step by step:
+
+- An outpost reads the `WinEvent` clock (`verbatim_ia2::event_clock`)
+  before it installs its hook, and says `Ready` once the hook is in.
+- On `Ready` the supervisor sends the listener
+  `SupervisorToOutpost::HookInstalled`, with the application and the
+  outpost incarnation. The listener reads the clock, forwards none of that
+  application's `WinEvent` facts raised after that tick, still forwards
+  those raised at or before it however late they reach its hook, and
+  queues `OutpostToSupervisor::ForwardingEnded`, naming the tick, behind
+  every fact it has queued. The supervisor relays it to that outpost
+  incarnation, in order behind the facts, as
+  `SupervisorToOutpost::ForwardingEnded`; one for an incarnation that has
+  gone is dropped.
+- Every `WinEvent` fact carries the thread that raised it and when
+  (`WinEventStamp`, from `idEventThread` and `dwmsEventTime`), whichever
+  hook took it in. The outpost matches the two hooks' copies of an event by
+  counting (`outpost::handover`): a copy whose identity, its kind, address,
+  thread, and time, the other source has an unmatched copy of is dropped,
+  and any other is handled and counted. Two identical events raised by one
+  thread in one tick are two copies from each source, matched pair by
+  pair, so both are handled; nothing that came from one source alone is
+  dropped. A listener copy raised before the outpost's first clock reading
+  has no twin and is not counted; after `ForwardingEnded`, only copies
+  raised between the two readings are counted, for as long as the outpost
+  runs, a handful at most.
+- When an application's ready outpost ends, for any reason, the
+  supervisor sends the listener `SupervisorToOutpost::HookRemoved`, and the
+  listener forwards that application's events again. A listener that
+  replaces another is told on its command line (`--hooks-in`) which
+  applications have outposts with their hooks in; it forwards none of
+  their events and first sends each such outpost a `ForwardingEnded`, which
+  ends a hand-over the listener it replaces left unfinished. Messages for
+  the listener while its launch is at work are held, in order, and written
+  once it has a writer.
+- A console window's events reach the console host's outpost by its own
+  hook, which Windows scopes by the event's thread, the console host's,
+  as the listener routes them (below).
+
 A console window is one application in one outpost, its console host's,
 as NVDA gives it and its text area the client's app module
 (`docs/design/focus-pipeline.md`, section 5.4). Windows names the console's
@@ -71,8 +117,10 @@ Public API:
   focus fact the listener captured, routed to this outpost — a UIA focus
   element's cached snapshot parts, an MSAA focus or menu-popup address, or a
   foreground window — carrying the listener's own trace id and observation
-  timestamp so the latency timeline starts at the OS event, and its
-  `EventTiming`), `Query` (a
+  timestamp so the latency timeline starts at the OS event, its
+  `EventTiming`, and for a `WinEvent`'s fact its `WinEventStamp`),
+  `HookInstalled` and `HookRemoved` (to the listener, the hand-over above),
+  `ForwardingEnded` (to an outpost, the hand-over's end), `Query` (a
   request id and a `Query`: `FocusNow`, `Navigate` with a model `QueryKind`,
   `Activate`, `Ancestors`, `DumpTree`, or `Text`, a node and a model
   `TextOp`, milestone M4's text protocol), `Cancel` (withdraws a query that
@@ -87,8 +135,8 @@ Public API:
   when it started and passed its deadline, so side effects such as an
   activation may already have happened), `Pong` (echoes the ping's sequence
   number and reports how many abandoned workers have not yet returned, which
-  the supervisor watches), `Fault`, `FocusFact` (sent only by the
-  listener), and `TargetExited` (the outpost's application has exited,
+  the supervisor watches), `Fault`, `FocusFact` and `ForwardingEnded` (sent
+  only by the listener), and `TargetExited` (the outpost's application has exited,
   sent once, ahead of ordinary messages, so the supervisor shuts the
   outpost down). A `FocusNow` answer carries the application's foreground
   window and its facts, when it holds the system foreground, and its focused
@@ -134,12 +182,14 @@ Public API:
 - `Outpost`, `run_pipe`, `run_attach` — the per-application outpost (the
   `outpost` module; outpost redesign, "Inside an outpost"). Its parts:
   - Intake (`outpost::intake`): the MSAA hook callbacks (`APP_SUBSCRIPTIONS`:
-    value, state, name, selection, destroy, and a top-level window
-    shown, for the fixed pid),
+    focus, foreground, menu-popup, alert, and tooltip events, which become
+    the same facts the listener forwards, value, state, name, selection,
+    destroy, and a top-level window shown, for the fixed pid),
     the focus-following UIA property callback, and the reader's routed facts
-    (focus, foreground, menus, and the listener's desktop-wide selections,
-    notifications, and alerts) and queries only add an entry to the queue and
-    return. A UIA callback captures the element's cached parts, its cached
+    (the UIA focus, the listener's desktop-wide selections, menus, and
+    notifications, and the MSAA facts it forwards until the hand-over ends,
+    each matched with the hook's copy first, `outpost::handover`) and
+    queries only add an entry to the queue and return. A UIA callback captures the element's cached parts, its cached
     window handle, and an agile reference; it never calls into the
     application.
   - The focus-following UIA property subscription, following NVDA's
@@ -161,9 +211,9 @@ Public API:
     to the back, which is all that limits UIA events; a batch is everything
     that accumulated while the worker handled the previous one, planned in
     the order it arrived; per batch the newest 4 MSAA focus events and the
-    newest 10 other MSAA events per thread that raised them are kept (the
-    hook passes each event's own thread; a fact the listener relays carries
-    none, and its window's thread stands in), the focused object's other
+    newest 10 other MSAA events per thread that raised them are kept (each
+    MSAA event carries its own thread, from the outpost's hook or the
+    listener's), the focused object's other
     events beyond the limit though they count, and a foreground change by
     either limit, since it counts among both; UIA events and menu openings
     are not counted; events from a window the system reports hung
@@ -363,9 +413,12 @@ Public API:
   outpost's worker, as NVDA's waits for its main-thread pump. Outgoing facts are
   coalesced with NVDA's UIA limiter rule, one waiting fact per element and
   kind (`DeliveredFact::key`; notifications are never merged), with pongs
-  and `Ready` first. It answers `Ping` with a `Pong` and ignores everything
-  else. It holds no per-application state, so a crash respawns into full
-  capability instantly. Range-value changes and live regions, which NVDA
+  and `Ready` first. It answers `Ping` with a `Pong`, takes the hand-over's
+  `HookInstalled` and `HookRemoved` (above), and ignores everything else.
+  Its only per-application state is which applications' outposts have
+  their hooks in, which a replacement is given on its command line
+  (`--hooks-in`, `listener::parse_hooks_in`), so a crash respawns into
+  full capability instantly. Range-value changes and live regions, which NVDA
   also registers globally, are not subscribed yet: the reducer speaks values
   only for the focus, and live regions are milestone M6's.
 - `Supervisor` (the `supervisor` module; outpost redesign, "The
@@ -406,16 +459,21 @@ Public API:
   - Each child has a writer thread with a bounded queue (`writer`, capacity
     64), so the owner never writes to a pipe while deciding and the reducer
     thread never waits on one. When the queue is full a ping still gets
-    through, a routed fact replaces any waiting fact for the same object and
-    kind (or the oldest waiting fact makes room), and anything else, a query
-    above all, fails at once. Each child has a reader thread that stamps
+    through, and so does a message of the MSAA hand-over, which keeps its
+    place behind everything queued before it, a routed fact replaces any
+    waiting fact for the same object and kind (or the oldest waiting fact
+    makes room), and anything else, a query above all, fails at once. Each child has a reader thread that stamps
     every node id with the child's outpost id, forwards messages to the app,
     and reports `Ready`, pongs, and the end of its pipe to the owner. Core's
     thread count is two per child plus the owner.
   - Facts that arrive while an outpost is starting are held in arrival
     order, a newer fact for the same object and kind replacing the older one
     and moving to the back (NVDA's limiter rule), and released in that order
-    on `Ready` (the pure `HeldFacts`).
+    on `Ready` (the pure `HeldFacts`); then the listener is told the
+    outpost's hook is in (`HookInstalled`), and when a ready outpost's
+    record goes, that it is not (`HookRemoved`), through
+    `Owner::tell_listener`, which holds them while the listener's launch is
+    at work.
   - Targets: the owner identifies each application by a process it holds
     open (`process::Target`), opened when the application's first outpost
     is started and kept while the application has an outpost or a crash

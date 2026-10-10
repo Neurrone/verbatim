@@ -164,7 +164,18 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    arrived before it, as File Explorer's first focus did before 42d9caa.
 5. MSAA focus, foreground and menu events in each outpost's own hook,
    with the listener's "forwarding ended" hand-over and duplicates matched
-   by counting.
+   by counting. Written (2026-10-11, `phase6-design.md`, "MSAA events in
+   each outpost's own hook"), awaiting its first build: `cargo xtask ci`,
+   the mockapp tests it names, step 4's scenarios, every `conhost_`
+   scenario (whether the console host's own hook receives the console
+   window's events is unmeasured), and the full suite. The five kinds of
+   section 12.4 moved (focus, foreground, menu-popup start, alert,
+   tooltip); every MSAA fact carries the thread that raised it, so the
+   window's thread no longer stands in. The listener stops by the time an
+   event was raised, not when it arrives, so a late event raised before
+   the hook went in is not lost. One question is recorded there with a
+   recommendation: an event raised in the moments between a ready
+   outpost's end and the listener resuming is lost.
 6. The listener judges and reads each UIA focus from the event's own
    element, on a thread per application, with the marker wait; the outpost
    finds its own element afterwards; the moved-on rules, name-and-position

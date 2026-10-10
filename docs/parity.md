@@ -309,13 +309,16 @@ verified.
     menu, and a reducer test for a move into another window). From
     2026-10-08 to 2026-10-11 the intake moved the events of objects other
     than the focus behind a focus change for latency, with an exception
-    for such a change observed before it. One gap remains until the
-    outpost's own hook takes focus events (stage A step 5 in
-    `docs/roadmap.md`): the focus reaches the outpost from the listener in
-    another process and the change from the outpost's own hook, so a
-    change raised just before the focus can reach the outpost after it and
-    is then judged against the new focus, which NVDA, with one hook and one
-    queue, never does.
+    for such a change observed before it. Until 2026-10-11 (stage A step
+    5 in `docs/roadmap.md`) one gap remained: the focus reached the outpost
+    from the listener in another process and the change from the
+    outpost's own hook, so a change raised just before the focus could
+    reach the outpost after it and be judged against the new focus, which
+    NVDA, with one hook and one queue, never does. Now the outpost's own
+    hook takes the MSAA focus too, so both reach it in the order Windows
+    raised them, as in NVDA; the listener's copy of a focus still reaches
+    an outpost whose hook went in only moments before, and is matched with
+    the hook's copy by counting.
   - A top-level window's state change. Opening a modal dialog disables
     its owner, raising a state change on the owner's client area while
     the focus is still inside it, on an ancestor NVDA holds. NVDA says
@@ -1530,11 +1533,12 @@ verified.
   [verbatim-outpost](crates/verbatim-outpost.md), the queue under
   `Outpost`), with these differences: a foreground change keeps its own
   place in a run rather than being tried with its focus events, as
-  before; the listener's focus, foreground, alert and show facts carry no
-  thread, so their window's thread stands in until they come from the
-  outpost's own hook (stage A step 5 in `docs/roadmap.md`); and events from
-  a window the system reports hung are dropped before any read. Until
-  then the limits counted UIA events too, by the thread of the event's
+  before; and events from a window the system reports hung are dropped
+  before any read. Every MSAA event is counted by the thread it carries,
+  whichever hook took it in; until stage A step 5 (`docs/roadmap.md`) the
+  listener's focus, foreground, alert and show facts carried no thread,
+  and their window's thread stood in. Before 2026-10-11 the limits
+  counted UIA events too, by the thread of the event's
   window, and the newest three focus events of each backend were kept
   across the whole batch. Before an outpost hears them, the focus
   listener coalesces its facts by the same one-per-object-and-kind rule,
