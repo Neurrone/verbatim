@@ -85,7 +85,7 @@ fn a_description_change_on_the_focus_is_spoken() {
     let title = common::unique_title("mockapp-msaa-change-events");
     let mut app = common::spawn("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
     let mut state = SrState::new();
 
     app.send("set-focus item2");
@@ -142,11 +142,10 @@ fn disabling_the_focus_window_is_not_spoken() {
     let title = common::unique_title("mockapp-msaa-modal-owner");
     let mut app = common::spawn("modal_owner.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
     let mut state = SrState::new();
 
     app.send("client-identity");
-    outpost.set_foreground(hwnd);
     app.send("set-focus remove");
     let reported = outpost.msaa_focus(hwnd, REMOVE);
     assert_eq!(reported.chain(), [Some("Settings"), Some("Remove")]);
@@ -176,8 +175,12 @@ fn disabling_a_window_not_in_the_foreground_is_spoken() {
     let title = common::unique_title("mockapp-msaa-background-owner");
     let mut app = common::spawn("modal_owner.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
     let mut state = SrState::new();
+    // mockapp's window stands for a popup menu's: topmost, and not the
+    // foreground window, which here is none.
+    common::make_topmost(hwnd);
+    outpost.set_foreground(windows::Win32::Foundation::HWND::default());
 
     app.send("client-identity");
     app.send("set-focus remove");
@@ -253,8 +256,13 @@ fn disable_then_move(batching: Batching, (to_id, to_index): (&str, usize)) -> Ve
     let title = common::unique_title("mockapp-msaa-change-before-focus");
     let mut app = common::spawn("modal_owner.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let mut outpost = OutpostUnderTest::new(app.pid());
+    let mut outpost = OutpostUnderTest::new(&app);
     let mut state = SrState::new();
+    // mockapp's window stands for a popup menu's: topmost, and not the
+    // foreground window, which here is none, so the focus's window is one
+    // of its ancestors whose state change is spoken.
+    common::make_topmost(hwnd);
+    outpost.set_foreground(windows::Win32::Foundation::HWND::default());
 
     app.send("client-identity");
     app.send("set-focus remove");
@@ -357,7 +365,7 @@ fn a_state_change_on_a_windowless_ancestor_is_not_spoken() {
     let title = common::unique_title("mockapp-msaa-acc-parent-state");
     let mut app = common::spawn("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
     let mut state = SrState::new();
 
     app.send("set-focus item2");
@@ -391,7 +399,7 @@ fn collapsing_a_tree_items_parent_says_nothing_until_its_focus() {
     let title = common::unique_title("mockapp-msaa-ancestor-state");
     let app = common::spawn("tree_view.json", "msaa", &title);
     let tree = common::tree_view::tree_view(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
     let mut state = SrState::new();
 
     let reported = common::tree_view::focus_item(&outpost, tree, "Disks");
@@ -428,7 +436,7 @@ fn a_progress_bar_off_the_focus_indicates_its_percentage() {
     let title = common::unique_title("mockapp-msaa-progress");
     let mut app = common::spawn("tree_view.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
     let mut state = SrState::new();
     let reported = outpost.msaa_focus(hwnd, INBOX);
     let _ = spoken(&mut state, focus_event(&reported));
@@ -474,7 +482,7 @@ fn a_help_balloon_shown_is_spoken() {
     let title = common::unique_title("mockapp-msaa-help-balloon");
     let app = common::spawn("tree_view.json", "msaa", &title);
     let hwnd = common::find_window(&title).0 as isize;
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
     let show = |index: usize| DeliveredFact::Show {
         hwnd,
         id_object: i32::try_from(index + 1).expect("a small index"),

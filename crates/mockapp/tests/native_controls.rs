@@ -82,7 +82,7 @@ fn a_windows_forms_tree_item_is_read_as_a_tree_view_item() {
     let title = common::unique_title("mockapp-native-tree-focus");
     let app = common::spawn("tree_view.json", "msaa", &title);
     let tree = tree_view(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
 
     let reported = focus_item(&outpost, tree, "Disks");
     let node = &reported.node;
@@ -153,7 +153,7 @@ fn tree_view_items_are_checked_by_their_state_images() {
     let title = common::unique_title("mockapp-native-tree-checks");
     let app = common::spawn("tree_view.json", "msaa", &title);
     let tree = tree_view(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
 
     let reported = focus_item(&outpost, tree, "Display");
     assert_eq!(
@@ -205,7 +205,7 @@ fn other_tree_items_keep_a_value_that_is_not_a_number() {
     let title = common::unique_title("mockapp-scripted-tree-items");
     let app = common::spawn("tree_view.json", "msaa", &title);
     let host = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
 
     let inbox = outpost.msaa_focus(host, INBOX);
     assert_eq!(
@@ -263,7 +263,7 @@ fn a_group_box_is_the_context_of_the_controls_inside_it() {
     let title = common::unique_title("mockapp-group-box");
     let app = common::spawn("group_box.json", "msaa", &title);
     let host = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
     let button = |text: windows::core::PCWSTR| {
         // SAFETY: a local search of the host window's children.
         unsafe { FindWindowExW(Some(host), None, w!("Button"), text) }
@@ -329,7 +329,7 @@ fn a_report_view_item_is_named_by_its_columns() {
         )
     }
     .expect("mockapp made the list view");
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
     let item = |child: i32| {
         outpost.focus(verbatim_outpost::protocol::DeliveredFact::MsaaFocus {
             hwnd: list.0 as isize,
@@ -395,7 +395,7 @@ fn bidirectional_marks_are_stripped_from_a_name() {
         )
     }
     .expect("mockapp made the list view");
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
     let date = outpost.focus(verbatim_outpost::protocol::DeliveredFact::MsaaFocus {
         hwnd: list.0 as isize,
         id_object: OBJID_CLIENT.0,
@@ -457,7 +457,7 @@ fn moving_to_a_tree_items_parent_says_only_the_parent() {
     let title = common::unique_title("mockapp-native-tree-parent");
     let app = common::spawn("tree_view.json", "msaa", &title);
     let tree = tree_view(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
 
     let mut state = SrState::new();
     let disks = focus_item(&outpost, tree, "Disks");

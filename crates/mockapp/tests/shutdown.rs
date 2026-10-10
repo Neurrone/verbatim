@@ -128,7 +128,7 @@ fn shut_down_during(name: &str, read: &Read) {
     );
 
     let mut outpost = OutpostUnderTest::with_options(
-        app.pid(),
+        &app,
         OutpostOptions {
             remote_operations: read.remote,
         },

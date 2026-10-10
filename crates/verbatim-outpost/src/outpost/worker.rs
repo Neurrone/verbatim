@@ -57,6 +57,7 @@ use crate::protocol::{
 };
 
 use super::Context;
+use super::acceptance::{self, EventName, SystemWindows};
 use super::intake::{Entry, Item, Object, Planned, UiaEvent, UiaKind, window_of};
 use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, CONSOLE_WINDOW_CLASS, OpenWatch};
@@ -1616,6 +1617,27 @@ impl Worker<'_> {
         self.context.tracking().chain.clone()
     }
 
+    /// Whether an event named `event` from `hwnd` is accepted by NVDA's
+    /// test against the foreground window as the event is handled
+    /// (`acceptance`), made before any call into the application. A dropped
+    /// event is logged.
+    fn accepts(&self, event: EventName, hwnd: isize) -> bool {
+        let windows = SystemWindows {
+            foreground: self.context.foreground_window(),
+        };
+        let accepted =
+            acceptance::accepts_event(event, hwnd, &windows, &self.context.requested_events);
+        if !accepted {
+            tracing::debug!(
+                hwnd,
+                ?event,
+                foreground = windows.foreground,
+                "event dropped: its window is not related to the foreground window"
+            );
+        }
+        accepted
+    }
+
     /// An MSAA event from this outpost's own hooks.
     fn msaa_event(
         &mut self,
@@ -1658,6 +1680,11 @@ impl Worker<'_> {
                 // A reused window handle must never inherit these nodes.
                 self.context.msaa_registry.forget_window(hwnd);
             }
+            return;
+        }
+        if let Some(event) = EventName::of_win_event(kind)
+            && !self.accepts(event, hwnd)
+        {
             return;
         }
         if read::window_uses_uia(self.context, hwnd) {
@@ -2267,6 +2294,9 @@ impl Worker<'_> {
         trace: TraceId,
         observed_at_ms: u64,
     ) {
+        // NVDA accepts a show event by its window's class alone, whatever
+        // the foreground; the focus listener's hook already took this one
+        // only from a tooltip window (`verbatim_ia2::hook`), so it passes.
         let Some(mut object) = verbatim_ia2::acquire::event_object(hwnd, id_object, id_child)
         else {
             return;
@@ -2298,6 +2328,9 @@ impl Worker<'_> {
         trace: TraceId,
         observed_at_ms: u64,
     ) {
+        if !self.accepts(EventName::Alert, hwnd) {
+            return;
+        }
         if super::window::parent_class(hwnd).as_deref() != Some("ToastChildWindowClass") {
             return;
         }
@@ -2353,6 +2386,9 @@ impl Worker<'_> {
         self.context.tracking().unshown_foreground = None;
         if window_belongs_to_hidden_frame(hwnd) {
             tracing::debug!(hwnd, "foreground dropped: Core's hidden frame");
+            return;
+        }
+        if !self.accepts(EventName::GainFocus, hwnd) {
             return;
         }
         if !window_is_foreground(hwnd) {
@@ -2478,6 +2514,9 @@ impl Worker<'_> {
         observed_at_ms: u64,
     ) {
         if id_child == CHILDID_SELF && window_belongs_to_hidden_frame(hwnd) {
+            return;
+        }
+        if !self.accepts(EventName::GainFocus, hwnd) {
             return;
         }
         if read::window_uses_uia(self.context, hwnd) {
@@ -3237,6 +3276,9 @@ impl Worker<'_> {
             {
                 return;
             }
+        }
+        if !self.accepts(EventName::MenuStart, hwnd) {
+            return;
         }
         if read::window_uses_uia(self.context, hwnd) {
             return;

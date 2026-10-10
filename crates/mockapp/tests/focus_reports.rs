@@ -103,7 +103,7 @@ fn reused_runtime_id(remote: bool) {
     let mut app = common::spawn("reuse.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::with_options(
-        app.pid(),
+        &app,
         OutpostOptions {
             remote_operations: remote,
         },
@@ -163,7 +163,7 @@ fn a_focus_reports_the_states_read_when_it_is_handled() {
     let title = common::unique_title("mockapp-live-states");
     let mut app = common::spawn("reuse.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
 
     app.send("set-focus inner");
     let event = client.focused();
@@ -207,7 +207,7 @@ fn a_controls_own_focus_reports_its_focused_child() {
     let title = common::unique_title("mockapp-focus-child");
     let mut app = common::spawn("focus_child.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
     // The tree is node 1, after the root, so its object id is 2; General
     // is its first child.
     let tree = 2;
@@ -275,7 +275,7 @@ fn a_focus_is_handled_before_slow_reads_queued_ahead_of_it() {
     let title = common::unique_title("mockapp-busy");
     let mut app = common::spawn("busy.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
-    let mut outpost = OutpostUnderTest::new(app.pid());
+    let mut outpost = OutpostUnderTest::new(&app);
 
     app.send("set-focus item1");
     let first = outpost.uia_focus(&client.focused()).node;
@@ -371,7 +371,7 @@ fn a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
 
     let stand_in = client.named("Original Name");
     app.send("set-focus root");
@@ -404,7 +404,7 @@ fn a_focus_that_moved_on_since_its_event_is_reported_as_the_event_said() {
     let title = common::unique_title("mockapp-lost-focus");
     let mut app = common::spawn("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
 
     app.send("set-focus btn1");
     let button = client.focused();
@@ -493,7 +493,7 @@ fn a_focus_that_moved_on_and_lost_its_selection_is_dropped() {
     let title = common::unique_title("mockapp-left-selection");
     let mut app = common::spawn("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
 
     app.send("select item1");
     app.send("set-focus item1");
@@ -532,7 +532,7 @@ fn a_focus_whose_element_was_not_found_is_followed_from_its_next_focus_event() {
     let title = common::unique_title("mockapp-focus-not-found");
     let mut app = common::spawn("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
 
     app.send("set-focus btn1");
     let button = client.focused();
@@ -563,7 +563,7 @@ fn a_selection_of_a_focus_whose_element_was_not_found_finds_its_element() {
     let title = common::unique_title("mockapp-selection-finds-focus");
     let mut app = common::spawn("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
 
     app.send("set-focus item1");
     let item = client.focused();
@@ -605,7 +605,7 @@ fn a_focus_whose_element_was_not_found_is_followed_from_its_own_changes() {
     let title = common::unique_title("mockapp-focus-own-change");
     let mut app = common::spawn("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
 
     app.send("set-focus btn1");
     let button = client.focused();
@@ -631,7 +631,7 @@ fn a_console_windows_own_focus_is_not_reported_when_its_text_area_is_focused() {
     let mut app = common::spawn("console_window.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
 
     let text_area = client.named("Text Area");
     app.send("set-focus root");

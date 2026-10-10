@@ -478,6 +478,23 @@ previous focus was itself reached by an arrow, 33 MSAA calls each, the
 `accFocus` probe included: one `accRole` more than the arrow above, whose previous focus was reached from
 the list. Why is not yet known.)
 
+### An event from a window not related to the foreground window, MSAA
+
+A state change on the focus while another application's window is in
+front, and the same change with the focus's window in front
+(`msaa_state_change_costs_exactly`). The outpost tests each event by
+NVDA's acceptance test against the foreground window before anything else
+(`docs/parity.md`, "Event acceptance in the outpost").
+
+- Before the event filtering work (2026-10-10): the change was acquired,
+  its window probed when its verdict had run out, and read in full, then
+  dropped by Core.
+- Today: dropped before any call; mockapp answers nothing, not even a
+  `WM_GETOBJECT` for a probe of its window, whose verdict has run out. With
+  the focus's window in front, the change costs the probe, the
+  acquisition, and the focus's read, 11 MSAA calls and 1 window message,
+  and mockapp answers 2 `WM_GETOBJECT` and 10 provider calls.
+
 ### A repeated or unfocused focus event, MSAA
 
 - A focus event naming the address of the focus the outpost last

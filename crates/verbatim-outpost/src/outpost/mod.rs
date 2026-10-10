@@ -27,6 +27,7 @@
 //! reported at or before that position. A node reported later, or issued and
 //! not yet reported, is kept: Core may not have seen it yet.
 
+mod acceptance;
 mod intake;
 mod outbound;
 mod read;
@@ -166,6 +167,9 @@ pub(crate) struct Context {
     /// How the worker reads the foreground window when it records the
     /// window a focus was reported in ([`Outpost::set_foreground_reader`]).
     foreground: Mutex<ForegroundReader>,
+    /// The events application support asked for from any window of the
+    /// application, whatever the foreground ([`acceptance`]).
+    requested_events: acceptance::RequestedEvents,
     /// Who is told of each event the outpost's own handlers take in
     /// ([`Outpost::observe_heard`]), if anyone.
     heard: OnceLock<HeardObserver>,
@@ -488,6 +492,7 @@ impl Outpost {
             terminals: Mutex::new(HashMap::new()),
             focused_element,
             foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
+            requested_events: acceptance::RequestedEvents::default(),
             heard: OnceLock::new(),
         });
         if let Some(registration) = register_focus_properties(&context) {
@@ -633,11 +638,12 @@ impl Outpost {
     }
 
     /// Reads the foreground window with `reader` from now on, in place of
-    /// the system's, when recording the window a focus was reported in,
-    /// whose own object NVDA holds as the foreground and so never speaks a
-    /// state change on as an ancestor: a test whose application runs on a
-    /// desktop where no window can take the foreground says which window
-    /// is the foreground.
+    /// the system's, when testing an event for acceptance against the
+    /// foreground window, as NVDA's `shouldAcceptEvent` does, and when
+    /// recording the window a focus was reported in, whose own object NVDA
+    /// holds as the foreground and so never speaks a state change on as an
+    /// ancestor: a test whose application runs on a desktop where no window
+    /// can take the foreground says which window is the foreground.
     pub fn set_foreground_reader(&self, reader: ForegroundReader) {
         *self
             .context

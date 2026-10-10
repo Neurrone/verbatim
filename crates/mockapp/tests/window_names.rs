@@ -31,7 +31,7 @@ fn a_window_renamed_after_activation_is_not_reported() {
     let title = common::unique_title("mockapp-window-names");
     let mut app = common::spawn("small.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
 
     // The slider is node 2, after the root and the button.
     common::apply(&mut app, hwnd, "set-focus slider1");

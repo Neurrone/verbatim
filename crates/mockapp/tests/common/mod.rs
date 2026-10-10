@@ -439,3 +439,27 @@ pub fn apply(app: &mut MockApp, hwnd: HWND, line: &str) {
     app.send(line);
     reset_hits(hwnd);
 }
+
+/// Makes mockapp's window `hwnd` topmost, as a popup menu's window is,
+/// without activating it: the outpost's acceptance test then takes its
+/// events whatever window is the foreground, as NVDA's takes a topmost
+/// window's. `SetWindowPos` returns once mockapp's window thread has
+/// applied it.
+pub fn make_topmost(hwnd: HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+    };
+    // SAFETY: a window handle and plain flags; an invalid handle fails.
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+    }
+    .unwrap_or_else(|error| panic!("mockapp's window could not be made topmost: {error}"));
+}

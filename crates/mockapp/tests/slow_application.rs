@@ -36,7 +36,7 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
     common::init_com();
     let title = common::unique_title("mockapp-slow-focus");
     let mut app = common::spawn("small.json", "msaa", &title);
-    let _hwnd = common::find_window(&title);
+    let window = common::find_window(&title).0 as isize;
     let pid = app.pid();
 
     // The focus event's real MSAA address, captured from mockapp itself.
@@ -57,6 +57,9 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
 
     let (pipe_in, pipe_out) = std::io::pipe().expect("an anonymous pipe");
     let outpost = Outpost::new(Box::new(pipe_out), pid);
+    // No window takes the foreground on the desktop the test runs on:
+    // mockapp's is the foreground, so its focus passes the acceptance test.
+    outpost.set_foreground_reader(Arc::new(move || window));
     let (messages_tx, messages) = mpsc::channel();
     std::thread::spawn(move || {
         let mut reader = BufReader::new(pipe_in);

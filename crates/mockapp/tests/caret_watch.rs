@@ -145,7 +145,7 @@ fn start(name: &str) -> (common::MockApp, HWND, OutpostUnderTest) {
     let title = common::unique_title(name);
     let app = common::spawn("caret_watch.json", "uia", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
     (app, hwnd, outpost)
 }
 

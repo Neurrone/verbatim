@@ -14,6 +14,13 @@
 //! test moves it on ([`OutpostUnderTest::pass_time`]), so a window's verdict
 //! of no UIA provider runs out, and its probe is made again, only where the
 //! test says, however long the test takes.
+//!
+//! No window takes the foreground on the desktop a test runs on, so the
+//! outpost reads the foreground window from the test too
+//! ([`Outpost::set_foreground_reader`]): mockapp's own window unless the
+//! test says otherwise ([`OutpostUnderTest::set_foreground`]), as when a
+//! user works in mockapp, so its events pass the outpost's acceptance test
+//! against the foreground window.
 
 use std::io::Write;
 use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
@@ -105,14 +112,16 @@ pub struct OutpostUnderTest {
 }
 
 impl OutpostUnderTest {
-    /// An outpost watching `pid` with the default options.
-    pub fn new(pid: u32) -> Self {
-        Self::with_options(pid, OutpostOptions::default())
+    /// An outpost watching `app` with the default options.
+    pub fn new(app: &super::MockApp) -> Self {
+        Self::with_options(app, OutpostOptions::default())
     }
 
-    /// An outpost watching `pid` as `options` say, which has announced
-    /// itself ready, and nothing else.
-    pub fn with_options(pid: u32, options: OutpostOptions) -> Self {
+    /// An outpost watching `app` as `options` say, which has announced
+    /// itself ready, and nothing else. It reads `app`'s window as the
+    /// foreground window.
+    pub fn with_options(app: &super::MockApp, options: OutpostOptions) -> Self {
+        let pid = app.pid();
         let (messages_tx, messages) = mpsc::channel();
         let sink = MessageSink {
             pending: Vec::new(),
@@ -140,9 +149,10 @@ impl OutpostUnderTest {
         outpost.set_arbitration_clock(Arc::new(move || {
             *clock.lock().unwrap_or_else(PoisonError::into_inner)
         }));
-        // No window takes the foreground where these tests run: the test
-        // says which is the foreground ([`OutpostUnderTest::set_foreground`]).
-        let foreground = Arc::new(AtomicIsize::new(0));
+        // No window takes the foreground where these tests run: mockapp's
+        // is the foreground unless the test says otherwise
+        // ([`OutpostUnderTest::set_foreground`]).
+        let foreground = Arc::new(AtomicIsize::new(super::find_window(&app.title).0 as isize));
         let reader = Arc::clone(&foreground);
         outpost.set_foreground_reader(Arc::new(move || reader.load(Ordering::Relaxed)));
         let (heard_tx, heard) = mpsc::channel();
@@ -170,8 +180,8 @@ impl OutpostUnderTest {
         under_test
     }
 
-    /// Makes `hwnd` the window the outpost reads as the foreground when it
-    /// records the window a focus was reported in.
+    /// Makes `hwnd` the window the outpost reads as the foreground from now
+    /// on.
     pub fn set_foreground(&self, hwnd: HWND) {
         self.foreground.store(hwnd.0 as isize, Ordering::Relaxed);
     }

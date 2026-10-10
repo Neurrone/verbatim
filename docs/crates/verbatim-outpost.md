@@ -164,7 +164,14 @@ Public API:
     Explorer built the window (`docs/performance.md`, "A focus behind other
     objects' events").
   - The worker (`outpost::worker`): one thread takes entries in order and
-    finishes each before the next. A caret key's evidence is watched for
+    finishes each before the next. Before any call into the application
+    for an entry, it tests the event by NVDA's acceptance test against the
+    foreground window (`outpost::acceptance`, since 2026-10-10;
+    `docs/parity.md`, "Event acceptance in the outpost"): `accepts_event`,
+    a pure function of the event's name, its window, the window queries
+    (`WindowQueries`, local calls in `SystemWindows`), and the events
+    application support asked for (`RequestedEvents`, empty), and drops
+    an event from a window unrelated to the foreground window. A caret key's evidence is watched for
     between entries (under "Text" below), not waited on. It is the only
     thread that calls into the application, so events and replies leave in
     the order their entries were planned: the order they joined the queue,
@@ -215,8 +222,10 @@ Public API:
   focus in a window that does not have the keyboard focus, and measure
   everything it does with it. `Outpost::set_foreground_reader` gives the
   outpost a `ForegroundReader`, the function it reads the foreground
-  window with when it records the window a focus entered, which is
-  otherwise `GetForegroundWindow`: an MSAA state change on that window's
+  window with when it tests an event for acceptance and when it records
+  the window a focus entered, which is otherwise `GetForegroundWindow`:
+  an event from a window not related to it is dropped, and an MSAA state
+  change on that window's
   own object, when the window was the foreground as the focus entered it,
   is not spoken as an ancestor's, as NVDA's foreground object takes its
   place (`docs/parity.md`, "A top-level window's state change"), and

@@ -788,6 +788,27 @@ verified.
   since UIA's property events are followed on the focus alone ("UIA event
   registration"). Background progress bar reporting (NVDA option, off by
   default): **not yet**.
+- Event acceptance in the outpost. NVDA: `shouldAcceptEvent` is made
+  per event as NVDA processes it, against the foreground window of that
+  moment, before it creates the event's object, so a background window's
+  event costs no call into its application; not in the event callback,
+  since that lost the focus events of applications starting up (issue
+  4001). Verbatim (since 2026-10-10): each outpost's worker makes the same
+  test, rule by rule in NVDA's order, as it handles each entry, with local
+  calls only, before any call into the application: for MSAA name,
+  description, state, value and selection changes, focus, foreground and
+  popup menu facts, and alerts. Show facts pass by their class, which the
+  focus listener's hook already tested, as NVDA's show rule depends on
+  the class alone. Core's own test stays. The opt-ins application support
+  asks for (`requestEvents`) have a table that nothing fills yet; the
+  option to accept background progress bars is not offered, so they stay
+  silent, as NVDA's are by default (Dickson, 2026-10-10); NVDA's rule for
+  windowless Chromium documents is not ported, as Verbatim has no Chromium
+  support. Outside the test, as before: an object destroyed (NVDA handles
+  it in its callback), and Verbatim's own events, the caret and text
+  selection of edit controls, the console host's updates, and a top-level
+  window shown (`phase6-design.md`, "Event filtering in the outposts").
+  **matched (unverified)**.
 - State-change diff announcements (gained states; lost states spoken
   by their absence, including half checked becoming "not checked").
   Verbatim: **matched since 2026-10-02** (source-checked).
@@ -1355,10 +1376,10 @@ verified.
   arrive while an outpost starts by that rule too, and lets a newer fact
   replace a waiting one when an outpost's queue is full.
 - Event acceptance filtering (foreground gating, show/hide rules).
-  NVDA: `shouldAcceptEvent`. Verbatim: **partial, different (D13)** —
-  foreground gating lives in the shell/focus-listener design rather
-  than per-event heuristics; background-app opt-ins (progress bars)
-  **not yet (M8)**.
+  NVDA: `shouldAcceptEvent`. Verbatim: the same test, in each outpost
+  before any call into the application; see "Event acceptance in the
+  outpost". Background progress bars are not offered (Dickson,
+  2026-10-10), and no application support asks for opt-ins yet.
 - IA2 upgrade of MSAA objects. NVDA: `normalizeIAccessible`
   ([IA2 usage](nvda/ia2.md)). Verbatim: **matched (unverified)** —
   verbatim-ia2 QueryService path exists ([verbatim-ia2](crates/verbatim-ia2.md));

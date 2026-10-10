@@ -550,7 +550,7 @@ fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
         let mut fixture = Fixture::start_alone(&format!("mockapp-rops-unknown-{path}"));
         let deep = fixture.focus("deep", "Deep button");
         let outpost = OutpostUnderTest::with_options(
-            fixture.app.pid(),
+            &fixture.app,
             OutpostOptions {
                 remote_operations: remote,
             },

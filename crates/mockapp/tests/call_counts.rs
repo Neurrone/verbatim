@@ -191,7 +191,7 @@ fn msaa_focus_changes_cost_exactly() {
     let mut app = common::spawn("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let window = Some(WindowHandle(hwnd.0 as u64));
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
     let mut ratchet = Ratchet::default();
 
     // The fixture's root has the window role, and an MSAA window object
@@ -443,6 +443,107 @@ fn msaa_focus_changes_cost_exactly() {
     app.quit();
 }
 
+/// A hidden top-level window of this process, standing for another
+/// application's window in front of mockapp's. Destroyed by the thread that
+/// made it, with `DestroyWindow`.
+fn another_applications_window() -> HWND {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, WINDOW_EX_STYLE, WS_OVERLAPPED,
+    };
+    use windows::core::w;
+    // SAFETY: a predefined class, no parent, menu, or creation data.
+    unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            w!("STATIC"),
+            w!("another application"),
+            WS_OVERLAPPED,
+            0,
+            0,
+            10,
+            10,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+    .expect("a window of the test's own")
+}
+
+/// A state change on mockapp's focus while another application's window is
+/// in front costs nothing at all: the outpost drops it by NVDA's acceptance
+/// test before any call into mockapp, before even probing its window, whose
+/// verdict of no UIA provider has run out. The same change with mockapp's
+/// window in front probes the window, acquires the object, and reads the
+/// focus.
+fn msaa_state_change_costs_exactly() {
+    use verbatim_ia2::WinEventKind;
+    use verbatim_outpost::Heard;
+    common::init_com();
+    let title = common::unique_title("mockapp-counts-msaa-state-change");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    let mut ratchet = Ratchet::default();
+    let _ = measure_msaa_focus(&mut app, hwnd, &outpost, ("item2", ITEM_TWO));
+    outpost.pass_time(NEGATIVE_VERDICT_LIFETIME);
+
+    let front = another_applications_window();
+    outpost.set_foreground(front);
+    common::reset_hits(hwnd);
+    app.send("set-states item2 focusable selectable selected");
+    outpost.heard(&[Heard::Msaa(WinEventKind::StateChange)]);
+    outpost.settled();
+    assert_eq!(common::read_hits(hwnd), [], "mockapp answered nothing");
+
+    outpost.set_foreground(hwnd);
+    common::reset_hits(hwnd);
+    app.send("set-states item2 focusable selectable");
+    let calls_made = match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::PropertyChanged {
+                    change: verbatim_model::PropertyChange::States(states),
+                    ..
+                },
+            timing,
+            ..
+        } => {
+            assert!(!states.contains(verbatim_model::State::Selected));
+            timing.calls
+        }
+        other => panic!("the outpost said {other:?}, not the focus's state change"),
+    };
+    outpost.settled();
+    ratchet.check(
+        "MSAA state change on the focus, the probe renewed",
+        &Cost {
+            calls: calls_made,
+            hits: common::read_hits(hwnd),
+        },
+        calls(0, 11, 1),
+        &[
+            ("WM_GETOBJECT", 2),
+            ("accParent", 1),
+            ("get_accChild", 1),
+            ("get_accName", 1),
+            ("get_accValue", 1),
+            ("get_accDescription", 1),
+            ("get_accRole", 2),
+            ("get_accState", 1),
+            ("get_accKeyboardShortcut", 1),
+            ("accLocation", 1),
+        ],
+    );
+
+    ratchet.finish();
+    // SAFETY: the window this thread made above.
+    unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyWindow(front) }
+        .expect("the test's window is destroyed");
+    app.quit();
+}
+
 /// The fact the listener delivers for an MSAA focus event on mockapp's
 /// node `index`.
 fn msaa_focus_fact(hwnd: HWND, index: usize) -> DeliveredFact {
@@ -477,7 +578,7 @@ fn msaa_dialog_text_costs_exactly() {
     let title = common::unique_title("mockapp-counts-msaa-dialog");
     let mut app = common::spawn("dialog.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
     let mut ratchet = Ratchet::default();
 
     common::apply(&mut app, hwnd, "set-focus yes");
@@ -526,7 +627,7 @@ fn msaa_tree_view_costs_exactly() {
     let title = common::unique_title("mockapp-counts-msaa-tree-view");
     let app = common::spawn("tree_view.json", "msaa", &title);
     let tree = common::tree_view::tree_view(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
     let mut ratchet = Ratchet::default();
 
     let _ = common::tree_view::focus_item(&outpost, tree, "Settings");
@@ -606,7 +707,7 @@ fn msaa_list_view_costs_exactly() {
         )
     }
     .expect("mockapp made the list view");
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
     let mut ratchet = Ratchet::default();
     let focus = |child: i32| {
         outpost.focus(DeliveredFact::MsaaFocus {
@@ -669,7 +770,7 @@ fn msaa_navigation_steps_cost_exactly() {
     let title = common::unique_title("mockapp-counts-msaa-navigation");
     let mut app = common::spawn("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let mut outpost = OutpostUnderTest::new(app.pid());
+    let mut outpost = OutpostUnderTest::new(&app);
     let mut ratchet = Ratchet::default();
     let (first, _) = measure_msaa_focus(&mut app, hwnd, &outpost, ("first", FIRST));
     let first = first.node;
@@ -886,7 +987,7 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
     let window = Some(WindowHandle(hwnd.0 as u64));
     let under_test = UiaUnderTest::new(hwnd);
     let outpost = OutpostUnderTest::with_options(
-        app.pid(),
+        &app,
         OutpostOptions {
             remote_operations: remote,
         },
@@ -1133,7 +1234,7 @@ fn uia_navigation_steps(remote: bool) -> [(NodeSnapshot, Cost); 2] {
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let mut outpost = OutpostUnderTest::with_options(
-        app.pid(),
+        &app,
         OutpostOptions {
             remote_operations: remote,
         },
@@ -2803,6 +2904,10 @@ fn main() {
         (
             "msaa_dialog_text_costs_exactly",
             msaa_dialog_text_costs_exactly,
+        ),
+        (
+            "msaa_state_change_costs_exactly",
+            msaa_state_change_costs_exactly,
         ),
         ("msaa_tree_view_costs_exactly", msaa_tree_view_costs_exactly),
         ("msaa_list_view_costs_exactly", msaa_list_view_costs_exactly),

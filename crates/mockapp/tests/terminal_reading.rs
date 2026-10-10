@@ -76,7 +76,7 @@ fn start(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
     let title = common::unique_title(name);
     let mut app = common::spawn("terminal_reading.json", "uia", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(app.pid());
+    let outpost = OutpostUnderTest::new(&app);
     app.send("set-focus term");
     let element = focused(hwnd);
     outpost.read_focus_as(&element);
