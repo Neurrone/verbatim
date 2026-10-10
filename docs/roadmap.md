@@ -270,6 +270,33 @@ Other open items, taken after the steps above unless they fold into one:
   25 other console scenarios did not. Capture what NVDA says for an
   elevated console window (needs an elevation prompt Dickson approves),
   then make Verbatim read one name consistently.
+- Decided by Dickson (2026-10-10, later):
+  - Control+Tab follows NVDA: 8be2223's rule goes; the tab being left is
+    announced and its speech cut once focus moves on.
+  - Every event for a console window goes to the console host's outpost,
+    with the client process (for example PowerShell) as the application's
+    identity, as NVDA's app module does; the console special cases (3f4dbb4,
+    54f9a26's foreign-window report for consoles, the worker's and judge's
+    console rules) then go. Five recurrences traced to the split.
+  - GitHub's e2e job tries running Verbatim and the test applications at
+    medium integrity, as users run them, after measuring that it behaves
+    with the runner's UAC disabled. The runner is elevated today
+    (`runneradmin`), which is what puts "Administrator: " in console
+    titles.
+  - The background UIA probe is not adopted: NVDA asks synchronously, and
+    a window that takes 3 seconds would still make its own events wait.
+    The 3-second window (its class unreadable when logged) is to be checked
+    against fixed recordings first.
+  - Step 6 is to be redone from a design Dickson approves: judging a UIA
+    focus from the event's own element as NVDA does (not by
+    `GetFocusedElement`, which took 9,990 ms in a measured File Explorer
+    run); arrival order with no focus lane, for UIA and MSAA; NVDA's
+    duplicate rule in Core. An audit of event processing against NVDA
+    (scratchpad, `event-processing-audit.md`) feeds it.
+- Screen recordings are truncated in every run: ffmpeg is killed rather
+  than told to stop, losing the last 1 to 2 seconds. Being fixed (graceful
+  stop, start after the first frame, a check that fails a scenario whose
+  recording is damaged).
 - Help balloons and toasts (Dickson, 2026-10-10): step 3 leaves them
   outside NVDA's rule that drops MSAA alert and show events from windows
   that use UIA. Check how Verbatim reads toasts; if it also gets them
