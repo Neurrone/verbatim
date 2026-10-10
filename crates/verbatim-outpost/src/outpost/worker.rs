@@ -1741,25 +1741,7 @@ impl Worker<'_> {
         };
         let registry = &self.context.msaa_registry;
         if kind == WinEventKind::Selection {
-            // A tree view item selected on its way to the focus, from one of
-            // its children, is one of the focus's logical ancestors only:
-            // NVDA, whose ancestors are reached through `accParent`, sees it
-            // as neither the focus nor an ancestor, and says nothing of it.
-            if object
-                .which_of(&self.logical_ancestors(), registry)
-                .is_some()
-            {
-                tracing::debug!(
-                    hwnd,
-                    id_object,
-                    id_child,
-                    "MSAA selection dropped: a logical ancestor of the focus only"
-                );
-                return;
-            }
-            let node = object.read(registry, Purpose::Announce);
-            let event = NormalizedEvent::SelectionChanged { node };
-            self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
+            self.msaa_selection(object, hwnd, (trace, observed_at_ms));
             return;
         }
         let spoken = self.spoken_node(kind, &object);
@@ -1793,6 +1775,69 @@ impl Worker<'_> {
                 }
             }
             _ => return,
+        };
+        self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
+    }
+
+    /// An MSAA selection of `object`, from `hwnd`'s hooks, read only as far
+    /// as it can be spoken. Selecting the focus or one of its ancestors is a
+    /// change of its state, as NVDA handles it, so only its states are
+    /// read. Any other selection is spoken only inside a focused selection
+    /// container of this outpost (Core's `is_selection_container`), so it is
+    /// read in full only while the focus this outpost last reported is
+    /// one, and dropped otherwise, having cost its acquisition alone.
+    fn msaa_selection(
+        &mut self,
+        object: verbatim_ia2::acquire::EventObject,
+        hwnd: isize,
+        (trace, observed_at_ms): (TraceId, u64),
+    ) {
+        let registry = &self.context.msaa_registry;
+        // A tree view item selected on its way to the focus, from one of
+        // its children, is one of the focus's logical ancestors only: NVDA,
+        // whose ancestors are reached through `accParent`, sees it as
+        // neither the focus nor an ancestor, and says nothing of it.
+        if object
+            .which_of(&self.logical_ancestors(), registry)
+            .is_some()
+        {
+            tracing::debug!(
+                hwnd,
+                "MSAA selection dropped: a logical ancestor of the focus only"
+            );
+            return;
+        }
+        let (chain, container) = {
+            let tracking = self.context.tracking();
+            let chain: Vec<NodeId> = tracking
+                .chain
+                .iter()
+                .map(|node| node.id)
+                .chain(tracking.focus)
+                .collect();
+            let container = tracking
+                .focus_role
+                .is_some_and(verbatim_core::is_selection_container);
+            (chain, container)
+        };
+        let event = if let Some(node_id) = object.which_of(&chain, registry)
+            && let Some(role) = self.known_role(node_id)
+        {
+            NormalizedEvent::PropertyChanged {
+                node_id,
+                change: PropertyChange::States(object.states(role)),
+                child_count: None,
+            }
+        } else if container {
+            NormalizedEvent::SelectionChanged {
+                node: object.read(registry, Purpose::Announce),
+            }
+        } else {
+            tracing::debug!(
+                hwnd,
+                "MSAA selection dropped: the focus is no selection container"
+            );
+            return;
         };
         self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
     }

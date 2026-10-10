@@ -30,5 +30,5 @@ pub use dump::{
 };
 pub use flight_recorder::FlightRecorder;
 pub use recorder::{RecordedInput, ReducerRecorder, replay};
-pub use reduce::reduce;
+pub use reduce::{is_selection_container, reduce};
 pub use state::SrState;

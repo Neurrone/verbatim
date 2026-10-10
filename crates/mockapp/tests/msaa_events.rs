@@ -469,6 +469,51 @@ fn a_progress_bar_off_the_focus_indicates_its_percentage() {
     app.quit();
 }
 
+/// A selection is read only as far as it can be spoken. While the focus is
+/// a button, an item selected in the list beside it is neither the focus
+/// nor an ancestor, nor inside a focused list, so it costs its acquisition
+/// alone and is not reported; once the focus is on the list, an item
+/// selected in it is read in full and spoken, as before.
+fn a_selection_is_read_in_full_only_inside_a_focused_list() {
+    /// The counts fixture's First button and Options list, by their index
+    /// in mockapp's tree.
+    const FIRST: usize = 2;
+    const LIST: usize = 4;
+    use verbatim_ia2::WinEventKind;
+    use verbatim_outpost::Heard;
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-selection-read");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    let mut state = SrState::new();
+
+    app.send("set-focus first");
+    let reported = outpost.msaa_focus(hwnd, FIRST);
+    let _ = spoken(&mut state, focus_event(&reported));
+    common::reset_hits(hwnd);
+    app.send("select item1");
+    outpost.heard(&[Heard::Msaa(WinEventKind::Selection)]);
+    outpost.settled();
+    assert_eq!(
+        common::read_hits(hwnd),
+        [("WM_GETOBJECT", 1), ("get_accChild", 1)],
+        "the selection was acquired and nothing of it read"
+    );
+
+    app.send("set-focus list");
+    let reported = outpost.msaa_focus(hwnd, LIST);
+    let _ = spoken(&mut state, focus_event(&reported));
+    app.send("select item2");
+    let event = next_event(&outpost);
+    outpost.settled();
+    assert_eq!(
+        spoken(&mut state, event),
+        [vec![SegmentContent::Label("Two".to_owned())]]
+    );
+    app.quit();
+}
+
 /// A tooltip window's show event (which the listener forwards only from
 /// `tooltips_class32` windows) is spoken as NVDA's notification behavior
 /// speaks a help balloon, which NVDA reports by default; an ordinary
@@ -506,6 +551,10 @@ fn a_help_balloon_shown_is_spoken() {
 
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_selection_is_read_in_full_only_inside_a_focused_list",
+            a_selection_is_read_in_full_only_inside_a_focused_list,
+        ),
         (
             "a_help_balloon_shown_is_spoken",
             a_help_balloon_shown_is_spoken,

@@ -1509,8 +1509,10 @@ pub(crate) fn flat_review_command(
 /// list) and tab controls (an Explorer or Settings tab strip). Combo boxes
 /// are deliberately excluded: their selection reaches the reducer as a
 /// value change already, and announcing both would double-speak every
-/// pick.
-fn is_selection_container(role: Role) -> bool {
+/// pick. The outposts call it too, to read a selection in full only when
+/// it can be spoken.
+#[must_use]
+pub fn is_selection_container(role: Role) -> bool {
     matches!(role, Role::List | Role::TabControl)
 }
 

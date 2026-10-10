@@ -741,6 +741,15 @@ verified.
   state, spoken only for the focus or its ancestors. Selecting the focused
   item itself is such a change of state, and since 2026-10-03 Verbatim
   speaks it ("selected"), as NVDA does ([verbatim-core](crates/verbatim-core.md)).
+  Since 2026-10-10 the outpost applies the same rules before it reads an
+  MSAA selection: one on the focus or an ancestor has its states read
+  alone and is reported as a change of state, one inside a focused list
+  or tab control is read in full, and any other is dropped after its
+  acquisition, never read. Nothing heard changes, but for one case:
+  Core's rule asks whether its own focus is a container, the outpost's
+  whether the focus it last reported is one, so a selection under an
+  older focus that is a container, whose outpost's newer focus Core did
+  not take, is no longer spoken.
 - A selection container's selected item through UIA. NVDA reads
   `SelectionPattern2` where the provider has it (`ItemCount` for its
   "selected" rule, and Excel's first and last selected cells), and a

@@ -502,6 +502,23 @@ previous focus was itself reached by an arrow, 33 MSAA calls each, the
 `accFocus` probe included: one `accRole` more than the arrow above, whose previous focus was reached from
 the list. Why is not yet known.)
 
+### A selection, MSAA
+
+A list item selected while the focus is a button beside the list, and an
+item selected while the focus is the list
+(`a_selection_is_read_in_full_only_inside_a_focused_list`), and the focus
+itself selected (`msaa_state_change_costs_exactly`). Core speaks a
+selection only inside a focused list or tab control, and a selection of
+the focus or an ancestor as a change of its state.
+
+- Before reading a selection only as far as it is spoken (2026-10-10):
+  every selection was read in full for speaking, its position counted,
+  whatever the focus.
+- Today: outside a focused container, the acquisition alone, and mockapp
+  answers a `WM_GETOBJECT` and a `get_accChild`; inside one, a full read,
+  as before; the focus selected, 2 MSAA calls, the acquisition and its
+  states.
+
 ### An event from a window not related to the foreground window, MSAA
 
 A state change on the focus while another application's window is in

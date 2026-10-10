@@ -687,8 +687,13 @@ Implementation notes:
   change that newly expands the focus, by the states the outpost last
   read for it, carries a `SysTreeView32` item's child count. A progress
   bar's value change reads its role, states, value, and location alone
-  (`EventObject::progress`). A selection event is read in full, as
-  before.
+  (`EventObject::progress`). A selection event on the focus or an
+  ancestor is a change of its state, as NVDA handles it: its states alone
+  are read and reported as one. Any other selection is spoken only inside
+  a focused selection container of this outpost, so it is read in full
+  only while the focus the outpost last reported is one
+  (`verbatim_core::is_selection_container`, Core's own rule), and is
+  otherwise dropped after its acquisition.
 - Ancestors (`read::uia_remote_enrichment`, `read::uia_enrichment`,
   `read::msaa_enrichment`): the walk stops at the first ancestor in the
   previous focus's chain (the tracking state's `chain`) and splices the

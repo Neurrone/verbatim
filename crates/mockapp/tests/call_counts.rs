@@ -472,7 +472,12 @@ fn another_applications_window() -> HWND {
 /// verdict of no UIA provider has run out. The same change with mockapp's
 /// window in front probes the window, acquires the object, and reads the
 /// focus's states alone; a name and a description change on the focus read
-/// that property alone, as NVDA reads only the property its event names.
+/// that property alone, as NVDA reads only the property its event names;
+/// and a selection of the focus reads its states alone.
+#[expect(
+    clippy::too_many_lines,
+    reason = "every change on the focus and its pinned provider hits, listed in full"
+)]
 fn msaa_state_change_costs_exactly() {
     use verbatim_ia2::WinEventKind;
     use verbatim_outpost::Heard;
@@ -567,6 +572,31 @@ fn msaa_state_change_costs_exactly() {
             ("accParent", 1),
             ("get_accChild", 1),
             ("get_accDescription", 1),
+        ],
+    );
+    // Selecting the focus is a change of its state, as NVDA handles it.
+    let (states, cost) = change("select item2");
+    assert_eq!(
+        states,
+        verbatim_model::PropertyChange::States(
+            [
+                verbatim_model::State::Focusable,
+                verbatim_model::State::Selectable,
+                verbatim_model::State::Selected
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+    ratchet.check(
+        "MSAA selection of the focus",
+        &cost,
+        calls(0, 2, 0),
+        &[
+            ("WM_GETOBJECT", 1),
+            ("accParent", 1),
+            ("get_accChild", 1),
+            ("get_accState", 1),
         ],
     );
 

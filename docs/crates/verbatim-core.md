@@ -8,6 +8,10 @@ Public API:
 - `reduce(&mut state, &input)` — deterministic, no I/O, no clocks;
   advances the state in place, without copying it, and returns the
   effects to execute.
+- `is_selection_container(role)` — whether a focused role is a list or a
+  tab control, whose interior selections the reducer speaks; the outposts
+  call it too, so that a selection is read in full only when it can be
+  spoken, and the rule has one definition.
 - `SrState` — `new()`; `focused()`, the live focus and its application;
   `focus_report()`, the focus's snapshot, its ancestors, and the navigator
   object, which the control plane's `DumpFocus` answers with for a test's
