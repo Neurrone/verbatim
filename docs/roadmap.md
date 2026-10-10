@@ -139,7 +139,11 @@ Dickson first.
    the end; it took 1.08 of the 1.4 seconds measured.
 3. NVDA's event filtering in the outposts, before any call into the
    application: its acceptance test, its order of checks for MSAA events,
-   and the same test for UIA events (approved 2026-10-10).
+   and the same test for UIA events (approved 2026-10-10). Done
+   (eb72303, 6a10534, 82ccb5f): the ten related scenarios passed, and
+   `explorer_folder_window`, `second_application_and_verbatim_menu`,
+   `menu_and_settings_dialog` and `settings_system_page` passed ten runs
+   each. The two-window scenarios wait for Alt+Tab's replacement.
 4. Cheaper reads: only the property that changed; a selection read in
    full only when it will be spoken; the controlled selection in one
    remote operation; smaller UIA cache requests for text and caret
