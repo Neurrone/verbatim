@@ -302,10 +302,15 @@ Other open items, taken after the steps above unless they fold into one:
   latency ledger is to record verbatim.exe's own time as a stage of its
   own, in both directions, with the fix. A warning over 2 ms, and failing a
   scenario over it, are deferred to the response-time budgets above.
-- Screen recordings are truncated in every run: ffmpeg is killed rather
-  than told to stop, losing the last 1 to 2 seconds. Being fixed (graceful
-  stop, start after the first frame, a check that fails a scenario whose
-  recording is damaged).
+- Screen recordings were truncated in every run: ffmpeg was killed rather
+  than told to stop, losing the last 1 to 2 seconds. Fixed (af91a5f,
+  9672234): ffmpeg is stopped with "q", Verbatim starts after the first
+  frame, every frame keeps its capture time, and a scenario fails if its
+  recording does not decode cleanly or is shorter than the capture. All 90
+  scenarios' recordings passed the check.
+- `conhost_leave_flood` once heard the window and "terminal" but never
+  "blank", though the recording shows the new console window empty: the
+  terminal's first read gave nothing within 15 seconds. For step 9.
 - Help balloons and toasts (Dickson, 2026-10-10): step 3 leaves them
   outside NVDA's rule that drops MSAA alert and show events from windows
   that use UIA. Check how Verbatim reads toasts; if it also gets them
