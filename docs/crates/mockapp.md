@@ -508,11 +508,7 @@ a repeated focus on it keeps that node, and each costs exactly the calls
 pinned there. A focus whose event was captured before its item was
 selected (`select` after the capture, the outpost's read of the focused
 element answering the item fetched afterwards) is reported with the item
-selected, its name and role from the event. And with every provider call
-answered 20 ms late (`slow 20`), a focus queued behind ten selections,
-which wait behind a query for an item's ancestors while mockapp is
-stalled, is handled right after the query and before the selections,
-waiting less than one slow call after the query's answer.
+selected, its name and role from the event.
 
 `call_counts.rs` is the operation ledger's ratchet (`docs/performance.md`):
 over `tests/fixtures/counts.json`, and `tests/fixtures/dialog.json` (a

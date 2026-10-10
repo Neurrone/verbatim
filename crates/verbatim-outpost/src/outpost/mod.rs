@@ -515,7 +515,7 @@ impl Outpost {
         let make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync> = Arc::new(move || {
             let context = Arc::clone(&hook_context);
             Box::new(
-                move |kind, hwnd, id_object, id_child, _thread, raised_ms_ago| {
+                move |kind, hwnd, id_object, id_child, thread, raised_ms_ago| {
                     if kind == verbatim_ia2::WinEventKind::Destroy
                         && (id_object != windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0
                             || id_child != verbatim_ia2::CHILDID_SELF)
@@ -528,6 +528,7 @@ impl Outpost {
                             hwnd,
                             id_object,
                             id_child,
+                            thread,
                         },
                         Heard::Msaa(kind),
                         EventTiming {

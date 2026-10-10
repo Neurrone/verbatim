@@ -120,15 +120,17 @@ releases Alt. Notepad has no outpost yet.
    reader (`Outpost::handle_command` in
    `crates/verbatim-outpost/src/outpost/mod.rs`) only pushes each fact onto
    the intake queue (`Intake::push` in `outpost/intake.rs`) and returns.
-   The queue applies NVDA's limiter rules: one waiting entry per object
-   and kind; a batch is everything that accumulated while the worker
-   handled the previous batch; per batch the newest 4 focus events and 10
-   other events per application UI thread, with the focused object's
-   events always kept; events from a window the system reports hung
-   (`IsHungAppWindow`) are dropped before any read. When planning a batch
-   (`plan`), only the newest foreground change is kept, focus events are
-   grouped per backend (the newest three in all, tried newest first until
-   one is reported), and a menu opening is moved last.
+   The queue applies NVDA's limiter rules to MSAA events: one waiting
+   entry per object and kind; a batch is everything that accumulated
+   while the worker handled the previous batch, in the order it arrived;
+   per batch the newest 4 MSAA focus events and 10 other MSAA events per
+   thread that raised them, with the focused object's other events always
+   kept; UIA events are not counted; events from a window the system
+   reports hung (`IsHungAppWindow`) are dropped before any read. When
+   planning a batch (`plan`), only the newest foreground change is kept,
+   each consecutive run of MSAA focus events is tried newest first until
+   one is reported, each UIA focus event is handled at its own place, and
+   a menu opening is moved last.
 6. **The worker takes the batch.** The worker thread takes the batch
    (`run` in `outpost/worker.rs`) at once; nothing waits for the window to
    come in front. Until 2026-10-09 the intake held a batch with a

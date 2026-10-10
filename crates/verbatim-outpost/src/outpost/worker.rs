@@ -4,11 +4,11 @@
 //! finishes each before starting the next. It is the only thread that calls
 //! into the application, so events and replies leave the outpost in the order
 //! the intake plans their entries: the order they joined the queue, but for
-//! the events of other objects that a focus change overtakes
-//! (`intake::overtaken`). This is NVDA's model, one thread doing all the
-//! work, with one such thread per application. The worker waits for
-//! nothing but its calls into the application and the queue: a caret key's
-//! evidence is watched for between entries.
+//! a batch's menu openings, handled last, and the older focus events of a
+//! run of MSAA focus events, tried after its newest. This is NVDA's model,
+//! one thread doing all the work, with one such thread per application. The
+//! worker waits for nothing but its calls into the application and the
+//! queue: a caret key's evidence is watched for between entries.
 //!
 //! Being the only thread that calls into the application, the worker is also
 //! where those calls are counted: the backend crates count each call on the
@@ -775,7 +775,10 @@ fn describe(item: &Item) -> String {
             hwnd,
             id_object,
             id_child,
-        } => format!("MSAA {kind:?} hwnd={hwnd} object={id_object} child={id_child}"),
+            thread,
+        } => {
+            format!("MSAA {kind:?} hwnd={hwnd} object={id_object} child={id_child} thread={thread}")
+        }
         Item::Uia(event) => format!("UIA {:?}", event.kind),
         Item::Fact(fact) => format!("fact {:?}", fact.key()),
         Item::Query { query, .. } => format!("query {query:?}"),
@@ -878,6 +881,7 @@ impl Worker<'_> {
                 hwnd,
                 id_object,
                 id_child,
+                ..
             } => self.msaa_event(kind, hwnd, id_object, id_child, trace, observed_at_ms),
             Item::Uia(event) => self.uia_event(event, trace, observed_at_ms),
             Item::Fact(fact) => self.fact(fact, trace, observed_at_ms),
@@ -1632,9 +1636,6 @@ impl Worker<'_> {
                 }
             }
             drop(tracking);
-            if !foreground {
-                self.context.intake.set_judged(self.judged_ancestors());
-            }
             if let Some(node) = text_node {
                 self.follow_text((node.id, node.role), trace);
             }
@@ -2055,29 +2056,6 @@ impl Worker<'_> {
                         && (id_object == OBJID_CLIENT.0 || id_object == OBJID_WINDOW.0)
                 })
         })
-    }
-
-    /// The focus's ancestors whose state changes [`Self::focus_if_spoken`]
-    /// judges against it and may report, by their own addresses, for the
-    /// intake to keep ahead of a focus change they were observed before
-    /// (`intake::State::judged`): those known at their own address, which
-    /// an event can name, and neither logical nor the foreground window.
-    fn judged_ancestors(&self) -> Vec<Object> {
-        let tracking = self.context.tracking();
-        let registry = &self.context.msaa_registry;
-        let Some((_, ancestors)) = tracking.chain.split_last() else {
-            return Vec::new();
-        };
-        ancestors
-            .iter()
-            .filter(|node| {
-                registry.at_address(node.id) == Some(true)
-                    && !self.is_logical_ancestor(node.id)
-                    && !self.is_foreground_window(node.id, tracking.foreground_window)
-            })
-            .filter_map(|node| registry.key_of(node.id))
-            .map(|(hwnd, id_object, id_child)| Object::Msaa(hwnd, id_object, id_child))
-            .collect()
     }
 
     /// The focus's logical ancestors ([`Self::is_logical_ancestor`]).
@@ -2766,20 +2744,6 @@ impl Worker<'_> {
                 id_object,
                 id_child,
                 "MSAA focus dropped: nothing has the focused state"
-            );
-            return;
-        }
-        // NVDA's limiter handles only the newest focus of everything that
-        // arrived since it last ran. A focus in the same window that arrived
-        // while this one was read would have been in its batch, as a tree
-        // view's focus on its item follows the window's own focus by a
-        // moment, and the newer one is what the focus is now.
-        if self.context.intake.msaa_focus_waiting(hwnd) {
-            tracing::debug!(
-                hwnd,
-                id_object,
-                id_child,
-                "MSAA focus dropped: a newer focus in its window is waiting"
             );
             return;
         }

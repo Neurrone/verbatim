@@ -155,41 +155,33 @@ Public API:
     which a dialog or window opened later received no UIA events at all,
     and, since 2026-10-07, the registrations on each of the focus's
     reported ancestors.
-  - The queue applies NVDA's limiter rules: one waiting entry per object and
-    kind, a newer one replacing it and moving to the back; a batch is
-    everything that accumulated while the worker handled the previous one;
-    per batch the newest 4 focus events and the newest 10 other events per
-    application UI thread are kept, the focused object's events always,
-    and a foreground change by either limit, since it counts among both;
-    events from a window the system reports hung (`IsHungAppWindow`) are
-    dropped before any read; and within a batch only the newest foreground
-    change and the newest focus are handled, with the newest menu opening
-    last.
-  - A focus change is never kept waiting behind reads of other objects
-    (`intake::overtaken`, since 2026-10-07): in a batch that holds a
-    foreground change or a focus, the events of objects that are neither
-    the focus nor an object the change moves to (the focus's own object, a
-    foreground window's window and client objects) are handled after it,
-    and after any menu opening, in their own order; and a focus change that
-    arrives while the worker is in the middle of a batch takes that batch's
-    such events that have not started back into the queue, where the next
-    batch puts them after it, the limits they already passed not applied
-    again. Notifications, alerts, queries, and the events of the focus and
-    of the object it moves to keep their place, and so does a state change
-    on one of the focus's ancestors known at its own address whose changes
-    are spoken (`Intake::set_judged`, since 2026-10-08): observed before
-    the batch's first focus change, or in the same millisecond, it is
-    handled before it, judged against the focus it was observed under,
-    even when it was pushed after it, as a hook event can be after a focus
-    the listener relays. The outcome then does not depend on batching:
-    Core speaks it and then the new focus, or cuts it off when the focus
-    moves into another top-level window or a menu, as NVDA, which handles
-    events in order, does. NVDA reads another
-    object's event with one call and judges it against the focus when it
-    runs; the outpost reads a whole snapshot, and the first focus in a new
-    File Explorer window waited 2.6 seconds behind such reads while
-    Explorer built the window (`docs/performance.md`, "A focus behind other
-    objects' events").
+  - The queue applies NVDA's limiter rules to MSAA events only
+    (`docs/design/focus-pipeline.md` section 5, since 2026-10-11): one
+    waiting entry per object and kind, a newer one replacing it and moving
+    to the back, which is all that limits UIA events; a batch is everything
+    that accumulated while the worker handled the previous one, planned in
+    the order it arrived; per batch the newest 4 MSAA focus events and the
+    newest 10 other MSAA events per thread that raised them are kept (the
+    hook passes each event's own thread; a fact the listener relays carries
+    none, and its window's thread stands in), the focused object's other
+    events beyond the limit though they count, and a foreground change by
+    either limit, since it counts among both; UIA events and menu openings
+    are not counted; events from a window the system reports hung
+    (`IsHungAppWindow`) are dropped before any read. Within a batch only
+    the newest foreground change is handled; each consecutive run of MSAA
+    focus events is tried newest first until one is reported, at the place
+    of the run's newest, as NVDA's `pumpAll` does (any other entry ends a
+    run; a foreground change within one keeps its own place and does not);
+    every UIA focus event is handled at its own place; and the newest menu
+    opening from each backend is handled last. Until 2026-10-11 a focus
+    change was moved ahead of the events of other objects queued before it
+    (`overtaken`, 42d9caa, with ce53dbc's exception for an ancestor's state
+    change), an MSAA focus was dropped while a newer one in its window was
+    waiting (`msaa_focus_waiting`), UIA events counted against the limits,
+    and the newest three focus events of each backend were kept across the
+    whole batch; the design removes all four, and a focus now waits behind
+    what came before it until it is judged on arrival (stage A step 6 in
+    `docs/roadmap.md`).
   - The worker (`outpost::worker`): one thread takes entries in order and
     finishes each before the next. Before any call into the application
     for an entry, it tests the event by NVDA's acceptance test against the
@@ -202,7 +194,8 @@ Public API:
     between entries (under "Text" below), not waited on. It is the only
     thread that calls into the application, so events and replies leave in
     the order their entries were planned: the order they joined the queue,
-    but for the events a focus change overtakes and a caret key's answer,
+    but for a batch's menu openings, the older focus events of a run of
+    MSAA focus events, and a caret key's answer,
     which leaves when its evidence comes. It replaces the announce lane, the query pool, the
     announce poll, the probe threads, and the late window retry. Being the
     only such thread, it is where the calls are counted: the backend crates

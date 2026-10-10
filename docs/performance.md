@@ -263,18 +263,23 @@ of tree items (one expanded, its 23 children counted) and a value change,
 reported, and ten more, whose trace ids are missing from the record,
 handled without being reported. Each was read as a full snapshot of an
 object the focus was not on, while Explorer answered slowly. NVDA reads such an event with one call and judges it against the
-focus when it runs. Since then a focus change goes before the events of
-other objects queued ahead of it (`docs/crates/verbatim-outpost.md`, the
-queue), and the events of the focus and of the object focus moves to keep
-their place.
+focus when it runs. From then until 2026-10-11 a focus change went before
+the events of other objects queued ahead of it, and the events of the
+focus and of the object the focus moved to kept their place.
 
 mockapp's `a_focus_is_handled_before_slow_reads_queued_ahead_of_it`
 reproduces it: every provider call answered 20 ms late (`slow 20`), ten
 selections in a list queued behind a query, then a focus. Before the
 change the focus was taken up 611.7 and 610.6 ms after the query was
 answered (two runs), after the ten selections; after it, 35 and 115 µs,
-before them. The test asserts the order exactly and that the focus waits
+before them. The test asserted the order exactly and that the focus waited
 less than one of the slow application's calls after the query.
+
+Removed on 2026-10-11 with the test (stage A step 4 in `docs/roadmap.md`;
+`docs/design/focus-pipeline.md`, sections 5 and 9): the outpost handles
+events in the order they arrive, as NVDA does, so this wait can return
+until a UIA focus is judged as it arrives (stage A step 6), and an MSAA
+focus waits behind the events queued before it as NVDA's does.
 
 ### A focus change, UIA, cold
 

@@ -301,14 +301,21 @@ verified.
     entering a menu does too (`event_focusEntered`). So NVDA says
     "unavailable" and then the new focus within a window, and effectively
     nothing of it when the focus leaves the window or enters a menu.
-    Verbatim: **matched since 2026-10-08**. Its intake moves the events of
-    objects other than the focus behind a focus change for latency, which
-    had made the outcome depend on whether the change shared a batch with
-    the focus; such a state change on a spoken ancestor now keeps its place
-    ahead of a focus change it was observed before, and Core's cancelling,
-    NVDA's, does the rest (the `msaa_events` mockapp tests, each in both
-    batchings, a move within the window and one into a menu, and a reducer
-    test for a move into another window).
+    Verbatim: **matched since 2026-10-08**, by arrival order since
+    2026-10-11: the outpost handles events in the order they reach it, so
+    such a change is handled before a focus change that reached it later,
+    and Core's cancelling, NVDA's, does the rest (the `msaa_events` mockapp
+    tests, each in both batchings, a move within the window and one into a
+    menu, and a reducer test for a move into another window). From
+    2026-10-08 to 2026-10-11 the intake moved the events of objects other
+    than the focus behind a focus change for latency, with an exception
+    for such a change observed before it. One gap remains until the
+    outpost's own hook takes focus events (stage A step 5 in
+    `docs/roadmap.md`): the focus reaches the outpost from the listener in
+    another process and the change from the outpost's own hook, so a
+    change raised just before the focus can reach the outpost after it and
+    is then judged against the new focus, which NVDA, with one hook and one
+    queue, never does.
   - A top-level window's state change. Opening a modal dialog disables
     its owner, raising a state change on the owner's client area while
     the focus is still inside it, on an ancestor NVDA holds. NVDA says
@@ -1510,39 +1517,30 @@ verified.
   (`IAccessibleHandler/orderedWinEventLimiter.py`), and its UIA events
   are only coalesced, one per element and kind per flush, with no count
   limit (`nvdaHelper/local/UIAEventLimiter/rateLimitedEventHandler.cpp`).
-  Verbatim: **matched for MSAA, different for UIA** (corrected
-  2026-10-11; this entry had called it matched for both). Each outpost's
-  intake applies the limiter's rules to its MSAA events and its UIA
-  events alike, so a UIA focus, menu opening, selection or notification
-  counts against the same limits, and in a burst UIA events NVDA would
-  queue are dropped
-  ([verbatim-outpost](crates/verbatim-outpost.md), the queue under
-  `Outpost`). The per-thread count is keyed by the thread of the event's
-  window, where NVDA keys it by the thread the event came from; the two
-  differ for console windows. The approved design,
-  `docs/design/focus-pipeline.md` section 5.1, changes both: the limits
-  count MSAA events only, by the event's own thread, and the UIA focus
-  candidate limit below goes. What it does today: one
-  waiting entry per object and kind, a newer one replacing it and moving
-  to the back; a batch is everything that arrived while the worker
-  handled the previous one; per batch the newest 4 focus events and the
-  newest 10 other events per application UI thread are kept, and the
-  focused object's events always; a foreground change counts among both
-  and is kept by either, as NVDA's limiter caches a foreground event with
-  its focus events and with its other events (since 2026-10-10: it had
-  counted among the focus events alone, and File Explorer's focus events
-  after a folder window's foreground event crowded the event out); events from a window the system
-  reports hung are dropped before any read; within a batch only the
-  newest foreground change is handled; of MSAA's focus events the newest
-  is tried first, falling back to the two older ones before it when it
-  cannot be reported (three in all, across the whole batch), where NVDA
-  collapses only consecutive runs and tries up to four; the newest three UIA focus events are each handled, oldest
-  first, and older ones dropped; and the newest menu opening is handled
-  last. Before an
-  outpost hears them, the focus listener coalesces its facts by the same
-  one-per-object-and-kind rule, and the supervisor holds the facts that
-  arrive while an outpost starts by that rule too, and lets a newer fact
-  replace a waiting one when an outpost's queue is full.
+  Its limiter counts each thread by the thread id the WinEvent carries,
+  keeps the newest 4 focus and foreground events of a flush, keeps a
+  foreground event among both the focus events and its thread's other
+  events, counts the focus's own events but always keeps them, and keeps
+  only the newest menu event, outside both limits. `pumpAll`
+  (`IAccessibleHandler/__init__.py`) then walks the flushed events in
+  order, collecting each consecutive run of focus and foreground events
+  and processing it newest first, stopping at the first valid one, when
+  the next other event comes; the menu event is tried last. Verbatim:
+  **matched since 2026-10-11** (`docs/design/focus-pipeline.md` section 5;
+  [verbatim-outpost](crates/verbatim-outpost.md), the queue under
+  `Outpost`), with these differences: a foreground change keeps its own
+  place in a run rather than being tried with its focus events, as
+  before; the listener's focus, foreground, alert and show facts carry no
+  thread, so their window's thread stands in until they come from the
+  outpost's own hook (stage A step 5 in `docs/roadmap.md`); and events from
+  a window the system reports hung are dropped before any read. Until
+  then the limits counted UIA events too, by the thread of the event's
+  window, and the newest three focus events of each backend were kept
+  across the whole batch. Before an outpost hears them, the focus
+  listener coalesces its facts by the same one-per-object-and-kind rule,
+  and the supervisor holds the facts that arrive while an outpost starts
+  by that rule too, and lets a newer fact replace a waiting one when an
+  outpost's queue is full.
 - Event acceptance filtering (foreground gating, show/hide rules).
   NVDA: `shouldAcceptEvent`. Verbatim: the same test, in each outpost
   before any call into the application; see "Event acceptance in the
@@ -2208,8 +2206,9 @@ verified.
   passing the focus on), or is the tab left (below): so a focus that has
   moved on, which NVDA would drop if it had already moved when NVDA
   judged it, is announced and then culled, and the rules that drop one
-  are Verbatim's, not NVDA's. Each batch's newest three UIA focus events
-  are handled in turn, oldest first, and older ones dropped; Core culls
+  are Verbatim's, not NVDA's. Every UIA focus event of a batch is handled
+  in turn, in the order it arrived (since 2026-10-11; only the newest
+  three had been, and older ones dropped); Core culls
   the speech of a focus no longer current as it expires. The approved
   design, `docs/design/focus-pipeline.md`, moves the judgement to the
   listener, reading the event's own element as it arrives, as NVDA does,

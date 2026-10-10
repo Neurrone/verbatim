@@ -252,6 +252,8 @@ enum Batching {
 fn disable_then_move(batching: Batching, (to_id, to_index): (&str, usize)) -> Vec<Said> {
     /// The Remove button, by its index in mockapp's tree.
     const REMOVE: usize = 1;
+    use verbatim_ia2::WinEventKind;
+    use verbatim_outpost::Heard;
     common::init_com();
     let title = common::unique_title("mockapp-msaa-change-before-focus");
     let mut app = common::spawn("modal_owner.json", "msaa", &title);
@@ -286,13 +288,16 @@ fn disable_then_move(batching: Batching, (to_id, to_index): (&str, usize)) -> Ve
         Batching::Together => {
             // The worker reads the Remove button's next sibling slowly
             // meanwhile, so the change and the focus wait for the same
-            // batch.
+            // batch, in the order they reached the outpost: the change,
+            // taken in by the outpost's own hook, before the focus is
+            // handed over.
             app.send("slow 100");
             let request = outpost.ask(Query::Navigate {
                 node_id: reported.node.id,
                 kind: verbatim_model::QueryKind::NextSibling,
             });
             app.send("disable-client");
+            outpost.heard(&[Heard::Msaa(WinEventKind::StateChange)]);
             app.send(&format!("set-focus {to_id}"));
             outpost.deliver_observed_now(focus_fact);
             app.send("slow 0");
