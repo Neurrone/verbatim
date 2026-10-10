@@ -136,8 +136,12 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
 3. Console windows: every event to the console host's outpost, with the
    client process as identity; the console special cases removed. Built,
    pending live checks (`phase6-design.md`, "Console windows as one
-   application"): `cargo xtask ci` passes; every `conhost_` scenario,
-   `settings_system_page`, and the full suite have not yet been run.
+   application"): `cargo xtask ci` passes; the first live run failed every
+   `conhost_` scenario (the window never announced), fixed by keeping an
+   early foreground event for the next focus (provisional, below);
+   `conhost_typing`, `conhost_two_windows`, `conhost_commands` and
+   `conhost_leave_flood` then passed once each. The other scenarios and
+   the full suite are still to run.
 4. Arrival order in the outposts: 42d9caa and ce53dbc removed; NVDA's MSAA
    focus collapsing (consecutive runs, up to four) and limits by the
    event's own thread, for MSAA only; `msaa_focus_waiting` removed.
@@ -220,6 +224,15 @@ Provisional decisions awaiting Dickson:
   as NVDA's `consoleUIAWindow` refuses it (2026-10-11, stage A step 3):
   before, it was reported when the focused element read answered the
   console window itself. No scenario shows that case.
+- A foreground event whose window is not yet in front is kept and
+  reported just before the next focus inside that window, if the window
+  is in front by then, as NVDA runs a foreground event for a focus
+  entering a new top-level window (`eventHandler.doPreGainFocus`)
+  (2026-10-11, stage A step 3): before, it was dropped. A console
+  window's foreground event comes before the window is in front and none
+  follows, and 54f9a26's report for consoles had hidden that. It applies
+  to every application, which phase 6's "A foreground event before its
+  window is in front" left for Dickson; this is its second choice.
 
 For a later milestone (Dickson, 2026-10-10): Verbatim echoes a typed
 character from its keyboard hook, before the application handles the key,

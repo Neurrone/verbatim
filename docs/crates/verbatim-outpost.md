@@ -553,6 +553,12 @@ Implementation notes:
   (`InternalGetWindowText`, which never sends the window a message). A
   report whose window is no longer the system's foreground window when it is
   ready to send is dropped, as NVDA's `processForegroundWinEvent` drops it.
+  A foreground event whose window is not yet in front when it is handled
+  is kept and reported just before the next focus inside that window, if
+  the window is in front by then (`Tracking::early_foreground`), as NVDA
+  runs a foreground event for a focus entering a new top-level window
+  (`eventHandler.doPreGainFocus`); a console window's comes that early,
+  and none follows.
 - Focus-now (the worker): the answer to Core's focus-now query is the
   target's foreground window, when it holds the system foreground
   (`GetForegroundWindow`, never `GetGUIThreadInfo`'s `hwndFocus`, which can

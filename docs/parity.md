@@ -1006,7 +1006,12 @@ verified.
   thread cannot be opened, the event goes to the client's outpost, as
   NVDA falls back to the window's own thread; and before any event from
   a console, the client's outpost answers for it (at start-up, when the
-  console is in front).
+  console is in front). A console window's foreground event comes before
+  the window is in front, and none follows; NVDA announces the window as
+  the focus enters it (`eventHandler.doPreGainFocus`), and Verbatim keeps
+  such an early foreground event and reports it just before the next
+  focus inside its window (provisional, awaiting Dickson; for every
+  application).
 - A control's own focus with a focused child. A Win32 control taking
   the focus, such as a tree view (`SysTreeView32`) or a tab control
   (`SysTabControl32`), raises a focus event on itself (child id 0) and

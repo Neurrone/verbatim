@@ -323,6 +323,13 @@ pub(super) struct Tracking {
     /// observed: reported once the window is shown, or just before a focus
     /// inside it, whichever comes first ([`Worker::foreground`]).
     unshown_foreground: Option<(isize, TraceId, u64)>,
+    /// A foreground change whose window was not yet in front when it was
+    /// handled, with its trace and the time it was observed: reported just
+    /// before a focus inside it, if its window is in front by then, as NVDA
+    /// runs a foreground event for a focus that enters a new top-level
+    /// window (`eventHandler.doPreGainFocus`), and otherwise forgotten with
+    /// the next focus ([`Worker::foreground`]).
+    early_foreground: Option<(isize, TraceId, u64)>,
 }
 
 impl Tracking {
@@ -1529,6 +1536,7 @@ impl Worker<'_> {
     ) {
         if !foreground && let Some(hwnd) = window {
             self.report_unshown_foreground(top_level_of(hwnd));
+            self.report_early_foreground(top_level_of(hwnd));
             self.report_foreign_window(trace, observed_at_ms, hwnd);
         }
         let mut node = node;
@@ -2536,18 +2544,33 @@ impl Worker<'_> {
     /// first has it reported just before
     /// ([`report_unshown_foreground`](Self::report_unshown_foreground)),
     /// since a window reported after a focus inside it is not announced.
+    ///
+    /// A window not yet in front is not reported now, as NVDA drops the
+    /// event, but kept until the next focus: a console window's foreground
+    /// event comes before the window is in front, and none follows when it
+    /// is (`phase6-design.md`, "Console windows as one application"). NVDA
+    /// announces such a window as the focus enters it, by running a
+    /// foreground event for the new top-level window
+    /// (`eventHandler.doPreGainFocus`); a focus inside it has the kept change
+    /// reported just before it
+    /// ([`report_early_foreground`](Self::report_early_foreground)).
     fn foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_ms: u64) {
-        // A newer foreground change replaces one still waiting to be shown.
-        self.context.tracking().unshown_foreground = None;
+        // A newer foreground change replaces one still waiting.
+        {
+            let mut tracking = self.context.tracking();
+            tracking.unshown_foreground = None;
+            tracking.early_foreground = None;
+        }
         if window_belongs_to_hidden_frame(hwnd) {
             tracing::debug!(hwnd, "foreground dropped: Core's hidden frame");
             return;
         }
-        if !self.accepts(EventName::GainFocus, hwnd) {
-            return;
-        }
-        if !window_is_foreground(hwnd) {
-            tracing::debug!(hwnd, "foreground dropped: not the foreground window");
+        if !self.accepts(EventName::GainFocus, hwnd) || !window_is_foreground(hwnd) {
+            tracing::debug!(
+                hwnd,
+                "foreground kept for a focus inside it: not the foreground window"
+            );
+            self.context.tracking().early_foreground = Some((hwnd, trace, observed_at_ms));
             return;
         }
         if !window_is_visible(hwnd) {
@@ -2590,6 +2613,21 @@ impl Worker<'_> {
             }
         };
         if let Some((hwnd, trace, observed_at_ms)) = waiting
+            && window_is_foreground(hwnd)
+        {
+            tracing::debug!(hwnd, "foreground reported before a focus inside its window");
+            self.report_foreground(hwnd, trace, observed_at_ms);
+        }
+    }
+
+    /// Reports the foreground change kept because its window, `top`, was not
+    /// yet in front ([`foreground`](Self::foreground)), just before a focus
+    /// inside it, if it is the foreground window now; any kept change is
+    /// forgotten with the focus.
+    fn report_early_foreground(&mut self, top: isize) {
+        let waiting = self.context.tracking().early_foreground.take();
+        if let Some((hwnd, trace, observed_at_ms)) = waiting
+            && hwnd == top
             && window_is_foreground(hwnd)
         {
             tracing::debug!(hwnd, "foreground reported before a focus inside its window");
