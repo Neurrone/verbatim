@@ -293,6 +293,15 @@ Other open items, taken after the steps above unless they fold into one:
     run); arrival order with no focus lane, for UIA and MSAA; NVDA's
     duplicate rule in Core. An audit of event processing against NVDA
     (scratchpad, `event-processing-audit.md`) feeds it.
+- verbatim.exe must never be a large source of latency: at most 1 to 2 ms
+  for relaying a message (Dickson, 2026-10-10). Measured, the supervisor's
+  relay from the listener to an outpost took a median of 0.05 to 0.15 ms
+  but 36 ms at the 90th percentile and 146 ms at worst; the cause is being
+  found (scratchpad, `supervisor-latency.md`). Events keep passing through
+  verbatim.exe: the fix is a fast supervisor, not another route. The
+  latency ledger is to record verbatim.exe's own time as a stage of its
+  own, in both directions, with the fix. A warning over 2 ms, and failing a
+  scenario over it, are deferred to the response-time budgets above.
 - Screen recordings are truncated in every run: ffmpeg is killed rather
   than told to stop, losing the last 1 to 2 seconds. Being fixed (graceful
   stop, start after the first frame, a check that fails a scenario whose
