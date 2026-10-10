@@ -501,7 +501,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
 
 /// The longest Verbatim waits for its exit sound to be heard before it
 /// exits: NVDA's exit sound plays for about half a second, and a replacing
-/// instance waits five seconds for this one to go.
+/// instance ends this one if it has not exited within five seconds.
 const EXIT_SOUND_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Names a WAV file to record everything Verbatim plays into.

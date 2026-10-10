@@ -2214,14 +2214,15 @@ verified.
 - Replacing a running instance. NVDA finds the running NVDA's window,
   posts it `WM_QUIT`, waits four seconds for its process to exit, and
   ends it with `TerminateProcess` if it has not (`nvda.pyw` lines 110 to
-  137). Verbatim: **deliberately different since 2026-10-09** (coherence
-  review): it posts `WM_QUIT` the same way, waits up to five seconds for
-  the old process to exit (Dickson, 2026-10-10), and never ends it:
-  ended, the old instance's teardown was cut short, so its outposts were
-  killed with it rather than shut down and the screen reader flag was
-  left set. An old Verbatim still running after the five seconds still
-  holds the startup mutex, so the new one reports that another Verbatim
-  is still running and exits, leaving the old one running.
+  137), waiting two seconds more for it to exit. Verbatim: **matched
+  since 2026-10-10**, but for the first wait, five seconds where NVDA's
+  is four (Dickson, 2026-10-10). An ended Verbatim's outposts, focus
+  listener and synthesizer hosts end with it, and the new one sets the
+  screen reader flag again, as NVDA does. When the old process cannot be
+  opened to be ended, NVDA shows a message box ("Couldn't terminate
+  existing NVDA process, abandoning start"); Verbatim instead reports
+  that another Verbatim is still running and exits, which is not yet
+  decided.
 - Vision framework (focus highlight, screen curtain, magnifier),
   OCR, secure screens, remote access: all **not yet** (M8 for OCR
   and secure desktop, M12 remote); references [The vision framework](nvda/vision.md),

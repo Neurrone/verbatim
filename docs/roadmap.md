@@ -127,7 +127,9 @@ Dickson first.
    the listener to the outpost should be no more than a few milliseconds.
 2. A second Verbatim does what NVDA does: asks the running one to quit,
    waits 5 seconds, then ends it and starts (replacing 9c7ba9a and
-   4405c84, which never end it).
+   4405c84, which never end it). Done; not yet exercised live. Whether
+   to show NVDA's message box when the running one cannot be ended is not
+   yet decided.
 3. NVDA's event filtering in the outposts, before any call into the
    application: its acceptance test, its order of checks for MSAA events,
    and the same test for UIA events (approved 2026-10-10).

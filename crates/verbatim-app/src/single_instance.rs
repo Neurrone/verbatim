@@ -1,22 +1,20 @@
 //! Single-instance startup: a newly started Verbatim replaces any running
-//! instance, following NVDA's algorithm (`nvda/source/nvda.pyw`) but for
-//! its fallback.
+//! instance, as NVDA does in `terminateRunningNVDA` and the startup mutex
+//! after it (`nvda/source/nvda.pyw`).
 //!
 //! Two mechanisms cooperate. First, the new process finds the old instance's
 //! hidden main window by title, checks that the window's process runs
 //! Verbatim's executable, posts `WM_QUIT` so its GUI loop exits and its
 //! normal teardown runs, and waits up to five seconds for its process to
-//! exit (Dickson, 2026-10-10). NVDA ends a process that has not exited
-//! after four seconds with `TerminateProcess` (`nvda.pyw` lines 110 to
-//! 137); Verbatim never does, since that cut the old instance's teardown
-//! short, killing its outposts rather than shutting them down and leaving
-//! the screen reader flag set, and the process's exit is the evidence that
-//! the teardown finished (Dickson, 2026-10-09, coherence review). Second, a
+//! exit (Dickson, 2026-10-10; NVDA waits four). If it is still running, it
+//! is ended with `TerminateProcess` and given up to two seconds more to
+//! exit, as in NVDA. Its outposts, focus listener and synthesizer hosts run
+//! in its kill-on-close job objects, so they end with it, and the screen
+//! reader flag it leaves set is set again by the new instance. Second, a
 //! named mutex serializes full startup, so the new instance does not
-//! proceed until the old one's teardown has released it (or abandoned it by
-//! dying). An old instance still running when the five seconds pass still
-//! holds the mutex, so the new instance's startup fails with an error and
-//! the old one is left running.
+//! proceed until the old one has released it, or abandoned it by being
+//! ended. An old instance that cannot be ended, or does not exit once
+//! ended, is left running and the new instance's startup fails.
 //!
 //! The mutex name has no per-desktop suffix yet; the secure-desktop instance
 //! that needs one arrives in milestone M8.
@@ -30,7 +28,8 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::System::Threading::{
     CreateMutexW, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-    PROCESS_SYNCHRONIZE, QueryFullProcessImageNameW, WaitForSingleObject,
+    PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, QueryFullProcessImageNameW, TerminateProcess,
+    WaitForSingleObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     ChangeWindowMessageFilter, FindWindowExW, GetWindowThreadProcessId, MSGFLT_ADD, PostMessageW,
@@ -47,8 +46,12 @@ const WINDOW_TITLE: &str = "Verbatim";
 const MUTEX_NAME: PCWSTR = w!(r"Local\Verbatim");
 
 /// How long a running instance gets to exit after `WM_QUIT` (Dickson,
-/// 2026-10-10).
+/// 2026-10-10; NVDA's is 4000).
 const REPLACED_EXIT_MS: u32 = 5000;
+
+/// How long a running instance ended with `TerminateProcess` gets to exit,
+/// as in NVDA.
+const TERMINATED_EXIT_MS: u32 = 2000;
 
 /// How long to wait for the startup mutex.
 const MUTEX_WAIT_MS: u32 = 2000;
@@ -74,10 +77,19 @@ impl Drop for InstanceGuard {
 ///
 /// # Errors
 ///
-/// Returns an error when the mutex cannot be created or another instance
-/// still holds it after the replacement attempt and the wait.
+/// Returns an error when a running instance could not be ended, when the
+/// mutex cannot be created, or when another instance still holds it after
+/// the wait.
 pub fn acquire_replacing() -> io::Result<InstanceGuard> {
-    replace_running_instance();
+    if replace_running_instance() == Replacement::StillRunning {
+        // Undecided (Dickson, 2026-10-10): NVDA shows a message box here,
+        // "Couldn't terminate existing NVDA process, abandoning start".
+        // Until that is decided, the error is reported and startup ends,
+        // as before.
+        return Err(io::Error::other(
+            "another Verbatim instance is still running and could not be ended",
+        ));
+    }
     allow_quit_across_integrity_levels();
 
     // SAFETY: a constant name and default security; the handle is owned
@@ -87,10 +99,11 @@ pub fn acquire_replacing() -> io::Result<InstanceGuard> {
     // SAFETY: waiting on the mutex handle just created.
     let wait = unsafe { WaitForSingleObject(mutex, MUTEX_WAIT_MS) };
     if wait == WAIT_OBJECT_0 || wait == WAIT_ABANDONED {
-        // WAIT_ABANDONED means the previous instance died without
-        // releasing; ownership still transfers to us.
+        // WAIT_ABANDONED means the previous instance ended without
+        // releasing, by crashing or by being ended above; ownership still
+        // transfers to us.
         if wait == WAIT_ABANDONED {
-            tracing::warn!("previous instance abandoned the startup mutex (crash?)");
+            tracing::warn!("previous instance abandoned the startup mutex (crashed or ended)");
         }
         Ok(InstanceGuard { mutex })
     } else {
@@ -102,21 +115,31 @@ pub fn acquire_replacing() -> io::Result<InstanceGuard> {
     }
 }
 
+/// What became of a running instance.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Replacement {
+    /// None was running, or it has exited.
+    Gone,
+    /// It could not be ended, or did not exit once ended.
+    StillRunning,
+}
+
 /// Finds a running instance's hidden main window and shuts that instance
 /// down with `WM_QUIT`, waiting up to [`REPLACED_EXIT_MS`] for its process
-/// to exit. A no-op when no instance is running.
+/// to exit, then ends it if it has not. [`Replacement::Gone`] when no
+/// instance is running.
 ///
 /// The title alone is not Verbatim's: Windows matches it without regard to
 /// case, and a File Explorer window on a folder named "verbatim" has it too.
 /// So every top-level window with the title is considered, and only one
 /// whose process runs an executable of this one's file name is acted on.
-fn replace_running_instance() {
+fn replace_running_instance() -> Replacement {
     let title = HSTRING::from(WINDOW_TITLE);
     let own_name = std::env::current_exe()
         .ok()
         .and_then(|path| path.file_name().map(std::ffi::OsStr::to_os_string));
     let Some(own_name) = own_name else {
-        return;
+        return Replacement::Gone;
     };
     let mut after: Option<HWND> = None;
     loop {
@@ -125,26 +148,27 @@ fn replace_running_instance() {
         // that has since closed only ends the search early.
         let found = unsafe { FindWindowExW(None, after, PCWSTR::null(), &title) };
         let Ok(hwnd) = found else {
-            return;
+            return Replacement::Gone;
         };
         if hwnd.0.is_null() {
-            return;
+            return Replacement::Gone;
         }
-        if shut_down_if_verbatim(hwnd, &own_name) {
-            return;
+        if let Some(replacement) = shut_down_if_verbatim(hwnd, &own_name) {
+            return replacement;
         }
         after = Some(hwnd);
     }
 }
 
 /// Shuts down `hwnd`'s process if it is another Verbatim, that is, runs an
-/// executable named `own_name`; returns whether it was one.
-fn shut_down_if_verbatim(hwnd: HWND, own_name: &std::ffi::OsStr) -> bool {
+/// executable named `own_name`, ending it if it does not exit in time;
+/// `None` if it is not one.
+fn shut_down_if_verbatim(hwnd: HWND, own_name: &std::ffi::OsStr) -> Option<Replacement> {
     let mut pid: u32 = 0;
     // SAFETY: `hwnd` came from FindWindowExW; `pid` is a valid out pointer.
     unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut pid)) };
     if pid == 0 || pid == std::process::id() {
-        return false;
+        return None;
     }
     // SAFETY: opening a process by id; the handle is closed on every path.
     let opened = unsafe {
@@ -155,12 +179,13 @@ fn shut_down_if_verbatim(hwnd: HWND, own_name: &std::ffi::OsStr) -> bool {
         )
     };
     let Ok(process) = opened else {
-        return false;
+        return None;
     };
     let is_verbatim = image_path(process)
         .as_deref()
         .and_then(Path::file_name)
         .is_some_and(|name| name.eq_ignore_ascii_case(own_name));
+    let mut replacement = None;
     if is_verbatim {
         tracing::info!(old_pid = pid, "replacing running Verbatim instance");
         // SAFETY: a message with no pointer parameters, posted to a window
@@ -180,23 +205,69 @@ fn shut_down_if_verbatim(hwnd: HWND, own_name: &std::ffi::OsStr) -> bool {
         // SAFETY: waiting on the process through its open handle, with
         // synchronize access; it is signalled when the process exits.
         let wait = unsafe { WaitForSingleObject(process, REPLACED_EXIT_MS) };
-        if wait == WAIT_OBJECT_0 {
+        replacement = Some(if wait == WAIT_OBJECT_0 {
             tracing::info!(old_pid = pid, "the running instance has exited");
-        } else if wait == WAIT_TIMEOUT {
-            tracing::warn!(
-                old_pid = pid,
-                limit_ms = REPLACED_EXIT_MS,
-                "the running instance did not exit in time; it is left running"
-            );
+            Replacement::Gone
         } else {
-            tracing::warn!(old_pid = pid, "waiting for the running instance failed");
-        }
+            if wait == WAIT_TIMEOUT {
+                tracing::warn!(
+                    old_pid = pid,
+                    limit_ms = REPLACED_EXIT_MS,
+                    "the running instance did not exit in time; ending it"
+                );
+            } else {
+                tracing::warn!(
+                    old_pid = pid,
+                    "waiting for the running instance failed; ending it"
+                );
+            }
+            // `process` stays open meanwhile, so `pid` names the same
+            // process when it is opened again to end it.
+            end_process(pid)
+        });
     }
     // SAFETY: `process` is the handle opened above, closed once.
     unsafe {
         let _ = CloseHandle(process);
     }
-    is_verbatim
+    replacement
+}
+
+/// Ends process `pid` with `TerminateProcess` and waits up to
+/// [`TERMINATED_EXIT_MS`] for it to exit, as NVDA's `terminateRunningNVDA`
+/// does after its wait.
+fn end_process(pid: u32) -> Replacement {
+    // SAFETY: opening a process by id; the handle is closed below.
+    let opened = unsafe { OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, false, pid) };
+    let process = match opened {
+        Ok(process) => process,
+        Err(error) => {
+            tracing::error!(old_pid = pid, %error, "the running instance cannot be ended");
+            return Replacement::StillRunning;
+        }
+    };
+    // SAFETY: the handle just opened, with terminate access.
+    if let Err(error) = unsafe { TerminateProcess(process, 1) } {
+        tracing::warn!(old_pid = pid, %error, "ending the running instance failed");
+    }
+    // SAFETY: waiting on the process through its open handle, with
+    // synchronize access; it is signalled when the process exits.
+    let wait = unsafe { WaitForSingleObject(process, TERMINATED_EXIT_MS) };
+    // SAFETY: the handle opened above, closed once.
+    unsafe {
+        let _ = CloseHandle(process);
+    }
+    if wait == WAIT_OBJECT_0 {
+        tracing::info!(old_pid = pid, "the running instance was ended");
+        Replacement::Gone
+    } else {
+        tracing::error!(
+            old_pid = pid,
+            limit_ms = TERMINATED_EXIT_MS,
+            "the running instance did not exit once ended"
+        );
+        Replacement::StillRunning
+    }
 }
 
 /// The full path of `process`'s executable, or `None` if it cannot be read.

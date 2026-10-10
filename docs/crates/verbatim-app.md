@@ -172,21 +172,20 @@ knowing for review:
   of its own, on a thread of its own, clears it when the session ends
   (`WM_ENDSESSION`). A crash or a process ended from outside leaves it
   set, as NVDA's does.
-- `single_instance::acquire_replacing` — NVDA's algorithm, but for its
-  fallback: find the old instance's hidden window by title, post
-  `WM_QUIT` so its loop exits and its normal teardown runs, and wait up
-  to five seconds for its process to exit (Dickson, 2026-10-10), where
-  NVDA ends it with `TerminateProcess` after four seconds (`nvda.pyw` 110
-  to 137), which Verbatim never does:
-  ending it cut its teardown short, killing its outposts rather than
-  shutting them down and leaving the screen reader flag set, and the exit
-  of its process is
-  the evidence the teardown finished (Dickson, 2026-10-09, coherence
-  review); then serialize startup on a named mutex
-  (an abandoned mutex — a crashed predecessor — still grants ownership,
-  with a warning; an old instance still running after the five seconds
-  still holds it, so startup fails with an error and the old instance is
-  left running). `ChangeWindowMessageFilter` lets a future
+- `single_instance::acquire_replacing` — NVDA's algorithm
+  (`terminateRunningNVDA` in `nvda.pyw`): find the old instance's hidden
+  window by title, post `WM_QUIT` so its loop exits and its normal
+  teardown runs, and wait up to five seconds for its process to exit
+  (Dickson, 2026-10-10; NVDA waits four). If it is still running, end it
+  with `TerminateProcess` and wait up to two seconds more; its outposts,
+  focus listener and synthesizer hosts end with it through their
+  kill-on-close jobs, and the screen reader flag it leaves set is set
+  again by the new instance. Then serialize startup on a named mutex (an
+  abandoned mutex, from a crashed or ended predecessor, still grants
+  ownership, with a warning). An old instance that cannot be opened to
+  be ended, or does not exit once ended, is left running and startup
+  fails with an error; whether to show NVDA's message box there is not
+  yet decided. `ChangeWindowMessageFilter` lets a future
   lower-integrity replacer's quit message through.
 - `ReducerThread` — owns the reducer state, the request table, and the
   live-outpost set, and is the only thread that touches them. It selects on
