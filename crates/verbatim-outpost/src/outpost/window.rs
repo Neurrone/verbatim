@@ -9,12 +9,13 @@ use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
+use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GA_PARENT, GA_ROOT, GA_ROOTOWNER, GUITHREADINFO, GWL_EXSTYLE, GetAncestor,
     GetForegroundWindow, GetGUIThreadInfo, GetPropW, GetWindowLongW, GetWindowThreadProcessId,
-    InternalGetWindowText, IsChild, IsHungAppWindow, IsWindowVisible, WS_EX_TOPMOST,
+    InternalGetWindowText, IsChild, IsHungAppWindow, IsWindow, IsWindowVisible, WS_EX_TOPMOST,
 };
-use windows::core::{BOOL, HSTRING};
+use windows::core::{BOOL, HSTRING, s, w};
 
 use verbatim_model::{HIDDEN_FRAME_WINDOW_PROP, WindowFacts, WindowHandle};
 
@@ -207,6 +208,55 @@ pub(crate) fn window_is_hung(handle: isize) -> bool {
     let target = if root == 0 { handle } else { root };
     // SAFETY: IsHungAppWindow tolerates any handle.
     unsafe { IsHungAppWindow(hwnd(target)) }.as_bool()
+}
+
+/// Why an event's own window, `handle`, cannot be read, or `None` when it
+/// can: it is no window, or no longer one; a ghost window stands in for it;
+/// or the system reports its application hung. NVDA drops such an event
+/// after accepting it and before it creates its object, in that order
+/// (`winEventToNVDAEvent`, `source/IAccessibleHandler/__init__.py`), since
+/// creating it would call into an application that does not answer. Every
+/// check is a local call.
+pub(super) fn event_window_unreadable(handle: isize) -> Option<&'static str> {
+    // SAFETY: IsWindow tolerates any handle.
+    if handle == 0 || !unsafe { IsWindow(Some(hwnd(handle))) }.as_bool() {
+        return Some("no window");
+    }
+    if ghost_window_from_hung_window().is_some_and(|ghost| {
+        // SAFETY: the function takes any window handle and returns null
+        // when no ghost window stands in for it.
+        !unsafe { ghost(hwnd(handle)) }.0.is_null()
+    }) {
+        return Some("a ghost window stands in for it");
+    }
+    // SAFETY: IsHungAppWindow tolerates any handle.
+    if unsafe { IsHungAppWindow(hwnd(handle)) }.as_bool() {
+        return Some("its application is not responding");
+    }
+    None
+}
+
+/// `GhostWindowFromHungWindow`, an undocumented export of user32 that NVDA
+/// uses where present (`source/winBindings/user32.py`): the window that
+/// stands in for a hung window, or null. Looked up once.
+fn ghost_window_from_hung_window() -> Option<unsafe extern "system" fn(HWND) -> HWND> {
+    static FUNCTION: OnceLock<Option<unsafe extern "system" fn(HWND) -> HWND>> = OnceLock::new();
+    *FUNCTION.get_or_init(|| {
+        // SAFETY: user32 is loaded in every process that has windows,
+        // which this one does through its hooks; the handle is not freed.
+        let user32 = unsafe { GetModuleHandleW(w!("user32.dll")) }.ok()?;
+        // SAFETY: a lookup by a NUL-terminated name in a loaded module.
+        let function = unsafe { GetProcAddress(user32, s!("GhostWindowFromHungWindow")) }?;
+        // SAFETY: the export takes a window handle and returns one
+        // (`HWND GhostWindowFromHungWindow(HWND)`), the signature NVDA
+        // declares for it; both are pointer-sized.
+        Some(unsafe {
+            std::mem::transmute::<
+                unsafe extern "system" fn() -> isize,
+                unsafe extern "system" fn(HWND) -> HWND,
+            >(function)
+        })
+    })
 }
 
 /// The id of the thread that owns `handle`, or 0 for none. Batch limits are
@@ -414,6 +464,15 @@ mod tests {
     fn destroy_window(handle: isize) {
         // SAFETY: called on the thread that created `handle`.
         unsafe { DestroyWindow(hwnd(handle)) }.expect("destroy a window");
+    }
+
+    #[test]
+    fn only_a_live_window_can_be_read_for_an_event() {
+        let window = create_window();
+        assert_eq!(event_window_unreadable(window), None);
+        destroy_window(window);
+        assert_eq!(event_window_unreadable(window), Some("no window"));
+        assert_eq!(event_window_unreadable(0), Some("no window"));
     }
 
     #[test]

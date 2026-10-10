@@ -62,9 +62,10 @@ use super::intake::{Entry, Item, Object, Planned, UiaEvent, UiaKind, window_of};
 use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, CONSOLE_WINDOW_CLASS, OpenWatch};
 use super::window::{
-    focus_window_of, foreground_window_handle, front_is_another_thread_of_its_application, now_ms,
-    top_level_of, window_belongs_to_hidden_frame, window_facts, window_is_foreground,
-    window_is_hidden_frame, window_is_visible, window_owner,
+    event_window_unreadable, focus_window_of, foreground_window_handle,
+    front_is_another_thread_of_its_application, now_ms, top_level_of,
+    window_belongs_to_hidden_frame, window_facts, window_is_foreground, window_is_hidden_frame,
+    window_is_visible, window_owner,
 };
 use crate::arbitration::window_class_name;
 use crate::terminal::keys;
@@ -1638,6 +1639,18 @@ impl Worker<'_> {
         accepted
     }
 
+    /// Whether the event's own window, `hwnd`, can be read: NVDA's checks
+    /// after acceptance and before the window's UIA test and the object's
+    /// acquisition (`window::event_window_unreadable`). A dropped event is
+    /// logged.
+    fn readable(hwnd: isize) -> bool {
+        let reason = event_window_unreadable(hwnd);
+        if let Some(reason) = reason {
+            tracing::debug!(hwnd, reason, "event dropped: its window cannot be read");
+        }
+        reason.is_none()
+    }
+
     /// An MSAA event from this outpost's own hooks.
     fn msaa_event(
         &mut self,
@@ -1682,9 +1695,14 @@ impl Worker<'_> {
             }
             return;
         }
+        // NVDA's order of checks: acceptance, the window's state, the
+        // window's UIA test, and only then the object.
         if let Some(event) = EventName::of_win_event(kind)
             && !self.accepts(event, hwnd)
         {
+            return;
+        }
+        if !Self::readable(hwnd) {
             return;
         }
         if read::window_uses_uia(self.context, hwnd) {
@@ -2297,6 +2315,9 @@ impl Worker<'_> {
         // NVDA accepts a show event by its window's class alone, whatever
         // the foreground; the focus listener's hook already took this one
         // only from a tooltip window (`verbatim_ia2::hook`), so it passes.
+        if !Self::readable(hwnd) {
+            return;
+        }
         let Some(mut object) = verbatim_ia2::acquire::event_object(hwnd, id_object, id_child)
         else {
             return;
@@ -2332,6 +2353,9 @@ impl Worker<'_> {
             return;
         }
         if super::window::parent_class(hwnd).as_deref() != Some("ToastChildWindowClass") {
+            return;
+        }
+        if !Self::readable(hwnd) {
             return;
         }
         let Some(node) = verbatim_ia2::acquire::snapshot_from_event(
@@ -2516,7 +2540,7 @@ impl Worker<'_> {
         if id_child == CHILDID_SELF && window_belongs_to_hidden_frame(hwnd) {
             return;
         }
-        if !self.accepts(EventName::GainFocus, hwnd) {
+        if !self.accepts(EventName::GainFocus, hwnd) || !Self::readable(hwnd) {
             return;
         }
         if read::window_uses_uia(self.context, hwnd) {
@@ -3277,7 +3301,7 @@ impl Worker<'_> {
                 return;
             }
         }
-        if !self.accepts(EventName::MenuStart, hwnd) {
+        if !self.accepts(EventName::MenuStart, hwnd) || !Self::readable(hwnd) {
             return;
         }
         if read::window_uses_uia(self.context, hwnd) {

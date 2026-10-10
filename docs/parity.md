@@ -808,6 +808,13 @@ verified.
   it in its callback), and Verbatim's own events, the caret and text
   selection of edit controls, the console host's updates, and a top-level
   window shown (`phase6-design.md`, "Event filtering in the outposts").
+  After acceptance, in NVDA's order (`winEventToNVDAEvent`), an MSAA
+  event is dropped when its own window is no window, has a ghost window
+  standing in for it, or belongs to an application the system reports
+  hung, then when its window is UIA's, and only then is its object
+  acquired: before, the window's UIA test, which can probe it, came
+  first, and no check was made on the event's own window. The intake's
+  hung test on the top-level window, for the batch limits, stays.
   **matched (unverified)**.
 - State-change diff announcements (gained states; lost states spoken
   by their absence, including half checked becoming "not checked").
