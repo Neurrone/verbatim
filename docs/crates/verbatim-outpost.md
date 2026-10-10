@@ -21,7 +21,11 @@ event carries (a UIA element's cached properties, an MSAA event's raw
 address) plus the hang-safe `GetWindowThreadProcessId`, and forwards each
 captured focus fact to Core. The supervisor routes every fact to the target
 application's own outpost, which acquires, arbitrates, enriches, and
-announces it exactly as it does for the events it still hooks itself. Node
+announces it exactly as it does for the events it still hooks itself. A
+fact for an application with no outpost starts one
+(`DeliveredFact::may_start_outpost`) unless it is a selection or a
+notification other than the shell's window-snap results: Core speaks no
+other notification from an application that cannot hold the focus. Node
 identity never crosses a process: the listener forwards a UIA runtime id,
 and the receiving outpost mints the `NodeId` from it. There is no announce
 poll: at startup, and after an outpost or the listener is replaced, Core

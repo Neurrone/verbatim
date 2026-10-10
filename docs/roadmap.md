@@ -155,7 +155,9 @@ Dickson first.
    remote operation; smaller UIA cache requests for text and caret
    events; no outpost started for a background notification (approved
    2026-10-10). Measure again after steps 3 and 4, from then on in both
-   debug and release builds (Dickson, 2026-10-10).
+   debug and release builds (Dickson, 2026-10-10). Built, pending the
+   live checks of the related scenarios (`phase6-design.md`, "Cheaper
+   reads in the outposts"); the measurement is still to be made.
 5. Events handled in arrival order, removing the focus-first reordering
    (42d9caa, ce53dbc).
 6. A UIA focus judged as it arrives at the outpost, ahead of its queue,

@@ -577,8 +577,9 @@ impl Owner {
             },
             None => {
                 if !held.fact.may_start_outpost() {
-                    // A selection in an application with no outpost is not
-                    // worth starting one for.
+                    // A selection, or a notification Core would not speak,
+                    // in an application with no outpost is not worth
+                    // starting one for.
                 } else if self.respawn_stopped(pid) {
                     tracing::debug!(%pid, "fact dropped: respawning is stopped after repeated crashes");
                 } else {

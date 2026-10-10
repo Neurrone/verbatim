@@ -222,11 +222,21 @@ pub enum DeliveredFact {
 impl DeliveredFact {
     /// Whether this fact may start an outpost for an application that has
     /// none (outpost redesign, "The focus listener"): focus, foreground,
-    /// menu, notification, and alert facts may; a selection without an
-    /// outpost is dropped.
+    /// menu, and alert facts may, and the shell's window-snap results
+    /// notification, the one Core speaks from any application. A selection
+    /// without an outpost is dropped, and so is any other notification:
+    /// Core speaks a notification only from the focus's application, and an
+    /// application with no outpost cannot hold the focus, as NVDA drops a
+    /// background application's notification.
     #[must_use]
     pub fn may_start_outpost(&self) -> bool {
-        !matches!(self, DeliveredFact::UiaSelection { .. })
+        match self {
+            DeliveredFact::UiaSelection { .. } => false,
+            DeliveredFact::UiaNotification { notification, .. } => {
+                notification.activity_id.as_deref() == Some(verbatim_core::SNAP_RESULTS_ACTIVITY)
+            }
+            _ => true,
+        }
     }
 
     /// The object and kind this fact concerns, for NVDA's limiter rule (one
@@ -736,7 +746,10 @@ pub fn read_message<R: BufRead, T: DeserializeOwned>(reader: &mut R) -> io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use verbatim_model::{NodeDetails, NodeId, NodeSnapshot, Role, State, StateSet};
+    use verbatim_model::{
+        NodeDetails, NodeId, NodeSnapshot, NotificationKind, NotificationProcessing, Role, State,
+        StateSet,
+    };
 
     #[test]
     fn a_message_larger_than_the_limit_is_neither_sent_nor_read() {
@@ -980,7 +993,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_selection_may_not_start_an_outpost() {
+    fn a_selection_or_a_background_notification_may_not_start_an_outpost() {
         let snapshot = UiaSnapshotFact {
             runtime_id: vec![1],
             role: Role::ListItem,
@@ -995,7 +1008,19 @@ mod tests {
             snapshot: snapshot.clone(),
         };
         assert!(!selection.may_start_outpost());
+        let notification = |activity_id: &str| DeliveredFact::UiaNotification {
+            hwnd: 0,
+            snapshot: snapshot.clone(),
+            notification: Notification {
+                kind: NotificationKind::ActionCompleted,
+                processing: NotificationProcessing::ImportantAll,
+                display_string: Some("Copied".into()),
+                activity_id: Some(activity_id.into()),
+            },
+        };
+        assert!(!notification("Clipboard").may_start_outpost());
         for fact in [
+            notification(verbatim_core::SNAP_RESULTS_ACTIVITY),
             DeliveredFact::Foreground { hwnd: 1 },
             DeliveredFact::UiaFocus {
                 hwnd: 0,

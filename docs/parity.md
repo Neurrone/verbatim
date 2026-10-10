@@ -866,7 +866,10 @@ verified.
   `event_UIA_notification` ([The UIA client](nvda/uia.md)). Verbatim:
   **matched (unverified)**, foreground-gated in shell. NVDA speaks
   notifications only from the focus's application, plus
-  per-application opt-ins; see "Event acceptance" above.
+  per-application opt-ins; see "Event acceptance" above. Since
+  2026-10-10 a notification from an application with no outpost starts
+  none, the shell's window-snap results excepted: such an application
+  cannot hold the focus, so Core would drop it, as NVDA drops it.
 - Toasts. NVDA: a toast's `alert` event is accepted from any application
   ([Event handling](nvda/events.md), "Acceptance filtering"), and the
   `Notification` behavior speaks the object. Verbatim: the listener hooks

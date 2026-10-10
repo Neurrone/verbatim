@@ -28,8 +28,8 @@ use crate::{editing, review, review_text, say_all, terminal, text};
 
 /// The activity id of the shell's window-snap results notification, the one
 /// UIA notification spoken from any application (`docs/parity.md`, "Event
-/// acceptance").
-const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyResults";
+/// acceptance"); the supervisor starts an outpost for no other notification.
+pub const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyResults";
 
 /// Advances `state` by one `input`, changing it in place, and returns the
 /// effects the imperative shell must execute.

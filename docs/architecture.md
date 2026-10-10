@@ -165,7 +165,9 @@ screen reader in both rendered and source form.
   for selection, menu opening, and notifications, coalesces its facts
   with NVDA's limiter rule (one waiting fact per element and kind), and
   may start an outpost only for focus, foreground, menu, notification, and
-  alert facts. Outposts lose their window-scoped UIA subscriptions in
+  alert facts (amended 2026-10-10: of the notifications, only the shell's
+  window-snap results, the one Core speaks from an application without
+  the focus). Outposts lose their window-scoped UIA subscriptions in
   favour of one property subscription that follows the focus and its
   ancestors.
   Amended 2026-10-05: the listener stays the only receiver of focus

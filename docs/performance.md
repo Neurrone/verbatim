@@ -1214,6 +1214,18 @@ the same provider calls as the focus alone.
   reaches the outpost, which read it, mapped it, and sent it to Core,
   which dropped it.
 
+### A notification from an application with no outpost
+
+Core speaks a UIA notification only from the focus's application, the
+shell's window-snap results excepted, and an application with no outpost
+cannot hold the focus.
+
+- Before (2026-10-10): the notification started an outpost, a process
+  with its hooks, its UIA client and subscriptions, about 40 ms in a debug
+  build before its first event, and Core then dropped the notification.
+- Today: the supervisor starts none for it (`DeliveredFact::may_start_outpost`);
+  the snap results still start one.
+
 ### Smaller caches for the focus's events
 
 The outpost's two focus-following registrations asked the provider for
