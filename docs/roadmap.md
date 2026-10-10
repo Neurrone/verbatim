@@ -293,6 +293,25 @@ Other open items, taken after the steps above unless they fold into one:
     run); arrival order with no focus lane, for UIA and MSAA; NVDA's
     duplicate rule in Core. An audit of event processing against NVDA
     (scratchpad, `event-processing-audit.md`) feeds it.
+- The focus pipeline (Dickson, 2026-10-10; design in the scratchpad,
+  `focus-pipeline-design.md`): option (b) is the plan. The listener
+  judges each UIA focus from the event's own element (live
+  HasKeyboardFocus) and reads it in one remote operation, on one thread
+  per application, with real time limits, and sends the result through
+  the supervisor; the outpost finds its own element afterwards, off the
+  focus path. Rejected: each outpost subscribing to its own application's
+  focus (option c), because its standby spare discards other applications'
+  events; and registering focus in a window-scoped event handler group
+  (b2), which no documentation or NVDA supports and which, checked live,
+  delivered no focus events from Notepad or File Explorer and missed
+  Windows Terminal's second window. A UIA element cannot be passed to
+  another process (tested: E_FAIL on unmarshaling).
+- One hung Win32 window that UIA proxies held up UIA event delivery for
+  every other application in the same process for 14.8 seconds, and UIA's
+  timeouts did not bound it; NVDA has the same exposure. Dickson chose to
+  try turning off UIA's WinEvent-to-UIA mapping for focus in the listener,
+  taking focus for those windows from MSAA; an experiment checks that the
+  stall goes and no focus is lost.
 - verbatim.exe must never be a large source of latency: at most 1 to 2 ms
   for relaying a message (Dickson, 2026-10-10). Measured, the supervisor's
   relay from the listener to an outpost took a median of 0.05 to 0.15 ms
