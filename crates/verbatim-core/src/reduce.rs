@@ -414,6 +414,32 @@ fn reduce_activation_completed(
     })]
 }
 
+/// Whether `event` is a focus dropped before anything else judges it: a
+/// duplicate of the last focus Core queued, whose newer reading is kept
+/// unspoken, or a stale focus from another outpost.
+fn focus_dropped_first(
+    state: &mut SrState,
+    observed_at_ms: u64,
+    window: Option<WindowFacts>,
+    event: &NormalizedEvent,
+) -> bool {
+    let NormalizedEvent::FocusChanged {
+        node,
+        ancestors,
+        ancestors_unknown,
+        ..
+    } = event
+    else {
+        return false;
+    };
+    if is_duplicate_focus(state, node) {
+        keep_newer_reading(state, node, ancestors, *ancestors_unknown);
+        sync_navigator_with_focus(state);
+        return true;
+    }
+    is_stale_focus(state, node.id.outpost(), observed_at_ms, window)
+}
+
 fn reduce_event(
     state: &mut SrState,
     trace_id: TraceId,
@@ -422,21 +448,8 @@ fn reduce_event(
     window: Option<WindowFacts>,
     event: &NormalizedEvent,
 ) -> Vec<Effect> {
-    if let NormalizedEvent::FocusChanged {
-        node,
-        ancestors,
-        ancestors_unknown,
-        ..
-    } = event
-    {
-        if is_duplicate_focus(state, node) {
-            keep_newer_reading(state, node, ancestors, *ancestors_unknown);
-            sync_navigator_with_focus(state);
-            return Vec::new();
-        }
-        if is_stale_focus(state, node.id.outpost(), observed_at_ms, window) {
-            return Vec::new();
-        }
+    if focus_dropped_first(state, observed_at_ms, window, event) {
+        return Vec::new();
     }
     match classify(
         state.attention.as_ref(),
@@ -446,10 +459,7 @@ fn reduce_event(
         event,
     ) {
         Acceptance::Dropped => return Vec::new(),
-        Acceptance::Background if observed_before_foreground_change(state, observed_at_ms) => {
-            return Vec::new();
-        }
-        Acceptance::Background => return reduce_background(trace_id, event),
+        Acceptance::Background => return reduce_background(state, trace_id, observed_at_ms, event),
         Acceptance::Attended => {}
     }
     if let NormalizedEvent::FocusChanged { node, .. } = event
@@ -564,9 +574,17 @@ fn sync_navigator_with_focus(state: &mut SrState) {
 /// Speaks an event accepted from outside the attention record. Background
 /// events never move focus or the navigator and always queue behind current
 /// speech: a toast alert, and the shell's window-snap results notification.
-/// One observed before the newest foreground change is dropped before this
+/// One observed before the newest foreground change is dropped unspoken
 /// ([`observed_before_foreground_change`]).
-fn reduce_background(trace_id: TraceId, event: &NormalizedEvent) -> Vec<Effect> {
+fn reduce_background(
+    state: &SrState,
+    trace_id: TraceId,
+    observed_at_ms: u64,
+    event: &NormalizedEvent,
+) -> Vec<Effect> {
+    if observed_before_foreground_change(state, observed_at_ms) {
+        return Vec::new();
+    }
     if let NormalizedEvent::Alert { node, .. } = event {
         return reduce_alert(trace_id, node);
     }
