@@ -564,7 +564,9 @@ Implementation notes:
   (`GetForegroundWindow`, never `GetGUIThreadInfo`'s `hwndFocus`, which can
   name a child window such as Windows 11 Notepad's text area), and its
   focused control (`hwndFocus`, through that window's backend) with its
-  ancestors and selected child. There are no retries: a nameless window is
+  ancestors and selected child; a console's text area reads as a nameless
+  terminal there too, as on the event path (`read::console_text_area`).
+  There are no retries: a nameless window is
   not announced later, a control that takes focus later raises its own focus
   event, and the query covers focus that settled before the listener
   existed.

@@ -1541,16 +1541,8 @@ impl Worker<'_> {
         }
         let mut node = node;
         let mut ancestors = ancestors;
-        // The console host's text area is a terminal, known by its window
-        // (Windows Terminal's control is known by its UIA class). Its name,
-        // "Text Area", is not localized, so it is dropped, as NVDA's console
-        // class drops it, and the focus says "terminal".
-        if backend == Backend::Uia
-            && matches!(node.role, Role::EditableText | Role::Document)
-            && window.is_some_and(|hwnd| window_class_name(hwnd) == CONSOLE_WINDOW_CLASS)
-        {
-            node.role = Role::Terminal;
-            node.name = None;
+        if backend == Backend::Uia {
+            read::console_text_area(&mut node, window);
         }
         // A dialog the focus has newly entered, or one in front, says its
         // own text as its description.

@@ -710,10 +710,11 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
     if window_uses_uia(context, hwnd) {
         let (uia, cache) = client.uia_and_cache(context).ok()?;
         let element = (context.focused_element)(uia, &cache).ok()?;
-        let node = with_legacy_checked_state(
+        let mut node = with_legacy_checked_state(
             &element,
             snapshot_from_cached_element(&element, &context.uia_registry),
         );
+        console_text_area(&mut node, Some(hwnd));
         // A focus that has moved on since the focused element was read is
         // still this query's answer, read the classic way.
         let (ancestors, selected_child) = match uia_remote_enrichment(
@@ -748,6 +749,29 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
             selected_child,
             window: Some(window_facts(hwnd)),
         })
+    }
+}
+
+/// Makes `node`, a focus read through UIA in `window`, the console host's
+/// text area when it is one: a terminal, known by its console window
+/// (Windows Terminal's control is known by its UIA class), with its name,
+/// "Text Area", which is not localized, dropped, as NVDA's console class
+/// drops it (`WinConsoleUIA`, chosen by the "Text Area" automation id in
+/// `NVDAObjects/UIA/winConsoleUIA.py`, `findExtraOverlayClasses`, whichever
+/// way the object was reached), so the focus says "terminal". Every way a
+/// focus is read applies it: its event and a focus-now query alike.
+pub(super) fn console_text_area(node: &mut NodeSnapshot, window: Option<isize>) {
+    console_text_area_in(node, || window.map(window_class_name));
+}
+
+/// [`console_text_area`] with the class of the focus's window read by
+/// `window_class`, only for a node that may be a text area.
+fn console_text_area_in(node: &mut NodeSnapshot, window_class: impl FnOnce() -> Option<String>) {
+    if matches!(node.role, Role::EditableText | Role::Document)
+        && window_class().as_deref() == Some(CONSOLE_WINDOW_CLASS)
+    {
+        node.role = Role::Terminal;
+        node.name = None;
     }
 }
 
@@ -1136,7 +1160,7 @@ pub(super) fn dump_tree(context: &Context, client: &mut Client) -> Result<Dumped
 mod tests {
     use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet};
 
-    use super::splice;
+    use super::{CONSOLE_WINDOW_CLASS, console_text_area_in, splice};
 
     fn node(id: u64) -> NodeSnapshot {
         NodeSnapshot {
@@ -1166,5 +1190,32 @@ mod tests {
     fn a_walk_meeting_nothing_known_is_kept_whole() {
         let spliced = splice(&[node(1)], vec![node(5), node(6)], NodeId::new(9));
         assert_eq!(ids(&spliced), ids(&[node(5), node(6)]));
+    }
+
+    fn text_area(role: Role) -> NodeSnapshot {
+        NodeSnapshot {
+            role,
+            name: Some("Text Area".to_owned()),
+            ..node(2)
+        }
+    }
+
+    #[test]
+    fn a_text_area_in_a_console_window_is_a_nameless_terminal() {
+        for role in [Role::EditableText, Role::Document] {
+            let mut read = text_area(role);
+            console_text_area_in(&mut read, || Some(CONSOLE_WINDOW_CLASS.to_owned()));
+            assert_eq!((read.role, read.name), (Role::Terminal, None), "{role:?}");
+        }
+    }
+
+    #[test]
+    fn a_text_area_anywhere_else_is_left_as_read() {
+        let mut read = text_area(Role::Document);
+        console_text_area_in(&mut read, || Some("Notepad".to_owned()));
+        assert_eq!(read, text_area(Role::Document));
+        let mut window = text_area(Role::Window);
+        console_text_area_in(&mut window, || panic!("a window's class is not read"));
+        assert_eq!(window, text_area(Role::Window));
     }
 }
