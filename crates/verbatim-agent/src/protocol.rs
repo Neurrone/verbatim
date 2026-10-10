@@ -37,10 +37,13 @@ use serde::{Deserialize, Serialize};
 /// [`Request::MinimizeAll`] with [`ReplyPayload::Minimized`], which tells
 /// windows left restored from a desktop that did not take the foreground,
 /// and added `hung` to [`WindowInfo`]; version 13 added
-/// `withhold_foreground` to [`Request::LaunchProcess`]. A test run against
+/// `withhold_foreground` to [`Request::LaunchProcess`]; version 14 added
+/// `stdin_piped` to [`Request::LaunchProcess`] and [`Request::WriteStdin`],
+/// so a recording's ffmpeg is told to stop rather than killed. A test run
+/// against
 /// an older agent is refused at `Hello` instead of losing its connection
 /// mid-run, or running without the exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 13;
+pub const AGENT_PROTOCOL_VERSION: u32 = 14;
 
 /// The environment variable that names, to the Verbatim under test, the
 /// processes it ignores entirely (`ignore_foreign_terminals` in
@@ -136,6 +139,21 @@ pub enum Request {
         /// launches is in the agent's jobs, and is not named.
         #[serde(default)]
         ignore_foreign_terminals: bool,
+        /// Whether the child's standard input is a pipe the agent holds,
+        /// for [`Request::WriteStdin`] to write to; otherwise the child has
+        /// no standard input.
+        #[serde(default)]
+        stdin_piped: bool,
+    },
+    /// Writes `text` to the standard input of a child launched with
+    /// `stdin_piped`, such as the `q` that has ffmpeg finish its output and
+    /// exit. Answered by [`ReplyPayload::StdinWritten`].
+    WriteStdin {
+        /// The OS process id, as returned by a prior
+        /// [`ReplyPayload::Launched`].
+        pid: u32,
+        /// What to write, as UTF-8.
+        text: String,
     },
     /// Terminates a process by pid.
     KillProcess {
@@ -432,6 +450,8 @@ pub enum ReplyPayload {
         #[serde(default)]
         ignored: Vec<u32>,
     },
+    /// Answer to [`Request::WriteStdin`]: the text was written.
+    StdinWritten,
     /// Answer to [`Request::KillProcess`].
     Killed(KillOutcome),
     /// Answer to [`Request::EndLaunched`]: how many launched processes were
@@ -747,6 +767,7 @@ mod tests {
                 minimized: true,
                 withhold_foreground: false,
                 ignore_foreign_terminals: true,
+                stdin_piped: true,
             },
         };
         let frame = Frame::Reply {

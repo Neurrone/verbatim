@@ -18,15 +18,17 @@ it when the suite is done.
 Public API:
 
 - `protocol` — the agent's own wire vocabulary, versioned separately from
-  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 10) and framed
+  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 14) and framed
   with the same newline-JSON helpers the control plane uses
   (`verbatim_control::protocol::write_message`/`read_message`). Its pids
   are raw OS process ids naming a process a test is driving, not
   `verbatim_model::Pid`, which names an application Verbatim observes.
   `Hello` must come first and is refused on any version mismatch. The
   requests, by what they are for:
-  - Processes: `LaunchProcess` (see below), `KillProcess` (a launched
-    child with everything in its job), `EndLaunched` (every process the
+  - Processes: `LaunchProcess` (see below), `WriteStdin` (text written
+    to the standard input of a child launched with `stdin_piped`, such as
+    the `q` that stops a recording's ffmpeg cleanly), `KillProcess` (a
+    launched child with everything in its job), `EndLaunched` (every process the
     agent launched that still runs, ended by its own handle: the
     pre-launch sweep, never by image name), `ChildProcesses` (the
     processes whose parent is a given pid, such as Verbatim's synthesizer
@@ -108,6 +110,10 @@ Public API:
   program opens from its first frame (`STARTUPINFO`'s title), since the
   console host started directly otherwise shows its own path until the
   shell sets a title. Both fields default when omitted on the wire.
+  `stdin_piped` (protocol version 14) gives the child a pipe as its
+  standard input, whose writing end the agent keeps with the launch for
+  `WriteStdin`: the recording stops ffmpeg by writing `q` to it, since
+  killing ffmpeg cuts the end off its video.
   `ignore_foreign_terminals`, set for a launch of Verbatim (protocol
   version 11), names to the child, in `VERBATIM_IGNORE_PIDS`, every
   `WindowsTerminal.exe` process outside the agent's jobs and the

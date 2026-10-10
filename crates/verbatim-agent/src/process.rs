@@ -25,7 +25,7 @@
 //! its id, and a launched child's by the handle the agent holds.
 
 use std::collections::BTreeMap;
-use std::io;
+use std::io::{self, Write as _};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -103,7 +103,9 @@ use crate::protocol::{KillOutcome, ProcessInfo, ProcessState};
 /// minimized and inactive (`SW_SHOWMINNOACTIVE`), for a caller that brings
 /// it forward itself once it is ready. With `withhold_foreground`, the
 /// agent does not allow the process the foreground at all, whatever right
-/// it has itself.
+/// it has itself. With `stdin_piped`, the child's standard input is a
+/// pipe whose writing end the agent keeps with the launch, for
+/// [`write_stdin`]; otherwise it has none.
 ///
 /// # Errors
 ///
@@ -117,18 +119,20 @@ pub fn launch(
     env: &[(String, String)],
     stderr_to: Option<&str>,
     console_title: Option<&str>,
-    (minimized, withhold_foreground): (bool, bool),
+    (minimized, withhold_foreground, stdin_piped): (bool, bool, bool),
 ) -> io::Result<(u32, bool)> {
     let capture = stderr_to
         .map(|path| std::fs::File::create(path).and_then(|file| inheritable(&file)))
         .transpose()?;
+    let (stdin_reader, stdin) = stdin_pipe(stdin_piped)?;
     let mut command_line = wide(&command_line(command, args));
     let environment = (!env.is_empty()).then(|| environment_block(env));
     let directory = working_dir.map(wide);
     let mut title = console_title.map(wide);
     let inherited: Vec<HANDLE> = capture
         .iter()
-        .map(|capture| HANDLE(capture.as_raw_handle()))
+        .chain(&stdin_reader)
+        .map(|handle| HANDLE(handle.as_raw_handle()))
         .collect();
     let handle_list = HandleList::new(&inherited)?;
     let mut startup = STARTUPINFOEXW::default();
@@ -143,11 +147,7 @@ pub fn launch(
             u16::try_from(windows::Win32::UI::WindowsAndMessaging::SW_SHOWMINNOACTIVE.0)
                 .unwrap_or_default();
     }
-    if let Some(capture) = &capture {
-        startup.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
-        startup.StartupInfo.hStdOutput = HANDLE(capture.as_raw_handle());
-        startup.StartupInfo.hStdError = HANDLE(capture.as_raw_handle());
-    }
+    set_standard_handles(&mut startup, capture.as_ref(), stdin_reader.as_ref());
     let job = create_job()?;
     let mut info = PROCESS_INFORMATION::default();
     // SAFETY: every pointer passed points into a buffer that outlives the
@@ -155,16 +155,16 @@ pub fn launch(
     // directory and the console title are, and the environment block is
     // UTF-16 ending in two nuls, as `CREATE_UNICODE_ENVIRONMENT` declares.
     // The startup information is sized as the extended one it is, and its
-    // attribute list, when there is a capture handle, names that handle
-    // alone, which is open and inheritable; handles are inherited only
-    // then.
+    // attribute list, when there is a capture handle or a stdin pipe, names
+    // those handles alone, each open and inheritable; handles are inherited
+    // only then.
     unsafe {
         CreateProcessW(
             PCWSTR::null(),
             Some(PWSTR(command_line.as_mut_ptr())),
             None,
             None,
-            capture.is_some(),
+            !inherited.is_empty(),
             CREATE_SUSPENDED
                 | CREATE_UNICODE_ENVIRONMENT
                 | EXTENDED_STARTUPINFO_PRESENT
@@ -179,6 +179,9 @@ pub fn launch(
     }
     .map_err(io::Error::other)?;
     drop(handle_list);
+    // The child holds its own end of the pipe now; the agent's copy would
+    // keep the pipe open after the child exited.
+    drop(stdin_reader);
     // SAFETY: both handles were just returned by CreateProcessW, and are
     // owned here alone.
     let child = unsafe { OwnedHandle::from_raw_handle(info.hProcess.0) };
@@ -224,9 +227,68 @@ pub fn launch(
             job,
             finished_at: None,
             held: Vec::new(),
+            stdin,
         },
     );
     Ok((pid, foreground_allowed))
+}
+
+/// A pipe for a child's standard input when `piped`: the reading end,
+/// inheritable, for the child, and the writing end, for the agent.
+fn stdin_pipe(piped: bool) -> io::Result<(Option<OwnedHandle>, Option<io::PipeWriter>)> {
+    if !piped {
+        return Ok((None, None));
+    }
+    let (reader, writer) = io::pipe()?;
+    Ok((
+        Some(make_inheritable(OwnedHandle::from(reader))?),
+        Some(writer),
+    ))
+}
+
+/// Gives the child `capture` as its standard output and error, and
+/// `stdin` as its standard input, when there are any.
+fn set_standard_handles(
+    startup: &mut STARTUPINFOEXW,
+    capture: Option<&OwnedHandle>,
+    stdin: Option<&OwnedHandle>,
+) {
+    if capture.is_none() && stdin.is_none() {
+        return;
+    }
+    startup.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
+    if let Some(capture) = capture {
+        startup.StartupInfo.hStdOutput = HANDLE(capture.as_raw_handle());
+        startup.StartupInfo.hStdError = HANDLE(capture.as_raw_handle());
+    }
+    if let Some(stdin) = stdin {
+        startup.StartupInfo.hStdInput = HANDLE(stdin.as_raw_handle());
+    }
+}
+
+/// Writes `text` to the standard input of `pid`, a child [`launch`]
+/// started with `stdin_piped`. A child that does not read its input fills
+/// the pipe's buffer and blocks the write, so this is for a few bytes, such
+/// as ffmpeg's `q`.
+///
+/// # Errors
+///
+/// Returns an error if the agent did not launch `pid` with a stdin pipe,
+/// or the write fails, as it does once the child has exited.
+pub fn write_stdin(pid: u32, text: &str) -> io::Result<()> {
+    let mut writer = {
+        let launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
+        launched
+            .get(&pid)
+            .ok_or_else(|| io::Error::other(format!("the agent did not launch process {pid}")))?
+            .stdin
+            .as_ref()
+            .ok_or_else(|| {
+                io::Error::other(format!("process {pid} was launched without a stdin pipe"))
+            })?
+            .try_clone()?
+    };
+    writer.write_all(text.as_bytes())
 }
 
 /// Keeps `handles` open with the launch of `pid`, for as long as its entry
@@ -400,7 +462,11 @@ fn wide(text: &str) -> Vec<u16> {
 /// An inheritable duplicate of `file`'s handle, for a child's standard
 /// output and error.
 fn inheritable(file: &std::fs::File) -> io::Result<OwnedHandle> {
-    let handle = OwnedHandle::from(file.try_clone()?);
+    make_inheritable(OwnedHandle::from(file.try_clone()?))
+}
+
+/// `handle`, made inheritable, for a child's standard handle.
+fn make_inheritable(handle: OwnedHandle) -> io::Result<OwnedHandle> {
     // SAFETY: `handle` is open; only its inheritance flag changes.
     unsafe {
         SetHandleInformation(
@@ -488,6 +554,8 @@ struct Launched {
     /// Processes held open for as long as the entry is kept: the ones the
     /// child was told to ignore, whose pids then name no other process.
     held: Vec<OwnedHandle>,
+    /// The writing end of the child's stdin pipe, when it was given one.
+    stdin: Option<io::PipeWriter>,
 }
 
 /// How long an entry is kept after its child has exited and its job has
@@ -852,7 +920,7 @@ mod tests {
             &[],
             None,
             None,
-            (false, false),
+            (false, false, false),
         )
         .expect("spawns powershell")
         .0
@@ -921,7 +989,7 @@ mod tests {
             &[],
             Some(&path_str),
             None,
-            (false, false),
+            (false, false, false),
         )
         .expect("spawns cmd with a stderr capture path");
         assert_eq!(
@@ -933,6 +1001,41 @@ mod tests {
         let captured =
             std::fs::read_to_string(&path).expect("reads the captured stderr/stdout file");
         assert_eq!(captured, "agent stderr capture test \r\n");
+        std::fs::remove_file(&path).expect("removes the capture file");
+    }
+
+    #[test]
+    fn a_child_launched_with_a_stdin_pipe_reads_what_is_written_to_it() {
+        let _launching = crate::process::LAUNCHING
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "verbatim-agent-test-stdin-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let path_str = path.to_str().expect("utf8 temp path").to_owned();
+        let (pid, _) = launch(
+            "cmd",
+            &[
+                "/v:on".to_owned(),
+                "/c".to_owned(),
+                "set /p line=& echo got !line!".to_owned(),
+            ],
+            None,
+            &[],
+            Some(&path_str),
+            None,
+            (false, false, true),
+        )
+        .expect("spawns cmd with a stdin pipe");
+        write_stdin(pid, "piped text\r\n").expect("writes to the child's stdin");
+        assert_eq!(
+            wait_for_exit(pid, WAIT).expect("waits"),
+            ProcessState::Exited { exit_code: Some(0) }
+        );
+        let captured = std::fs::read_to_string(&path).expect("reads the capture file");
+        assert_eq!(captured, "got piped text\r\n");
         std::fs::remove_file(&path).expect("removes the capture file");
     }
 
@@ -980,7 +1083,7 @@ mod tests {
             &[],
             Some(&path_str),
             None,
-            (false, false),
+            (false, false, false),
         )
         .expect("spawns powershell with a capture file");
         drop(accepted);
@@ -1013,7 +1116,7 @@ mod tests {
             &[],
             None,
             None,
-            (false, false),
+            (false, false, false),
         )
         .expect("spawns cmd");
         assert_eq!(
@@ -1037,7 +1140,7 @@ mod tests {
             &[],
             None,
             None,
-            (false, false),
+            (false, false, false),
         )
         .expect("spawns cmd");
         // cmd, the console host of the window-less console it was started

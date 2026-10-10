@@ -163,7 +163,57 @@ impl AgentClient {
             minimized: false,
             withhold_foreground: false,
             ignore_foreign_terminals: false,
+            stdin_piped: false,
         })
+    }
+
+    /// Launches `command` with `args`, as [`AgentClient::launch_process`]
+    /// does with no working directory or environment, its stdout and stderr
+    /// captured into `stderr_to` and its standard input a pipe the agent
+    /// holds, for [`AgentClient::write_stdin`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails or the agent could not spawn
+    /// the process.
+    pub fn launch_with_stdin(
+        &mut self,
+        command: &str,
+        args: &[String],
+        stderr_to: &str,
+    ) -> io::Result<Launched> {
+        self.launch(Request::LaunchProcess {
+            command: command.to_owned(),
+            args: args.to_vec(),
+            working_dir: None,
+            env: Vec::new(),
+            stderr_to: Some(stderr_to.to_owned()),
+            console_title: None,
+            minimized: false,
+            withhold_foreground: false,
+            ignore_foreign_terminals: false,
+            stdin_piped: true,
+        })
+    }
+
+    /// Writes `text` to the standard input of `pid`, launched with
+    /// [`AgentClient::launch_with_stdin`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, including when the process
+    /// has no stdin pipe or has exited.
+    pub fn write_stdin(&mut self, pid: u32, text: &str) -> io::Result<()> {
+        match self.request(Request::WriteStdin {
+            pid,
+            text: text.to_owned(),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::StdinWritten,
+                ..
+            } => Ok(()),
+            other => Err(unexpected("WriteStdin", &other)),
+        }
     }
 
     /// Launches Verbatim, as [`AgentClient::launch_process`] launches any
@@ -194,6 +244,7 @@ impl AgentClient {
             minimized: false,
             withhold_foreground: false,
             ignore_foreign_terminals: true,
+            stdin_piped: false,
         })
     }
 
@@ -216,6 +267,7 @@ impl AgentClient {
             minimized: true,
             withhold_foreground: false,
             ignore_foreign_terminals: false,
+            stdin_piped: false,
         })
     }
 
@@ -244,6 +296,7 @@ impl AgentClient {
             minimized: false,
             withhold_foreground: true,
             ignore_foreign_terminals: false,
+            stdin_piped: false,
         })
     }
 
@@ -272,6 +325,7 @@ impl AgentClient {
             minimized: true,
             withhold_foreground: false,
             ignore_foreign_terminals: false,
+            stdin_piped: false,
         })
     }
 

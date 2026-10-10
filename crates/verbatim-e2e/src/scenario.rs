@@ -1711,8 +1711,9 @@ impl Scenario {
 impl Drop for Scenario {
     /// A scenario dropped without its cleanup having run, which happens
     /// only when the run panicked before reaching it: Verbatim is ended by
-    /// its process id and what the scenario opened is closed. Anything
-    /// that will not close is printed; the run has already failed.
+    /// its process id, what the scenario opened is closed, and the capture
+    /// is stopped as [`Recording::stop`] stops it, so its file is complete.
+    /// Anything that will not close is printed; the run has already failed.
     fn drop(&mut self) {
         if !self.quit {
             let _ = self.control.request(Request::Quit);

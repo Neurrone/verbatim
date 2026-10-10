@@ -71,7 +71,8 @@ every scenario, recorded or not, and recording changes nothing else:
    every window that can be minimized is (cloaked windows, which are not
    shown, aside), and brings the desktop, Program Manager, to the
    foreground, all through the agent and with no input injected.
-5. Starts the recording, when recording, creates a named event through
+5. Starts the recording, when recording, and waits for ffmpeg to capture
+   its first frame, then creates a named event through
    the agent, launches Verbatim with its name in `VERBATIM_READY_EVENT`,
    and waits for Verbatim to set it once it is ready for input; then opens the command connection and the speech
    connection and checks the status reports it ready.
@@ -287,7 +288,9 @@ queue, and event to audio in milliseconds), `focus.txt`,
 `flight-recorder.jsonl`, `foreground.txt`, `stderr.log`, every file of the
 launch's log directory (the outposts' logs, the listener's, the
 synthesizer host's), `verbatim-audio.wav` (everything Verbatim played),
-new crash dumps, the video `<name>.mp4` when recording, and `summary.txt`.
+new crash dumps, the video `<name>.mp4` and ffmpeg's logs
+(`recording-video.log` from the capture, `recording-mux.log`, and
+`recording-check.log`) when recording, and `summary.txt`.
 Losing any of them fails the run. `archive_run` copies each run into
 `history/<scenario>/<UTC time>-<pass or fail>`, keeping the newest 100,
 without the video.
@@ -297,10 +300,32 @@ without the video.
 A video of each scenario with Verbatim's speech (decision D16), unless
 `RECORD_ENV` (`VERBATIM_E2E_RECORD`) is `0` or `false`. ffmpeg, named by
 `FFMPEG_ENV`, captures the desktop on the agent's machine into fragmented
-MP4; Verbatim always writes everything it plays into a WAV file
-(`VERBATIM_RECORD_AUDIO`), recording or not, so recording changes nothing
-about Verbatim's run; `finish` muxes the two and copies the result back.
-A recording that cannot start or be finished is a failure.
+MP4; `start` returns once ffmpeg has created its output file, which it
+does only after capturing its first frame and logging that frame's time,
+within `FIRST_FRAME_TIMEOUT` (30 seconds). Verbatim always writes
+everything it plays into a WAV file (`VERBATIM_RECORD_AUDIO`), recording
+or not, so recording changes nothing about Verbatim's run.
+
+`stop` ends the capture as a user ends ffmpeg: the capture is launched
+with a stdin pipe (the agent's `stdin_piped`), and `stop` writes `q` to it
+(`WriteStdin`) and waits for ffmpeg to exit with code 0 within
+`STOP_TIMEOUT` (15 seconds), so ffmpeg encodes what it holds and writes
+its last fragment. Killing ffmpeg instead loses its last one to two
+seconds, not just the fragment being written: the muxer holds every frame
+since the last keyframe in memory, and up to 32 KB of the fragment before
+that waits in a file buffer that is never flushed, so the video ends in a
+cut keyframe. ffmpeg is killed only when the bound passes, and that is a
+failure. A scenario that panicked is stopped the same way, by the
+scenario's `Drop` when `finish` was never reached.
+
+`finish` stops the capture, muxes it with the audio, copies the result
+back with ffmpeg's logs, and checks it (`verify`). The check decodes the
+recording with `ffmpeg -v error -f null`, and fails when that logs
+anything, when the mux log has an error or a corrupt packet (the mux
+exits 0 on both), or when the video is shorter than the capture ran, from
+the evidence of its first frame to the request to stop, by more than one
+frame. A recording that cannot start or be finished, or fails the check,
+is a failure.
 
 ## The registry
 

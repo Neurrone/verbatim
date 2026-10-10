@@ -864,17 +864,27 @@ asserted any speech has timelines that reached audio
 
 **How a scenario is recorded** (`crates/verbatim-e2e/src/recording.rs`).
 `Scenario::launch` starts ffmpeg through the agent before it launches
-Verbatim, so the video shows Verbatim start. ffmpeg has to go through the
+Verbatim, and launches Verbatim only once ffmpeg has captured its first
+frame (the evidence is ffmpeg's output file, which it creates only after
+logging that frame's time), so the video shows Verbatim start. ffmpeg has
+to go through the
 agent for the same session-isolation reason the agent exists at all (see
 Troubleshooting below): `gdigrab`, ffmpeg's Windows desktop-capture input,
 needs a real interactive desktop, which a PowerShell Direct or WinRM
 session never has. The capture is written as fragmented MP4 into
 Verbatim's launch directory on the agent's machine (`target/e2e-stage`
 runner-direct, `C:\VerbatimLab\verbatim` in the guest), a fragment starting
-at each keyframe, one a second, with an encoder tuned not to hold frames
-back, so ending ffmpeg with the agent's `KillProcess` still leaves a
-playable file, losing at most the last second, after the scenario has
-ended. `KillProcess` ends everything the
+at each keyframe, one a second. The capture is stopped as a user stops
+ffmpeg, with `q` on its standard input, which the agent gives it as a pipe
+(`stdin_piped` and `WriteStdin`), and the harness waits for it to exit
+with code 0. Killing ffmpeg loses more than the fragment being written,
+which this guide used to claim was all it lost: the muxer holds every frame since the
+last keyframe in memory, and up to 32 KB of the fragment before that
+waits in a file buffer that is never flushed, so a killed capture loses
+its last one to two seconds and ends in a cut keyframe. Every recording
+checked before this was fixed was damaged that way. ffmpeg is killed with
+`KillProcess` only when it has not exited 15 seconds after being told to
+stop, and the scenario then fails. `KillProcess` ends everything the
 process it launched started, so a launcher such as a Chocolatey `ffmpeg`
 shim cannot leave the real capture running. The launch also sets
 `VERBATIM_RECORD_AUDIO`, so Verbatim writes everything its mixer plays
@@ -883,11 +893,18 @@ speakers, to an RDP session's Remote Audio, or into silence on a machine
 with no audio device (where Verbatim plays silently in real time).
 
 At the end of every scenario, pass or fail, `registry::run` calls
-`Scenario::finish_recording`, which ends ffmpeg, lines the audio up with
+`Scenario::finish_recording`, which stops ffmpeg, lines the audio up with
 the video from their two start times (the WAV's `.start` file, and the
 wall-clock time ffmpeg logs for the first frame), muxes them on the
 agent's machine into one MP4 with AAC audio, and copies it through the
-agent's `ReadFileChunk` request to the scenario's artifacts directory.
+agent's `ReadFileChunk` request to the scenario's artifacts directory,
+with ffmpeg's logs (`recording-video.log`, `recording-mux.log`, and
+`recording-check.log`). It then checks the video: decoding it with
+`ffmpeg -v error -f null` must log nothing, the mux log must have no error
+and no corrupt packet (that ffmpeg exits 0 regardless), and the video must
+last as long as the capture ran, from the evidence of the first frame to
+the request to stop, within one frame. A recording that fails the check
+fails the scenario, and its video is still copied, to be watched.
 The recording covers the scenario's launch, setup, body, and teardown,
 since setup and teardown are where a target application appears or
 closes. A recording that cannot start (no ffmpeg) or cannot finish fails
