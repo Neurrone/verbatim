@@ -195,6 +195,27 @@ count a flood of identical lines (their count mixes buffer and view
 scrolls, PowerShell's output raises none, Windows Terminal raises none):
 stage C's question is closed.
 
+Two harness defects found on 2026-10-11, each fixed and committed but
+not yet built or run:
+
+- The recording check failed clean runs. It required the video to last
+  as long as the capture ran, from the first frame to sending `q`, but on
+  `q` ffmpeg's threaded scheduler stops without draining: it reads its
+  standard input only once per stats period, and drops the frames still
+  queued between the `gdigrab` input and the encoder, so the video loses
+  a random tail of a few frames to about a second. That tail is the
+  desktop after Verbatim has quit and the teardown has run. The check now
+  requires that the capture log's final frame count equals the video's
+  frames, with its `time=` within one frame of the last frame's, and that
+  the video reaches the moment the scenario's body ended.
+- "could not save the flight recorder ... (os error 10060)": every
+  control-plane tunnel read with the speech collector's 2-second poll
+  interval, so a reply on the primary connection, such as `DumpRecorder`,
+  that took over 2 seconds failed the scenario. Tunnels now read replies
+  with a 30-second hang deadline, the agent's own, and only connections
+  subscribed to speech or events switch to the poll interval. Verbatim
+  now logs, at debug level, how long a flight-recorder dump took.
+
 Stage C, evidence and proposals, not building: step 7's File Explorer
 evidence pass with written recommendations; step 8 as a throwaway
 prototype of holding keys, measured, with a written analysis (holding keys
@@ -382,6 +403,13 @@ Other open items, taken after the steps above unless they fold into one:
   a full dump of every outpost crash, so the event that carried it can be
   found, since a minidump holds no heap; and count outpost crashes across
   runs, in the suite's summary, so how often it happens is known.
+- Verbatim's own outpost once left a fact in its intake for 6.37 seconds
+  (2026-10-11): its worker logged nothing from 18:22:28.52 to 18:22:34.90,
+  and the menu window's SHOW event reached the outpost only at 34.896.
+  The cause is not known. Debug-level logs now record each entry pushed
+  into the outpost's intake and each batch it plans, and the GUI logs
+  when it starts popping the Verbatim menu and how long the popup was
+  held; reproduce it with them.
 - `settings_system_page` once heard "Windows isn't activated"; the
   settings package above says 14 settings but names 13.
 - `verbatim-gui`'s rlib is 375 MB.
