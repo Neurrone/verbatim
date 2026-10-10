@@ -109,97 +109,102 @@ in the dated section named with each item.
   runs; on GitHub's runners an explicit setting turns enforcement off and
   the numbers are recorded. Today the suite records them and asserts
   none.
+Phase 6's remaining work is done in the order below, one step at a time,
+each one change checked with `cargo xtask ci` and the related scenarios
+(Dickson, 2026-10-10). It follows an audit of phase 6's commits, which
+found most regressions came from patches over three root causes: Verbatim
+learns of a key after the application has acted on it; a UIA focus is
+judged when the outpost's worker reaches it, not when it arrives; and a
+terminal is read in several calls that need rules about which to trust.
+Agents make no behaviour decisions: every change in what is heard goes to
+Dickson first.
+
+1. Baseline measurements of the code at 5cd388c, from the `measure-timing`
+   branch (timestamps only, not merged): the focus path from the listener
+   to the outpost's check, including a new outpost's start-up; the key
+   path from the hook to the outpost; what holding a key would cost; and
+   how often a key's effect is misjudged after the fact. The delay from
+   the listener to the outpost should be no more than a few milliseconds.
+2. A second Verbatim does what NVDA does: asks the running one to quit,
+   waits 5 seconds, then ends it and starts (replacing 9c7ba9a and
+   4405c84, which never end it).
+3. NVDA's event filtering in the outposts, before any call into the
+   application: its acceptance test, its order of checks for MSAA events,
+   and the same test for UIA events (approved 2026-10-10).
+4. Cheaper reads: only the property that changed; a selection read in
+   full only when it will be spoken; the controlled selection in one
+   remote operation; smaller UIA cache requests for text and caret
+   events; no outpost started for a background notification (approved
+   2026-10-10). Measure again after steps 3 and 4.
+5. Events handled in arrival order, removing the focus-first reordering
+   (42d9caa, ce53dbc).
+6. A UIA focus judged as it arrives at the outpost, ahead of its queue,
+   with the one read that finds the focused element; then the rules for
+   a focus that moved on (2818fd4, 5076b5a) are removed. The rule that
+   Control+Tab announces only the tab it selects (8be2223) stays.
+7. A fresh File Explorer evidence pass on the new pipeline: NVDA captures
+   and Verbatim logs with raw event timings, ten runs locally, ten in the
+   VM and on GitHub. Dickson then decides what Explorer should say, and
+   whether announcing a window only once it is shown (edd0352) stays.
+   Open Explorer items: the "Working on it..." placeholder that fails
+   `explorer_folder_window` on GitHub (run 37974580973); the early
+   foreground event; a file-list focus once 10 seconds late; and the
+   "e2e-stage - File Explorer" window of unknown origin.
+8. Whether keys are held, as NVDA holds a key with a script while it reads
+   the caret, decided by Dickson from step 1's numbers.
+9. Terminal reading redesigned from first principles, at least as good as
+   NVDA and willing to replace all of today's logic: one read per change
+   as the unit, every other call only a hint, an original line diff, and
+   each extra beyond NVDA's model decided separately. It removes ecf191c,
+   restores a scenario with an interactive shell for output written just
+   after a terminal takes the focus (with an NVDA capture), and restores
+   the console host's real password prompt.
+
+Decided by Dickson on 2026-10-10 for this work: drop background events
+before any read; background progress bars stay silent with no setting; a
+foreground UIA progress bar that is not the focus is reported, as NVDA
+does, as a separate fix; selection announcements in a focused list stay
+as they are; acquisition is skipped for events outside the focus chain;
+a control's ControllerFor is read per event, as NVDA does; the event
+limit counts by the event's own thread; NVDA's short foreground deferral
+is not added; and Verbatim's own events (the console host's updates, text
+selection changes in edit controls, UIA text changes from any text focus,
+window-wide subscriptions) are kept as listed differences.
+
+Other open items, taken after the steps above unless they fold into one:
+
 - A test that UIA text fields are read by parts (coherence review,
-  2026-10-09); the rest of that review's fixes and tests are built.
-- Text fields (from the 2026-10-09 review): on the classic text path
-  `UiaText::caret_read` (`verbatim-outpost` `text/mod.rs` and `text/uia.rs`)
-  answers as if it had read the caret, so the caret recheck added in
-  676d127 is skipped there; decide by the path taken, with a test. The
-  `(Some(Removal::Joined) | None, Some(deleted))` arm in Core's
-  `editing.rs` has a case that cannot occur.
+  2026-10-09).
+- Text fields: on the classic text path `UiaText::caret_read`
+  (`verbatim-outpost` `text/mod.rs` and `text/uia.rs`) answers as if it
+  had read the caret, so the caret recheck added in 676d127 is skipped
+  there; and the `(Some(Removal::Joined) | None, Some(deleted))` arm in
+  Core's `editing.rs` has a case that cannot occur.
 - Core speaks state changes such as "selected" for a focus that has
-  expired. The outpost's rules for a focus that moved on (5076b5a, and
-  8be2223 for the tab Control+Tab leaves) avoid it; fix it in Core from
-  the parity docs, then decide whether those outpost rules are still
-  needed.
+  expired.
 - Core picks between the outpost's events and its commands at random, so
   a typed character's echo and the output after it can come in either
-  order (seen in `conhost_typing` and `conhost_flood`).
-- Output written just after a Windows Terminal terminal takes the focus
-  can go unspoken: on GitHub's runner (run 37926631704), PowerShell's
-  start-up notice, arriving just after the focus, was never spoken within
-  15 seconds. The suite's Windows Terminal shells now run
-  `-NonInteractive` (f694dca), so no scenario covers this; add one.
-- A Windows Terminal terminal was once announced twice: a second UIA
-  focus event for the same terminal, about 110 ms after the first,
-  announced "terminal" and "blank" again and cut off the first
-  announcement instead of being taken silently.
-- A terminal key whose effect is redrawn twice before Core's request for
-  its watch reaches the outpost is judged by the caret alone: ecf191c
-  keeps one earlier screen, not more.
-- File Explorer:
-  - `explorer_folder_window` fails on GitHub's runner (run 37974580973):
-    opening the subfolder, Explorer focuses its "Working on it..."
-    placeholder while it lists the folder, and the scenario expected the
-    file. Capture NVDA for the same steps, then make the scenario wait for
-    evidence that the folder is listed, or expect what NVDA says.
-  - Explorer raises a foreground event of its own for a new folder window
-    140 to 400 ms before the window is in front. Verbatim drops it as
-    NVDA does and announces the window from the system's later event
-    (5440c15). Awaiting Dickson's decision: keep dropping it; keep it and
-    report it just before a focus inside the window; or report it when the
-    window is shown and also announce a later title change. Keeping it
-    until the window was shown announced "File Explorer" once in 10 runs,
-    because Explorer showed the window before setting the folder's title
-    (`phase6-design.md`, "A foreground event before its window is in
-    front").
-  - Once, Explorer's file-list focus arrived 10 seconds late, on the
-    list's container rather than its first item, and the moved-on rule
-    dropped it while waiting for the item's own event, which never came.
-    Ten-second delays also appear in passing runs.
-  - A window titled "e2e-stage - File Explorer" appeared during a suite
-    run; which scenario opens it is not known.
+  order.
+- A Windows Terminal terminal was once announced twice: a second UIA focus
+  event for the same terminal, about 110 ms after the first, was not taken
+  as a duplicate. The cause is not known; reproduce it with logging.
 - Alt+Tab's "Task Switching" window twice stayed in front for 30 seconds
-  in `windows_terminal_two_windows` and the switch never happened, while
-  code since removed was in place; not seen since. Whether the shell's
-  outpost reading it played a part is not established.
-- The five-second limit on a second Verbatim waiting for the first to exit
-  (4405c84) has not been exercised live.
-- mockapp's `uia_event_registrations_cost_exactly` failed once and has not
-  failed since.
-- `settings_system_page` once heard Windows' "Windows isn't activated"
-  notice; and the settings package's list above says 14 settings but
-  names 13, so one is missing or the count is wrong.
-- `verbatim-gui`'s rlib is 375 MB; whether that is the bundled wxWidgets
-  is worth a look.
-- Deferred by Dickson (2026-10-10): reading an element's keyboard focus
-  live as its focus event arrives, as NVDA does. The listener uses the
-  event's cached state, since it cannot make cross-process calls.
-  Accepted for now: Control+Tab says "tab control" before "list".
-- Awaiting Dickson's confirmation, each recorded in `phase6-design.md`:
-  - The suite's Windows Terminal shells run `-NonInteractive`, and the
-    password scenarios draw their own prompt, instead of waiting for the
-    shell's start-up output to reach the terminal.
-  - A speech pause or resume no step asserts is dropped at the next input
-    rather than failing the scenario, since Shift with another key always
-    pauses and resumes.
-  - Every UIA focus event in a batch is handled oldest first, and a focus
-    that has moved on is still reported unless its element is gone or
-    contains the focus now.
-  - The shell's staging windows are ignored for focus and foreground, as
-    NVDA's File Explorer module does.
-  - The leave-during-a-flood scenarios bring windows forward as a taskbar
-    button does, not with Alt+Tab, since flood output read between Alt's
-    press and the switch was spoken.
-  - The 250 ms foreground hold is removed, despite one observation on
-    2026-10-05 of Notepad's foreground event arriving 130 ms early.
+  in `windows_terminal_two_windows`; not seen since.
+- mockapp's `uia_event_registrations_cost_exactly` failed once.
+- `settings_system_page` once heard "Windows isn't activated"; the
+  settings package above says 14 settings but names 13.
+- `verbatim-gui`'s rlib is 375 MB.
+- Awaiting Dickson's confirmation: the shell's staging windows are
+  ignored for focus and foreground, as NVDA does; the leave-during-a-flood
+  scenarios use a taskbar-style switch rather than Alt+Tab (the audit
+  recommends restoring Alt+Tab with a wait for evidence); and the 250 ms
+  foreground hold stays removed.
 
-To resume: read `phase6-design.md`'s dated sections from 2026-10-09 on,
-then this list. `docs/tooling.md` covers building in parallel worktrees,
-the single end-to-end test binary, and capturing NVDA (a capture's window
-is closed only once its program has caught up with its input). Run
-changed scenarios ten times each, and the full suite once after a change
-every scenario sees.
+To resume: read this list, then `phase6-design.md`'s dated sections from
+2026-10-09 on. `docs/tooling.md` covers building in parallel worktrees,
+the single end-to-end test binary, and capturing NVDA. Run changed
+scenarios ten times each, and the full suite once after a change every
+scenario sees.
 
 ## M5 — Extensions v1
 
