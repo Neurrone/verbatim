@@ -2779,6 +2779,38 @@ impl Worker<'_> {
         }
     }
 
+    /// Whether a UIA focus fact passes the checks made before any read: the
+    /// event's acceptance against the foreground, the element having the
+    /// keyboard focus, and its not being the console host's own window.
+    fn allows_uia_focus(
+        &self,
+        (fact_hwnd, focus_window): (isize, isize),
+        fact: &UiaSnapshotFact,
+    ) -> bool {
+        let window = Some(fact_hwnd).filter(|&hwnd| hwnd != 0);
+        if !self.accepts(EventName::GainFocus, window.unwrap_or(focus_window)) {
+            return false;
+        }
+        if !fact.states.contains(State::Focused) {
+            tracing::debug!("UIA focus dropped: the element does not have the keyboard focus");
+            return false;
+        }
+        // The console host's window element, the parent of its text area,
+        // reports the keyboard focus whenever the text area has it, and its
+        // focus events, which come around the text area's, are never the
+        // focus: NVDA refuses them whatever the element reports
+        // (`consoleUIAWindow.shouldAllowUIAFocusEvent` is false,
+        // `NVDAObjects/UIA/winConsoleUIA.py` 356 to 358, given to the element
+        // whose automation id is "Console Window", 446 and 447; checked in
+        // `UIAHandler/__init__.py` 948 to 953). It is the one element whose
+        // own window is the console window; the text area has none.
+        if fact_hwnd != 0 && window_class_name(fact_hwnd) == CONSOLE_WINDOW_CLASS {
+            tracing::debug!("UIA focus dropped: the console window's own focus");
+            return false;
+        }
+        true
+    }
+
     /// A UIA focus fact. What the focus is comes from the event, as NVDA
     /// builds the focus from the event's sender, and only when the event
     /// says the element has the keyboard focus (NVDA's
@@ -2820,25 +2852,7 @@ impl Worker<'_> {
         observed_at_ms: u64,
     ) {
         let context = self.context;
-        let window = Some(fact_hwnd).filter(|&hwnd| hwnd != 0);
-        if !self.accepts(EventName::GainFocus, window.unwrap_or(focus_window)) {
-            return;
-        }
-        if !fact.states.contains(State::Focused) {
-            tracing::debug!("UIA focus dropped: the element does not have the keyboard focus");
-            return;
-        }
-        // The console host's window element, the parent of its text area,
-        // reports the keyboard focus whenever the text area has it, and its
-        // focus events, which come around the text area's, are never the
-        // focus: NVDA refuses them whatever the element reports
-        // (`consoleUIAWindow.shouldAllowUIAFocusEvent` is false,
-        // `NVDAObjects/UIA/winConsoleUIA.py` 356 to 358, given to the element
-        // whose automation id is "Console Window", 446 and 447; checked in
-        // `UIAHandler/__init__.py` 948 to 953). It is the one element whose
-        // own window is the console window; the text area has none.
-        if fact_hwnd != 0 && window_class_name(fact_hwnd) == CONSOLE_WINDOW_CLASS {
-            tracing::debug!("UIA focus dropped: the console window's own focus");
+        if !self.allows_uia_focus((fact_hwnd, focus_window), fact) {
             return;
         }
         let reading = Instant::now();

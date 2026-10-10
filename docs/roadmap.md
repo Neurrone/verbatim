@@ -136,8 +136,8 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
 3. Console windows: every event to the console host's outpost, with the
    client process as identity; the console special cases removed. Built,
    pending live checks (`phase6-design.md`, "Console windows as one
-   application"): not yet built or tested; then `cargo xtask ci`, every
-   `conhost_` scenario, `settings_system_page`, and the full suite.
+   application"): `cargo xtask ci` passes; every `conhost_` scenario,
+   `settings_system_page`, and the full suite have not yet been run.
 4. Arrival order in the outposts: 42d9caa and ce53dbc removed; NVDA's MSAA
    focus collapsing (consecutive runs, up to four) and limits by the
    event's own thread, for MSAA only; `msaa_focus_waiting` removed.
