@@ -231,6 +231,11 @@ Other open items, taken after the steps above unless they fold into one:
   (`Request::AwaitIdle`) answers only once every outpost's work in flight
   is done, events not yet published and caret watches included; the
   measurement runs heard speech arrive after it.
+- Help balloons and toasts (Dickson, 2026-10-10): step 3 leaves them
+  outside NVDA's rule that drops MSAA alert and show events from windows
+  that use UIA. Check how Verbatim reads toasts; if it also gets them
+  through UIA, adopt NVDA's rule, the expected outcome; if only through
+  MSAA, keep the difference and record it in `docs/parity.md`.
 - To investigate, then bring to Dickson: after Shift pauses speech, NVDA's
   next key cancels speech, clearing the pause, where Verbatim reports a
   resume; whether anything is heard differently.
