@@ -123,7 +123,7 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
 1. Time limits that hold: UIA's transaction and connection timeouts at 5
    seconds, set once per process; `Uia::within` retired; watchdogs on every
    thread others wait on; multi-call searches given a deadline of their own
-   or made one remote operation. Built, pending live checks (2026-10-11,
+   or made one remote operation. Done (2026-10-11, full suite 90 of 90;
    `phase6-design.md`, "Time limits that hold"): `CoCancelCall` for MSAA
    calls is left as a recommendation there.
 2. Core: one input channel in arrival order; NVDA's duplicate-focus rule;
