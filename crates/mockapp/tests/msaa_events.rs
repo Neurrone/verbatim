@@ -15,11 +15,14 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
+use std::sync::{Arc, Mutex, PoisonError};
+
 use verbatim_core::SrState;
+use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
 use verbatim_model::{
     Backend, Earcon, Effect, Input, NormalizedEvent, OutpostId, Pid, SegmentContent, State, TraceId,
 };
-use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, Query};
+use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, Query, WinEventStamp};
 
 use common::outpost::{OutpostUnderTest, Reported};
 
@@ -252,7 +255,6 @@ enum Batching {
 fn disable_then_move(batching: Batching, (to_id, to_index): (&str, usize)) -> Vec<Said> {
     /// The Remove button, by its index in mockapp's tree.
     const REMOVE: usize = 1;
-    use verbatim_ia2::WinEventKind;
     use verbatim_outpost::Heard;
     common::init_com();
     let title = common::unique_title("mockapp-msaa-change-before-focus");
@@ -484,7 +486,6 @@ fn a_selection_is_read_in_full_only_inside_a_focused_list() {
     /// in mockapp's tree.
     const FIRST: usize = 2;
     const LIST: usize = 4;
-    use verbatim_ia2::WinEventKind;
     use verbatim_outpost::Heard;
     common::init_com();
     let title = common::unique_title("mockapp-msaa-selection-read");
@@ -519,8 +520,8 @@ fn a_selection_is_read_in_full_only_inside_a_focused_list() {
     app.quit();
 }
 
-/// A tooltip window's show event (which the listener forwards only from
-/// `tooltips_class32` windows) is spoken as NVDA's notification behavior
+/// A tooltip window's show event (which the outpost's own hook and the
+/// listener take only from `tooltips_class32` windows) is spoken as NVDA's notification behavior
 /// speaks a help balloon, which NVDA reports by default; an ordinary
 /// tooltip is not, as NVDA does not report tooltips by default.
 fn a_help_balloon_shown_is_spoken() {
@@ -554,8 +555,86 @@ fn a_help_balloon_shown_is_spoken() {
     app.quit();
 }
 
+/// Has mockapp, running the small fixture with its MSAA provider, raise a
+/// focus event on `btn1` (`focus`), and returns the fact the focus
+/// listener forwards for it with the thread that raised it and when, as a
+/// hook on this thread took it in.
+fn raise_focus(app: &mut common::MockApp) -> (DeliveredFact, WinEventStamp) {
+    let seen = Arc::new(Mutex::new(None::<WinEvent>));
+    let sink = Arc::clone(&seen);
+    let hook = WinEventHook::install(
+        app.pid(),
+        &[WinEventKind::Focus],
+        Box::new(move |event: WinEvent| {
+            *sink.lock().unwrap_or_else(PoisonError::into_inner) = Some(event);
+        }),
+    )
+    .expect("WinEventHook::install");
+    app.send("focus btn1");
+    let event = common::pump_until(|| *seen.lock().unwrap_or_else(PoisonError::into_inner));
+    drop(hook);
+    let fact =
+        DeliveredFact::from_win_event(event.kind, (event.hwnd, event.id_object, event.id_child))
+            .expect("a focus in mockapp's window");
+    let stamp = WinEventStamp {
+        thread: event.thread,
+        time: event.time,
+    };
+    (fact, stamp)
+}
+
+/// An MSAA focus raised once an outpost's own hook is in reaches it by
+/// that hook and is reported; the focus listener's copy of the same event,
+/// forwarded before the listener heard the hook was in, is the twin of the
+/// hook's copy and is dropped (`docs/design/focus-pipeline.md`, section
+/// 12.4, "The MSAA hand-over, exactly").
+fn a_focus_the_outposts_own_hook_took_in_is_reported_once() {
+    use verbatim_outpost::Heard;
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-hook-focus");
+    let mut app = common::spawn("small.json", "msaa", &title);
+    let outpost = OutpostUnderTest::new(&app);
+
+    let (fact, stamp) = raise_focus(&mut app);
+    outpost.heard(&[Heard::Msaa(WinEventKind::Focus)]);
+    let NormalizedEvent::FocusChanged { node, .. } = next_event(&outpost) else {
+        panic!("the outpost reported something other than the focus");
+    };
+    assert_eq!(node.name.as_deref(), Some("Original Name"));
+    outpost.deliver_win_event(fact, stamp);
+    outpost.settled();
+    app.quit();
+}
+
+/// An MSAA focus raised before an outpost's own hook is in reaches it only
+/// from the focus listener, with the thread that raised it and when: it has
+/// no twin, and is reported.
+fn a_focus_raised_before_the_outposts_hook_is_reported_from_the_listener() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-listener-focus");
+    let mut app = common::spawn("small.json", "msaa", &title);
+    let (fact, stamp) = raise_focus(&mut app);
+    let outpost = OutpostUnderTest::new(&app);
+
+    outpost.deliver_win_event(fact, stamp);
+    let NormalizedEvent::FocusChanged { node, .. } = next_event(&outpost) else {
+        panic!("the outpost reported something other than the focus");
+    };
+    assert_eq!(node.name.as_deref(), Some("Original Name"));
+    outpost.settled();
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_focus_the_outposts_own_hook_took_in_is_reported_once",
+            a_focus_the_outposts_own_hook_took_in_is_reported_once,
+        ),
+        (
+            "a_focus_raised_before_the_outposts_hook_is_reported_from_the_listener",
+            a_focus_raised_before_the_outposts_hook_is_reported_from_the_listener,
+        ),
         (
             "a_selection_is_read_in_full_only_inside_a_focused_list",
             a_selection_is_read_in_full_only_inside_a_focused_list,

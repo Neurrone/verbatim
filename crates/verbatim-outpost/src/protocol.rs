@@ -89,6 +89,43 @@ pub struct UiaSnapshotFact {
     pub details: NodeDetails,
 }
 
+/// The thread that raised an MSAA `WinEvent` and when, as every hook that
+/// receives the event is told (`idEventThread` and `dwmsEventTime`): with
+/// the event's kind and address, what tells the listener's copy of an event
+/// and the outpost's own hook's copy apart from other events
+/// (`docs/design/focus-pipeline.md`, section 12.4, "The MSAA hand-over,
+/// exactly"). The thread is also the one NVDA's limiter counts the event
+/// by.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WinEventStamp {
+    /// The thread that raised the event.
+    pub thread: u32,
+    /// When Windows raised it, on the clock `verbatim_ia2::event_clock`
+    /// reads, which wraps after 49.7 days.
+    pub time: u32,
+}
+
+impl WinEventStamp {
+    /// Whether the event was raised after the clock read `tick`.
+    #[must_use]
+    pub fn raised_after(self, tick: u32) -> bool {
+        tick_is_after(self.time, tick)
+    }
+
+    /// Whether the event was raised before the clock read `tick`.
+    #[must_use]
+    pub fn raised_before(self, tick: u32) -> bool {
+        tick_is_after(tick, self.time)
+    }
+}
+
+/// Whether tick `a` comes after tick `b` on the event clock, which wraps:
+/// two ticks are compared by their difference, so the comparison holds
+/// across a wrap for times less than 24 days apart.
+pub(crate) fn tick_is_after(a: u32, b: u32) -> bool {
+    a != b && a.wrapping_sub(b) < 1 << 31
+}
+
 /// A fact the listener forwards to Core, tagged with the pid Core routes it
 /// to (decision D13). The listener reads only what the event itself carries
 /// plus hang-safe local reads (the owning pid, a cached window handle), never
@@ -121,7 +158,9 @@ impl ListenerFact {
 /// A fact the supervisor delivers to a target outpost (decision D13): what
 /// the listener captured, minus the pid, since routing is already done. The
 /// outpost's worker reads, arbitrates, and reports it exactly as it does the
-/// events it hooks itself.
+/// events it hooks itself; its own hook makes the same facts of the MSAA
+/// focus, foreground, menu, alert, and tooltip events it takes in
+/// ([`DeliveredFact::from_win_event`]).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum DeliveredFact {
     /// A UIA focus change: the element's cached native window handle (0 when
@@ -221,6 +260,64 @@ pub enum DeliveredFact {
 }
 
 impl DeliveredFact {
+    /// The fact an MSAA `WinEvent` of `kind` at the address `(hwnd,
+    /// id_object, id_child)` makes, whether the listener's hook or an
+    /// outpost's own took it in: a focus, a foreground change, a menu
+    /// opening, an alert, or a tooltip shown. `None` for any other kind,
+    /// and for an event with no window, which neither routes nor reads.
+    #[must_use]
+    pub fn from_win_event(
+        kind: verbatim_ia2::WinEventKind,
+        (hwnd, id_object, id_child): (isize, i32, i32),
+    ) -> Option<Self> {
+        use verbatim_ia2::WinEventKind;
+        if hwnd == 0 {
+            return None;
+        }
+        Some(match kind {
+            WinEventKind::Focus => DeliveredFact::MsaaFocus {
+                hwnd,
+                id_object,
+                id_child,
+            },
+            // Taken unchecked: whether the window is still the foreground
+            // window is checked when the fact is handled, as NVDA checks it
+            // when it processes the event rather than in its event callback.
+            WinEventKind::Foreground => DeliveredFact::Foreground { hwnd },
+            WinEventKind::MenuPopupStart => DeliveredFact::MenuPopup {
+                hwnd,
+                id_object,
+                id_child,
+            },
+            WinEventKind::Alert => DeliveredFact::Alert {
+                hwnd,
+                id_object,
+                id_child,
+            },
+            WinEventKind::Show => DeliveredFact::Show {
+                hwnd,
+                id_object,
+                id_child,
+            },
+            _ => return None,
+        })
+    }
+
+    /// Whether this fact is an MSAA `WinEvent`'s, which an outpost's own
+    /// hook takes in once it is installed, and the listener forwards only
+    /// until then (`docs/design/focus-pipeline.md`, section 12.4).
+    #[must_use]
+    pub fn is_win_event(&self) -> bool {
+        matches!(
+            self,
+            DeliveredFact::MsaaFocus { .. }
+                | DeliveredFact::Foreground { .. }
+                | DeliveredFact::MenuPopup { .. }
+                | DeliveredFact::Alert { .. }
+                | DeliveredFact::Show { .. }
+        )
+    }
+
     /// Whether this fact may start an outpost for an application that has
     /// none (outpost redesign, "The focus listener"): focus, foreground,
     /// menu, and alert facts may, and the shell's window-snap results
@@ -334,6 +431,39 @@ pub enum SupervisorToOutpost {
         timing: EventTiming,
         /// The routed fact, minus the pid (routing is done).
         fact: DeliveredFact,
+        /// For an MSAA `WinEvent`'s fact, the thread that raised it and
+        /// when, by which the outpost matches it with its own hook's copy
+        /// and counts it in NVDA's limits; `None` for a UIA fact.
+        #[serde(default)]
+        win_event: Option<WinEventStamp>,
+    },
+    /// To the focus listener: the outpost `outpost` watching `pid` has its
+    /// own `WinEvent` hook in, so the listener forwards none of `pid`'s
+    /// `WinEvent` facts raised from now on, and answers
+    /// [`OutpostToSupervisor::ForwardingEnded`] behind every fact it has
+    /// forwarded (`docs/design/focus-pipeline.md`, section 12.4).
+    HookInstalled {
+        /// The application.
+        pid: Pid,
+        /// Its outpost incarnation, echoed in the answer so a late answer
+        /// never reaches a later incarnation.
+        outpost: OutpostId,
+    },
+    /// To the focus listener: `pid` has no outpost with its hook in any
+    /// more, so the listener forwards its `WinEvent` facts again.
+    HookRemoved {
+        /// The application.
+        pid: Pid,
+    },
+    /// To an outpost: the listener forwards none of the application's
+    /// `WinEvent` facts raised after `through`, and every one it forwarded
+    /// before is ahead of this message, so the listener's copies and the
+    /// outpost's hook's are matched from now on only for events raised
+    /// while the hook went in (section 12.4, "The overlap's ends"). Relayed
+    /// in order behind every fact the listener sent before it.
+    ForwardingEnded {
+        /// The listener's clock when it stopped, on the `WinEvent` clock.
+        through: u32,
     },
     /// A query, answered by exactly one [`OutpostToSupervisor::Reply`]
     /// carrying the same `request_id`.
@@ -608,6 +738,23 @@ pub enum OutpostToSupervisor {
         timing: EventTiming,
         /// The captured fact, tagged with the pid Core routes it to.
         fact: ListenerFact,
+        /// For an MSAA `WinEvent`'s fact, the thread that raised it and
+        /// when; `None` for a UIA fact.
+        #[serde(default)]
+        win_event: Option<WinEventStamp>,
+    },
+    /// The listener's answer to [`SupervisorToOutpost::HookInstalled`],
+    /// sent behind every fact it forwarded before it: it forwards none of
+    /// `pid`'s `WinEvent` facts raised after `through`. Sent only by the
+    /// listener; the supervisor relays it to `outpost` as
+    /// [`SupervisorToOutpost::ForwardingEnded`] if it still watches `pid`.
+    ForwardingEnded {
+        /// The application.
+        pid: Pid,
+        /// The outpost incarnation the hand-over was for.
+        outpost: OutpostId,
+        /// The listener's clock when it stopped, on the `WinEvent` clock.
+        through: u32,
     },
     /// A menu closed, menu mode ended, or the Alt+Tab switcher closed,
     /// anywhere on the desktop, 50 milliseconds ago. Sent only by the
@@ -965,6 +1112,7 @@ mod tests {
             timing: EventTiming::default(),
             observed_at_ms: 1_752_000_000_000,
             fact: fact.clone(),
+            win_event: None,
         };
         let mut buffer = Vec::new();
         write_message(&mut buffer, &focus_fact).expect("writes");
@@ -994,6 +1142,10 @@ mod tests {
                 id_object: -4,
                 id_child: 0,
             },
+            win_event: Some(WinEventStamp {
+                thread: 77,
+                time: 1000,
+            }),
         };
         let mut buffer = Vec::new();
         write_message(&mut buffer, &deliver).expect("writes");
@@ -1002,6 +1154,65 @@ mod tests {
             .expect("reads")
             .expect("not end of stream");
         assert_eq!(read_back, deliver);
+    }
+
+    #[test]
+    fn the_hand_over_messages_round_trip() {
+        let pid = Pid(1234);
+        let outpost = OutpostId(5);
+        for command in [
+            SupervisorToOutpost::HookInstalled { pid, outpost },
+            SupervisorToOutpost::HookRemoved { pid },
+            SupervisorToOutpost::ForwardingEnded { through: 99 },
+        ] {
+            let mut buffer = Vec::new();
+            write_message(&mut buffer, &command).expect("writes");
+            let read_back: Option<SupervisorToOutpost> =
+                read_message(&mut buffer.as_slice()).expect("reads");
+            assert_eq!(read_back, Some(command));
+        }
+        let ended = OutpostToSupervisor::ForwardingEnded {
+            pid,
+            outpost,
+            through: 99,
+        };
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &ended).expect("writes");
+        let read_back: Option<OutpostToSupervisor> =
+            read_message(&mut buffer.as_slice()).expect("reads");
+        assert_eq!(read_back, Some(ended));
+    }
+
+    #[test]
+    fn a_win_event_is_raised_before_or_after_a_tick_across_the_clocks_wrap() {
+        let at = |time| WinEventStamp { thread: 1, time };
+        assert!(at(20).raised_after(10));
+        assert!(at(5).raised_before(10));
+        assert!(!at(10).raised_after(10) && !at(10).raised_before(10));
+        // Just after the clock wrapped is after just before it.
+        assert!(at(3).raised_after(u32::MAX - 3));
+        assert!(at(u32::MAX - 3).raised_before(3));
+    }
+
+    #[test]
+    fn only_the_five_win_event_kinds_with_a_window_make_a_fact() {
+        use verbatim_ia2::WinEventKind;
+        for kind in [
+            WinEventKind::Focus,
+            WinEventKind::Foreground,
+            WinEventKind::MenuPopupStart,
+            WinEventKind::Alert,
+            WinEventKind::Show,
+        ] {
+            let fact = DeliveredFact::from_win_event(kind, (7, -4, 0))
+                .unwrap_or_else(|| panic!("{kind:?} makes a fact"));
+            assert!(fact.is_win_event(), "{kind:?}");
+            assert_eq!(DeliveredFact::from_win_event(kind, (0, -4, 0)), None);
+        }
+        assert_eq!(
+            DeliveredFact::from_win_event(WinEventKind::NameChange, (7, -4, 0)),
+            None
+        );
     }
 
     #[test]

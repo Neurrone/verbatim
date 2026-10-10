@@ -21,6 +21,15 @@
 //! test says otherwise ([`OutpostUnderTest::set_foreground`]), as when a
 //! user works in mockapp, so its events pass the outpost's acceptance test
 //! against the foreground window.
+//!
+//! The outpost's own hook takes in mockapp's MSAA focus, foreground, menu,
+//! alert, and tooltip events, as every outpost's does
+//! (`docs/design/focus-pipeline.md`, section 12.4). A fact the test hands
+//! over carries no `WinEvent` stamp, so the outpost never takes it for the
+//! twin of an event its hook took in: a test hands over an MSAA fact for an
+//! event mockapp never raised, or raised before the outpost was made. Only
+//! [`OutpostUnderTest::deliver_win_event`] hands over a stamped one, the
+//! listener's copy of an event mockapp raised.
 
 use std::io::Write;
 use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
@@ -35,7 +44,7 @@ use verbatim_model::{
 use verbatim_outpost::listener::uia_focus_fact;
 use verbatim_outpost::protocol::{
     DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, Query, QueryOutcome,
-    QueryResult, SupervisorToOutpost, read_message,
+    QueryResult, SupervisorToOutpost, WinEventStamp, read_message,
 };
 use verbatim_outpost::{Heard, Outpost, OutpostOptions};
 use windows::Win32::Foundation::{E_FAIL, HWND};
@@ -250,6 +259,21 @@ impl OutpostUnderTest {
                 observed_at_ms: 0,
                 timing: EventTiming::default(),
                 fact,
+                win_event: None,
+            });
+    }
+
+    /// Hands the outpost the fact the listener forwards for an MSAA
+    /// `WinEvent`, with the thread that raised the event and when, which
+    /// the outpost matches with its own hook's copy, and returns at once.
+    pub fn deliver_win_event(&self, fact: DeliveredFact, stamp: WinEventStamp) {
+        self.outpost
+            .handle_command(&SupervisorToOutpost::DeliverFact {
+                trace_id: TraceId::mint(),
+                observed_at_ms: 0,
+                timing: EventTiming::default(),
+                fact,
+                win_event: Some(stamp),
             });
     }
 
@@ -270,6 +294,7 @@ impl OutpostUnderTest {
                 observed_at_ms,
                 timing: EventTiming::default(),
                 fact,
+                win_event: None,
             });
     }
 

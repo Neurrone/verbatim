@@ -48,6 +48,41 @@ pub fn init_com() {
 /// broken.
 pub const WAIT_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Pumps this thread's messages, which out-of-context `WinEvent`s are
+/// delivered through, until `value` yields something, waiting for each
+/// message rather than polling; fails the test if nothing comes within
+/// [`WAIT_TIMEOUT`].
+pub fn pump_until<T>(mut value: impl FnMut() -> Option<T>) -> T {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, MSG, MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, PM_REMOVE,
+        PeekMessageW, QS_ALLINPUT, TranslateMessage,
+    };
+    let deadline = std::time::Instant::now() + WAIT_TIMEOUT;
+    let mut msg = MSG::default();
+    loop {
+        // SAFETY: `msg` is a local the call writes when it returns a message.
+        while unsafe { PeekMessageW(&raw mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
+            // SAFETY: `msg` is the message just retrieved.
+            let _ = unsafe { TranslateMessage(&raw const msg) };
+            // SAFETY: as above.
+            unsafe { DispatchMessageW(&raw const msg) };
+        }
+        if let Some(value) = value() {
+            return value;
+        }
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        let left = u32::try_from(left.as_millis()).unwrap_or(u32::MAX);
+        // SAFETY: no handles; wakes when a message arrives or the time is up.
+        let woke =
+            unsafe { MsgWaitForMultipleObjectsEx(None, left, QS_ALLINPUT, MWMO_INPUTAVAILABLE) };
+        assert_ne!(
+            woke,
+            windows::Win32::Foundation::WAIT_TIMEOUT,
+            "the awaited WinEvent did not arrive"
+        );
+    }
+}
+
 static TITLE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Builds a per-test-unique window title, so concurrently running tests

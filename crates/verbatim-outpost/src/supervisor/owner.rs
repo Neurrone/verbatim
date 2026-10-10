@@ -16,7 +16,7 @@ use verbatim_model::{OutpostId, Pid, TraceId};
 
 use crate::protocol::{
     DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
-    read_message,
+    WinEventStamp, read_message,
 };
 
 use super::ignored::IgnoredProcesses;
@@ -50,6 +50,15 @@ pub(super) enum OwnerEvent {
         observed_at_ms: u64,
         timing: EventTiming,
         fact: ListenerFact,
+        win_event: Option<WinEventStamp>,
+    },
+    /// From the listener's reader: it forwards none of `pid`'s `WinEvent`
+    /// facts raised after `through`, the answer to the hand-over for
+    /// `outpost`.
+    ForwardingEnded {
+        pid: Pid,
+        outpost: OutpostId,
+        through: u32,
     },
     /// From the listener's reader: a menu or the Alt+Tab switcher closed.
     MenuOrSwitchEnded { ended_at_ms: u64 },
@@ -120,6 +129,9 @@ struct ListenerRecord {
     /// Whether this listener replaces an earlier one: facts were lost in the
     /// gap, so the attention application is asked to report again on `Ready`.
     replacement: bool,
+    /// The hand-over's news for it, held while its launch is still at work,
+    /// in order, and written once it has a writer.
+    pending: Vec<SupervisorToOutpost>,
 }
 
 /// The owner thread's state.
@@ -246,7 +258,22 @@ impl Owner {
                 observed_at_ms,
                 timing,
                 fact,
-            } => self.route_fact(trace_id, observed_at_ms, timing, fact),
+                win_event,
+            } => self.route_fact(
+                HeldFact {
+                    trace_id,
+                    observed_at_ms,
+                    timing,
+                    fact: fact.fact,
+                    win_event,
+                },
+                fact.pid,
+            ),
+            OwnerEvent::ForwardingEnded {
+                pid,
+                outpost,
+                through,
+            } => self.forwarding_ended(pid, outpost, through),
             OwnerEvent::TargetExited(outpost) => {
                 if let Some(pid) = self.pid_of(outpost) {
                     self.target_exited(pid, "target exited");
@@ -385,6 +412,9 @@ impl Owner {
     }
 
     /// Records a new listener as starting and hands its launch to a helper.
+    /// It is told on its command line which applications' outposts have
+    /// their own hooks in now, and of every change after this as soon as it
+    /// has a writer ([`tell_listener`](Self::tell_listener)).
     fn start_listener(&mut self, replacement: bool) {
         let outpost = self.next_outpost_id();
         self.listener = Some(ListenerRecord {
@@ -392,8 +422,57 @@ impl Owner {
             child: None,
             last_pong_at: Instant::now(),
             replacement,
+            pending: Vec::new(),
         });
         self.launch(outpost, Role::Listener);
+    }
+
+    /// The applications whose outposts have their own `WinEvent` hooks in:
+    /// those that have said they are ready, each with its outpost.
+    fn hooks_in(&self) -> Vec<(Pid, OutpostId)> {
+        self.records
+            .iter()
+            .filter(|(_, record)| record.ready)
+            .map(|(pid, record)| (*pid, record.outpost))
+            .collect()
+    }
+
+    /// Sends the listener a message of the MSAA hand-over
+    /// (`docs/design/focus-pipeline.md`, section 12.4), or holds it, in
+    /// order, while the listener's launch is at work. With no listener, it
+    /// is not needed: the next one is told the applications whose outposts
+    /// have their hooks in on its command line.
+    fn tell_listener(&mut self, command: SupervisorToOutpost) {
+        let Some(listener) = self.listener.as_mut() else {
+            return;
+        };
+        match &listener.child {
+            Some(child) => {
+                if let Err(error) = child.writer.push(Outgoing::HandOver(command)) {
+                    tracing::warn!(%error, "the hand-over could not be told to the listener");
+                }
+            }
+            None => listener.pending.push(command),
+        }
+    }
+
+    /// Relays the listener's "forwarding ended" to the outpost it was for,
+    /// behind every fact the listener sent before it, if that outpost still
+    /// watches `pid`; one for an earlier incarnation is dropped.
+    fn forwarding_ended(&self, pid: Pid, outpost: OutpostId, through: u32) {
+        let Some(child) = self
+            .records
+            .get(&pid)
+            .filter(|record| record.outpost == outpost && record.ready)
+            .and_then(|record| record.child.as_ref())
+        else {
+            tracing::debug!(%pid, %outpost, "forwarding ended for an outpost that has gone");
+            return;
+        };
+        let command = SupervisorToOutpost::ForwardingEnded { through };
+        if let Err(error) = child.writer.push(Outgoing::HandOver(command)) {
+            tracing::warn!(%error, %pid, "forwarding ended could not be relayed");
+        }
     }
 
     /// Launches a child on a helper thread. The helper starts the child's
@@ -405,6 +484,10 @@ impl Owner {
     /// or the end of its pipe.
     fn launch(&self, outpost: OutpostId, role: Role) {
         let ignored = self.ignored.list();
+        let hooks_in = match role {
+            Role::Listener => crate::listener::format_hooks_in(&self.hooks_in()),
+            Role::Outpost(_) => String::new(),
+        };
         let exe_path = self.exe_path.clone();
         let options = self.options;
         let events_tx = self.events_tx.clone();
@@ -415,7 +498,7 @@ impl Owner {
             .spawn(move || {
                 match launch_child(
                     &exe_path,
-                    (options, &ignored),
+                    (options, &ignored, &hooks_in),
                     outpost,
                     role,
                     &events_tx,
@@ -459,6 +542,11 @@ impl Owner {
         {
             match result {
                 Ok(child) => {
+                    for command in listener.pending.drain(..) {
+                        if let Err(error) = child.writer.push(Outgoing::HandOver(command)) {
+                            tracing::warn!(%error, "the hand-over could not be told to the listener");
+                        }
+                    }
                     listener.child = Some(child);
                     listener.last_pong_at = Instant::now();
                     if self.shutting_down.is_some() {
@@ -524,7 +612,10 @@ impl Owner {
             });
             return;
         }
-        let Some(record) = self.record_of(outpost) else {
+        let Some(pid) = self.pid_of(outpost) else {
+            return;
+        };
+        let Some(record) = self.records.get_mut(&pid) else {
             return;
         };
         record.ready = true;
@@ -534,6 +625,10 @@ impl Owner {
         for held in record.held.take() {
             deliver(&writer, held);
         }
+        // An outpost is ready once its own `WinEvent` hook is in: the
+        // listener stops forwarding the application's MSAA events raised
+        // from now on, and says so behind the last it forwarded.
+        self.tell_listener(SupervisorToOutpost::HookInstalled { pid, outpost });
     }
 
     /// Whether crashes have stopped respawning for `pid` until its next
@@ -547,29 +642,16 @@ impl Owner {
     /// if there is none — unless crashes have stopped respawning for that
     /// application. A foreground change earns a stopped application another
     /// try.
-    fn route_fact(
-        &mut self,
-        trace_id: TraceId,
-        observed_at_ms: u64,
-        timing: EventTiming,
-        fact: ListenerFact,
-    ) {
-        let pid = fact.pid();
+    fn route_fact(&mut self, held: HeldFact, pid: Pid) {
         if self.ignored.contains(pid) {
             // The listener drops these already; nothing is routed either way.
             return;
         }
-        if matches!(fact.fact, DeliveredFact::Foreground { .. })
+        if matches!(held.fact, DeliveredFact::Foreground { .. })
             && let Some(history) = self.crashes.get_mut(&pid)
         {
             history.reset();
         }
-        let held = HeldFact {
-            trace_id,
-            observed_at_ms,
-            timing,
-            fact: fact.into_delivered(),
-        };
         match self.records.get_mut(&pid) {
             Some(record) => match record.child.as_ref().filter(|_| record.ready) {
                 Some(child) => deliver(&child.writer, held),
@@ -657,6 +739,11 @@ impl Owner {
     /// has one yet, for `why`. Returns the record's outpost id.
     fn take_record(&mut self, pid: Pid, why: &str) -> Option<OutpostId> {
         let record = self.records.remove(&pid)?;
+        if record.ready {
+            // Its hook goes with it: the listener forwards the
+            // application's MSAA events again, to start the next outpost.
+            self.tell_listener(SupervisorToOutpost::HookRemoved { pid });
+        }
         self.writers
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -908,6 +995,7 @@ fn deliver(writer: &WriterHandle, held: HeldFact) {
         observed_at_ms: held.observed_at_ms,
         timing: held.timing,
         fact: held.fact,
+        win_event: held.win_event,
     };
     if let Err(error) = writer.push(Outgoing::Fact(key, command)) {
         tracing::warn!(%error, "a routed fact could not be queued");
@@ -919,13 +1007,13 @@ fn deliver(writer: &WriterHandle, held: HeldFact) {
 /// the child and the pipe its reader will read.
 fn launch_child(
     exe_path: &std::path::Path,
-    (options, ignored): (crate::OutpostOptions, &str),
+    (options, ignored, hooks_in): (crate::OutpostOptions, &str, &str),
     outpost: OutpostId,
     role: Role,
     events_tx: &EventSink,
     writers: &Writers,
 ) -> io::Result<(Child, File)> {
-    let (launched, pipes) = process::launch(exe_path, role, options, ignored)?;
+    let (launched, pipes) = process::launch(exe_path, role, options, (ignored, hooks_in))?;
     tracing::info!(%outpost, process_id = %launched.process_id, ?role, "launched");
     let writer_name = match role {
         Role::Outpost(_) => "verbatim-outpost-writer",
@@ -1044,11 +1132,22 @@ fn read_listener(outpost: OutpostId, from_child: File, own_tx: &Sender<OwnerEven
                 observed_at_ms,
                 timing,
                 fact,
+                win_event,
             } => OwnerEvent::Fact {
                 trace_id,
                 observed_at_ms,
                 timing,
                 fact,
+                win_event,
+            },
+            OutpostToSupervisor::ForwardingEnded {
+                pid,
+                outpost,
+                through,
+            } => OwnerEvent::ForwardingEnded {
+                pid,
+                outpost,
+                through,
             },
             OutpostToSupervisor::Pong { .. } => OwnerEvent::Pong {
                 outpost,

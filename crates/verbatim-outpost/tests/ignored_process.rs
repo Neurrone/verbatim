@@ -64,6 +64,7 @@ fn focus_fact(pid: u32) -> OutpostToSupervisor {
                 id_child: 0,
             },
         },
+        win_event: None,
     }
 }
 

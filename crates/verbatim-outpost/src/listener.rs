@@ -5,9 +5,10 @@
 //! global by nature and forwards each captured fact to Core, which routes it
 //! to the target application's own outpost:
 //!
-//! - MSAA focus, foreground, menu-popup, and alert events for every process,
-//!   and the end of a menu or of the Alt+Tab switcher, which go to Core
-//!   rather than to an application's outpost;
+//! - MSAA focus, foreground, menu-popup, alert, and tooltip events for
+//!   every process whose outpost's own hook is not yet in, and the end of a
+//!   menu or of the Alt+Tab switcher, which go to Core rather than to an
+//!   application's outpost;
 //! - the desktop-wide UIA focus subscription;
 //! - desktop-wide UIA subscriptions for the events NVDA registers globally on
 //!   Windows 11: an element selected, a menu opened, and notifications.
@@ -28,6 +29,26 @@
 //! deadlines and no way for any application to stall focus detection for
 //! the rest of the desktop.
 //!
+//! The hand-over of MSAA events (`docs/design/focus-pipeline.md`, section
+//! 12.4, "The MSAA hand-over, exactly"): every application's outpost takes
+//! its focus, foreground, menu, alert, and tooltip events from its own
+//! process-scoped hook, so they reach it by one route, in the order Windows
+//! raised them, with its other MSAA events. The listener forwards them only
+//! for an application whose outpost's hook is not yet in, so that the
+//! application's first events start its outpost and reach it. When the
+//! supervisor tells it an outpost's hook is in
+//! ([`SupervisorToOutpost::HookInstalled`]), the listener reads the event
+//! clock, forwards none of that application's events raised after it, and
+//! queues "forwarding ended" naming that tick behind every fact it has
+//! queued ([`OutpostToSupervisor::ForwardingEnded`]); events raised at or
+//! before it, which can still reach its hook late, it forwards still. The
+//! outpost matches the two hooks' copies of an event by counting. When the
+//! application has no outpost with its hook in any more
+//! ([`SupervisorToOutpost::HookRemoved`]), the listener forwards its events
+//! again. A listener that replaces another is told on its command line the
+//! applications whose outposts' hooks are in, and forwards none of their
+//! events from the start.
+//!
 //! Outgoing facts are coalesced with NVDA's UIA limiter rule before they are
 //! sent: one waiting fact per element and kind, a newer one replacing it and
 //! moving to the back, so a flood from one busy process cannot pass through
@@ -40,11 +61,11 @@
 //! `WinEvent` delivery cannot be scoped to leave a process out.
 //!
 //! Run as `verbatim-outpost.exe --listener --pipe-in <handle> --pipe-out
-//! <handle> [--ignore-pids <pid,pid>]` — the same binary as a
-//! per-application outpost, with no target pid, supervised by the same
-//! machinery.
+//! <handle> [--ignore-pids <pid,pid>] [--hooks-in <pid:outpost,pid:outpost>]`
+//! — the same binary as a per-application outpost, with no target pid,
+//! supervised by the same machinery.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{self, BufReader, Write};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -55,8 +76,8 @@ use windows::Win32::UI::Accessibility::{
     UIA_SelectionItem_ElementSelectedEventId,
 };
 
-use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEventCallback, WinEventKind};
-use verbatim_model::{Notification, Pid, TraceId};
+use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEvent, WinEventCallback, WinEventKind};
+use verbatim_model::{Notification, OutpostId, Pid, TraceId};
 use verbatim_uia::map::{
     cached_native_window_handle, cached_process_id, notification_kind_from_uia,
     notification_processing_from_uia, snapshot_parts_from_cached_element,
@@ -69,7 +90,7 @@ use crate::outpost::now_ms;
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::protocol::{
     DeliveredFact, EventTiming, FactKey, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
-    UiaSnapshotFact, now_us, read_message, write_message,
+    UiaSnapshotFact, WinEventStamp, now_us, read_message, write_message,
 };
 use crate::supervisor::IgnoredProcesses;
 
@@ -99,6 +120,10 @@ struct OutgoingState {
     /// dropped or fail to read, so Core, which knows which focus it applied,
     /// decides, and every end is told.
     menu_end_at: Option<(Instant, u64)>,
+    /// The applications whose outposts have their own hooks in, each with
+    /// the tick on the event clock after which none of its `WinEvent`
+    /// facts is forwarded.
+    hooked: HashMap<Pid, u32>,
     /// Whether the listener is shutting down: what is queued is written,
     /// then the writer ends.
     closed: bool,
@@ -112,8 +137,16 @@ impl Outgoing {
 
     /// Queues a fact, replacing any waiting fact for the same element and
     /// kind. `raised_ms_ago` is how long before now Windows raised the event,
-    /// when it says.
-    fn fact(&self, pid: Pid, fact: DeliveredFact, raised_ms_ago: Option<u32>) {
+    /// and `win_event` which thread raised it and when, for a `WinEvent`'s
+    /// fact. A `WinEvent`'s fact raised after the outpost of `pid` has its
+    /// own hook in is dropped: that hook took it in.
+    fn fact(
+        &self,
+        pid: Pid,
+        fact: DeliveredFact,
+        raised_ms_ago: Option<u32>,
+        win_event: Option<WinEventStamp>,
+    ) {
         if self.ignored.contains(pid) {
             return;
         }
@@ -127,8 +160,17 @@ impl Outgoing {
                 ..EventTiming::default()
             },
             fact: ListenerFact { pid, fact },
+            win_event,
         };
         let mut state = self.lock();
+        // Judged under the lock that queues "forwarding ended", so no fact
+        // raised after its tick is ever queued behind it.
+        if let Some(stamp) = win_event
+            && let Some(&through) = state.hooked.get(&pid)
+            && stamp.raised_after(through)
+        {
+            return;
+        }
         if let Some(key) = &key {
             state
                 .facts
@@ -137,6 +179,33 @@ impl Outgoing {
         state.facts.push_back((key, message));
         drop(state);
         self.ready.notify_one();
+    }
+
+    /// The outpost `outpost` watching `pid` has its own hook in: none of
+    /// `pid`'s `WinEvent` facts raised after `through`, a tick on the event
+    /// clock read now or earlier, is forwarded from now on, and "forwarding
+    /// ended" is queued behind every fact already queued. Facts raised at
+    /// or before it are still forwarded, since the outpost's hook may not
+    /// have taken them in, and the outpost matches any it did by counting.
+    fn hook_installed(&self, pid: Pid, outpost: OutpostId, through: u32) {
+        let mut state = self.lock();
+        state.hooked.insert(pid, through);
+        state.facts.push_back((
+            None,
+            OutpostToSupervisor::ForwardingEnded {
+                pid,
+                outpost,
+                through,
+            },
+        ));
+        drop(state);
+        self.ready.notify_one();
+    }
+
+    /// `pid` has no outpost with its hook in any more: its `WinEvent` facts
+    /// are forwarded again.
+    fn hook_removed(&self, pid: Pid) {
+        self.lock().hooked.remove(&pid);
     }
 
     /// Notes that a menu or the Alt+Tab switcher closed.
@@ -215,15 +284,31 @@ impl Listener {
     /// milliseconds; announcing readiness first let events in that time go
     /// unseen, such as a menu opened right after Verbatim started.
     ///
+    /// The applications in `hooks_in` have outposts with their own hooks
+    /// in already: none of their `WinEvent`s is forwarded, and each outpost
+    /// is told so first, ending a hand-over the listener this one replaces
+    /// may have left unfinished.
+    ///
     /// # Panics
     ///
     /// Panics if the writer thread cannot be spawned, which means the
     /// process is out of OS thread resources.
-    fn new(mut pipe: Box<dyn Write + Send>, ignored: IgnoredProcesses) -> Self {
+    fn new(
+        mut pipe: Box<dyn Write + Send>,
+        ignored: IgnoredProcesses,
+        hooks_in: &[(Pid, OutpostId)],
+    ) -> Self {
         let outgoing = Arc::new(Outgoing {
             ignored,
             ..Outgoing::default()
         });
+        // Every event this listener's hook takes in is raised after the
+        // hook is installed, so after this tick: none is forwarded for
+        // these applications.
+        let before_the_hook = verbatim_ia2::event_clock().wrapping_sub(1);
+        for &(pid, outpost) in hooks_in {
+            outgoing.hook_installed(pid, outpost, before_the_hook);
+        }
         let writer_outgoing = Arc::clone(&outgoing);
         let writer = thread::Builder::new()
             .name("verbatim-listener-outbound".to_owned())
@@ -243,17 +328,7 @@ impl Listener {
         let msaa_outgoing = Arc::clone(&outgoing);
         let make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync> = Arc::new(move || {
             let outgoing = Arc::clone(&msaa_outgoing);
-            Box::new(
-                move |kind, hwnd, id_object, id_child, thread, raised_ms_ago| {
-                    forward_msaa_event(
-                        &outgoing,
-                        kind,
-                        (hwnd, id_object, id_child),
-                        thread,
-                        raised_ms_ago,
-                    );
-                },
-            )
+            Box::new(move |event: WinEvent| forward_msaa_event(&outgoing, event))
         });
         let event_thread = EventThread::spawn(0, LISTENER_SUBSCRIPTIONS, make_callback);
 
@@ -304,13 +379,22 @@ impl Listener {
     }
 
     /// Answers `Ping` with a `Pong` (the listener never abandons a worker, so
-    /// its count is always zero) and ignores everything else.
+    /// its count is always zero), takes the hand-over's news of outposts'
+    /// hooks, and ignores everything else.
     fn handle_command(&self, command: &SupervisorToOutpost) {
-        if let SupervisorToOutpost::Ping { seq } = command {
-            self.outgoing.urgent(OutpostToSupervisor::Pong {
-                seq: *seq,
-                parked_count: 0,
-            });
+        match command {
+            SupervisorToOutpost::Ping { seq } => {
+                self.outgoing.urgent(OutpostToSupervisor::Pong {
+                    seq: *seq,
+                    parked_count: 0,
+                });
+            }
+            SupervisorToOutpost::HookInstalled { pid, outpost } => {
+                self.outgoing
+                    .hook_installed(*pid, *outpost, verbatim_ia2::event_clock());
+            }
+            SupervisorToOutpost::HookRemoved { pid } => self.outgoing.hook_removed(*pid),
+            _ => {}
         }
     }
 }
@@ -376,7 +460,7 @@ fn install_focus_registration(outgoing: &Arc<Outgoing>) -> Option<FocusRegistrat
     let callback = Arc::new(move |element: &IUIAutomationElement| {
         // A cached focus element from the registration's base cache request.
         if let Some(ListenerFact { pid, fact }) = uia_focus_fact(element) {
-            callback_outgoing.fact(pid, fact, None);
+            callback_outgoing.fact(pid, fact, None, None);
         }
     });
     match FocusRegistration::new(callback) {
@@ -407,6 +491,7 @@ fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Option<Registratio
                         snapshot,
                     },
                     None,
+                    None,
                 );
             }
         }),
@@ -417,7 +502,12 @@ fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Option<Registratio
         event: UIA_MenuOpenedEventId,
         callback: Arc::new(move |element: &IUIAutomationElement| {
             if let Some((pid, hwnd, snapshot)) = capture(element) {
-                menu_outgoing.fact(pid, DeliveredFact::UiaMenuOpened { hwnd, snapshot }, None);
+                menu_outgoing.fact(
+                    pid,
+                    DeliveredFact::UiaMenuOpened { hwnd, snapshot },
+                    None,
+                    None,
+                );
             }
         }),
     };
@@ -445,6 +535,7 @@ fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Option<Registratio
                             notification,
                         },
                         None,
+                        None,
                     );
                 }
             },
@@ -462,17 +553,22 @@ fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Option<Registratio
     }
 }
 
-/// Forwards one global MSAA `WinEvent`, raised on `thread`, as a fact for
-/// the process [`routed_process`] names. Drops a null window or a pid-zero
-/// owner; the raw object address is forwarded untouched, and the app
-/// outpost does the acquisition.
-fn forward_msaa_event(
-    outgoing: &Outgoing,
-    kind: WinEventKind,
-    (hwnd, id_object, id_child): (isize, i32, i32),
-    thread: u32,
-    raised_ms_ago: u32,
-) {
+/// Forwards one global MSAA `WinEvent` as a fact for the process
+/// [`routed_process`] names, with the thread that raised it and when, unless
+/// that process's outpost has its own hook in and took it in itself
+/// ([`Outgoing::fact`]). Drops a null window or a pid-zero owner; the raw
+/// object address is forwarded untouched, and the app outpost does the
+/// acquisition.
+fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) {
+    let WinEvent {
+        kind,
+        hwnd,
+        id_object,
+        id_child,
+        thread,
+        time,
+        raised_ms_ago,
+    } = event;
     if matches!(kind, WinEventKind::MenuEnd | WinEventKind::SwitchEnd) {
         // Not routed to an outpost: if no focus event follows, Core reads
         // the focus of whichever application is then in front. NVDA accepts
@@ -504,36 +600,16 @@ fn forward_msaa_event(
             "a console window's event goes to its console host"
         );
     }
-    let fact = match kind {
-        WinEventKind::Focus => DeliveredFact::MsaaFocus {
-            hwnd,
-            id_object,
-            id_child,
-        },
-        // Forwarded unchecked: whether the window is still the foreground
-        // window is checked later, by the outpost's worker when it handles
-        // the fact, as NVDA checks it when it processes the event rather
-        // than in its event callback.
-        WinEventKind::Foreground => DeliveredFact::Foreground { hwnd },
-        WinEventKind::MenuPopupStart => DeliveredFact::MenuPopup {
-            hwnd,
-            id_object,
-            id_child,
-        },
-        WinEventKind::Alert => DeliveredFact::Alert {
-            hwnd,
-            id_object,
-            id_child,
-        },
-        WinEventKind::Show => DeliveredFact::Show {
-            hwnd,
-            id_object,
-            id_child,
-        },
-        // The listener subscribes to nothing else (LISTENER_SUBSCRIPTIONS).
-        _ => return,
+    // The listener subscribes to nothing else (LISTENER_SUBSCRIPTIONS).
+    let Some(fact) = DeliveredFact::from_win_event(kind, (hwnd, id_object, id_child)) else {
+        return;
     };
-    outgoing.fact(Pid(pid), fact, Some(raised_ms_ago));
+    outgoing.fact(
+        Pid(pid),
+        fact,
+        Some(raised_ms_ago),
+        Some(WinEventStamp { thread, time }),
+    );
 }
 
 /// The owning process id of `hwnd`, or 0 for an invalid or ownerless window.
@@ -594,7 +670,8 @@ fn process_of_thread(thread: u32) -> Option<u32> {
 /// `pipe_in` and writes facts and replies to `pipe_out` until Core asks it
 /// to shut down ([`SupervisorToOutpost::Shutdown`]) or the command stream
 /// ends, then shuts it down cleanly and returns. Facts from the processes
-/// `ignored` holds are dropped.
+/// `ignored` holds are dropped, and so are the `WinEvent` facts of the
+/// applications in `hooks_in`, whose outposts have their own hooks in.
 ///
 /// # Errors
 ///
@@ -603,8 +680,9 @@ pub fn run_listener(
     pipe_in: Box<dyn io::Read + Send>,
     pipe_out: Box<dyn Write + Send>,
     ignored: IgnoredProcesses,
+    hooks_in: &[(Pid, OutpostId)],
 ) -> io::Result<()> {
-    let listener = Listener::new(pipe_out, ignored);
+    let listener = Listener::new(pipe_out, ignored, hooks_in);
     let mut reader = BufReader::new(pipe_in);
     let ended = loop {
         match read_message::<_, SupervisorToOutpost>(&mut reader) {
@@ -624,11 +702,140 @@ pub fn run_listener(
     ended
 }
 
+/// The command-line option that tells a listener the applications whose
+/// outposts have their own hooks in.
+pub(crate) const HOOKS_IN_ARG: &str = "--hooks-in";
+
+/// The applications and outposts in `list`, as the listener's `--hooks-in`
+/// option gives them: `pid:outpost` pairs separated by commas. Anything
+/// that is not such a pair is skipped.
+#[must_use]
+pub fn parse_hooks_in(list: &str) -> Vec<(Pid, OutpostId)> {
+    list.split(',')
+        .filter_map(|pair| {
+            let (pid, outpost) = pair.trim().split_once(':')?;
+            Some((Pid(pid.parse().ok()?), OutpostId(outpost.parse().ok()?)))
+        })
+        .collect()
+}
+
+/// `hooks_in` as [`HOOKS_IN_ARG`] gives it.
+pub(crate) fn format_hooks_in(hooks_in: &[(Pid, OutpostId)]) -> String {
+    hooks_in
+        .iter()
+        .map(|(pid, outpost)| format!("{}:{}", pid.0, outpost.0))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;
 
     use super::*;
+
+    /// Everything queued in `outgoing`, which is closed first.
+    fn sent(outgoing: &Outgoing) -> Vec<OutpostToSupervisor> {
+        outgoing.close();
+        std::iter::from_fn(|| outgoing.next()).collect()
+    }
+
+    /// An MSAA focus fact raised at `time`.
+    fn raised_at(time: u32) -> Option<WinEventStamp> {
+        Some(WinEventStamp { thread: 9, time })
+    }
+
+    #[test]
+    fn a_win_event_raised_after_the_outposts_hook_is_in_is_not_forwarded() {
+        let outgoing = Outgoing::default();
+        outgoing.fact(Pid(5), msaa_focus(), None, raised_at(90));
+        outgoing.hook_installed(Pid(5), OutpostId(3), 100);
+        // Raised after the tick: the outpost's hook took it in.
+        outgoing.fact(Pid(5), msaa_focus(), None, raised_at(101));
+        // Raised at the tick, and reaching the listener late: forwarded,
+        // for the outpost to match by counting.
+        outgoing.fact(
+            Pid(5),
+            DeliveredFact::Foreground { hwnd: 1 },
+            None,
+            raised_at(100),
+        );
+        // Another application's, and a UIA fact: forwarded.
+        outgoing.fact(Pid(6), msaa_focus(), None, raised_at(101));
+        outgoing.fact(
+            Pid(5),
+            DeliveredFact::UiaFocus {
+                hwnd: 1,
+                focus_window: 0,
+                snapshot: uia_snapshot(),
+            },
+            None,
+            None,
+        );
+        let kinds: Vec<String> = sent(&outgoing)
+            .into_iter()
+            .map(|message| match message {
+                OutpostToSupervisor::FocusFact { fact, .. } => {
+                    format!("{} {:?}", fact.pid.0, fact.fact.key())
+                }
+                OutpostToSupervisor::ForwardingEnded {
+                    pid,
+                    outpost,
+                    through,
+                } => format!("ended {} {} {through}", pid.0, outpost.0),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                "5 Some(MsaaFocus(1, -4, 0))",
+                "ended 5 3 100",
+                "5 Some(Foreground(1))",
+                "6 Some(MsaaFocus(1, -4, 0))",
+                "5 Some(UiaFocus([42]))",
+            ],
+            "the fact queued first goes ahead of forwarding ended"
+        );
+    }
+
+    #[test]
+    fn a_win_event_is_forwarded_again_once_the_hook_is_removed() {
+        let outgoing = Outgoing::default();
+        outgoing.hook_installed(Pid(5), OutpostId(3), 100);
+        outgoing.hook_removed(Pid(5));
+        outgoing.fact(Pid(5), msaa_focus(), None, raised_at(101));
+        let sent = sent(&outgoing);
+        assert!(
+            matches!(
+                sent.as_slice(),
+                [
+                    OutpostToSupervisor::ForwardingEnded { .. },
+                    OutpostToSupervisor::FocusFact { .. }
+                ]
+            ),
+            "{sent:?}"
+        );
+    }
+
+    #[test]
+    fn the_applications_with_hooks_in_round_trip_through_the_command_line() {
+        let hooks_in = [(Pid(12), OutpostId(3)), (Pid(40), OutpostId(7))];
+        assert_eq!(parse_hooks_in(&format_hooks_in(&hooks_in)), hooks_in);
+        assert_eq!(parse_hooks_in(" 12:3,x,9, 40:7 "), hooks_in);
+        assert!(parse_hooks_in("").is_empty());
+    }
+
+    fn uia_snapshot() -> UiaSnapshotFact {
+        UiaSnapshotFact {
+            runtime_id: vec![42],
+            role: verbatim_model::Role::ListItem,
+            name: None,
+            value: None,
+            states: verbatim_model::StateSet::new(),
+            details: verbatim_model::NodeDetails::default(),
+        }
+    }
 
     /// Takes messages from `outgoing` on another thread, since `next`
     /// blocks while there is nothing to send.
@@ -688,9 +895,9 @@ mod tests {
             ignored: IgnoredProcesses::hold([own]),
             ..Outgoing::default()
         };
-        outgoing.fact(own, DeliveredFact::Foreground { hwnd: 1 }, None);
-        outgoing.fact(own, msaa_focus(), None);
-        outgoing.fact(Pid(5), msaa_focus(), None);
+        outgoing.fact(own, DeliveredFact::Foreground { hwnd: 1 }, None, None);
+        outgoing.fact(own, msaa_focus(), None, None);
+        outgoing.fact(Pid(5), msaa_focus(), None, None);
         outgoing.close();
         let mut sent = Vec::new();
         while let Some(message) = outgoing.next() {
@@ -724,7 +931,7 @@ mod tests {
         // dropped or fail to read.
         let outgoing = Arc::new(Outgoing::default());
         outgoing.menu_or_switch_ended();
-        outgoing.fact(Pid(5), msaa_focus(), None);
+        outgoing.fact(Pid(5), msaa_focus(), None, None);
         let messages = drain(&outgoing);
         let first = messages
             .recv_timeout(Duration::from_secs(5))

@@ -15,12 +15,14 @@
 //!   retargeted). Commands are read from `--pipe-in`, messages written to
 //!   `--pipe-out`.
 //! - `--listener --pipe-in <handle> --pipe-out <handle> [--ignore-pids
-//!   <pid,pid>]`: the focus-listener mode (decision D13), spawned by the
-//!   same supervisor into its dedicated slot with no target pid. It holds
-//!   the desktop-global UIA focus registration and the global MSAA hooks and
-//!   forwards each focus fact to Core, except those of the processes
-//!   `--ignore-pids` names, which Verbatim ignores entirely; the same pipe
-//!   conventions apply.
+//!   <pid,pid>] [--hooks-in <pid:outpost,pid:outpost>]`: the focus-listener
+//!   mode (decision D13), spawned by the same supervisor into its dedicated
+//!   slot with no target pid. It holds the desktop-global UIA focus
+//!   registration and the global MSAA hooks and forwards each focus fact to
+//!   Core, except those of the processes `--ignore-pids` names, which
+//!   Verbatim ignores entirely, and the MSAA facts of the applications
+//!   `--hooks-in` names, whose outposts have their own hooks in; the same
+//!   pipe conventions apply.
 //! - `--attach <pid>`: a dev mode that watches `<pid>` directly and prints
 //!   outbound messages as JSON lines to stdout, for standalone testing without
 //!   Core.
@@ -83,6 +85,7 @@ fn main() -> ExitCode {
             pipe_in,
             pipe_out,
             ignore_pids,
+            hooks_in,
         }) => {
             // Held before anything is installed; Core holds them too, so
             // these pids still name the processes Core was told of.
@@ -101,7 +104,8 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            match run_listener(Box::new(reader), Box::new(writer), ignored) {
+            let hooks_in = verbatim_outpost::listener::parse_hooks_in(&hooks_in);
+            match run_listener(Box::new(reader), Box::new(writer), ignored, &hooks_in) {
                 Ok(()) => end_without_detach(0),
                 Err(error) => {
                     report_error!("listener pipe loop ended with error: {error}");
@@ -120,7 +124,7 @@ fn main() -> ExitCode {
             report_error!(
                 "verbatim-outpost is spawned by verbatim.exe. Usage:\n  \
                  verbatim-outpost --pipe-in <handle> --pipe-out <handle> --target-pid <pid> [--classic-uia]\n  \
-                 verbatim-outpost --listener --pipe-in <handle> --pipe-out <handle> [--ignore-pids <pid,pid>]\n  \
+                 verbatim-outpost --listener --pipe-in <handle> --pipe-out <handle> [--ignore-pids <pid,pid>] [--hooks-in <pid:outpost,pid:outpost>]\n  \
                  verbatim-outpost --attach <pid> [--classic-uia]   (dev mode: prints JSON to stdout)"
             );
             ExitCode::FAILURE
@@ -178,6 +182,9 @@ enum Mode {
         pipe_out: usize,
         /// The pids of the processes to ignore, separated by commas.
         ignore_pids: String,
+        /// The applications whose outposts have their own hooks in, as
+        /// `pid:outpost` pairs separated by commas.
+        hooks_in: String,
     },
     Attach {
         pid: u32,
@@ -194,6 +201,7 @@ fn parse_args(args: &[String]) -> Option<Mode> {
     let mut attach = None;
     let mut listener = false;
     let mut ignore_pids = String::new();
+    let mut hooks_in = String::new();
     let mut options = OutpostOptions::default();
     let mut index = 1;
     while index < args.len() {
@@ -203,6 +211,7 @@ fn parse_args(args: &[String]) -> Option<Mode> {
             "--target-pid" => target_pid = args.get(index + 1).and_then(|v| v.parse().ok()),
             "--attach" => attach = args.get(index + 1).and_then(|v| v.parse().ok()),
             "--ignore-pids" => ignore_pids = args.get(index + 1).cloned().unwrap_or_default(),
+            "--hooks-in" => hooks_in = args.get(index + 1).cloned().unwrap_or_default(),
             // A bare flag, not a valued option; do not consume a following arg.
             "--listener" => {
                 listener = true;
@@ -227,6 +236,7 @@ fn parse_args(args: &[String]) -> Option<Mode> {
                 pipe_in,
                 pipe_out,
                 ignore_pids,
+                hooks_in,
             }),
             _ => None,
         };

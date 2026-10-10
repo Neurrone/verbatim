@@ -9,13 +9,15 @@
 //!
 //! Two callers install these, with two scopes (decision D13). A per-application
 //! outpost installs its subscriptions with `idProcess` set to the target pid,
-//! so it sees only that application's events. The focus listener installs its
-//! subscriptions with `idProcess` zero, so it sees the events that are global
-//! by nature — focus, foreground, and menu-popup — across the whole desktop,
-//! reads the owning pid from each with a hang-safe local call, and forwards a
-//! fact to the target's own outpost. Which events an install subscribes to is
-//! the caller's choice ([`WinEventHook::install`] takes the kind list), since
-//! the two callers want disjoint sets.
+//! so it sees only that application's events, its focus, foreground, menu,
+//! alert, and tooltip events included (`docs/design/focus-pipeline.md`,
+//! section 12.4). The focus listener installs its subscriptions with
+//! `idProcess` zero, so it sees those events across the whole desktop, reads
+//! the owning pid from each with a hang-safe local call, and forwards a fact
+//! to the target's outpost only while that outpost's own hook is not yet in;
+//! the end of a menu or of the Alt+Tab switcher, which goes to Core, it
+//! always takes. Which events an install subscribes to is the caller's
+//! choice ([`WinEventHook::install`] takes the kind list).
 //!
 //! The Win32 `WINEVENTPROC` has no user-context argument, so the callback is
 //! held in a thread-local. Because one process hosts one hook set on one
@@ -106,12 +108,13 @@ pub enum WinEventKind {
 
 /// Every raw `WinEvent` id Verbatim subscribes to, paired with its normalized
 /// kind. An install subscribes to the subset whose kind the caller asked for;
-/// [`kind_of`] maps a delivered event id back to its kind among the kinds
-/// the install asked for. `StateChange` maps four raw ids to the one kind,
-/// so a caller that wants state changes also gets the selection add,
-/// remove, and within hooks; `EVENT_OBJECT_SHOW` is `Show` for the listener
-/// and `WindowShown` for an outpost, and an install asking for both hooks
-/// the event once, as `Show`.
+/// [`kinds_among`] maps a delivered event id back to its kinds among the
+/// kinds the install asked for. `StateChange` maps four raw ids
+/// to the one kind, so a caller that wants state changes also gets the
+/// selection add, remove, and within hooks; `EVENT_OBJECT_SHOW` is `Show`
+/// from a tooltip window and `WindowShown` from a top-level window, and an
+/// install asking for both hooks the event once and reports it as each kind
+/// it is wanted as.
 const SUBSCRIPTIONS: [(u32, WinEventKind); 24] = [
     (EVENT_OBJECT_FOCUS, WinEventKind::Focus),
     (EVENT_SYSTEM_FOREGROUND, WinEventKind::Foreground),
@@ -149,12 +152,21 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 24] = [
 ];
 
 /// The per-application outpost's subscription set (decision D13): the
-/// process-scoped name, description, value, state, and selection events,
-/// the caret
-/// and text selection (milestone M4), object destruction (for windows
-/// going away), and its top-level windows being shown. Focus, menu-popup, and the end of a menu are not here — the
-/// focus listener owns them globally.
+/// process-scoped focus, foreground, menu opening, alert, and tooltip
+/// events, so every MSAA event of the application reaches its outpost by
+/// one route in the order Windows raised it (`docs/design/focus-pipeline.md`,
+/// section 12.4); the name, description, value, state, and selection
+/// events; the caret and text selection (milestone M4); object destruction
+/// (for windows going away); and its top-level windows being shown. The end
+/// of a menu and of the Alt+Tab switcher are not here: the focus listener
+/// takes them for Core, since focus returns to whichever application is
+/// then in front.
 pub const APP_SUBSCRIPTIONS: &[WinEventKind] = &[
+    WinEventKind::Focus,
+    WinEventKind::Foreground,
+    WinEventKind::MenuPopupStart,
+    WinEventKind::Alert,
+    WinEventKind::Show,
     WinEventKind::ValueChange,
     WinEventKind::StateChange,
     WinEventKind::NameChange,
@@ -167,11 +179,12 @@ pub const APP_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::WindowShown,
 ];
 
-/// The focus listener's subscription set (decisions D13 and D14): the
-/// events that are global by nature, installed with `idProcess` zero. The
-/// end of a menu or of the Alt+Tab switcher is global because focus returns
-/// to whichever application is then in front, usually not the one that
-/// owned the menu.
+/// The focus listener's subscription set (decisions D13 and D14), installed
+/// with `idProcess` zero: the focus, foreground, menu opening, alert, and
+/// tooltip events, which it forwards for an application whose outpost's own
+/// hook is not yet in, and the end of a menu or of the Alt+Tab switcher,
+/// which is global because focus returns to whichever application is then
+/// in front, usually not the one that owned the menu.
 pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::Focus,
     WinEventKind::Foreground,
@@ -182,16 +195,50 @@ pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::Show,
 ];
 
-/// Called on the installing thread for each in-scope event, with the event
-/// kind, its MSAA address `(hwnd, id_object, id_child)`, the thread that
-/// raised it, and how many milliseconds ago Windows raised it (delivery to
-/// an out-of-context hook waits for this thread's message loop). The thread
-/// is the window's real one even for a console window, whose
-/// `GetWindowThreadProcessId` names its client's thread instead (NVDA's
-/// `consoleWindowsToThreadIDs`, `IAccessibleHandler/internalWinEventHandler.py`).
-/// It must not block: its job is to enqueue the address for handling
-/// elsewhere.
-pub type WinEventCallback = Box<dyn Fn(WinEventKind, isize, i32, i32, u32, u32)>;
+/// One `WinEvent` as a hook delivers it.
+///
+/// Every hook that receives one event receives the same `kind`, address,
+/// `thread`, and `time`, so two hooks' copies of one event are told apart
+/// from other events by these alone, except from an identical event raised
+/// by the same thread within the same tick of the clock
+/// (`docs/design/focus-pipeline.md`, section 12.4, "The MSAA hand-over,
+/// exactly").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WinEvent {
+    /// What it reports.
+    pub kind: WinEventKind,
+    /// Its window, `hwnd`.
+    pub hwnd: isize,
+    /// Its `idObject`; a window object stands for its client area, as NVDA
+    /// treats it, except in a window's destruction.
+    pub id_object: i32,
+    /// Its `idChild`.
+    pub id_child: i32,
+    /// The thread that raised it, `idEventThread`: the window's real thread
+    /// even for a console window, whose `GetWindowThreadProcessId` names its
+    /// client's thread instead (NVDA's `consoleWindowsToThreadIDs`,
+    /// `IAccessibleHandler/internalWinEventHandler.py`).
+    pub thread: u32,
+    /// When Windows raised it, `dwmsEventTime`, on [`event_clock`]'s clock.
+    pub time: u32,
+    /// How many milliseconds before the callback Windows raised it
+    /// (delivery to an out-of-context hook waits for the installing
+    /// thread's message loop).
+    pub raised_ms_ago: u32,
+}
+
+/// Called on the installing thread for each in-scope event. It must not
+/// block: its job is to enqueue the event for handling elsewhere.
+pub type WinEventCallback = Box<dyn Fn(WinEvent)>;
+
+/// The clock `WinEvent`s are stamped with ([`WinEvent::time`]): milliseconds
+/// since the system started, `GetTickCount`, which advances in ticks of
+/// about 15.6 milliseconds and wraps after 49.7 days.
+#[must_use]
+pub fn event_clock() -> u32 {
+    // SAFETY: GetTickCount has no preconditions.
+    unsafe { GetTickCount() }
+}
 
 thread_local! {
     static CALLBACK: RefCell<Option<WinEventCallback>> = const { RefCell::new(None) };
@@ -290,16 +337,19 @@ impl Drop for WinEventHook {
 /// The window class of a standard tooltip, help balloons included.
 pub const TOOLTIP_CLASS: &str = "tooltips_class32";
 
-/// Maps a raw event id to a [`WinEventKind`], `None` for events we do not want.
-fn kind_of(event: u32) -> Option<WinEventKind> {
-    KINDS.with(|kinds| kind_among(event, &kinds.borrow()))
+/// Maps a raw event id to the [`WinEventKind`]s it has among this thread's
+/// kinds, none for events we do not want.
+fn kinds_of(event: u32) -> Vec<WinEventKind> {
+    KINDS.with(|kinds| kinds_among(event, &kinds.borrow()))
 }
 
-/// Maps a raw event id to the first [`WinEventKind`] it has among `kinds`.
-fn kind_among(event: u32, kinds: &[WinEventKind]) -> Option<WinEventKind> {
+/// Maps a raw event id to the [`WinEventKind`]s it has among `kinds`, in
+/// [`SUBSCRIPTIONS`] order.
+fn kinds_among(event: u32, kinds: &[WinEventKind]) -> Vec<WinEventKind> {
     SUBSCRIPTIONS
         .iter()
-        .find_map(|&(id, kind)| (id == event && kinds.contains(&kind)).then_some(kind))
+        .filter_map(|&(id, kind)| (id == event && kinds.contains(&kind)).then_some(kind))
+        .collect()
 }
 
 /// NVDA's early filters for `WinEvent`s, all local checks: a location
@@ -353,37 +403,41 @@ unsafe extern "system" fn win_event_proc(
     thread: u32,
     time: u32,
 ) {
-    // SAFETY: GetTickCount has no preconditions; `time` is on the same clock.
-    let raised_ms_ago = unsafe { GetTickCount() }.wrapping_sub(time);
-    let Some(kind) = kind_of(event) else {
-        return;
-    };
-    if !is_wanted(kind, hwnd, id_object, id_child) {
-        return;
-    }
-    // An event on a window object stands for its client area, as NVDA's
-    // event hook treats it, so a window's foreground report and a focus on
-    // its client area name one object. A window's destruction keeps the
-    // window object, which is how its end is recognized.
-    let id_object =
-        if kind != WinEventKind::Destroy && id_object == OBJID_WINDOW.0 && id_child == CHILDID_SELF
+    // `time` is on the event clock.
+    let raised_ms_ago = event_clock().wrapping_sub(time);
+    // One raw event can be wanted as more than one kind: a tooltip window's
+    // own show event is both a tooltip shown and a top-level window shown.
+    for kind in kinds_of(event) {
+        if !is_wanted(kind, hwnd, id_object, id_child) {
+            continue;
+        }
+        // An event on a window object stands for its client area, as NVDA's
+        // event hook treats it, so a window's foreground report and a focus
+        // on its client area name one object. A window's destruction keeps
+        // the window object, which is how its end is recognized.
+        let id_object = if kind != WinEventKind::Destroy
+            && id_object == OBJID_WINDOW.0
+            && id_child == CHILDID_SELF
         {
             OBJID_CLIENT.0
         } else {
             id_object
         };
-    CALLBACK.with(|slot| {
-        if let Some(callback) = slot.borrow().as_ref() {
-            callback(
-                kind,
-                hwnd.0 as isize,
-                id_object,
-                id_child,
-                thread,
-                raised_ms_ago,
-            );
-        }
-    });
+        let delivered = WinEvent {
+            kind,
+            hwnd: hwnd.0 as isize,
+            id_object,
+            id_child,
+            thread,
+            time,
+            raised_ms_ago,
+        };
+        CALLBACK.with(|slot| {
+            if let Some(callback) = slot.borrow().as_ref() {
+                callback(delivered);
+            }
+        });
+    }
 }
 
 #[cfg(test)]
@@ -393,8 +447,8 @@ mod tests {
     #[test]
     fn only_a_plain_selection_announces_a_newly_selected_item() {
         assert_eq!(
-            kind_among(EVENT_OBJECT_SELECTION, APP_SUBSCRIPTIONS),
-            Some(WinEventKind::Selection)
+            kinds_among(EVENT_OBJECT_SELECTION, APP_SUBSCRIPTIONS),
+            [WinEventKind::Selection]
         );
         for removed_or_added in [
             EVENT_OBJECT_SELECTIONADD,
@@ -402,8 +456,8 @@ mod tests {
             EVENT_OBJECT_SELECTIONWITHIN,
         ] {
             assert_eq!(
-                kind_among(removed_or_added, APP_SUBSCRIPTIONS),
-                Some(WinEventKind::StateChange)
+                kinds_among(removed_or_added, APP_SUBSCRIPTIONS),
+                [WinEventKind::StateChange]
             );
         }
     }
@@ -412,8 +466,8 @@ mod tests {
     fn only_the_carets_location_changes_are_wanted() {
         let any = HWND::default();
         assert_eq!(
-            kind_among(EVENT_OBJECT_LOCATIONCHANGE, APP_SUBSCRIPTIONS),
-            Some(WinEventKind::Caret)
+            kinds_among(EVENT_OBJECT_LOCATIONCHANGE, APP_SUBSCRIPTIONS),
+            [WinEventKind::Caret]
         );
         assert!(is_wanted(
             WinEventKind::Caret,
@@ -430,14 +484,16 @@ mod tests {
     }
 
     #[test]
-    fn a_show_is_a_tooltip_for_the_listener_and_a_window_shown_for_an_outpost() {
+    fn a_show_is_a_tooltip_for_the_listener_and_either_kind_for_an_outpost() {
         assert_eq!(
-            kind_among(EVENT_OBJECT_SHOW, LISTENER_SUBSCRIPTIONS),
-            Some(WinEventKind::Show)
+            kinds_among(EVENT_OBJECT_SHOW, LISTENER_SUBSCRIPTIONS),
+            [WinEventKind::Show]
         );
+        // The window's class and object decide which the outpost's hook
+        // reports it as, or both for a tooltip's own window.
         assert_eq!(
-            kind_among(EVENT_OBJECT_SHOW, APP_SUBSCRIPTIONS),
-            Some(WinEventKind::WindowShown)
+            kinds_among(EVENT_OBJECT_SHOW, APP_SUBSCRIPTIONS),
+            [WinEventKind::Show, WinEventKind::WindowShown]
         );
         // A window shown is the window's own show event, never a child
         // object's.

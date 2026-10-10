@@ -13,6 +13,11 @@
 //! - a routed fact replaces any older fact still waiting for the same object
 //!   and kind; if there is none, the oldest waiting fact is dropped to make
 //!   room, so the newest facts survive;
+//! - a message of the MSAA hand-over between the listener and an outpost
+//!   (`docs/design/focus-pipeline.md`, section 12.4) always gets through,
+//!   past the bound, and keeps its place behind everything queued before
+//!   it: the listener's "forwarding ended" must reach the outpost after
+//!   every fact the listener sent before it, and is never lost;
 //! - anything else, a query above all, fails at once, so its asker gets an
 //!   outcome straight away instead of waiting behind a stuck outpost.
 
@@ -45,6 +50,9 @@ pub(super) enum Outgoing {
     /// A routed fact, keyed by the object and kind it concerns (`None` for
     /// a notification, which nothing replaces).
     Fact(Option<FactKey>, SupervisorToOutpost),
+    /// A message of the MSAA hand-over: `ForwardingEnded` to an outpost,
+    /// `HookInstalled` or `HookRemoved` to the listener.
+    HandOver(SupervisorToOutpost),
     /// Anything else: a query, an activation, a configuration command.
     Other(SupervisorToOutpost),
 }
@@ -56,6 +64,7 @@ impl Outgoing {
             Outgoing::Ping(command)
             | Outgoing::NodesHeld(command)
             | Outgoing::Fact(_, command)
+            | Outgoing::HandOver(command)
             | Outgoing::Other(command) => command,
         }
     }
@@ -94,7 +103,7 @@ impl Queue {
             return Err(QueueError::Closed);
         }
         match item {
-            Outgoing::Ping(_) | Outgoing::Shutdown => {}
+            Outgoing::Ping(_) | Outgoing::Shutdown | Outgoing::HandOver(_) => {}
             Outgoing::NodesHeld(_) => {
                 self.items
                     .retain(|waiting| !matches!(waiting, Outgoing::NodesHeld(_)));
@@ -288,6 +297,23 @@ mod tests {
             })
             .collect();
         assert_eq!(acknowledged, vec![3]);
+    }
+
+    #[test]
+    fn a_hand_over_message_gets_through_a_full_queue_behind_the_facts_before_it() {
+        let ended = || Outgoing::HandOver(SupervisorToOutpost::ForwardingEnded { through: 99 });
+        let mut queue = Queue::default();
+        queue.push(fact(1), 2).expect("queued");
+        queue.push(fact(2), 2).expect("queued");
+        queue.push(ended(), 2).expect("gets through the full queue");
+        let order: Vec<String> = std::iter::from_fn(|| queue.pop())
+            .map(|item| match item.command() {
+                SupervisorToOutpost::Ping { seq } => seq.to_string(),
+                SupervisorToOutpost::ForwardingEnded { .. } => "ended".to_owned(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(order, ["1", "2", "ended"]);
     }
 
     #[test]

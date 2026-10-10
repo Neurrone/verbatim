@@ -755,7 +755,7 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
             };
             (deadline, Some((*request_id, entry.trace)))
         }
-        Item::Fact(_)
+        Item::Fact(..)
         | Item::Msaa { .. }
         | Item::Uia(_)
         | Item::CaretOf { .. }
@@ -780,7 +780,7 @@ fn describe(item: &Item) -> String {
             format!("MSAA {kind:?} hwnd={hwnd} object={id_object} child={id_child} thread={thread}")
         }
         Item::Uia(event) => format!("UIA {:?}", event.kind),
-        Item::Fact(fact) => format!("fact {:?}", fact.key()),
+        Item::Fact(fact, _) => format!("fact {:?}", fact.key()),
         Item::Query { query, .. } => format!("query {query:?}"),
         Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
         Item::CaretOf { node_id } => format!("caret of {node_id:?}"),
@@ -884,7 +884,7 @@ impl Worker<'_> {
                 ..
             } => self.msaa_event(kind, hwnd, id_object, id_child, trace, observed_at_ms),
             Item::Uia(event) => self.uia_event(event, trace, observed_at_ms),
-            Item::Fact(fact) => self.fact(fact, trace, observed_at_ms),
+            Item::Fact(fact, _) => self.fact(fact, trace, observed_at_ms),
             Item::Query { request_id, query } => self.query(request_id, &query, trace),
             Item::NodesHeld {
                 nodes,
@@ -2321,7 +2321,9 @@ impl Worker<'_> {
         }
     }
 
-    /// A focus fact routed from the listener.
+    /// A fact routed from the listener, or one the outpost's own hook took
+    /// in: an MSAA focus, foreground change, menu opening, alert, or
+    /// tooltip, whichever brought it.
     fn fact(&mut self, fact: DeliveredFact, trace: TraceId, observed_at_ms: u64) {
         let focus_window = match &fact {
             DeliveredFact::Foreground { hwnd } | DeliveredFact::MsaaFocus { hwnd, .. } => {
@@ -2399,7 +2401,7 @@ impl Worker<'_> {
             // handled the same way.
             menu @ (DeliveredFact::MenuPopup { .. } | DeliveredFact::UiaMenuOpened { .. }) => {
                 self.menu_opened(&Entry {
-                    item: Item::Fact(menu),
+                    item: Item::Fact(menu, None),
                     trace,
                     observed_at_ms,
                     timing: crate::protocol::EventTiming::default(),
@@ -2422,8 +2424,9 @@ impl Worker<'_> {
         observed_at_ms: u64,
     ) {
         // NVDA accepts a show event by its window's class alone, whatever
-        // the foreground; the focus listener's hook already took this one
-        // only from a tooltip window (`verbatim_ia2::hook`), so it passes.
+        // the foreground; the hook that took this one, the outpost's own or
+        // the focus listener's, took it only from a tooltip window
+        // (`verbatim_ia2::hook`), so it passes.
         if !Self::readable(hwnd) {
             return;
         }
@@ -3423,15 +3426,18 @@ impl Worker<'_> {
     /// its object is not a popup menu; otherwise it becomes a focus on the
     /// popup menu.
     fn menu_opened(&mut self, entry: &Entry) {
-        if let Item::Fact(DeliveredFact::UiaMenuOpened { hwnd, snapshot }) = &entry.item {
+        if let Item::Fact(DeliveredFact::UiaMenuOpened { hwnd, snapshot }, _) = &entry.item {
             self.uia_menu_opened(*hwnd, snapshot, entry);
             return;
         }
-        let Item::Fact(DeliveredFact::MenuPopup {
-            hwnd,
-            id_object,
-            id_child,
-        }) = entry.item
+        let Item::Fact(
+            DeliveredFact::MenuPopup {
+                hwnd,
+                id_object,
+                id_child,
+            },
+            _,
+        ) = entry.item
         else {
             return;
         };

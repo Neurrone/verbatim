@@ -25,7 +25,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Instant;
 
-use verbatim_ia2::{APP_SUBSCRIPTIONS, WinEventHook, WinEventKind};
+use verbatim_ia2::{APP_SUBSCRIPTIONS, WinEvent, WinEventHook, WinEventKind};
 use verbatim_model::{NotificationKind, NotificationProcessing, State, StateSet};
 use verbatim_uia::{
     ElementExt, FOCUS_PROPERTIES, Registration, Scope, Subscription, Uia,
@@ -448,8 +448,8 @@ fn hook(pid: u32) -> (WinEventHook, Receiver<SeenWinEvent>) {
     let hook = WinEventHook::install(
         pid,
         APP_SUBSCRIPTIONS,
-        Box::new(move |kind, hwnd, id_object, id_child, _, _| {
-            let _ = sender.send((kind, hwnd, id_object, id_child));
+        Box::new(move |event: WinEvent| {
+            let _ = sender.send((event.kind, event.hwnd, event.id_object, event.id_child));
         }),
     )
     .expect("WinEventHook::install");

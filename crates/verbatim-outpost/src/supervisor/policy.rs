@@ -120,6 +120,8 @@ pub(super) struct HeldFact {
     pub(super) observed_at_ms: u64,
     pub(super) timing: crate::protocol::EventTiming,
     pub(super) fact: DeliveredFact,
+    /// For an MSAA `WinEvent`'s fact, the thread that raised it and when.
+    pub(super) win_event: Option<crate::protocol::WinEventStamp>,
 }
 
 /// Facts that arrive while an outpost is starting, held in arrival order and
@@ -241,6 +243,7 @@ mod tests {
             observed_at_ms,
             timing: crate::protocol::EventTiming::default(),
             fact,
+            win_event: None,
         }
     }
 

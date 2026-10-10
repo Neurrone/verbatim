@@ -199,16 +199,19 @@ fn a_focus_reports_the_states_read_when_it_is_handled() {
 /// names (`docs/parity.md`, "A control's own focus with a focused child").
 /// The tree's event is handed to the outpost alone, as when it is read
 /// before the item's arrives, and the item's then reports nothing more.
+/// Both events are raised before the outpost is made, so its own hook,
+/// which takes in focus events, has neither, as when the listener forwards
+/// an application's first events.
 fn a_controls_own_focus_reports_its_focused_child() {
     let title = common::unique_title("mockapp-focus-child");
     let mut app = common::spawn("focus_child.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(&app);
     // The tree is node 1, after the root, so its object id is 2; General
     // is its first child.
     let tree = 2;
 
     common::apply(&mut app, hwnd, "focus-child categories general");
+    let outpost = OutpostUnderTest::new(&app);
     let reported = outpost.focus(DeliveredFact::MsaaFocus {
         hwnd: hwnd.0 as isize,
         id_object: tree,

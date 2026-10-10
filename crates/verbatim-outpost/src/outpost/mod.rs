@@ -28,6 +28,7 @@
 //! not yet reported, is kept: Core may not have seen it yet.
 
 mod acceptance;
+mod handover;
 mod intake;
 mod outbound;
 mod read;
@@ -47,7 +48,9 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::core::AgileReference;
 
-use verbatim_ia2::{APP_SUBSCRIPTIONS, NodeIdRegistry as MsaaRegistry, WinEventCallback};
+use verbatim_ia2::{
+    APP_SUBSCRIPTIONS, NodeIdRegistry as MsaaRegistry, WinEvent, WinEventCallback, WinEventKind,
+};
 use verbatim_model::{Backend, Fetches, NodeId, Pid, TraceId};
 use verbatim_uia::map::{cached_native_window_handle, snapshot_parts_from_cached_element};
 use verbatim_uia::{
@@ -57,8 +60,8 @@ use verbatim_uia::{
 use crate::arbitration::Arbitrator;
 use crate::event_thread::EventThread;
 use crate::protocol::{
-    EventTiming, OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost, UiaSnapshotFact,
-    now_us, read_message,
+    DeliveredFact, EventTiming, OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost,
+    UiaSnapshotFact, WinEventStamp, now_us, read_message,
 };
 use crate::text::uia::UiaPos;
 use crate::text::{Anchors, HeldAnchors};
@@ -176,6 +179,10 @@ pub(crate) struct Context {
     /// Who is told of each event the outpost's own handlers take in
     /// ([`Outpost::observe_heard`]), if anyone.
     heard: OnceLock<HeardObserver>,
+    /// The MSAA hand-over between the listener's copies of the
+    /// application's `WinEvent`s and the outpost's own hook's
+    /// ([`handover`]).
+    handover: Mutex<handover::Handover>,
 }
 
 /// An event the outpost's own UIA handlers or `WinEvent` hooks took in from
@@ -402,9 +409,118 @@ impl Context {
     /// now, then tells the observer, if there is one, that it was heard.
     fn take_in(&self, item: Item, heard: Heard, timing: EventTiming) {
         self.push(item, TraceId::mint(), now_ms(), timing);
+        self.tell_heard(heard);
+    }
+
+    /// Tells the observer, if there is one, that an event was heard.
+    fn tell_heard(&self, heard: Heard) {
         if let Some(observer) = self.heard.get() {
             observer(heard);
         }
+    }
+
+    /// Takes in a `WinEvent` the outpost's own hook delivered. A focus,
+    /// foreground change, menu opening, alert, or tooltip becomes the fact
+    /// the listener forwards for one, queued unless it is the twin of the
+    /// listener's copy, already queued ([`handover`]); one with no window
+    /// is dropped, as the listener drops it. Any other event is queued as
+    /// it is.
+    fn take_in_win_event(&self, event: WinEvent, timing: EventTiming) {
+        let WinEvent {
+            kind,
+            hwnd,
+            id_object,
+            id_child,
+            thread,
+            time,
+            ..
+        } = event;
+        if !matches!(
+            kind,
+            WinEventKind::Focus
+                | WinEventKind::Foreground
+                | WinEventKind::MenuPopupStart
+                | WinEventKind::Alert
+                | WinEventKind::Show
+        ) {
+            self.take_in(
+                Item::Msaa {
+                    kind,
+                    hwnd,
+                    id_object,
+                    id_child,
+                    thread,
+                },
+                Heard::Msaa(kind),
+                timing,
+            );
+            return;
+        }
+        let Some(fact) = DeliveredFact::from_win_event(kind, (hwnd, id_object, id_child)) else {
+            return;
+        };
+        let stamp = WinEventStamp { thread, time };
+        if self.admit_win_event(handover::Source::Hook, &fact, stamp) {
+            let foreground = matches!(fact, DeliveredFact::Foreground { .. });
+            self.push(
+                Item::Fact(fact, Some(stamp)),
+                TraceId::mint(),
+                now_ms(),
+                timing,
+            );
+            if foreground {
+                self.watch.foreground_changed();
+            }
+        }
+        self.tell_heard(Heard::Msaa(kind));
+    }
+
+    /// Queues a fact the supervisor routed from the listener, unless it is
+    /// the listener's copy of a `WinEvent` the outpost's own hook already
+    /// took in ([`handover`]).
+    fn take_in_routed_fact(
+        &self,
+        fact: &DeliveredFact,
+        win_event: Option<WinEventStamp>,
+        trace: TraceId,
+        observed_at_ms: u64,
+        timing: EventTiming,
+    ) {
+        if let Some(stamp) = win_event
+            && fact.is_win_event()
+            && !self.admit_win_event(handover::Source::Listener, fact, stamp)
+        {
+            return;
+        }
+        self.push(
+            Item::Fact(fact.clone(), win_event),
+            trace,
+            observed_at_ms,
+            timing,
+        );
+        if matches!(fact, DeliveredFact::Foreground { .. }) {
+            self.watch.foreground_changed();
+        }
+    }
+
+    /// Whether a copy of the `WinEvent` `fact` and `stamp` describe, from
+    /// `source`, is to be handled, or dropped as the twin of a copy
+    /// already handled ([`handover`]).
+    fn admit_win_event(
+        &self,
+        source: handover::Source,
+        fact: &DeliveredFact,
+        stamp: WinEventStamp,
+    ) -> bool {
+        let Some(key) = fact.key() else {
+            return true;
+        };
+        self.handover().admit(source, key, stamp)
+    }
+
+    /// The MSAA hand-over's state ([`handover`]).
+    fn handover(&self) -> MutexGuard<'_, handover::Handover> {
+        self.handover.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -498,6 +614,9 @@ impl Outpost {
             foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
             requested_events: acceptance::RequestedEvents::default(),
             heard: OnceLock::new(),
+            // Read before the hook below is installed: no event raised
+            // before this reaches it.
+            handover: Mutex::new(handover::Handover::new(verbatim_ia2::event_clock())),
         });
         if let Some(registration) = register_focus_properties(&context) {
             let _ = context.focus_properties.set(registration);
@@ -508,37 +627,31 @@ impl Outpost {
 
         worker::start(&context);
 
-        // The MSAA hooks: process-scoped value, state, name, selection, and
-        // destroy events (decision D13). A destroy is queued only for
+        // The MSAA hooks, process-scoped (decision D13): focus, foreground,
+        // menu opening, alert, and tooltip events, which the listener
+        // forwards only until it hears this hook is in
+        // (`docs/design/focus-pipeline.md`, section 12.4), and value, state,
+        // name, selection, and destroy events. A destroy is queued only for
         // a window, the one kind of object whose end the outpost tracks.
         let hook_context = Arc::clone(&context);
         let make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync> = Arc::new(move || {
             let context = Arc::clone(&hook_context);
-            Box::new(
-                move |kind, hwnd, id_object, id_child, thread, raised_ms_ago| {
-                    if kind == verbatim_ia2::WinEventKind::Destroy
-                        && (id_object != windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0
-                            || id_child != verbatim_ia2::CHILDID_SELF)
-                    {
-                        return;
-                    }
-                    context.take_in(
-                        Item::Msaa {
-                            kind,
-                            hwnd,
-                            id_object,
-                            id_child,
-                            thread,
-                        },
-                        Heard::Msaa(kind),
-                        EventTiming {
-                            raised_ms_ago: Some(raised_ms_ago),
-                            observed_at_us: now_us(),
-                            ..EventTiming::default()
-                        },
-                    );
-                },
-            )
+            Box::new(move |event: WinEvent| {
+                if event.kind == WinEventKind::Destroy
+                    && (event.id_object != windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0
+                        || event.id_child != verbatim_ia2::CHILDID_SELF)
+                {
+                    return;
+                }
+                context.take_in_win_event(
+                    event,
+                    EventTiming {
+                        raised_ms_ago: Some(event.raised_ms_ago),
+                        observed_at_us: now_us(),
+                        ..EventTiming::default()
+                    },
+                );
+            })
         });
         let event_thread = EventThread::spawn(target_pid, APP_SUBSCRIPTIONS, make_callback);
 
@@ -690,19 +803,22 @@ impl Outpost {
                 observed_at_ms,
                 timing,
                 fact,
-            } => {
-                context.push(
-                    Item::Fact(fact.clone()),
-                    *trace_id,
-                    *observed_at_ms,
-                    EventTiming {
-                        relayed_at_us: now_us(),
-                        ..*timing
-                    },
-                );
-                if matches!(fact, crate::protocol::DeliveredFact::Foreground { .. }) {
-                    context.watch.foreground_changed();
-                }
+                win_event,
+            } => context.take_in_routed_fact(
+                fact,
+                *win_event,
+                *trace_id,
+                *observed_at_ms,
+                EventTiming {
+                    relayed_at_us: now_us(),
+                    ..*timing
+                },
+            ),
+            SupervisorToOutpost::ForwardingEnded { through } => {
+                context.handover().forwarding_ended(*through);
+            }
+            SupervisorToOutpost::HookInstalled { .. } | SupervisorToOutpost::HookRemoved { .. } => {
+                // For the listener alone.
             }
             SupervisorToOutpost::Query {
                 trace_id,
@@ -1002,6 +1118,9 @@ fn watch_target(context: &Arc<Context>) {
 /// begins; once running it blocks until the process is terminated.
 pub fn run_attach(target_pid: u32, options: OutpostOptions) -> io::Result<()> {
     let outpost = Outpost::with_options(Box::new(io::stdout()), target_pid, options);
+    // No listener forwards anything here: the outpost's own hook takes in
+    // every `WinEvent`.
+    outpost.context.handover().without_listener();
     outpost.handle_command(&SupervisorToOutpost::Query {
         trace_id: TraceId::mint(),
         request_id: 0,

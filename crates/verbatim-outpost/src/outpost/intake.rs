@@ -15,11 +15,11 @@
 //!   newest 10 other events per thread that raised them are kept; a
 //!   foreground change counts among both and is kept by either, as NVDA's
 //!   limiter keeps it; the focused object's other events are always kept,
-//!   though they count. An MSAA event from the outpost's own hook carries
-//!   its thread; for a fact the listener relays, which carries none, its
-//!   window's thread stands in. UIA events, menu openings, queries and
-//!   housekeeping entries are not counted. A newer list of the nodes Core
-//!   holds replaces a waiting one.
+//!   though they count. Every MSAA event carries the thread that raised it,
+//!   from the outpost's own hook or from the listener's, which counted by
+//!   it the same. UIA events, menu openings, queries and housekeeping
+//!   entries are not counted. A newer list of the nodes Core holds replaces
+//!   a waiting one.
 //! - Events from a window the system reports as hung are dropped before any
 //!   read.
 //! - Within a batch only the newest foreground change is handled. Each
@@ -57,7 +57,7 @@ use verbatim_model::{Notification, TraceId};
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange};
 use windows::core::AgileReference;
 
-use crate::protocol::{DeliveredFact, Query, UiaSnapshotFact};
+use crate::protocol::{DeliveredFact, Query, UiaSnapshotFact, WinEventStamp};
 
 /// How many MSAA focus events a batch keeps (NVDA's limiter's
 /// `maxFocusItems`).
@@ -122,8 +122,11 @@ pub(super) enum Item {
     },
     /// A UIA event from this outpost's own subscriptions.
     Uia(UiaEvent),
-    /// A focus fact routed from the listener.
-    Fact(DeliveredFact),
+    /// A fact routed from the listener, or an MSAA focus, foreground
+    /// change, menu opening, alert, or tooltip the outpost's own hook took
+    /// in as the same fact, with the thread that raised an MSAA event and
+    /// when (`None` for a UIA fact).
+    Fact(DeliveredFact, Option<WinEventStamp>),
     /// A query from Core.
     Query { request_id: u64, query: Query },
     /// The nodes Core still holds, and the position of the last message it
@@ -285,7 +288,7 @@ impl Intake {
     /// here, with local calls, so the limiter never needs them later.
     pub(super) fn push(&self, entry: Entry) {
         let (key, category, hwnd) = classify(&entry.item);
-        let thread = thread_of(&entry.item, category, hwnd);
+        let thread = thread_of(&entry.item);
         let mut state = self.lock();
         if state.closed {
             // Shutting down: nothing new is taken. The entry is dropped
@@ -509,7 +512,7 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
             };
             (key, Category::Uncounted, event.hwnd)
         }
-        Item::Fact(fact) => classify_fact(fact),
+        Item::Fact(fact, _) => classify_fact(fact),
         // Only the newest list of held nodes matters.
         Item::NodesHeld { .. } => (Some(Key::NodesHeld), Category::Exempt, 0),
         // Only the newest caret report for a node matters, and it is never
@@ -519,7 +522,8 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
     }
 }
 
-/// The key, category, and window of a fact routed from the listener.
+/// The key, category, and window of a fact, from the listener or the
+/// outpost's own hook.
 fn classify_fact(fact: &DeliveredFact) -> (Option<Key>, Category, isize) {
     match fact {
         // Selections and notifications routed from the listener are
@@ -530,8 +534,7 @@ fn classify_fact(fact: &DeliveredFact) -> (Option<Key>, Category, isize) {
             *hwnd,
         ),
         DeliveredFact::UiaNotification { hwnd, .. } => (None, Category::Uncounted, *hwnd),
-        // Alerts and shows routed from the listener are ordinary MSAA
-        // events, limited per thread.
+        // Alerts and shows are ordinary MSAA events, limited per thread.
         DeliveredFact::Alert {
             hwnd,
             id_object,
@@ -588,16 +591,15 @@ fn classify_fact(fact: &DeliveredFact) -> (Option<Key>, Category, isize) {
     }
 }
 
-/// The thread the batch limits count an entry of `category` in window
-/// `hwnd` by: for an event from the outpost's own hook, the thread that
-/// raised it, as NVDA's limiter counts by the event's own thread (for a
-/// console window, the console host's thread, not the window's); for a fact
-/// the listener relays, which carries no thread, the window's thread stands
-/// in; and 0 for an entry not counted.
-fn thread_of(item: &Item, category: Category, hwnd: isize) -> u32 {
-    match (item, category) {
-        (Item::Msaa { thread, .. }, _) => *thread,
-        (_, Category::Focus | Category::Other) => super::window::window_thread(hwnd),
+/// The thread the batch limits count an entry by: for an MSAA event, from
+/// the outpost's own hook or the listener's, the thread that raised it, as
+/// NVDA's limiter counts by the event's own thread (for a console window,
+/// the console host's thread, not the window's); 0 for anything else, and
+/// for an MSAA fact with no thread, which only a test hands over.
+fn thread_of(item: &Item) -> u32 {
+    match item {
+        Item::Msaa { thread, .. } => *thread,
+        Item::Fact(_, Some(stamp)) => stamp.thread,
         _ => 0,
     }
 }
@@ -774,7 +776,7 @@ mod tests {
             key,
             category,
             hwnd,
-            thread: thread_of(&item, category, hwnd),
+            thread: thread_of(&item),
             entry: Entry {
                 item,
                 trace: TraceId::mint(),
@@ -790,7 +792,7 @@ mod tests {
     }
 
     fn fact(fact: DeliveredFact, observed_at_ms: u64) -> Waiting {
-        let item = Item::Fact(fact);
+        let item = Item::Fact(fact, None);
         let (key, category, hwnd) = classify(&item);
         Waiting {
             key,
@@ -925,6 +927,26 @@ mod tests {
         waiting.extend((2..=11).map(|child| msaa_from(WinEventKind::ValueChange, 7, child, 70)));
         let planned = plan(waiting, None, never_hung);
         assert_eq!(observed(&planned), (1..=11).collect::<Vec<u64>>());
+    }
+
+    #[test]
+    fn an_msaa_fact_is_counted_by_the_thread_that_raised_it() {
+        // An alert from the listener or the outpost's own hook carries its
+        // event's thread, whatever thread its window belongs to.
+        let alert = Item::Fact(
+            DeliveredFact::Alert {
+                hwnd: 7,
+                id_object: -4,
+                id_child: 0,
+            },
+            Some(WinEventStamp {
+                thread: 80,
+                time: 1,
+            }),
+        );
+        assert_eq!(thread_of(&alert), 80);
+        let unstamped = Item::Fact(DeliveredFact::Foreground { hwnd: 7 }, None);
+        assert_eq!(thread_of(&unstamped), 0);
     }
 
     #[test]
@@ -1138,11 +1160,14 @@ mod tests {
         let (first, _) = intake.next().expect("an entry");
         order.extend(first.entries().iter().map(|entry| entry.observed_at_ms));
         push(
-            Item::Fact(DeliveredFact::MsaaFocus {
-                hwnd: 0,
-                id_object: -4,
-                id_child: 4,
-            }),
+            Item::Fact(
+                DeliveredFact::MsaaFocus {
+                    hwnd: 0,
+                    id_object: -4,
+                    id_child: 4,
+                },
+                None,
+            ),
             4,
         );
         while intake.busy() {
@@ -1211,7 +1236,7 @@ mod tests {
 
     fn push_fact(intake: &Intake, fact: DeliveredFact) {
         intake.push(Entry {
-            item: Item::Fact(fact),
+            item: Item::Fact(fact, None),
             trace: TraceId::mint(),
             observed_at_ms: 0,
             timing: crate::protocol::EventTiming::default(),

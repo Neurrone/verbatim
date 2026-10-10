@@ -15,18 +15,13 @@ mod harness;
 use std::io::BufReader;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use verbatim_ia2::{WinEventHook, WinEventKind};
+use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
 use verbatim_model::{NormalizedEvent, TraceId};
 use verbatim_outpost::Outpost;
 use verbatim_outpost::protocol::{
     DeliveredFact, OutpostToSupervisor, SupervisorToOutpost, read_message,
-};
-use windows::Win32::Foundation::WAIT_TIMEOUT;
-use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, MSG, MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, PM_REMOVE,
-    PeekMessageW, QS_ALLINPUT, TranslateMessage,
 };
 
 /// Longer than the old focus deadline, well under NVDA's ten seconds.
@@ -45,15 +40,15 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
     let _hook = WinEventHook::install(
         pid,
         &[WinEventKind::Focus],
-        Box::new(move |_, hwnd, id_object, id_child, _, _| {
+        Box::new(move |event: WinEvent| {
             *seen.lock().unwrap_or_else(PoisonError::into_inner) =
-                Some((hwnd, id_object, id_child));
+                Some((event.hwnd, event.id_object, event.id_child));
         }),
     )
     .expect("WinEventHook::install");
     app.send("focus btn1");
     let (hwnd, id_object, id_child) =
-        pump_until(|| *focus.lock().unwrap_or_else(PoisonError::into_inner));
+        common::pump_until(|| *focus.lock().unwrap_or_else(PoisonError::into_inner));
 
     let (pipe_in, pipe_out) = std::io::pipe().expect("an anonymous pipe");
     let outpost = Outpost::new(Box::new(pipe_out), pid);
@@ -89,6 +84,7 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
             id_object,
             id_child,
         },
+        win_event: None,
     });
 
     let message = messages
@@ -119,32 +115,6 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
         timing.published_at_us
     );
     app.quit();
-}
-
-/// Pumps this thread's messages, which out-of-context `WinEvent`s are
-/// delivered through, until `value` yields something, waiting for each
-/// message rather than polling.
-fn pump_until<T>(mut value: impl FnMut() -> Option<T>) -> T {
-    let deadline = Instant::now() + common::WAIT_TIMEOUT;
-    let mut msg = MSG::default();
-    loop {
-        // SAFETY: `msg` is a local the call writes when it returns a message.
-        while unsafe { PeekMessageW(&raw mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
-            // SAFETY: `msg` is the message just retrieved.
-            let _ = unsafe { TranslateMessage(&raw const msg) };
-            // SAFETY: as above.
-            unsafe { DispatchMessageW(&raw const msg) };
-        }
-        if let Some(value) = value() {
-            return value;
-        }
-        let left = deadline.saturating_duration_since(Instant::now());
-        let left = u32::try_from(left.as_millis()).unwrap_or(u32::MAX);
-        // SAFETY: no handles; wakes when a message arrives or the time is up.
-        let woke =
-            unsafe { MsgWaitForMultipleObjectsEx(None, left, QS_ALLINPUT, MWMO_INPUTAVAILABLE) };
-        assert_ne!(woke, WAIT_TIMEOUT, "mockapp's focus event did not arrive");
-    }
 }
 
 /// Runs each test on a desktop of its own (`common/harness.rs`).
