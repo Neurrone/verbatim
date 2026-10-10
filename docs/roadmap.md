@@ -308,10 +308,14 @@ Other open items, taken after the steps above unless they fold into one:
   another process (tested: E_FAIL on unmarshaling).
 - One hung Win32 window that UIA proxies held up UIA event delivery for
   every other application in the same process for 14.8 seconds, and UIA's
-  timeouts did not bound it; NVDA has the same exposure. Dickson chose to
-  try turning off UIA's WinEvent-to-UIA mapping for focus in the listener,
-  taking focus for those windows from MSAA; an experiment checks that the
-  stall goes and no focus is lost.
+  timeouts did not bound it; NVDA has the same exposure. The cause is UIA's
+  own focus tracking in any process holding a focus registration, not the
+  WinEvent mapping (clearing it changed nothing). Measured: only the
+  listener's UIA delivery stalls; its WinEvent hooks and every outpost
+  carry on. Decided (Dickson, 2026-10-10): do as NVDA does, with no MSAA
+  fallback while the listener's UIA focus is stalled, since announcing
+  from MSAA instead would behave differently and confuse; option (b) keeps
+  the stall to the listener's UIA focus.
 - verbatim.exe must never be a large source of latency: at most 1 to 2 ms
   for relaying a message (Dickson, 2026-10-10). Measured, the supervisor's
   relay from the listener to an outpost took a median of 0.05 to 0.15 ms
