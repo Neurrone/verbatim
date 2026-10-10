@@ -4,10 +4,12 @@
 //! The local window functions (`IsWindow`, `GetClassNameW`, `GetAncestor`,
 //! `GetWindow`, and the rest) tolerate any handle value, failing on one that
 //! names no window, and are not counted (`docs/performance.md`, "What counts
-//! as a call"). The list view and tree view messages are sent with plain
-//! `SendMessageW`, which blocks while the owning application is wedged,
-//! acceptable only because every caller runs on the outpost's
-//! deadline-guarded worker; each counts as one window message. Only messages
+//! as a call"). The list view and tree view messages are sent with
+//! `SendMessageTimeoutW`, giving up after [`MESSAGE_TIMEOUT_MS`] or at once
+//! when the owning application is hung, as the list view's and the edit
+//! control's own messages are (`docs/design/focus-pipeline.md`, section
+//! 6.3); each answers zero when it fails, and counts as one window message.
+//! Only messages
 //! whose parameters are plain integers are offered, never one that carries a
 //! pointer, so sending them cannot make a window procedure in this process
 //! read memory it does not own. A tree view's `HTREEITEM` is such an
@@ -26,7 +28,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 use windows::Win32::UI::WindowsAndMessaging::{
     ES_MULTILINE, GA_PARENT, GET_WINDOW_CMD, GUITHREADINFO, GWL_STYLE, GetAncestor, GetClassNameW,
     GetDesktopWindow, GetGUIThreadInfo, GetTopWindow, GetWindow, GetWindowLongPtrW, GetWindowRect,
-    GetWindowThreadProcessId, IsChild, IsWindow, IsWindowVisible, SendMessageW,
+    GetWindowThreadProcessId, IsChild, IsWindow, IsWindowVisible, SMTO_ABORTIFHUNG, SMTO_BLOCK,
+    SendMessageTimeoutW,
 };
 
 use verbatim_model::CallKind;
@@ -158,24 +161,38 @@ pub(crate) fn focused() -> Option<(isize, u32)> {
     Some((hwnd.0 as isize, pid))
 }
 
-/// Sends `msg` with integer parameters, counted as one window message.
+/// How long a message waits for the window to answer: the list view's and
+/// the edit control's bound.
+const MESSAGE_TIMEOUT_MS: u32 = 500;
+
+/// Sends `msg` with integer parameters, counted as one window message,
+/// answering zero when the window does not answer within
+/// [`MESSAGE_TIMEOUT_MS`], is hung, or is gone.
 ///
 /// # Safety
 ///
 /// `msg` must take plain integers in both parameters, never a pointer.
 unsafe fn send(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> isize {
     count(CallKind::WindowMessage);
-    // SAFETY: SendMessageW tolerates any handle, answering zero for an
-    // invalid one; the caller's contract rules out pointer parameters.
-    unsafe {
-        SendMessageW(
+    let mut result = 0usize;
+    // SAFETY: SendMessageTimeoutW tolerates any handle, failing for an
+    // invalid one; the caller's contract rules out pointer parameters, and
+    // the result is a local.
+    let sent = unsafe {
+        SendMessageTimeoutW(
             handle(hwnd),
             msg,
-            Some(WPARAM(wparam)),
-            Some(LPARAM(lparam)),
+            WPARAM(wparam),
+            LPARAM(lparam),
+            SMTO_ABORTIFHUNG | SMTO_BLOCK,
+            MESSAGE_TIMEOUT_MS,
+            Some(&raw mut result),
         )
+    };
+    if sent.0 == 0 {
+        return 0;
     }
-    .0
+    result.cast_signed()
 }
 
 /// A list view's item count (`LVM_GETITEMCOUNT`), zero on failure.

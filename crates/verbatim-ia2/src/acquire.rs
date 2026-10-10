@@ -16,11 +16,12 @@
 //! msinfo32. [`navigate`] and [`ancestor_chain`] detect this window class and
 //! route a tree item's navigation through the control's own `TVM_*` window
 //! messages instead of `accNavigate`/`accParent`, mirroring NVDA's
-//! `sysTreeView32.py`. Those messages are sent with plain `SendMessageW`,
-//! which can block if the owning application is wedged — acceptable only
-//! because every caller of this module already runs on the outpost's
-//! deadline-guarded worker (never the event thread), the same bound every other
-//! blocking call in this module already relies on.
+//! `sysTreeView32.py`. Those messages are sent with `SendMessageTimeoutW`
+//! ([`crate::window`]), so a wedged application fails them after half a
+//! second, or at once when Windows judges it hung. The `IAccessible` calls
+//! here have no bound of their own: every caller of this module runs on
+//! the outpost's deadline-guarded worker (never the event thread), whose
+//! watchdog abandons a call that passes the entry's deadline.
 
 use windows::Win32::Foundation::{
     CO_E_OBJNOTCONNECTED, RPC_E_DISCONNECTED, RPC_E_SERVER_DIED, RPC_E_SERVER_DIED_DNE,
