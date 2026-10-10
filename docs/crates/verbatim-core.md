@@ -12,6 +12,10 @@ Public API:
   tab control, whose interior selections the reducer speaks; the outposts
   call it too, so that a selection is read in full only when it can be
   spoken, and the rule has one definition.
+- `SNAP_RESULTS_ACTIVITY` — the activity id of the shell's window-snap
+  results notification, the one UIA notification spoken from an
+  application without the focus; the supervisor starts an outpost for no
+  other notification.
 - `SrState` — `new()`; `focused()`, the live focus and its application;
   `focus_report()`, the focus's snapshot, its ancestors, and the navigator
   object, which the control plane's `DumpFocus` answers with for a test's
