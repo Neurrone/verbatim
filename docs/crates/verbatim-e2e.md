@@ -154,8 +154,10 @@ hook reads the number and Core reports it handled
 (`Frame::InputHandled`) once every effect the key caused is queued, the
 barrier `expect_nothing_more` waits on. `send_gesture` sends a gesture by
 its identifier through the control plane. Nothing taps keys or uses
-Alt+Tab to move the foreground; a window that does not take the
-foreground fails the step. The agent can let a launched program take the
+Alt+Tab to move the foreground, not even in a scenario about switching
+windows: the window is brought forward through the agent, as its
+taskbar button does; a window that does not take the foreground fails
+the step. The agent can let a launched program take the
 foreground only while it injected the last input, which it does as every
 scenario runs (see `docs/tooling.md`).
 
@@ -183,9 +185,13 @@ and the input methods above:
   when a window so titled is already open, for a program whose title is
   not the run's own, such as msinfo32; `launched_children` lists what the
   last launched program started.
-- `bring_document_forward(name)` brings the Notepad document opened
-  before launch to the foreground, as its taskbar button does;
-  `save_document` and `expect_unsaved` wait on its title.
+- `bring_window_forward(marker)` brings a window the scenario opened,
+  found by the marker in its title, to the foreground, as its taskbar
+  button does and as NVDA's system tests do with `SetForegroundWindow`,
+  and waits on window events until it is in front; the suite switches
+  windows only this way (Dickson, 2026-10-10).
+  `bring_document_forward(name)` does the same for the Notepad document
+  opened before launch; `save_document` and `expect_unsaved` wait on its title.
 - `open_folder` opens a File Explorer window on a harness folder,
   launched without the agent's foreground right and brought forward like
   every other launch;

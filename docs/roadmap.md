@@ -145,7 +145,8 @@ Dickson first.
    (eb72303, 6a10534, 82ccb5f): the ten related scenarios passed, and
    `explorer_folder_window`, `second_application_and_verbatim_menu`,
    `menu_and_settings_dialog` and `settings_system_page` passed ten runs
-   each. The two-window scenarios wait for Alt+Tab's replacement.
+   each. The two-window scenarios no longer use Alt+Tab; see the item on
+   switching windows below.
 4. Cheaper reads: only the property that changed; a selection read in
    full only when it will be spoken; the controlled selection in one
    remote operation; smaller UIA cache requests for text and caret
@@ -225,7 +226,11 @@ Other open items, taken after the steps above unless they fold into one:
   of the window behind the foreground in z-order did not predict Alt+Tab's
   most-recently-used order, and a measurement run's Alt+Tab activated the
   owner's own Windows Terminal. This replaces coherence decision 8's
-  Alt+Tab in the two-window scenarios. Done with step 2's remaining work.
+  Alt+Tab in the two-window scenarios. Done with step 2's remaining work,
+  pending live runs of `conhost_two_windows` and
+  `windows_terminal_two_windows`, whose expectations are unchanged:
+  nothing is playing when they switch, so Alt's press had nothing to
+  cancel.
 - Confirmed by Dickson (2026-10-10): the shell's staging windows stay
   ignored for focus and foreground (NVDA moves its focus to them and says
   nothing; nothing is heard differently); the 250 ms foreground hold stays
