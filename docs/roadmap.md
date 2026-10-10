@@ -175,7 +175,15 @@ above decides follows NVDA where NVDA's behaviour is clear, recorded as
 "provisional, awaiting Dickson" in the list below; otherwise the question
 is recorded with a recommendation and that item is set aside for the next.
 
-Provisional decisions awaiting Dickson: none yet.
+Provisional decisions awaiting Dickson:
+
+- An exception to `docs/testing.md`'s exact assertions for the
+  `*_control_flood` scenarios (2026-10-11): how Verbatim splits a flood
+  into bursts depends on timing, so the speech before Control is asserted
+  by its first and last lines and by its endings (heard in full, then cut
+  off), and the utterances between are not read. Everything after Control
+  is asserted exactly. The alternative is an assertion on every utterance
+  that does not depend on the burst split, if one can be found.
 
 For a later milestone (Dickson, 2026-10-10): Verbatim echoes a typed
 character from its keyboard hook, before the application handles the key,
