@@ -206,6 +206,22 @@ Public API:
     message after releasing it, and the watchdog releases it before it
     queues an `Abandoned` answer, so the watchdog never waits on the
     writer.
+  - Time limits inside an entry (`docs/design/focus-pipeline.md`, section
+    6; built 2026-10-11). Each UIA call ends after
+    `verbatim_uia::CALL_TIMEOUT`, five seconds, set once for the process.
+    A focus's ancestor walk checks its two-second budget
+    (`ENRICHMENT_BUDGET`) between calls, so it ends within the budget and
+    one call. The two operations made of many provider calls, the
+    `FindFirst` searches for a moved focus's element
+    (`element_of_moved_focus`, `holds_element`, one second,
+    `SEARCH_DEADLINE`) and a UIA dialog's own text (one second,
+    `DIALOG_TEXT_WAIT`), run on the context's `verbatim_uia::BoundedClient`
+    and are given up at their deadline, their thread abandoned; a search
+    given up finds nothing, and a dialog's text given up is no text. Tree
+    view messages are sent with `SendMessageTimeoutW`, half a second,
+    aborting at once for a hung window, as list view and edit messages
+    were already. An `IAccessible` call has no bound of its own: the
+    entry's deadline, enforced by abandonment, is its bound.
   - The reader (`Outpost::handle_command`, driven by `run_pipe`) answers
     pings itself, withdraws a cancelled query that has not started with a
     `NotStarted` reply, and queues everything else.
@@ -584,7 +600,7 @@ Implementation notes:
   states, and details are read when the focus is handled, as NVDA fetches
   them then (`with_live_reads`; `docs/parity.md`, "How an outpost turns
   events into focus reports"), from the focused element the outpost reads
-  (`live_focus_element`, waiting at most `FOCUS_READ_WAIT`, one second)
+  (`live_focus_element`, one call that UIA ends after `CALL_TIMEOUT`)
   to get its own live copy of the element, which also serves for the
   ancestors, the selected child, the element's window, and navigation.
   Without it the focus is emitted from the event alone, with
@@ -1153,8 +1169,9 @@ The outpost's side (`Outpost::shutdown`), in order:
 3. Both focus-following UIA subscriptions are closed: each client removes
    everything it registered (`RemoveAllEventHandlers`).
 4. The worker finishes the entry in hand and every abandoned worker
-   returns from its call. The watchdog ends first, so nothing more is
-   abandoned. No call is cut off: a call into an application that does
+   returns from its call, and so does every thread of the client for
+   operations with a deadline of their own. The watchdog ends first, so
+   nothing more is abandoned. No call is cut off: a call into an application that does
    not answer is ended by UIA's own timeouts.
 5. Every object held is released: every node leaves both registries, with
    its text patterns, anchors, and terminal memory.
@@ -1180,14 +1197,15 @@ process's exit, as the supervisor logs it (`shut down cleanly`,
 `elapsed_ms`): a median of 15 and a 99th percentile of 31, the slowest
 the focus listener's once. The only thing that can make it take longer is a call in
 progress, which the outpost lets finish. UIA ends a call to a provider
-that never answers by its transaction timeout, 20 seconds, UIA's default,
-which Verbatim leaves as it is; this bounds a classic call and a remote
-operation's `Execute` alike (mockapp's `remote_ops` tests pin it), and the
-connection timeout, 10 seconds, ends a call to a provider that cannot be
-reached. So 20 seconds covers every call UIA ends by itself, and one more
-second covers the shutdown's own work; waiting longer could only wait on
-an MSAA call into a hung application, which nothing times out, and that
-child is killed. The kill only ever happens while an application is not
+that never answers by its transaction timeout, and one to a provider that
+cannot be reached by its connection timeout, both `CALL_TIMEOUT`, five
+seconds, set once per process; this bounds a classic call and a remote
+operation's `Execute` alike (mockapp's `remote_ops` and `time_limits`
+tests pin it). A search makes several calls, each waiting up to that
+long, so the limit was left at 21 seconds when the timeouts were
+shortened from UIA's default of 20 (2026-10-11); waiting longer could
+only wait on an MSAA call into a hung application, which nothing times
+out, and that child is killed. The kill only ever happens while an application is not
 answering, and Verbatim's exit then waits up to the limit, after the exit
 sound.
 

@@ -750,11 +750,12 @@ thread its apartment-threaded providers run on:
 
 - `Execute` blocks while the provider is stalled, exactly as a classic
   call does. The UIA connection timeout (`IUIAutomation2`'s
-  `ConnectionTimeout`, which `Uia::within` shortens) does not bound it:
+  `ConnectionTimeout`) does not bound it:
   with a one-second connection timeout, both a program and the classic
   walk waited out a four-second stall and then succeeded.
 - UIA's transaction timeout (`IUIAutomation2`'s `TransactionTimeout`,
-  20 seconds by default) does bound it. With it at one second, `Execute`
+  20 seconds by default, five in every Verbatim process,
+  `verbatim_uia::CALL_TIMEOUT`) does bound it. With it at one second, `Execute`
   returned after about 1.1 seconds with `ExecutionFailure` and extended
   error `UIA_E_TIMEOUT`, as the classic walk's call failed with
   `UIA_E_TIMEOUT` in the same time.

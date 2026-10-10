@@ -236,6 +236,8 @@ Decided by Dickson (`docs/roadmap.md` 276 to 280): every event for a console win
 
 ### 6.1 UIA: one transaction timeout and one connection timeout per outpost
 
+Built on 2026-10-11 (`phase6-design.md`, "Time limits that hold"), with sections 6.3 and 6.4; section 6.2 is left as a recommendation there. The line numbers below are those of the code before it.
+
 `Uia::within` (client.rs 208 to 219) sets only `ConnectionTimeout`, restores a fixed 10 seconds rather than the earlier value, and does not bound a call on an element already fetched or a remote operation; those run under UIA's `TransactionTimeout`, 20 seconds by default and never changed outside tests (`focus-read-timeout.md` sections 1 and 2; `crates/mockapp/tests/remote_ops.rs` 416 to 476).
 
 Change:

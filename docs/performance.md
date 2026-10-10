@@ -114,6 +114,24 @@ evidence are kept with the watch and printed with the caret wait stage;
 the reply's total holds them and the answering check's, so the counts
 this ledger pins are each check's.
 
+Two operations of the worker run on another thread, so that they can
+have a deadline of their own (2026-10-11, roadmap step A1): the searches
+for a focus's element after the focus has moved on, and a UIA dialog's own
+text. Each runs on the outpost's `verbatim_uia::BoundedClient`, whose
+thread counts its calls and hands them back with the answer; they are
+added to the worker's count (`verbatim_uia::calls::add`), so the ledger's
+counts are unchanged. An operation given up at its deadline has no answer,
+and its calls are not counted: they belong to an abandoned thread, as an
+abandoned worker's do. A dialog's text now pays one hand-over to that
+thread and back, tens of microseconds, and the first one in an outpost
+also creates the thread and its UIA client.
+
+UIA's connection and transaction timeouts are five seconds in every
+Verbatim process (`verbatim_uia::CALL_TIMEOUT`), set once by UIA's
+first-time setup, where they were UIA's default 20 seconds for a
+transaction and ten for a connection. A call that the application answers
+costs the same; only a call it does not answer ends sooner.
+
 ## Cold and steady state
 
 - Cold: the first focus in a window after its outpost started. The outpost

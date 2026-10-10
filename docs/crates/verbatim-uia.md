@@ -5,11 +5,32 @@ threads, and the arbitration probe.
 
 Public API:
 
+- `CALL_TIMEOUT` — five seconds, UIA's connection timeout and transaction
+  timeout for the whole process. Both are settings of the process, not of
+  a client (experiment E1 in `docs/design/focus-pipeline.md`), so UIA's
+  first-time setup sets them once, through its own client, and creating a
+  client changes neither (measured 2026-10-11: a new client, on the same
+  thread or another, reads whatever was set last). Each bounds one call
+  into a provider, not an operation: a search makes many calls and waits a
+  full timeout for each that is not answered, which is why
+  `BoundedClient` exists. Five seconds is under the outpost worker's
+  ten-second deadline and over the two to three seconds a starting
+  application takes to answer.
+- `BoundedClient` — a client on a thread of its own for an operation made
+  of many provider calls that needs a deadline of its own (a `FindFirst`
+  search, a dialog's text). `run(deadline, operation)` queues the
+  operation, which captures and answers only `Send` values (UIA objects as
+  agile references), and waits for its answer; past the deadline it
+  answers `Unanswered::DeadlinePassed` and abandons the thread, which
+  finishes its call unheard and ends, and the next `run` starts a new
+  thread and client. A UIA call cannot be cancelled, so abandonment is the
+  bound, as it is for the outpost's worker. The calls an operation made
+  are added to the waiting thread's count (`calls::add`) when it answers.
+  `close()` waits for every thread, abandoned ones included; `abandoned()`
+  counts them.
 - `Uia` — a per-thread client (one COM apartment, one `IUIAutomation`
-  instance; nothing COM crosses threads), whose connection timeout is ten
-  seconds rather than UIA's default two, so a busy application's read
-  waits for its own answer instead of failing or returning UIA's stand-in
-  for the window: `focused_element`,
+  instance; nothing COM crosses threads), each of whose calls waits up to
+  `CALL_TIMEOUT` for the application: `focused_element`,
   `element_from_handle`, `element_by_runtime_id`,
   `element_by_name_and_position` (an element named so at a given position
   in its set, for a focus event whose sender no element of the tree is, as
@@ -62,12 +83,9 @@ Public API:
   `AncestorStops`: at a window read through the other API, at an ancestor
   the caller already knows (reporting `AncestorWalk::MetKnown`), or at a
   deadline or a hop that UIA's transaction timeout ended
-  (`AncestorWalk::OutOfTime`); any other failed hop is the root. `Uia::within(wait, read)` runs a
-  read with a shorter connection timeout, for reads that are only extras;
-  verified with `verbatim-uia-rops`'s stall test, the connection timeout
-  does not bound a call on an element already fetched, which UIA's
-  process-wide transaction timeout (20 seconds by default) does, so it
-  limits only reads that connect to a provider anew. Ancestors that are not
+  (`AncestorWalk::OutOfTime`); any other failed hop is the root. The
+  deadline is checked between hops, each of which UIA ends after
+  `CALL_TIMEOUT`. Ancestors that are not
   presentable focus context — NVDA's `isPresentableFocusAncestor`,
   ported: layout elements (unknown and pane roles, textless static text,
   nameless windows, property pages, and groupings) plus list items, tree
@@ -297,7 +315,17 @@ Public API:
   group cannot be registered (an element that has gone, which NVDA also
   logs and passes over), are skipped. `settle()` waits until every move
   asked for before it has been made, for a test that measures what the
-  moves cost an application. Dropping a registration unregisters
+  moves cost an application. A registration's thread has a watchdog, the
+  outpost worker's rule: when a move has taken `MOVE_DEADLINE` (ten
+  seconds, two call timeouts) by the time the registration is next
+  retargeted or settled, the thread is abandoned and a new one, with its
+  own client and the same subscriptions, registers on the newest scope;
+  `settle()` then returns without waiting for it. An abandoned thread's
+  handlers call back no more, so nothing is heard twice, and once its call
+  returns it removes what its client registered and ends; `abandoned()`
+  counts those not yet waited for, and `close()` waits for them too.
+  `new` waits for the first registration up to `MOVE_DEADLINE` and fails
+  with `UIA_E_TIMEOUT` past it. Dropping a registration unregisters
   and ends its thread. The focus listener holds one registration, the
   desktop-wide selection, menu-opened, and notification subscriptions as
   one group, where it held three registrations, each with its own thread

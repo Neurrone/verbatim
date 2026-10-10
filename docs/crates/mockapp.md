@@ -484,6 +484,18 @@ the stall ended, so the read waited longer than the outpost's old 1.5
 second deadline. The
 scripted focus event is raised with `NotifyWinEvent`, so this test too
 needs no real keyboard focus.
+`time_limits.rs` holds mockapp's next provider call (`hold`) and shows
+each of UIA's time limits ending the wait while the call is still held,
+each test in a process of its own since the timeouts belong to the
+process: a property read on an element fetched before the hold fails
+with `UIA_E_TIMEOUT` after one `CALL_TIMEOUT` (five seconds, not UIA's
+default of twenty); a `FindFirst` search run on a `BoundedClient` is
+given up at its own one-second deadline, before any call timeout, its
+thread abandoned and waited for once the call is released; and a
+subscription moved onto the held window named three times, so that its
+move makes three calls each waiting out the call timeout, is abandoned and
+replaced when settled, once `MOVE_DEADLINE` has passed. (A move held at
+one call ends at the call timeout, within the deadline.)
 `focus_reports.rs` runs a real outpost in the test process over
 `tests/fixtures/reuse.json` (two lists named alike, as a File Explorer
 folder and its subfolder), through `tests/common/outpost.rs`, the
