@@ -500,7 +500,7 @@ More environment variables matter for less common cases:
   `C:\VerbatimLab\tools\ffmpeg.exe`.
 - `VERBATIM_E2E_RUST_LOG` is passed to the Verbatim a scenario launches
   as `RUST_LOG`, and its outposts inherit it. Unset, every scenario's
-  Verbatim logs with `info,verbatim_outpost=debug`
+  Verbatim logs with `info,verbatim_outpost=debug,verbatim_uia::subscribe=debug`
   (`DEFAULT_RUST_LOG`), so a failed run's artifacts hold the outposts'
   debug lines: what each read and how long it took, what it released, and
   what it reported. The focus listener runs from the outpost binary, so
