@@ -150,10 +150,12 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
 4. Arrival order in the outposts: 42d9caa and ce53dbc removed; NVDA's MSAA
    focus collapsing (consecutive runs, up to four) and limits by the
    event's own thread, for MSAA only; `msaa_focus_waiting` removed.
-   Built (2026-10-11): `cargo xtask ci` passes; its mockapp tests and
-   scenarios are still to run (`menu_and_settings_dialog`,
-   `system_information_tree`, `rapid_tabbing_in_settings`,
-   `explorer_folder_window`, `settings_dialog_keys`, `theme_panel`).
+   Done (2026-10-11): `cargo xtask ci` and the mockapp tests pass; ten
+   runs each of fourteen related scenarios (the menu, Settings, System
+   Information, Explorer and theme ones, with the Windows Terminal tab,
+   console, Notepad and second-application ones) and
+   the full suite passed every scenario's steps, the only failures being
+   the old recording check, fixed on main since.
    Every UIA focus of a batch is now handled, as the design's section 5.1
    says. Until step 5, an MSAA focus still comes from the listener while
    other MSAA events come from the outpost's own hook, so a change raised
