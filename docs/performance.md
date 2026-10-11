@@ -225,25 +225,36 @@ outpost reads it: with remote operations, the default, and with the
 classic walk (`uia.remote_operations = false` in `settings.toml`, or a
 window whose elements cannot be imported into a program).
 
-Stage A step 6 of phase 6 (written 2026-10-11, not yet built; see
-`docs/design/focus-pipeline.md`, section 12) moves the read of a UIA focus
-into the focus listener, which reads the event's own element, so the
-outpost no longer reads the focused element, and the "Today" figures in
-the four UIA focus sections below are those from before it. The test now
-stands in for the listener with the listener's own reader, counted on the
-test's thread, and adds its calls to the outpost's. Counted by reading
-the code: with remote operations, one UIA call per focus, the listener's
-`Execute`, which also refreshes the focus's own cache, the cold focus's
-window message being the outpost's probe; classically, five calls for the
-cold focus (the live keyboard focus, the focus's cache, and three hops up
-to the desktop's root), four for the steady state and the next list item
-(one hop to the known ancestor, and the nearest window), and five into
-the list (one hop and the selected item's two). The outpost makes no UIA
-call before it reports the focus; after the report it finds its own copy
-of the element, one `ElementFromHandle` and one `Execute`, which the
-worker's count does not reach. The provider hits change with both, and
-are measured at the step's first build, when `call_counts.rs` and these
-sections are updated together.
+Since stage A step 6 of phase 6 (2026-10-11; see
+`docs/design/focus-pipeline.md`, section 12) the focus listener reads a
+UIA focus from the event's own element, so the outpost no longer reads
+the focused element; the "Today" figures in the four UIA focus sections
+below are those from before the step. The test now stands in for the
+listener with the listener's own reader, counted on the test's thread,
+and adds its calls to the outpost's. Measured at the step's first build,
+the calls as reading the code predicted: with remote operations, one UIA
+call per focus, the listener's `Execute`, which also refreshes the
+focus's own cache, the cold focus's window message being the outpost's
+probe; classically, five calls for the cold focus (the live keyboard
+focus, the focus's cache, and three hops up to the desktop's root), four
+for the steady state and the next list item (one hop to the known
+ancestor, and the nearest window), and five into the list (one hop and
+the selected item's two). The outpost makes no UIA call before it reports
+the focus; after the report it finds its own copy of the element, one
+`ElementFromHandle` and one `Execute`, which the worker's count does not
+reach. The provider hits, which now include the listener's read, the
+outpost's walk to its own element, and both moves of the focus-following
+subscriptions, rose: with remote operations 350 cold, 305 steady, 327
+into the list, and 320 to the next item (91, 91, 129, and 91 before, the
+focused-element read excluded then as now); classically 403, 432, 401,
+and 498. The `WM_GETOBJECT` count rose most, from 1 to 10 in the steady
+state, from the outpost's `ElementFromHandle` and the listener's and the
+outpost's separate clients each connecting; this is recorded as a
+follow-up for step 11's measurements rather than changed here. The
+listener's refreshed read executes 2,190 instructions at mockapp's worst
+(2,180 without the refresh), and the outpost's walk down mockapp's
+deepest path, sixty-two levels, 1,139 (`instruction_limit.rs`,
+`reads_and_paths_execute_exactly`).
 
 ### A focus change, UIA, steady state
 

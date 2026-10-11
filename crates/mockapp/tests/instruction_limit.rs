@@ -20,10 +20,10 @@ use verbatim_uia::text::{Endpoint, TextPatternExt};
 use verbatim_uia::{CACHED_PROPERTIES, ElementExt, Uia, runtime_id};
 use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, ControlledQuery, Error,
-    FocusAncestry, FocusQuery, FormatSpan, Movement, NavigationDirection, Position, RangeEnd,
-    ScreenAnchor, ScreenQuery, Status, StepQuery, TextAttribute, TextFrom, TextTarget, UnitsQuery,
-    caret_read_remote, controlled_selection_remote, counting, focus_ancestry_remote,
-    navigation_step_remote, terminal_screen_remote, text_units_remote,
+    FocusAncestry, FocusQuery, FormatSpan, Movement, NavigationDirection, PathQuery, Position,
+    RangeEnd, ScreenAnchor, ScreenQuery, Status, StepQuery, TextAttribute, TextFrom, TextTarget,
+    UnitsQuery, caret_read_remote, controlled_selection_remote, counting, element_by_path_remote,
+    focus_ancestry_remote, navigation_step_remote, terminal_screen_remote, text_units_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
@@ -241,6 +241,71 @@ fn focus_and_navigation_execute_exactly() {
         "focus ancestry worst, at depth limit 30, typical; navigation far and near"
     );
     assert!(worst < LIMIT / 2 && far < LIMIT / 2);
+}
+
+/// The focus listener's read of a focus, and the outpost's walk to its own
+/// copy of an element by its path (stage A step 6). The read: the worst
+/// case of `focus_and_navigation_execute_exactly`, with the focus's own
+/// cache filled afresh in the same run, as the listener reads every focus.
+/// The walk: from mockapp's window down sixty nested groups and the list
+/// to its second item, the deepest path in mockapp, each level's first
+/// child the one wanted but for the item; one level down; and a path whose
+/// first runtime id no child has, which ends the walk at once.
+fn reads_and_paths_execute_exactly() {
+    common::init_com();
+    let mut fixture = Fixture::start("deep.json", "mockapp-instructions-path");
+    fixture.app.send("focus fruits");
+    let list = fixture.find("Fruits");
+    let previous = fixture.find("Banana");
+    let known: Vec<Vec<i32>> = (0..64).map(|index| vec![42, 7, index]).collect();
+    let query = FocusQuery {
+        element: &list,
+        known: &known,
+        previous: Some(&previous),
+        depth_limit: 64,
+        properties: CACHED_PROPERTIES,
+        deadline: None,
+        require_focus: true,
+        refresh: true,
+    };
+    let read = counted(|| {
+        let answer = focus_ancestry_remote(&fixture.uia, &query).expect("the program runs");
+        let FocusAncestry::Focused(ancestry) = answer else {
+            panic!("not focused");
+        };
+        assert!(
+            ancestry.element.is_some(),
+            "the focus's own cache, refreshed"
+        );
+    });
+
+    let mut path: Vec<Vec<i32>> = (1..=60)
+        .map(|group| runtime_id(&fixture.find(&format!("Group {group}"))))
+        .collect();
+    path.push(runtime_id(&list));
+    path.push(runtime_id(&previous));
+    let walk = |path: &[Vec<i32>]| {
+        let query = PathQuery {
+            root: &fixture.root,
+            path,
+            properties: CACHED_PROPERTIES,
+            deadline: None,
+        };
+        element_by_path_remote(&fixture.uia, &query)
+            .expect("the program runs")
+            .map(|found| runtime_id(&found))
+    };
+    let deepest = counted(|| assert_eq!(walk(&path).as_ref(), path.last()));
+    let near = counted(|| assert_eq!(walk(&path[..1]).as_ref(), path.first()));
+    let missing = counted(|| assert_eq!(walk(&[vec![42, -1]]), None));
+    fixture.app.quit();
+
+    assert_eq!(
+        [read, deepest, near, missing],
+        [2190, 1139, 153, 149],
+        "the listener's refreshed read; a path down sixty-two levels, down one, and to nothing"
+    );
+    assert!(read < LIMIT / 2 && deepest < LIMIT / 2);
 }
 
 /// A selection inside the list a search box controls
@@ -517,6 +582,10 @@ fn main() {
         (
             "focus_and_navigation_execute_exactly",
             focus_and_navigation_execute_exactly,
+        ),
+        (
+            "reads_and_paths_execute_exactly",
+            reads_and_paths_execute_exactly,
         ),
         (
             "controlled_selections_execute_exactly",

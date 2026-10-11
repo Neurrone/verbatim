@@ -598,8 +598,9 @@ own copy of an element the focus listener read
 (`docs/design/focus-pipeline.md`, section 12.5): the focus, from the
 nearest element of its chain with a window of its own, after the focus is
 reported; and an element of that chain it needs later. Its instruction
-count, which grows with the children looked at on the way, is not yet
-pinned (`crates/mockapp/tests/instruction_limit.rs`).
+count grows with the children looked at on the way: 1,139 down mockapp's
+deepest path, sixty-two levels, 153 one level down, and 149 for a path
+that ends at once (`crates/mockapp/tests/instruction_limit.rs`).
 
 ## Layer 3: a selection the focus controls
 

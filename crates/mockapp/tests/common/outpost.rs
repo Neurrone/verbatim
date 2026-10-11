@@ -410,7 +410,7 @@ impl OutpostUnderTest {
             panic!("the listener dropped the focus: {judged:?}");
         };
         let mut reported = self.focus(judged.into_fact(0));
-        reported.calls = reported.calls + calls;
+        reported.calls += calls;
         reported
     }
 

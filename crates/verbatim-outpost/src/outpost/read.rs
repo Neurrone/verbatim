@@ -713,12 +713,11 @@ fn dialog_text_of(context: &Context, node: &NodeSnapshot) -> Option<String> {
             // A dialog the focus listener read in the focus's chain, whose
             // element this outpost does not hold, is found by its path.
             let element = context.uia_registry.element_of(node.id);
-            let route = match element {
-                Some(_) => None,
-                None => {
-                    let runtime_id = context.uia_registry.runtime_id_of(node.id)?;
-                    Some(context.focus_route(&runtime_id)?)
-                }
+            let route = if element.is_some() {
+                None
+            } else {
+                let runtime_id = context.uia_registry.runtime_id_of(node.id)?;
+                Some(context.focus_route(&runtime_id)?)
             };
             let remote = route
                 .as_ref()

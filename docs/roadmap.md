@@ -188,10 +188,10 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    finds its own element afterwards; the moved-on rules, name-and-position
    lookups and `GetFocusedElement` on the focus path removed; Control+Tab
    follows NVDA (8be2223's rule goes); D13 amended. Written (2026-10-11,
-   `phase6-design.md`, "The listener reads each UIA focus"), not yet
-   built: it awaits its first build, `cargo xtask ci`, the mockapp tests
-   (some of whose provider-call pins can only be measured then), and its
-   scenarios. Three questions are recorded there with recommendations: the
+   `phase6-design.md`, "The listener reads each UIA focus"). Built: `cargo
+   xtask ci` passes, every mockapp test with it, the UIA focus cost pins
+   and the path program's instruction counts measured and set; its
+   scenarios are still to run. Three questions are recorded there with recommendations: the
    acceptance test left in the outpost, the reading threads ended when
    idle rather than when their application exits, and whether
    `windows_terminal_tabs` hears the tab left in every run.
