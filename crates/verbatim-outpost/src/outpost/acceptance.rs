@@ -2,7 +2,9 @@
 //! ported rule by rule from `shouldAcceptEvent` (`source/eventHandler.py`):
 //! an event from a window unrelated to the foreground window is dropped
 //! before any call into the application (`docs/parity.md`, "Event
-//! acceptance in the outpost").
+//! acceptance in the outpost"). The outpost's worker makes it for every
+//! event but a UIA focus, which the focus listener's reading thread tests
+//! with it before reading the focus (`crate::focus_read`).
 //!
 //! NVDA makes the test per event as it processes it, against the foreground
 //! window of that moment, not in its event callback, because filtering there

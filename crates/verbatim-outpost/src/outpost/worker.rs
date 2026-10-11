@@ -2643,37 +2643,11 @@ impl Worker<'_> {
         }
     }
 
-    /// Whether a UIA focus the listener read passes NVDA's acceptance test
-    /// against the foreground window, made as the focus is handled, before
-    /// any call into the application. The listener has judged the rest
-    /// already: the element had the keyboard focus, read live, and the
-    /// console window's own focus never comes.
-    ///
-    /// The test runs against the element's nearest window, as NVDA's runs
-    /// against `getNearestWindowHandle(sender)`
-    /// (`docs/design/focus-pipeline.md`, section 16.2): its own window, else
-    /// the nearest its listener's read found, else the nearest ancestor's.
-    /// An element with no window in its chain is tested with 0, which
-    /// passes, as NVDA lets such a focus through untested
-    /// (`shouldAcceptEvent` cannot filter without a window handle).
-    fn allows_uia_focus(&self, read: &UiaFocusRead) -> bool {
-        let window = Some(read.hwnd)
-            .filter(|&hwnd| hwnd != 0)
-            .or(read.window)
-            .or_else(|| {
-                read.ancestors.as_ref().and_then(|ancestors| {
-                    ancestors
-                        .iter()
-                        .map(|ancestor| ancestor.hwnd)
-                        .find(|&hwnd| hwnd != 0)
-                })
-            });
-        self.accepts(EventName::GainFocus, window.unwrap_or(0))
-    }
-
     /// A UIA focus as the focus listener judged and read it from the
     /// event's own element (`docs/design/focus-pipeline.md`, section 12):
-    /// the element had the keyboard focus when the listener read it, as
+    /// it was no repeat of the last focus accepted, its nearest window
+    /// passed NVDA's acceptance test against the foreground window, the
+    /// element had the keyboard focus when the listener read it, as
     /// NVDA's `shouldAllowUIAFocusEvent` requires, and its states, value,
     /// details, ancestors, and selected child are the element's own, read
     /// in one remote operation. The outpost reports it at once, its node
@@ -2685,9 +2659,9 @@ impl Worker<'_> {
     /// ([`find_focus_element`](Self::find_focus_element)).
     fn uia_focus(&mut self, read: &UiaFocusRead, trace: TraceId, observed_at_ms: u64) {
         let context = self.context;
-        if !self.allows_uia_focus(read) {
-            return;
-        }
+        // NVDA's acceptance test against the foreground window was made by
+        // the listener, before it read the focus, as NVDA makes it before
+        // it queues one (`docs/design/focus-pipeline.md`, section 16.2).
         let Ok(reported) = self.uia_focus_window((read.hwnd, read.focus_window), read.window)
         else {
             return;

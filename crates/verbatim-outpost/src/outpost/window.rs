@@ -103,7 +103,7 @@ pub(super) fn window_belongs_to_hidden_frame(handle: isize) -> bool {
 }
 
 /// The system's foreground window, or 0 when no window has the foreground.
-pub(super) fn foreground_window_handle() -> isize {
+pub(crate) fn foreground_window_handle() -> isize {
     // SAFETY: GetForegroundWindow has no preconditions.
     unsafe { GetForegroundWindow() }.0 as isize
 }

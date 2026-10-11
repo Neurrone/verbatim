@@ -120,7 +120,13 @@ event's own element:
   (section 16.3 of the focus-pipeline design): an event whose sender
   `CompareElements` equates with that focus, while that element's
   `HasKeyboardFocus` reads true, is dropped, its marker resolved as a drop;
-  a comparison or a read that fails lets it through. Each read is also
+  a comparison or a read that fails lets it through. Then NVDA's
+  acceptance test against the foreground window, with the outpost's port
+  of it (`outpost::acceptance`), on the element's own window or, one call
+  (`verbatim_uia::nearest_window_handle`), its nearest ancestor's: a focus
+  that fails is dropped before it is read and is never recorded as the
+  last accepted, which only a focus that passed and was read becomes. The
+  outpost no longer tests a UIA focus itself. Each read is also
   logged at debug level: the sender's runtime id, class name, framework,
   and own window handle, and the comparison's result; the framework is a
   call made only while debug logging is on. Each thread's own focus before

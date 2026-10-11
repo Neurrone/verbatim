@@ -71,7 +71,9 @@ use verbatim_uia::map::{
 use verbatim_uia::{ElementExt as _, Uia, WalkerExt as _};
 use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, Path, focus_ancestry};
 
+use crate::ForegroundReader;
 use crate::arbitration::window_class_name;
+use crate::outpost::acceptance::{EventName, RequestedEvents, SystemWindows, accepts_event};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::outpost::window::{
     is_shell_transition_window, top_level_of, window_is_hung, window_thread,
@@ -194,6 +196,10 @@ pub struct FocusReader {
     number: u64,
     /// The last focus any reader accepted.
     last_accepted: LastAccepted,
+    /// Reads the foreground window for NVDA's acceptance test: the
+    /// system's, unless a test supplies its own
+    /// ([`set_foreground_reader`](Self::set_foreground_reader)).
+    foreground: ForegroundReader,
 }
 
 impl Drop for FocusReader {
@@ -220,7 +226,17 @@ impl FocusReader {
             last: None,
             number: NEXT_READER.fetch_add(1, Ordering::Relaxed),
             last_accepted,
+            foreground: Arc::new(crate::outpost::window::foreground_window_handle),
         })
+    }
+
+    /// Reads the foreground window with `reader` from now on, in place of
+    /// the system's, for NVDA's acceptance test: a test whose application
+    /// runs on a desktop where no window can take the foreground says which
+    /// window is the foreground, as it does to an outpost
+    /// (`Outpost::set_foreground_reader`).
+    pub fn set_foreground_reader(&mut self, reader: ForegroundReader) {
+        self.foreground = reader;
     }
 
     /// Judges and reads the UIA focus event whose sender is `element`,
@@ -262,6 +278,31 @@ impl FocusReader {
             return Judged::Dropped(
                 "a repeat of the last focus, which still has the keyboard focus",
             );
+        }
+        // NVDA's acceptance test, next, against the element's nearest
+        // window (`getNearestWindowHandle`, then `shouldAcceptEvent`,
+        // `UIAHandler/__init__.py` 920 to 925;
+        // `docs/design/focus-pipeline.md`, sections 16.2 and 16.3): its own
+        // window, else, one call, the nearest ancestor's. An element with no
+        // window anywhere above it is not tested, as NVDA cannot test it. A
+        // focus that fails is dropped and never becomes the last accepted,
+        // so the same element's focus once its window is in front, as a
+        // console's text area's comes, is no repeat.
+        let nearest = if hwnd == 0 {
+            verbatim_uia::nearest_window_handle(element)
+        } else {
+            Some(hwnd)
+        };
+        let windows = SystemWindows {
+            foreground: (self.foreground)(),
+        };
+        if !accepts_event(
+            EventName::GainFocus,
+            nearest.unwrap_or(0),
+            &windows,
+            &RequestedEvents::default(),
+        ) {
+            return Judged::Dropped("its window is not related to the foreground window");
         }
         let previous = self
             .last
@@ -309,7 +350,7 @@ impl FocusReader {
                         self.classic_windows.insert(classic_key);
                     }
                 }
-                self.focused(element, (hwnd, focus_window), event, &ancestry)
+                self.focused(element, (hwnd, focus_window, nearest), event, &ancestry)
             }
             Err(error) => {
                 // NVDA lets a focus event through when its sender's keyboard
@@ -335,7 +376,7 @@ impl FocusReader {
                     snapshot: fact_of(event),
                     ancestors: None,
                     selected_child: None,
-                    window: None,
+                    window: nearest,
                     same_as_last: None,
                 }))
             }
@@ -350,7 +391,7 @@ impl FocusReader {
     fn focused(
         &mut self,
         element: &IUIAutomationElement,
-        (hwnd, focus_window): (isize, isize),
+        (hwnd, focus_window, nearest): (isize, isize, Option<isize>),
         event: CachedUiaParts,
         ancestry: &Ancestry,
     ) -> Judged {
@@ -394,12 +435,13 @@ impl FocusReader {
         // The console host's provider answers no native window handle for
         // its window inside a remote operation (only the client side's
         // window proxy supplies it), so for a windowless element whose read
-        // named no window, the classic walk finds it (3f4dbb4), and the
-        // ancestor that is that window is given its handle, which the
-        // outpost finds its own copy of the element from.
+        // named no window, the nearest window found for the acceptance test
+        // stands (3f4dbb4), and the ancestor that is that window is given
+        // its handle, which the outpost finds its own copy of the element
+        // from.
         let mut window = ancestry.window;
         if window.is_none() && hwnd == 0 {
-            window = verbatim_uia::nearest_window_handle(element);
+            window = nearest;
             if let (Some(found), Some(ancestors)) = (window, ancestors.as_mut()) {
                 self.mark_window(found, ancestors);
             }

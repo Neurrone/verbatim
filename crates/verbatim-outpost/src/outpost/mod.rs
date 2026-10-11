@@ -27,7 +27,7 @@
 //! reported at or before that position. A node reported later, or issued and
 //! not yet reported, is kept: Core may not have seen it yet.
 
-mod acceptance;
+pub(crate) mod acceptance;
 mod focus_path;
 mod handover;
 mod intake;

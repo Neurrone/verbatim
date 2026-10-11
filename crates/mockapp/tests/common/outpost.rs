@@ -22,11 +22,13 @@
 //! test says, however long the test takes.
 //!
 //! No window takes the foreground on the desktop a test runs on, so the
-//! outpost reads the foreground window from the test too
-//! ([`Outpost::set_foreground_reader`]): mockapp's own window unless the
+//! outpost and the listener's reader read the foreground window from the
+//! test too ([`Outpost::set_foreground_reader`],
+//! [`FocusReader::set_foreground_reader`]): mockapp's own window unless the
 //! test says otherwise ([`OutpostUnderTest::set_foreground`]), as when a
-//! user works in mockapp, so its events pass the outpost's acceptance test
-//! against the foreground window.
+//! user works in mockapp, so its events pass the acceptance test against
+//! the foreground window, which the listener makes for a UIA focus and the
+//! outpost for every other event.
 //!
 //! The outpost's own hook takes in mockapp's MSAA focus, foreground, menu,
 //! alert, and tooltip events, as every outpost's does
@@ -179,8 +181,13 @@ impl OutpostUnderTest {
             // The test may have finished with what the outpost hears.
             let _ = heard_tx.send(event);
         }));
-        let reader = FocusReader::new(options.remote_operations, LastAccepted::default())
+        let mut reader = FocusReader::new(options.remote_operations, LastAccepted::default())
             .expect("a UIA client for the listener's reads");
+        // The listener's acceptance test reads the same foreground window.
+        let listener_foreground = Arc::clone(&foreground);
+        reader.set_foreground_reader(Arc::new(move || {
+            listener_foreground.load(Ordering::Relaxed)
+        }));
         let under_test = Self {
             outpost,
             messages,

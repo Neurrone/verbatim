@@ -763,6 +763,8 @@ Step 6 (the listener judging and reading each UIA focus, built on worktree branc
 
 The outpost keeps the acceptance test (decided by Dickson, 2026-10-11), run against the element's nearest window: its own native window handle if it has one, else the nearest ancestor's from the listener's read, which the fact already carries. The application's keyboard focus window is not used. An element with no window anywhere in its chain is tested as NVDA tests a handle of 0. Tests: mockapp, a windowless focus inside a window that is not in front is dropped; the same focus is accepted once its window is in front.
 
+Revised by Dickson on 2026-10-11, reversing the choice to keep the test in the outpost so as to follow NVDA's order (16.3): the listener's reading thread makes the test, after the repeat check and before the read, against the element's own window or, one call, its nearest ancestor's (`verbatim_uia::nearest_window_handle`, NVDA's `getNearestWindowHandle`), using the outpost's port of `shouldAcceptEvent` (`outpost::acceptance`, shared by both). A focus that fails is dropped, its marker resolved as a drop, and never becomes the last accepted focus. The outpost no longer tests a UIA focus; it keeps the test for every other event.
+
 ### 16.3 Repeated focus, judged as NVDA judges it
 
 NVDA keeps one last focused UIA element for the whole program and treats an event as a duplicate when `CompareElements(sender, last)` is true and the sender still has the keyboard focus (`UIAHandler/__init__.py` 908 to 912). The revision follows that:
@@ -770,6 +772,8 @@ NVDA keeps one last focused UIA element for the whole program and treats an even
 - One last accepted focus for the listener, shared by its reading threads, not one per thread, so a focus in another application in between makes the next one new, as in NVDA.
 - `CompareElements` in place of comparing runtime ids, then the live `HasKeyboardFocus`.
 - Before building on it: log, for each read, the sender's runtime id, class name, framework id and window handle, and the `CompareElements` result against the last focus, and run `windows_terminal_short_output` to see whether UIA equates Windows Terminal's two senders. If it does not, take an NVDA capture of the same terminal opening to see what NVDA does with the second sender, and bring that to Dickson rather than add a rule.
+
+Built (Dickson, 2026-10-11), in NVDA's order, per UIA focus event in the listener's reading thread: the local refusals (hung window, staging window, the console window's own element); the repeat check against the one last accepted focus the reading threads share (`CompareElements`, then that element's live `HasKeyboardFocus`), a repeat dropped before any read; the element's nearest window; the acceptance test against it (16.2); the read; and only then the focus recorded as the last accepted. Recording only a focus that passed the acceptance test is what NVDA's `lastQueuedFocusObject` does: a console's text area, focused before its window is in front and dropped, is no repeat when it is focused again once the window is in front. Tests: mockapp, a repeat of an accepted focus is dropped after two calls; a focus dropped for its window not being in front is read and reported when it comes again once it is.
 
 ### 16.4 Windows announced from the focus's ancestry
 

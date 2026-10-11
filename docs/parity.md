@@ -502,9 +502,10 @@ verified.
   fails lets the event through. A repeat then costs those two calls, where
   it was read in full and dropped by Core. Core's rule stays for the
   focuses the listener does not judge: MSAA's, and the answers to a
-  focus-now query. Unlike NVDA's, the last focus is the last the listener
-  read, not the last Core queued: an outpost can still drop it, by the
-  acceptance test against the foreground window (mockapp's
+  focus-now query. The last focus is recorded only once a focus has passed
+  the acceptance test against the foreground window, which the listener
+  makes next, and has been read, as NVDA records only a focus it queues
+  (mockapp's
   `a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read`).
 - Stale focus events: NVDA has no timestamp arbitration; it relies on
   queue-time freshness plus cancellable speech
@@ -934,8 +935,16 @@ verified.
   window, the focus's recorded window for the focus's own events, or, for
   a windowless element not found, its application's focus window as the
   listener captured it, where NVDA walks to the nearest window. Tested so:
-  the UIA focus and menu opening (as gain focus), property changes, and
-  selections. Not tested, as in NVDA: notifications (spoken only from the
+  the UIA menu opening (as gain focus), property changes, and selections.
+  The UIA focus is tested by the focus listener instead, since stage A
+  step 6's revision (Dickson, 2026-10-11; `docs/design/focus-pipeline.md`,
+  sections 16.2 and 16.3), in NVDA's order: after the repeat check and
+  before the focus is read, against the element's own window or its
+  nearest ancestor's (`getNearestWindowHandle`, one call), with the same
+  port of `shouldAcceptEvent`; a focus that fails is dropped and never
+  becomes the last focus accepted, as NVDA's `lastQueuedFocusObject` is
+  set only for a focus it queues (mockapp's
+  `a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is`). Not tested, as in NVDA: notifications (spoken only from the
   focus's application, which Core judges) and the active text position;
   Verbatim's own, kept: a text focus's caret and text changes. UIA's MSAA
   proxy is told never to raise, from `WinEvent`s, the UIA events Verbatim

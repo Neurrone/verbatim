@@ -82,7 +82,8 @@ impl Client {
 /// are none: it reads nothing before it reports the focus. Before any read,
 /// the listener compares the sender with the last focus it accepted and,
 /// UI Automation equating them, reads that element's keyboard focus: two
-/// calls. Remotely, the earlier element's focus is read in the focus's one
+/// calls; then, for the acceptance test, the windowless item's nearest
+/// window, one call. Remotely, the earlier element's focus is read in the focus's one
 /// round trip; an earlier element that is gone fails the whole run before
 /// it starts, which is run again without it, one call more. Classically,
 /// the read makes five calls: the focus's keyboard focus, the earlier
@@ -91,7 +92,7 @@ impl Client {
 /// and the keyboard focus read alone.
 fn reused_runtime_id(remote: bool) {
     let path = if remote { "remote" } else { "classic" };
-    let gone_cost = if remote { 4 } else { 7 };
+    let gone_cost = if remote { 5 } else { 8 };
     let title = common::unique_title(&format!("mockapp-reuse-{path}"));
     let mut app = common::spawn("reuse.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
@@ -562,12 +563,16 @@ fn a_change_raised_after_a_focus_event_waits_for_the_focus_read() {
 }
 
 /// A windowless UIA focus is tested by NVDA's acceptance test against its
-/// nearest window, the one the listener's read found
-/// (`docs/design/focus-pipeline.md`, section 16.2), not passed untested for
-/// want of a window of its own: with another application's window in
-/// front, mockapp's button's focus is dropped, and the outpost says
-/// nothing; once mockapp's window is in front, the same read is reported.
-fn a_windowless_focus_is_accepted_only_once_its_window_is_in_front() {
+/// nearest window, in the listener, after the repeat check and before the
+/// focus is read, as NVDA tests it before it queues a focus
+/// (`docs/design/focus-pipeline.md`, sections 16.2 and 16.3): with another
+/// application's window in front, mockapp's button's focus is dropped
+/// after one call, the nearest window's, and the outpost, handed the drop,
+/// says nothing. A dropped focus never becomes the last focus accepted, so
+/// when the same element's focus comes again once its window is in front,
+/// as a console's text area's does, focused before its window comes in
+/// front and again after, it is no repeat: it is read and reported.
+fn a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is() {
     let title = common::unique_title("mockapp-focus-in-front");
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
@@ -575,21 +580,18 @@ fn a_windowless_focus_is_accepted_only_once_its_window_is_in_front() {
     let outpost = OutpostUnderTest::new(&app);
 
     app.send("set-focus btn1");
-    let read = outpost.listener_fact(&client.focused());
-    let DeliveredFact::UiaFocusRead { read: button, .. } = &read else {
-        panic!("the listener sent {read:?}, not a read");
-    };
-    assert_eq!(
-        (button.hwnd, button.window),
-        (0, Some(hwnd.0 as isize)),
-        "a windowless focus whose nearest window is mockapp's"
-    );
     outpost.set_foreground(common::another_applications_window());
-    outpost.deliver(read.clone());
+    let (judged, calls) = outpost.listener_read(&client.focused());
+    let Judged::Dropped(reason) = judged else {
+        panic!("the listener read a focus whose window is not in front: {judged:?}");
+    };
+    assert_eq!(reason, "its window is not related to the foreground window");
+    assert_eq!(calls.uia, 1, "the nearest window, and nothing else");
+    outpost.deliver(Judged::Dropped(reason).into_fact(0));
     outpost.settled();
 
     outpost.set_foreground(hwnd);
-    let reported = outpost.focus(read);
+    let reported = outpost.uia_focus(&client.focused());
     assert_eq!(
         reported.chain(),
         [Some("Mockapp Events Fixture"), Some("Original Name")]
@@ -752,8 +754,8 @@ fn main() {
             a_change_raised_after_a_focus_event_waits_for_the_focus_read,
         ),
         (
-            "a_windowless_focus_is_accepted_only_once_its_window_is_in_front",
-            a_windowless_focus_is_accepted_only_once_its_window_is_in_front,
+            "a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is",
+            a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is,
         ),
         (
             "a_console_windows_own_focus_is_never_reported",
