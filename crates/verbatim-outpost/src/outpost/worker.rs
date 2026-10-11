@@ -1394,16 +1394,16 @@ impl Worker<'_> {
 
     /// A focused terminal's text changed: read at once or noted, as its
     /// on-demand reading stands.
-    /// A change observed before the last read began is covered by that read
-    /// and changes nothing (a console terminal's text change comes by UIA
-    /// and as a console update both).
+    /// A change observed before the last read that settled began is
+    /// covered by that read and changes nothing (a console terminal's text
+    /// change comes by UIA and as a console update both).
     fn terminal_output(&mut self, node_id: NodeId, trace: TraceId, observed_at_ms: u64) {
         let covered = observed_at_ms != 0
             && self
                 .context
                 .terminals()
                 .get(&node_id.number())
-                .is_some_and(|terminal| observed_at_ms < terminal.read_started_ms);
+                .is_some_and(|terminal| terminal.covers(observed_at_ms));
         if covered {
             return;
         }

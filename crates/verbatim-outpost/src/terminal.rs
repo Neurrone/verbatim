@@ -521,9 +521,10 @@ pub struct Terminal {
     /// ([`ScreenQuery::matches_padding`]), set by the worker from the
     /// terminal's window.
     pub matches_padding: bool,
-    /// When the last read began, in milliseconds since the Unix epoch: a
-    /// text change observed before it is covered by that read.
-    pub read_started_ms: u64,
+    /// When the last read that settled began, in milliseconds since the
+    /// Unix epoch: a text change observed before it is covered by that
+    /// read ([`Terminal::covers`]).
+    read_started_ms: u64,
     /// A range at the start of the screen's top row as last read, tried
     /// before a search ([`ScreenAnchor::range`]).
     top: Option<AgileReference<IUIAutomationTextRange>>,
@@ -588,6 +589,24 @@ impl Terminal {
     #[must_use]
     pub fn memory(&self) -> Option<&Memory> {
         self.memory.as_ref()
+    }
+
+    /// Notes a read that began at `started_ms` (Unix milliseconds) and
+    /// found `found`. Only a read that settled covers the changes observed
+    /// before it began: an unsettled one reported and remembered nothing,
+    /// so a change queued behind it must still be read.
+    pub fn note_read(&mut self, started_ms: u64, found: &Found) {
+        if matches!(found, Found::Output(..)) {
+            self.read_started_ms = started_ms;
+        }
+    }
+
+    /// Whether a text change observed at `observed_at_ms` (Unix
+    /// milliseconds) is covered by the last read that settled, having been
+    /// observed before that read began.
+    #[must_use]
+    pub fn covers(&self, observed_at_ms: u64) -> bool {
+        observed_at_ms < self.read_started_ms
     }
 }
 

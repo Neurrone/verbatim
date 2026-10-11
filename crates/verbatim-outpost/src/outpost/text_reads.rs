@@ -472,7 +472,6 @@ pub(super) fn terminal_output(
     // The caret is stamped as read when the round trip began: a caret event
     // observed while it was in flight may report a move it did not see.
     let started_us = crate::protocol::now_us();
-    terminal.read_started_ms = started_us / 1_000;
     let read = crate::terminal::read(
         uia,
         (source.element(), source.pattern()),
@@ -480,6 +479,9 @@ pub(super) fn terminal_output(
         terminal,
         (head_wanted, remote, mode),
     );
+    if let Ok(answer) = &read {
+        terminal.note_read(started_us / 1_000, &answer.found);
+    }
     drop(terminals);
     match read {
         Ok(answer) => {

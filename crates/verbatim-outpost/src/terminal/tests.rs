@@ -38,6 +38,22 @@ fn the_screen_before_a_key_is_found_after_its_change_was_read() {
     assert_eq!(terminal.screen_at(150), None);
 }
 
+#[test]
+fn a_change_observed_before_an_unsettled_read_is_still_read() {
+    let mut terminal = Terminal::default();
+    let settled = Found::Output(TerminalOutput::default(), remembered(&["ready>"], 0));
+    terminal.note_read(100, &settled);
+    // A change observed at 150 is behind a read that began at 200 and came
+    // back unsettled: that read covers nothing.
+    terminal.note_read(200, &Found::Unsettled);
+    assert!(!terminal.covers(150));
+    // The settled read before it still covers what was observed before it.
+    assert!(terminal.covers(90));
+    // A read that settles covers the change.
+    terminal.note_read(300, &settled);
+    assert!(terminal.covers(150));
+}
+
 /// The columns every simulated row is padded to.
 const WIDTH: usize = 20;
 

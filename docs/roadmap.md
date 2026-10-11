@@ -454,8 +454,11 @@ Other open items, taken after the steps above unless they fold into one:
   skipped and, when the program has finished writing, the rest of its
   output is never read (`conhost_marker_list`, 2026-10-09 and
   2026-10-11). Fix: only a settled read sets the time that marks changes
-  covered. An unsettled read with nothing queued behind it is still never
-  retried; that belongs to step 9.
+  covered. Built (2026-10-11): `cargo xtask ci` passes, with a unit test
+  that a change observed before an unsettled read is not covered; it
+  awaits live runs of `conhost_marker_list` and the other terminal
+  scenarios. An unsettled read with nothing queued behind it is still
+  never retried; that belongs to step 9.
 - Verbatim's own outpost once left a fact in its intake for 6.37 seconds
   (2026-10-11): its worker logged nothing from 18:22:28.52 to 18:22:34.90,
   and the menu window's SHOW event reached the outpost only at 34.896.

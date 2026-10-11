@@ -1513,8 +1513,9 @@ finds it.
   (`UIAHandler/__init__.py` 145 to 147 and 674 to 679, the "Text Area"
   automation id given them at 713 to 721); its `WinEvent` handling of the
   console (`winConsoleHandler.py` 84 to 87) is for the legacy console. A
-  change observed before the last read began is covered by it and reads
-  nothing (`Terminal::read_started_ms`). A terminal gaining
+  change observed before the last read that settled began is covered by
+  it and reads nothing (`Terminal::note_read` and `Terminal::covers`); an
+  unsettled read covers nothing. A terminal gaining
   the focus is read as a baseline, which speaks nothing, and reading is
   live.
 - Each read logs its cost at debug (`terminal screen timing`: the path,
