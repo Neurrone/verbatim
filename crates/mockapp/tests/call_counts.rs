@@ -1132,67 +1132,79 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
 /// a window message. Its walk to its own copy of the element comes after
 /// the report, where the worker's count does not reach, and is seen in
 /// the provider calls alone.
+///
+/// Since the listener judges a repeat and tests acceptance before it reads
+/// a focus (`docs/design/focus-pipeline.md`, sections 16.2 and 16.3), each
+/// focus costs, before its read, the nearest window of the windowless
+/// element (`NormalizeElementBuildCache`, one call), and each focus after
+/// the first the comparison with the last focus accepted
+/// (`CompareElements`, one call, which mockapp answers nothing for). The
+/// nearest window cost mockapp, for a button or the list, 1
+/// `WM_GETOBJECT`, 14 `ProviderOptions`, 6 `GetPropertyValue`, 4
+/// `HostRawElementProvider`, 5 `Navigate`, and 1 `FragmentRoot`, and for
+/// the list's item 1, 10, 4, 3, 3, and 1: so the cold focus rose by one
+/// call and the others by two, by both read paths alike.
 fn uia_focus_changes_cost_exactly_remote() {
     uia_focus_changes(
         true,
         &FocusCosts {
             cold: (
-                calls(1, 0, 1),
+                calls(2, 0, 1),
                 &[
-                    ("WM_GETOBJECT", 13),
-                    ("ProviderOptions", 74),
+                    ("WM_GETOBJECT", 14),
+                    ("ProviderOptions", 88),
                     ("GetPatternProvider", 55),
-                    ("GetPropertyValue", 120),
-                    ("HostRawElementProvider", 32),
-                    ("Navigate", 23),
+                    ("GetPropertyValue", 126),
+                    ("HostRawElementProvider", 36),
+                    ("Navigate", 28),
                     ("GetRuntimeId", 13),
                     ("BoundingRectangle", 5),
-                    ("FragmentRoot", 15),
+                    ("FragmentRoot", 16),
                 ],
             ),
             steady: (
-                calls(1, 0, 0),
+                calls(3, 0, 0),
                 &[
-                    ("WM_GETOBJECT", 10),
-                    ("ProviderOptions", 66),
+                    ("WM_GETOBJECT", 11),
+                    ("ProviderOptions", 80),
                     ("GetPatternProvider", 44),
-                    ("GetPropertyValue", 100),
-                    ("HostRawElementProvider", 30),
-                    ("Navigate", 21),
+                    ("GetPropertyValue", 106),
+                    ("HostRawElementProvider", 34),
+                    ("Navigate", 26),
                     ("GetRuntimeId", 14),
                     ("BoundingRectangle", 4),
-                    ("FragmentRoot", 16),
+                    ("FragmentRoot", 17),
                 ],
             ),
             // The list's first selected item through `SelectionPattern2`.
             into_list: (
-                calls(1, 0, 0),
+                calls(3, 0, 0),
                 &[
-                    ("WM_GETOBJECT", 11),
-                    ("ProviderOptions", 62),
+                    ("WM_GETOBJECT", 12),
+                    ("ProviderOptions", 72),
                     ("GetPatternProvider", 56),
-                    ("GetPropertyValue", 119),
-                    ("HostRawElementProvider", 28),
-                    ("Navigate", 20),
+                    ("GetPropertyValue", 123),
+                    ("HostRawElementProvider", 31),
+                    ("Navigate", 23),
                     ("GetRuntimeId", 11),
                     ("BoundingRectangle", 5),
-                    ("FragmentRoot", 13),
+                    ("FragmentRoot", 14),
                     ("IsSelected", 1),
                     ("FirstSelectedItem", 1),
                 ],
             ),
             next_item: (
-                calls(1, 0, 0),
+                calls(3, 0, 0),
                 &[
-                    ("WM_GETOBJECT", 10),
-                    ("ProviderOptions", 72),
+                    ("WM_GETOBJECT", 11),
+                    ("ProviderOptions", 86),
                     ("GetPatternProvider", 44),
-                    ("GetPropertyValue", 101),
-                    ("HostRawElementProvider", 32),
-                    ("Navigate", 23),
+                    ("GetPropertyValue", 107),
+                    ("HostRawElementProvider", 36),
+                    ("Navigate", 28),
                     ("GetRuntimeId", 15),
                     ("BoundingRectangle", 4),
-                    ("FragmentRoot", 17),
+                    ("FragmentRoot", 18),
                     ("IsSelected", 2),
                 ],
             ),
@@ -1205,31 +1217,31 @@ fn uia_focus_changes_cost_exactly_classic() {
         false,
         &FocusCosts {
             cold: (
-                calls(5, 0, 1),
+                calls(6, 0, 1),
                 &[
-                    ("WM_GETOBJECT", 12),
-                    ("ProviderOptions", 71),
+                    ("WM_GETOBJECT", 13),
+                    ("ProviderOptions", 85),
                     ("GetPatternProvider", 77),
-                    ("GetPropertyValue", 158),
-                    ("HostRawElementProvider", 31),
-                    ("Navigate", 15),
+                    ("GetPropertyValue", 164),
+                    ("HostRawElementProvider", 35),
+                    ("Navigate", 20),
                     ("GetRuntimeId", 11),
                     ("BoundingRectangle", 7),
-                    ("FragmentRoot", 21),
+                    ("FragmentRoot", 22),
                 ],
             ),
             steady: (
-                calls(4, 0, 0),
+                calls(6, 0, 0),
                 &[
-                    ("WM_GETOBJECT", 10),
-                    ("ProviderOptions", 80),
+                    ("WM_GETOBJECT", 11),
+                    ("ProviderOptions", 94),
                     ("GetPatternProvider", 77),
-                    ("GetPropertyValue", 165),
-                    ("HostRawElementProvider", 36),
-                    ("Navigate", 17),
+                    ("GetPropertyValue", 171),
+                    ("HostRawElementProvider", 40),
+                    ("Navigate", 22),
                     ("GetRuntimeId", 14),
                     ("BoundingRectangle", 7),
-                    ("FragmentRoot", 26),
+                    ("FragmentRoot", 27),
                 ],
             ),
             // The list's first selected item through `SelectionPattern2`'s
@@ -1237,33 +1249,33 @@ fn uia_focus_changes_cost_exactly_classic() {
             // one call, and its cache, one more (6 calls and 143 provider
             // calls through the `Selection` pattern alone, before).
             into_list: (
-                calls(5, 0, 0),
+                calls(7, 0, 0),
                 &[
-                    ("WM_GETOBJECT", 10),
-                    ("ProviderOptions", 66),
+                    ("WM_GETOBJECT", 11),
+                    ("ProviderOptions", 76),
                     ("GetPatternProvider", 79),
-                    ("GetPropertyValue", 158),
-                    ("HostRawElementProvider", 31),
-                    ("Navigate", 12),
+                    ("GetPropertyValue", 162),
+                    ("HostRawElementProvider", 34),
+                    ("Navigate", 15),
                     ("GetRuntimeId", 13),
                     ("BoundingRectangle", 7),
-                    ("FragmentRoot", 23),
+                    ("FragmentRoot", 24),
                     ("IsSelected", 1),
                     ("FirstSelectedItem", 1),
                 ],
             ),
             next_item: (
-                calls(4, 0, 0),
+                calls(6, 0, 0),
                 &[
-                    ("WM_GETOBJECT", 10),
-                    ("ProviderOptions", 92),
+                    ("WM_GETOBJECT", 11),
+                    ("ProviderOptions", 106),
                     ("GetPatternProvider", 88),
-                    ("GetPropertyValue", 188),
-                    ("HostRawElementProvider", 42),
-                    ("Navigate", 19),
+                    ("GetPropertyValue", 194),
+                    ("HostRawElementProvider", 46),
+                    ("Navigate", 24),
                     ("GetRuntimeId", 17),
                     ("BoundingRectangle", 8),
-                    ("FragmentRoot", 31),
+                    ("FragmentRoot", 32),
                     ("IsSelected", 3),
                 ],
             ),
@@ -1277,7 +1289,9 @@ fn uia_focus_changes_cost_exactly_classic() {
 /// listener compares the sender with that element (`CompareElements`) and
 /// reads the earlier element's keyboard focus, two calls, and the outpost,
 /// handed the drop, makes none and says nothing, so the focus-following
-/// subscription is not moved either (section 17). Before the listener
+/// subscription is not moved either (section 17). The comparison costs
+/// mockapp nothing; the keyboard focus read, 1 `GetPropertyValue`, 1
+/// `HostRawElementProvider`, and 1 `FragmentRoot`. Before the listener
 /// judged repeats, the repeat was read in full, one remote operation
 /// filling the sender's cache afresh and walking to its first known
 /// ancestor, which cost mockapp 54 `GetPropertyValue`, 22
@@ -1313,7 +1327,11 @@ fn uia_repeated_focus_costs_exactly() {
         "UIA focus repeated on the element followed",
         &cost,
         calls(2, 0, 0),
-        &[("GetPropertyValue", 1)],
+        &[
+            ("GetPropertyValue", 1),
+            ("HostRawElementProvider", 1),
+            ("FragmentRoot", 1),
+        ],
     );
 
     ratchet.finish();

@@ -252,58 +252,10 @@ impl FocusReader {
         }
         // The element arrives with the registration's base cache request.
         let event = snapshot_parts_from_cached_element(element);
-        // NVDA's duplicate rule, before anything of the sender is read
-        // (`UIAHandler/__init__.py` 899 to 921; `docs/design/focus-pipeline.md`,
-        // section 16.3): the sender is the last focus accepted, by any of
-        // the listener's readers, as UIA compares them, and that element
-        // still has the keyboard focus, read live. A comparison that fails
-        // is no duplicate, as NVDA lets the event through on a COM error,
-        // and so is a keyboard focus read that fails: the earlier element is
-        // gone. Two calls, the second only for an element UIA equates.
-        let last = self.last_accepted.element();
-        let same_as_last_accepted = last
-            .as_ref()
-            .map(|last| self.uia.compare_elements(element, last));
-        if tracing::enabled!(tracing::Level::DEBUG) {
-            self.log_sender(
-                element,
-                hwnd,
-                &event.runtime_id,
-                same_as_last_accepted.as_ref(),
-            );
-        }
-        if let (Some(Ok(true)), Some(last)) = (&same_as_last_accepted, &last)
-            && last.has_keyboard_focus().unwrap_or(false)
-        {
-            return Judged::Dropped(
-                "a repeat of the last focus, which still has the keyboard focus",
-            );
-        }
-        // NVDA's acceptance test, next, against the element's nearest
-        // window (`getNearestWindowHandle`, then `shouldAcceptEvent`,
-        // `UIAHandler/__init__.py` 920 to 925;
-        // `docs/design/focus-pipeline.md`, sections 16.2 and 16.3): its own
-        // window, else, one call, the nearest ancestor's. An element with no
-        // window anywhere above it is not tested, as NVDA cannot test it. A
-        // focus that fails is dropped and never becomes the last accepted,
-        // so the same element's focus once its window is in front, as a
-        // console's text area's comes, is no repeat.
-        let nearest = if hwnd == 0 {
-            verbatim_uia::nearest_window_handle(element)
-        } else {
-            Some(hwnd)
+        let nearest = match self.judge_before_reading(element, hwnd, &event.runtime_id) {
+            Ok(nearest) => nearest,
+            Err(reason) => return Judged::Dropped(reason),
         };
-        let windows = SystemWindows {
-            foreground: (self.foreground)(),
-        };
-        if !accepts_event(
-            EventName::GainFocus,
-            nearest.unwrap_or(0),
-            &windows,
-            &RequestedEvents::default(),
-        ) {
-            return Judged::Dropped("its window is not related to the foreground window");
-        }
         let previous = self
             .last
             .as_ref()
@@ -350,7 +302,12 @@ impl FocusReader {
                         self.classic_windows.insert(classic_key);
                     }
                 }
-                self.focused(element, (hwnd, focus_window, nearest), event, &ancestry)
+                self.focused(
+                    element,
+                    (hwnd, focus_window, nearest),
+                    event,
+                    (&ancestry, path.name()),
+                )
             }
             Err(error) => {
                 // NVDA lets a focus event through when its sender's keyboard
@@ -393,7 +350,7 @@ impl FocusReader {
         element: &IUIAutomationElement,
         (hwnd, focus_window, nearest): (isize, isize, Option<isize>),
         event: CachedUiaParts,
-        ancestry: &Ancestry,
+        (ancestry, path): (&Ancestry, &'static str),
     ) -> Judged {
         let live = ancestry
             .element
@@ -432,6 +389,18 @@ impl FocusReader {
                 .chain(tail)
                 .collect::<Vec<_>>()
         });
+        tracing::debug!(
+            path,
+            read = ancestry.ancestors.len(),
+            met_known = ?ancestry.met_known,
+            depth_limited = ancestry.depth_limited,
+            out_of_time = ancestry.out_of_time,
+            window = ?ancestry.window,
+            "UIA focus ancestors read"
+        );
+        if let Some(facts) = &ancestors {
+            log_ancestor_facts(path, facts);
+        }
         // The console host's provider answers no native window handle for
         // its window inside a remote operation (only the client side's
         // window proxy supplies it), so for a windowless element whose read
@@ -453,6 +422,9 @@ impl FocusReader {
             let outermost = ancestry.ancestors.last().unwrap_or(element);
             self.reach_the_top_level(outermost, hwnd, facts);
         }
+        if let Some(facts) = &ancestors {
+            log_ancestor_facts("sent", facts);
+        }
         self.last = Some(LastFocus {
             runtime_id: snapshot.runtime_id.clone(),
             element: element.clone(),
@@ -473,6 +445,66 @@ impl FocusReader {
         }))
     }
 
+    /// What a focus event goes through before anything of its sender,
+    /// `element`, whose own window is `hwnd` and whose runtime id is
+    /// `runtime_id`, is read, in NVDA's order: the repeat check, then the
+    /// acceptance test against its nearest window. Answers that window,
+    /// `None` when the element has none above it, or why the event is
+    /// dropped.
+    fn judge_before_reading(
+        &self,
+        element: &IUIAutomationElement,
+        hwnd: isize,
+        runtime_id: &[i32],
+    ) -> Result<Option<isize>, &'static str> {
+        // NVDA's duplicate rule, before anything of the sender is read
+        // (`UIAHandler/__init__.py` 899 to 921; `docs/design/focus-pipeline.md`,
+        // section 16.3): the sender is the last focus accepted, by any of
+        // the listener's readers, as UIA compares them, and that element
+        // still has the keyboard focus, read live. A comparison that fails
+        // is no duplicate, as NVDA lets the event through on a COM error,
+        // and so is a keyboard focus read that fails: the earlier element is
+        // gone. Two calls, the second only for an element UIA equates.
+        let last = self.last_accepted.element();
+        let same_as_last_accepted = last
+            .as_ref()
+            .map(|last| self.uia.compare_elements(element, last));
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            Self::log_sender(element, hwnd, runtime_id, same_as_last_accepted.as_ref());
+        }
+        if let (Some(Ok(true)), Some(last)) = (&same_as_last_accepted, &last)
+            && last.has_keyboard_focus().unwrap_or(false)
+        {
+            return Err("a repeat of the last focus, which still has the keyboard focus");
+        }
+        // NVDA's acceptance test, next, against the element's nearest
+        // window (`getNearestWindowHandle`, then `shouldAcceptEvent`,
+        // `UIAHandler/__init__.py` 920 to 925;
+        // `docs/design/focus-pipeline.md`, sections 16.2 and 16.3): its own
+        // window, else, one call, the nearest ancestor's. An element with no
+        // window anywhere above it is not tested, as NVDA cannot test it. A
+        // focus that fails is dropped and never becomes the last accepted,
+        // so the same element's focus once its window is in front, as a
+        // console's text area's comes, is no repeat.
+        let nearest = if hwnd == 0 {
+            verbatim_uia::nearest_window_handle(element)
+        } else {
+            Some(hwnd)
+        };
+        let windows = SystemWindows {
+            foreground: (self.foreground)(),
+        };
+        if !accepts_event(
+            EventName::GainFocus,
+            nearest.unwrap_or(0),
+            &windows,
+            &RequestedEvents::default(),
+        ) {
+            return Err("its window is not related to the foreground window");
+        }
+        Ok(nearest)
+    }
+
     /// Logs, at debug, what section 16.3 of `docs/design/focus-pipeline.md`
     /// asks to see of each read before the duplicate rule is built on
     /// `CompareElements`: the sender's runtime id, class name, framework,
@@ -482,7 +514,6 @@ impl FocusReader {
     /// (`same_as_last_accepted`, the duplicate rule's comparison). The
     /// framework is one call, made only while debug logging is on.
     fn log_sender(
-        &self,
         element: &IUIAutomationElement,
         hwnd: isize,
         runtime_id: &[i32],
@@ -522,6 +553,10 @@ impl FocusReader {
     ) {
         let window = facts.last().map_or(hwnd, |fact| fact.hwnd);
         if window != 0 && top_level_of(window) == window {
+            tracing::debug!(
+                window,
+                "UIA focus ancestors: the outermost is a top-level window; no classic walk"
+            );
             return;
         }
         let properties = verbatim_uia::cached_properties(Fetches::default());
@@ -549,14 +584,21 @@ impl FocusReader {
         while facts.len() < limit {
             // A failed step, a provider that did not answer in time
             // included, ends the walk with what it has.
-            let Ok(parent) = walker.parent(&current, &cache) else {
-                break;
+            let parent = match walker.parent(&current, &cache) {
+                Ok(parent) => parent,
+                Err(error) => {
+                    tracing::debug!(%error, "UIA focus ancestors: a classic walk step failed");
+                    break;
+                }
             };
             let runtime_id = verbatim_uia::runtime_id(&parent);
             if runtime_id == root {
+                tracing::debug!("UIA focus ancestors: the classic walk reached the root");
                 break;
             }
-            facts.push(ancestor_fact(&parent));
+            let fact = ancestor_fact(&parent);
+            log_ancestor_fact("classic walk", &fact);
+            facts.push(fact);
             if let Some(met) = known
                 .iter()
                 .position(|known| *known == runtime_id.as_slice())
@@ -578,6 +620,7 @@ impl FocusReader {
             return;
         };
         let Ok(window) = self.uia.element_from_handle(hwnd, &cache) else {
+            tracing::debug!(hwnd, "mark_window: the window's element could not be read");
             return;
         };
         let runtime_id = verbatim_uia::runtime_id(&window);
@@ -586,6 +629,13 @@ impl FocusReader {
             .find(|ancestor| ancestor.hwnd == 0 && ancestor.snapshot.runtime_id == runtime_id)
         {
             ancestor.hwnd = hwnd;
+            log_ancestor_fact("mark_window", ancestor);
+        } else {
+            tracing::debug!(
+                hwnd,
+                ?runtime_id,
+                "mark_window: no ancestor read is the window's element"
+            );
         }
     }
 }
@@ -610,6 +660,28 @@ fn refused(hwnd: isize, window: isize) -> Option<&'static str> {
         return Some("the console window's own focus");
     }
     None
+}
+
+/// Logs, at debug, each of a focus's ancestor facts, nearest first, with
+/// the read that produced them (`docs/design/focus-pipeline.md`, section
+/// 16.4: where a console window element is lost).
+fn log_ancestor_facts(path: &str, facts: &[UiaAncestorFact]) {
+    for fact in facts {
+        log_ancestor_fact(path, fact);
+    }
+}
+
+/// Logs one ancestor fact at debug, with the read that produced it.
+fn log_ancestor_fact(path: &str, fact: &UiaAncestorFact) {
+    tracing::debug!(
+        path,
+        runtime_id = ?fact.snapshot.runtime_id,
+        role = ?fact.snapshot.role,
+        name = ?fact.snapshot.name,
+        hwnd = fact.hwnd,
+        content = fact.content,
+        "UIA focus ancestor fact"
+    );
 }
 
 /// The ancestors of the focus before that lie above the one the new

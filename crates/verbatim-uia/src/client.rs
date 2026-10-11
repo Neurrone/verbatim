@@ -843,7 +843,22 @@ fn take_reported(
     known: &dyn Fn(verbatim_model::NodeId) -> bool,
     chain: &mut Vec<NodeSnapshot>,
 ) -> Taken {
-    if is_presentable_focus_ancestor(&snapshot) && content {
+    let presentable = is_presentable_focus_ancestor(&snapshot);
+    if !(presentable && content) {
+        tracing::debug!(
+            role = ?snapshot.role,
+            name = ?snapshot.name,
+            presentable,
+            content,
+            "focus ancestor not reported: {}",
+            if presentable {
+                "not a control and content element"
+            } else {
+                "layout or an item, not focus context"
+            }
+        );
+    }
+    if presentable && content {
         let id = snapshot.id;
         chain.push(snapshot);
         if known(id) {

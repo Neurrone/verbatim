@@ -256,6 +256,20 @@ listener's refreshed read executes 2,190 instructions at mockapp's worst
 deepest path, sixty-two levels, 1,139 (`instruction_limit.rs`,
 `reads_and_paths_execute_exactly`).
 
+With the listener judging a repeat and testing acceptance before it reads
+a focus, in NVDA's order (stage A step 6's revision, 2026-10-11;
+`docs/design/focus-pipeline.md`, sections 16.2 and 16.3), every UIA focus
+costs one call more before its read, the nearest window of a windowless
+element (`NormalizeElementBuildCache`), and every focus after the first
+one more again, the comparison with the last focus accepted
+(`CompareElements`, which reaches no provider). The nearest window costs
+mockapp 31 provider calls for a button or the list and 22 for a list item.
+A repeated focus on the element that still has the keyboard focus is
+dropped after the comparison and that element's keyboard focus read: 2
+calls and 3 provider calls, where it was read in full, 1 call and 146
+provider calls, and then dropped by Core (`call_counts.rs`,
+`uia_repeated_focus_costs_exactly`).
+
 ### A focus change, UIA, steady state
 
 - Minimum: 2 UIA calls. The outpost must have a live element, confirm that
