@@ -224,6 +224,10 @@ pub struct Scenario {
     cleaned_up: bool,
     /// Whether Verbatim has been asked to quit.
     quit: bool,
+    /// The keys the scenario holds down ([`Scenario::hold_key`]), in the
+    /// order it pressed them, released at the latest by
+    /// [`Scenario::release_held_keys`].
+    held: Vec<String>,
 }
 
 impl Scenario {
@@ -444,6 +448,7 @@ impl Scenario {
             dumps_collected: Vec::new(),
             cleaned_up: false,
             quit: false,
+            held: Vec::new(),
         })
     }
 
@@ -551,6 +556,73 @@ impl Scenario {
         let keys: Vec<String> = keys.iter().map(|key| (*key).to_owned()).collect();
         self.last_input = Some(self.agent.send_keys(&keys)?);
         Ok(())
+    }
+
+    /// Presses `key`, one key such as `control`, down through the agent's
+    /// `PressKey` and holds it, numbered like a key stroke, so the keys sent
+    /// next are pressed with it, as a person holds Control through a tab
+    /// switcher; [`Scenario::release_key`] releases it. Every utterance
+    /// heard so far must have been asserted first. A key still held when
+    /// the body ends, passing or failing, is released then and fails the
+    /// run ([`Scenario::release_held_keys`]); the agent also releases it if
+    /// the connection ends first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, including when the key name
+    /// is unknown or the key is already held.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an utterance no assertion matched is waiting.
+    pub fn hold_key(&mut self, key: &str) -> io::Result<()> {
+        self.speech
+            .require_all_asserted(&format!("before holding {key:?}"));
+        self.timeline.push_keys(&[&format!("hold {key}")]);
+        self.last_input = Some(self.agent.press_key(key)?);
+        self.held.push(key.to_owned());
+        Ok(())
+    }
+
+    /// Releases `key`, which [`Scenario::hold_key`] holds, numbered like a
+    /// key stroke. Every utterance heard so far must have been asserted
+    /// first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, including when the key is not
+    /// held.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an utterance no assertion matched is waiting.
+    pub fn release_key(&mut self, key: &str) -> io::Result<()> {
+        self.speech
+            .require_all_asserted(&format!("before releasing {key:?}"));
+        self.timeline.push_keys(&[&format!("release {key}")]);
+        self.held.retain(|held| held != key);
+        self.last_input = Some(self.agent.release_key(key)?);
+        Ok(())
+    }
+
+    /// Releases every key the scenario still holds, the last pressed first,
+    /// with no assertion: called as the body ends, passed or failed, and
+    /// again by [`Scenario::clean_up`], so no modifier stays down. A key
+    /// held at the body's end is a failure of the run, and each is
+    /// returned as a problem, as is a release that fails.
+    pub fn release_held_keys(&mut self) -> Vec<String> {
+        let mut problems = Vec::new();
+        for key in std::mem::take(&mut self.held).into_iter().rev() {
+            match self.agent.release_key(&key) {
+                Ok(_) => problems.push(format!(
+                    "the scenario ended holding {key:?}, which was released"
+                )),
+                Err(error) => problems.push(format!(
+                    "the scenario ended holding {key:?}, which could not be released: {error}"
+                )),
+            }
+        }
+        problems
     }
 
     /// Types `text` as real key presses through the agent's `TypeText`,
@@ -1690,7 +1762,7 @@ impl Scenario {
     /// each window left open, each a failure.
     pub fn clean_up(&mut self) -> Vec<String> {
         self.cleaned_up = true;
-        let mut problems = Vec::new();
+        let mut problems = self.release_held_keys();
         for launched in std::mem::take(&mut self.launched).into_iter().rev() {
             problems.extend(self.close(&launched));
         }

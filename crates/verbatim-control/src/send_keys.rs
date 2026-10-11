@@ -79,6 +79,39 @@ pub fn parse_all(keys: &[String]) -> Result<Vec<ParsedCombo>, String> {
     keys.iter().map(|entry| parse_combo(entry)).collect()
 }
 
+/// Parses the name of one key to press down, or release, on its own, such
+/// as `control` held while other keys are sent: any name
+/// [`vk_from_name`] resolves.
+///
+/// # Errors
+///
+/// Returns a human-readable message when the name does not resolve, or is
+/// a plus-joined combination.
+pub fn parse_key(name: &str) -> Result<KeyName, String> {
+    if name.contains('+') {
+        return Err(format!(
+            "one key is pressed or released at a time, not a combination: {name:?}"
+        ));
+    }
+    vk_from_name(name).ok_or_else(|| format!("unknown key name: {name:?}"))
+}
+
+/// Injects one transition of `key`, down or, with `up`, up, as a stroke
+/// of its own: numbered `number` for the end-to-end harness, and marked as
+/// the stroke's last event, when a number is given
+/// ([`verbatim_input::harness`]), so Verbatim reports it handled once the
+/// key's transition has been handed on.
+///
+/// # Errors
+///
+/// As [`inject`].
+pub fn inject_transition(key: KeyName, up: bool, number: Option<u64>) -> io::Result<()> {
+    let extra = number.map_or(0, |number| {
+        usize::try_from(verbatim_input::harness::encode(number, true)).unwrap_or(0)
+    });
+    inject_inputs(&[keybd_input(key, up, extra)])
+}
+
 /// Builds one `KEYBDINPUT` [`INPUT`] for a virtual key transition, with
 /// `extra` as its extra information.
 fn keybd_input(key: KeyName, key_up: bool, extra: usize) -> INPUT {
@@ -278,6 +311,22 @@ mod tests {
         let keys = vec!["enter".to_owned(), "hyperspace".to_owned()];
         assert_eq!(
             parse_all(&keys),
+            Err("unknown key name: \"hyperspace\"".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_key_to_hold_is_one_key_by_its_name() {
+        assert_eq!(parse_key("control"), Ok(vk_from_name("control").unwrap()));
+        assert_eq!(
+            parse_key("control+tab"),
+            Err(
+                "one key is pressed or released at a time, not a combination: \"control+tab\""
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            parse_key("hyperspace"),
             Err("unknown key name: \"hyperspace\"".to_owned())
         );
     }

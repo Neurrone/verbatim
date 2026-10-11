@@ -15,7 +15,10 @@ use tracing::warn;
 use verbatim_control::protocol::{read_message, write_message};
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
+
+use verbatim_input::keys::KeyName;
 
 use crate::protocol::{
     AGENT_PROTOCOL_VERSION, Frame, IGNORE_PIDS_ENV, ReplyPayload, Request, RequestEnvelope,
@@ -41,7 +44,83 @@ struct ConnectionEnd(u64);
 
 impl Drop for ConnectionEnd {
     fn drop(&mut self) {
+        release_held(self.0);
         scenario_windows::connection_ended(self.0);
+    }
+}
+
+/// The keys each connection holds down ([`Request::PressKey`]), by
+/// connection, with each key's name, in the order they were pressed.
+static HELD: Mutex<Vec<(u64, String, KeyName)>> = Mutex::new(Vec::new());
+
+fn held() -> MutexGuard<'static, Vec<(u64, String, KeyName)>> {
+    HELD.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Releases every key `connection` still holds, the last pressed first,
+/// as the connection ends: a test or capture that failed with a modifier
+/// held never leaves it down.
+fn release_held(connection: u64) {
+    let keys: Vec<(String, KeyName)> = {
+        let mut held = held();
+        let (mine, others): (Vec<_>, Vec<_>) =
+            held.drain(..).partition(|(owner, ..)| *owner == connection);
+        *held = others;
+        mine.into_iter().map(|(_, name, key)| (name, key)).collect()
+    };
+    for (name, key) in keys.into_iter().rev() {
+        match verbatim_control::send_keys::inject_transition(key, true, None) {
+            Ok(()) => warn!(
+                key = name,
+                "a key the connection held was released as it ended"
+            ),
+            Err(error) => {
+                warn!(key = name, %error, "a key the connection held could not be released");
+            }
+        }
+    }
+}
+
+/// Answers [`Request::PressKey`] and [`Request::ReleaseKey`]: one key's
+/// transition, down or with `up` up, numbered for the harness, refused for
+/// a key the connection already holds, or, to release, does not.
+fn key_transition(connection: u64, id: u64, name: &str, up: bool) -> Frame {
+    let key = match verbatim_control::send_keys::parse_key(name) {
+        Ok(key) => key,
+        Err(message) => {
+            return error_frame(id, &io::Error::new(io::ErrorKind::InvalidInput, message));
+        }
+    };
+    let mut held = held();
+    let position = held
+        .iter()
+        .position(|(owner, held_name, _)| *owner == connection && held_name == name);
+    match (up, position) {
+        (false, Some(_)) => {
+            return error_frame(
+                id,
+                &io::Error::other(format!("{name:?} is already held on this connection")),
+            );
+        }
+        (true, None) => {
+            return error_frame(
+                id,
+                &io::Error::other(format!("{name:?} is not held on this connection")),
+            );
+        }
+        (false, None) => held.push((connection, name.to_owned(), key)),
+        (true, Some(position)) => {
+            held.remove(position);
+        }
+    }
+    drop(held);
+    let number = NEXT_INPUT.fetch_add(1, Ordering::Relaxed);
+    match verbatim_control::send_keys::inject_transition(key, up, Some(number)) {
+        Ok(()) => Frame::Reply {
+            to: id,
+            payload: ReplyPayload::KeysSent { input: number },
+        },
+        Err(error) => error_frame(id, &error),
     }
 }
 
@@ -273,6 +352,8 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         Request::ListFiles { path } => list_reply(id, files::list(&path)),
         Request::ListFolders { path } => list_reply(id, files::list_folders(&path)),
         Request::SendKeys { keys } => send_keys(id, &keys),
+        Request::PressKey { key } => key_transition(connection, id, &key, false),
+        Request::ReleaseKey { key } => key_transition(connection, id, &key, true),
         Request::TypeText { text } => type_text(id, &text),
         Request::OpenControlTunnel => {
             unreachable!("OpenControlTunnel is handled in handle_connection before dispatch")

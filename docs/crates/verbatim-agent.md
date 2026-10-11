@@ -128,6 +128,12 @@ Public API:
     its `dwExtraInfo` (`verbatim_input::harness`), the last of each key or
     character marked last, and `KeysSent` and `TextTyped` answer with the
     last number, which Verbatim reports once it has handled that input.
+    `PressKey` and `ReleaseKey` (protocol version 16) press one key down
+    and leave it down, and release it, each a numbered stroke of its own,
+    so a key such as Control can be held while `SendKeys` sends others. A
+    connection cannot press a key it already holds or release one it does
+    not, and every key a connection holds is released when the connection
+    ends, so a failed test or capture never leaves a modifier down.
   - `SessionInfo` and `OpenControlTunnel`.
 
   `KillProcessesByName`, `BringToForeground`, and the Control tap and

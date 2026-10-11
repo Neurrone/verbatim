@@ -66,8 +66,10 @@ pub fn run(args: &[String]) -> ExitCode {
                  [--json] <step>...: run each step through the agent and print what NVDA (or, \
                  with --verbatim, the local Verbatim) speaks after it, as JSON lines with \
                  --json; a step is a key, --launch <program> [--arg <arg>]..., --front \
-                 <image>[=<title>] (* for any image), --type <text>, or --gesture <id> (sent \
-                 to the local Verbatim)"
+                 <image>[=<title>] (* for any image), --type <text>, --hold <key> or \
+                 --release <key> (a key held down across the steps between them, released \
+                 when the capture ends or fails), or --gesture <id> (sent to the local \
+                 Verbatim)"
             );
             return ExitCode::from(2);
         }
@@ -226,6 +228,11 @@ enum Step {
     /// Type text through the agent, each character mapped with the
     /// foreground window's keyboard layout.
     Type(String),
+    /// Press one key, such as `control`, down through the agent and keep it
+    /// down, so the keys of the steps after it are pressed with it.
+    Hold(String),
+    /// Release a key a `Hold` step pressed.
+    Release(String),
 }
 
 impl Step {
@@ -234,6 +241,8 @@ impl Step {
             Self::Key(key) => key.clone(),
             Self::Gesture(identifier) => format!("gesture {identifier}"),
             Self::Type(text) => format!("type {text:?}"),
+            Self::Hold(key) => format!("hold {key}"),
+            Self::Release(key) => format!("release {key}"),
             Self::Launch { program, args } => format!("launch {program} {}", args.join(" ")),
             Self::Front { image, title } => match title {
                 Some(title) => format!("front {image} \"{title}\""),
@@ -294,6 +303,8 @@ fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
             }
             "--gesture" => options.steps.push(Step::Gesture(value()?.clone())),
             "--type" => options.steps.push(Step::Type(value()?.clone())),
+            "--hold" => options.steps.push(Step::Hold(value()?.clone())),
+            "--release" => options.steps.push(Step::Release(value()?.clone())),
             "--front" => {
                 let target = value()?;
                 let (image, title) = match target.split_once('=') {
@@ -539,79 +550,49 @@ fn capture(args: &[String]) -> io::Result<()> {
         .foreground_info()?
         .foreground
         .map(|window| window.window);
-    for (index, step) in options.steps.iter().enumerate() {
-        let sent_ms = source.now_ms();
-        match step {
-            Step::Key(keys) => {
-                // Each key of a batch is checked and pressed on its own.
-                for key in keys.split(',') {
-                    require_in_front(&mut agent, target, step)?;
-                    agent.send_keys(&[key.to_owned()])?;
+    // Keys a --hold step holds down, released when the capture ends,
+    // whether it ended on an error or not, so no modifier stays down; the
+    // agent releases them too if the connection ends first.
+    let mut held: Vec<String> = Vec::new();
+    let steps = (|| -> io::Result<()> {
+        for (index, step) in options.steps.iter().enumerate() {
+            let sent_ms = source.now_ms();
+            run_step(&mut agent, &mut target, &mut held, step)?;
+            if options.json {
+                println!("{}", json!({"step": index, "label": step.label()}));
+            } else {
+                println!("> {}", step.label());
+            }
+            let mut last_activity = Instant::now();
+            let deadline = last_activity + options.timeout;
+            loop {
+                thread::sleep(POLL_INTERVAL);
+                let entries = source.poll()?;
+                if !entries.is_empty() {
+                    last_activity = Instant::now();
                 }
-            }
-            Step::Launch { program, args } => {
-                agent.launch_process(program, args, None, &[], None)?;
-                target = None;
-            }
-            Step::Front { image, title } => {
-                // The window, found by its image and title, is brought
-                // forward with SetForegroundWindow, which injects no input;
-                // Windows allows it when the agent injected the last input.
-                let window = agent.foreground_info()?.windows.into_iter().find(|window| {
-                    (image == ANY_IMAGE || window.image.eq_ignore_ascii_case(image))
-                        && title
-                            .as_deref()
-                            .is_none_or(|title| window.title.contains(title))
-                });
-                let taken = match &window {
-                    Some(window) => agent.set_foreground(window.window)?,
-                    None => false,
-                };
-                target = window.filter(|_| taken).map(|window| window.window);
-                // The steps after it press keys in whatever is in front:
-                // without the window, none of them may run.
-                if !taken {
-                    return Err(io::Error::other(format!(
-                        "no window of {image} titled {title:?} took the foreground; the remaining steps were not run"
-                    )));
+                for (ms, entry) in entries {
+                    print(index, Some(ms - sent_ms), &entry);
                 }
-            }
-            Step::Gesture(identifier) => send_gesture(identifier)?,
-            Step::Type(text) => {
-                // One character at a time, each checked just before it.
-                for character in text.chars() {
-                    require_in_front(&mut agent, target, step)?;
-                    agent.type_text(&character.to_string())?;
+                let now = Instant::now();
+                if now.duration_since(last_activity) >= options.quiet {
+                    break;
+                }
+                if now >= deadline {
+                    let note = format!("speech did not settle within {:?}", options.timeout);
+                    print(index, None, &Entry::Note(note));
+                    break;
                 }
             }
         }
-        if options.json {
-            println!("{}", json!({"step": index, "label": step.label()}));
-        } else {
-            println!("> {}", step.label());
-        }
-        let mut last_activity = Instant::now();
-        let deadline = last_activity + options.timeout;
-        loop {
-            thread::sleep(POLL_INTERVAL);
-            let entries = source.poll()?;
-            if !entries.is_empty() {
-                last_activity = Instant::now();
-            }
-            for (ms, entry) in entries {
-                print(index, Some(ms - sent_ms), &entry);
-            }
-            let now = Instant::now();
-            if now.duration_since(last_activity) >= options.quiet {
-                break;
-            }
-            if now >= deadline {
-                let note = format!("speech did not settle within {:?}", options.timeout);
-                print(index, None, &Entry::Note(note));
-                break;
-            }
+        Ok(())
+    })();
+    for key in held.iter().rev() {
+        if let Err(error) = agent.release_key(key) {
+            eprintln!("xtask nvda: could not release {key}: {error}");
         }
     }
+    steps?;
     // Keys the window has not read yet go to whichever window is in front
     // when they are read, or when it closes: a capture that ends with its
     // window behind another, or not responding, says so.
@@ -622,6 +603,72 @@ fn capture(args: &[String]) -> io::Result<()> {
              closing it would hand them to the window behind it"
         ))
     })
+}
+
+/// Does what `step` says through the agent: presses its keys, types its
+/// text, launches, brings a window forward, sends a gesture, or holds or
+/// releases a key, recording a held key in `held`; `target` is the window
+/// the keys go to, by its handle, which a launch or a --front changes.
+fn run_step(
+    agent: &mut AgentClient,
+    target: &mut Option<u64>,
+    held: &mut Vec<String>,
+    step: &Step,
+) -> io::Result<()> {
+    match step {
+        Step::Key(keys) => {
+            // Each key of a batch is checked and pressed on its own.
+            for key in keys.split(',') {
+                require_in_front(agent, *target, step)?;
+                agent.send_keys(&[key.to_owned()])?;
+            }
+        }
+        Step::Launch { program, args } => {
+            agent.launch_process(program, args, None, &[], None)?;
+            *target = None;
+        }
+        Step::Front { image, title } => {
+            // The window, found by its image and title, is brought
+            // forward with SetForegroundWindow, which injects no input;
+            // Windows allows it when the agent injected the last input.
+            let window = agent.foreground_info()?.windows.into_iter().find(|window| {
+                (image == ANY_IMAGE || window.image.eq_ignore_ascii_case(image))
+                    && title
+                        .as_deref()
+                        .is_none_or(|title| window.title.contains(title))
+            });
+            let taken = match &window {
+                Some(window) => agent.set_foreground(window.window)?,
+                None => false,
+            };
+            *target = window.filter(|_| taken).map(|window| window.window);
+            // The steps after it press keys in whatever is in front:
+            // without the window, none of them may run.
+            if !taken {
+                return Err(io::Error::other(format!(
+                    "no window of {image} titled {title:?} took the foreground; the remaining steps were not run"
+                )));
+            }
+        }
+        Step::Gesture(identifier) => send_gesture(identifier)?,
+        Step::Type(text) => {
+            // One character at a time, each checked just before it.
+            for character in text.chars() {
+                require_in_front(agent, *target, step)?;
+                agent.type_text(&character.to_string())?;
+            }
+        }
+        Step::Hold(key) => {
+            require_in_front(agent, *target, step)?;
+            agent.press_key(key)?;
+            held.push(key.clone());
+        }
+        Step::Release(key) => {
+            held.retain(|held| held != key);
+            agent.release_key(key)?;
+        }
+    }
+    Ok(())
 }
 
 /// Fails, just before one key or character of `step` is sent, unless the
@@ -793,6 +840,20 @@ mod tests {
         assert_eq!(
             options.steps,
             [Step::Key("tab".to_owned()), Step::Type("hi".to_owned())]
+        );
+    }
+
+    #[test]
+    fn a_key_is_held_across_the_steps_between_hold_and_release() {
+        let args = ["--hold", "control", "shift+tab", "--release", "control"].map(str::to_owned);
+        let options = parse_capture_args(&args).unwrap();
+        assert_eq!(
+            options.steps,
+            [
+                Step::Hold("control".to_owned()),
+                Step::Key("shift+tab".to_owned()),
+                Step::Release("control".to_owned()),
+            ]
         );
     }
 

@@ -120,7 +120,9 @@ Public API:
   (validating every entry against the shared key-name vocabulary before
   anything is injected) and `inject`, which synthesizes the modifier-down,
   key, modifier-up sequence via `SendInput` with correct extended-key
-  flags; `inject_numbered` does the same with each combination numbered in
+  flags; `parse_key` and `inject_transition` press or release one key on
+  its own, for the agent's `PressKey` and `ReleaseKey`, numbered as a
+  stroke of its own when a number is given; `inject_numbered` does the same with each combination numbered in
   its key events' `dwExtraInfo` for the end-to-end harness
   (`verbatim_input::harness`), the last event of each marked last, and
   returns the last number. The modifier position accepts Control, Shift, Alt, either Windows

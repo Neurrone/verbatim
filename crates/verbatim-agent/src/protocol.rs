@@ -42,11 +42,12 @@ use serde::{Deserialize, Serialize};
 /// so a recording's ffmpeg is told to stop rather than killed; version 15
 /// added [`Request::RecordWindows`], [`Request::WaitForNewWindowsGone`],
 /// and [`Request::CloseAbandonedWindows`], so a scenario's cleanup proves
-/// it left no window open, whatever the window's title. A test run
-/// against
-/// an older agent is refused at `Hello` instead of losing its connection
+/// it left no window open, whatever the window's title; version 16 added
+/// [`Request::PressKey`] and [`Request::ReleaseKey`], so a key such as
+/// Control can be held while other keys are sent. A test run against an
+/// older agent is refused at `Hello` instead of losing its connection
 /// mid-run, or running without the exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 15;
+pub const AGENT_PROTOCOL_VERSION: u32 = 16;
 
 /// The environment variable that names, to the Verbatim under test, the
 /// processes it ignores entirely (`ignore_foreign_terminals` in
@@ -428,6 +429,24 @@ pub enum Request {
         /// `shift+tab`.
         keys: Vec<String>,
     },
+    /// Presses one key down and leaves it down, such as `control` held
+    /// while [`Request::SendKeys`] sends Shift+Tab, as a person holds
+    /// Control through a tab switcher. Numbered for the harness like a key
+    /// stroke. A key this connection already holds is refused, and every
+    /// key a connection holds is released when the connection ends, so a
+    /// failed run never leaves a modifier down. Answered by
+    /// [`ReplyPayload::KeysSent`].
+    PressKey {
+        /// The key's name, one key, in the `SendKeys` vocabulary.
+        key: String,
+    },
+    /// Releases a key [`Request::PressKey`] pressed on this connection;
+    /// refused for a key it does not hold. Answered by
+    /// [`ReplyPayload::KeysSent`].
+    ReleaseKey {
+        /// The key's name, as it was pressed.
+        key: String,
+    },
     /// Types `text` as real key presses with `SendInput`: each character is
     /// mapped to its virtual key and Shift, Control, and Alt state in the
     /// keyboard layout of the foreground window's thread (`VkKeyScanEx`),
@@ -622,7 +641,9 @@ pub enum ReplyPayload {
         /// The file names, without the directory.
         names: Vec<String>,
     },
-    /// Answer to [`Request::SendKeys`]: every key was injected.
+    /// Answer to [`Request::SendKeys`]: every key was injected; and to
+    /// [`Request::PressKey`] and [`Request::ReleaseKey`]: the key's
+    /// transition was.
     KeysSent {
         /// The number the last key stroke carried
         /// (`verbatim_input::harness`), which Verbatim reports once it has

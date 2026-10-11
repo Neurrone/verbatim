@@ -1403,6 +1403,10 @@ fn run(def: &ScenarioDef) {
     // first frame with, so the recording's check can tell that the video
     // reaches it.
     let body_end_ms = crate::timeline::unix_ms();
+    // A key the body held, as Control through a tab switcher, is released
+    // first, whether the body passed or failed, so nothing after it runs
+    // with a modifier down.
+    problems.extend(scenario.release_held_keys());
 
     let latency = match scenario.latency_snapshot(LATENCY_RECORDS) {
         Ok(latency) => Some(latency),

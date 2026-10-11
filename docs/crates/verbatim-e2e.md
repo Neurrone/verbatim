@@ -160,7 +160,11 @@ Every key and character the scenario injects goes through the agent
 (see the [verbatim-input guide](verbatim-input.md)); Verbatim's keyboard
 hook reads the number and Core reports it handled
 (`Frame::InputHandled`) once every effect the key caused is queued, the
-barrier `expect_nothing_more` waits on. `send_gesture` sends a gesture by
+barrier `expect_nothing_more` waits on. `hold_key` and `release_key` hold
+one key, such as Control, down across the keys sent between them, through
+the agent's `PressKey` and `ReleaseKey`; a key still held when the body
+ends, passed or failed, is released then and fails the run
+(`release_held_keys`, run again by the cleanup). `send_gesture` sends a gesture by
 its identifier through the control plane. Nothing taps keys or uses
 Alt+Tab to move the foreground, not even in a scenario about switching
 windows: the window is brought forward through the agent, as its

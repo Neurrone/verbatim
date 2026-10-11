@@ -77,6 +77,16 @@ A step is a key to press, or one of these:
   NVDA also uses.
 - `--type <text>` types the text through the agent's `TypeText`, as the
   terminal scenarios type their commands.
+- `--hold <key>` presses one key, such as `control`, down through the
+  agent's `PressKey` and keeps it down, so the keys of the steps after
+  it are pressed with it, as a person holds Control through Windows
+  Terminal's tab switcher; `--release <key>` releases it, through
+  `ReleaseKey`. A key still held when the capture ends, or stops on an
+  error, is released then, and the agent also releases every key a
+  connection holds when the connection ends, so a modifier never stays
+  down. For example, `--hold control shift+tab --release control` presses
+  Shift+Tab with Control held, and records what is said before Control
+  is released and after.
 
 A key step can also name several keys joined by commas, such as
 `numpad8,numpad8`, pressed in one batch, so that both screen readers

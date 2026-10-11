@@ -867,6 +867,46 @@ impl AgentClient {
         }
     }
 
+    /// Presses `key`, one key such as `control`, down on the guest and
+    /// leaves it down until [`AgentClient::release_key`] releases it, or
+    /// the connection ends, when the agent releases it. Numbered for the
+    /// harness's barrier; returns its number.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, including when the key name
+    /// is unknown or the key is already held on this connection.
+    pub fn press_key(&mut self, key: &str) -> io::Result<u64> {
+        match self.request(Request::PressKey {
+            key: key.to_owned(),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::KeysSent { input },
+                ..
+            } => Ok(input),
+            other => Err(unexpected("PressKey", &other)),
+        }
+    }
+
+    /// Releases `key`, which [`AgentClient::press_key`] pressed on this
+    /// connection. Numbered for the harness's barrier; returns its number.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, including when the key is not
+    /// held on this connection.
+    pub fn release_key(&mut self, key: &str) -> io::Result<u64> {
+        match self.request(Request::ReleaseKey {
+            key: key.to_owned(),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::KeysSent { input },
+                ..
+            } => Ok(input),
+            other => Err(unexpected("ReleaseKey", &other)),
+        }
+    }
+
     /// Types `text` on the guest as real key presses, each character mapped
     /// to its key and shift state in the foreground window's keyboard
     /// layout and numbered for the harness's barrier. Returns the last
