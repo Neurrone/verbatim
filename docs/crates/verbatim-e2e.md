@@ -606,10 +606,13 @@ debug log can be larger than one read of the agent's.
   `verbatim_control::client::Client`, reading with `CONTROL_REPLY_TIMEOUT`
   (30 seconds, the same hang bound as the agent's own replies), so a
   slow reply to a request such as `DumpRecorder` is not a failure. A
-  tunnel subscribed to speech or events, once its subscribe is answered,
-  reads with `CONTROL_POLL_INTERVAL` (2 seconds) instead, so its reader
-  can check its own deadline; a read that times out there is not a
-  failure.
+  tunnel subscribed to events, once its subscribe is answered, reads with
+  `CONTROL_POLL_INTERVAL` (2 seconds) instead, so its reader can check
+  its own deadline; a read that times out there is not a failure. The
+  speech tunnel has no read timeout once subscribed: its reader thread's
+  read ends when a frame arrives, or when dropping the collector shuts
+  the connection down (`Sender::shutdown`), and the drop joins the
+  thread.
 - `timeline`: injected gestures, keys, typed text, and speech (queued,
   audio started, ended), saved whole in time order, and printed on
   failure with each earlier step shortened to one line.

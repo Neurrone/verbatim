@@ -13,7 +13,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufReader, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
 
@@ -107,6 +107,23 @@ impl Sender {
         self.next_id += 1;
         write_message(&mut self.writer, &RequestEnvelope { id, request })?;
         Ok(id)
+    }
+
+    /// Shuts the connection down in both directions, so a read pending
+    /// on the [`Receiver`], on any thread, returns at once with an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket refuses the shutdown, as one already
+    /// closed does.
+    pub fn shutdown(&self) -> io::Result<()> {
+        match &self.writer {
+            Transport::Tcp(stream) => stream.shutdown(Shutdown::Both),
+            Transport::Pipe(_) => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "only a split, TCP control connection is shut down",
+            )),
+        }
     }
 }
 
@@ -430,10 +447,13 @@ mod tests {
     }
 
     /// A split client's halves work from two threads: the receiver reads,
-    /// on a thread of its own, the reply to a request the sender sends.
-    /// The fake server answers `Hello`, then the one request after it.
+    /// on a thread of its own, the reply to a request the sender sends,
+    /// and a read left pending, which the server never answers, ends with
+    /// an error once the sender shuts the connection down. The fake server
+    /// answers `Hello` and the one request after it, then waits for the
+    /// connection to end.
     #[test]
-    fn a_split_client_sends_while_its_receiver_reads() {
+    fn a_split_client_sends_while_its_receiver_reads_and_shuts_down() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("binds an ephemeral port");
         let addr = listener.local_addr().expect("has a local address");
         let server = thread::spawn(move || {
@@ -459,21 +479,33 @@ mod tests {
                 )
                 .expect("writes a reply");
             }
+            let after: Option<RequestEnvelope> = read_message(&mut reader).expect("reads");
+            assert!(after.is_none(), "nothing follows the request");
         });
 
         let client = Client::connect_tcp(addr).expect("connects and completes Hello");
         let (mut sender, mut receiver) = client.split().expect("a TCP client splits");
-        let reading = thread::spawn(move || receiver.next_frame().expect("reads the reply"));
+        let (replies, reply) = std::sync::mpsc::channel();
+        let reading = thread::spawn(move || {
+            replies
+                .send(receiver.next_frame().expect("reads the reply"))
+                .expect("the test takes the reply");
+            receiver.next_frame()
+        });
         let id = sender
             .send(Request::Quit)
             .expect("sends while the read is pending");
+        let reply = reply.recv().expect("the reading thread reads the reply");
+        sender.shutdown().expect("shuts the connection down");
+        let after = reading.join().expect("the reading thread does not panic");
         assert_eq!(
-            reading.join().expect("the reading thread does not panic"),
+            reply,
             Frame::Reply {
                 to: id,
                 payload: ReplyPayload::Ok,
             }
         );
+        assert!(after.is_err(), "the pending read ends: {after:?}");
         server.join().expect("server thread does not panic");
     }
 }

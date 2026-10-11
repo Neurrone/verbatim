@@ -46,10 +46,8 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::io;
 use std::ops::Range;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError};
-use std::thread;
+use std::sync::mpsc::{self, RecvTimeoutError, TryRecvError};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use verbatim_control::client::{self as control, Client as ControlClient, ok_or_error};
@@ -66,16 +64,14 @@ pub const STEP_TIMEOUT: Duration = Duration::from_secs(15);
 /// become idle: a bound on a hang.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// How long a read for frames already on their way waits before deciding
-/// there are none: the collector drains what has arrived, and what its
-/// reader thread is handing on, before an input is injected. Not a wait
-/// for anything to happen.
-const DRAIN_READ: Duration = Duration::from_millis(1);
+/// How much longer than [`IDLE_TIMEOUT`] Verbatim's answer to `AwaitIdle`
+/// may take to arrive: a bound on a hang.
+const IDLE_ANSWER_MARGIN: Duration = Duration::from_secs(4);
 
 /// Where a [`SpeechCollector`]'s reader thread reads frames from: the
 /// reading half of the live, subscribed control connection, or a scripted
-/// sequence in this module's unit tests. A read timeout is an error of
-/// kind `WouldBlock` or `TimedOut`, after which the thread reads again.
+/// sequence in this module's unit tests. A read blocks until a frame
+/// arrives or the connection ends, which is an error.
 trait FrameSource: Send {
     fn next_frame(&mut self) -> io::Result<Frame>;
 }
@@ -84,6 +80,9 @@ trait FrameSource: Send {
 /// writing half of the same connection, or the scripted sequence.
 trait RequestSink: Send {
     fn send(&mut self, request: Request) -> io::Result<u64>;
+    /// Ends the connection, so a read pending on the reader thread
+    /// returns at once with an error.
+    fn shutdown(&mut self) -> io::Result<()>;
 }
 
 impl FrameSource for control::Receiver {
@@ -95,6 +94,10 @@ impl FrameSource for control::Receiver {
 impl RequestSink for control::Sender {
     fn send(&mut self, request: Request) -> io::Result<u64> {
         control::Sender::send(self, request)
+    }
+
+    fn shutdown(&mut self) -> io::Result<()> {
+        control::Sender::shutdown(self)
     }
 }
 
@@ -255,14 +258,11 @@ pub struct SpeechCollector {
     /// The frames the reader thread has read, already on the timeline, in
     /// the order they came, or the error that ended the connection.
     frames: mpsc::Receiver<io::Result<Frame>>,
-    /// Set when the collector is dropped: the reader thread stops at its
-    /// next read.
-    stop: Arc<AtomicBool>,
+    /// The reader thread, joined when the collector is dropped, once the
+    /// connection is shut down.
+    reader: Option<JoinHandle<()>>,
     /// The scenario's shared action-and-speech log (see [`crate::timeline`]).
     timeline: Timeline,
-    /// How long one wait for a frame lasts before the waiting assertion
-    /// checks its own deadline.
-    read_timeout: Duration,
     /// How long an assertion waits; [`STEP_TIMEOUT`] outside unit tests.
     step_timeout: Duration,
     /// Utterances read and not yet matched by an assertion, oldest first.
@@ -290,30 +290,21 @@ impl SpeechCollector {
     /// by the collector, pushing every utterance it reads to `timeline`.
     /// The first speech subscription to a Verbatim also receives the
     /// speech it queued before anyone subscribed, its startup speech. The
-    /// connection is then split, and its reading half read on a thread of
-    /// its own with the poll interval
-    /// ([`crate::agent_client::CONTROL_POLL_INTERVAL`]) as its read
-    /// timeout, so the thread notices the collector has gone; assertions
-    /// wait for frames from it for as long, then check their own
-    /// deadlines.
+    /// connection is then split, with no read timeout, and its reading
+    /// half read on a thread of its own, whose read returns only when a
+    /// frame arrives or the connection ends; dropping the collector shuts
+    /// the connection down, which ends that read at once.
     ///
     /// # Errors
     ///
     /// Returns an error if the subscribe request fails, the read timeout
-    /// cannot be set, the connection cannot be split, or the reader thread
-    /// cannot be started.
+    /// cannot be cleared, the connection cannot be split, or the reader
+    /// thread cannot be started.
     pub fn subscribe(mut control: ControlClient, timeline: Timeline) -> io::Result<Self> {
         ok_or_error(control.request(Request::SubscribeSpeech)?)?;
-        let poll = crate::agent_client::CONTROL_POLL_INTERVAL;
-        control.set_read_timeout(Some(poll))?;
+        control.set_read_timeout(None)?;
         let (sender, receiver) = control.split()?;
-        Self::from_source(
-            Box::new(receiver),
-            Box::new(sender),
-            timeline,
-            poll,
-            STEP_TIMEOUT,
-        )
+        Self::from_source(Box::new(receiver), Box::new(sender), timeline, STEP_TIMEOUT)
     }
 
     /// A collector reading `source` on a thread it starts, and sending on
@@ -322,24 +313,20 @@ impl SpeechCollector {
         source: Box<dyn FrameSource>,
         sink: Box<dyn RequestSink>,
         timeline: Timeline,
-        read_timeout: Duration,
         step_timeout: Duration,
     ) -> io::Result<Self> {
         let (passed, frames) = mpsc::channel();
-        let stop = Arc::new(AtomicBool::new(false));
-        {
+        let reader = {
             let timeline = timeline.clone();
-            let stop = Arc::clone(&stop);
             thread::Builder::new()
                 .name("speech reader".to_owned())
-                .spawn(move || read_frames(source, &timeline, &passed, &stop))?;
-        }
+                .spawn(move || read_frames(source, &timeline, &passed))?
+        };
         Ok(Self {
             sink,
             frames,
-            stop,
+            reader: Some(reader),
             timeline,
-            read_timeout,
             step_timeout,
             pending: VecDeque::new(),
             texts: HashMap::new(),
@@ -428,40 +415,46 @@ impl SpeechCollector {
             .map_or("(unknown utterance)", String::as_str)
     }
 
-    /// Takes one frame from the reader thread, waiting up to the read
-    /// timeout for one, and keeps any utterance it announces in
-    /// [`Self::pending`]. No frame in that time is `Ok(None)`.
-    fn read_one(&mut self) -> io::Result<Option<Absorbed>> {
-        self.read_within(self.read_timeout)
-    }
-
-    /// [`read_one`](Self::read_one), waiting up to `wait`.
-    fn read_within(&mut self, wait: Duration) -> io::Result<Option<Absorbed>> {
+    /// Takes the next frame from the reader thread, waiting until
+    /// `deadline` for one, and keeps any utterance it announces in
+    /// [`Self::pending`]. No frame by then is `Ok(None)`.
+    fn read_by(&mut self, deadline: Instant) -> io::Result<Option<Absorbed>> {
+        let wait = deadline.saturating_duration_since(Instant::now());
         match self.frames.recv_timeout(wait) {
-            Ok(Ok(frame)) => {
-                let absorbed = self.absorb(frame);
-                if let Absorbed::Utterance(utterance) = &absorbed {
-                    self.pending.push_back(utterance.clone());
-                }
-                Ok(Some(absorbed))
-            }
-            Ok(Err(error)) => Err(error),
+            Ok(received) => self.take(received).map(Some),
             Err(RecvTimeoutError::Timeout) => Ok(None),
-            Err(RecvTimeoutError::Disconnected) => Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "the speech connection's reader has stopped",
-            )),
+            Err(RecvTimeoutError::Disconnected) => Err(reader_stopped()),
         }
     }
 
-    /// Reads every frame already on its way, without waiting for any to
-    /// happen.
+    /// Absorbs one frame the reader thread passed on, keeping any
+    /// utterance it announces in [`Self::pending`].
+    fn take(&mut self, received: io::Result<Frame>) -> io::Result<Absorbed> {
+        let absorbed = self.absorb(received?);
+        if let Absorbed::Utterance(utterance) = &absorbed {
+            self.pending.push_back(utterance.clone());
+        }
+        Ok(absorbed)
+    }
+
+    /// Takes every frame that has reached the harness, which the reader
+    /// thread passes on as soon as it arrives, without waiting for any:
+    /// what has arrived is the evidence the caller checks. A frame still
+    /// on the wire is not yet evidence of anything, and whatever it
+    /// carries is checked by a later assertion, at the latest by
+    /// [`Self::expect_nothing_more`].
     fn read_arrived(&mut self) {
         loop {
-            match self.read_within(DRAIN_READ) {
-                Ok(Some(_)) => {}
-                Ok(None) => return,
-                Err(error) => self.fail(&format!("the speech connection failed: {error}")),
+            let received = match self.frames.try_recv() {
+                Ok(received) => received,
+                Err(TryRecvError::Empty) => return,
+                Err(TryRecvError::Disconnected) => self.fail(&format!(
+                    "the speech connection failed: {}",
+                    reader_stopped()
+                )),
+            };
+            if let Err(error) = self.take(received) {
+                self.fail(&format!("the speech connection failed: {error}"));
             }
         }
     }
@@ -475,7 +468,7 @@ impl SpeechCollector {
             if Instant::now() >= deadline {
                 return None;
             }
-            if let Err(error) = self.read_one() {
+            if let Err(error) = self.read_by(deadline) {
                 self.fail(&format!("the speech connection failed: {error}"));
             }
         }
@@ -491,7 +484,7 @@ impl SpeechCollector {
             if Instant::now() >= deadline {
                 return None;
             }
-            if let Err(error) = self.read_one() {
+            if let Err(error) = self.read_by(deadline) {
                 self.fail(&format!("the speech connection failed: {error}"));
             }
         }
@@ -643,7 +636,7 @@ impl SpeechCollector {
                     got.utterance,
                 );
             }
-            if let Err(error) = self.read_one() {
+            if let Err(error) = self.read_by(deadline) {
                 self.fail(&format!("the speech connection failed: {error}"));
             }
         }
@@ -791,7 +784,7 @@ impl SpeechCollector {
                     self.step_timeout
                 ));
             }
-            if let Err(error) = self.read_one() {
+            if let Err(error) = self.read_by(deadline) {
                 self.fail(&format!("the speech connection failed: {error}"));
             }
         }
@@ -901,9 +894,9 @@ impl SpeechCollector {
                 "could not ask Verbatim whether it is idle: {error}"
             )),
         };
-        let deadline = Instant::now() + IDLE_TIMEOUT + self.read_timeout * 2;
+        let deadline = Instant::now() + IDLE_TIMEOUT + IDLE_ANSWER_MARGIN;
         loop {
-            match self.read_one() {
+            match self.read_by(deadline) {
                 Ok(Some(Absorbed::Reply { to, error })) if to == id => {
                     if let Some(error) = error {
                         self.fail(&format!("Verbatim did not become idle: {error}"));
@@ -971,23 +964,39 @@ impl SpeechCollector {
 }
 
 impl Drop for SpeechCollector {
+    /// Shuts the connection down, which ends the reader thread's pending
+    /// read at once, and joins the thread, so none outlives the collector.
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        if let Err(error) = self.sink.shutdown() {
+            // A connection that cannot be shut down has already ended, and
+            // the reader's read with it.
+            tracing::debug!(%error, "the speech connection was already closed");
+        }
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
     }
+}
+
+/// The error a read gets once the reader thread has stopped.
+fn reader_stopped() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::BrokenPipe,
+        "the speech connection's reader has stopped",
+    )
 }
 
 /// The reader thread: reads every frame from `source` as it arrives,
 /// records it on `timeline` at once, and passes it on through `passed`,
-/// until the connection fails, whose error is passed on last, the
-/// collector is dropped (`stop`), or nothing takes frames any more.
+/// until the connection ends, as dropping the collector ends it, whose
+/// error is passed on last.
 fn read_frames(
     mut source: Box<dyn FrameSource>,
     timeline: &Timeline,
     passed: &mpsc::Sender<io::Result<Frame>>,
-    stop: &AtomicBool,
 ) {
     let mut texts: HashMap<UtteranceId, String> = HashMap::new();
-    while !stop.load(Ordering::Relaxed) {
+    loop {
         match source.next_frame() {
             Ok(frame) => {
                 record(timeline, &mut texts, &frame);
@@ -995,7 +1004,6 @@ fn read_frames(
                     return;
                 }
             }
-            Err(error) if is_read_timeout(&error) => {}
             Err(error) => {
                 let _ = passed.send(Err(error));
                 return;
@@ -1077,13 +1085,6 @@ fn describe_mismatch(expected: &[Expected], actual: &[Utterance]) -> String {
     out
 }
 
-fn is_read_timeout(error: &io::Error) -> bool {
-    matches!(
-        error.kind(),
-        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -1092,32 +1093,28 @@ mod tests {
 
     use super::*;
 
-    /// Hands the reader thread the frames a test feeds it, in order, and
-    /// reports a read timeout after [`SHORT`] without one, as an idle
-    /// connection would. Each time it is asked for a frame while it has
+    /// Hands the reader thread the frames a test feeds it, in order,
+    /// waiting for each, until the sink shuts it down (`None`), which ends
+    /// the connection. Each time it is asked for a frame while it has
     /// none, it reports how many fed frames it has handed out, every one
     /// of which the reader has then passed on.
     struct Scripted {
-        frames: mpsc::Receiver<Frame>,
+        frames: mpsc::Receiver<Option<Frame>>,
         handed: usize,
         idle: mpsc::Sender<usize>,
     }
 
     impl FrameSource for Scripted {
         fn next_frame(&mut self) -> io::Result<Frame> {
-            let frame = if let Ok(frame) = self.frames.try_recv() {
-                frame
+            let next = if let Ok(next) = self.frames.try_recv() {
+                next
             } else {
                 let _ = self.idle.send(self.handed);
                 self.frames
-                    .recv_timeout(SHORT)
-                    .map_err(|error| match error {
-                        RecvTimeoutError::Timeout => io::Error::from(io::ErrorKind::TimedOut),
-                        RecvTimeoutError::Disconnected => {
-                            io::Error::from(io::ErrorKind::UnexpectedEof)
-                        }
-                    })?
+                    .recv()
+                    .map_err(|_| io::Error::from(io::ErrorKind::UnexpectedEof))?
             };
+            let frame = next.ok_or_else(|| io::Error::from(io::ErrorKind::ConnectionAborted))?;
             if !matches!(frame, Frame::Reply { .. }) {
                 self.handed += 1;
             }
@@ -1127,7 +1124,7 @@ mod tests {
 
     /// Answers `AwaitIdle` at once, after the frames fed before it.
     struct ScriptedSink {
-        frames: mpsc::Sender<Frame>,
+        frames: mpsc::Sender<Option<Frame>>,
         next_id: u64,
     }
 
@@ -1135,18 +1132,24 @@ mod tests {
         fn send(&mut self, _request: Request) -> io::Result<u64> {
             self.next_id += 1;
             self.frames
-                .send(Frame::Reply {
+                .send(Some(Frame::Reply {
                     to: self.next_id,
                     payload: verbatim_control::protocol::ReplyPayload::Idle,
-                })
+                }))
                 .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
             Ok(self.next_id)
+        }
+
+        fn shutdown(&mut self) -> io::Result<()> {
+            self.frames
+                .send(None)
+                .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))
         }
     }
 
     /// Feeds a collector's reader thread.
     struct Script {
-        feed: mpsc::Sender<Frame>,
+        feed: mpsc::Sender<Option<Frame>>,
         idle: mpsc::Receiver<usize>,
         fed: usize,
     }
@@ -1158,7 +1161,7 @@ mod tests {
         fn feed(&mut self, frames: Vec<Frame>) {
             self.fed += frames.len();
             for frame in frames {
-                self.feed.send(frame).expect("the reader is running");
+                self.feed.send(Some(frame)).expect("the reader is running");
             }
             while self.idle.recv().expect("the reader is running") < self.fed {}
         }
@@ -1181,7 +1184,6 @@ mod tests {
                 next_id: 0,
             }),
             timeline,
-            SHORT,
             SHORT,
         )
         .expect("starts the reader thread");

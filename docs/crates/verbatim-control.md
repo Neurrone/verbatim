@@ -98,7 +98,9 @@ Public API:
   why its shared-handle `try_clone` is safe where the server needed
   overlapped I/O. The one exception is `split`, which only a TCP client
   allows: it hands back the writing half, a `Sender` with `send`, and the
-  reading half, a `Receiver` with `next_frame`, for use on two threads,
+  reading half, a `Receiver` with `next_frame`, for use on two threads
+  (`Sender::shutdown` ends the connection, so a read pending on the
+  `Receiver` returns at once with an error),
   as the end-to-end harness's speech collector reads on a thread of its
   own; a socket serves a read and a write at once, where a synchronous
   pipe handle would hold the write until the pending read finished.
