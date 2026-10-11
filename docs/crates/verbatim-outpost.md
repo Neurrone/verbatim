@@ -248,7 +248,9 @@ Public API:
   the outpost looks them up with the stamp cleared (`NodeId::unstamped`).
   `OutpostToSupervisor::assign_outpost` is the stamp Core applies to every
   node id in a message. Framing is newline-delimited compact JSON via
-  `write_message` and `read_message`.
+  `write_message` and `read_message`; `write_message` hands its writer the
+  line and its line feed in one write, so a message is one `WriteFile` on a
+  bare pipe, and `encode_message` gives those bytes without writing them.
 - `Arbitrator` — NVDA's per-window backend decision (`_isUIAWindowHelper`):
   `verdict(hwnd, &WindowClasses)` answers from the good class list, the
   Windows 11 shell rule (the root ancestor's class is a shell top-level

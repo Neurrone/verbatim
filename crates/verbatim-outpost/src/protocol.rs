@@ -980,6 +980,11 @@ pub const MAX_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
 
 /// Writes one message as a single JSON line and flushes.
 ///
+/// The line and its line feed go to `writer` in one `write_all`, so on a
+/// bare pipe, as the listener and every outpost write to, a message is one
+/// `WriteFile` and the reader never receives a line without its line feed
+/// (`docs/design/relay.md`, section 4.3).
+///
 /// # Errors
 ///
 /// Returns any I/O error from the underlying writer, and
@@ -987,7 +992,19 @@ pub const MAX_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
 /// [`MAX_MESSAGE_BYTES`], which is not sent; serialization of these
 /// message types cannot fail.
 pub fn write_message<W: Write, T: Serialize>(writer: &mut W, message: &T) -> io::Result<()> {
-    let line = serde_json::to_string(message).map_err(io::Error::other)?;
+    let line = encode_message(message)?;
+    writer.write_all(&line)?;
+    writer.flush()
+}
+
+/// One message as the bytes [`write_message`] writes: its JSON line with
+/// the line feed.
+///
+/// # Errors
+///
+/// As [`write_message`], without the I/O.
+pub fn encode_message<T: Serialize>(message: &T) -> io::Result<Vec<u8>> {
+    let mut line = serde_json::to_vec(message).map_err(io::Error::other)?;
     if line.len() > MAX_MESSAGE_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -997,9 +1014,8 @@ pub fn write_message<W: Write, T: Serialize>(writer: &mut W, message: &T) -> io:
             ),
         ));
     }
-    writer.write_all(line.as_bytes())?;
-    writer.write_all(b"\n")?;
-    writer.flush()
+    line.push(b'\n');
+    Ok(line)
 }
 
 /// Reads one JSON-line message. Returns `Ok(None)` on clean end of stream —
@@ -1058,6 +1074,25 @@ mod tests {
         write_message(&mut written, &fits).expect("fits");
         let read: Option<String> = read_message(&mut std::io::Cursor::new(written)).expect("reads");
         assert_eq!(read.as_deref(), Some(fits.as_str()));
+    }
+
+    #[test]
+    fn a_message_and_its_line_feed_are_one_write() {
+        /// Records each write it is given.
+        #[derive(Default)]
+        struct Writes(Vec<Vec<u8>>);
+        impl Write for Writes {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.0.push(bytes.to_vec());
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut writes = Writes::default();
+        write_message(&mut writes, &"one").expect("written");
+        assert_eq!(writes.0, vec![b"\"one\"\n".to_vec()]);
     }
 
     #[test]
