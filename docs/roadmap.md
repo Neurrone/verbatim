@@ -200,9 +200,15 @@ Order from 2026-10-11 (Dickson): the outpost's UIA crash fix first; then
 step 6's revisions (`docs/design/focus-pipeline.md` section 16) and their
 verification; the terminal redesign's measurements whenever the desktop is
 free; then stage A step 9 (the relay), before the terminal redesign, since
-the relay's latency affects Windows Terminal's timings; then the terminal
-redesign, which removes `FindText` (it makes Windows Terminal fault on a
-miss, `phase6-design.md`); then stage A steps 7, 8, 10 and 11.
+the relay's latency affects Windows Terminal's timings, built from
+`docs/design/relay.md` with its two decisions approved (the budget read as
+verbatim.exe's own stage within 1 to 2 ms and its hop no worse than the
+platform floor, every exception attributed by trace, measured once on
+bare metal too; and the 2026-10-08 priority and power-throttling decision
+built with it); then stage A step 8 (spare outposts), which removes the
+relay tail over 20 ms, facts held for a starting outpost; then the
+terminal redesign, which removes `FindText` (it makes Windows Terminal
+fault on a miss, `phase6-design.md`); then stage A steps 7, 10 and 11.
 
 Then step 9, the terminal redesign, built from `docs/design/terminal-reading.md`
 in its small steps, after its measurements; it includes a test bounding

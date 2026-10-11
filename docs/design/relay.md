@@ -1,6 +1,6 @@
 # verbatim.exe's relay: design for stage A step 9
 
-Proposed 2026-10-11, awaiting Dickson. Researched on main at 3804050. Sources: the code cited by file and line; `scratchpad\supervisor-latency.md` and its scripts and classified output in `scratchpad\sup-lat` (measured on the measure-timing branch, whose stamps are not on main); `docs/design/focus-pipeline.md` 12.4 and 15; `docs/roadmap.md`; `phase6-design.md`; `docs/performance.md`; `docs/architecture.md` D9 and D13; NVDA's `source/core.py`.
+Approved by Dickson on 2026-10-11, with both decisions in section "Decisions" as recommended. Researched on main at 3804050. Sources: the code cited by file and line; `scratchpad\supervisor-latency.md` and its scripts and classified output in `scratchpad\sup-lat` (measured on the measure-timing branch, whose stamps are not on main); `docs/design/focus-pipeline.md` 12.4 and 15; `docs/roadmap.md`; `phase6-design.md`; `docs/performance.md`; `docs/architecture.md` D9 and D13; NVDA's `source/core.py`.
 
 ## 1. Summary
 
