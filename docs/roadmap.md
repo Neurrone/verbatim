@@ -164,11 +164,13 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    arrived before it, as File Explorer's first focus did before 42d9caa.
 5. MSAA focus, foreground and menu events in each outpost's own hook,
    with the listener's "forwarding ended" hand-over and duplicates matched
-   by counting. Written (2026-10-11, `phase6-design.md`, "MSAA events in
-   each outpost's own hook"), awaiting its first build: `cargo xtask ci`,
-   the mockapp tests it names, step 4's scenarios, every `conhost_`
-   scenario (whether the console host's own hook receives the console
-   window's events is unmeasured), and the full suite. The five kinds of
+   by counting. Built (2026-10-11, `phase6-design.md`, "MSAA events in
+   each outpost's own hook"): `cargo xtask ci` and every mockapp test
+   pass; `conhost_typing`, `conhost_two_windows`,
+   `menu_and_settings_dialog` and `explorer_folder_window` passed once
+   each, and the console host's own hook was seen taking its console
+   windows' foreground and focus events. The full suite is still to run.
+   The five kinds of
    section 12.4 moved (focus, foreground, menu-popup start, alert,
    tooltip); every MSAA fact carries the thread that raised it, so the
    window's thread no longer stands in. The listener stops by the time an
