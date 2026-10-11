@@ -116,7 +116,9 @@ pub struct UiaFocusRead {
     pub hwnd: isize,
     /// For an element that is not a window: the keyboard focus window of
     /// its application when the listener received the event, else 0, as
-    /// for a [`DeliveredFact::UiaSelection`].
+    /// for a [`DeliveredFact::UiaSelection`]. The outpost's acceptance test
+    /// does not use it: it runs against the element's nearest window
+    /// (`docs/design/focus-pipeline.md`, section 16.2).
     pub focus_window: isize,
     /// The focus: its name and role from the event's cache, as NVDA reads
     /// them from the event's element, and its value, states, and details

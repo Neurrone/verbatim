@@ -438,34 +438,6 @@ fn msaa_focus_changes_cost_exactly() {
     app.quit();
 }
 
-/// A hidden top-level window of this process, standing for another
-/// application's window in front of mockapp's. Destroyed by the thread that
-/// made it, with `DestroyWindow`.
-fn another_applications_window() -> HWND {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, WINDOW_EX_STYLE, WS_OVERLAPPED,
-    };
-    use windows::core::w;
-    // SAFETY: a predefined class, no parent, menu, or creation data.
-    unsafe {
-        CreateWindowExW(
-            WINDOW_EX_STYLE(0),
-            w!("STATIC"),
-            w!("another application"),
-            WS_OVERLAPPED,
-            0,
-            0,
-            10,
-            10,
-            None,
-            None,
-            None,
-            None,
-        )
-    }
-    .expect("a window of the test's own")
-}
-
 /// A state change on mockapp's focus while another application's window is
 /// in front costs nothing at all: the outpost drops it by NVDA's acceptance
 /// test before any call into mockapp, before even probing its window, whose
@@ -490,7 +462,7 @@ fn msaa_state_change_costs_exactly() {
     let _ = measure_msaa_focus(&mut app, hwnd, &outpost, ("item2", ITEM_TWO));
     outpost.pass_time(NEGATIVE_VERDICT_LIFETIME);
 
-    let front = another_applications_window();
+    let front = common::another_applications_window();
     outpost.set_foreground(front);
     common::reset_hits(hwnd);
     app.send("set-states item2 focusable selectable selected");

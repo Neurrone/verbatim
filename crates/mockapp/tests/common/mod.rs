@@ -498,3 +498,31 @@ pub fn make_topmost(hwnd: HWND) {
     }
     .unwrap_or_else(|error| panic!("mockapp's window could not be made topmost: {error}"));
 }
+
+/// A hidden top-level window of this process, standing for another
+/// application's window in front of mockapp's. Destroyed by the thread that
+/// made it, with `DestroyWindow`.
+pub fn another_applications_window() -> HWND {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, WINDOW_EX_STYLE, WS_OVERLAPPED,
+    };
+    use windows::core::w;
+    // SAFETY: a predefined class, no parent, menu, or creation data.
+    unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            w!("STATIC"),
+            w!("another application"),
+            WS_OVERLAPPED,
+            0,
+            0,
+            10,
+            10,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+    .expect("a window of the test's own")
+}

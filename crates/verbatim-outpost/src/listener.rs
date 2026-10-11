@@ -543,11 +543,14 @@ fn capture(element: &IUIAutomationElement) -> Option<(Pid, isize, UiaSnapshotFac
     ))
 }
 
-/// The window that stands in for a windowless element's own, for the
-/// outpost's acceptance test against the foreground window: the keyboard
-/// focus window of the element's process `pid` now, a local read, when the
-/// element's cached window handle `hwnd` is 0 and the process has the
-/// keyboard focus; else 0.
+/// The window that stands in for a windowless element's own: for a
+/// selection, in the outpost's acceptance test against the foreground
+/// window; for a focus, in the reading thread's checks before its read and
+/// as the window the outpost reports the focus in when the read found
+/// none, its acceptance test running against the nearest window the read
+/// found. The keyboard focus window of the element's process `pid` now, a
+/// local read, when the element's cached window handle `hwnd` is 0 and the
+/// process has the keyboard focus; else 0.
 fn focus_window_for(pid: Pid, hwnd: isize) -> isize {
     if hwnd == 0 {
         crate::outpost::window::focus_window_of(pid.0).unwrap_or(0)

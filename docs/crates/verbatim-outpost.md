@@ -771,8 +771,11 @@ Implementation notes:
   keyboard focus, read live, as NVDA's `shouldAllowUIAFocusEvent` does,
   and read its states, value, details, ancestors, and selected child from
   that element. The outpost tests it against the foreground window
-  (NVDA's acceptance test, with the event's window or the application's
-  keyboard focus window when the listener received it), decides its
+  (NVDA's acceptance test, with the element's nearest window: its own,
+  else the nearest the listener's read found, else the nearest ancestor's
+  in the read; an element with no window in its chain is tested with 0,
+  which passes, as NVDA's `shouldAcceptEvent` lets through an event with
+  no window; `docs/design/focus-pipeline.md`, section 16.2), decides its
   window's backend, and gives its runtime id a new node first when the
   listener read that the element it read before under that id has lost
   the keyboard focus or is gone. It reports the focus at once, with

@@ -4,8 +4,9 @@
 //! the provider reuses a dead element's runtime id; with which states,
 //! when they changed after the focus event; dropped when its element lost
 //! the keyboard focus before it was read, and reported when it had it
-//! though the focus has moved on since; how the outpost finds its own copy
-//! of the element by its path and follows it, and follows nothing when it
+//! though the focus has moved on since; accepted only while its nearest
+//! window is in front, as NVDA's acceptance test has it; how the outpost
+//! finds its own copy of the element by its path and follows it, and follows nothing when it
 //! has no path, until a later focus brings one; how a change raised after
 //! a focus event waits for the focus's read; and that a text change raised
 //! after the focus leaves a document and returns to it is heard.
@@ -546,6 +547,44 @@ fn a_change_raised_after_a_focus_event_waits_for_the_focus_read() {
     app.quit();
 }
 
+/// A windowless UIA focus is tested by NVDA's acceptance test against its
+/// nearest window, the one the listener's read found
+/// (`docs/design/focus-pipeline.md`, section 16.2), not passed untested for
+/// want of a window of its own: with another application's window in
+/// front, mockapp's button's focus is dropped, and the outpost says
+/// nothing; once mockapp's window is in front, the same read is reported.
+fn a_windowless_focus_is_accepted_only_once_its_window_is_in_front() {
+    let title = common::unique_title("mockapp-focus-in-front");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let read = outpost.listener_fact(&client.focused());
+    let DeliveredFact::UiaFocusRead { read: button, .. } = &read else {
+        panic!("the listener sent {read:?}, not a read");
+    };
+    assert_eq!(
+        (button.hwnd, button.window),
+        (0, Some(hwnd.0 as isize)),
+        "a windowless focus whose nearest window is mockapp's"
+    );
+    outpost.set_foreground(common::another_applications_window());
+    outpost.deliver(read.clone());
+    outpost.settled();
+
+    outpost.set_foreground(hwnd);
+    let reported = outpost.focus(read);
+    assert_eq!(
+        reported.chain(),
+        [Some("Mockapp Events Fixture"), Some("Original Name")]
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 /// The console host's window is the parent of its text area, reports the
 /// keyboard focus whenever the text area has it, and raises focus events
 /// around the text area's; those are never the focus (NVDA refuses them
@@ -621,6 +660,10 @@ fn main() {
         (
             "a_change_raised_after_a_focus_event_waits_for_the_focus_read",
             a_change_raised_after_a_focus_event_waits_for_the_focus_read,
+        ),
+        (
+            "a_windowless_focus_is_accepted_only_once_its_window_is_in_front",
+            a_windowless_focus_is_accepted_only_once_its_window_is_in_front,
         ),
         (
             "a_console_windows_own_focus_is_never_reported",
