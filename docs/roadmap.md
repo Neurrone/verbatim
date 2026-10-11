@@ -310,6 +310,10 @@ Provisional decisions awaiting Dickson:
   follows, and 54f9a26's report for consoles had hidden that. It applies
   to every application, which phase 6's "A foreground event before its
   window is in front" left for Dickson; this is its second choice.
+  Superseded on the step 6 branch by section 16.4 of the focus-pipeline
+  design (approved by Dickson, 2026-10-11): such an event is dropped, as
+  is every foreground event for a window read through UI Automation, and
+  the window is announced from the focus's ancestry.
 - Three details of NVDA's MSAA limiter that the focus-pipeline design
   does not name, followed in stage A step 4 (2026-10-11), each heard
   only in a burst of events: a menu opening no longer takes one of a

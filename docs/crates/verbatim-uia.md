@@ -42,7 +42,9 @@ Public API:
   whose scope takes in the children, for a dialog's own text), and the
   local helpers `cache_request(properties)`,
   `raw_view_walker`, `control_view_walker`, `root_element`, and
-  `property_condition`. Every one of
+  `property_condition`, and `compare_elements` (UI Automation's
+  `CompareElements`, counted as one call, for the focus listener's log of
+  whether two focus senders are one element). Every one of
   them is safe to call. The coclass is `CUIAutomation8`, not the
   older `CUIAutomation`: only the former's objects implement the newer
   client interfaces, and querying `IUIAutomation5` (the notification-event
@@ -209,7 +211,8 @@ Public API:
   `cached_bool`, `cached_optional_bool`,
   `cached_f64`, `cached_string`, `cached_bounding_rectangle`,
   `cached_control_type`, `cached_framework_id`), which are local, and the
-  live calls (`current_control_type`, `current_i32_ignoring_default`,
+  live calls (`current_control_type`, `current_framework_id`,
+  `current_i32_ignoring_default`,
   `has_keyboard_focus`,
   `build_updated_cache`, `current_pattern`, `controller_for`,
   `find_first`, `find_first_build_cache`), each of which counts one UIA

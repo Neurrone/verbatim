@@ -49,13 +49,15 @@
 //! after that, for an application still running, starts a new thread.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, UIA_LegacyIAccessibleStatePropertyId,
+    IUIAutomationElement, UIA_ClassNamePropertyId, UIA_LegacyIAccessibleStatePropertyId,
 };
+use windows::core::AgileReference;
 
 use verbatim_model::{Fetches, Pid, State, TraceId};
 use verbatim_uia::map::{
@@ -118,6 +120,55 @@ struct LastFocus {
     ancestors: Vec<UiaAncestorFact>,
 }
 
+/// The last focus any of the listener's reading threads accepted, shared
+/// by them all, as NVDA keeps one last focused UIA element for the whole
+/// program (`docs/design/focus-pipeline.md`, section 16.3), with the reader
+/// that accepted it. For now it only feeds the debug log of each read
+/// (`FocusReader::log_sender`), which is to show whether UI Automation
+/// counts two senders with different runtime ids as one element; the
+/// duplicate evidence is still each thread's own focus before.
+#[derive(Clone, Default)]
+pub struct LastAccepted(Arc<Mutex<Option<(u64, AgileReference<IUIAutomationElement>)>>>);
+
+impl LastAccepted {
+    fn lock(&self) -> MutexGuard<'_, Option<(u64, AgileReference<IUIAutomationElement>)>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The last focus accepted, if there is one and it can be had on this
+    /// thread.
+    fn element(&self) -> Option<IUIAutomationElement> {
+        self.lock()
+            .as_ref()
+            .and_then(|(_, element)| element.resolve().ok())
+    }
+
+    /// Makes `element`, which reader `reader` accepted, the last focus
+    /// accepted.
+    fn accept(&self, reader: u64, element: &IUIAutomationElement) {
+        match AgileReference::new(element) {
+            Ok(element) => *self.lock() = Some((reader, element)),
+            Err(error) => {
+                tracing::debug!(%error, "the last focus accepted could not be kept");
+            }
+        }
+    }
+
+    /// Forgets the last focus accepted if reader `reader` accepted it, so
+    /// it is released on the thread that ends with that reader, while the
+    /// thread is still in COM's apartment.
+    fn release(&self, reader: u64) {
+        let mut slot = self.lock();
+        if slot.as_ref().is_some_and(|(owner, _)| *owner == reader) {
+            *slot = None;
+        }
+    }
+}
+
+/// The next [`FocusReader`]'s number, which names the reader that accepted
+/// the [`LastAccepted`] focus.
+static NEXT_READER: AtomicU64 = AtomicU64::new(1);
+
 /// One application's focus reader: a UIA client of its own and the focus
 /// it read last. Lives on one reading thread.
 pub struct FocusReader {
@@ -128,23 +179,36 @@ pub struct FocusReader {
     /// read the classic way from then on.
     classic_windows: HashSet<(isize, u32)>,
     last: Option<LastFocus>,
+    /// This reader's number among the listener's readers.
+    number: u64,
+    /// The last focus any reader accepted.
+    last_accepted: LastAccepted,
+}
+
+impl Drop for FocusReader {
+    fn drop(&mut self) {
+        self.last_accepted.release(self.number);
+    }
 }
 
 impl FocusReader {
     /// A reader with a UIA client of its own, made on the calling thread,
     /// which joins COM's multithreaded apartment. With `remote` off, every
     /// read is the classic walk (`uia.remote_operations` in
-    /// `settings.toml`).
+    /// `settings.toml`). `last_accepted` is the last focus any of the
+    /// listener's readers accepted, which this one shares.
     ///
     /// # Errors
     ///
     /// The COM error when the client cannot be made.
-    pub fn new(remote: bool) -> windows::core::Result<Self> {
+    pub fn new(remote: bool, last_accepted: LastAccepted) -> windows::core::Result<Self> {
         Ok(Self {
             uia: Uia::new()?,
             remote,
             classic_windows: HashSet::new(),
             last: None,
+            number: NEXT_READER.fetch_add(1, Ordering::Relaxed),
+            last_accepted,
         })
     }
 
@@ -161,6 +225,9 @@ impl FocusReader {
         }
         // The element arrives with the registration's base cache request.
         let event = snapshot_parts_from_cached_element(element);
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            self.log_sender(element, hwnd, &event.runtime_id);
+        }
         let previous = self
             .last
             .as_ref()
@@ -226,6 +293,7 @@ impl FocusReader {
                     element: element.clone(),
                     ancestors: Vec::new(),
                 });
+                self.last_accepted.accept(self.number, element);
                 Judged::Read(Box::new(UiaFocusRead {
                     hwnd,
                     focus_window,
@@ -306,6 +374,7 @@ impl FocusReader {
             element: element.clone(),
             ancestors: ancestors.clone().unwrap_or_default(),
         });
+        self.last_accepted.accept(self.number, element);
         Judged::Read(Box::new(UiaFocusRead {
             hwnd,
             focus_window,
@@ -318,6 +387,30 @@ impl FocusReader {
             window,
             same_as_last: ancestry.previous_focused,
         }))
+    }
+
+    /// Logs, at debug, what section 16.3 of `docs/design/focus-pipeline.md`
+    /// asks to see of each read before the duplicate rule is built on
+    /// `CompareElements`: the sender's runtime id, class name, framework,
+    /// and own native window handle, `hwnd`, and whether UI Automation
+    /// counts it as the same element as the last focus any of the
+    /// listener's readers accepted, in any application. The framework and
+    /// the comparison are two calls, made only while debug logging is on.
+    fn log_sender(&self, element: &IUIAutomationElement, hwnd: isize, runtime_id: &[i32]) {
+        let class_name = element.cached_string(UIA_ClassNamePropertyId);
+        let framework = element.current_framework_id().ok();
+        let same_as_last_accepted = self
+            .last_accepted
+            .element()
+            .map(|last| self.uia.compare_elements(element, &last));
+        tracing::debug!(
+            ?runtime_id,
+            ?class_name,
+            ?framework,
+            hwnd,
+            ?same_as_last_accepted,
+            "UIA focus sender"
+        );
     }
 
     /// Gives the ancestor that is window `hwnd`'s own element its handle,

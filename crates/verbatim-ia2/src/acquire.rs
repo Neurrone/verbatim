@@ -27,7 +27,7 @@ use windows::Win32::Foundation::{
     CO_E_OBJNOTCONNECTED, RPC_E_DISCONNECTED, RPC_E_SERVER_DIED, RPC_E_SERVER_DIED_DNE,
 };
 use windows::Win32::UI::Accessibility::{
-    NAVDIR_FIRSTCHILD, NAVDIR_NEXT, NAVDIR_PREVIOUS, ROLE_SYSTEM_GROUPING,
+    NAVDIR_FIRSTCHILD, NAVDIR_NEXT, NAVDIR_PREVIOUS, ROLE_SYSTEM_CLIENT, ROLE_SYSTEM_GROUPING,
 };
 use windows::Win32::UI::Controls::{TVGN_CHILD, TVGN_NEXT, TVGN_PARENT, TVGN_PREVIOUS};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -1515,10 +1515,9 @@ fn read_snapshot_with(
     // neutral default.
     let name = visible_text(acc.name());
     let raw_value = visible_text(acc.value());
-    let role = reading
-        .role
-        .or_read(|| acc.role())
-        .map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()));
+    let raw_role = reading.role.or_read(|| acc.role());
+    let top_level_client = is_top_level_client(key, raw_role);
+    let role = raw_role.map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()));
     let (role, states, tree_item) =
         role_and_states(acc, key, role, reading.state.or_read(|| acc.state()));
     // A detail the active theme reports as off is not read at all, saving
@@ -1602,8 +1601,25 @@ fn read_snapshot_with(
             set_size,
             level,
             rect,
+            top_level_client,
         },
     }
+}
+
+/// Whether the object `raw_role` names, at `key`, is the client area of a
+/// window with a system menu, a top-level window's: NVDA presents it as a
+/// focus ancestor although it reads as a pane, so a window read through
+/// MSAA is spoken by its title as the focus enters it
+/// (`_get_isPresentableFocusAncestor`, `NVDAObjects/IAccessible/__init__.py`
+/// 2094 to 2106): a client object, child id 0, of a window with the
+/// `WS_SYSMENU` style. One local read of the window's style, made only for
+/// a client object.
+fn is_top_level_client(key: MsaaKey, raw_role: Option<i32>) -> bool {
+    const WS_SYSMENU_STYLE: isize = 0x0008_0000;
+    raw_role == Some(ROLE_SYSTEM_CLIENT.cast_signed())
+        && key.1 == OBJID_CLIENT.0
+        && key.2 == CHILDID_SELF
+        && window::style(key.0) & WS_SYSMENU_STYLE != 0
 }
 
 /// The role and states `acc`, addressed at `key`, is read with, from its

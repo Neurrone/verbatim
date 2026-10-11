@@ -61,8 +61,8 @@ use super::text_reads::{self, CARET_WATCH_BOUND, CONSOLE_WINDOW_CLASS, OpenWatch
 use super::window::{
     console_client, event_window_unreadable, focus_window_of, foreground_window_handle,
     front_is_another_thread_of_its_application, is_shell_transition_window, now_ms, top_level_of,
-    window_belongs_to_hidden_frame, window_facts, window_is_foreground, window_is_hidden_frame,
-    window_is_visible, window_owner,
+    window_belongs_to_hidden_frame, window_facts, window_is_hidden_frame, window_is_visible,
+    window_owner,
 };
 use crate::arbitration::window_class_name;
 use crate::terminal::keys;
@@ -312,13 +312,6 @@ pub(super) struct Tracking {
     /// observed: reported once the window is shown, or just before a focus
     /// inside it, whichever comes first ([`Worker::foreground`]).
     unshown_foreground: Option<(isize, TraceId, u64)>,
-    /// A foreground change whose window was not yet in front when it was
-    /// handled, with its trace and the time it was observed: reported just
-    /// before a focus inside it, if its window is in front by then, as NVDA
-    /// runs a foreground event for a focus that enters a new top-level
-    /// window (`eventHandler.doPreGainFocus`), and otherwise forgotten with
-    /// the next focus ([`Worker::foreground`]).
-    early_foreground: Option<(isize, TraceId, u64)>,
 }
 
 impl Tracking {
@@ -1491,7 +1484,6 @@ impl Worker<'_> {
     ) {
         if !foreground && let Some(hwnd) = window {
             self.report_unshown_foreground(top_level_of(hwnd));
-            self.report_early_foreground(top_level_of(hwnd));
             self.report_foreign_window(trace, observed_at_ms, hwnd);
         }
         let mut node = node;
@@ -1610,6 +1602,15 @@ impl Worker<'_> {
             );
         }
         accepted
+    }
+
+    /// Whether `hwnd` is the system's foreground window now, read by the
+    /// reader the outpost was given (`Outpost::set_foreground_reader`). A
+    /// foreground fact whose window is not is not reported, as NVDA's
+    /// `processForegroundWinEvent` drops it; the reducer accepts every
+    /// foreground fact on the strength of this check.
+    fn in_front(&self, hwnd: isize) -> bool {
+        self.context.foreground_window() == hwnd
     }
 
     /// Whether the event's own window, `hwnd`, can be read: NVDA's checks
@@ -2416,8 +2417,9 @@ impl Worker<'_> {
     }
 
     /// A foreground change: reported at once, named or not, as a focus on
-    /// the window, unless the window is no longer the system's foreground
-    /// window by the time it is read.
+    /// the window, unless the window is not the system's foreground window
+    /// when the change is handled or when it is read, or is read through
+    /// UI Automation.
     ///
     /// It is stamped with the time its window was confirmed as the
     /// foreground, read after the window's name, not the time Windows
@@ -2445,32 +2447,30 @@ impl Worker<'_> {
     /// ([`report_unshown_foreground`](Self::report_unshown_foreground)),
     /// since a window reported after a focus inside it is not announced.
     ///
-    /// A window not yet in front is not reported now, as NVDA drops the
-    /// event, but kept until the next focus: a console window's foreground
-    /// event comes before the window is in front, and none follows when it
-    /// is (`phase6-design.md`, "Console windows as one application"). NVDA
-    /// announces such a window as the focus enters it, by running a
-    /// foreground event for the new top-level window
-    /// (`eventHandler.doPreGainFocus`); a focus inside it has the kept change
-    /// reported just before it
-    /// ([`report_early_foreground`](Self::report_early_foreground)).
+    /// A window not yet in front is dropped and never kept, as NVDA drops
+    /// it; so is a window read through UI Automation, for which NVDA drops
+    /// every MSAA event, a foreground event included (`winEventToNVDAEvent`,
+    /// `IAccessibleHandler/__init__.py` 576 to 582). Either window is
+    /// announced as the focus enters it, from the focus's ancestry, where the
+    /// top-level window is an ancestor like any other: the reducer speaks
+    /// the entered ancestors when the focus's top-level window changes
+    /// (`docs/design/focus-pipeline.md`, section 16.4). A console window's
+    /// foreground event comes before the window is in front, and the window
+    /// is read through UI Automation besides, so its title is the console
+    /// window element's, the text area's parent.
     fn foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_ms: u64) {
         // A newer foreground change replaces one still waiting.
-        {
-            let mut tracking = self.context.tracking();
-            tracking.unshown_foreground = None;
-            tracking.early_foreground = None;
-        }
+        self.context.tracking().unshown_foreground = None;
         if window_belongs_to_hidden_frame(hwnd) {
             tracing::debug!(hwnd, "foreground dropped: Core's hidden frame");
             return;
         }
-        if !self.accepts(EventName::GainFocus, hwnd) || !window_is_foreground(hwnd) {
-            tracing::debug!(
-                hwnd,
-                "foreground kept for a focus inside it: not the foreground window"
-            );
-            self.context.tracking().early_foreground = Some((hwnd, trace, observed_at_ms));
+        if !self.accepts(EventName::GainFocus, hwnd) || !self.in_front(hwnd) {
+            tracing::debug!(hwnd, "foreground dropped: not the foreground window");
+            return;
+        }
+        if read::window_uses_uia(self.context, hwnd) {
+            tracing::debug!(hwnd, "foreground dropped: UIA owns the window");
             return;
         }
         if !window_is_visible(hwnd) {
@@ -2493,7 +2493,7 @@ impl Worker<'_> {
             }
         };
         if let Some((hwnd, trace, observed_at_ms)) = waiting {
-            if window_is_foreground(hwnd) {
+            if self.in_front(hwnd) {
                 self.report_foreground(hwnd, trace, observed_at_ms);
             } else {
                 tracing::debug!(hwnd, "foreground dropped: shown no longer in front");
@@ -2513,22 +2513,7 @@ impl Worker<'_> {
             }
         };
         if let Some((hwnd, trace, observed_at_ms)) = waiting
-            && window_is_foreground(hwnd)
-        {
-            tracing::debug!(hwnd, "foreground reported before a focus inside its window");
-            self.report_foreground(hwnd, trace, observed_at_ms);
-        }
-    }
-
-    /// Reports the foreground change kept because its window, `top`, was not
-    /// yet in front ([`foreground`](Self::foreground)), just before a focus
-    /// inside it, if it is the foreground window now; any kept change is
-    /// forgotten with the focus.
-    fn report_early_foreground(&mut self, top: isize) {
-        let waiting = self.context.tracking().early_foreground.take();
-        if let Some((hwnd, trace, observed_at_ms)) = waiting
-            && hwnd == top
-            && window_is_foreground(hwnd)
+            && self.in_front(hwnd)
         {
             tracing::debug!(hwnd, "foreground reported before a focus inside its window");
             self.report_foreground(hwnd, trace, observed_at_ms);
@@ -2539,7 +2524,7 @@ impl Worker<'_> {
     /// is no longer the foreground window by then.
     fn report_foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_ms: u64) {
         let (backend, node) = read::foreground_window(self.context, self.client, hwnd);
-        if !window_is_foreground(hwnd) {
+        if !self.in_front(hwnd) {
             tracing::info!(
                 hwnd,
                 "foreground report dropped: no longer the foreground window"
@@ -2579,7 +2564,7 @@ impl Worker<'_> {
             || window_owner(top).1 == self.context.target_pid
             || window_class_name(top) == CONSOLE_WINDOW_CLASS
             || window_belongs_to_hidden_frame(top)
-            || !window_is_foreground(top)
+            || !self.in_front(top)
         {
             return;
         }

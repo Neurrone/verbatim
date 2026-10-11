@@ -108,6 +108,16 @@ event's own element:
   reports the focus from its event, its ancestors unknown, unless the
   event said it lacked the keyboard focus, as NVDA lets a focus through
   whose read fails.
+- The readers share the last focus any of them accepted
+  (`focus_read::LastAccepted`), as NVDA keeps one last focus for the whole
+  program. For now it only feeds a debug log line for each read: the
+  sender's runtime id, class name, framework, and own window handle, and
+  whether `CompareElements` counts the sender the same element as that
+  last focus, which section 16.3 of the focus-pipeline design asks to see
+  before the duplicate rule is built on it. The framework and the
+  comparison are two calls into the application, made only while debug
+  logging is on; the duplicate evidence is still each thread's own focus
+  before.
 - The read (`DeliveredFact::UiaFocusRead`, a `UiaFocusRead`) or the drop
   (`DeliveredFact::UiaFocusDropped`) follows the marker through
   verbatim.exe, never coalesced and never dropped on the way: the
@@ -699,11 +709,24 @@ Implementation notes:
   report whose window is no longer the system's foreground window when it is
   ready to send is dropped, as NVDA's `processForegroundWinEvent` drops it.
   A foreground event whose window is not yet in front when it is handled
-  is kept and reported just before the next focus inside that window, if
-  the window is in front by then (`Tracking::early_foreground`), as NVDA
-  runs a foreground event for a focus entering a new top-level window
-  (`eventHandler.doPreGainFocus`); a console window's comes that early,
-  and none follows.
+  is dropped and never kept, and so is one for a window read through UI
+  Automation, even in front, as NVDA drops every MSAA event for such a
+  window. Either window is announced as the focus enters it, from the
+  focus's ancestry, where the reducer speaks the top-level window like any
+  other entered ancestor (`docs/design/focus-pipeline.md`, section 16.4);
+  a console window's foreground event comes before the window is in
+  front, and its title comes from the console window element, the text
+  area's parent, which the listener's read keeps among the ancestors.
+  Whether a window is the foreground window is read by the reader the
+  outpost was given (`Outpost::set_foreground_reader`, the system's
+  `GetForegroundWindow` unless a test gives another), for the foreground
+  fact as for the acceptance test.
+- A window's client area read through MSAA is marked
+  `NodeDetails::top_level_client` when it is a client object of a window
+  with the `WS_SYSMENU` style (`verbatim_ia2`'s snapshot read, one local
+  style read for a client object only): it reads as a pane, and the
+  reducer presents it, by its title, as the window it stands for, as
+  NVDA's `isPresentableFocusAncestor` presents it.
 - Focus-now (the worker): the answer to Core's focus-now query is the
   target's foreground window, when it holds the system foreground
   (`GetForegroundWindow`, never `GetGUIThreadInfo`'s `hwndFocus`, which can

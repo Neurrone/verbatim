@@ -8,6 +8,10 @@
 //! NVDA does not speak it: nothing NVDA does meets that ancestor again
 //! from an event.
 //!
+//! A foreground event whose window is not yet in front is dropped and
+//! never kept, as NVDA drops it: the window is announced from the focus's
+//! ancestry instead (`docs/design/focus-pipeline.md`, section 16.4).
+//!
 //! mockapp's focus moves with `set-focus`, which raises no event; the
 //! test hands the outpost the focus itself, as `call_counts.rs` does.
 
@@ -637,6 +641,31 @@ fn a_focus_raised_before_the_outposts_hook_is_reported_from_the_listener() {
     app.quit();
 }
 
+/// A foreground event whose window is not the foreground window when the
+/// outpost handles it is dropped, not kept for a focus inside the window:
+/// once the window is in front, its focus is reported alone, with no
+/// foreground report before it, as NVDA, having dropped the event, meets
+/// the window only in the focus's ancestry.
+fn a_foreground_event_before_its_window_is_in_front_is_dropped() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-early-foreground");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+
+    outpost.set_foreground(common::another_applications_window());
+    outpost.deliver(DeliveredFact::Foreground {
+        hwnd: hwnd.0 as isize,
+    });
+    outpost.settled();
+
+    outpost.set_foreground(hwnd);
+    app.send("set-focus item2");
+    let reported = outpost.msaa_focus(hwnd, ITEM_TWO);
+    assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
         (
@@ -686,6 +715,10 @@ fn main() {
         (
             "collapsing_a_tree_items_parent_says_nothing_until_its_focus",
             collapsing_a_tree_items_parent_says_nothing_until_its_focus,
+        ),
+        (
+            "a_foreground_event_before_its_window_is_in_front_is_dropped",
+            a_foreground_event_before_its_window_is_in_front_is_dropped,
         ),
     ]);
 }

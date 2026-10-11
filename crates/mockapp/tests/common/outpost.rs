@@ -48,7 +48,7 @@ use verbatim_model::{
     CallCounts, CallKind, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
     WindowHandle,
 };
-use verbatim_outpost::focus_read::{FocusReader, Judged};
+use verbatim_outpost::focus_read::{FocusReader, Judged, LastAccepted};
 use verbatim_outpost::protocol::{
     DeliveredFact, EventTiming, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
     SupervisorToOutpost, WinEventStamp, read_message,
@@ -179,7 +179,7 @@ impl OutpostUnderTest {
             // The test may have finished with what the outpost hears.
             let _ = heard_tx.send(event);
         }));
-        let reader = FocusReader::new(options.remote_operations)
+        let reader = FocusReader::new(options.remote_operations, LastAccepted::default())
             .expect("a UIA client for the listener's reads");
         let under_test = Self {
             outpost,

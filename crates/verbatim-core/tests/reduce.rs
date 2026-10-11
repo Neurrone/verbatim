@@ -1752,6 +1752,7 @@ fn details_speak_in_nvda_property_order() {
         set_size: Some(5),
         level: Some(1),
         rect: None,
+        top_level_client: false,
     };
 
     // The first level spoken goes first ("Where the level goes" in
@@ -3773,17 +3774,19 @@ fn a_focus_in_the_system_foreground_window_moves_attention_without_a_foreground_
 #[test]
 fn a_focus_in_a_new_foreground_window_without_a_foreground_fact_announces_the_window() {
     // The same dropped foreground fact, in a File Explorer folder window:
-    // the focus's outermost ancestor is the window, read as a pane, and it
-    // is announced before the containers and the focus, as NVDA announces
-    // a foreground window it took from the focus's ancestry.
+    // the focus's outermost ancestor is the window's client area, read
+    // through MSAA as a pane, which, being a top-level window's client with
+    // a system menu, is presented by its title before the containers and
+    // the focus, as NVDA presents a window it meets in the focus's ancestry.
     let state = switch_to(&SrState::new(), Pid(1));
-    let title = node(
+    let mut title = node(
         5,
         Role::Pane,
         Some("Folder - File Explorer"),
         None,
         StateSet::new(),
     );
+    title.details.top_level_client = true;
     let list = node(6, Role::List, Some("Items View"), None, StateSet::new());
     let item = node(7, Role::ListItem, Some("alpha.txt"), None, StateSet::new());
     let (_, effects) = reduce(
@@ -3807,15 +3810,92 @@ fn a_focus_in_a_new_foreground_window_without_a_foreground_fact_announces_the_wi
 }
 
 #[test]
-fn a_window_already_announced_by_its_foreground_fact_is_not_announced_again() {
+fn a_pane_ancestor_that_is_no_top_level_windows_client_is_not_announced() {
+    // The same window entered, but its outermost ancestor is a pane that is
+    // not a top-level window's client with a system menu: it is structure,
+    // as any other pane, and the window's speech is cut off and the
+    // containers and the focus spoken without it.
     let state = switch_to(&SrState::new(), Pid(1));
-    let title = node(
+    let pane = node(
         5,
         Role::Pane,
         Some("Folder - File Explorer"),
         None,
         StateSet::new(),
     );
+    let list = node(6, Role::List, Some("Items View"), None, StateSet::new());
+    let item = node(7, Role::ListItem, Some("alpha.txt"), None, StateSet::new());
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(Pid(2), foreground_window(40), item, vec![pane, list]),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(2), 7, &[5, 6], Some((OutpostId(2), 5)))),
+            Heard::Stop,
+            queued(vec![
+                UtteranceSegment::label("Items View"),
+                role(Role::List)
+            ]),
+            queued(vec![UtteranceSegment::label("alpha.txt")]),
+        ],
+        "list, item"
+    );
+}
+
+#[test]
+fn a_focus_entering_another_top_level_window_speaks_its_entered_ancestors_outermost_first() {
+    // No foreground report came for the Settings window, as none comes for
+    // a window read through UI Automation: the focus entering it cuts off
+    // the speech of the window left, then speaks its entered ancestors, the
+    // window first, then the focus (`docs/design/focus-pipeline.md`,
+    // section 16.4).
+    let state = switch_to(&SrState::new(), Pid(1));
+    let window_node = node(1, Role::Window, Some("Settings"), None, StateSet::new());
+    let group = node(2, Role::Group, Some("Display"), None, StateSet::new());
+    let button = node(3, Role::Button, Some("Apply"), None, StateSet::new());
+    let (state, effects) = reduce(
+        &state,
+        &focus_in(
+            Pid(2),
+            foreground_window(30),
+            button,
+            vec![window_node, group],
+        ),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(2), 3, &[1, 2], Some((OutpostId(2), 1)))),
+            Heard::Stop,
+            queued(vec![
+                UtteranceSegment::label("Settings"),
+                role(Role::Window)
+            ]),
+            queued(vec![UtteranceSegment::label("Display"), role(Role::Group)]),
+            queued(vec![UtteranceSegment::label("Apply"), role(Role::Button)]),
+        ],
+        "window, group, button"
+    );
+    assert_eq!(
+        state.attention(),
+        Some(Pid(2)),
+        "attention follows the focus"
+    );
+}
+
+#[test]
+fn a_window_already_announced_by_its_foreground_fact_is_not_announced_again() {
+    let state = switch_to(&SrState::new(), Pid(1));
+    let mut title = node(
+        5,
+        Role::Pane,
+        Some("Folder - File Explorer"),
+        None,
+        StateSet::new(),
+    );
+    title.details.top_level_client = true;
     let (state, effects) = reduce(
         &state,
         &foreground_in(Pid(2), foreground_window(40), title.clone()),

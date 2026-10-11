@@ -107,7 +107,7 @@ use verbatim_uia::{FocusRegistration, Registration, Scope, Subscription};
 use crate::OutpostOptions;
 use crate::arbitration::window_class_name;
 use crate::event_thread::EventThread;
-use crate::focus_read::{FocusReader, Judged, Meta, READ_DEADLINE, Readers, Reading};
+use crate::focus_read::{FocusReader, Judged, LastAccepted, Meta, READ_DEADLINE, Readers, Reading};
 use crate::outpost::now_ms;
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::protocol::{
@@ -339,6 +339,8 @@ struct UiaFocusReading {
     /// Whether reads may use remote operations ([`OutpostOptions`]).
     remote: bool,
     outgoing: Arc<Outgoing>,
+    /// The last focus any reading thread accepted, which they share.
+    last_accepted: LastAccepted,
 }
 
 impl Reading for UiaFocusReading {
@@ -348,7 +350,7 @@ impl Reading for UiaFocusReading {
     type Reader = FocusReader;
 
     fn reader(&self) -> Option<FocusReader> {
-        match FocusReader::new(self.remote) {
+        match FocusReader::new(self.remote, self.last_accepted.clone()) {
             Ok(reader) => Some(reader),
             Err(error) => {
                 tracing::warn!(%error, "a reading thread could not create a UIA client");
@@ -438,6 +440,7 @@ impl Listener {
             UiaFocusReading {
                 remote: options.remote_operations,
                 outgoing: Arc::clone(&outgoing),
+                last_accepted: LastAccepted::default(),
             },
             READ_DEADLINE,
         ));

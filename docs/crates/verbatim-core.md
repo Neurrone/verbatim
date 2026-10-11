@@ -185,7 +185,11 @@ Implementation notes, `reduce`:
   with `_get_isPresentableFocusAncestor` over `_get_presentationType`: it is
   exclusion-based, not an allowlist. Item and editable-text roles (`TreeItem`,
   `ListItem`, `EditableText`) are never presented; the always-layout
-  structural roles (`Unknown`, `Pane`) never; menu bars, menus, and menu
+  structural roles (`Unknown`, `Pane`) never, except a pane marked
+  `NodeDetails::top_level_client`, the MSAA client area of a top-level
+  window with a system menu, which stands for its window and is presented
+  whatever its name, spoken by its title alone, as NVDA's
+  `isPresentableFocusAncestor` presents it; menu bars, menus, and menu
   items never (NVDA cancels speech and stays silent on entering them, and
   so does the reducer, through `Effect::StopSpeech`); `Window`, `Group`,
   and `PropertyPage` only when they carry a name or description, so a named
@@ -193,7 +197,14 @@ Implementation notes, `reduce`:
   real text; and every other role — dialogs, toolbars, an unnamed tree
   announcing as bare "tree view" — regardless of name, as NVDA treats them.
   A focus change into a different top-level window treats the whole chain as
-  newly entered.
+  newly entered: speech is cut off, then the entered presentable
+  ancestors are spoken outermost first, the top-level window among them,
+  then the focus, whether or not a foreground report came for the window.
+  This is how a window is announced when its foreground event is dropped,
+  as the outposts drop one whose window is not yet in front and every one
+  for a window read through UI Automation (`docs/design/focus-pipeline.md`,
+  section 16.4); there is no separate rule for an unannounced foreground
+  window.
 - Event acceptance (decision D14 as amended by the outpost redesign;
   `docs/parity.md`, "Event acceptance"): the state keeps an attention
   record, the application and window facts of the most recent foreground

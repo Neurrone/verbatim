@@ -639,10 +639,14 @@ struct FocusReport<'a> {
 /// - Otherwise the newly entered containers, the node, and a selection
 ///   container's selected item are spoken, queued behind current speech
 ///   (which the key press that moved focus has already cut off), and the
-///   navigator follows focus. When the outpost could not read the
-///   ancestors in time, no container is announced and the previous focus's
-///   chain is kept for the next comparison, so the next focus does not
-///   announce every container again.
+///   navigator follows focus. When the focus's top-level window changed,
+///   speech is cut off first, and the window, its outermost ancestor, is
+///   one of the entered containers, spoken by the same rule as the others
+///   whether or not a foreground report came for it (`docs/parity.md`,
+///   "Window announcement on switching applications"). When the outpost
+///   could not read the ancestors in time, no container is announced and
+///   the previous focus's chain is kept for the next comparison, so the
+///   next focus does not announce every container again.
 fn reduce_focus_changed(
     state: &mut SrState,
     trace_id: TraceId,
@@ -731,9 +735,7 @@ fn reduce_focus_changed(
     if report.foreground {
         state.foreground = Some(report.node.id);
     }
-    let mut entered = entered_ancestors(state.focus.as_ref(), window, report);
-    let foreground_window =
-        unannounced_foreground_window(report, foreground_changed, window, &mut entered);
+    let entered = entered_ancestors(state.focus.as_ref(), window, report);
     let entering_menu = entered
         .iter()
         .any(|ancestor| matches!(ancestor.role, Role::MenuBar | Role::Menu | Role::MenuItem));
@@ -759,7 +761,7 @@ fn reduce_focus_changed(
     }
 
     editing::await_focus_text(state, report.node);
-    let speech = focus_speech(state, trace_id, report, (foreground_window, entered));
+    let speech = focus_speech(state, trace_id, report, entered);
     effects.extend(speech);
     effects
 }
@@ -820,35 +822,6 @@ fn end_text_activity(state: &mut SrState, node: NodeId, cut: bool, effects: &mut
     }
 }
 
-/// The top-level window to announce with a focus that moved into another
-/// top-level window, the system's foreground window, when no foreground
-/// report announced it: Windows can raise a new window's foreground event
-/// while still refusing it the foreground, and raise none when it gets the
-/// foreground later. NVDA takes the foreground window from the focus's
-/// ancestry then (`eventHandler.doPreGainFocus`) and announces it as an
-/// entered ancestor, so it is the outermost ancestor, which is the
-/// top-level window, whatever its role. It is removed from `entered`, so it
-/// is not spoken twice.
-fn unannounced_foreground_window<'a>(
-    report: &FocusReport<'a>,
-    foreground_changed: bool,
-    window: Option<WindowFacts>,
-    entered: &mut Vec<&'a NodeSnapshot>,
-) -> Option<&'a NodeSnapshot> {
-    if report.foreground
-        || !foreground_changed
-        || !window.is_some_and(|window| window.in_foreground)
-    {
-        return None;
-    }
-    let top = report
-        .ancestors
-        .first()
-        .filter(|top| has_text(top.name.as_deref()))?;
-    entered.retain(|ancestor| ancestor.id != top.id);
-    Some(top)
-}
-
 /// Whether a new focus brings a new foreground window, which cancels
 /// speech: a foreground report, or a focus in another top-level window
 /// than the previous focus (NVDA's foreground event, run when the top of
@@ -869,33 +842,23 @@ fn foreground_changed(
         }
 }
 
-/// The speech for a new focus: an unannounced foreground window, then each
-/// entered container as its own utterance, valid while the focus is inside
-/// it, then the focus, valid while it is the focus. A focus that may have
-/// text leaves its value out, since its text follows
-/// (`editing::await_focus_text`).
+/// The speech for a new focus: each entered container as its own
+/// utterance, outermost first, valid while the focus is inside it, then the
+/// focus, valid while it is the focus. When the focus has entered another
+/// top-level window, the window is the outermost entered container, spoken
+/// first whenever it is presentable, whether or not a foreground report
+/// came for it, as NVDA speaks a window it took from the focus's ancestry
+/// ([`is_presentable_container`]). A focus that may have text leaves its
+/// value out, since its text follows (`editing::await_focus_text`).
 fn focus_speech(
     state: &mut SrState,
     trace_id: TraceId,
     report: &FocusReport<'_>,
-    (foreground_window, entered): (Option<&NodeSnapshot>, Vec<&NodeSnapshot>),
+    entered: Vec<&NodeSnapshot>,
 ) -> Vec<Effect> {
     let last_level = &mut state.last_tree_level;
     let reads_text = editing::may_have_text(report.node.role);
     let mut effects = Vec::new();
-    if let Some(top) = foreground_window {
-        effects.push(Effect::Speak(Utterance {
-            trace_id,
-            priority: SpeechPriority::Queued,
-            segments: node_segments(top, Reason::Focus, last_level),
-            source: Some(source_of(top)),
-            say_all: false,
-            validity: Some(FocusValidity {
-                node: top.id,
-                had_focus: false,
-            }),
-        }));
-    }
     for container in entered
         .into_iter()
         .filter(|ancestor| is_presentable_container(ancestor))
@@ -2120,7 +2083,12 @@ fn entered_ancestors<'a>(
 ///
 /// - An item-level or text-entry role (`TreeItem`, `ListItem`,
 ///   `EditableText`). Focus lands on these; they are never context.
-/// - A structural node with no semantics of its own (`Unknown`, `Pane`).
+/// - A structural node with no semantics of its own (`Unknown`, `Pane`),
+///   except a pane that is the client area of a top-level window with a
+///   system menu ([`verbatim_model::NodeDetails::top_level_client`]): it
+///   stands for its window, which is presented as any entered window is,
+///   and is spoken by its title alone, since a pane's role is silent on
+///   focus.
 /// - A menu bar, menu, or menu item: entering one is silent, as in NVDA.
 /// - A `Window`, `Group`, or `PropertyPage` with neither a name nor a
 ///   description, which would speak as a bare role. NVDA treats these as
@@ -2144,10 +2112,12 @@ fn is_presentable_container(node: &NodeSnapshot) -> bool {
         | Role::BusyIndicator
         | Role::TitleBar
         | Role::Unknown
-        | Role::Pane
         | Role::MenuBar
         | Role::Menu
         | Role::MenuItem => false,
+        // A pane is structure, unless it is a top-level window's client
+        // area read through MSAA, which stands for its window.
+        Role::Pane => node.details.top_level_client,
         // Layout-when-unlabeled roles: content only when named or described.
         Role::Window | Role::Group | Role::PropertyPage => named || described,
         // Static text: content only when it has real, non-whitespace text.

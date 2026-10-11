@@ -40,7 +40,9 @@ Public API:
 - `NodeSnapshot` — everything needed to announce one node: id, backend,
   role, optional name and value, states, plus a `NodeDetails` group of
   optional properties (description, keyboard shortcut, position in set,
-  set size, level, bounding `Rect`) that backends fill as they learn to
+  set size, level, bounding `Rect`, and `top_level_client`, set on the
+  MSAA client area of a top-level window with a system menu, which the
+  reducer presents as that window) that backends fill as they learn to
   fetch each one; everything in it defaults to "not reported", and its
   serde default keeps snapshots recorded before it existed deserializing
   unchanged.

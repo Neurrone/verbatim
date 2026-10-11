@@ -440,6 +440,15 @@ pub struct NodeDetails {
     pub level: Option<u32>,
     /// Bounding rectangle in screen coordinates, when reported.
     pub rect: Option<Rect>,
+    /// Whether the node is the client area of a top-level window that has
+    /// a system menu (MSAA: the client object of a window with the
+    /// `WS_SYSMENU` style). Such a client reads as a pane, yet it stands
+    /// for its window: entered as a focus ancestor, it is presented, by its
+    /// title, as the window is (`docs/parity.md`, "Top-level windows in
+    /// the ancestry"). `#[serde(default)]` keeps snapshots recorded before
+    /// this field existed deserializing unchanged.
+    #[serde(default)]
+    pub top_level_client: bool,
 }
 
 /// Everything the reducer needs to announce one node, captured in one place.

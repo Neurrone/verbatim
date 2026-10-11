@@ -184,6 +184,25 @@ impl Uia {
         unsafe { self.client.GetRootElement() }
     }
 
+    /// Whether UI Automation counts `first` and `second` as one element
+    /// (`CompareElements`), as NVDA compares a focus event's sender with
+    /// its last focus. Counted as one cross-process call: UI Automation can
+    /// ask the providers for their runtime ids.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the comparison fails.
+    pub fn compare_elements(
+        &self,
+        first: &IUIAutomationElement,
+        second: &IUIAutomationElement,
+    ) -> windows::core::Result<bool> {
+        count(CallKind::Uia);
+        // SAFETY: `self.client` is a live IUIAutomation, and both elements
+        // are live elements.
+        unsafe { self.client.CompareElements(first, second) }.map(|same| same.as_bool())
+    }
+
     /// A condition matching elements whose `property` equals `value`.
     /// Local.
     ///

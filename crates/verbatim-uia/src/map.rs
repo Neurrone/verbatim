@@ -371,6 +371,7 @@ fn details_from_cached(element: &IUIAutomationElement) -> NodeDetails {
         set_size: cached_one_based(element, UIA_SizeOfSetPropertyId),
         level: cached_one_based(element, UIA_LevelPropertyId),
         rect: cached_rect(element),
+        top_level_client: false,
     }
 }
 

@@ -383,9 +383,22 @@ verified.
 - Top-level windows in the ancestry. NVDA presents an entered window
   like any other container when it has a name or a description, and
   treats an unnamed window as layout ([Event handling](nvda/events.md),
-  "Foreground windows"). Verbatim: the window is one of the roles
-  presentable only when named or described, as in NVDA, and there is
-  no separate foreground announcement. **matched (unverified)**.
+  "Foreground windows"). A window read through UI Automation is content,
+  and so presented, only when UI Automation counts its element both a
+  control and content, as every UI Automation ancestor must be; it is
+  spoken as its title and "window". A window read through MSAA is
+  reached as its client area, which reads as a pane, a role that is
+  otherwise layout: NVDA presents the client area of a window with a
+  system menu (the `WS_SYSMENU` style) all the same, whatever its name,
+  and since a pane's role is silent on focus it is spoken by its title
+  alone. Verbatim: the window is one of the roles presentable only when
+  named or described, as in NVDA; a UI Automation ancestor is reported
+  only when it is a control and content; and since 2026-10-11 the
+  outposts mark the MSAA client area of a window with a system menu
+  (`NodeDetails::top_level_client`), which the reducer presents although
+  it is a pane, so it is spoken by its title. There is no separate
+  foreground announcement. **matched (unverified)**: reducer tests for
+  the marked pane and for a pane without the mark.
 - Window announcement on switching applications. NVDA: a foreground
   event is a focus on the window; it is ignored when the latest focus
   is already in that window, and the window is otherwise announced as
@@ -402,18 +415,36 @@ verified.
   window that has no name when focus enters it is not announced
   later, and a foreground change to a nameless window moves
   attention without speaking (a bare "window" says nothing), though it
-  cancels speech, as NVDA's foreground event does. When a focus moves
-  into another top-level window that is the system's foreground window
-  and no foreground fact announced it, the focus's outermost ancestor,
-  the top-level window, is spoken first, whatever its role: NVDA takes
-  the foreground from the focus's ancestry then
-  (`eventHandler.doPreGainFocus`) and announces it as an entered
-  ancestor. Found live on 2026-10-06 in a File Explorer folder window,
-  whose foreground event Windows raised while still refusing it the
-  foreground (the fact was dropped) and did not raise again; its title
-  was then never spoken, since the window reads as a pane.
-  **matched**; the Start menu, window-switch, and
-  `explorer_folder_window` scenarios verify it.
+  cancels speech, as NVDA's foreground event does. NVDA has no rule of
+  its own for announcing a window otherwise: a window is spoken either
+  as the object a foreground event focuses, or as a newly entered
+  ancestor of a focus. When the top of the focus's ancestry changes,
+  NVDA cancels speech and speaks the entered presentable ancestors,
+  outermost first, then the focus, whether or not a foreground event
+  came (`eventHandler.doPreGainFocus`). A foreground event whose window
+  is not the foreground window when it is handled is dropped, never
+  kept, and every MSAA event for a window NVDA reads through UI
+  Automation is dropped, a foreground event included, so such windows,
+  the console host's and Windows Terminal's among them, are announced
+  only from the focus's ancestry. Verbatim, since 2026-10-11 (approved
+  by Dickson; `docs/design/focus-pipeline.md`, section 16.4): the
+  outposts drop a foreground fact whose window is not the foreground
+  window when it is handled, and one for a window read through UI
+  Automation; the reducer, when the focus's top-level window changes,
+  cuts speech off and speaks the entered presentable ancestors outermost
+  first, the top-level window among them by the rule in "Top-level
+  windows in the ancestry" above, then the focus. It replaces a special
+  case that spoke the outermost ancestor, whatever its role, for a focus
+  in a new foreground window that no foreground fact had announced
+  (found live on 2026-10-06 in a File Explorer folder window, whose
+  foreground event Windows raised while still refusing it the
+  foreground and did not raise again; the window's client area, a pane,
+  is now presented by the rule above). **matched (unverified)**: reducer
+  tests, and `mockapp` tests that an early foreground event and a UI
+  Automation window's foreground event are dropped; the Start menu,
+  window-switch, `conhost_` and `explorer_folder_window` scenarios are to
+  verify it live, and what NVDA says when a console window comes in
+  front some 400 ms after its text area's focus is still to be captured.
 - Duplicate focus suppression (same control announced once when two
   paths report it). NVDA: "already the focus" early return, comparing
   the focus object by identity only. Since 2026-10-02 Verbatim compares
@@ -1021,11 +1052,14 @@ verified.
   NVDA falls back to the window's own thread; and before any event from
   a console, the client's outpost answers for it (at start-up, when the
   console is in front). A console window's foreground event comes before
-  the window is in front, and none follows; NVDA announces the window as
-  the focus enters it (`eventHandler.doPreGainFocus`), and Verbatim keeps
-  such an early foreground event and reports it just before the next
-  focus inside its window (provisional, awaiting Dickson; for every
-  application).
+  the window is in front, and none follows, and the window is read
+  through UI Automation; NVDA drops the event on both counts and
+  announces the window as the focus enters it, from the console window
+  element, named and with the window role, which is the text area's
+  parent (`eventHandler.doPreGainFocus`). Verbatim does the same since
+  2026-10-11 ("Window announcement on switching applications"); from the
+  same day's stage A step 3 until then, it kept such an early foreground
+  event for the next focus inside its window.
 - A control's own focus with a focused child. A Win32 control taking
   the focus, such as a tree view (`SysTreeView32`) or a tab control
   (`SysTabControl32`), raises a focus event on itself (child id 0) and

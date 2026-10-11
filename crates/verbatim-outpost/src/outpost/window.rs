@@ -212,15 +212,6 @@ pub(super) fn desktop_window() -> isize {
     unsafe { windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow() }.0 as isize
 }
 
-/// Whether `handle` is still the system's foreground window. A foreground
-/// fact whose window is no longer the foreground is not reported, as NVDA's
-/// `processForegroundWinEvent` drops it; the reducer accepts every foreground
-/// fact on the strength of this check.
-pub(super) fn window_is_foreground(handle: isize) -> bool {
-    // SAFETY: GetForegroundWindow has no preconditions.
-    unsafe { GetForegroundWindow() }.0 as isize == handle
-}
-
 /// Whether `hwnd` is one of the shell's windows that take the focus or the
 /// foreground only while a switch is staged: the Alt+Tab switcher's and
 /// Task View's staging windows, the Windows+X menu's host, and the desktop

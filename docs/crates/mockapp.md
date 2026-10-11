@@ -508,7 +508,11 @@ a repeated focus on it keeps that node, and each costs exactly the calls
 pinned there. A focus whose event was captured before its item was
 selected (`select` after the capture, the outpost's read of the focused
 element answering the item fetched afterwards) is reported with the item
-selected, its name and role from the event.
+selected, its name and role from the event. A foreground event for
+mockapp's window, which is read through UIA, is dropped, and the focus
+inside the window that follows is reported alone, with no foreground
+report before it; `msaa_events.rs` has the same for an MSAA window's
+foreground event handled before the window is in front.
 
 `call_counts.rs` is the operation ledger's ratchet (`docs/performance.md`):
 over `tests/fixtures/counts.json`, and `tests/fixtures/dialog.json` (a

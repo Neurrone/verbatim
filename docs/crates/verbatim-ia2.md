@@ -114,7 +114,10 @@ Public API:
 - `acquire` — the query-pool side: `snapshot_from_event` (from
   `AccessibleObjectFromEvent` through name, role, value, state,
   description, keyboard-shortcut, and location reads to a `NodeSnapshot` —
-  the `NodeDetails` half plain MSAA can express; position-in-set is
+  the `NodeDetails` half plain MSAA can express, with `top_level_client`
+  set on a client object, child id 0, of a window with the `WS_SYSMENU`
+  style, from one local style read, as NVDA's
+  `isPresentableFocusAncestor` singles it out; position-in-set is
   counted for list-view and tree-view items, as described below, and is
   otherwise `None` until IA2's `groupPosition` (roadmap M6)),
   `tree_view_child_count` (a `SysTreeView32` item's number of children,
