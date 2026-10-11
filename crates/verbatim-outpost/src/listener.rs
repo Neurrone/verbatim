@@ -740,28 +740,28 @@ mod tests {
         std::iter::from_fn(|| outgoing.next()).collect()
     }
 
-    /// An MSAA focus fact raised at `time`.
-    fn raised_at(time: u32) -> Option<WinEventStamp> {
-        Some(WinEventStamp { thread: 9, time })
+    /// The stamp of an MSAA event raised at `time`.
+    fn raised_at(time: u32) -> WinEventStamp {
+        WinEventStamp { thread: 9, time }
     }
 
     #[test]
     fn a_win_event_raised_after_the_outposts_hook_is_in_is_not_forwarded() {
         let outgoing = Outgoing::default();
-        outgoing.fact(Pid(5), msaa_focus(), None, raised_at(90));
+        outgoing.fact(Pid(5), msaa_focus(), None, Some(raised_at(90)));
         outgoing.hook_installed(Pid(5), OutpostId(3), 100);
         // Raised after the tick: the outpost's hook took it in.
-        outgoing.fact(Pid(5), msaa_focus(), None, raised_at(101));
+        outgoing.fact(Pid(5), msaa_focus(), None, Some(raised_at(101)));
         // Raised at the tick, and reaching the listener late: forwarded,
         // for the outpost to match by counting.
         outgoing.fact(
             Pid(5),
             DeliveredFact::Foreground { hwnd: 1 },
             None,
-            raised_at(100),
+            Some(raised_at(100)),
         );
         // Another application's, and a UIA fact: forwarded.
-        outgoing.fact(Pid(6), msaa_focus(), None, raised_at(101));
+        outgoing.fact(Pid(6), msaa_focus(), None, Some(raised_at(101)));
         outgoing.fact(
             Pid(5),
             DeliveredFact::UiaFocus {
@@ -804,7 +804,7 @@ mod tests {
         let outgoing = Outgoing::default();
         outgoing.hook_installed(Pid(5), OutpostId(3), 100);
         outgoing.hook_removed(Pid(5));
-        outgoing.fact(Pid(5), msaa_focus(), None, raised_at(101));
+        outgoing.fact(Pid(5), msaa_focus(), None, Some(raised_at(101)));
         let sent = sent(&outgoing);
         assert!(
             matches!(
@@ -823,7 +823,7 @@ mod tests {
         let hooks_in = [(Pid(12), OutpostId(3)), (Pid(40), OutpostId(7))];
         assert_eq!(parse_hooks_in(&format_hooks_in(&hooks_in)), hooks_in);
         assert_eq!(parse_hooks_in(" 12:3,x,9, 40:7 "), hooks_in);
-        assert!(parse_hooks_in("").is_empty());
+        assert_eq!(parse_hooks_in(""), Vec::<(Pid, OutpostId)>::new());
     }
 
     fn uia_snapshot() -> UiaSnapshotFact {

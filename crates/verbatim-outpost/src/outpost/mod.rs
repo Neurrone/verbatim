@@ -817,9 +817,6 @@ impl Outpost {
             SupervisorToOutpost::ForwardingEnded { through } => {
                 context.handover().forwarding_ended(*through);
             }
-            SupervisorToOutpost::HookInstalled { .. } | SupervisorToOutpost::HookRemoved { .. } => {
-                // For the listener alone.
-            }
             SupervisorToOutpost::Query {
                 trace_id,
                 request_id,
@@ -866,9 +863,12 @@ impl Outpost {
                     .outbound
                     .set_terminal_lines((*lines).clamp(1, verbatim_model::MAX_TERMINAL_LINES));
             }
-            // `run_pipe` ends its loop on it and calls `shutdown`, which
-            // takes the outpost.
-            SupervisorToOutpost::Shutdown => {}
+            // `run_pipe` ends its loop on `Shutdown` and calls `shutdown`,
+            // which takes the outpost; the hand-over's news of hooks is for
+            // the listener alone.
+            SupervisorToOutpost::Shutdown
+            | SupervisorToOutpost::HookInstalled { .. }
+            | SupervisorToOutpost::HookRemoved { .. } => {}
             SupervisorToOutpost::NodesHeld {
                 nodes,
                 anchors,

@@ -468,8 +468,9 @@ fn moving_to_a_tree_items_parent_says_only_the_parent() {
         TVGN_CARET as usize,
         common::tree_view::item(tree, "Hardware"),
     );
-    // The focus is the first thing the outpost says after the selection.
-    let hardware = focus_item(&outpost, tree, "Hardware");
+    // The control's focus on the parent, which the outpost's own hook takes
+    // in, is the one thing the outpost says after the selection.
+    let hardware = outpost.reported_focus();
     assert_eq!(hardware.node.name.as_deref(), Some("Hardware"));
     assert_eq!(
         spoken_in(&mut state, &hardware),

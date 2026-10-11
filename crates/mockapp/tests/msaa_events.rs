@@ -397,9 +397,11 @@ fn a_state_change_on_a_windowless_ancestor_is_not_spoken() {
 /// collapsed item until it has the focus. It is the focused item's logical
 /// parent, read through the control's messages, not an ancestor NVDA has:
 /// NVDA's ancestors are those reached through `accParent`, and a tree view
-/// item's is the control, so neither the control moving its selection to
-/// the collapsed item nor the item's state change is spoken. The control's
-/// focus on it then says its announcement, collapsed.
+/// item's is the control, so the control moving its selection to the
+/// collapsed item says nothing. The control's focus on it, which the
+/// outpost's own hook takes in, says its announcement, collapsed; the
+/// item's state change, raised after it, is then the focus's own and says
+/// nothing new, the collapsed state having been spoken with the focus.
 fn collapsing_a_tree_items_parent_says_nothing_until_its_focus() {
     use windows::Win32::UI::Controls::{TVE_COLLAPSE, TVM_EXPAND};
     common::init_com();
@@ -413,11 +415,17 @@ fn collapsing_a_tree_items_parent_says_nothing_until_its_focus() {
     let _ = spoken(&mut state, focus_event(&reported));
     let hardware = common::tree_view::item(tree, "Hardware");
     common::tree_view::send(tree, TVM_EXPAND, TVE_COLLAPSE.0 as usize, hardware);
-    // The selection and the state change say nothing: the parent's focus
-    // is the first thing the outpost says.
-    let focus = common::tree_view::focus_item(&outpost, tree, "Hardware");
+    // The control's focus on the parent is the first thing the outpost
+    // says, and the parent's state change the last.
+    let focus = next_event(&outpost);
+    let change = next_event(&outpost);
+    outpost.settled();
+    assert!(
+        matches!(change, NormalizedEvent::PropertyChanged { .. }),
+        "{change:?}"
+    );
     assert_eq!(
-        spoken(&mut state, focus_event(&focus)),
+        spoken(&mut state, focus),
         [vec![
             SegmentContent::Level(0),
             SegmentContent::Label("Hardware".to_owned()),
@@ -428,6 +436,10 @@ fn collapsing_a_tree_items_parent_says_nothing_until_its_focus() {
                 set_size: Some(3)
             },
         ]]
+    );
+    assert_eq!(
+        spoken(&mut state, change),
+        Vec::<Vec<SegmentContent>>::new()
     );
     app.quit();
 }

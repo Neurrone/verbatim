@@ -321,6 +321,13 @@ impl OutpostUnderTest {
     /// must be the next thing it says, and the only thing.
     pub fn focus(&self, fact: DeliveredFact) -> Reported {
         self.deliver(fact);
+        self.reported_focus()
+    }
+
+    /// The focus the outpost reports next, which must be the next thing it
+    /// says, and the only thing: one handed over, or one its own hook took
+    /// in from a focus event mockapp's control raised.
+    pub fn reported_focus(&self) -> Reported {
         let reported = match self.next() {
             OutpostToSupervisor::Event {
                 event:

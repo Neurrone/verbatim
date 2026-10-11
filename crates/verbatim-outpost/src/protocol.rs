@@ -407,6 +407,10 @@ pub enum FactKey {
 /// handle; there is no shutdown message.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a command is built, queued, written once, and dropped; the writer's queue holds at most 64"
+)]
 pub enum SupervisorToOutpost {
     /// Forces one backend for every window of the target application,
     /// overriding arbitration; used by tests and per-app config overrides.
