@@ -196,6 +196,14 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
     flight.
 11. Measure again (debug and release), full suite, push.
 
+Order from 2026-10-11 (Dickson): the outpost's UIA crash fix first; then
+step 6's revisions (`docs/design/focus-pipeline.md` section 16) and their
+verification; the terminal redesign's measurements whenever the desktop is
+free; then stage A step 9 (the relay), before the terminal redesign, since
+the relay's latency affects Windows Terminal's timings; then the terminal
+redesign, which removes `FindText` (it makes Windows Terminal fault on a
+miss, `phase6-design.md`); then stage A steps 7, 8, 10 and 11.
+
 Then step 9, the terminal redesign, built from `docs/design/terminal-reading.md`
 in its small steps, after its measurements; it includes a test bounding
 the diff's work on a 9,000-line overflow and a 2,000-line flood.
