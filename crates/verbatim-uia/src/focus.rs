@@ -1,29 +1,18 @@
-//! Self-contained UIA focus-change registration.
+//! The desktop-wide UIA focus-change handler.
 //!
-//! This module owns its own thread, apartment, client, and the global
-//! `IUIAutomationFocusChangedEventHandler`. Its entire public surface is
-//! [`FocusRegistration::new`] — construct with a callback — and `Drop`, which
-//! unregisters.
-//!
-//! The registration is desktop-global and unfiltered: UIA offers focus
-//! change events only desktop-wide anyway, and under decision D13 the one
-//! process that holds this registration is the focus listener, which watches
-//! every application at once and forwards each focus fact to the target's own
-//! outpost. The per-application pid filter this module used to carry is gone
-//! with that move — the M3 sentinel split this narrow seam was built to make
-//! a relocation rather than a rewrite.
+//! The handler is registered by a [`crate::Registration`] holding a
+//! [`crate::Subscription::Focus`], on the same client as that
+//! registration's event handler group, as NVDA registers its focus handler
+//! on the client that holds its global group. Under decision D13 the one
+//! process that holds it is the focus listener, which watches every
+//! application at once and forwards each focus fact to the target's own
+//! outpost.
 
 use std::sync::Arc;
-use std::sync::mpsc;
-use std::thread::{self, JoinHandle};
 
-use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, IUIAutomationFocusChangedEventHandler,
-};
+use windows::Win32::UI::Accessibility::IUIAutomationElement;
 
-use crate::client::Uia;
-
-pub use handler::FocusHandler;
+pub(crate) use handler::FocusHandler;
 
 /// Invoked on the UIA callback thread for each desktop-wide focus change.
 /// Receives the cached element; the listener reads its cached process id,
@@ -60,104 +49,6 @@ mod handler {
                 crate::com::guarded("focus", || (self.callback)(element));
             }
             Ok(())
-        }
-    }
-}
-
-/// A live global focus-change registration. Dropping it unregisters the
-/// handler and tears down its thread and apartment.
-pub struct FocusRegistration {
-    // Dropping the sender wakes the worker thread out of its `recv`, which is
-    // its signal to unregister and exit.
-    stop: Option<mpsc::Sender<()>>,
-    join: Option<JoinHandle<()>>,
-}
-
-impl FocusRegistration {
-    /// Registers the desktop-global focus-change handler, spawning the thread
-    /// that owns the apartment and client. Returns once the handler is
-    /// registered (or with the error that prevented it).
-    ///
-    /// # Errors
-    ///
-    /// Returns the COM error if the apartment, client, cache request, or
-    /// handler registration could not be set up.
-    pub fn new(callback: FocusCallback) -> windows::core::Result<Self> {
-        let (stop_tx, stop_rx) = mpsc::channel::<()>();
-        let (ready_tx, ready_rx) = mpsc::channel::<windows::core::Result<()>>();
-        let join = thread::Builder::new()
-            .name("verbatim-uia-focus".to_owned())
-            .spawn(move || run(callback, &ready_tx, &stop_rx))
-            .map_err(|e| {
-                windows::core::Error::new(windows::Win32::Foundation::E_FAIL, e.to_string())
-            })?;
-        match ready_rx.recv() {
-            Ok(Ok(())) => Ok(Self {
-                stop: Some(stop_tx),
-                join: Some(join),
-            }),
-            Ok(Err(error)) => {
-                let _ = join.join();
-                Err(error)
-            }
-            Err(_) => {
-                let _ = join.join();
-                Err(windows::core::Error::new(
-                    windows::Win32::Foundation::E_FAIL,
-                    "focus registration thread ended before signalling readiness",
-                ))
-            }
-        }
-    }
-}
-
-impl Drop for FocusRegistration {
-    fn drop(&mut self) {
-        drop(self.stop.take());
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
-        }
-    }
-}
-
-/// The worker-thread body: set up the apartment, client, and handler, report
-/// readiness, then block until asked to stop and unregister.
-fn run(
-    callback: FocusCallback,
-    ready: &mpsc::Sender<windows::core::Result<()>>,
-    stop: &mpsc::Receiver<()>,
-) {
-    let setup = (|| -> windows::core::Result<(Uia, IUIAutomationFocusChangedEventHandler)> {
-        let uia = Uia::new()?;
-        // NVDA's base cache request, which its focus handler carries.
-        let cache = crate::cache::nvda_base_cache_request(uia.client())?;
-        let handler: IUIAutomationFocusChangedEventHandler = FocusHandler { callback }.into();
-        // SAFETY: `cache` and `handler` are live; the client is this thread's
-        // own. UIA keeps its own references to both the handler and the
-        // cache request, so dropping our `cache` handle after registration
-        // is safe.
-        unsafe {
-            uia.client().AddFocusChangedEventHandler(&cache, &handler)?;
-        }
-        Ok((uia, handler))
-    })();
-
-    match setup {
-        Err(error) => {
-            let _ = ready.send(Err(error));
-        }
-        Ok((uia, handler)) => {
-            let _ = ready.send(Ok(()));
-            // Block until the registration is dropped.
-            let _ = stop.recv();
-            // SAFETY: unregistering the same handler on the same client thread.
-            unsafe {
-                let _ = uia.client().RemoveFocusChangedEventHandler(&handler);
-            }
-            drop(handler);
-            drop(uia);
-            // Leaves the apartment `Uia::new` joined this thread to.
-            crate::com::leave_mta();
         }
     }
 }

@@ -79,7 +79,7 @@ releases Alt. Notepad has no outpost yet.
      foreground event is not checked against the foreground here; the
      outpost's worker checks it when it handles it, as NVDA checks it
      when it processes the event.
-   - The UIA focus callback (`install_focus_registration`) receives the
+   - The UIA focus callback (`focus_subscription`) receives the
      element with its properties already cached. `capture` reads the
      cached pid, the cached window handle, and the cached snapshot parts
      (runtime id, role, name, value, states, details) as a

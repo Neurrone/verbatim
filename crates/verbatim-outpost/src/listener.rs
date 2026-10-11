@@ -102,7 +102,7 @@ use verbatim_uia::map::{
     cached_native_window_handle, cached_process_id, notification_kind_from_uia,
     notification_processing_from_uia,
 };
-use verbatim_uia::{FocusRegistration, Part, Registration, Scope, Subscription};
+use verbatim_uia::{Part, Registration, Scope, Subscription};
 
 use crate::OutpostOptions;
 use crate::arbitration::window_class_name;
@@ -326,7 +326,6 @@ impl Outgoing {
 struct Listener {
     outgoing: Arc<Outgoing>,
     readers: Arc<Readers<UiaFocusReading>>,
-    _focus_registration: Option<FocusRegistration>,
     _registration: Option<Registration>,
     _event_thread: EventThread,
     _writer: JoinHandle<()>,
@@ -444,8 +443,8 @@ impl Listener {
             },
             READ_DEADLINE,
         ));
-        let focus_registration = install_focus_registration(&outgoing, &readers);
-        let registration = install_desktop_subscriptions(&outgoing);
+        let registration =
+            install_desktop_subscriptions(&outgoing, focus_subscription(&outgoing, &readers));
 
         let msaa_outgoing = Arc::clone(&outgoing);
         let make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync> = Arc::new(move || {
@@ -464,7 +463,6 @@ impl Listener {
         Self {
             outgoing,
             readers,
-            _focus_registration: focus_registration,
             _registration: registration,
             _event_thread: event_thread,
             _writer: writer,
@@ -474,7 +472,7 @@ impl Listener {
     /// Shuts the listener down cleanly ([`SupervisorToOutpost::Shutdown`]),
     /// returning once it is done: the `WinEvent` hooks are removed with the
     /// thread that pumped them, the desktop-wide UIA focus handler and the
-    /// other desktop-wide handlers are removed (each subscription's thread
+    /// other desktop-wide handlers are removed (the registration's thread
     /// waits for a callback in progress, releases its client, and leaves
     /// COM), every reading thread finishes the read in hand, each abandoned
     /// one returning once UIA gives up on its call, the writer writes what
@@ -485,13 +483,11 @@ impl Listener {
         let Self {
             outgoing,
             readers,
-            _focus_registration: focus_registration,
             _registration: registration,
             _event_thread: event_thread,
             _writer: writer,
         } = self;
         drop(event_thread);
-        drop(focus_registration);
         drop(registration);
         let reading_threads = readers.stop();
         outgoing.close();
@@ -568,15 +564,14 @@ fn focus_window_for(pid: Pid, hwnd: isize) -> isize {
     }
 }
 
-/// Installs the desktop-global UIA focus registration. Its callback makes
-/// no call: it sends the application's outpost a marker for the event at
-/// once and queues the event's element for the application's reading
-/// thread ([`Readers`]), whose read or drop follows the marker. A failure
-/// is reported as a fault and leaves the MSAA path running on its own.
-fn install_focus_registration(
+/// The desktop-wide UIA focus subscription. Its callback makes no call: it
+/// sends the application's outpost a marker for the event at once and
+/// queues the event's element for the application's reading thread
+/// ([`Readers`]), whose read or drop follows the marker.
+fn focus_subscription(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaFocusReading>>,
-) -> Option<FocusRegistration> {
+) -> Subscription {
     let callback_outgoing = Arc::clone(outgoing);
     let callback_readers = Arc::clone(readers);
     let callback = Arc::new(move |element: &IUIAutomationElement| {
@@ -619,23 +614,24 @@ fn install_focus_registration(
             }
         }
     });
-    match FocusRegistration::new(callback) {
-        Ok(registration) => Some(registration),
-        Err(error) => {
-            outgoing.fault(format!("listener UIA focus registration failed: {error}"));
-            None
-        }
-    }
+    Subscription::Focus { callback }
 }
 
 /// Installs the desktop-wide UIA subscriptions NVDA registers globally on
-/// Windows 11, an element selected, a menu opened, and notifications, as
-/// one event handler group, as NVDA's global handlers also are, with
-/// NVDA's base cache request (`verbatim_uia::nvda_base_cache_request`).
-/// The facts carry the element's process, window, runtime id, role, and
-/// name from that cache; anything else in their snapshots is not read
-/// here and is left empty.
-fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Option<Registration> {
+/// Windows 11: `focus` ([`focus_subscription`]) on the registration's
+/// client, then an element selected, a menu opened, and notifications as
+/// one event handler group on the desktop's root, all on one client as
+/// NVDA's global handlers are (`verbatim_uia::Subscription::Focus` says why
+/// they must share it), with NVDA's base cache request
+/// (`verbatim_uia::nvda_base_cache_request`). The facts carry the
+/// element's process, window, runtime id, role, and name from that cache;
+/// anything else in their snapshots is not read here and is left empty. A
+/// failure is reported as a fault and leaves the MSAA path running on its
+/// own.
+fn install_desktop_subscriptions(
+    outgoing: &Arc<Outgoing>,
+    focus: Subscription,
+) -> Option<Registration> {
     let selection_outgoing = Arc::clone(outgoing);
     let selection = Subscription::Event {
         event: UIA_SelectionItem_ElementSelectedEventId,
@@ -705,7 +701,7 @@ fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Option<Registratio
     // NVDA's base cache request, as its global group carries: UIA fills
     // only these in the application for each event, and the outpost reads
     // what more it needs of a selected item when it handles the event.
-    let parts = [selection, menu, notifications]
+    let parts = [focus, selection, menu, notifications]
         .into_iter()
         .map(|subscription| {
             Part::new(subscription, verbatim_uia::NVDA_BASE_PROPERTIES).with_text_pattern()

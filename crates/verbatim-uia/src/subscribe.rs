@@ -53,17 +53,19 @@ use std::time::{Duration, Instant};
 use windows::Win32::UI::Accessibility::{
     IUIAutomation6, IUIAutomationActiveTextPositionChangedEventHandler, IUIAutomationCacheRequest,
     IUIAutomationElement, IUIAutomationEventHandler, IUIAutomationEventHandlerGroup,
-    IUIAutomationNotificationEventHandler, IUIAutomationPropertyChangedEventHandler,
-    IUIAutomationTextRange, NotificationKind, NotificationProcessing, TreeScope, TreeScope_Element,
-    TreeScope_Subtree, UIA_EVENT_ID, UIA_ExpandCollapseExpandCollapseStatePropertyId,
-    UIA_IsEnabledPropertyId, UIA_NamePropertyId, UIA_PROPERTY_ID, UIA_RangeValueValuePropertyId,
-    UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId,
+    IUIAutomationFocusChangedEventHandler, IUIAutomationNotificationEventHandler,
+    IUIAutomationPropertyChangedEventHandler, IUIAutomationTextRange, NotificationKind,
+    NotificationProcessing, TreeScope, TreeScope_Element, TreeScope_Subtree, UIA_EVENT_ID,
+    UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_IsEnabledPropertyId, UIA_NamePropertyId,
+    UIA_PROPERTY_ID, UIA_RangeValueValuePropertyId, UIA_ToggleToggleStatePropertyId,
+    UIA_ValueValuePropertyId,
 };
 use windows::core::AgileReference;
 use windows_core::Interface;
 
 use crate::cache::CACHED_PROPERTIES;
 use crate::client::Uia;
+use crate::focus::{FocusCallback, FocusHandler};
 
 /// Invoked on a UIA callback thread for a property change, with the cached
 /// element and the changed property id.
@@ -179,6 +181,20 @@ pub enum Subscription {
     ActiveTextPosition {
         /// Called for each change.
         callback: ActiveTextPositionCallback,
+    },
+    /// Focus changes anywhere on the desktop. Not part of the event handler
+    /// groups: the handler is registered on the registration's client
+    /// itself, before the groups, as NVDA registers its focus handler on
+    /// the client that holds its global group (`_registerGlobalEventHandlers`).
+    /// The two must share a client: Windows Terminal's XAML raises some
+    /// focus events from a second identity of the focused control (runtime
+    /// ids starting 14, not 42), and UIA delivers those to a client whose
+    /// only registration is the focus handler, but not to one that also
+    /// has a group registered on the desktop's root (measured 2026-10-12,
+    /// `docs/design/focus-pipeline.md`, section 16.8).
+    Focus {
+        /// Called for each focus change.
+        callback: FocusCallback,
     },
 }
 
@@ -540,6 +556,7 @@ enum Handler {
     Events(IUIAutomationEventHandler, Vec<UIA_EVENT_ID>),
     Notifications(IUIAutomationNotificationEventHandler),
     ActiveTextPosition(IUIAutomationActiveTextPositionChangedEventHandler),
+    Focus(IUIAutomationFocusChangedEventHandler),
 }
 
 impl Handler {
@@ -606,6 +623,16 @@ impl Handler {
                 }
                 .into(),
             ),
+            Subscription::Focus { callback } => Self::Focus(
+                FocusHandler {
+                    callback: Arc::new(move |element| {
+                        if is_live() {
+                            callback(element);
+                        }
+                    }),
+                }
+                .into(),
+            ),
         }
     }
 
@@ -639,6 +666,8 @@ impl Handler {
             Self::ActiveTextPosition(handler) => unsafe {
                 group.AddActiveTextPositionChangedEventHandler(tree_scope, cache, handler)
             },
+            // Registered on the client, not in a group.
+            Self::Focus(_) => Ok(()),
         }
     }
 }
@@ -722,6 +751,18 @@ fn run(
                 })
             })
             .collect::<windows::core::Result<Vec<_>>>()?;
+        // The focus handler goes on the client before any group is
+        // registered, as NVDA registers it.
+        for built in &built {
+            if let Handler::Focus(handler) = &built.handler {
+                // SAFETY: the cache and handler are live and owned by this
+                // thread's client, which keeps its own references to both.
+                unsafe {
+                    uia.client()
+                        .AddFocusChangedEventHandler(&built.cache, handler)
+                }?;
+            }
+        }
         Ok(Follower {
             client: uia.client().cast()?,
             uia,

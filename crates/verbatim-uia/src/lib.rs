@@ -20,13 +20,12 @@
 //!   deadline of its own: UIA's timeouts ([`CALL_TIMEOUT`]) bound each call,
 //!   not the operation, and a call cannot be cancelled, so an operation
 //!   that passes its deadline is abandoned with its thread.
-//! - [`FocusRegistration`] — the self-contained global focus-change handler
-//!   (its narrow seam is what the M3 sentinel split relocates).
 //! - [`Registration`] — a property-change, automation-event, or notification
 //!   subscription over a [`Scope`] (given windows, the whole desktop, or
 //!   given elements) that can be moved without waiting, as two event
 //!   handler groups built once ([`Group`], [`Part`]): the listener's
-//!   desktop-wide subscriptions and an outpost's focus-following
+//!   desktop-wide subscriptions, with the global focus handler on the same
+//!   client ([`Subscription::Focus`]), and an outpost's focus-following
 //!   subscription.
 //! - [`NodeIdRegistry`] — stable [`NodeId`](verbatim_model::NodeId)s from UIA
 //!   runtime IDs, sharing a mint counter with the MSAA backend.
@@ -77,7 +76,7 @@ pub use com::{
     variant_string,
 };
 pub use element::{ElementExt, WalkerExt, elements_of};
-pub use focus::{FocusCallback, FocusRegistration};
+pub use focus::FocusCallback;
 pub use nearest::nearest_window_handle;
 pub use probe::{PROBE_BUDGET, Probe, has_server_side_provider, probe, probe_server_side_provider};
 pub use registry::{NodeIdRegistry, Released};

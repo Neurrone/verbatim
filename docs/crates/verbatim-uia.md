@@ -273,24 +273,16 @@ Public API:
   them, never by a window's title; the snapshot mapping gives them
   `Role::Terminal`. The console host's text area is recognized by its
   window, in the outpost.
-- `FocusRegistration::new(callback)` — the self-contained, desktop-global
-  UIA focus registration, carrying NVDA's base cache request
-  (`nvda_base_cache_request`: `NVDA_BASE_PROPERTIES`, thirteen properties,
-  and the Text pattern, with UIA's default scope and filter); drop
-  unregisters and tears down its own thread, which leaves COM's
-  multithreaded apartment as it ends. A `Part` built `with_text_pattern`
-  adds the Text pattern to its cache request, so a `Registration` of parts
-  with `NVDA_BASE_PROPERTIES` carries the same request.
-  UIA's focus registration is desktop-global and unscopeable, so exactly one
-  exists per process. Under decision D13 the one process that holds it is the
-  focus listener, which watches every application at once; the per-application
-  pid filter this module once carried is gone with that move (the sealed
-  module made the relocation a change of caller, not a rewrite).
+- NVDA's base cache request (`nvda_base_cache_request`:
+  `NVDA_BASE_PROPERTIES`, thirteen properties, and the Text pattern, with
+  UIA's default scope and filter). A `Part` built `with_text_pattern` adds
+  the Text pattern to its cache request, so a `Registration` of parts with
+  `NVDA_BASE_PROPERTIES` carries the same request.
 - `Registration::new(subscriptions, scope)`,
   `Registration::with_cache(subscriptions, scope, properties)`,
   `Registration::with_parts(parts, scope)`, `retarget(scope)`, and
   `retarget_to(scope, group)` — one
-  subscription type for everything but focus: `Subscription::Properties`
+  subscription type for every event: `Subscription::Properties`
   (a list of property ids, such as `FOCUS_PROPERTIES`: name, value,
   toggle state, enabled, and expand/collapse), `Subscription::Event` (an
   automation event id, such as `SelectionItem_ElementSelected` or
@@ -301,7 +293,18 @@ Public API:
   kind, processing, display string, and activity id), or
   `Subscription::ActiveTextPosition` (`IUIAutomation6`'s active text
   position changed event, delivering the raising element and the range now
-  active, when the event carries one). `close()` ends a registration for
+  active, when the event carries one), or `Subscription::Focus` (focus
+  changes anywhere on the desktop, delivering the focused element with its
+  part's cache request). A focus subscription is not part of the groups:
+  its handler is registered on the registration's client itself
+  (`AddFocusChangedEventHandler`) before any group, as NVDA registers its
+  focus handler on the client that holds its global group. The two must
+  share a client: UIA delivers the focus events Windows Terminal's XAML
+  raises from a second identity of its terminal to a client with only a
+  focus handler, but not to one that also has a group on the desktop's root
+  (`docs/design/focus-pipeline.md`, section 16.8). UIA's focus handler is
+  desktop-wide, so the focus listener, which watches every application at
+  once (decision D13), is the one process that registers it. `close()` ends a registration for
   good and returns once it is done: every move already asked for is made,
   then its client removes everything it registered
   (`RemoveAllEventHandlers`, which waits for a callback in progress, and

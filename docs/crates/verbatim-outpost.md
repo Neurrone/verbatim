@@ -516,14 +516,16 @@ Public API:
   listener's `a_fact_from_an_ignored_process_is_never_queued`).
 - `run_listener` — the focus-listener runtime (decisions D13 and D14;
   outpost redesign, "The focus listener"): sets up the writer, installs
-  the desktop-global `FocusRegistration`, the global
+  the global
   MSAA hooks (`LISTENER_SUBSCRIPTIONS`, pid zero: focus, foreground,
   menu-popup, menu and switcher end, alert, and a tooltip window shown,
   forwarded as `DeliveredFact::Show`, whose help balloon the worker
   reports as an alert), and desktop-wide UIA
-  subscriptions for the events NVDA registers globally on Windows 11: an
-  element selected, a menu opened, and notifications, registered together
-  as one event handler group on the desktop's root element, and only then
+  subscriptions for the events NVDA registers globally on Windows 11, all
+  through one `Registration` and so one client, as NVDA's are: the focus
+  handler (`Subscription::Focus`) on the client first, then an element
+  selected, a menu opened, and notifications, registered together as one
+  event handler group on the desktop's root element; and only then
   announces `Ready`, so focus and menus are seen from the moment it does
   (announcing first lost a menu opened right after start, found
   2026-10-06). The event thread (`EventThread::spawn`) likewise returns
