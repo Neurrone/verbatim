@@ -456,7 +456,25 @@ Other open items, taken after the steps above unless they fold into one:
   `conhost_leave_flood`. Suspected, not proven: a saved event delivered
   for a handler group already removed, since every move of a
   focus-following registration removes all handlers and adds the group
-  again while the console host floods text events.
+  again while the console host floods text events. Full dumps and the
+  per-run crash count are in (f0dab2f). The first full dump (2026-10-11,
+  run 8 of 20) confirms the mechanism: the saved event's record was
+  destroyed by an earlier move, and UIA fails fast instead of dropping it;
+  no move was in progress. An isolated experiment found a related state, a
+  text area registration hearing nothing after a removed subtree
+  registration. The fix, following the focus as NVDA does, is
+  `docs/design/focus-pipeline.md` section 17 (approved 2026-10-11), first
+  in the work order.
+- Windows Terminal faults on our `FindText` (2026-10-11): when the search
+  finds nothing, Windows Terminal (1.24 to 1.26 and main, unreported
+  upstream) returns a range wrapping no range, and the next call on it is
+  an access violation on its UI thread, which COM turns into
+  `RPC_E_SERVERFAULT`; our code had taken that for a "throw". Six faults
+  since 2026-10-07, all in staged copies; three more in the installed
+  terminal on 2026-10-07 and 2026-10-08, one likely the same and two
+  inside UI Automation, not investigated (no dumps kept then). Removed by
+  the terminal redesign, which drops `FindText`
+  (`docs/design/terminal-reading.md`, corrections of 2026-10-11).
 - A terminal read that comes back unsettled still marks every change
   observed before it began as covered, so a change queued behind it is
   skipped and, when the program has finished writing, the rest of its
