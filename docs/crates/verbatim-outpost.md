@@ -116,14 +116,18 @@ event's own element:
   whose read fails.
 - The readers share the last focus any of them accepted
   (`focus_read::LastAccepted`), as NVDA keeps one last focus for the whole
-  program. For now it only feeds a debug log line for each read: the
-  sender's runtime id, class name, framework, and own window handle, and
-  whether `CompareElements` counts the sender the same element as that
-  last focus, which section 16.3 of the focus-pipeline design asks to see
-  before the duplicate rule is built on it. The framework and the
-  comparison are two calls into the application, made only while debug
-  logging is on; the duplicate evidence is still each thread's own focus
-  before.
+  program, and judge a repeat by it before any read, as NVDA does
+  (section 16.3 of the focus-pipeline design): an event whose sender
+  `CompareElements` equates with that focus, while that element's
+  `HasKeyboardFocus` reads true, is dropped, its marker resolved as a drop;
+  a comparison or a read that fails lets it through. Each read is also
+  logged at debug level: the sender's runtime id, class name, framework,
+  and own window handle, and the comparison's result; the framework is a
+  call made only while debug logging is on. Each thread's own focus before
+  still serves the ancestor read's stop and `same_as_last`, the evidence
+  that a runtime id still names the element it named, by which the
+  outpost gives a reused runtime id a new node and keeps the element it
+  found for a node.
 - The read (`DeliveredFact::UiaFocusRead`, a `UiaFocusRead`) or the drop
   (`DeliveredFact::UiaFocusDropped`) follows the marker through
   verbatim.exe, never coalesced and never dropped on the way: the

@@ -2715,8 +2715,11 @@ impl Worker<'_> {
             enrichment_us = reading.elapsed().as_micros(),
             "UIA focus reported from the listener's read"
         );
-        // A repeated focus whose element this outpost already found keeps
-        // it: the listener read that it still has the keyboard focus.
+        // A focus on the element this outpost already found under its
+        // runtime id keeps it: the listener read that it still has the
+        // keyboard focus. A plain repeat never comes this far, as the
+        // listener drops it (section 16.3); this is the focus coming back
+        // to the element after one in another application.
         let found =
             read.same_as_last == Some(true) && context.uia_registry.element_of(node.id).is_some();
         self.emit_focus(

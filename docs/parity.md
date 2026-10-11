@@ -492,6 +492,20 @@ verified.
   the keyboard focus. **matched since 2026-10-11** (Core's
   `a_duplicate_focus_does_not_make_a_later_focus_stale` and
   `the_same_focus_after_another_applications_focus_is_announced`).
+  Since stage A step 6's revision (`docs/design/focus-pipeline.md`,
+  section 16.3, approved by Dickson on 2026-10-11) the focus listener also
+  makes NVDA's check itself, in NVDA's order, before it reads anything of
+  the event's sender: one last accepted focus is shared by all its
+  reading threads, as NVDA keeps one for the whole program, and an event
+  whose sender `CompareElements` equates with it, while that element's
+  `HasKeyboardFocus` reads true, is dropped; a comparison or a read that
+  fails lets the event through. A repeat then costs those two calls, where
+  it was read in full and dropped by Core. Core's rule stays for the
+  focuses the listener does not judge: MSAA's, and the answers to a
+  focus-now query. Unlike NVDA's, the last focus is the last the listener
+  read, not the last Core queued: an outpost can still drop it, by the
+  acceptance test against the foreground window (mockapp's
+  `a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read`).
 - Stale focus events: NVDA has no timestamp arbitration; it relies on
   queue-time freshness plus cancellable speech
   ([Event handling](nvda/events.md), [Speech](nvda/speech.md)), and its

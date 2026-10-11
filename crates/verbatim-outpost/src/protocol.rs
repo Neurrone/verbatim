@@ -134,12 +134,16 @@ pub struct UiaFocusRead {
     /// The element's own window or its nearest ancestor's (NVDA's
     /// `getNearestWindowHandle`), when it was found.
     pub window: Option<isize>,
-    /// NVDA's duplicate evidence: `None` when the event's runtime id is not
-    /// that of the last focus the listener's thread read for the
-    /// application; else whether that earlier element still had the
-    /// keyboard focus, read live with this focus. `Some(false)`, the
-    /// earlier element without the focus or gone, means the application
-    /// gave the id to a new element after the one it named died.
+    /// Whether the event's runtime id still names the element it named
+    /// before: `None` when it is not that of the last focus the listener's
+    /// thread read for the application; else whether that earlier element
+    /// still had the keyboard focus, read live with this focus.
+    /// `Some(false)`, the earlier element without the focus or gone, means
+    /// the application gave the id to a new element after the one it named
+    /// died, and the outpost gives the id a new node; `Some(true)` lets the
+    /// outpost keep the element it found for the node. A plain repeat of the
+    /// focus never carries it, as the listener drops a repeat first
+    /// (`focus_read::LastAccepted`).
     pub same_as_last: Option<bool>,
 }
 

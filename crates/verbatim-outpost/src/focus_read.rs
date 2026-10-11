@@ -17,15 +17,19 @@
 //!   only stages a switch, which NVDA's File Explorer app module ignores,
 //!   and the console window's own element, which NVDA's
 //!   `consoleUIAWindow` refuses;
+//! - then NVDA's duplicate rule, before anything of the sender is read: a
+//!   sender UI Automation counts as the last focus any of the listener's
+//!   readers accepted (`CompareElements`), while that element still has the
+//!   keyboard focus, read live, is a repeat and is dropped ([`LastAccepted`]);
 //! - then one remote operation from the sender: its `HasKeyboardFocus`
 //!   read live first, a sender without the keyboard focus dropped, as
 //!   NVDA's `shouldAllowUIAFocusEvent` drops it; then, when the sender has
 //!   the runtime id of the focus the thread read before, whether that
-//!   earlier element still has the keyboard focus, NVDA's duplicate
-//!   evidence; then the sender's own value, states, and details afresh,
-//!   its selected child for a list or tab control, and its ancestors up
-//!   to the first one the thread knew from the focus before, whose
-//!   ancestors are reused from that read.
+//!   earlier element still has the keyboard focus, the evidence that the
+//!   runtime id still names it; then the sender's own value, states, and
+//!   details afresh, its selected child for a list or tab control, and its
+//!   ancestors up to the first one the thread knew from the focus before,
+//!   whose ancestors are reused from that read.
 //!
 //! The result, or the drop, goes to the application's outpost through
 //! verbatim.exe like every fact; the outpost was sent a marker the moment
@@ -125,10 +129,11 @@ struct LastFocus {
 /// The last focus any of the listener's reading threads accepted, shared
 /// by them all, as NVDA keeps one last focused UIA element for the whole
 /// program (`docs/design/focus-pipeline.md`, section 16.3), with the reader
-/// that accepted it. For now it only feeds the debug log of each read
-/// (`FocusReader::log_sender`), which is to show whether UI Automation
-/// counts two senders with different runtime ids as one element; the
-/// duplicate evidence is still each thread's own focus before.
+/// that accepted it: a focus event whose sender UI Automation counts as
+/// this element, while it still has the keyboard focus, is a repeat and is
+/// dropped before it is read ([`FocusReader::read`]). Each thread's own
+/// focus before still serves the ancestor read's stop and the evidence
+/// that a runtime id now names another element (`same_as_last`).
 #[derive(Clone, Default)]
 pub struct LastAccepted(Arc<Mutex<Option<Accepted>>>);
 
@@ -231,8 +236,32 @@ impl FocusReader {
         }
         // The element arrives with the registration's base cache request.
         let event = snapshot_parts_from_cached_element(element);
+        // NVDA's duplicate rule, before anything of the sender is read
+        // (`UIAHandler/__init__.py` 899 to 921; `docs/design/focus-pipeline.md`,
+        // section 16.3): the sender is the last focus accepted, by any of
+        // the listener's readers, as UIA compares them, and that element
+        // still has the keyboard focus, read live. A comparison that fails
+        // is no duplicate, as NVDA lets the event through on a COM error,
+        // and so is a keyboard focus read that fails: the earlier element is
+        // gone. Two calls, the second only for an element UIA equates.
+        let last = self.last_accepted.element();
+        let same_as_last_accepted = last
+            .as_ref()
+            .map(|last| self.uia.compare_elements(element, last));
         if tracing::enabled!(tracing::Level::DEBUG) {
-            self.log_sender(element, hwnd, &event.runtime_id);
+            self.log_sender(
+                element,
+                hwnd,
+                &event.runtime_id,
+                same_as_last_accepted.as_ref(),
+            );
+        }
+        if let (Some(Ok(true)), Some(last)) = (&same_as_last_accepted, &last)
+            && last.has_keyboard_focus().unwrap_or(false)
+        {
+            return Judged::Dropped(
+                "a repeat of the last focus, which still has the keyboard focus",
+            );
         }
         let previous = self
             .last
@@ -407,15 +436,18 @@ impl FocusReader {
     /// `CompareElements`: the sender's runtime id, class name, framework,
     /// and own native window handle, `hwnd`, and whether UI Automation
     /// counts it as the same element as the last focus any of the
-    /// listener's readers accepted, in any application. The framework and
-    /// the comparison are two calls, made only while debug logging is on.
-    fn log_sender(&self, element: &IUIAutomationElement, hwnd: isize, runtime_id: &[i32]) {
+    /// listener's readers accepted, in any application
+    /// (`same_as_last_accepted`, the duplicate rule's comparison). The
+    /// framework is one call, made only while debug logging is on.
+    fn log_sender(
+        &self,
+        element: &IUIAutomationElement,
+        hwnd: isize,
+        runtime_id: &[i32],
+        same_as_last_accepted: Option<&windows::core::Result<bool>>,
+    ) {
         let class_name = element.cached_string(UIA_ClassNamePropertyId);
         let framework = element.current_framework_id().ok();
-        let same_as_last_accepted = self
-            .last_accepted
-            .element()
-            .map(|last| self.uia.compare_elements(element, &last));
         tracing::debug!(
             ?runtime_id,
             ?class_name,

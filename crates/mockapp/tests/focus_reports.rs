@@ -71,24 +71,27 @@ impl Client {
 /// item the runtime id of the subfolder's item it had just destroyed. The
 /// focus listener's reader, which read the dead item as the focus before,
 /// reads with the new focus whether that earlier element still has the
-/// keyboard focus, NVDA's duplicate evidence: it is gone, so the outpost
-/// reports the new focus under a new node; a focus repeated on the new
-/// element keeps its node, since that element still has the focus. Both
-/// ways the reader reads a focus: with remote operations and without.
+/// keyboard focus: it is gone, so the outpost reports the new focus under
+/// a new node. UI Automation counts the new element as the dead one, whose
+/// runtime id it has, but the dead one's keyboard focus cannot be read, so
+/// the focus is no repeat (section 16.3); a focus event repeated on the new
+/// element, which still has the focus, is. Both ways the reader reads a
+/// focus: with remote operations and without.
 ///
 /// The calls each read makes are pinned, the outpost's own included, which
-/// are none: it reads nothing before it reports the focus. Remotely, the
-/// earlier element's focus is read in the focus's one round trip; an
-/// earlier element that is gone fails the whole run before it starts,
-/// which is run again without it, one call more. Classically, each read
-/// makes five calls: the focus's keyboard focus, the earlier element's,
-/// the focus's own cache, and two hops up to an ancestor of the focus
-/// before, with its window, for the new item; and for the repeated one,
-/// one hop to its list, which has no window, and one call more for the
-/// nearest window.
+/// are none: it reads nothing before it reports the focus. Before any read,
+/// the listener compares the sender with the last focus it accepted and,
+/// UI Automation equating them, reads that element's keyboard focus: two
+/// calls. Remotely, the earlier element's focus is read in the focus's one
+/// round trip; an earlier element that is gone fails the whole run before
+/// it starts, which is run again without it, one call more. Classically,
+/// the read makes five calls: the focus's keyboard focus, the earlier
+/// element's, the focus's own cache, and two hops up to an ancestor of the
+/// focus before, with its window. The repeated focus makes the comparison
+/// and the keyboard focus read alone.
 fn reused_runtime_id(remote: bool) {
     let path = if remote { "remote" } else { "classic" };
-    let (gone_cost, kept_cost) = if remote { (2, 1) } else { (5, 5) };
+    let gone_cost = if remote { 4 } else { 7 };
     let title = common::unique_title(&format!("mockapp-reuse-{path}"));
     let mut app = common::spawn("reuse.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
@@ -122,15 +125,14 @@ fn reused_runtime_id(remote: bool) {
         "{path}: the calls the focus made"
     );
 
-    let reported = outpost.uia_focus(&inner);
-    assert_eq!(
-        reported.node.id, new_node,
-        "{path}: the element that has the focus keeps its node"
+    let (judged, calls) = outpost.listener_read(&inner);
+    assert!(
+        matches!(judged, Judged::Dropped(_)),
+        "{path}: the repeated focus is dropped, not {judged:?}"
     );
-    assert_eq!(
-        reported.calls.uia, kept_cost,
-        "{path}: the calls the repeated focus made"
-    );
+    assert_eq!(calls.uia, 2, "{path}: the calls the repeated focus made");
+    outpost.deliver(judged.into_fact(0));
+    outpost.settled();
 
     drop(outpost);
     app.quit();
@@ -404,10 +406,12 @@ fn a_focus_is_found_by_its_path_and_followed() {
 
 /// A UIA focus with no path to its element, as Windows Terminal's tab
 /// focus elements, which are in no tree, have none, is reported from the
-/// listener's read, and its next focus event, read in full, finds the
-/// element: the focus is reported again under its node, which Core takes
-/// silently, now with its ancestors, and its changes are followed from
-/// then on.
+/// listener's read, and nothing is followed. A focus event repeated on it
+/// while it keeps the keyboard focus is a repeat, dropped before it is
+/// read (section 16.3); once the focus has been elsewhere and comes back,
+/// its focus event is read in full and finds the element: the focus is
+/// reported under its node, now with its ancestors, and its changes are
+/// followed from then on.
 fn a_focus_without_a_path_is_followed_from_its_next_focus_event() {
     let title = common::unique_title("mockapp-focus-not-found");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -417,7 +421,15 @@ fn a_focus_without_a_path_is_followed_from_its_next_focus_event() {
     app.send("set-focus btn1");
     let button = client.focused();
     let node = focus_without_a_path(&outpost, &button);
+    let (judged, _) = outpost.listener_read(&button);
+    assert!(
+        matches!(judged, Judged::Dropped(_)),
+        "a repeat is dropped, not {judged:?}"
+    );
 
+    app.send("set-focus slider1");
+    let _ = outpost.uia_focus(&client.focused());
+    app.send("set-focus btn1");
     let reported = outpost.uia_focus(&button);
     assert_eq!(
         (reported.node.id, reported.node.name.as_deref()),
@@ -618,6 +630,51 @@ fn a_foreground_event_for_a_window_read_through_uia_is_dropped() {
     app.quit();
 }
 
+/// A focus event repeated on the element the listener last accepted, which
+/// still has the keyboard focus, is dropped before anything of it is read,
+/// as NVDA's duplicate rule drops it (`docs/design/focus-pipeline.md`,
+/// section 16.3): the listener makes two calls, the comparison of the
+/// sender with that element and the element's keyboard focus, and the
+/// outpost says nothing. Once another focus has been accepted in between,
+/// the same element's focus is read and reported again.
+fn a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read() {
+    let title = common::unique_title("mockapp-repeated-focus");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let button = outpost.uia_focus(&client.focused());
+    let (judged, calls) = outpost.listener_read(&client.focused());
+    let Judged::Dropped(reason) = judged else {
+        panic!("the listener read a repeated focus: {judged:?}");
+    };
+    assert_eq!(
+        reason,
+        "a repeat of the last focus, which still has the keyboard focus"
+    );
+    assert_eq!(
+        (calls.uia, calls.msaa, calls.window_messages),
+        (2, 0, 0),
+        "the comparison and the keyboard focus read, and nothing else"
+    );
+    outpost.deliver(Judged::Dropped(reason).into_fact(0));
+    outpost.settled();
+
+    app.send("set-focus slider1");
+    let slider = outpost.uia_focus(&client.focused());
+    assert_eq!(slider.node.name.as_deref(), Some("Level"));
+    app.send("set-focus btn1");
+    let again = outpost.uia_focus(&client.focused());
+    assert_eq!(
+        (again.node.id, again.node.name.as_deref()),
+        (button.node.id, Some("Original Name"))
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 /// The console host's window is the parent of its text area, reports the
 /// keyboard focus whenever the text area has it, and raises focus events
 /// around the text area's; those are never the focus (NVDA refuses them
@@ -701,6 +758,10 @@ fn main() {
         (
             "a_console_windows_own_focus_is_never_reported",
             a_console_windows_own_focus_is_never_reported,
+        ),
+        (
+            "a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read",
+            a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read,
         ),
         (
             "a_foreground_event_for_a_window_read_through_uia_is_dropped",

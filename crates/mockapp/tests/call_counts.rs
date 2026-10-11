@@ -1271,20 +1271,19 @@ fn uia_focus_changes_cost_exactly_classic() {
     );
 }
 
-/// A focus repeated on the element the focus-following subscription already
-/// follows, under the same node, does not move the subscription, so it costs
-/// the focus's read alone (`docs/design/focus-pipeline.md`, section 17).
-/// The worker does not ask for the move; were it asked, the subscription
-/// would find the element already has its group and make no call either,
-/// which `uia_event_registrations_cost_exactly` pins. With the listener
-/// reading each focus (stage A step 6), the read is the listener's one
-/// remote operation: the sender's and the previous element's keyboard
-/// focus, the sender's cache filled afresh, and its ancestors up to the
-/// first one known from the focus before. The outpost makes no call: it
-/// already holds the element, which the listener read as still focused, so
-/// it does not look for it by its path. Measured against main's outpost,
-/// which read the focused element and then ran its own remote operation,
-/// it is one call fewer and more of mockapp's work, the fresh cache's.
+/// A focus event repeated on the element the listener last accepted, which
+/// still has the keyboard focus, is dropped before anything of it is read,
+/// as NVDA drops it (`docs/design/focus-pipeline.md`, section 16.3): the
+/// listener compares the sender with that element (`CompareElements`) and
+/// reads the earlier element's keyboard focus, two calls, and the outpost,
+/// handed the drop, makes none and says nothing, so the focus-following
+/// subscription is not moved either (section 17). Before the listener
+/// judged repeats, the repeat was read in full, one remote operation
+/// filling the sender's cache afresh and walking to its first known
+/// ancestor, which cost mockapp 54 `GetPropertyValue`, 22
+/// `GetPatternProvider`, 30 `ProviderOptions`, 14 `HostRawElementProvider`,
+/// 9 `Navigate`, 7 `GetRuntimeId`, 7 `FragmentRoot`, 2 `BoundingRectangle`,
+/// and 1 `WM_GETOBJECT`, and was then dropped by Core as a duplicate.
 fn uia_repeated_focus_costs_exactly() {
     let title = common::unique_title("mockapp-counts-uia-repeated-focus");
     let mut app = common::spawn("counts.json", "uia", &title);
@@ -1293,25 +1292,28 @@ fn uia_repeated_focus_costs_exactly() {
     let outpost = OutpostUnderTest::new(&app);
     let mut ratchet = Ratchet::default();
 
-    let (first, _) = measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("first", "First"));
-    let (again, cost) =
-        measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("first", "First"));
-    assert_eq!(again.node.id, first.node.id, "the focus keeps its node");
+    let _ = measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("first", "First"));
+    let focused = under_test.focused(hwnd);
+    common::reset_hits(hwnd);
+    let (judged, listener_calls) = outpost.listener_read(&focused);
+    let verbatim_outpost::focus_read::Judged::Dropped(reason) = judged else {
+        panic!("the listener read a repeated focus: {judged:?}");
+    };
+    assert_eq!(
+        reason,
+        "a repeat of the last focus, which still has the keyboard focus"
+    );
+    outpost.deliver(verbatim_outpost::focus_read::Judged::Dropped(reason).into_fact(0));
+    outpost.settled();
+    let cost = Cost {
+        calls: listener_calls,
+        hits: common::read_hits(hwnd),
+    };
     ratchet.check(
         "UIA focus repeated on the element followed",
         &cost,
-        calls(1, 0, 0),
-        &[
-            ("WM_GETOBJECT", 1),
-            ("ProviderOptions", 30),
-            ("GetPatternProvider", 22),
-            ("GetPropertyValue", 54),
-            ("HostRawElementProvider", 14),
-            ("Navigate", 9),
-            ("GetRuntimeId", 7),
-            ("BoundingRectangle", 2),
-            ("FragmentRoot", 7),
-        ],
+        calls(2, 0, 0),
+        &[("GetPropertyValue", 1)],
     );
 
     ratchet.finish();
