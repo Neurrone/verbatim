@@ -524,6 +524,8 @@ Each step is small, builds and passes `cargo xtask ci`, and is verified before t
 
 Also measured in this step: the JSON parse and re-serialize cost of decision 1, and, before step 4, the evaluation of `mio::windows::NamedPipe` in place of the hand-written overlapped module (Dickson, 2026-10-11), including whether a write that completes at once leaves the pipe free for the next write without the I/O thread waking.
 
+Evaluated 2026-10-11 against mio 1.2.4 (79d1417): mio never sets skip-completion-on-success on pipes, so after any write the pipe stays busy until its poll thread processes the completion, and a second frame from the same producer waits for that wake-up; reads go through a 4 KiB internal buffer and are copied again; a second writer is refused, not queued; and its named-pipe code had a use-after-free fixed on 2026-09-28. Decided with Dickson: keep the hand-written module and grow it into the transport; mio's race tests (`tests/win_named_pipe.rs`) are models for step 4's tests. The floor benchmark gains the measurements the evaluation lists (back-to-back frames, write latency during a flood, several producers on one pipe, 1, 2 and 32 MB frames, allocations per frame, a child draining a 2 MB write before exit).
+
 - Builds from the branch: f94e761 (one write per message), 43adba8 (the relay stages), and the `overlapped` module and the scheduling module as libraries only, split out of db16548 and 7e6e562, with no behaviour change.
 - Extends the ledger with the return-path and speech stages of 10.1 that today's architecture can stamp (synth request, host first chunk, host return, device clock).
 - Removes: nothing. Adds the measurement.
