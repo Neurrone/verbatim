@@ -317,10 +317,21 @@ fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
     }
 }
 
-/// The reducer inputs a focus-now answer becomes: a foreground change to the
-/// window, when the application holds the foreground, then a focus on the
-/// focused control. The same rules as live events then apply, so a report of
-/// the focus the user already heard after a replacement is taken silently.
+/// The reducer inputs a focus-now answer becomes: a focus on the focused
+/// control, with its ancestors, or, when the application has no focused
+/// control, a foreground change to its window, the window then being the
+/// focus. NVDA, starting, takes the system's focus and announces it with
+/// its newly entered ancestors by the rules for any focus, the foreground
+/// window among them only when it is presentable; it does not speak the
+/// foreground window as a focus of its own. So the window is not reported
+/// before a control: the control's focus in the system's foreground window
+/// moves attention and the foreground with it, cuts speech off as a new
+/// top-level window does, and announces the window only as an entered
+/// ancestor (a desktop's Program Manager, a pane, says nothing, as NVDA's
+/// captures of 2026-10-11 show). A control without window facts of its own
+/// takes the window's. The same rules as live events then apply, so a
+/// report of the focus the user already heard after a replacement is taken
+/// silently.
 fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
     let event =
         |node: NodeSnapshot, window: Option<WindowFacts>, foreground, ancestors, selected_child| {
@@ -339,20 +350,17 @@ fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
                 },
             }
         };
-    let mut inputs = Vec::new();
-    if let Some((window, facts)) = focus.window {
-        inputs.push(event(window, Some(facts), true, Vec::new(), None));
-    }
-    if let Some(control) = focus.focus {
-        inputs.push(event(
+    match (focus.focus, focus.window) {
+        (Some(control), window) => vec![event(
             control.node,
-            control.window,
+            control.window.or(window.map(|(_, facts)| facts)),
             false,
             control.ancestors,
             control.selected_child,
-        ));
+        )],
+        (None, Some((window, facts))) => vec![event(window, Some(facts), true, Vec::new(), None)],
+        (None, None) => Vec::new(),
     }
-    inputs
 }
 
 #[cfg(test)]
@@ -616,8 +624,22 @@ mod tests {
         assert_eq!(root.snapshot.name.as_deref(), Some("new"));
     }
 
+    fn notepad_facts(under_active_window: Option<bool>) -> WindowFacts {
+        WindowFacts {
+            top_level: WindowHandle(0x10),
+            root_owner: WindowHandle(0x10),
+            topmost: false,
+            under_active_window,
+            in_foreground: true,
+        }
+    }
+
+    /// A focus-now answer with a focused control is that control's focus
+    /// alone, with its ancestors: the foreground window is not spoken as a
+    /// focus of its own, as NVDA does not speak it when it starts, and is
+    /// announced only as an entered ancestor when it is presentable.
     #[test]
-    fn a_focus_now_answer_becomes_a_foreground_change_then_a_focus() {
+    fn a_focus_now_answer_with_a_control_is_the_controls_focus_alone() {
         let mut table = RequestTable::default();
         let trace_id = TraceId::mint();
         let id = table.begin(
@@ -628,26 +650,13 @@ mod tests {
             },
         );
         let window = node(Role::Window, "Untitled - Notepad");
-        let window_facts = WindowFacts {
-            top_level: WindowHandle(0x10),
-            root_owner: WindowHandle(0x10),
-            topmost: false,
-            under_active_window: None,
-            in_foreground: true,
-        };
         // The control's own window facts, told apart from the window's.
-        let control_facts = WindowFacts {
-            top_level: WindowHandle(0x10),
-            root_owner: WindowHandle(0x10),
-            topmost: false,
-            under_active_window: Some(true),
-            in_foreground: true,
-        };
+        let control_facts = notepad_facts(Some(true));
         let control = node(Role::Button, "OK");
         let ancestors = vec![node(Role::Pane, "Buttons")];
         let selected_child = Some(node(Role::ListItem, "First"));
         let answer = FocusNow {
-            window: Some((window.clone(), window_facts)),
+            window: Some((window, notepad_facts(None))),
             focus: Some(FocusedControl {
                 node: control.clone(),
                 ancestors: ancestors.clone(),
@@ -663,36 +672,101 @@ mod tests {
         );
         assert_eq!(
             inputs,
-            [
-                Input::Event {
-                    trace_id,
-                    observed_at_ms: 1234,
-                    source: Pid(5),
-                    backend: Backend::Uia,
-                    window: Some(window_facts),
-                    event: NormalizedEvent::FocusChanged {
-                        node: window,
-                        foreground: true,
-                        ancestors: Vec::new(),
-                        ancestors_unknown: false,
-                        selected_child: None,
-                    },
+            [Input::Event {
+                trace_id,
+                observed_at_ms: 1234,
+                source: Pid(5),
+                backend: Backend::Uia,
+                window: Some(control_facts),
+                event: NormalizedEvent::FocusChanged {
+                    node: control,
+                    foreground: false,
+                    ancestors,
+                    ancestors_unknown: false,
+                    selected_child,
                 },
-                Input::Event {
-                    trace_id,
-                    observed_at_ms: 1234,
+            }]
+        );
+    }
+
+    /// With no focused control, the foreground window is the focus, a
+    /// foreground change; a control without window facts of its own takes
+    /// the foreground window's.
+    #[test]
+    fn a_focus_now_answer_without_a_control_is_the_windows_focus() {
+        let mut table = RequestTable::default();
+        let trace_id = TraceId::mint();
+        let begin = |table: &mut RequestTable| {
+            table.begin(
+                OutpostId(1),
+                Asker::FocusNow {
                     source: Pid(5),
-                    backend: Backend::Uia,
-                    window: Some(control_facts),
-                    event: NormalizedEvent::FocusChanged {
-                        node: control,
-                        foreground: false,
-                        ancestors,
-                        ancestors_unknown: false,
-                        selected_child,
-                    },
+                    trace_id,
                 },
-            ]
+            )
+        };
+        let window = node(Role::Window, "Untitled - Notepad");
+        let facts = notepad_facts(None);
+        let id = begin(&mut table);
+        let inputs = table.finish(
+            id,
+            OutpostId(1),
+            QueryOutcome::Done(QueryResult::Focus(FocusNow {
+                window: Some((window.clone(), facts)),
+                focus: None,
+                observed_at_ms: 1234,
+            })),
+        );
+        assert_eq!(
+            inputs,
+            [Input::Event {
+                trace_id,
+                observed_at_ms: 1234,
+                source: Pid(5),
+                backend: Backend::Uia,
+                window: Some(facts),
+                event: NormalizedEvent::FocusChanged {
+                    node: window.clone(),
+                    foreground: true,
+                    ancestors: Vec::new(),
+                    ancestors_unknown: false,
+                    selected_child: None,
+                },
+            }]
+        );
+
+        let control = node(Role::Button, "OK");
+        let id = begin(&mut table);
+        let inputs = table.finish(
+            id,
+            OutpostId(1),
+            QueryOutcome::Done(QueryResult::Focus(FocusNow {
+                window: Some((window, facts)),
+                focus: Some(FocusedControl {
+                    node: control.clone(),
+                    ancestors: Vec::new(),
+                    selected_child: None,
+                    window: None,
+                }),
+                observed_at_ms: 1234,
+            })),
+        );
+        assert_eq!(
+            inputs,
+            [Input::Event {
+                trace_id,
+                observed_at_ms: 1234,
+                source: Pid(5),
+                backend: Backend::Uia,
+                window: Some(facts),
+                event: NormalizedEvent::FocusChanged {
+                    node: control,
+                    foreground: false,
+                    ancestors: Vec::new(),
+                    ancestors_unknown: false,
+                    selected_child: None,
+                },
+            }]
         );
     }
 

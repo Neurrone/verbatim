@@ -64,11 +64,12 @@ pub(crate) mod word_selection;
 
 /// What the scenario says about the desktop, which has the focus after the
 /// harness minimized every window and once a dialog of Verbatim's closes:
-/// the window, the desktop's list, and its focused item, which the harness
-/// reads independently of Verbatim ([`Scenario::desktop_speech`]) once the
-/// desktop is in the foreground. When a dialog of Verbatim's closes,
-/// Verbatim's own window titled "Verbatim" can be in front for a moment
-/// first.
+/// the desktop's list and its focused item, which the harness reads
+/// independently of Verbatim ([`Scenario::desktop_speech`]) once the
+/// desktop, the window titled "Program Manager", is in the foreground. The
+/// window's title is not spoken, as NVDA's captures of 2026-10-11 show for
+/// both occasions. When a dialog of Verbatim's closes, Verbatim's own
+/// window titled "Verbatim" can be in front for a moment first.
 pub(crate) fn expect_desktop(scenario: &mut Scenario) {
     scenario
         .wait_for_window_in_front(
@@ -238,7 +239,9 @@ pub(crate) fn outpost_of(scenario: &mut Scenario, target: u32) -> u32 {
 }
 
 /// Closes Verbatim's settings dialog with Escape and asserts that the
-/// desktop, where the focus returns, is announced.
+/// desktop, where the focus returns, is announced as NVDA announced it in
+/// its capture of 2026-10-11: "Desktop list", then the focused icon, with
+/// no "Program Manager".
 pub(crate) fn close_settings_to_desktop(scenario: &mut Scenario) {
     scenario.send_keys(&["escape"]).expect("sends escape");
     expect_desktop(scenario);

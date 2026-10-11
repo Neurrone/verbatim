@@ -1173,10 +1173,15 @@ impl Scenario {
     }
 
     /// What Verbatim says as the desktop takes the focus, the state every
-    /// scenario starts from: the desktop's window, its list of icons, and
-    /// the icon that has the focus, whose name, position, and selection the
-    /// agent reads through UI Automation, independently of Verbatim, since
-    /// they belong to the machine. The window must be the desktop's.
+    /// scenario starts from: the desktop's list of icons, then the icon that
+    /// has the focus, whose name, position, and selection the agent reads
+    /// through UI Automation, independently of Verbatim, since they belong
+    /// to the machine. The desktop's window, Program Manager, is not spoken:
+    /// NVDA's captures of 2026-10-11 (NVDA alpha-57645, on this project's
+    /// development machine), starting with the desktop focused and after
+    /// Escape from Verbatim's settings dialog, both said "Desktop list" and
+    /// the item alone, and Dickson confirms NVDA never says "Program
+    /// Manager". The window must be the desktop's, which its title tells.
     ///
     /// # Errors
     ///
@@ -1195,7 +1200,7 @@ impl Scenario {
             )));
         }
         let focus = self.agent.focused_element()?;
-        let mut speech = vec![DESKTOP_TITLE.to_owned(), "Desktop list".to_owned()];
+        let mut speech = vec!["Desktop list".to_owned()];
         if let Some((position, size)) = focus.position {
             let state = match focus.selected {
                 Some(false) => " not selected",

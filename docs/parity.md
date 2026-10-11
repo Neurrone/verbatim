@@ -445,6 +445,27 @@ verified.
   window-switch, `conhost_` and `explorer_folder_window` scenarios are to
   verify it live, and what NVDA says when a console window comes in
   front some 400 ms after its text area's focus is still to be captured.
+- The desktop's announcement. NVDA, starting with the desktop focused,
+  and after Escape from Verbatim's settings dialog back to the desktop,
+  says "Desktop list" and the focused icon, such as "NVDA 3 of 12", and
+  never "Program Manager", the desktop window's title (captures of
+  2026-10-11, NVDA alpha-57645, on this project's development machine;
+  Dickson confirms it never says it). Starting, NVDA announces the
+  system's focus with its newly entered presentable ancestors, and
+  Program Manager's client area, a pane with no system menu, is not one;
+  NVDA also drops every foreground event for the Program Manager and the
+  taskbar windows, by their window classes (`Progman` and
+  `Shell_TrayWnd`, `IAccessibleHandler/internalWinEventHandler.py` 165 to
+  166). Verbatim: since 2026-10-11 a focus-now answer with a focused
+  control is that control's focus alone, the foreground window announced
+  only as an entered ancestor when it is presentable, so starting with
+  the desktop says "Desktop list" and the icon; before, the answer's
+  window was reported first as a foreground change and spoken, "Program
+  Manager". **Different** on returning to the desktop: a foreground fact
+  for the desktop window that reaches Core before the list item's focus
+  is still spoken as the focus, "Program Manager", as Verbatim has not
+  ported NVDA's class rule for foreground events; the harness expects
+  NVDA's speech there (`close_settings_to_desktop`).
 - Duplicate focus suppression (same control announced once when two
   paths report it). NVDA: "already the focus" early return, comparing
   the focus object by identity only. Since 2026-10-02 Verbatim compares

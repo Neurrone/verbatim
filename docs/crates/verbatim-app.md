@@ -248,9 +248,11 @@ knowing for review:
   speaks, except that an abandoned activation (started, then past its
   deadline, so it may or may not have happened) is only logged and says
   nothing; a tree dump's is sent on its reply channel; and a
-  focus-now query's becomes reducer input: a foreground change to the window,
-  when the application holds the foreground, then a focus on its focused
-  control. The reducer thread sends a focus-now query at startup (for the
+  focus-now query's becomes reducer input: a focus on the focused control,
+  with its ancestors, its window announced only as an entered ancestor
+  when it is presentable, as NVDA announces the focus it starts with (since
+  2026-10-11; the desktop's Program Manager had been spoken), or, with no
+  focused control, a foreground change to the window. The reducer thread sends a focus-now query at startup (for the
   foreground application), when the attention application's outpost was
   replaced after a crash or kill, when the outpost of the focus's
   application, if that is not the attention one, ended in a crash or kill
