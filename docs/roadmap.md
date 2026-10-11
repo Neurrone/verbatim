@@ -492,6 +492,12 @@ Other open items, taken after the steps above unless they fold into one:
   into the outpost's intake and each batch it plans, and the GUI logs
   when it starts popping the Verbatim menu and how long the popup was
   held; reproduce it with them.
+- `settings_system_page` once heard "Keyboard switched to English
+  (Singapore) US keyboard", then "English (United States)" 4 ms later
+  (2026-10-11): two UIA notifications from Windows' input switcher
+  (`Windows.Shell.InputSwitch.SwitchNotification`) as Settings opened;
+  three reruns passed. What switches the layout, and whether NVDA speaks
+  these notifications, is not established.
 - `settings_system_page` once heard "Windows isn't activated"; the
   settings package above says 14 settings but names 13.
 - `verbatim-gui`'s rlib is 375 MB.
