@@ -23,7 +23,7 @@ use verbatim_model::{NodeSnapshot, NormalizedEvent, PropertyChange, Role, State,
 use verbatim_outpost::focus_read::Judged;
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor};
 use verbatim_outpost::{Heard, OutpostOptions};
-use verbatim_uia::Uia;
+use verbatim_uia::{ElementExt as _, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
