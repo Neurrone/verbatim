@@ -2466,8 +2466,14 @@ confirmed):
 - With the flag set, Windows PowerShell prints a notice that it leaves
   `PSReadLine` out as its interactive host starts, before the shell runs
   its script. The terminal scenarios bring a window forward only once
-  its shell has written its process id, so in the console host the notice
-  is on screen before the terminal is announced and is not new output.
+  its shell has written its process id, and it was thought that in the
+  console host the notice was then on screen before the terminal was
+  announced and so not new output; that was wrong (diagnosed 2026-10-11):
+  the console window takes the foreground as it is created, still
+  minimized, before the script runs, so the terminal is read before the
+  notice, which is then new output, and the script's `mode con` clears
+  it before the process id is written. Since 2026-10-11 the console
+  host's shell runs with `-NonInteractive` as well.
   Windows Terminal takes the notice from its own console host later, and
   on GitHub's runner a first window was announced before it had the
   notice, or with half of it (runs 37926631704 and 37931377428, a

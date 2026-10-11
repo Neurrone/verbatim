@@ -34,17 +34,23 @@
 //! `-NoProfile -NoLogo -NoExit -ExecutionPolicy Bypass -File start.ps1`.
 //! With Verbatim running, Windows' screen reader flag is set, and the
 //! interactive host prints, as it starts, a notice that it leaves
-//! `PSReadLine` out. In the console host, whose window holds the text as
-//! the shell writes it, the notice is on screen once the shell's process
-//! id is written, before the window is brought forward, so it is never
-//! new output. Windows Terminal takes the text from its own console host
-//! some time later, and nothing it shows while its window is minimized
-//! tells when: on GitHub's runner its window was announced before it had
-//! the notice, or with half of it, which was then spoken as new output.
-//! So every Windows Terminal shell also runs with `-NonInteractive`
-//! ([`shell_command`]), which prints no notice. No scenario needs more
-//! of the interactive host than its prompt, which `-NoExit` keeps; the
-//! password prompt is a script's own ([`super::terminal_commands`]).
+//! `PSReadLine` out, before it runs the start script. Nothing the harness
+//! waits for orders the notice after the terminal's announcement: in
+//! Windows Terminal, which takes the text from its own console host some
+//! time later, its window was announced before the notice, or with half of
+//! it, on GitHub's runner; and the console window takes the foreground as
+//! it is created, still minimized, before the script runs, so Verbatim
+//! reads the terminal before the notice, and the start script's `mode
+//! con` then clears it, so it is not on screen when the shell's process
+//! id is written either (a read-only diagnosis of the `conhost_` runs on
+//! 2026-10-11). Spoken as new output, the notice is what NVDA speaks too
+//! (`docs/parity.md`). So every shell, in both terminals, runs with
+//! `-NonInteractive` ([`shell_command`]), which prints no notice. No
+//! scenario needs more of the interactive host than its prompt, which
+//! `-NoExit` keeps; the password prompt is a script's own
+//! ([`super::terminal_commands`]), and the footer scripts read keys with
+//! `[Console]::ReadKey`, which a shell that is not interactive still
+//! allows.
 //! The start script removes `PSReadLine`, so a line is neither re-rendered
 //! nor given predictions, moves to the run's folder, and sets a one-word
 //! prompt, `ready> `, spoken as "ready>". It writes the shell's process id
@@ -478,17 +484,15 @@ fn other_terminal_windows(
         .collect())
 }
 
-/// The shell's command line, running the start script: in Windows
-/// Terminal not interactive (`-NonInteractive`), so it prints no notice
-/// that it leaves `PSReadLine` out, which Windows Terminal could show only
-/// after its window is announced (the module's documentation).
+/// The shell's command line, running the start script, in both terminals
+/// not interactive (`-NonInteractive`), so it prints no notice that it
+/// leaves `PSReadLine` out, which either terminal can show after it is
+/// announced (the module's documentation).
 fn shell_command(start: &str, terminal: Terminal) -> Vec<String> {
     let mut command: Vec<String> = vec!["powershell.exe".to_owned()];
-    if terminal == Terminal::WindowsTerminal {
-        command.push("-NonInteractive".to_owned());
-    }
     command.extend(
         [
+            "-NonInteractive",
             "-NoProfile",
             "-NoLogo",
             "-NoExit",
@@ -682,13 +686,13 @@ mod tests {
     }
 
     #[test]
-    fn only_windows_terminal_runs_its_shell_not_interactive() {
+    fn every_shell_runs_not_interactive() {
         assert!(
             shell_command("start.ps1", Terminal::WindowsTerminal)
                 .contains(&"-NonInteractive".to_owned())
         );
         assert!(
-            !shell_command("start.ps1", Terminal::ConsoleHost)
+            shell_command("start.ps1", Terminal::ConsoleHost)
                 .contains(&"-NonInteractive".to_owned())
         );
     }

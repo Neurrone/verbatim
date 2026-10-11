@@ -631,7 +631,9 @@ directly, never `wt.exe` from `PATH`, with `-w new --size 120,30 new-tab
 --title <title> --suppressApplicationTitle` and the shell, Windows
 PowerShell started with `-NonInteractive` so that it prints no notice
 that it leaves PSReadLine out, which Windows Terminal could show after
-its window is announced (`docs/crates/verbatim-e2e.md`). Before it
+its window is announced (`docs/crates/verbatim-e2e.md`); the console
+host's shell is started the same way, since its window takes the
+foreground as it is created, before the notice is printed. Before it
 drives the window, it asserts that the process the agent launched owns
 the window, and that no other Windows Terminal process opened a window
 meanwhile. At cleanup it closes that window by its title, and the copy's

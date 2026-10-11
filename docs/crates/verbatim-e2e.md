@@ -471,13 +471,16 @@ The groups:
   window. Each window is brought forward only once its shell has written
   its process id. With Verbatim running, Windows' screen reader flag is
   set, and Windows PowerShell's interactive host prints, as it starts, a
-  notice that it leaves `PSReadLine` out. The console host's window
-  holds that text once the process id is written, so it is never new
-  output there; Windows Terminal takes it from its own console host some
-  time later, and shows nothing while minimized that tells when (on
-  GitHub's runner its window was announced before the notice, or with
-  half of it), so every Windows Terminal shell runs with
-  `-NonInteractive`, which leaves the notice out. The password prompt
+  notice that it leaves `PSReadLine` out, before the start script runs.
+  Windows Terminal takes it from its own console host some time later,
+  and shows nothing while minimized that tells when (on GitHub's runner
+  its window was announced before the notice, or with half of it); the
+  console window takes the foreground as it is created, still minimized,
+  before the notice, so Verbatim reads the terminal before it, and the
+  start script's `mode con` then clears it, so it is not on screen when
+  the process id is written either (diagnosed on 2026-10-11). So every
+  shell, in both terminals, runs with `-NonInteractive`, which leaves the
+  notice out. The password prompt
   the commands scenarios use is drawn by their script, since `Read-Host`
   fails in a shell that is not interactive. The scenario
   also fails if any other Windows Terminal process opened a window
