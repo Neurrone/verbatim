@@ -801,3 +801,41 @@ Section 12.2 has a thread end when its application exits and after a period with
 5. The full suite, ten runs each of the related scenarios, and only then the merge.
 
 Decisions for Dickson: 16.3's single shared last focus; 16.4 as a whole, including removing step 3's provisional early-foreground rule; adopting 16.5's lazy element only after its measurement; 16.6.
+
+## 17. Focus-following UIA subscriptions without the crash (proposed 2026-10-11, awaiting Dickson)
+
+### 17.1 The evidence
+
+- The crash (`docs/roadmap.md`, "Outpost crashes"; full dump of outpost 7204, `conhost_leave_flood` run 8, 2026-10-11): UIA's own worker thread delivered a saved event (`SavedEvent::OnMessage`) whose `EventRecord` had been destroyed (its memory stamped "DEAD", the weak reference expired, the event id field 20014, `Text_TextSelectionChanged`), and UIA fails fast with `E_UNEXPECTED` instead of dropping the event. Both of the outpost's subscription threads were idle at the time: no removal was in progress. The record was destroyed by an earlier move of our registration; the console's next update reached it about 2.8 seconds later. This is a defect in UIA, but our moves are what reach it.
+- The isolated experiment (`console_handler_churn`, branch `worktree-agent-a44b1832786a5fa5d`, not merged) did not crash in about 180 passes, but found a related broken state: after a registration on the console window's whole subtree was added and later removed, a registration on the text area received no text events at all (18 or 19 of 20 passes), while the console raised tens of thousands of console events. It happened whichever call removed the subtree registration (`RemoveAllEventHandlers` or `RemoveEventHandlerGroup`). Removing and re-adding on the text area alone, NVDA's pattern in both forms, a subtree registration kept for the window's life, and a registration on the window element alone all kept hearing.
+- In the crashed run, the outpost re-registered its subscriptions on the same text area four times within two seconds (06:29:36.6 to 38.2 local) while the console flooded and the focus was elsewhere, each time removing everything and adding it again. The cause is visible in the log's shape: the focus's node was released by Core when the focus left, so `focus_without_element` held, and each text event from the still-registered element was taken as the focus's element arriving (`adopt_focus_element`, then `follow_focus_element`). Subscription moves are not logged, so the exact moves before the crash are not known.
+
+### 17.2 How NVDA follows the focus
+
+NVDA (`UIAHandler/__init__.py` 642 to 756; `NVDAObjects/UIA/__init__.py` 1623 to 1630), with selective registration, the default on Windows 11 22H2 and later:
+
+- One client, and two local groups built once: one with the local property changes and `Text_TextSelectionChanged`, and one that also has `Text_TextChanged`, used for the console's "Text Area" and Word's document.
+- On a focus, it adds the matching group to the focused element, on its MTA thread, unless that element already has one (`_localEventHandlerGroupElements`).
+- On losing focus, it removes the group from that element alone (`RemoveEventHandlerGroup`), and forgets the element whatever the result.
+- Its global group lives on the desktop's root for the program's life and is never moved.
+- Events raised between a focus and its group being added are not heard, except through the global group. NVDA accepts that gap.
+
+### 17.3 The proposal
+
+1. One focus-following group per outpost, built once, as NVDA's: the property changes and the caret event, with text changes and the active text position added for a text focus (two prebuilt groups, as NVDA's two). One thread and client, as today's registration threads.
+2. On a new focus whose element the outpost has, add the matching group to that element, then remove the previous element's group from the previous element with `RemoveEventHandlerGroup`. `RemoveAllEventHandlers` is used only at the outpost's shutdown.
+3. Never register or move a group to an element that already has it: a move to the element already followed does nothing. This removes the repeated re-registration of 17.1.
+4. No temporary registration on a window's subtree: `follow_focus_window` and `adopt_focus_element` go. Until the outpost has the focus's element, nothing is followed, as in NVDA's gap. On main the outpost reads the focused element as it reports the focus, so the gap is that read; with step 6, it is the path walk after the report (12.5).
+5. A focus whose element the outpost never finds (Windows Terminal's tab focus elements, which are in no tree) is followed by nothing; the terminal takes the focus a few milliseconds later.
+6. Section 16.5's "element found only when needed" relied on `follow_focus_window` and is withdrawn: the element is found for every focus, as now, and only the duplicated connections are looked at.
+
+### 17.4 Verification
+
+- Debug logging of every subscription move (from which element or scope, to which, and the calls made), so a later failure can be traced.
+- A mockapp test: focus moves from a text element to another element and back, and a text change raised after the return is heard; and a test that a move to the element already followed makes no UIA call.
+- `conhost_leave_flood` fifty times on the fix, with the harness's outpost crash count: about three to five crashes are expected at today's rate, so none is strong evidence. Every `conhost_` and `windows_terminal_` scenario once, and the step 6 scenario set, since how focus is followed changes.
+- The experiment rerun with the outpost's new pattern as a variant, as a supporting check.
+
+### 17.5 Order and decisions
+
+Built on main before step 6's revisions, which then rebase onto it. Decisions for Dickson: nothing followed during the gap before the element is found, as NVDA; dropping `follow_focus_window` and the adoption of an element from its own events; withdrawing 16.5's lazy element.
