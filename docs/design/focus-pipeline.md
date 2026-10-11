@@ -744,3 +744,60 @@ Still unproven, to be shown before or while building:
 - Whether Windows 11 Notepad's first focus, read through MSAA after a single slow probe, sounds different (item 6).
 
 Changes to section 12.9's migration under (b2): step 5 builds option (b) as described (the listener judges and reads; the outpost reports the result); a new step after it adds the outpost's per-window focus registration and the hand-over, with tests that (1) a focus raised in a window before its registration is reported once, from the listener; (2) one raised after the hand-over ended is reported once, from the outpost, with the sender; (3) one received by both in the overlap is reported once; (4) a group-scoped focus registration delivers mockapp's focus events (the E-scope result, kept as a test so a Windows change is caught); (5) a window whose registration timed out stays with the listener.
+
+## 16. Revisions after stage A step 6's first live run (proposed 2026-10-11, awaiting Dickson)
+
+Step 6 (the listener judging and reading each UIA focus, built on worktree branch `worktree-agent-a14ad13539258a122`, e9dd752) failed 48 of 90 scenarios in the full suite and was not merged. A read-only diagnosis of every failing run found one implementation defect behind most failures, and four places where the design's own statements did not hold. NVDA's handling of window announcement was traced at the same time. This section revises section 12 accordingly. Nothing here is built.
+
+### 16.1 What the run showed
+
+- The acceptance test ran against the wrong window, an implementation defect. Section 12.1 says the fact carries the element's nearest window handle and the test is NVDA's (`getNearestWindowHandle(sender)`, then `shouldAcceptEvent`, `UIAHandler/__init__.py` 924 to 925). The outpost's `allows_uia_focus` tested the element's own handle, or for a windowless element the application's keyboard focus window, or 0, and a test on 0 always passes. So a console's text area was accepted before its window was in front, and the Start button's focus, which Windows raises at each Verbatim start, was accepted although the taskbar is not the foreground window. On main the moved-on rules had dropped both by side effect. This accounts for every `conhost_` failure and most of the others.
+- Windows Terminal's tab list said "Tab switcher grouping, list", where the design predicted "list" alone from the sender's own ancestors (12.8). The group is named, and a control and content element, so it is presented. Why NVDA's capture omits it is not established.
+- Windows Terminal raised focus on one terminal from two senders with different runtime ids, and both were spoken. The design's duplicate evidence compares runtime ids only (12.1).
+- A tab's focus read after the terminal had taken the keyboard focus was dropped by the live `HasKeyboardFocus` read (12.1), the timing question already recorded for Dickson.
+- File Explorer's item view container was read as focused 16 ms before its first item's focus, and "pane" was spoken. Main dropped it with a moved-on rule that 12.8 removes. Whether NVDA queues and culls it is not established.
+
+### 16.2 The acceptance test against the nearest window
+
+The outpost keeps the acceptance test (decided by Dickson, 2026-10-11), run against the element's nearest window: its own native window handle if it has one, else the nearest ancestor's from the listener's read, which the fact already carries. The application's keyboard focus window is not used. An element with no window anywhere in its chain is tested as NVDA tests a handle of 0. Tests: mockapp, a windowless focus inside a window that is not in front is dropped; the same focus is accepted once its window is in front.
+
+### 16.3 Repeated focus, judged as NVDA judges it
+
+NVDA keeps one last focused UIA element for the whole program and treats an event as a duplicate when `CompareElements(sender, last)` is true and the sender still has the keyboard focus (`UIAHandler/__init__.py` 908 to 912). The revision follows that:
+
+- One last accepted focus for the listener, shared by its reading threads, not one per thread, so a focus in another application in between makes the next one new, as in NVDA.
+- `CompareElements` in place of comparing runtime ids, then the live `HasKeyboardFocus`.
+- Before building on it: log, for each read, the sender's runtime id, class name, framework id and window handle, and the `CompareElements` result against the last focus, and run `windows_terminal_short_output` to see whether UIA equates Windows Terminal's two senders. If it does not, take an NVDA capture of the same terminal opening to see what NVDA does with the second sender, and bring that to Dickson rather than add a rule.
+
+### 16.4 Windows announced from the focus's ancestry
+
+NVDA has no rule of its own for announcing a window (traced 2026-10-11: `eventHandler.doPreGainFocus`, `api.setFocusObject`, `NVDAObject.event_focusEntered`). A window is spoken either as the object a foreground event focuses, or as a newly entered ancestor of a focus: when the focus's top-level ancestor changes, speech is cancelled and the entered presentable ancestors are spoken outermost first, then the focus, whether or not any foreground event arrived. A foreground event whose window is not yet in front is deferred for at most two cycles and then dropped, never kept. For a window NVDA reads through UIA, which includes the console host on current Windows 11 and Windows Terminal, NVDA drops every MSAA event, foreground included, so those windows are announced only from the focus's ancestry: the console window element, named and with the Window role, is the text area's parent and is spoken "title window".
+
+The revision:
+
+- A foreground fact whose window is not the foreground window when handled is dropped, and one for a window read through UIA is dropped, as NVDA drops them. `early_foreground` and `report_early_foreground` (step 3's provisional rule) are removed.
+- The top-level window is an ordinary presentable ancestor, by NVDA's rules: a UIA top-level window that is named or described and is a control and content element is spoken "title window"; an MSAA top-level window's client with a system menu is presentable although its role is pane, and is spoken by its title alone (pane is silent on focus). Core takes this from a parity entry; the outpost carries the fact that the client belongs to a top-level window with a system menu.
+- Core's special case for an unannounced foreground window (`unannounced_foreground_window`, `crates/verbatim-core/src/reduce.rs`) is replaced by the general step: when the focus's top-level window changes, cancel speech, then speak the entered ancestors outermost first, then the focus.
+- Where the ancestry is the only source of the title, it must be complete. The console text area's chain must include the console window element; step 3's first live run saw it arrive with no ancestors. The listener's read and its classic fallback for the windowless text area must keep that element.
+- To be checked against NVDA captures before the console scenarios' expectations are relied on: what NVDA says when the console window comes to the front about 400 ms after its text area's focus (NVDA would also drop that focus, and depends on a later one), and whether Windows 11 Notepad's top level is read through UIA ("title window") or MSAA ("title").
+- Whether `unshown_foreground` stays is Verbatim's own earlier decision for File Explorer's placeholder title and is not changed here.
+
+### 16.5 The outpost's own element, found only when needed
+
+The step's mockapp counts put provider hits per UIA focus at 305 steady with remote operations, against 91 before. The two figures are not counted alike: 91 excluded the outpost's focused-element read, while 305 includes the listener's read, which replaces it, the outpost's path walk to its own copy, both moves of the focus-following subscriptions, and window-message connections that rose from 1 to 10 because the listener's and the outpost's separate clients each connect. The first revision step measures each part separately against main's figures with the same accounting, so the real increase is known.
+
+Then the outpost finds its own copy of the focus only when something needs the live element, instead of after every focus (12.5): a text read or the caret watch for an editable focus, review or navigation from the focus, the controller relation, a dialog's own text, or a query on an ancestor. Until then, the focus-following subscriptions stay on the focus's top-level window (`follow_focus_window`), as 12.5 already allows. Whether that is cheaper overall depends on how many more events a window-wide subscription receives than one on the focus; that is measured in mockapp and in `rapid_tabbing_in_settings` before it is adopted. If the window-wide subscription costs more, the element is found for every focus as now and only the duplicated connections are removed.
+
+### 16.6 Reading threads end with their application's outpost
+
+Section 12.2 has a thread end when its application exits and after a period with no events; the step as built ended threads only after a minute idle. Ending on idle loses the thread's last focus, and with it the evidence that a runtime id now names a different element (`same_as_last`), which NVDA, keeping its last focus for its whole life, never loses. The revision: no idle end. A thread ends when the listener learns that its application's outpost has ended, through the hand-over messages it already receives, so nothing new watches processes. With 16.3's single shared last focus, the per-thread state that remains is the ancestors' runtime ids.
+
+### 16.7 Order of work
+
+1. The acceptance test against the nearest window (16.2), with its tests; rerun the step 6 scenario set.
+2. The logging for 16.3 and for the tab switcher's ancestors, then the NVDA captures 16.1 and 16.4 list: the tab switch with its focus ancestry, File Explorer's folder opening, and a console window opening.
+3. 16.3, 16.4 and 16.6, each with its mockapp test and scenario runs.
+4. The measurement and the decision in 16.5.
+5. The full suite, ten runs each of the related scenarios, and only then the merge.
+
+Decisions for Dickson: 16.3's single shared last focus; 16.4 as a whole, including removing step 3's provisional early-foreground rule; adopting 16.5's lazy element only after its measurement; 16.6.
