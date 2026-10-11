@@ -195,8 +195,8 @@ count a flood of identical lines (their count mixes buffer and view
 scrolls, PowerShell's output raises none, Windows Terminal raises none):
 stage C's question is closed.
 
-Two harness defects found on 2026-10-11, each fixed and committed but
-not yet built or run:
+Two harness defects found on 2026-10-11, both fixed (the full suite
+passed 90 of 90 with the fixes, 2026-10-11):
 
 - The recording check failed clean runs. It required the video to last
   as long as the capture ran, from the first frame to sending `q`, but on
