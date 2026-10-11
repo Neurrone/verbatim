@@ -1021,14 +1021,22 @@ verified.
   then the focus. Verbatim's two outposts, one for each process, report
   them with nothing ordering them, and the reducer says nothing for a
   window reported after a focus inside it, so the window went unannounced
-  whenever the content's outpost was quicker. **Matched since 2026-10-08,
-  by another route**: an outpost reporting a focus whose top-level window
-  belongs to another process and is the foreground window reports that
-  window first, read as a foreground report reads it, so the window
-  reaches Core before the focus whichever outpost is quicker, and its
-  second report says nothing (a reducer test feeding both orders). A
-  console window was handled the same way until 2026-10-11; it is now
-  one application, below.
+  whenever the content's outpost was quicker. NVDA's focus also reaches
+  the frame through its ancestry: its raw-view walk goes from the page up
+  through the frame window to the desktop. **Matched since 2026-10-11, as
+  NVDA does it**: the focus listener's read goes on past the top-level
+  element of the focus's own process, where a remote operation's walk
+  ends, the classic way, until the top-level window, and the outpost reads
+  the frame through its own API, so the frame is an entered ancestor of
+  the page's focus and is announced with it whichever outpost is quicker;
+  a foreground report for the frame that comes before the focus is
+  announced, and the page's focus does not announce the frame again,
+  since it is the same top-level window with the same role and name (a
+  reducer test feeding both orders). From 2026-10-08 until then an
+  outpost reporting a focus whose top-level window belonged to another
+  process reported that window first, as a foreground report, a step
+  NVDA does not have. A console window was handled the same way until
+  2026-10-11; it is now one application, below.
 - Console windows. Windows names a console window's owner, by
   `GetWindowThreadProcessId`, as the console's client (such as
   `powershell.exe`), while the window, its UIA provider and its text

@@ -3161,14 +3161,19 @@ fn spoken_by(inputs: &[Input]) -> Vec<Vec<UtteranceSegment>> {
 
 #[test]
 fn a_settings_page_is_announced_before_its_focus_whichever_outpost_reports_first() {
-    // The Settings app: the frame window is `ApplicationFrameHost`'s, the
-    // page and its focus `SystemSettings`'s, whose outpost reports the frame
-    // just before the focus. Either outpost can reach Core first.
+    // The Settings app: the frame window is `ApplicationFrameHost`'s, read
+    // through MSAA as its client area, a pane, and the page and its focus
+    // are `SystemSettings`'s, whose focus reaches the frame through its
+    // ancestry, as NVDA's walk does. Either outpost can reach Core first:
+    // the frame's foreground report, or the page's focus.
     let frame_host = Pid(1);
     let settings = Pid(2);
-    let frame = || node(1, Role::Pane, Some("Settings"), None, StateSet::new());
-    let from_frame_host = foreground_in(frame_host, foreground_window(10), frame());
-    let from_settings = foreground_in(settings, foreground_window(10), frame());
+    let frame = |id| {
+        let mut frame = node(id, Role::Pane, Some("Settings"), None, StateSet::new());
+        frame.details.top_level_client = true;
+        frame
+    };
+    let from_frame_host = foreground_in(frame_host, foreground_window(10), frame(1));
     let search = || {
         focus_in(
             settings,
@@ -3180,13 +3185,10 @@ fn a_settings_page_is_announced_before_its_focus_whichever_outpost_reports_first
                 None,
                 StateSet::new(),
             ),
-            vec![node(
-                2,
-                Role::Window,
-                Some("Settings"),
-                None,
-                StateSet::new(),
-            )],
+            vec![
+                frame(4),
+                node(2, Role::Window, Some("Settings"), None, StateSet::new()),
+            ],
         )
     };
     let expected = vec![
@@ -3198,14 +3200,14 @@ fn a_settings_page_is_announced_before_its_focus_whichever_outpost_reports_first
         ],
     ];
     assert_eq!(
-        spoken_by(&[from_frame_host.clone(), from_settings.clone(), search()]),
+        spoken_by(&[from_frame_host.clone(), search()]),
         expected,
-        "the frame host's report first"
+        "the frame host's report first: the page's focus does not repeat the frame"
     );
     assert_eq!(
-        spoken_by(&[from_settings, search(), from_frame_host]),
+        spoken_by(&[search(), from_frame_host]),
         expected,
-        "the page's focus first"
+        "the page's focus first: it announces the frame, whose report then says nothing"
     );
 }
 

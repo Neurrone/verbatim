@@ -104,7 +104,13 @@ event's own element:
   handle, up to the first one the thread knew, the rest reused from the
   read before. A windowless focus whose read named no window, the console
   host's text area above all, has its window found by the classic walk,
-  and the ancestor that is that window marked with it. A read that fails
+  and the ancestor that is that window marked with it. A remote
+  operation's walk ends at the top-level element of the focus's own
+  process; when that element is not a top-level window, as the Settings
+  page's inside its frame, the read goes on with classic tree walker
+  steps up to the desktop root, or to an ancestor of the focus before, as
+  NVDA's raw-view walk does. An outermost element that is a top-level
+  window costs no call. A read that fails
   reports the focus from its event, its ancestors unknown, unless the
   event said it lacked the keyboard focus, as NVDA lets a focus through
   whose read fails.
@@ -155,9 +161,11 @@ outpost marks each event in a console window with the client as its
 event's source, and answers a focus-now query for its console window,
 which it recognizes by its UIA element's process id
 (`read::hosts_console_window`). A focus whose top-level window belongs to
-another process is reported with that window first
-(`report_foreign_window`, for the Settings app's frame), never for a
-console window, whose own foreground event reaches the same outpost.
+another process, as the Settings app's page inside `ApplicationFrameHost`'s
+frame, reaches that window through its ancestry: the listener's read
+continues past the top-level element of the focus's own process to the
+top-level window (`FocusReader::reach_the_top_level`), and the outpost
+reads the frame through its own API.
 
 A fact for an application with no outpost starts one
 (`DeliveredFact::may_start_outpost`) unless it is a selection or a

@@ -64,12 +64,14 @@ use verbatim_uia::map::{
     CachedUiaParts, add_legacy_checked_state, cached_is_control_and_content,
     cached_native_window_handle, snapshot_parts_from_cached_element, wants_legacy_checked_state,
 };
-use verbatim_uia::{ElementExt as _, Uia};
+use verbatim_uia::{ElementExt as _, Uia, WalkerExt as _};
 use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, Path, focus_ancestry};
 
 use crate::arbitration::window_class_name;
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
-use crate::outpost::window::{is_shell_transition_window, window_is_hung, window_thread};
+use crate::outpost::window::{
+    is_shell_transition_window, top_level_of, window_is_hung, window_thread,
+};
 use crate::protocol::{DeliveredFact, EventTiming, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact};
 
 /// The most ancestors read for a focus, as many as the outpost walks.
@@ -369,6 +371,13 @@ impl FocusReader {
                 self.mark_window(found, ancestors);
             }
         }
+        if ancestry.met_known.is_none()
+            && !ancestry.depth_limited
+            && let Some(facts) = ancestors.as_mut()
+        {
+            let outermost = ancestry.ancestors.last().unwrap_or(element);
+            self.reach_the_top_level(outermost, hwnd, facts);
+        }
         self.last = Some(LastFocus {
             runtime_id: snapshot.runtime_id.clone(),
             element: element.clone(),
@@ -411,6 +420,76 @@ impl FocusReader {
             ?same_as_last_accepted,
             "UIA focus sender"
         );
+    }
+
+    /// Completes `facts`, the ancestors a read found, nearest first, ending
+    /// at `outermost` (the focus itself, whose own window is `hwnd`, when
+    /// there are none), up to the top-level window, as NVDA's raw-view walk
+    /// reaches it. A remote operation's walk ends at the top-level element
+    /// of the focus's own process, and in the Settings app that is the
+    /// content's window, inside the frame window of another process
+    /// (`ApplicationFrameHost`'s), whose parent the program reports as null.
+    /// So when the outermost ancestor is not a top-level window, the walk
+    /// goes on the classic way, one tree walker step per ancestor, until
+    /// the desktop root or an ancestor of the focus before, whose own
+    /// ancestors are then reused. The outpost reads the frame through its
+    /// own API from the handle each step brings, as NVDA switches API at a
+    /// window boundary. An outermost ancestor that is a top-level window
+    /// costs no call; a windowless one, one call, which finds the root.
+    fn reach_the_top_level(
+        &self,
+        outermost: &IUIAutomationElement,
+        hwnd: isize,
+        facts: &mut Vec<UiaAncestorFact>,
+    ) {
+        let window = facts.last().map_or(hwnd, |fact| fact.hwnd);
+        if window != 0 && top_level_of(window) == window {
+            return;
+        }
+        let properties = verbatim_uia::cached_properties(Fetches::default());
+        let (Ok(cache), Ok(walker), Ok(root)) = (
+            self.uia.cache_request(&properties),
+            self.uia.raw_view_walker(),
+            self.uia.root_element(),
+        ) else {
+            return;
+        };
+        let root = verbatim_uia::runtime_id(&root);
+        let known: Vec<&[i32]> = self
+            .last
+            .iter()
+            .flat_map(|last| {
+                std::iter::once(last.runtime_id.as_slice()).chain(
+                    last.ancestors
+                        .iter()
+                        .map(|ancestor| ancestor.snapshot.runtime_id.as_slice()),
+                )
+            })
+            .collect();
+        let limit = usize::try_from(MAX_ANCESTORS).unwrap_or(usize::MAX);
+        let mut current = outermost.clone();
+        while facts.len() < limit {
+            // A failed step, a provider that did not answer in time
+            // included, ends the walk with what it has.
+            let Ok(parent) = walker.parent(&current, &cache) else {
+                break;
+            };
+            let runtime_id = verbatim_uia::runtime_id(&parent);
+            if runtime_id == root {
+                break;
+            }
+            facts.push(ancestor_fact(&parent));
+            if let Some(met) = known
+                .iter()
+                .position(|known| *known == runtime_id.as_slice())
+            {
+                if let Some(last) = &self.last {
+                    facts.extend(reused_ancestors(&last.ancestors, met));
+                }
+                break;
+            }
+            current = parent;
+        }
     }
 
     /// Gives the ancestor that is window `hwnd`'s own element its handle,
