@@ -2302,8 +2302,20 @@ verified.
   tree, by its name and position, so said "tab control" before "list"
   (accepted by Dickson for the time being, 2026-10-10), and dropped the tab
   left, which had lost its selection by then (8be2223, Dickson,
-  2026-10-10, withdrawn with the design's decision 2 of section 10.1). The
-  two-window scenarios switch windows with Alt+Tab (see above).
+  2026-10-10, withdrawn with the design's decision 2 of section 10.1).
+  A single Control+Shift+Tab, Control released at once, gives NVDA's
+  speech by timing: of two captures on 2026-10-09, one had only the
+  terminal, the other the list and the tab. With Control held through the
+  tab switcher, as a person switches, NVDA's speech is fixed: captured on
+  2026-10-12 (alpha-57645, the portable Windows Terminal 1.24, two tabs),
+  Control held then Shift+Tab says "Tab switcher grouping", "list", and
+  the tab moved to ("<title> 1 of 2") in full, and releasing Control the
+  tab's terminal and its line; Control held then Tab the same for the
+  second tab ("<title> two 2 of 2"). Since 2026-10-12
+  `windows_terminal_tabs` switches that way (`Scenario::hold_key`) and
+  expects exactly that speech; whether Verbatim says "Tab switcher
+  grouping" is to be seen in its first run. The two-window scenarios
+  switch windows by bringing them to the front (see above).
 
   Up and Down Arrow in a terminal, a selection list a program draws
   among them: **matched since 2026-10-09** (Dickson, 2026-10-09,

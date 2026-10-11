@@ -32,18 +32,21 @@
 //! NVDA's silence there is NVDA not recognising the terminal's focus, a
 //! bug not copied (Dickson, 2026-10-09, `docs/parity.md`).
 //!
-//! Switching tabs with Control+Tab or Control+Shift+Tab, NVDA, captured
-//! live on 2026-10-09, queues "list" and the tab ("<title> 1 of 2"), which
-//! holds the keyboard focus until Windows Terminal moves it to the tab's
-//! terminal, then "<title> terminal"; on Control+Tab the tab left comes
-//! first, then the tab moved to ("<title> two 2 of 2"). Verbatim does the
-//! same since stage A step 6 (`docs/design/focus-pipeline.md`, section
-//! 10.1, items 2 and 3): the focus listener judges and reads each tab's
-//! focus from the event's own element, so the tab's ancestors are its own
-//! ("list", with no "tab control" above it) and the tab left, which still
-//! has the keyboard focus when its event is read, is announced too; each
-//! tab's name is culled once the next focus is applied, then the terminal
-//! and its line are said (`docs/parity.md`).
+//! Switching tabs holds Control, as a person does through Windows
+//! Terminal's tab switcher, and releases it once the tab is chosen
+//! (`Scenario::hold_key`): a single Control+Shift+Tab, with Control
+//! released at once, gives NVDA's speech by timing, only the terminal in
+//! one capture of 2026-10-09 and the list and the tab in another. NVDA,
+//! captured live on 2026-10-12 (alpha-57645, the portable Windows Terminal
+//! 1.24, two tabs, shells started with `-NonInteractive`), with Control
+//! held then Shift+Tab, says "Tab switcher grouping", "list", and the tab
+//! moved to ("<title> 1 of 2"), each in full; on releasing Control, the
+//! tab's terminal, "<title> terminal", with the line the caret is on; with
+//! Control held then Tab, the same for the second tab ("<title> two 2 of
+//! 2"). Verbatim is expected to say the same: the focus listener reads
+//! each tab's focus from the event's own element, so the tab's ancestors
+//! are its own (`docs/design/focus-pipeline.md`, section 12;
+//! `docs/parity.md`).
 //! Typing after a switch is echoed and its output spoken as in any
 //! terminal.
 //!
@@ -74,7 +77,7 @@ use super::terminal_flood::{FLOOD_STEP, line};
 use super::terminal_key_timing::FILE_SIGNALS;
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
-use crate::speech::{Ending, cut_off, heard};
+use crate::speech::Ending;
 
 /// The flood that waits halfway, and again at its end.
 const AWAY_SCRIPT: &str = "for ($line = 1; $line -le 100; $line++) { \"flood line $line\" }\r\n\
@@ -361,6 +364,28 @@ pub(crate) fn body_two_windows_terminal(scenario: &mut Scenario, state: &mut Sce
     scenario.speech().expect(&["yo", PROMPT]);
 }
 
+/// Switches to the tab titled `title`, the `position`th of two, as NVDA was
+/// captured switching (the module's documentation): Control held, `key`
+/// pressed, the tab switcher, its list, and the tab heard in full; then
+/// Control released, and the tab's terminal and its line, the prompt.
+fn switch_tab(scenario: &mut Scenario, key: &str, title: &str, position: u32) {
+    scenario.hold_key("control").expect("holds control");
+    scenario
+        .send_keys(&[key])
+        .expect("moves in the tab switcher");
+    scenario.speech().expect(&[
+        "Tab switcher grouping",
+        "list",
+        &format!("{title} {position} of 2"),
+    ]);
+    scenario
+        .release_key("control")
+        .expect("releases control on the tab");
+    scenario
+        .speech()
+        .expect(&[&format!("{title} terminal"), PROMPT]);
+}
+
 /// `windows_terminal_tabs`: a second tab is opened in the window.
 pub(crate) fn body_tabs(scenario: &mut Scenario, state: &mut ScenarioState) {
     let first = terminal::title(state).to_owned();
@@ -381,28 +406,10 @@ pub(crate) fn body_tabs(scenario: &mut Scenario, state: &mut ScenarioState) {
         &second_state,
         &[&format!("{second} terminal"), "blank"],
     );
-    scenario
-        .send_keys(&["control+shift+tab"])
-        .expect("switches to the first tab");
-    scenario.speech().expect_sequence(&[
-        heard("list"),
-        cut_off(&format!("{first} 1 of 2")),
-        heard(&format!("{first} terminal")),
-        heard(PROMPT),
-    ]);
+    switch_tab(scenario, "shift+tab", &first, 1);
     terminal::type_with_echo(scenario, "echo hi", terminal::Echo::Shown);
     scenario.speech().expect(&["hi", PROMPT]);
-    scenario
-        .send_keys(&["control+tab"])
-        .expect("switches to the second tab");
-    // The tab left first, as Windows Terminal gives it the focus first.
-    scenario.speech().expect_sequence(&[
-        heard("list"),
-        cut_off(&format!("{first} 1 of 2")),
-        cut_off(&format!("{second} 2 of 2")),
-        heard(&format!("{second} terminal")),
-        heard(PROMPT),
-    ]);
+    switch_tab(scenario, "tab", &second, 2);
     terminal::type_with_echo(scenario, "echo yo", terminal::Echo::Shown);
     scenario.speech().expect(&["yo", PROMPT]);
 }
