@@ -30,16 +30,29 @@
 //!
 //! The dedicated connection matters. [`ControlClient::request`] discards
 //! any frame that is not the reply it is waiting for, so the collector
-//! never calls it after its subscribe: its one request, `AwaitIdle`, is
-//! sent with [`ControlClient::send`] and its reply read among the frames.
+//! never calls it after its subscribe: the connection is split
+//! ([`ControlClient::split`]), its one request, `AwaitIdle`, is sent on
+//! the writing half, and its reply is read among the frames.
+//!
+//! The reading half is read on a thread of its own, which records each
+//! frame on the timeline the moment it reaches the harness and passes it
+//! on to the assertions. The scenario's own thread waits on its requests
+//! to the agent, such as bringing a window forward, which takes a few
+//! hundred milliseconds and once took 1.4 seconds; read on that thread,
+//! a frame that arrived meanwhile was recorded only once the request was
+//! answered, so the timeline put it late, after the step it preceded.
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::io;
 use std::ops::Range;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::thread;
 use std::time::{Duration, Instant};
 
-use verbatim_control::client::{Client as ControlClient, ok_or_error};
+use verbatim_control::client::{self as control, Client as ControlClient, ok_or_error};
 use verbatim_control::protocol::{Frame, Request};
 use verbatim_model::{TraceId, UtteranceEnding, UtteranceId};
 
@@ -54,29 +67,34 @@ pub const STEP_TIMEOUT: Duration = Duration::from_secs(15);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// How long a read for frames already on their way waits before deciding
-/// there are none: the collector drains what has arrived before an input
-/// is injected. Not a wait for anything to happen.
+/// there are none: the collector drains what has arrived, and what its
+/// reader thread is handing on, before an input is injected. Not a wait
+/// for anything to happen.
 const DRAIN_READ: Duration = Duration::from_millis(1);
 
-/// Where a [`SpeechCollector`] reads frames from: the live, subscribed
-/// control connection, or a scripted sequence in this module's unit tests.
-trait FrameSource {
+/// Where a [`SpeechCollector`]'s reader thread reads frames from: the
+/// reading half of the live, subscribed control connection, or a scripted
+/// sequence in this module's unit tests. A read timeout is an error of
+/// kind `WouldBlock` or `TimedOut`, after which the thread reads again.
+trait FrameSource: Send {
     fn next_frame(&mut self) -> io::Result<Frame>;
-    fn send(&mut self, request: Request) -> io::Result<u64>;
-    fn set_read_timeout(&mut self, timeout: Duration) -> io::Result<()>;
 }
 
-impl FrameSource for ControlClient {
+/// Where a [`SpeechCollector`] sends its one request, `AwaitIdle`: the
+/// writing half of the same connection, or the scripted sequence.
+trait RequestSink: Send {
+    fn send(&mut self, request: Request) -> io::Result<u64>;
+}
+
+impl FrameSource for control::Receiver {
     fn next_frame(&mut self) -> io::Result<Frame> {
-        ControlClient::next_frame(self)
+        control::Receiver::next_frame(self)
     }
+}
 
+impl RequestSink for control::Sender {
     fn send(&mut self, request: Request) -> io::Result<u64> {
-        ControlClient::send(self, request)
-    }
-
-    fn set_read_timeout(&mut self, timeout: Duration) -> io::Result<()> {
-        ControlClient::set_read_timeout(self, Some(timeout))
+        control::Sender::send(self, request)
     }
 }
 
@@ -232,10 +250,18 @@ enum Absorbed {
 /// Subscribes to and collects speech frames on its own control-plane
 /// connection.
 pub struct SpeechCollector {
-    source: Box<dyn FrameSource>,
+    /// The connection's writing half.
+    sink: Box<dyn RequestSink>,
+    /// The frames the reader thread has read, already on the timeline, in
+    /// the order they came, or the error that ended the connection.
+    frames: mpsc::Receiver<io::Result<Frame>>,
+    /// Set when the collector is dropped: the reader thread stops at its
+    /// next read.
+    stop: Arc<AtomicBool>,
     /// The scenario's shared action-and-speech log (see [`crate::timeline`]).
     timeline: Timeline,
-    /// The read timeout the connection normally has.
+    /// How long one wait for a frame lasts before the waiting assertion
+    /// checks its own deadline.
     read_timeout: Duration,
     /// How long an assertion waits; [`STEP_TIMEOUT`] outside unit tests.
     step_timeout: Duration,
@@ -264,34 +290,54 @@ impl SpeechCollector {
     /// by the collector, pushing every utterance it reads to `timeline`.
     /// The first speech subscription to a Verbatim also receives the
     /// speech it queued before anyone subscribed, its startup speech. The
-    /// connection then reads with the poll interval
-    /// ([`crate::agent_client::CONTROL_POLL_INTERVAL`]), so the collector
-    /// can check its own deadlines.
+    /// connection is then split, and its reading half read on a thread of
+    /// its own with the poll interval
+    /// ([`crate::agent_client::CONTROL_POLL_INTERVAL`]) as its read
+    /// timeout, so the thread notices the collector has gone; assertions
+    /// wait for frames from it for as long, then check their own
+    /// deadlines.
     ///
     /// # Errors
     ///
-    /// Returns an error if the subscribe request fails, or the read timeout
-    /// cannot be set.
+    /// Returns an error if the subscribe request fails, the read timeout
+    /// cannot be set, the connection cannot be split, or the reader thread
+    /// cannot be started.
     pub fn subscribe(mut control: ControlClient, timeline: Timeline) -> io::Result<Self> {
         ok_or_error(control.request(Request::SubscribeSpeech)?)?;
         let poll = crate::agent_client::CONTROL_POLL_INTERVAL;
         control.set_read_timeout(Some(poll))?;
-        Ok(Self::from_source(
-            Box::new(control),
+        let (sender, receiver) = control.split()?;
+        Self::from_source(
+            Box::new(receiver),
+            Box::new(sender),
             timeline,
             poll,
             STEP_TIMEOUT,
-        ))
+        )
     }
 
+    /// A collector reading `source` on a thread it starts, and sending on
+    /// `sink`.
     fn from_source(
         source: Box<dyn FrameSource>,
+        sink: Box<dyn RequestSink>,
         timeline: Timeline,
         read_timeout: Duration,
         step_timeout: Duration,
-    ) -> Self {
-        Self {
-            source,
+    ) -> io::Result<Self> {
+        let (passed, frames) = mpsc::channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        {
+            let timeline = timeline.clone();
+            let stop = Arc::clone(&stop);
+            thread::Builder::new()
+                .name("speech reader".to_owned())
+                .spawn(move || read_frames(source, &timeline, &passed, &stop))?;
+        }
+        Ok(Self {
+            sink,
+            frames,
+            stop,
             timeline,
             read_timeout,
             step_timeout,
@@ -305,10 +351,11 @@ impl SpeechCollector {
             order: Vec::new(),
             next_sound: u64::MAX,
             pauses: VecDeque::new(),
-        }
+        })
     }
 
-    /// Records one frame on the timeline and in the collector's state.
+    /// Records one frame, which the reader thread has put on the timeline,
+    /// in the collector's state.
     fn absorb(&mut self, frame: Frame) -> Absorbed {
         match frame {
             Frame::Speech {
@@ -318,7 +365,6 @@ impl SpeechCollector {
                 event_observed_at_ms,
                 queued_at_ms,
             } => {
-                self.timeline.push_utterance(&text, Some(trace_id));
                 self.texts.insert(utterance, text.clone());
                 self.traces.insert(utterance, trace_id);
                 if !self.endings.contains_key(&utterance) {
@@ -337,7 +383,6 @@ impl SpeechCollector {
                 Absorbed::Utterance(Utterance { utterance, text })
             }
             Frame::SpeechStarted { utterance, at_ms } => {
-                self.timeline.push_audio_started(self.text_of(utterance));
                 self.started.insert(utterance);
                 if let Some(timing) = self.timings.get_mut(&utterance) {
                     timing.audio_started_at_ms = Some(at_ms);
@@ -345,7 +390,6 @@ impl SpeechCollector {
                 Absorbed::Other
             }
             Frame::SpeechEnded { utterance, ending } => {
-                self.timeline.push_ended(self.text_of(utterance), &ending);
                 self.unended.remove(&utterance);
                 self.endings.insert(utterance, ending);
                 Absorbed::Other
@@ -358,7 +402,6 @@ impl SpeechCollector {
                 let text = format!("sound: {indication}");
                 let utterance = UtteranceId(self.next_sound);
                 self.next_sound -= 1;
-                self.timeline.push_utterance(&text, None);
                 self.texts.insert(utterance, text.clone());
                 self.started.insert(utterance);
                 self.endings.insert(utterance, UtteranceEnding::Completed);
@@ -367,7 +410,6 @@ impl SpeechCollector {
             // A pause or resume is not an utterance: it is asserted on its
             // own, after the input that caused it.
             Frame::SpeechPaused { paused, .. } => {
-                self.timeline.push_paused(paused);
                 self.pauses.push_back(paused);
                 Absorbed::Other
             }
@@ -386,19 +428,41 @@ impl SpeechCollector {
             .map_or("(unknown utterance)", String::as_str)
     }
 
-    /// Reads one frame, keeping any utterance it announces in
-    /// [`Self::pending`]. A read timeout is `Ok(None)`.
+    /// Takes one frame from the reader thread, waiting up to the read
+    /// timeout for one, and keeps any utterance it announces in
+    /// [`Self::pending`]. No frame in that time is `Ok(None)`.
     fn read_one(&mut self) -> io::Result<Option<Absorbed>> {
-        match self.source.next_frame() {
-            Ok(frame) => {
+        self.read_within(self.read_timeout)
+    }
+
+    /// [`read_one`](Self::read_one), waiting up to `wait`.
+    fn read_within(&mut self, wait: Duration) -> io::Result<Option<Absorbed>> {
+        match self.frames.recv_timeout(wait) {
+            Ok(Ok(frame)) => {
                 let absorbed = self.absorb(frame);
                 if let Absorbed::Utterance(utterance) = &absorbed {
                     self.pending.push_back(utterance.clone());
                 }
                 Ok(Some(absorbed))
             }
-            Err(error) if is_read_timeout(&error) => Ok(None),
-            Err(error) => Err(error),
+            Ok(Err(error)) => Err(error),
+            Err(RecvTimeoutError::Timeout) => Ok(None),
+            Err(RecvTimeoutError::Disconnected) => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "the speech connection's reader has stopped",
+            )),
+        }
+    }
+
+    /// Reads every frame already on its way, without waiting for any to
+    /// happen.
+    fn read_arrived(&mut self) {
+        loop {
+            match self.read_within(DRAIN_READ) {
+                Ok(Some(_)) => {}
+                Ok(None) => return,
+                Err(error) => self.fail(&format!("the speech connection failed: {error}")),
+            }
         }
     }
 
@@ -654,6 +718,35 @@ impl SpeechCollector {
         }
     }
 
+    /// Requires, for a step meant to cut `heard` off while it plays, that
+    /// `heard` had not been heard in full when the step's action had
+    /// completed, which is now: every frame already on its way is read
+    /// first. Its having been cut off already passes, as Verbatim may act
+    /// on the change before the harness sees the action complete. An
+    /// action that completes only after the utterance has played to its
+    /// end did not test what the step was meant to, so that fails as a
+    /// harness error, not as Verbatim's: the action was too slow, which
+    /// `when` describes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `heard` had been heard in full.
+    pub fn require_not_completed(&mut self, heard: &Heard, when: &str) {
+        self.read_arrived();
+        if matches!(
+            self.endings.get(&heard.utterance),
+            Some(UtteranceEnding::Completed)
+        ) {
+            self.fail_at(
+                &format!(
+                    "harness error: {:?} had been heard in full {when}, so the step meant to cut it off came too late",
+                    heard.text
+                ),
+                heard.utterance,
+            );
+        }
+    }
+
     /// Asserts that speech was paused next, waiting up to [`STEP_TIMEOUT`]
     /// for Verbatim to report it: the evidence that Shift's pause has been
     /// applied.
@@ -799,7 +892,7 @@ impl SpeechCollector {
     /// idle, and reads every frame until the answer: every utterance
     /// queued before it is then read.
     fn await_idle(&mut self, after_input: Option<u64>) {
-        let id = match self.source.send(Request::AwaitIdle {
+        let id = match self.sink.send(Request::AwaitIdle {
             after_input,
             timeout_ms: u64::try_from(IDLE_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
         }) {
@@ -836,20 +929,7 @@ impl SpeechCollector {
     ///
     /// Panics, naming the unmatched utterances, if there are any.
     pub fn require_all_asserted(&mut self, when: &str) {
-        if let Err(error) = self.source.set_read_timeout(DRAIN_READ) {
-            self.fail(&format!("could not read the speech connection: {error}"));
-        }
-        let drained = loop {
-            match self.read_one() {
-                Ok(Some(_)) => {}
-                Ok(None) => break Ok(()),
-                Err(error) => break Err(error),
-            }
-        };
-        let restored = self.source.set_read_timeout(self.read_timeout);
-        if let Err(error) = drained.and(restored) {
-            self.fail(&format!("the speech connection failed: {error}"));
-        }
+        self.read_arrived();
         // A pause or resume no step asserted is left behind here, on the
         // timeline: every Shift pressed with another key pauses speech,
         // which the key after it resumes, as in NVDA, and only a step
@@ -887,6 +967,74 @@ impl SpeechCollector {
                 })
             })
             .collect()
+    }
+}
+
+impl Drop for SpeechCollector {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// The reader thread: reads every frame from `source` as it arrives,
+/// records it on `timeline` at once, and passes it on through `passed`,
+/// until the connection fails, whose error is passed on last, the
+/// collector is dropped (`stop`), or nothing takes frames any more.
+fn read_frames(
+    mut source: Box<dyn FrameSource>,
+    timeline: &Timeline,
+    passed: &mpsc::Sender<io::Result<Frame>>,
+    stop: &AtomicBool,
+) {
+    let mut texts: HashMap<UtteranceId, String> = HashMap::new();
+    while !stop.load(Ordering::Relaxed) {
+        match source.next_frame() {
+            Ok(frame) => {
+                record(timeline, &mut texts, &frame);
+                if passed.send(Ok(frame)).is_err() {
+                    return;
+                }
+            }
+            Err(error) if is_read_timeout(&error) => {}
+            Err(error) => {
+                let _ = passed.send(Err(error));
+                return;
+            }
+        }
+    }
+}
+
+/// Records `frame` on `timeline` as it arrives; `texts` holds every
+/// utterance's text so far, by id, which an audio start or an ending is
+/// recorded with.
+fn record(timeline: &Timeline, texts: &mut HashMap<UtteranceId, String>, frame: &Frame) {
+    let text_of = |texts: &HashMap<UtteranceId, String>, utterance: &UtteranceId| {
+        texts
+            .get(utterance)
+            .map_or("(unknown utterance)", String::as_str)
+            .to_owned()
+    };
+    match frame {
+        Frame::Speech {
+            utterance,
+            trace_id,
+            text,
+            ..
+        } => {
+            timeline.push_utterance(text, Some(*trace_id));
+            texts.insert(*utterance, text.clone());
+        }
+        Frame::SpeechStarted { utterance, .. } => {
+            timeline.push_audio_started(&text_of(texts, utterance));
+        }
+        Frame::SpeechEnded { utterance, ending } => {
+            timeline.push_ended(&text_of(texts, utterance), ending);
+        }
+        Frame::Sound { indication, .. } => {
+            timeline.push_utterance(&format!("sound: {indication}"), None);
+        }
+        Frame::SpeechPaused { paused, .. } => timeline.push_paused(*paused),
+        _ => {}
     }
 }
 
@@ -944,36 +1092,106 @@ mod tests {
 
     use super::*;
 
-    /// Hands out scripted frames in order, then reports a read timeout on
-    /// every later read, as an idle connection would. `AwaitIdle` is
-    /// answered at once, after the frames scripted before it.
+    /// Hands the reader thread the frames a test feeds it, in order, and
+    /// reports a read timeout after [`SHORT`] without one, as an idle
+    /// connection would. Each time it is asked for a frame while it has
+    /// none, it reports how many fed frames it has handed out, every one
+    /// of which the reader has then passed on.
     struct Scripted {
-        frames: VecDeque<Frame>,
-        next_id: u64,
+        frames: mpsc::Receiver<Frame>,
+        handed: usize,
+        idle: mpsc::Sender<usize>,
     }
 
     impl FrameSource for Scripted {
         fn next_frame(&mut self) -> io::Result<Frame> {
-            self.frames
-                .pop_front()
-                .ok_or_else(|| io::ErrorKind::TimedOut.into())
+            let frame = if let Ok(frame) = self.frames.try_recv() {
+                frame
+            } else {
+                let _ = self.idle.send(self.handed);
+                self.frames
+                    .recv_timeout(SHORT)
+                    .map_err(|error| match error {
+                        RecvTimeoutError::Timeout => io::Error::from(io::ErrorKind::TimedOut),
+                        RecvTimeoutError::Disconnected => {
+                            io::Error::from(io::ErrorKind::UnexpectedEof)
+                        }
+                    })?
+            };
+            if !matches!(frame, Frame::Reply { .. }) {
+                self.handed += 1;
+            }
+            Ok(frame)
         }
+    }
 
+    /// Answers `AwaitIdle` at once, after the frames fed before it.
+    struct ScriptedSink {
+        frames: mpsc::Sender<Frame>,
+        next_id: u64,
+    }
+
+    impl RequestSink for ScriptedSink {
         fn send(&mut self, _request: Request) -> io::Result<u64> {
             self.next_id += 1;
-            self.frames.push_back(Frame::Reply {
-                to: self.next_id,
-                payload: verbatim_control::protocol::ReplyPayload::Idle,
-            });
+            self.frames
+                .send(Frame::Reply {
+                    to: self.next_id,
+                    payload: verbatim_control::protocol::ReplyPayload::Idle,
+                })
+                .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
             Ok(self.next_id)
         }
+    }
 
-        fn set_read_timeout(&mut self, _timeout: Duration) -> io::Result<()> {
-            Ok(())
+    /// Feeds a collector's reader thread.
+    struct Script {
+        feed: mpsc::Sender<Frame>,
+        idle: mpsc::Receiver<usize>,
+        fed: usize,
+    }
+
+    impl Script {
+        /// Feeds `frames` and waits until the reader thread has passed
+        /// every one on, so each is on the timeline and waiting for the
+        /// collector.
+        fn feed(&mut self, frames: Vec<Frame>) {
+            self.fed += frames.len();
+            for frame in frames {
+                self.feed.send(frame).expect("the reader is running");
+            }
+            while self.idle.recv().expect("the reader is running") < self.fed {}
         }
     }
 
     const SHORT: Duration = Duration::from_millis(50);
+
+    /// A collector on `timeline` with nothing fed yet, and what feeds it.
+    fn scripted(timeline: Timeline) -> (SpeechCollector, Script) {
+        let (feed, frames) = mpsc::channel();
+        let (idle, handed) = mpsc::channel();
+        let speech = SpeechCollector::from_source(
+            Box::new(Scripted {
+                frames,
+                handed: 0,
+                idle,
+            }),
+            Box::new(ScriptedSink {
+                frames: feed.clone(),
+                next_id: 0,
+            }),
+            timeline,
+            SHORT,
+            SHORT,
+        )
+        .expect("starts the reader thread");
+        let script = Script {
+            feed,
+            idle: handed,
+            fed: 0,
+        };
+        (speech, script)
+    }
 
     fn queued(id: u64, text: &str) -> Frame {
         Frame::Speech {
@@ -1003,16 +1221,11 @@ mod tests {
         collector_on(Timeline::new(), frames)
     }
 
+    /// A collector on `timeline` whose reader has passed `frames` on.
     fn collector_on(timeline: Timeline, frames: Vec<Frame>) -> SpeechCollector {
-        SpeechCollector::from_source(
-            Box::new(Scripted {
-                frames: frames.into(),
-                next_id: 0,
-            }),
-            timeline,
-            SHORT,
-            SHORT,
-        )
+        let (speech, mut script) = scripted(timeline);
+        script.feed(frames);
+        speech
     }
 
     fn traced(id: u64, text: &str, trace: TraceId) -> Frame {
@@ -1134,6 +1347,34 @@ mod tests {
     }
 
     #[test]
+    fn an_utterance_heard_in_full_before_the_step_meant_to_cut_it_off_is_a_harness_error() {
+        let mut speech = collector(vec![
+            queued(1, "long line"),
+            started(1),
+            ended(1, UtteranceEnding::Cancelled),
+        ]);
+        let playing = speech.expect_started("long line");
+        speech.require_not_completed(&playing, "when the window was in front");
+        speech.expect_ended(&playing, Ending::Cancelled);
+
+        let mut speech = collector(vec![
+            queued(1, "long line"),
+            started(1),
+            ended(1, UtteranceEnding::Completed),
+        ]);
+        let playing = speech.expect_started("long line");
+        let message = fails(move || {
+            speech.require_not_completed(&playing, "when the window was in front");
+        });
+        assert!(
+            message.starts_with(
+                "harness error: \"long line\" had been heard in full when the window was in front"
+            ),
+            "{message}"
+        );
+    }
+
+    #[test]
     fn a_pause_and_a_resume_are_asserted_in_order_apart_from_speech() {
         let paused = |paused| Frame::SpeechPaused { paused, at_ms: 0 };
         let mut speech = collector(vec![
@@ -1194,16 +1435,14 @@ mod tests {
     fn a_failure_prints_the_sequences_the_steps_trace_and_the_failed_step_in_full() {
         let timeline = Timeline::new();
         let stray = TraceId::mint();
-        let mut speech = collector_on(
-            timeline.clone(),
-            vec![
-                queued(1, "first"),
-                ended(1, UtteranceEnding::Completed),
-                traced(2, "stray", stray),
-            ],
-        );
+        let (mut speech, mut script) = scripted(timeline.clone());
+        script.feed(vec![
+            queued(1, "first"),
+            ended(1, UtteranceEnding::Completed),
+        ]);
         speech.expect(&["first"]);
         timeline.push_keys(&["downarrow"]);
+        script.feed(vec![traced(2, "stray", stray)]);
         let failed = failure(move || speech.expect(&["second"]));
         assert_eq!(failed.trace, Some(stray));
 
@@ -1233,14 +1472,12 @@ mod tests {
     fn an_utterance_never_queued_is_traced_by_the_steps_newest_utterance_or_by_none() {
         let timeline = Timeline::new();
         let heard_first = TraceId::mint();
-        let mut speech = collector_on(
-            timeline.clone(),
-            vec![
-                traced(1, "first", heard_first),
-                ended(1, UtteranceEnding::Completed),
-            ],
-        );
+        let (mut speech, mut script) = scripted(timeline.clone());
         timeline.push_keys(&["downarrow"]);
+        script.feed(vec![
+            traced(1, "first", heard_first),
+            ended(1, UtteranceEnding::Completed),
+        ]);
         let failed = failure(move || speech.expect(&["first", "second"]));
         assert_eq!(failed.trace, Some(heard_first));
         assert!(failed.report(&timeline, Ok(&[])).contains(&format!(

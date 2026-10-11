@@ -46,7 +46,11 @@ Public API:
     (restoring a window from minimized, minimizing it first when it is
     restored and not in front, then `SetForegroundWindow`, injecting no
     input, so it works whatever input came last, and answering whether the
-    window is in front once `SetForegroundWindow` returns),
+    window is in front once `SetForegroundWindow` returns; each call
+    logs, at info, the window's title and when each step finished,
+    measured from the call's start: the minimize requested and observed,
+    the restore, and `SetForegroundWindow`'s answer, with whether it
+    accepted the window and whether the window was then in front),
     `WaitForWindow` with a `WindowCondition` (`Foreground`, optionally
     requiring the title to mark unsaved changes or not; `NotForeground`;
     `Present`; `Absent`; `AllMinimized`), where a cloaked window, kept but

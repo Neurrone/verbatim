@@ -17,7 +17,7 @@
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::FILETIME;
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, WPARAM};
@@ -211,8 +211,16 @@ pub fn minimize_all(timeout: Duration) -> (bool, bool, ForegroundInfo) {
 /// foreground window"). The wait for it on window events, added when a
 /// restored inactive window was set as the foreground without being
 /// minimized first, is gone.
+///
+/// Each call logs, at info, how long each step took from the call's
+/// start: the minimize requested (`ShowWindow` returns once the window's
+/// thread has handled it), the minimize observed, the restore, and
+/// `SetForegroundWindow`'s answer, and whether the window was then in
+/// front, so a slow switch can be explained from the agent's log.
 #[must_use]
 pub fn set_foreground(window: u64) -> bool {
+    let started = Instant::now();
+    let mut steps = SwitchSteps::default();
     let window = HWND(usize::try_from(window).unwrap_or(0) as *mut c_void);
     // SAFETY: GetForegroundWindow has no preconditions.
     let in_front = unsafe { GetForegroundWindow() } == window;
@@ -227,19 +235,56 @@ pub fn set_foreground(window: u64) -> bool {
         // SAFETY: tolerates any handle; the return value is the window's
         // earlier visibility, not a failure.
         let _ = unsafe { ShowWindow(window, SW_MINIMIZE) };
-        if !wait::until(|| is_minimized(window), MINIMIZE_LIMIT) {
+        steps.minimize_requested = Some(started.elapsed());
+        let minimized = wait::until(|| is_minimized(window), MINIMIZE_LIMIT);
+        steps.minimized = minimized.then(|| started.elapsed());
+        if !minimized {
+            steps.log(window, started, false, false);
             return false;
         }
     }
     if is_minimized(window) {
         // SAFETY: as above.
         let _ = unsafe { ShowWindow(window, SW_RESTORE) };
+        steps.restored = Some(started.elapsed());
     }
-    // SAFETY: tolerates any handle; a stale one fails. Its answer is not
-    // used: whether the window is in front is read below.
-    let _ = unsafe { SetForegroundWindow(window) };
+    // SAFETY: tolerates any handle; a stale one fails. Its answer is only
+    // logged: whether the window is in front is read below.
+    let accepted = unsafe { SetForegroundWindow(window) }.as_bool();
+    steps.set_foreground = Some(started.elapsed());
     // SAFETY: GetForegroundWindow has no preconditions.
-    unsafe { GetForegroundWindow() == window }
+    let in_front = unsafe { GetForegroundWindow() == window };
+    steps.log(window, started, accepted, in_front);
+    in_front
+}
+
+/// When each step of one [`set_foreground`] call finished, measured from
+/// the call's start; `None` for a step the call did not take.
+#[derive(Default)]
+struct SwitchSteps {
+    minimize_requested: Option<Duration>,
+    minimized: Option<Duration>,
+    restored: Option<Duration>,
+    set_foreground: Option<Duration>,
+}
+
+impl SwitchSteps {
+    /// Logs the steps for `window`, by its title, whether
+    /// `SetForegroundWindow` accepted it (false when it was not called),
+    /// and whether it was then in front.
+    fn log(&self, window: HWND, started: Instant, accepted: bool, in_front: bool) {
+        tracing::info!(
+            title = window_text(window),
+            minimize_requested = ?self.minimize_requested,
+            minimized = ?self.minimized,
+            restored = ?self.restored,
+            set_foreground = ?self.set_foreground,
+            accepted,
+            in_front,
+            total = ?started.elapsed(),
+            "bring forward steps"
+        );
+    }
 }
 
 /// How long [`set_foreground`] waits for a window it minimized to be

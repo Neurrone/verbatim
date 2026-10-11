@@ -106,7 +106,15 @@ items, so the agent counts the item's place among its parent's children.
 
 `SpeechCollector` reads a dedicated speech connection. The first speech
 subscriber receives the speech Verbatim queued before it subscribed, so
-startup speech is asserted like any other. There is one kind of
+startup speech is asserted like any other. Once subscribed, the
+connection is split (`verbatim_control::client::Client::split`): a
+thread of the collector's own reads every frame as it arrives, records
+it on the timeline then, and passes it on to the assertions, while
+`AwaitIdle` is sent on the writing half. Read on the scenario's thread,
+as frames were before, a frame that arrived while that thread waited on
+the agent, such as for a window to be brought forward, was recorded only
+once the agent answered, so the timeline put it after the step it
+preceded. There is one kind of
 assertion: the next utterances are exactly this list, each with its exact
 text, in order, each ending as expected, and nothing else in between. An
 empty utterance counts, and so does a sound played at once for an event,
@@ -124,7 +132,12 @@ an utterance is named in its text.
   audio has started, for a step that then interrupts it;
   `expect_queued(texts)` matches utterances queued behind it without
   waiting for them; `expect_ended(heard, ending)` then asserts how each
-  ended, `Ending::Completed` or `Ending::Cancelled`.
+  ended, `Ending::Completed` or `Ending::Cancelled`. Where the step's
+  action takes time of its own, such as bringing a window forward,
+  `require_not_completed(heard, when)` first requires, once the action
+  has completed, that the utterance had not been heard in full: one that
+  had was not cut off because the action came too late, a harness error
+  naming `when`, not Verbatim's failure.
 - `take_until(until, timeout)` and `ending_of` hand over utterances whose
   text cannot be known before the step, for the caller to assert on.
 - `expect_nothing_more(after_input)`: ends every scenario. The collector
@@ -538,7 +551,12 @@ both limits raised to 200 (`*_raised_flood`), and a full-screen redraw
 of 30 rows with both limits lowered to 10 (`*_redraw_limit`). In
 `scenarios/terminal_windows.rs`, `*_leave_flood` leaves a terminal for a
 second window during a flood, which is finished while away and not
-spoken, and returns to its caret's line; `windows_terminal_close_tab`
+spoken, and returns to its caret's line. The flood's first line is
+sixteen numbered words, about six seconds of speech, so it is still
+playing when the switch lands, which takes a few hundred milliseconds;
+the scenario requires it had not been heard in full once the second
+window is in front, so a slow switch fails as a harness error.
+`windows_terminal_close_tab`
 closes the second tab and hears the first's terminal and prompt.
 
 The review-output scenarios (`scenarios/terminal_review_output.rs`)

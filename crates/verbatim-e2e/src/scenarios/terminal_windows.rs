@@ -48,10 +48,27 @@
 //! terminal.
 //!
 //! `*_leave_flood` leaves a terminal during a flood and returns. `away.ps1`
-//! writes "flood line 1" to "flood line 100", writes the file `half`, and
-//! waits for the file `more`; while its first line plays, the second
+//! writes a line of sixteen numbered words, "word1" to "word16", then
+//! "flood line 1" to "flood line 100", writes the file `half`, and waits
+//! for the file `more`; while the long first line plays, the second
 //! window is brought forward, which cuts that line and the two queued
 //! behind it off and says the second window, its terminal and prompt.
+//!
+//! The first line is long so that it is still playing when the switch
+//! lands, by construction. The harness asks for the switch once the
+//! line's audio has started, and the agent's switch (minimize, restore,
+//! `SetForegroundWindow`) took 150 to 282 milliseconds, and once 1.4
+//! seconds, over 148 switches in 50 runs on 2026-10-11, while "flood line
+//! 1", the first line before, played for only 310 to 340 milliseconds, so
+//! about one run in 25 heard it in full before the switch landed. Forty
+//! such numbered words played for 16.1 seconds in a `conhost_wrapped_flood`
+//! run, so sixteen play for about six seconds, four times the slowest
+//! switch seen and twenty times the usual one, and still fit on one row
+//! of the terminal's 120 columns. Once the second window is in front, the
+//! scenario requires that the line had not been heard in full
+//! (`SpeechCollector::require_not_completed`), so a switch slower than the
+//! line fails as a harness error naming how long it took, never as
+//! Verbatim's failure to cut the line off.
 //! Then `more` lets the flood write lines 101 to 2000, and the file
 //! `written`, and wait for the file `end`: nothing of it is said while the
 //! terminal is in the background. Back in the first window, Verbatim says
@@ -68,6 +85,7 @@
 //! keeps the line (`phase6-design.md`, decisions of 2026-10-09).
 
 use std::io;
+use std::time::Instant;
 
 use super::terminal::{self, PROMPT};
 use super::terminal_flood::{FLOOD_STEP, line};
@@ -76,7 +94,20 @@ use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 use crate::speech::{Ending, cut_off, heard};
 
-/// The flood that waits halfway, and again at its end.
+/// How many numbered words the line before the flood has: about six
+/// seconds of speech, on one row of the terminal's 120 columns.
+const FIRST_WORDS: u32 = 16;
+
+/// The line before the flood: [`FIRST_WORDS`] numbered words.
+fn first_line() -> String {
+    (1..=FIRST_WORDS)
+        .map(|n| format!("word{n}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The flood that waits halfway, and again at its end; [`away_scripts`]
+/// puts the line before it.
 const AWAY_SCRIPT: &str = "for ($line = 1; $line -le 100; $line++) { \"flood line $line\" }\r\n\
 Mark half\r\n\
 Wait-For more\r\n\
@@ -102,8 +133,14 @@ pub(crate) fn setup_close_tab(scenario: &mut Scenario) -> io::Result<ScenarioSta
     terminal::open_windows_terminal_for_tabs(scenario, "close-tab")
 }
 
+/// `away.ps1`: the file signals, the line before the flood, and the
+/// flood.
 fn away_scripts() -> String {
-    format!("{FILE_SIGNALS}{AWAY_SCRIPT}")
+    format!(
+        "{FILE_SIGNALS}$words = foreach ($i in 1..{FIRST_WORDS}) {{ \"word$i\" }}\r\n\
+         $words -join ' '\r\n\
+         {AWAY_SCRIPT}"
+    )
 }
 
 pub(crate) fn setup_leave_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
@@ -127,11 +164,20 @@ fn leave_steps(
     scenario
         .wait_for_agent_file(&format!(r"{directory}\half"), FLOOD_STEP)
         .expect("the flood writes its first hundred lines");
-    let playing = scenario.speech().expect_started(&line(1));
-    let queued = scenario.speech().expect_queued(&[&line(2), &line(3)]);
+    let playing = scenario.speech().expect_started(&first_line());
+    let queued = scenario.speech().expect_queued(&[&line(1), &line(2)]);
+    let asked = Instant::now();
     scenario
         .bring_window_forward(second)
         .expect("brings the second window forward");
+    let took = asked.elapsed();
+    scenario.speech().require_not_completed(
+        &playing,
+        &format!(
+            "when the second window was in front, {} ms after it was asked for",
+            took.as_millis()
+        ),
+    );
     scenario.speech().expect_ended(&playing, Ending::Cancelled);
     for heard in &queued {
         scenario.speech().expect_ended(heard, Ending::Cancelled);

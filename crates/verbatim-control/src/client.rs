@@ -6,7 +6,10 @@
 //! [`Client::next_frame`] at a time — which is why sharing the underlying
 //! handle between the reader and a fresh writer via `try_clone` is safe
 //! here, unlike the server's overlapped-I/O pipe (see `server`'s module
-//! doc).
+//! doc). The one exception is [`Client::split`], which only a TCP
+//! transport allows: a socket serves a read on one thread and a write on
+//! another at once, where a synchronous pipe handle serializes them, so a
+//! write would wait for a pending read to finish.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufReader, Read, Write};
@@ -70,12 +73,57 @@ impl Write for Transport {
 /// An open connection to Verbatim's control plane, past the `Hello`
 /// handshake.
 pub struct Client {
+    sender: Sender,
+    receiver: Receiver,
+}
+
+/// The writing half of a [`Client`] on a TCP transport, from
+/// [`Client::split`]: sends requests while the [`Receiver`] reads on
+/// another thread.
+pub struct Sender {
     writer: Transport,
+    next_id: u64,
+}
+
+/// The reading half of a [`Client`] on a TCP transport, from
+/// [`Client::split`]: reads frames while the [`Sender`] writes on another
+/// thread.
+pub struct Receiver {
     /// A [`MessageReader`] because a TCP transport may carry a read timeout
     /// (the end-to-end suite sets one): a timeout partway through a frame
     /// must not lose the part already read.
     reader: MessageReader<BufReader<Transport>>,
-    next_id: u64,
+}
+
+impl Sender {
+    /// Sends one request without waiting for its reply, and returns the id
+    /// its reply will carry, as [`Client::send`] does.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
+    pub fn send(&mut self, request: Request) -> io::Result<u64> {
+        let id = self.next_id;
+        self.next_id += 1;
+        write_message(&mut self.writer, &RequestEnvelope { id, request })?;
+        Ok(id)
+    }
+}
+
+impl Receiver {
+    /// Reads the next frame of any kind, as [`Client::next_frame`] does.
+    ///
+    /// # Errors
+    ///
+    /// As [`Client::next_frame`].
+    pub fn next_frame(&mut self) -> io::Result<Frame> {
+        self.reader.read()?.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Verbatim closed the connection",
+            )
+        })
+    }
 }
 
 impl Client {
@@ -152,9 +200,11 @@ impl Client {
     fn handshake(transport: Transport) -> io::Result<Self> {
         let reader = MessageReader::new(BufReader::new(transport.try_clone()?));
         let mut client = Self {
-            writer: transport,
-            reader,
-            next_id: 1,
+            sender: Sender {
+                writer: transport,
+                next_id: 1,
+            },
+            receiver: Receiver { reader },
         };
 
         match client.request(Request::Hello {
@@ -182,9 +232,7 @@ impl Client {
     /// Returns an error if writing fails, the connection closes before a
     /// matching reply arrives, or a message fails to parse.
     pub fn request(&mut self, request: Request) -> io::Result<Frame> {
-        let id = self.next_id;
-        self.next_id += 1;
-        write_message(&mut self.writer, &RequestEnvelope { id, request })?;
+        let id = self.sender.send(request)?;
         loop {
             match self.next_frame()? {
                 frame @ (Frame::Reply { to, .. } | Frame::Error { to, .. }) if to == id => {
@@ -205,10 +253,7 @@ impl Client {
     ///
     /// Returns an error if writing fails.
     pub fn send(&mut self, request: Request) -> io::Result<u64> {
-        let id = self.next_id;
-        self.next_id += 1;
-        write_message(&mut self.writer, &RequestEnvelope { id, request })?;
-        Ok(id)
+        self.sender.send(request)
     }
 
     /// Sets the read timeout of a TCP transport, which every later read
@@ -220,7 +265,10 @@ impl Client {
     pub fn set_read_timeout(&self, timeout: Option<std::time::Duration>) -> io::Result<()> {
         // The reader reads through its own duplicate of the socket's
         // handle, whose timeout is its own.
-        for transport in [&self.writer, self.reader.get_ref().get_ref()] {
+        for transport in [
+            &self.sender.writer,
+            self.receiver.reader.get_ref().get_ref(),
+        ] {
             if let Transport::Tcp(stream) = transport {
                 stream.set_read_timeout(timeout)?;
             }
@@ -238,12 +286,28 @@ impl Client {
     /// timeout, calling this again continues the frame it was partway
     /// through.
     pub fn next_frame(&mut self) -> io::Result<Frame> {
-        self.reader.read()?.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "Verbatim closed the connection",
-            )
-        })
+        self.receiver.next_frame()
+    }
+
+    /// Splits a client on a TCP transport into its writing half and its
+    /// reading half, for a subscribed connection that reads its frames on
+    /// a thread of their own and sends requests from another, such as the
+    /// end-to-end harness's speech connection. A read timeout already set
+    /// stays on both halves; any frame already read ahead stays with the
+    /// [`Receiver`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `Unsupported` for a pipe transport, whose synchronous handle
+    /// would hold a write until a pending read finished.
+    pub fn split(self) -> io::Result<(Sender, Receiver)> {
+        match &self.sender.writer {
+            Transport::Tcp(_) => Ok((self.sender, self.receiver)),
+            Transport::Pipe(_) => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "only a TCP control connection can be split",
+            )),
+        }
     }
 }
 
@@ -362,6 +426,54 @@ mod tests {
             }
         );
 
+        server.join().expect("server thread does not panic");
+    }
+
+    /// A split client's halves work from two threads: the receiver reads,
+    /// on a thread of its own, the reply to a request the sender sends.
+    /// The fake server answers `Hello`, then the one request after it.
+    #[test]
+    fn a_split_client_sends_while_its_receiver_reads() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("binds an ephemeral port");
+        let addr = listener.local_addr().expect("has a local address");
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accepts one connection");
+            let mut reader = BufReader::new(stream.try_clone().expect("clones the stream"));
+            let mut writer = stream;
+            for _ in 0..2 {
+                let envelope: RequestEnvelope = read_message(&mut reader)
+                    .expect("reads")
+                    .expect("not end of stream");
+                let payload = match envelope.request {
+                    Request::Hello { .. } => ReplyPayload::Hello {
+                        protocol_version: PROTOCOL_VERSION,
+                    },
+                    _ => ReplyPayload::Ok,
+                };
+                write_message(
+                    &mut writer,
+                    &Frame::Reply {
+                        to: envelope.id,
+                        payload,
+                    },
+                )
+                .expect("writes a reply");
+            }
+        });
+
+        let client = Client::connect_tcp(addr).expect("connects and completes Hello");
+        let (mut sender, mut receiver) = client.split().expect("a TCP client splits");
+        let reading = thread::spawn(move || receiver.next_frame().expect("reads the reply"));
+        let id = sender
+            .send(Request::Quit)
+            .expect("sends while the read is pending");
+        assert_eq!(
+            reading.join().expect("the reading thread does not panic"),
+            Frame::Reply {
+                to: id,
+                payload: ReplyPayload::Ok,
+            }
+        );
         server.join().expect("server thread does not panic");
     }
 }

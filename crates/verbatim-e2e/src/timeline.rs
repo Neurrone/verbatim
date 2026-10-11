@@ -6,7 +6,7 @@
 //! A speech-assertion failure without this is a transcript with a hole in
 //! it: it shows what Verbatim said, but not what provoked it. The
 //! [`Timeline`] fixes that by having both sides write to the same log —
-//! `Scenario`'s inject methods and `SpeechCollector`'s frame loop each hold
+//! `Scenario`'s inject methods and `SpeechCollector`'s reader thread each hold
 //! a clone of the same handle — so a panic message can print, in order, the
 //! last command sent before speech stopped.
 
