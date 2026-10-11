@@ -593,9 +593,8 @@ fn desktop_request(id: u64, request: Request) -> Frame {
 /// left.
 fn scenario_windows_request(connection: u64, id: u64, request: Request) -> Frame {
     let payload = match request {
-        Request::RecordWindows => {
-            scenario_windows::record(connection).map(|count| ReplyPayload::WindowsRecorded { count })
-        }
+        Request::RecordWindows => scenario_windows::record(connection)
+            .map(|count| ReplyPayload::WindowsRecorded { count }),
         Request::WaitForNewWindowsGone { timeout_ms } => {
             scenario_windows::wait_for_new_gone(connection, Duration::from_millis(timeout_ms))
                 .map(|remaining| ReplyPayload::NewWindows { remaining })

@@ -221,9 +221,7 @@ fn still_open(left: &[WindowIdentity], shown: &[WindowIdentity]) -> Vec<WindowId
 }
 
 /// The agent's watch, shared by every connection.
-static WATCH: Mutex<Watch> = Mutex::new(Watch {
-    state: State::Idle,
-});
+static WATCH: Mutex<Watch> = Mutex::new(Watch { state: State::Idle });
 
 /// Signalled whenever a watch ends, for [`close_abandoned`] waiting on a
 /// connection that has not yet seen its test process go.
@@ -388,7 +386,10 @@ mod tests {
             pid: 200,
             ..window(2)
         };
-        assert_eq!(new_windows(baseline, &[window(1), reused.clone()]), [reused]);
+        assert_eq!(
+            new_windows(baseline, &[window(1), reused.clone()]),
+            [reused]
+        );
         assert!(watch.baseline(2).is_err(), "only connection 1's");
     }
 
@@ -400,7 +401,7 @@ mod tests {
             .expect("records");
         // A baseline window that has closed since is not asked about.
         let baseline = watch.baseline(1).expect("connection 1's baseline");
-        assert!(new_windows(baseline, &[window(2)]).is_empty());
+        assert_eq!(new_windows(baseline, &[window(2)]), Vec::new());
         watch.finish(1);
         assert!(!watch.connection_ended(1, Vec::new), "nothing to abandon");
         assert_eq!(watch.abandoned(), Some(&[][..]));
