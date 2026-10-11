@@ -3,6 +3,7 @@
   "role": "window",
   "name": "Mockapp Boundary Fixture",
   "states": ["focused"],
+  "msaa_client": true,
   "children": [
     { "id": "apply", "role": "button", "name": "Apply", "native": "button" }
   ]

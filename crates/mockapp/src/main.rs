@@ -88,6 +88,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     let mut root = fixture::load(&cli.fixture)?;
     // The root's window class names the host window's class.
     let window_class = root.window_class.clone();
+    let msaa_client = root.msaa_client;
     let native = root.take_native();
     let edit_version_6 = root.edit_version_6();
     let tree = std::sync::Arc::new(std::sync::Mutex::new(tree::Tree::build(root)));
@@ -106,6 +107,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         edit_version_6,
         (&cli.title, window_class.as_deref()),
         cli.show,
+        msaa_client,
     )?;
     Ok(())
 }

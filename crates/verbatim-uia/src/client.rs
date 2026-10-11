@@ -200,7 +200,7 @@ impl Uia {
         count(CallKind::Uia);
         // SAFETY: `self.client` is a live IUIAutomation, and both elements
         // are live elements.
-        unsafe { self.client.CompareElements(first, second) }.map(|same| same.as_bool())
+        unsafe { self.client.CompareElements(first, second) }.map(windows_core::BOOL::as_bool)
     }
 
     /// A condition matching elements whose `property` equals `value`.

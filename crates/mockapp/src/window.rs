@@ -50,6 +50,9 @@ const WM_APP_COMMAND_READY: u32 = WM_APP + 1;
 struct WindowContext {
     /// The backend the window answers as; `None` for a plain Win32 window.
     backend: Option<Backend>,
+    /// Whether a window on the UIA backend also answers MSAA's client
+    /// object with the scripted root (the fixture's `msaa_client`).
+    msaa_client: bool,
     tree: SharedTree,
     receiver: Receiver<Command>,
 }
@@ -78,6 +81,8 @@ impl From<windows::core::Error> for WindowError {
 /// otherwise closes). `backend` decides how `WM_GETOBJECT` is answered;
 /// with none, the window answers nothing itself, as a plain Win32 window.
 /// The nodes in `native` become real child windows, whatever the backend.
+/// With `msaa_client`, a window on the UIA backend also answers MSAA's
+/// client object with the scripted root.
 pub(crate) fn run(
     backend: Option<Backend>,
     tree: SharedTree,
@@ -85,6 +90,7 @@ pub(crate) fn run(
     edit_version_6: bool,
     (title, class): (&str, Option<&str>),
     show: bool,
+    msaa_client: bool,
 ) -> Result<(), WindowError> {
     // SAFETY: called once, before any window is created on this thread.
     unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.ok()?;
@@ -154,6 +160,7 @@ pub(crate) fn run(
     let (sender, receiver) = mpsc::channel();
     let context = Box::leak(Box::new(WindowContext {
         backend,
+        msaa_client,
         tree,
         receiver,
     }));
@@ -346,6 +353,11 @@ fn handle_get_object(
             {
                 // SAFETY: `simple` is a live provider for the root node.
                 return unsafe { UiaReturnRawElementProvider(hwnd, wparam, lparam, &simple) };
+            }
+            if obj_id == OBJID_CLIENT.0 && context.msaa_client {
+                let accessible: IAccessible = msaa::node_accessible(&context.tree, hwnd, 0);
+                // SAFETY: `accessible` is a live provider for the root node.
+                return unsafe { LresultFromObject(&IAccessible::IID, wparam, &accessible) };
             }
         }
         Some(Backend::Msaa) => {

@@ -266,6 +266,7 @@ mod tests {
             state_images: false,
             edit_version_6: false,
             content: true,
+            msaa_client: false,
             children,
         }
     }

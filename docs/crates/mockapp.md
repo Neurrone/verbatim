@@ -44,7 +44,11 @@ feeds made carriage return and line feed pairs, read through the edit
 control's own messages), an optional `content` (true unless set false:
 on the UIA backend a node set false answers `IsContentElement` false, so
 a client that presents only control and content elements, as NVDA does,
-takes it for layout), an optional `native` (the node is a real child
+takes it for layout), an optional `msaa_client` on the root (on the UIA
+backend, the window also answers MSAA's client object with the scripted
+root, as a window with a native UIA provider can serve MSAA too, so a
+Win32 control inside it has an MSAA parent with the root's states, the
+focused state included), an optional `native` (the node is a real child
 window rather than a scripted node, on any backend: `tree_view` makes a
 comctl32 tree view, below, with its own optional `window_class` and
 `state_images`, and `uia_window` a child window that is a native UIA
@@ -273,9 +277,15 @@ its crate-internal modules are the reviewable surface:
 The window boundary is tested both ways, with the fewest new pieces: a
 `native` `button` in a host on the UIA backend is a Win32 control inside
 a window whose UIA provider is native (`tests/fixtures/boundary_uia_host.json`,
-and `boundary_uia_layout_host.json`, whose root is not content), and a
+and `boundary_uia_layout_host.json`, whose root is not content; both set
+`msaa_client`, whose focused root passes the outpost's check that an MSAA
+focus or one of its ancestors has the focused state, since no window
+takes the real focus where the tests run), and a
 `uia_window` in a host on the `win32` backend is a UIA window inside a
-plain Win32 window (`boundary_win32_host.json`). `native_controls.rs`
+plain Win32 window (`boundary_win32_host.json`; the test finds the focus
+from the UIA window, since UIA lists no hidden child window among the
+hidden host's children, though the UIA window's parent is still the
+host). `native_controls.rs`
 reports a focus in each through a real outpost and asserts its ancestors
 and what Core speaks: the UIA window's element before the button when it
 is a control and content, and not at all when it is not; and the Win32

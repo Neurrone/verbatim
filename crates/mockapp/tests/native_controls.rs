@@ -580,11 +580,17 @@ fn a_uia_window_in_a_win32_window_has_the_windows_client_as_context() {
     let host = common::find_window(&title);
     let outpost = OutpostUnderTest::new(&app);
 
+    // The host window is hidden, and UIA lists no hidden child window among
+    // its children, so the focus is found from the UIA window itself; its
+    // parent is still the host's element, as the listener's read finds it.
+    // SAFETY: a local search of the host window's children.
+    let island = unsafe { FindWindowExW(Some(host), None, w!("VerbatimMockAppUiaWindow"), None) }
+        .expect("mockapp made the UIA window");
     let uia = Uia::new().expect("a UIA client");
     let cache = uia.base_cache_request().expect("a cache request");
     let root = uia
-        .element_from_handle(host.0 as isize, &cache)
-        .expect("the host window's element");
+        .element_from_handle(island.0 as isize, &cache)
+        .expect("the UIA window's element");
     let condition = uia
         .property_condition(UIA_HasKeyboardFocusPropertyId, &VARIANT::from(true))
         .expect("a condition");

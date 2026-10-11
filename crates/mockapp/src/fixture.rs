@@ -127,6 +127,8 @@ struct RawNode {
     #[serde(default = "content_by_default")]
     content: bool,
     #[serde(default)]
+    msaa_client: bool,
+    #[serde(default)]
     /// Kept as JSON values, each made a node only when it is converted:
     /// deserializing a node's many fields takes a large stack frame in a
     /// debug build (about 17 KB), and nested inside its parent's, sixty
@@ -244,6 +246,12 @@ pub(crate) struct FixtureNode {
     /// makes it layout to a client that, as NVDA, presents a UIA element
     /// only when it is both a control and content.
     pub(crate) content: bool,
+    /// On the root, on the UIA backend: whether the window also answers
+    /// MSAA's client object with the scripted root, as a window whose UIA
+    /// provider is native can serve MSAA too, so a Win32 control inside it
+    /// has an MSAA parent that reports the scripted root's states, the
+    /// focused state included.
+    pub(crate) msaa_client: bool,
     pub(crate) children: Vec<FixtureNode>,
 }
 
@@ -378,6 +386,7 @@ fn convert(
         state_images: raw.state_images,
         edit_version_6: raw.edit_version_6,
         content: raw.content,
+        msaa_client: raw.msaa_client,
         children,
     })
 }

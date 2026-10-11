@@ -130,10 +130,14 @@ struct LastFocus {
 /// counts two senders with different runtime ids as one element; the
 /// duplicate evidence is still each thread's own focus before.
 #[derive(Clone, Default)]
-pub struct LastAccepted(Arc<Mutex<Option<(u64, AgileReference<IUIAutomationElement>)>>>);
+pub struct LastAccepted(Arc<Mutex<Option<Accepted>>>);
+
+/// The last focus accepted, as the number of the reader that accepted it
+/// and the element.
+type Accepted = (u64, AgileReference<IUIAutomationElement>);
 
 impl LastAccepted {
-    fn lock(&self) -> MutexGuard<'_, Option<(u64, AgileReference<IUIAutomationElement>)>> {
+    fn lock(&self) -> MutexGuard<'_, Option<Accepted>> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
