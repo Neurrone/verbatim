@@ -507,6 +507,14 @@ Other open items, taken after the steps above unless they fold into one:
 - `settings_system_page` once heard "Windows isn't activated"; the
   settings package above says 14 settings but names 13.
 - `verbatim-gui`'s rlib is 375 MB.
+- Scheduled for later (Dickson, 2026-10-11), found by the communication
+  design (`docs/design/communication.md`): the mixer retries opening a
+  failed audio device after a fixed second, its idle wait doubling as the
+  check for a reopen request (`crates/verbatim-audio/src/mixer.rs` 59 to
+  65), a timed retry to be replaced by waiting for evidence such as a
+  device notification; and the keyboard hook drops a gesture when the
+  router's 64-slot channel is full (`crates/verbatim-input-windows/src/lib.rs`
+  469 to 470), which must never lose a key.
 - The suite switches windows only by bringing a window it opened,
   found by its title marker, to the front, as NVDA's system tests do with
   `SetForegroundWindow`; every Alt+Tab switch is replaced and
