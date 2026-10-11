@@ -187,7 +187,14 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    element, on a thread per application, with the marker wait; the outpost
    finds its own element afterwards; the moved-on rules, name-and-position
    lookups and `GetFocusedElement` on the focus path removed; Control+Tab
-   follows NVDA (8be2223's rule goes); D13 amended.
+   follows NVDA (8be2223's rule goes); D13 amended. Written (2026-10-11,
+   `phase6-design.md`, "The listener reads each UIA focus"), not yet
+   built: it awaits its first build, `cargo xtask ci`, the mockapp tests
+   (some of whose provider-call pins can only be measured then), and its
+   scenarios. Three questions are recorded there with recommendations: the
+   acceptance test left in the outpost, the reading threads ended when
+   idle rather than when their application exits, and whether
+   `windows_terminal_tabs` hears the tab left in every run.
 7. The UIA probe asks once.
 8. Two reserved spare outposts.
 9. verbatim.exe's relay: fewer hand-offs, its own stage in the latency

@@ -15,13 +15,16 @@ path. Outposts stay alive when their application loses foreground.
 Focus detection is a separate process (decision D13). The focus listener —
 the same `verbatim-outpost.exe` run with `--listener` and no target pid —
 holds the one desktop-global UIA focus registration and the global MSAA
-hooks for focus, foreground, and menu-popup opens (process id zero), under a
-hard rule that it never makes a cross-process call: it reads only what each
-event carries (a UIA element's cached properties, an MSAA event's raw
-address) plus the hang-safe `GetWindowThreadProcessId`, and forwards each
-captured focus fact to Core. The supervisor routes every fact to the target
-application's own outpost, which acquires, arbitrates, enriches, and
-announces it exactly as it does for the events it still hooks itself.
+hooks for focus, foreground, and menu-popup opens (process id zero). Its
+callbacks never make a cross-process call: they read only what each event
+carries (a UIA element's cached properties, an MSAA event's raw address)
+plus the hang-safe `GetWindowThreadProcessId`, and forward each captured
+fact to Core. Since stage A step 6 of phase 6 a UIA focus is the
+exception: the listener judges and reads it from the event's own element,
+on a thread for the element's application (below). The supervisor routes
+every fact to the target application's own outpost, which acquires,
+arbitrates, enriches, and announces it exactly as it does for the events
+it still hooks itself.
 
 Since stage A step 5 of phase 6 (`docs/design/focus-pipeline.md`, section
 12.4, and decision 2 of its section 15), an outpost's own process-scoped
@@ -69,6 +72,58 @@ hand-over, step by step:
   hook, which Windows scopes by the event's thread, the console host's,
   as the listener routes them (below).
 
+A UIA focus, since stage A step 6 of phase 6 (`docs/design/focus-pipeline.md`,
+section 12, option (b), and decisions 1, 3, and 9 of its section 15), is
+judged and read by the listener, since a UIA element cannot be handed to
+another process and the listener is the one process that receives the
+event's own element:
+
+- The listener's focus callback makes no call. It sends the element's
+  application a marker (`DeliveredFact::UiaFocusMarker`, numbered by the
+  listener) and queues the element, as an agile reference, for that
+  application's reading thread (`focus_read::Readers`): one thread per
+  application, created on its first focus event, ended after a minute
+  without one.
+- The thread judges and reads each event in arrival order
+  (`focus_read::FocusReader::read`). An event from a hung window, a shell
+  window that only stages a switch, or the console window's own element
+  is dropped before any call. Then one remote operation
+  (`verbatim_uia_rops::focus_ancestry`, with `require_focus` and
+  `refresh`): the element's `HasKeyboardFocus` live first, an element
+  without it dropped as NVDA drops it; when the element has the runtime id
+  of the focus the thread read before, whether that earlier element still
+  has the keyboard focus (NVDA's duplicate evidence, sent as
+  `UiaFocusRead::same_as_last`); the element's value, states, and details
+  afresh, its name and role staying the event's; a list's or tab control's
+  selected child; and its raw-view ancestors, each with its own window
+  handle, up to the first one the thread knew, the rest reused from the
+  read before. A windowless focus whose read named no window, the console
+  host's text area above all, has its window found by the classic walk,
+  and the ancestor that is that window marked with it. A read that fails
+  reports the focus from its event, its ancestors unknown, unless the
+  event said it lacked the keyboard focus, as NVDA lets a focus through
+  whose read fails.
+- The read (`DeliveredFact::UiaFocusRead`, a `UiaFocusRead`) or the drop
+  (`DeliveredFact::UiaFocusDropped`) follows the marker through
+  verbatim.exe, never coalesced and never dropped on the way: the
+  listener queues them unkeyed, and the supervisor's writer lets them
+  through a full queue in order.
+- A watchdog abandons a thread whose read runs past `READ_DEADLINE`, a
+  second longer than UIA's call timeout: the event is reported dropped, a
+  new thread takes the application's later events, and the abandoned
+  thread, once its call returns, says nothing and ends. With two of an
+  application's threads abandoned and still in their calls, its focus
+  events are dropped until one returns.
+- When the listener is replaced, the supervisor tells every outpost,
+  ready or starting, that its reads have ended
+  (`DeliveredFact::UiaFocusReadsEnded`), so none waits on a marker the old
+  listener cannot resolve.
+
+The outpost's side is under the intake and the worker below: the intake
+holds everything behind a marker until its read takes the marker's place,
+and the worker reports the read and only then finds its own copy of the
+element (`outpost::focus_path`).
+
 A console window is one application in one outpost, its console host's,
 as NVDA gives it and its text area the client's app module
 (`docs/design/focus-pipeline.md`, section 5.4). Windows names the console's
@@ -114,8 +169,8 @@ Public API:
   latency ledger reads it.
   `SupervisorToOutpost`: `SetBackendOverride` (forces one backend for every
   window of the target, or restores normal arbitration), `DeliverFact` (a
-  focus fact the listener captured, routed to this outpost — a UIA focus
-  element's cached snapshot parts, an MSAA focus or menu-popup address, or a
+  focus fact the listener captured, routed to this outpost — a UIA focus's
+  marker, its read or its drop, an MSAA focus or menu-popup address, or a
   foreground window — carrying the listener's own trace id and observation
   timestamp so the latency timeline starts at the OS event, its
   `EventTiming`, and for a `WinEvent`'s fact its `WinEventStamp`),
@@ -186,7 +241,7 @@ Public API:
     the same facts the listener forwards, value, state, name, selection,
     destroy, and a top-level window shown, for the fixed pid),
     the focus-following UIA callbacks, and the reader's routed facts
-    (the UIA focus, the listener's desktop-wide selections, menus, and
+    (the UIA focus's marker and read, the listener's desktop-wide selections, menus, and
     notifications, and the MSAA facts it forwards until the hand-over ends,
     each matched with the hook's copy first, `outpost::handover`) and
     queries only add an entry to the queue and return. A UIA callback captures the element's cached parts, its cached
@@ -251,9 +306,14 @@ Public API:
     change), an MSAA focus was dropped while a newer one in its window was
     waiting (`msaa_focus_waiting`), UIA events counted against the limits,
     and the newest three focus events of each backend were kept across the
-    whole batch; the design removes all four, and a focus now waits behind
-    what came before it until it is judged on arrival (stage A step 6 in
-    `docs/roadmap.md`).
+    whole batch; the design removes all four. Since stage A step 6 a UIA
+    focus's marker holds its place: nothing that arrives after it is
+    planned until the listener's read takes its place, or its drop, or the
+    end of the listener's reads, removes it, so an event raised after a
+    focus is never handled before it, as NVDA's UIA events pass in order
+    through its one flusher thread; a read whose marker the outpost never
+    held, as when the outpost started after it, is taken where it
+    arrives.
   - The worker (`outpost::worker`): one thread takes entries in order and
     finishes each before the next. Before any call into the application
     for an entry, it tests the event by NVDA's acceptance test against the
@@ -427,20 +487,26 @@ Public API:
   2026-10-06). The event thread (`EventThread::spawn`) likewise returns
   only once its hooks are installed. Each event becomes a `FocusFact` (a
   `ListenerFact`: the owning pid and a `DeliveredFact`) built entirely from
-  cached and hang-safe local reads (`uia_focus_fact` builds a UIA focus's,
-  public so a test hands an outpost the fact the listener would). A
+  cached and hang-safe local reads, but for a UIA focus, whose marker is
+  sent at once and whose read is made on its application's reading thread
+  (`focus_read`, above; `focus_read::FocusReader` is public so a test
+  stands in for the listener with the listener's own reader). A
   foreground event is forwarded without
   checking the foreground: a starting application's window raises it before
   it actually becomes the foreground window, so the check waits for the
   outpost's worker, as NVDA's waits for its main-thread pump. Outgoing facts are
   coalesced with NVDA's UIA limiter rule, one waiting fact per element and
-  kind (`DeliveredFact::key`; notifications are never merged), with pongs
+  kind (`DeliveredFact::key`; notifications and a focus's marker, read, and
+  drop are never merged), with pongs
   and `Ready` first. It answers `Ping` with a `Pong`, takes the hand-over's
   `HookInstalled` and `HookRemoved` (above), and ignores everything else.
-  Its only per-application state is which applications' outposts have
-  their hooks in, which a replacement is given on its command line
-  (`--hooks-in`, `listener::parse_hooks_in`), so a crash respawns into
-  full capability instantly. Range-value changes and live regions, which NVDA
+  Its per-application state is which applications' outposts have their
+  hooks in, which a replacement is given on its command line
+  (`--hooks-in`, `listener::parse_hooks_in`), and each reading thread's
+  last focus, which a replacement does without at the cost of one fuller
+  ancestor read per application, so a crash respawns into full
+  capability at once. It takes `--classic-uia` as an outpost does, for
+  its reads. Range-value changes and live regions, which NVDA
   also registers globally, are not subscribed yet: the reducer speaks values
   only for the focus, and live regions are milestone M6's.
 - `Supervisor` (the `supervisor` module; outpost redesign, "The
@@ -700,89 +766,47 @@ Implementation notes:
   windows whether `GetGUIThreadInfo`'s active window is it or contains it,
   and whether it is in `GetForegroundWindow`'s window by NVDA's test), all
   local calls.
-- A UIA focus fact is reported from the fact itself, as NVDA builds the
-  focus from the event's sender, and it is accepted only when its
-  properties say the element has the keyboard focus. Its name and role
-  are the event's, which NVDA reads from the sender's cache; its value,
-  states, and details are read when the focus is handled, as NVDA fetches
-  them then (`with_live_reads`; `docs/parity.md`, "How an outpost turns
-  events into focus reports"), from the focused element the outpost reads
-  (`live_focus_element`, one call that UIA ends after `CALL_TIMEOUT`)
-  to get its own live copy of the element, which also serves for the
-  ancestors, the selected child, the element's window, and navigation.
-  Without it the focus is emitted from the event alone, with
-  `ancestors_unknown`, and nothing reads again: the element comes from
-  the focus's own next event, keyed by its runtime id. Meanwhile nothing
-  is followed, as NVDA hears nothing local before its group is added to a
-  focus (`docs/design/focus-pipeline.md`, section 17; the subscriptions on
-  the focus's whole window that once filled the gap, `follow_focus_window`
-  and `adopt_focus_element`, were removed on 2026-10-11). A focus event reads the element as any focus does, and
-  Core takes the same node silently; a selection event of the focus reads
-  the focused element once (`element_from_selection`) and keeps it when
-  it is the focus's, the subscription then following it and, for a focus
-  that may have text, its caret asked for, whose line Core then speaks. Until 2026-10-09 a queued follow-up read the focused
-  element once more. A focus that raises neither a focus nor a selection
-  event after its element was not found is not followed, as in NVDA's
-  gap. When the focused element
-  read is in another application, the fact is out of date and dropped.
-  When it is another element of this application, and the fact's element
-  is a window of its own, that window's element is read
-  (`own_element_focused`): if it is the fact's element and has the
-  keyboard focus, read live, the focus is reported from it at once, as
-  NVDA accepts a UIA focus event whose own element has the keyboard focus
-  (`shouldAllowUIAFocusEvent`), where the outpost had held the focus back
-  and read again (`phase6-design.md`, "Notepad at launch and the
-  outposts' loose ends"). The console host's window never gets this far:
-  its element is the parent of the text area, reports the keyboard focus
-  whenever the text area has it, and raises focus events around the text
-  area's, which NVDA refuses whatever the element reports
-  (`consoleUIAWindow.shouldAllowUIAFocusEvent` is false,
-  `NVDAObjects/UIA/winConsoleUIA.py` lines 356 to 358 and 446 to 447), so
-  a UIA focus whose own window is a console window is dropped before any
-  read, one rule since 2026-10-11 where there were two (mockapp's
-  `a_console_windows_own_focus_is_never_reported`); taken, it was
-  announced as a second focus beside the text area's.
-  Otherwise the focus has moved on to another element of the
-  application since the event, and the fact is reported all the same, as
-  its event said (since 2026-10-09; it had been dropped): NVDA judges a
-  UIA focus event by its sender's keyboard focus as the event arrives
-  (`shouldAllowUIAFocusEvent` in `NVDAObjects/UIA/__init__.py`, lines
-  1632 to 1637, checked by
-  `IUIAutomationFocusChangedEventHandler_HandleFocusChangedEvent` in
-  `UIAHandler/__init__.py`, lines 948 to 953), which the fact's cached
-  states carry, and the newer focus's own event follows. Its element is
-  found in its window (`element_of_moved_focus`): by its runtime id, else
-  by the name and position the event gave it, since Windows Terminal
-  raises its tabs' focus events from elements that are not in its tree;
-  its ancestors are read without requiring the keyboard focus
-  (`FocusQuery::require_focus`). It is not kept with its element, so the
-  focus-following subscription does not move to it; one found nowhere is
-  gone and is dropped, as File Explorer's "Working on it..." is as a
-  folder opens, and so is one that holds the element focused now, a
-  container that passed the focus to its content, which the newer focus
-  reports as an ancestor (File Explorer's file list pane), and so is one
-  whose event said it was selected and which is no longer selected, an
-  item the selection left with the focus (the tab Windows Terminal's
-  Control+Tab leaves; Dickson, 2026-10-10; mockapp's
-  `a_focus_that_moved_on_and_lost_its_selection_is_dropped`).
-  Every
-  UIA focus of a batch is handled in turn, oldest first, as NVDA's UIA
-  handler queues each one, and Core culls the speech of those that have
-  expired (mockapp's
-  `a_focus_that_moved_on_since_its_event_is_reported_as_the_event_said`).
-  For an
-  element with no window of its own the listener also sends the keyboard
-  focus window it found when it captured the event (`focus_window`, the
-  foreground thread's focus window when it belongs to the element's
-  process, a local read); an element the outpost cannot resolve is
-  reported with that window's facts, so Core judges it against the
-  foreground window. That window is exact when the event is current; for
-  a late event in an application with several windows it can be another
-  of them. Intake also uses it as the entry's window, so a hung focus
-  window drops the fact and the watchdog's moved-on check applies to it.
-  Only a fact with neither is reported without window facts, arbitrated
-  against this application's own focus window. A UIA selection fact
-  carries the same `focus_window` (since 2026-10-10), the window its
+- A UIA focus is reported from the listener's read (`Worker::uia_focus`,
+  since stage A step 6): the listener judged it by its own element's
+  keyboard focus, read live, as NVDA's `shouldAllowUIAFocusEvent` does,
+  and read its states, value, details, ancestors, and selected child from
+  that element. The outpost tests it against the foreground window
+  (NVDA's acceptance test, with the event's window or the application's
+  keyboard focus window when the listener received it), decides its
+  window's backend, and gives its runtime id a new node first when the
+  listener read that the element it read before under that id has lost
+  the keyboard focus or is gone. It reports the focus at once, with
+  nodes minted from runtime ids; its ancestors are the listener's chain,
+  filtered as a walk filters them, stopped at a container of the previous
+  focus's chain and spliced, and continued through MSAA from a window MSAA
+  owns (`read::uia_chain_from_read`). Then, off the way to speech, it
+  finds its own copy of the element by the chain's runtime ids, from the
+  nearest element of the chain with a window of its own: one
+  `ElementFromHandle` and one remote operation
+  (`verbatim_uia_rops::element_by_path`; the classic walk within a second
+  where a program cannot import the window's element), and keeps it
+  under the focus's node and follows it. A repeated focus whose element
+  the outpost already holds, and which the listener read as still
+  focused, is not looked for again. The chain is kept
+  (`outpost::focus_path`) and serves whenever the outpost needs an element
+  of it it does not hold: the focus's controller relation for a
+  selection, a newly entered dialog's own text, and a query on a node of
+  the chain, before any search. A focus whose element its path does not
+  reach, as Windows Terminal's tab focus elements, raised from elements
+  that are in no tree, do not, is reported from the read all the same,
+  with its own ancestors, and nothing is followed until a later focus
+  brings an element, as NVDA hears nothing local before its group is added
+  to a focus (`docs/design/focus-pipeline.md`, section 17). Removed with
+  the step: the outpost's read of
+  the focused element for a focus event, the moved-on rules (a focus
+  reported as its event said, the gone element, the container holding
+  the new focus, and 8be2223's rule for an item that lost its selection),
+  the name-and-position search, the selection event's read of the focused
+  element, and the outpost's own console window rule, now the listener's.
+  Every UIA focus is handled in turn, oldest first, as NVDA's UIA handler
+  queues each one, and Core culls the speech of those that have expired.
+  A UIA selection fact
+  carries the listener's `focus_window` (since 2026-10-10), the window its
   acceptance is tested with when its element has no window of its own;
   a menu opening uses the application's focus window when it is handled,
   as before. The UIA focus, selection, menu opening, and the outpost's
@@ -843,42 +867,29 @@ Implementation notes:
   focus-now answer gathers for its window and its focus's chain alike,
   reading a dialog that is both only once. A UIA dialog is read through the
   element the registry holds, each call waiting at most a second.
-- A UIA focus's ancestry, by default, is one remote operation
+- A focus-now query's UIA ancestry, by default, is one remote operation
   (`verbatim_uia_rops::focus_ancestry`, called by
   `read::uia_remote_enrichment` right after the focused element is read):
   one `Execute` checks the element's `HasKeyboardFocus` live, reads a list's
   or tab control's selected child, walks the raw-view parents with the
-  base cache filled inside the provider until it meets a runtime id of the
-  previous chain, and finds the element's nearest window, so the
-  `NormalizeElement` call for the window is not made either. The parents
-  become the chain through `Uia::ancestor_chain_from`, with the same
-  presentable filter, the same stop at a window read through MSAA and the
-  same continuation through MSAA from there, and the same splice; the
-  program also stops at a known ancestor that is not reported (the
-  previous focus itself, say), and the splice is made there. An element
-  the program finds no longer focused holds the fact back as above.
-  When the focus's runtime id already names a node, the program also
-  reads whether the element that node stands for still has the keyboard
-  focus (`FocusQuery::previous`; with remote operations off, one call of
-  its own): an application can give a dead element's runtime id to a new
-  one, and when the held element has lost the focus, or cannot be read,
-  the registry gives the id a new node before the focus is reported
-  (`NodeIdRegistry::reissue`; `docs/parity.md`, "Duplicate focus
-  suppression"). A held element that is gone fails the whole program
-  before it runs, and `verbatim_uia_rops::focus_ancestry` runs it once
-  more without it. With
-  remote operations off (`--classic-uia`), or for a window whose element
-  could not be imported into a program (a client-side proxy, marked in the
-  context for the window's lifetime and forgotten when it is destroyed),
-  the per-hop walk (`read::uia_enrichment`) is used, as before. A program
-  that fails otherwise is answered by the classic walk for that call and
-  logged with the failing instruction's source line. The focus-now query
-  reads its focus the same way. A steady-state UIA focus change costs two
-  UIA calls, the focused element and the `Execute` (`docs/performance.md`).
-  A focused menu item that no pattern makes checkable costs one more: its
-  legacy MSAA checked state, read live for it alone
-  (`verbatim_uia::map::with_legacy_checked_state`), as are the focus-now
-  answer and a navigation step's neighbor.
+  base cache filled inside the provider, and finds the element's nearest
+  window. The parents become the chain through `Uia::ancestor_chain_from`,
+  with the same presentable filter, the same stop at a window read through
+  MSAA and the same continuation through MSAA from there. With remote
+  operations off (`--classic-uia`, which the listener's reads follow too),
+  or for a window whose element could not be imported into a program (a
+  client-side proxy, marked in the context for the window's lifetime and
+  forgotten when it is destroyed), the per-hop walk (`read::uia_enrichment`)
+  is used. A program that fails otherwise is answered by the classic walk
+  for that call and logged with the failing instruction's source line. A
+  UIA focus event costs the outpost no UIA call before it is reported:
+  the listener's read is one `Execute`, and the outpost's walk to its own
+  copy of the element after the report is one `ElementFromHandle` and one
+  `Execute` (`docs/performance.md`). A focused menu item that no pattern
+  makes checkable costs the listener one call more: its legacy MSAA
+  checked state, read live for it alone, as are the focus-now answer
+  (`verbatim_uia::map::with_legacy_checked_state`) and a navigation step's
+  neighbor.
 - A UIA object-navigation step (`read::uia_remote_step`) is one remote
   operation (`verbatim_uia_rops::navigation_step`): from the element the
   registry keeps, without refreshing its cache first, the program finds

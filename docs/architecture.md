@@ -184,6 +184,24 @@ screen reader in both rendered and source form.
   processes, drops a fact whose focus has meanwhile moved to another
   application, and reports one it cannot resolve with the window the
   listener found, so Core judges it against the foreground window (D14).
+  Amended 2026-10-11 (phase 6, stage A step 6, option (b) of
+  `docs/design/focus-pipeline.md`, section 12.3, approved as decision 9 of
+  its section 15): the listener judges and reads each UIA focus from its
+  sender, on a thread for the sender's application, with time limits and
+  watchdogs. A UIA element cannot be handed to another process (experiment
+  E-marshal), so the listener, which receives the event, is the one
+  process that can judge it by its own element, as NVDA does. Its
+  callbacks, writer, and registration threads still make no cross-process
+  call; each application's reading thread makes one remote operation per
+  focus, under UIA's call timeout set once for the process, and a watchdog
+  abandons a thread whose read runs past its deadline. A slow or hung
+  application holds only its own reading thread, except that a hung window
+  named in a focus `WinEvent` holds UIA's delivery of every focus event to
+  the listener until it answers (measured, section 12.11; NVDA's exposure
+  too). MSAA events are forwarded with no call, as before. The outpost no
+  longer reads the focused element for a focus event: it reports the
+  listener's read and finds its own copy of the element afterwards, off
+  the way to speech.
 - **D14 — Attention follows focus; foreground is announced, not used as a
   gate.** The reducer tracks an attention record: the process and root
   window that most recently received a focus fact. It replaces the earlier
@@ -337,7 +355,9 @@ event floods serialized behind slow synchronous queries). The evidence
 is collected in
 [Main loop and watchdog](nvda/main-loop-and-watchdog.md); it is the
 justification for D9's per-application process isolation and D13's
-never-make-a-cross-process-call rule for the focus listener.
+rule that the focus listener's callbacks never make a cross-process call
+(amended 2026-10-11: its reads of a UIA focus are made on a thread per
+application, each under UIA's call timeout and a watchdog).
 
 Verbatim runs as three kinds of process:
 
@@ -570,6 +590,37 @@ is in, it says "forwarding ended" behind its last forwarded fact, and the
 outpost matches the two hooks' copies of an event by counting, so each
 event is handled once and none is dropped. The UIA focus stays with the
 listener.
+
+Amended 2026-10-11 (phase 6, stage A step 6, option (b) of
+`docs/design/focus-pipeline.md`, section 12): the listener's hard rule
+above now holds for its callbacks, its writer, and its registration
+threads, and no longer for the whole process. Its UIA focus callback
+sends the application's outpost a marker the moment the event arrives
+and queues the event's element for that application's reading thread,
+one per application, created on its first focus event and ended after a
+minute without one. The thread judges and reads the focus from the
+event's own element in one remote operation: the element's
+`HasKeyboardFocus` live first, a focus that has lost it dropped as NVDA
+drops it; NVDA's duplicate evidence, whether the element the thread read
+before under the same runtime id still has the keyboard focus; the
+element's value, states, and details afresh; and its ancestors up to the
+first one known from the focus before. The read, or its drop, follows
+the marker through verbatim.exe, the only route between the listener and
+the outposts. The outpost holds every entry that arrives after a marker
+until the read takes the marker's place, so a change raised after a
+focus is never handled before it, as in NVDA's single flusher thread;
+reports the focus from the read at once, its ancestors filtered and
+continued through MSAA where a window is MSAA's, as before; and only then
+finds its own copy of the element by the chain's runtime ids, from the
+nearest window in the chain, for the subscriptions, text, and review.
+The moved-on rules, the name-and-position search, and the focused
+element read are gone from the focus path; a focus-now query after a
+restart still reads the focused element. Each reading thread has a
+watchdog: a read past its deadline is reported dropped, a new thread
+takes the application's later events, and an application whose
+abandoned threads reach a small cap has its focus events dropped until
+one returns. When the listener is replaced, the supervisor tells every
+outpost to wait on none of its markers.
 
 ### Why one process per app
 

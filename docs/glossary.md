@@ -57,10 +57,16 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
 - **Flight recorder** — the bounded ring buffer of reducer inputs,
   dumpable to a versioned JSON-lines file and deterministically
   replayable. [verbatim-core](crates/verbatim-core.md).
-- **Focus listener** — the permanent, stateless outpost mode holding
-  the desktop-global focus registrations under a hard
-  never-make-a-cross-process-call rule (D13).
-  [Architecture](architecture.md) section 1.
+- **Focus listener** — the permanent outpost mode holding the
+  desktop-global focus registrations, whose callbacks never make a
+  cross-process call (D13); since stage A step 6 of phase 6 it also judges
+  and reads each UIA focus from the event's own element, on a reading
+  thread per application. [Architecture](architecture.md) section 1.
+- **Focus marker** — what the focus listener sends an application's
+  outpost the moment a UIA focus event arrives, before it has read it:
+  the outpost holds everything it takes in after the marker until the
+  listener's read of the focus, or its drop, takes the marker's place.
+  [verbatim-outpost](crates/verbatim-outpost.md).
 - **Golden image** — the Packer-built Windows VM baseline the Hyper-V
   harness imports, deploys to, and checkpoints. [The VM harness](vm.md).
 - **Held nodes** — the node references the reducer holds (the focus,

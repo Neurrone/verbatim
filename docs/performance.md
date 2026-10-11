@@ -225,6 +225,26 @@ outpost reads it: with remote operations, the default, and with the
 classic walk (`uia.remote_operations = false` in `settings.toml`, or a
 window whose elements cannot be imported into a program).
 
+Stage A step 6 of phase 6 (written 2026-10-11, not yet built; see
+`docs/design/focus-pipeline.md`, section 12) moves the read of a UIA focus
+into the focus listener, which reads the event's own element, so the
+outpost no longer reads the focused element, and the "Today" figures in
+the four UIA focus sections below are those from before it. The test now
+stands in for the listener with the listener's own reader, counted on the
+test's thread, and adds its calls to the outpost's. Counted by reading
+the code: with remote operations, one UIA call per focus, the listener's
+`Execute`, which also refreshes the focus's own cache, the cold focus's
+window message being the outpost's probe; classically, five calls for the
+cold focus (the live keyboard focus, the focus's cache, and three hops up
+to the desktop's root), four for the steady state and the next list item
+(one hop to the known ancestor, and the nearest window), and five into
+the list (one hop and the selected item's two). The outpost makes no UIA
+call before it reports the focus; after the report it finds its own copy
+of the element, one `ElementFromHandle` and one `Execute`, which the
+worker's count does not reach. The provider hits change with both, and
+are measured at the step's first build, when `call_counts.rs` and these
+sections are updated together.
+
 ### A focus change, UIA, steady state
 
 - Minimum: 2 UIA calls. The outpost must have a live element, confirm that

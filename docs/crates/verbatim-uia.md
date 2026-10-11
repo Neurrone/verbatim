@@ -31,10 +31,7 @@ Public API:
 - `Uia` — a per-thread client (one COM apartment, one `IUIAutomation`
   instance; nothing COM crosses threads), each of whose calls waits up to
   `CALL_TIMEOUT` for the application: `focused_element`,
-  `element_from_handle`, `element_by_runtime_id`,
-  `element_by_name_and_position` (an element named so at a given position
-  in its set, for a focus event whose sender no element of the tree is, as
-  Windows Terminal's tabs' are), `base_cache_request`,
+  `element_from_handle`, `element_by_runtime_id`, `base_cache_request`,
   `controlled_descendant` (the selected element, when it is inside an
   element the focus names in its ControllerFor relation; the classic
   implementation behind `verbatim_uia_rops::controlled_selection`), plus
@@ -95,8 +92,18 @@ Public API:
   same result from ancestors already fetched, nearest first, with their
   caches filled: what `verbatim-uia-rops`'s `focus_ancestry` returns after
   reading the same raw-view ancestors in one round trip inside the
-  provider process. The outpost uses that for a UIA focus and keeps the
-  per-hop walk for windows read the classic way.
+  provider process. The outpost uses that for a focus-now query and keeps
+  the per-hop walk for windows read the classic way.
+  `Uia::ancestor_chain_from_parts(parents, registry, stops)` does the same
+  for ancestors another process read and sent as their parts
+  (`AncestorParts`: the cached parts, the own window handle, and whether
+  UIA counts the element both a control and content), minting each node
+  from its runtime id with no element kept: the outpost reports a UIA
+  focus's ancestors this way from the focus listener's read, since stage
+  A step 6 of phase 6 (`docs/design/focus-pipeline.md`, section 12).
+  `element_by_name_and_position`, which found a focus whose sender no
+  element of the tree is by its name and position, is gone with that
+  step: the listener reads such a focus from its own element.
 - `Uia::selected_element(element, cache)` — the first element of a
   selection container's current selection, rebuilt with `cache`, or
   `None`. One `BuildUpdatedCache` on the container caches both

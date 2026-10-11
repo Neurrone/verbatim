@@ -434,13 +434,16 @@ verified.
   going back from a subfolder (found 2026-10-07), the parent folder's item
   "Inner" took the runtime id of the subfolder's item delta.txt, destroyed
   with its list, so the outpost reported Inner under delta.txt's node and
-  Core stayed silent. Since 2026-10-07 the outpost does NVDA's check
-  before it reports a UIA focus whose runtime id already names a node: it
-  reads, live, whether the element that node stands for still has the
-  keyboard focus, in the same remote operation that reads the focus's
-  ancestors (or with one call of its own when it reads classically), and
-  when it does not, or cannot be read, the runtime id gets a new node, so
-  Core announces the focus. **matched since 2026-10-07**; mockapp's
+  Core stayed silent. Since 2026-10-07 Verbatim does NVDA's check before
+  it reports a UIA focus whose runtime id already names a node: whether
+  the element it stood for still has the keyboard focus, read live, in
+  the same remote operation that reads the focus's ancestors (or with one
+  call of its own when it reads classically), and when it does not, or
+  cannot be read, the runtime id gets a new node, so Core announces the
+  focus. Since stage A step 6 (awaiting its first build) the focus
+  listener's thread for the application makes the read, on the element
+  it read for the focus before when the new event has the same runtime
+  id, and the outpost issues the new node on its evidence. **matched since 2026-10-07**; mockapp's
   `focus_reports` tests and Core's
   `a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows`
   check it. NVDA makes the comparison against the last focus it queued,
@@ -451,10 +454,11 @@ verified.
   before the stale and foreground checks, so it no longer moves attention
   or counts as the newest focus a later-arriving focus from another
   application is judged stale against; its newer reading is still kept.
-  The evidence of "still focused" is the outpost's live read above, which
-  a UIA focus whose element the outpost could not find lacks: its node id
-  alone stands for it until step 6 of stage A has the outpost mark the
-  event from its own element. **matched since 2026-10-11** (Core's
+  The evidence of "still focused" is the live read above, made since
+  stage A step 6 by the listener from the event's own element for every
+  UIA focus whose runtime id is that of the focus the listener read
+  before, so a node id Core compares stands for an element that still has
+  the keyboard focus. **matched since 2026-10-11** (Core's
   `a_duplicate_focus_does_not_make_a_later_focus_stale` and
   `the_same_focus_after_another_applications_focus_is_announced`).
 - Stale focus events: NVDA has no timestamp arbitration; it relies on
@@ -1338,51 +1342,44 @@ verified.
     **matched since 2026-10-08**; since 2026-10-11 as NVDA does it, one
     rule, before any read: before then the outpost reported the window's
     focus when the focused element read answered the window itself,
-    provisional, awaiting Dickson). Verbatim first
-    requires the delivered properties to say so; the outpost then reads
-    the focused element live, when its worker reaches the fact, and drops
-    the fact when the focus is in another application now. **Different
-    since 2026-10-09** (corrected 2026-10-11): when the read names another
-    element of the same application, the fact is not dropped as NVDA's
-    handler drops it (`UIAHandler/__init__.py`, lines 948 to 953) but
-    reported as its event said, unless one of Verbatim's own rules drops
-    it (see the switching of Windows Terminal's tabs under terminals);
-    NVDA judges much earlier, as the event arrives, so the two drop
-    different focus events. When the element is the one focused, the
-    remote operation that reads the ancestors reads `HasKeyboardFocus`
-    live again in the same round trip and drops the fact when it is
-    false. `docs/design/focus-pipeline.md` (approved, not built) moves the
-    live check to the listener, on the event's own element. Until 2026-10-08 the
-    outpost held such a fact back and read the focused element again, up
-    to three times. With remote operations off, the
-    focused-element read is the live check. Since 2026-10-08, when the
-    focused-element read names another element of the application and the
-    event's element is a window of its own, the outpost reads that
-    window's element and accepts the focus at once if it is the event's
-    element and has the keyboard focus, read live, which is exactly
-    NVDA's check (**matched since 2026-10-08**); before, such a focus was
-    held back and read again (mockapp's
-    `a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_in`).
-    A windowless element is dropped as above, since only its own window's
-    element can be read without NVDA's event element: where the focused
-    element read answers a stand-in for such an element's window while
-    the element has the focus, NVDA, which reads the event's own element,
-    accepts the focus, and Verbatim waits for the application's next focus
-    event (mockapp's
-    `a_windowless_focus_that_lost_the_keyboard_focus_waits_for_the_next_focus_event`).
+    provisional, awaiting Dickson; since stage A step 6 the focus listener
+    applies it). Since stage A step 6 (2026-10-11,
+    `docs/design/focus-pipeline.md`, section 12; awaiting its first build)
+    the focus listener judges each UIA focus as NVDA does: on its thread
+    for the application, a few milliseconds after the event, it reads the
+    event's own element's `HasKeyboardFocus` live and drops the focus when
+    it is false, then reads the element's states, value, and details
+    afresh and its ancestors in the same remote operation (**matched**).
+    The outpost reports every focus the listener read, whatever has
+    happened since, as NVDA queues every focus it accepts, and Core culls
+    the speech of one no longer current. Gone with the step: the outpost's
+    read of the system's focused element for a focus event, and its rules
+    for a focus that had moved on since its event (reported as its event
+    said, unless its element was gone, held the element focused now, or
+    had lost its selection), which were Verbatim's, not NVDA's; and the
+    window-element check of 2026-10-08 (mockapp's
+    `a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_in`),
+    since the listener reads the event's own element whatever kind it is.
     Until 2026-10-03 Verbatim's outpost read the focused element live,
     took the focus from that read, and dropped the focus when the read
     failed; under a busy application the read blocked
     for more than ten seconds or returned UIA's stand-in for the window,
-    so the focus was announced wrongly or not at all.
+    so the focus was announced wrongly or not at all. When the listener's
+    read fails (its application does not answer within the call timeout),
+    the focus is reported from its event with its ancestors unknown, as
+    NVDA lets a focus through whose `HasKeyboardFocus` read fails.
   - **Different, because of the outposts:** the event's element is in the
-    listener's process and cannot cross to the outpost, which reads its
-    own copy of it for the focus's ancestors and for navigation. That read
-    waits at most a second; without it the focus is still reported, with
-    its ancestors unknown (the reducer then announces no containers and
-    keeps the previous chain), and a follow-up finds the element later so
-    the focus's property changes are still followed. NVDA has the element
-    from the event and never waits for it.
+    listener's process and cannot cross to the outpost (experiment
+    E-marshal). Since stage A step 6 the listener reads the focus's
+    ancestors from it, and the outpost, after reporting the focus, finds
+    its own copy by the runtime ids of the chain the listener read, from
+    the nearest window, for its subscriptions, text, and navigation. An
+    element that path does not reach, such as Windows Terminal's tab
+    focus elements, which are in no tree, is reported from the listener's
+    read with its own ancestors; its changes are followed from its window
+    until its own event brings the element, and review and navigation
+    start from the nearest ancestor found (decision 3 of section 15 of the
+    design). NVDA has the element from the event and never looks for it.
   - A focus's ancestors are read only until they meet the previous
     focus's chain, whose rest is reused, as NVDA's focus ancestry does.
     **Different:** reading the rest is limited to two seconds, after which
@@ -2185,57 +2182,36 @@ verified.
   (matched). An earlier report that Verbatim left the window's title out
   of a console's terminal was not borne out: NVDA leaves it out too.
   Switching tabs with Control+Tab or Control+Shift+Tab: **matched since
-  2026-10-09, but for two differences** (the earlier deliberate
-  difference was withdrawn by Dickson on 2026-10-09 in the coherence
-  review). Windows Terminal gives the tab the keyboard focus only until it
-  moves it to the tab's terminal, a few milliseconds later, and on
-  Control+Tab gives it first to the tab it leaves. NVDA, captured live
-  on 2026-10-09, queued "list" and the tab ("<title> 1 of 2"; on
-  Control+Tab the tab it left, then "<title> two 2 of 2"), then "<title>
-  terminal", and culls a focus's speech once the focus has moved on. NVDA
-  judges a UIA focus event by the sender's keyboard focus as its event
-  thread receives it (`IUIAutomationFocusChangedEventHandler_HandleFocusChangedEvent`
-  and `shouldAllowUIAFocusEvent`, `nvda/source/UIAHandler/__init__.py`
-  lines 948 to 953 and `nvda/source/NVDAObjects/UIA/__init__.py` lines
-  1632 to 1637), on its UIA flusher thread a few milliseconds after the
-  event, and queues every UIA focus event it accepts. Verbatim does not
-  judge at receipt (corrected 2026-10-11; this entry had said Verbatim
-  does the same). Its focus listener makes no call into the application,
-  so the outpost judges the focus when its worker reaches the fact, after
-  the relay and whatever the worker was handling, by reading the
-  system's focused element rather than the event's own element, which
-  stays in the listener's process. When that read names another element
-  of the application, the outpost reports the focus as its event said,
-  unless the element is gone, holds the element focused now (a container
-  passing the focus on), or is the tab left (below): so a focus that has
-  moved on, which NVDA would drop if it had already moved when NVDA
-  judged it, is announced and then culled, and the rules that drop one
-  are Verbatim's, not NVDA's. Every UIA focus event of a batch is handled
-  in turn, in the order it arrived (since 2026-10-11; only the newest
-  three had been, and older ones dropped); Core culls
-  the speech of a focus no longer current as it expires. The approved
-  design, `docs/design/focus-pipeline.md`, moves the judgement to the
-  listener, reading the event's own element as it arrives, as NVDA does,
-  and removes these rules; it is not built yet. Windows Terminal raises its tabs' focus events
-  from elements that are not in its tree, so the outpost finds the tab by
-  the name and position the event gave it, and takes its ancestors and
-  states from there, read as it handles the event, as NVDA reads them as
-  it speaks; a focus that has moved on is not followed by the
-  focus-following subscriptions. The differences that remain: the tab
-  found that way has the tab control above its list, where the event's
-  own element, as NVDA reads it, has the terminal's container, so
-  Verbatim says "tab control" before "list" (accepted by Dickson for now,
-  2026-10-10); and on Control+Tab Verbatim does not announce the tab
-  left, which NVDA queues: **deliberately different since 2026-10-10**
-  (Dickson: when a new tab is selected, only that tab is announced). A
-  focus that has moved on since its event, whose event said it was
-  selected and which is no longer selected when the outpost handles it,
-  is dropped, as the tab left is: Windows Terminal gives the focus first
-  to the tab already selected and then moves the selection and the focus
-  to the next tab, so by then the tab left has lost both. Heard, either
-  key says "tab control", "list", "<title> terminal" and the line, the
-  tab's own name culled (`windows_terminal_tabs`). The two-window scenarios switch windows with
-  Alt+Tab (see above).
+  2026-10-11** (stage A step 6, `docs/design/focus-pipeline.md`, section
+  10.1, items 2 and 3; awaiting its first build and live runs). Windows
+  Terminal gives the tab the keyboard focus only until it moves it to the
+  tab's terminal, a few milliseconds later, and on Control+Tab gives it
+  first to the tab it leaves. NVDA, captured live on 2026-10-09, queued
+  "list" and the tab ("<title> 1 of 2"; on Control+Tab the tab it left,
+  then "<title> two 2 of 2"), then "<title> terminal", and culls a focus's
+  speech once the focus has moved on. NVDA judges a UIA focus event by the
+  sender's keyboard focus as its event thread receives it
+  (`IUIAutomationFocusChangedEventHandler_HandleFocusChangedEvent` and
+  `shouldAllowUIAFocusEvent`, `nvda/source/UIAHandler/__init__.py` lines
+  948 to 953 and `nvda/source/NVDAObjects/UIA/__init__.py` lines 1632 to
+  1637), on its UIA flusher thread a few milliseconds after the event,
+  and queues every UIA focus event it accepts. Verbatim's focus listener
+  now does the same: it judges and reads each focus from the event's own
+  element on its thread for the application, a few milliseconds after the
+  event, and the outpost reports every focus it read, in the order the
+  events arrived; Core culls the speech of a focus no longer current. The
+  tab's ancestors are its own element's, the terminal's container above
+  its list, so Verbatim says "list" and the tab, as NVDA does, and the tab
+  left is announced and then culled, as NVDA queues it. Heard, either key
+  says "list", the tab or tabs (culled), "<title> terminal", and the line
+  (`windows_terminal_tabs`). Before step 6 the outpost judged the focus
+  when its worker reached it, by reading the system's focused element,
+  found the tab, whose focus event comes from an element that is in no
+  tree, by its name and position, so said "tab control" before "list"
+  (accepted by Dickson for the time being, 2026-10-10), and dropped the tab
+  left, which had lost its selection by then (8be2223, Dickson,
+  2026-10-10, withdrawn with the design's decision 2 of section 10.1). The
+  two-window scenarios switch windows with Alt+Tab (see above).
 
   Up and Down Arrow in a terminal, a selection list a program draws
   among them: **matched since 2026-10-09** (Dickson, 2026-10-09,

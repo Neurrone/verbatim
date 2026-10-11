@@ -142,7 +142,8 @@ as an integer array, and a null register as a null object.
 
 `focus_ancestry_remote` and `focus_ancestry_classic` share one signature
 (`FocusAncestryFn`): a `&Uia` and a `FocusQuery`, which holds the focused
-element (with its cache filled; the outpost passes the focused element it
+element (with its cache filled; the focus listener passes the focus
+event's own element, and the outpost the focused element a focus-now query
 read), the runtime ids the caller already knows, a depth limit, the
 properties to cache on every returned element
 (`verbatim_uia::CACHED_PROPERTIES`, so they match what the snapshot code
@@ -223,6 +224,13 @@ caches, or, when it stopped before reaching one, from
 `nearest_window_handle`, one more call. Every call it makes goes through
 `verbatim-uia`'s safe wrappers, so it is counted, and the module has no
 `unsafe` code.
+
+With `FocusQuery::refresh`, the program also fills the focused element's
+own cache afresh with the query's properties, in the same round trip, and
+answers it as `Ancestry::element` (the classic walk makes it one
+`BuildUpdatedCache`): the focus listener reports a focus's value, states,
+and details from it, as NVDA reads those afresh when it handles a focus
+event, without a second call. Every other caller leaves it off.
 
 ### The entry point
 
@@ -571,6 +579,27 @@ takes a step from a top-level window classically. Against mockapp's
 ancestry fixture (`crates/mockapp/tests/remote_ops.rs`), both give the
 same neighbor with the same cached properties and snapshot, and the same
 window, for every direction and at an edge.
+
+## Layer 3: an element found by its path
+
+`element_by_path(uia, query, remote)`, with `element_by_path_remote` and
+`element_by_path_classic` behind it (`ElementByPathFn`), finds an element
+again from one the caller has, such as a window's element from its
+handle, by the runtime ids of the raw-view elements below it, outermost
+first (`PathQuery::path`): at each level, the current element's children
+are looked at in order until one has the path's next runtime id, and the
+walk goes down to it; a level with no such child answers that nothing was
+found. The program does the whole path in one round trip and fills the
+found element's cache inside the provider; the classic walk takes one
+call per child it looks at (`GetFirstChildElementBuildCache`, then
+`GetNextSiblingElementBuildCache`) and checks the query's deadline between
+calls. The outpost uses it, since stage A step 6 of phase 6, to find its
+own copy of an element the focus listener read
+(`docs/design/focus-pipeline.md`, section 12.5): the focus, from the
+nearest element of its chain with a window of its own, after the focus is
+reported; and an element of that chain it needs later. Its instruction
+count, which grows with the children looked at on the way, is not yet
+pinned (`crates/mockapp/tests/instruction_limit.rs`).
 
 ## Layer 3: a selection the focus controls
 
