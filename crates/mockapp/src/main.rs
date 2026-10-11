@@ -22,6 +22,7 @@ mod stdin;
 mod tree;
 mod tree_view;
 mod uia;
+mod uia_window;
 mod window;
 
 use std::path::PathBuf;
@@ -66,6 +67,10 @@ enum BackendArg {
     Uia,
     /// Answer as an MSAA (`IAccessible`) provider.
     Msaa,
+    /// Answer nothing for the window itself, as a plain Win32 window: its
+    /// client area is Windows' own standard object, and only its real child
+    /// controls, a UIA window among them, answer for themselves.
+    Win32,
 }
 
 fn main() -> ExitCode {
@@ -90,13 +95,14 @@ fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         uia::count_registrations();
     }
     let backend = match cli.backend {
-        BackendArg::Uia => Backend::Uia,
-        BackendArg::Msaa => Backend::Msaa,
+        BackendArg::Uia => Some(Backend::Uia),
+        BackendArg::Msaa => Some(Backend::Msaa),
+        BackendArg::Win32 => None,
     };
     window::run(
         backend,
         tree,
-        &native,
+        native,
         edit_version_6,
         (&cli.title, window_class.as_deref()),
         cli.show,

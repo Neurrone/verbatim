@@ -57,6 +57,8 @@ pub(crate) struct NodeData {
     /// Whether the node has died (`take-runtime-id`): it has left the tree,
     /// and every call on its elements fails as on an element that is gone.
     pub(crate) dead: bool,
+    /// Whether UIA counts the node as content (`IsContentElement`).
+    pub(crate) content: bool,
 }
 
 /// A text's formatting: stretches that are spelling errors, that are bold,
@@ -209,6 +211,7 @@ fn insert(
         children: Vec::new(),
         runtime_id: index,
         dead: false,
+        content: node.content,
     });
     by_fixture_id.insert(node.id, index);
     if let Some(controlled) = node.controller_for {
@@ -262,6 +265,7 @@ mod tests {
             columns: Vec::new(),
             state_images: false,
             edit_version_6: false,
+            content: true,
             children,
         }
     }

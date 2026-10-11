@@ -124,6 +124,8 @@ struct RawNode {
     state_images: bool,
     #[serde(default)]
     edit_version_6: bool,
+    #[serde(default = "content_by_default")]
+    content: bool,
     #[serde(default)]
     /// Kept as JSON values, each made a node only when it is converted:
     /// deserializing a node's many fields takes a large stack frame in a
@@ -237,7 +239,17 @@ pub(crate) struct FixtureNode {
     /// text is Common Controls version 6's, as a Windows Forms text box is,
     /// rather than the classic one.
     pub(crate) edit_version_6: bool,
+    /// Whether UIA counts the node as content (`IsContentElement`), as
+    /// every node is unless the fixture says `"content": false`, which
+    /// makes it layout to a client that, as NVDA, presents a UIA element
+    /// only when it is both a control and content.
+    pub(crate) content: bool,
     pub(crate) children: Vec<FixtureNode>,
+}
+
+/// A node is content unless its fixture says otherwise.
+fn content_by_default() -> bool {
+    true
 }
 
 impl FixtureNode {
@@ -365,6 +377,7 @@ fn convert(
         columns: raw.columns,
         state_images: raw.state_images,
         edit_version_6: raw.edit_version_6,
+        content: raw.content,
         children,
     })
 }

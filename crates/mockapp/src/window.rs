@@ -48,7 +48,8 @@ const WM_APP_COMMAND_READY: u32 = WM_APP + 1;
 /// Intentionally leaked (`Box::leak`) for the process's lifetime: mockapp
 /// exits shortly after the message loop ends, so there is nothing to free.
 struct WindowContext {
-    backend: Backend,
+    /// The backend the window answers as; `None` for a plain Win32 window.
+    backend: Option<Backend>,
     tree: SharedTree,
     receiver: Receiver<Command>,
 }
@@ -74,11 +75,13 @@ impl From<windows::core::Error> for WindowError {
 /// Creates the host window, titled `title` and of the window class `class`
 /// (mockapp's own when `None`), shown when `show` is set, prints `ready`,
 /// and runs the message loop until a `quit` command (or the window
-/// otherwise closes). `backend` decides how `WM_GETOBJECT` is answered.
+/// otherwise closes). `backend` decides how `WM_GETOBJECT` is answered;
+/// with none, the window answers nothing itself, as a plain Win32 window.
+/// The nodes in `native` become real child windows, whatever the backend.
 pub(crate) fn run(
-    backend: Backend,
+    backend: Option<Backend>,
     tree: SharedTree,
-    native: &[crate::fixture::FixtureNode],
+    native: Vec<crate::fixture::FixtureNode>,
     edit_version_6: bool,
     (title, class): (&str, Option<&str>),
     show: bool,
@@ -119,7 +122,7 @@ pub(crate) fn run(
     // MSAA has no text interface: the first node with text is served by a
     // real edit control, read through its messages, the classic one or, as
     // the fixture asks, Common Controls version 6's.
-    if backend == Backend::Msaa {
+    if backend == Some(Backend::Msaa) {
         let text = tree
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -129,19 +132,22 @@ pub(crate) fn run(
         if let Some(text) = text {
             crate::edit::create(hwnd, &text, edit_version_6)?;
         }
-        // Real controls, read through their own MSAA implementations.
-        for node in native {
-            match node.native.as_deref() {
-                Some("tree_view") => {
-                    crate::tree_view::create(hwnd, node)?;
-                }
-                Some("list_view") => {
-                    crate::list_view::create(hwnd, node)?;
-                }
-                Some("group_box") => crate::buttons::create_group_box(hwnd, node)?,
-                Some("button") => crate::buttons::create_button(hwnd, node)?,
-                _ => {}
+    }
+    // Real controls, read through their own MSAA implementations, and a
+    // child window that is a UIA provider of its own.
+    for node in native {
+        let kind = node.native.clone();
+        match kind.as_deref() {
+            Some("tree_view") => {
+                crate::tree_view::create(hwnd, &node)?;
             }
+            Some("list_view") => {
+                crate::list_view::create(hwnd, &node)?;
+            }
+            Some("group_box") => crate::buttons::create_group_box(hwnd, &node)?,
+            Some("button") => crate::buttons::create_button(hwnd, &node)?,
+            Some("uia_window") => crate::uia_window::create(hwnd, node)?,
+            _ => {}
         }
     }
 
@@ -259,7 +265,7 @@ unsafe extern "system" fn wnd_proc(
         WM_KEYDOWN => {
             // SAFETY: see above.
             if let Some(context) = unsafe { context_for(hwnd) }
-                && context.backend == Backend::Uia
+                && context.backend == Some(Backend::Uia)
             {
                 #[expect(
                     clippy::cast_possible_truncation,
@@ -333,7 +339,8 @@ fn handle_get_object(
     )]
     let obj_id = lparam.0 as i32;
     match context.backend {
-        Backend::Uia => {
+        None => {}
+        Some(Backend::Uia) => {
             if obj_id == UiaRootObjectId
                 && let Ok(simple) = uia::root_provider(context.tree.clone(), hwnd)
             {
@@ -341,7 +348,7 @@ fn handle_get_object(
                 return unsafe { UiaReturnRawElementProvider(hwnd, wparam, lparam, &simple) };
             }
         }
-        Backend::Msaa => {
+        Some(Backend::Msaa) => {
             if obj_id == OBJID_CLIENT.0 {
                 let accessible: IAccessible = msaa::node_accessible(&context.tree, hwnd, 0);
                 // SAFETY: `accessible` is a live provider for the root node.
@@ -403,8 +410,9 @@ fn drain_commands(hwnd: HWND, context: &WindowContext) {
         let applied = match command {
             Command::Unrecognized(line) => Err(format!("unrecognized command: {line}")),
             command => match context.backend {
-                Backend::Uia => uia::apply_command(&context.tree, hwnd, command),
-                Backend::Msaa => msaa::apply_command(&context.tree, hwnd, command),
+                Some(Backend::Uia) => uia::apply_command(&context.tree, hwnd, command),
+                Some(Backend::Msaa) => msaa::apply_command(&context.tree, hwnd, command),
+                None => Err("a plain Win32 window has no scripted tree".to_owned()),
             },
         };
         // Acknowledged once it has taken effect, events raised, so a test

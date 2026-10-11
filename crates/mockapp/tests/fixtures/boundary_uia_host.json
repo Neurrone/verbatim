@@ -1,0 +1,9 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Boundary Fixture",
+  "states": ["focused"],
+  "children": [
+    { "id": "apply", "role": "button", "name": "Apply", "native": "button" }
+  ]
+}

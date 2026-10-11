@@ -430,7 +430,8 @@ mod props {
         ToggleState_Indeterminate, ToggleState_On, UIA_AccessKeyPropertyId,
         UIA_ClassNamePropertyId, UIA_ControlTypePropertyId, UIA_ControllerForPropertyId,
         UIA_E_ELEMENTNOTAVAILABLE, UIA_ExpandCollapseExpandCollapseStatePropertyId,
-        UIA_FullDescriptionPropertyId, UIA_HasKeyboardFocusPropertyId, UIA_IsEnabledPropertyId,
+        UIA_FullDescriptionPropertyId, UIA_HasKeyboardFocusPropertyId,
+        UIA_IsContentElementPropertyId, UIA_IsEnabledPropertyId,
         UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
         UIA_IsOffscreenPropertyId, UIA_IsSelectionItemPatternAvailablePropertyId,
         UIA_IsTogglePatternAvailablePropertyId, UIA_LevelPropertyId, UIA_NamePropertyId,
@@ -732,6 +733,9 @@ mod props {
                         .ok()
                 })
                 .map_or_else(empty_variant, |element| element_array_variant(&element))
+        } else if id == UIA_IsContentElementPropertyId.0 && !node.content {
+            // Left to UIA's default, content, unless the fixture says not.
+            bool_variant(false)
         } else {
             empty_variant()
         }

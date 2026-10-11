@@ -11,8 +11,12 @@ client crates it is built to be tested against (`verbatim-uia`,
 `verbatim-ia2`, `verbatim-outpost`) are dev-dependencies, used only by its
 own integration tests.
 
-CLI: `mockapp --fixture <path.json> --backend <uia|msaa> [--title
-<window title>] [--show]` (default title `mockapp`). It creates one real
+CLI: `mockapp --fixture <path.json> --backend <uia|msaa|win32> [--title
+<window title>] [--show]` (default title `mockapp`). With `win32` the
+window answers nothing itself, as a plain Win32 window: its client area
+is Windows' own standard object, named by the title, and only its real
+child controls answer for themselves; stdin commands that act on the
+scripted tree are rejected. It creates one real
 top-level Win32 window titled per `--title`, hidden unless `--show` is
 given, prints `ready` (flushed) once the window exists and the provider is
 answering, then processes stdin commands until `quit`. The cross-process
@@ -37,10 +41,14 @@ the UIA backend the node serves the text pattern over it, and on the MSAA
 backend, since MSAA has no text interface, mockapp creates a real
 multi-line Win32 `EDIT` control holding the first such text, its line
 feeds made carriage return and line feed pairs, read through the edit
-control's own messages), an optional `native` (on the MSAA backend, the
-node is a real control rather than a scripted node: `tree_view` makes a
+control's own messages), an optional `content` (true unless set false:
+on the UIA backend a node set false answers `IsContentElement` false, so
+a client that presents only control and content elements, as NVDA does,
+takes it for layout), an optional `native` (the node is a real child
+window rather than a scripted node, on any backend: `tree_view` makes a
 comctl32 tree view, below, with its own optional `window_class` and
-`state_images`), and `children` (nested nodes). The root
+`state_images`, and `uia_window` a child window that is a native UIA
+provider of its own, below), and `children` (nested nodes). The root
 node conceptually corresponds to the window itself.
 
 A `native` tree view (`tree_view.rs`, `tests/fixtures/tree_view.json`) is
@@ -256,6 +264,23 @@ its crate-internal modules are the reviewable surface:
   node a push button beside it; each window is placed below the last in
   z-order, as a dialog places its controls
   (`tests/fixtures/group_box.json`).
+- `uia_window` — a `native` `uia_window` node becomes a child window of
+  the host that answers UIA's root object id with the same scripted UIA
+  provider as the host's, over a tree of its own: the node, as its root,
+  and its children. Windows' own window objects answer MSAA for it. At
+  most one per fixture.
+
+The window boundary is tested both ways, with the fewest new pieces: a
+`native` `button` in a host on the UIA backend is a Win32 control inside
+a window whose UIA provider is native (`tests/fixtures/boundary_uia_host.json`,
+and `boundary_uia_layout_host.json`, whose root is not content), and a
+`uia_window` in a host on the `win32` backend is a UIA window inside a
+plain Win32 window (`boundary_win32_host.json`). `native_controls.rs`
+reports a focus in each through a real outpost and asserts its ancestors
+and what Core speaks: the UIA window's element before the button when it
+is a control and content, and not at all when it is not; and the Win32
+window's client area, by its title, before the UIA window's root and its
+focused button.
 - `stdin` — command parsing and the reader thread.
 - `hits` — the provider-side hit counters: one atomic per provider method
   (every `IRawElementProviderSimple`, `IRawElementProviderFragment`,

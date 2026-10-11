@@ -9,6 +9,16 @@
 //! without the control taking the keyboard focus from the desktop the test
 //! runs on. What the outpost reports is then given to the reducer, and the
 //! speech it makes is asserted whole.
+//!
+//! The window boundary, both ways, as NVDA switches API there
+//! (`correctAPIForRelation`): a Win32 button inside a window whose UIA
+//! provider is native (`tests/fixtures/boundary_uia_host.json`), whose
+//! MSAA ancestors continue as that window's UIA element, presented only
+//! when it is a control and content (`boundary_uia_layout_host.json` says
+//! it is not); and a UIA window inside a plain Win32 window
+//! (`boundary_win32_host.json`, `--backend win32`), whose UIA ancestors
+//! continue as the Win32 window's MSAA client area, presented by its title
+//! as a top-level window's client with a system menu.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -19,6 +29,14 @@ use verbatim_model::{
     Backend, Effect, Input, NodeSnapshot, NormalizedEvent, OutpostId, Pid, Role, SegmentContent,
     State, StateSet, TraceId,
 };
+
+use verbatim_outpost::protocol::DeliveredFact;
+use verbatim_uia::{ElementExt as _, Uia};
+use windows::Win32::Foundation::HWND;
+use windows::Win32::System::Variant::VARIANT;
+use windows::Win32::UI::Accessibility::{TreeScope_Descendants, UIA_HasKeyboardFocusPropertyId};
+use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
+use windows::core::{PCWSTR, w};
 
 use common::outpost::{OutpostUnderTest, Reported};
 use common::tree_view::{focus_item, tree_view};
@@ -257,8 +275,6 @@ fn other_tree_items_keep_a_value_that_is_not_a_number() {
 /// sibling: entering it speaks it ("Synthesizer grouping"); a button
 /// outside it has no such container.
 fn a_group_box_is_the_context_of_the_controls_inside_it() {
-    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
-    use windows::core::w;
     common::init_com();
     let title = common::unique_title("mockapp-group-box");
     let app = common::spawn("group_box.json", "msaa", &title);
@@ -313,8 +329,6 @@ fn a_group_box_is_the_context_of_the_controls_inside_it() {
 /// width or with no text left out, as NVDA names it; it has no value or
 /// description of its own.
 fn a_report_view_item_is_named_by_its_columns() {
-    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
-    use windows::core::w;
     common::init_com();
     let title = common::unique_title("mockapp-list-view");
     let app = common::spawn("list_view.json", "msaa", &title);
@@ -379,8 +393,6 @@ fn a_report_view_item_is_named_by_its_columns() {
 /// the focus speaks the date alone, and the review cursor's next character
 /// from the start is its second digit.
 fn bidirectional_marks_are_stripped_from_a_name() {
-    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
-    use windows::core::w;
     common::init_com();
     let title = common::unique_title("mockapp-bidi-marks");
     let app = common::spawn("bidi_marks.json", "msaa", &title);
@@ -488,6 +500,125 @@ fn moving_to_a_tree_items_parent_says_only_the_parent() {
     app.quit();
 }
 
+/// The focus a Win32 button named `name`, inside `host`, reports when the
+/// outpost is handed its MSAA focus.
+fn button_focus(outpost: &OutpostUnderTest, host: HWND, name: PCWSTR) -> Reported {
+    // SAFETY: a local search of the host window's children.
+    let button = unsafe { FindWindowExW(Some(host), None, w!("Button"), name) }
+        .expect("mockapp made the button");
+    outpost.focus(DeliveredFact::MsaaFocus {
+        hwnd: button.0 as isize,
+        id_object: OBJID_CLIENT.0,
+        id_child: 0,
+    })
+}
+
+/// A Win32 button inside a window whose UIA provider is native: its MSAA
+/// ancestors cross into the window, which is read as its UIA element, a
+/// named window that is a control and content, and so is spoken before the
+/// button as an entered container.
+fn a_win32_control_in_a_uia_window_has_the_windows_element_as_context() {
+    common::init_com();
+    let title = common::unique_title("mockapp-boundary-uia-host");
+    let app = common::spawn("boundary_uia_host.json", "uia", &title);
+    let host = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+
+    let apply = button_focus(&outpost, host, w!("Apply"));
+    assert_eq!(
+        apply.chain(),
+        [Some("Mockapp Boundary Fixture"), Some("Apply")]
+    );
+    assert_eq!(
+        spoken(&apply),
+        [
+            vec![
+                SegmentContent::Label("Mockapp Boundary Fixture".to_owned()),
+                SegmentContent::Role(Role::Window)
+            ],
+            vec![
+                SegmentContent::Label("Apply".to_owned()),
+                SegmentContent::Role(Role::Button)
+            ],
+        ]
+    );
+    app.quit();
+}
+
+/// The same button, in a UIA window that UIA does not count as content:
+/// the window is layout by NVDA's rule for a UIA object, so it is not among
+/// the button's ancestors, and the button is spoken alone.
+fn a_uia_window_that_is_not_content_is_no_context_for_a_win32_control() {
+    common::init_com();
+    let title = common::unique_title("mockapp-boundary-uia-layout");
+    let app = common::spawn("boundary_uia_layout_host.json", "uia", &title);
+    let host = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+
+    let apply = button_focus(&outpost, host, w!("Apply"));
+    assert_eq!(apply.chain(), [Some("Apply")]);
+    assert_eq!(
+        spoken(&apply),
+        [vec![
+            SegmentContent::Label("Apply".to_owned()),
+            SegmentContent::Role(Role::Button)
+        ]]
+    );
+    app.quit();
+}
+
+/// A UIA window inside a plain Win32 window: the focus read by the
+/// listener's reader goes up through the UIA window's root, a named
+/// grouping, and on past it to the Win32 window, whose client area, read
+/// through MSAA, is a pane that stands for a top-level window with a
+/// system menu: it is spoken by its title, then the grouping, then the
+/// button.
+fn a_uia_window_in_a_win32_window_has_the_windows_client_as_context() {
+    common::init_com();
+    let title = common::unique_title("mockapp-boundary-win32-host");
+    let app = common::spawn("boundary_win32_host.json", "win32", &title);
+    let host = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+
+    let uia = Uia::new().expect("a UIA client");
+    let cache = uia.base_cache_request().expect("a cache request");
+    let root = uia
+        .element_from_handle(host.0 as isize, &cache)
+        .expect("the host window's element");
+    let condition = uia
+        .property_condition(UIA_HasKeyboardFocusPropertyId, &VARIANT::from(true))
+        .expect("a condition");
+    let ok = root
+        .find_first_build_cache(TreeScope_Descendants, &condition, &cache)
+        .expect("the search")
+        .expect("the UIA window reports a focused element");
+    let reported = outpost.uia_focus(&ok);
+    assert_eq!(
+        reported.chain(),
+        [Some(title.as_str()), Some("Embedded"), Some("OK")]
+    );
+    assert!(
+        reported.ancestors[0].details.top_level_client,
+        "the Win32 window's client area, marked as a top-level window's"
+    );
+    assert_eq!(
+        spoken(&reported),
+        [
+            vec![SegmentContent::Label(title.clone())],
+            vec![
+                SegmentContent::Label("Embedded".to_owned()),
+                SegmentContent::Role(Role::Group)
+            ],
+            vec![
+                SegmentContent::Label("OK".to_owned()),
+                SegmentContent::Role(Role::Button)
+            ],
+        ]
+    );
+    drop(outpost);
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
         (
@@ -517,6 +648,18 @@ fn main() {
         (
             "moving_to_a_tree_items_parent_says_only_the_parent",
             moving_to_a_tree_items_parent_says_only_the_parent,
+        ),
+        (
+            "a_win32_control_in_a_uia_window_has_the_windows_element_as_context",
+            a_win32_control_in_a_uia_window_has_the_windows_element_as_context,
+        ),
+        (
+            "a_uia_window_that_is_not_content_is_no_context_for_a_win32_control",
+            a_uia_window_that_is_not_content_is_no_context_for_a_win32_control,
+        ),
+        (
+            "a_uia_window_in_a_win32_window_has_the_windows_client_as_context",
+            a_uia_window_in_a_win32_window_has_the_windows_client_as_context,
         ),
     ]);
 }
