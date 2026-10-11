@@ -270,8 +270,9 @@ Public API:
   pid filter this module once carried is gone with that move (the sealed
   module made the relocation a change of caller, not a rewrite).
 - `Registration::new(subscriptions, scope)`,
-  `Registration::with_cache(subscriptions, scope, properties)`, and
-  `retarget(scope)` — one
+  `Registration::with_cache(subscriptions, scope, properties)`,
+  `Registration::with_parts(parts, scope)`, `retarget(scope)`, and
+  `retarget_to(scope, group)` — one
   subscription type for everything but focus: `Subscription::Properties`
   (a list of property ids, such as `FOCUS_PROPERTIES`: name, value,
   toggle state, enabled, and expand/collapse), `Subscription::Event` (an
@@ -286,40 +287,63 @@ Public API:
   active, when the event carries one). `close()` ends a registration for
   good and returns once it is done: every move already asked for is made,
   then its client removes everything it registered
-  (`RemoveAllEventHandlers`, which waits for a callback in progress), its
+  (`RemoveAllEventHandlers`, which waits for a callback in progress, and
+  the only place that call is made), its
   objects are released, and its thread leaves the apartment and ends;
   moving or settling a closed registration does nothing, and dropping one
-  closes it. An outpost closes its registrations when it shuts down. The
+  closes it. An outpost closes its registration when it shuts down. The
   `Scope` is nothing yet, the subtree of given top-level windows, the whole
   desktop (the subtree of the root element), or exactly given elements.
-  A registration takes any number of subscriptions and registers them as
-  one event handler group (`IUIAutomationEventHandlerGroup`, from
-  `IUIAutomation6`), as NVDA registers its handlers: each handler is added
-  to the group, which is local, and the group is registered on each
-  element of the scope with one `AddEventHandlerGroup` call. Each
-  registration owns its thread, apartment, client, and handlers and
-  registers with one cache request: the base one from `new`, or exactly
-  the given properties from `with_cache`, for events whose callers read
-  fewer, so the provider is asked for no more with each event. The
-  outpost registers a text focus's caret, text, and active text position
-  events with `TEXT_EVENT_PROPERTIES` (process id, native window handle,
-  and class name: nothing is spoken from them, and the class name of an
-  element one brings, which may become the node's kept element, says
-  whether its text is a terminal's) and the focus's property changes with
-  `FOCUS_EVENT_PROPERTIES` (the base set without the details and focus
-  context properties, since a change of states carries the whole state
-  set); `retarget` hands the new scope to
-  that thread, which removes everything its client registered and registers
-  the group again, so the caller never waits on UIA's removal (which waits
-  for running callbacks). Elements that fail to resolve, or on which the
-  group cannot be registered (an element that has gone, which NVDA also
-  logs and passes over), are skipped. `settle()` waits until every move
-  asked for before it has been made, for a test that measures what the
-  moves cost an application. A registration's thread has a watchdog, the
+- A registration registers its subscriptions as an event handler group
+  (`IUIAutomationEventHandlerGroup`, from `IUIAutomation6`), as NVDA
+  registers its handlers: each handler is added to the group, which is
+  local, and the group is registered on each element of the scope with one
+  `AddEventHandlerGroup` call. Each subscription is a `Part`, with the
+  properties its events' elements arrive with, so one group can carry a
+  different cache request for each handler. A registration has two groups,
+  as NVDA has two local groups (`UIAHandler/__init__.py`,
+  `_createLocalEventHandlerGroup`): `Group::Base`, which holds every part
+  not marked `extended_only`, and `Group::Extended`, which holds every
+  part. Each is built once per thread and client, on first need. `new`
+  gives every part the base cache request, `with_cache` exactly the given
+  properties, for events whose callers read fewer, so the provider is asked
+  for no more with each event, and `with_parts` each part its own. The
+  elements of a scope of windows or the desktop are fetched with the first
+  part's cache request.
+- The outpost's one focus-following registration has four parts: the
+  focus's property changes with `FOCUS_EVENT_PROPERTIES` (the base set
+  without the details and focus context properties, since a change of
+  states carries the whole state set) and its caret event with
+  `TEXT_EVENT_PROPERTIES` (process id, native window handle, and class
+  name: nothing is spoken from it, and the class name of an element one
+  brings, which may become the node's kept element, says whether its text
+  is a terminal's), in both groups; and its text changes and active text
+  position changes, with `TEXT_EVENT_PROPERTIES`, in the extended group
+  alone.
+- A move (`retarget` gives the base group, `retarget_to` the group named)
+  is handed to the registration's thread, so the caller never waits on
+  UIA's removal, which waits for running callbacks. The thread adds the
+  group to each element of the new scope that does not already have it,
+  then removes from each element no longer in the scope the group it added
+  there (`RemoveEventHandlerGroup`), and forgets that element whatever the
+  result, as NVDA adds its local group to a new focus and removes it from
+  the old one (`UIAHandler/__init__.py` 642 to 756). An element that
+  already has the same group, the same element by `CompareElements`, keeps
+  it, and no call is made for it, so a move to the element already
+  followed costs the application nothing. A move to the same element with
+  the other group adds the new group, then removes the old one. Elements
+  that fail to resolve, or on which the group cannot be registered (an
+  element that has gone, which NVDA also logs and passes over), are
+  skipped. Every move is logged at debug level: the elements it moves from,
+  by runtime id and group, the scope and elements it moves to, and each
+  call it makes with its result. `settle()` waits until every move asked
+  for before it has been made, for a test that measures what the moves
+  cost an application.
+- A registration's thread has a watchdog, the
   outpost worker's rule: when a move has taken `MOVE_DEADLINE` (ten
   seconds, two call timeouts) by the time the registration is next
   retargeted or settled, the thread is abandoned and a new one, with its
-  own client and the same subscriptions, registers on the newest scope;
+  own client and the same parts, registers on the newest scope and group;
   `settle()` then returns without waiting for it. An abandoned thread's
   handlers call back no more, so nothing is heard twice, and once its call
   returns it removes what its client registered and ends; `abandoned()`
@@ -329,9 +353,9 @@ Public API:
   and ends its thread. The focus listener holds one registration, the
   desktop-wide selection, menu-opened, and notification subscriptions as
   one group, where it held three registrations, each with its own thread
-  and client, before; each outpost holds one focus-following property
-  subscription and one focus-following subscription to a text focus's
-  caret and text changes and active text position changes, one group.
+  and client, before; each outpost holds one focus-following registration,
+  where it held two, each with its own thread and client, before
+  (`docs/design/focus-pipeline.md`, section 17).
   Registering the listener's group took 9.9 ms at
   the median against mockapp where its three registrations took 18.5 ms
   (`docs/performance.md`, "Event handler groups").

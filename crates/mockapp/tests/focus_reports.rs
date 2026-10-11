@@ -5,7 +5,7 @@
 //! a windowless focus's element no longer has the keyboard focus, when a
 //! focus has moved on and lost its selection since its event, when a
 //! focus's element is not found until its next focus or selection event,
-//! and what another element's change costs meanwhile.
+//! and when the focus leaves a document and returns to it.
 //!
 //! The outpost runs in this process and reads the focused element from the
 //! test (`common::outpost`), as `call_counts.rs` describes; mockapp's focus
@@ -484,73 +484,73 @@ fn a_selection_of_a_focus_whose_element_was_not_found_finds_its_element() {
     app.quit();
 }
 
-/// A UIA focus whose element was not found, and which raises neither a
-/// focus nor a selection event afterwards, is still followed: its
-/// subscriptions listen in its window while its element is unknown, so its
-/// own change brings the element, and the change is reported. They had
-/// listened nowhere, and the focus's changes went unheard until its next
-/// focus or selection event.
-fn a_focus_whose_element_was_not_found_is_followed_from_its_own_changes() {
-    let title = common::unique_title("mockapp-focus-own-change");
-    let mut app = common::spawn("small.json", "uia", &title);
+/// Focuses `id` in mockapp's caret watch fixture and returns the focus the
+/// outpost reports, which must be the next thing it says, followed by the
+/// caret it reports for a document, and nothing more.
+fn focus_in_caret_fixture(
+    app: &mut common::MockApp,
+    client: &Client,
+    outpost: &OutpostUnderTest,
+    id: &str,
+) -> NodeSnapshot {
+    app.send(&format!("set-focus {id}"));
+    let element = client.focused();
+    outpost.read_focus_as(&element);
+    let ListenerFact { fact, .. } =
+        uia_focus_fact(&element).expect("mockapp's element has its process");
+    outpost.deliver(fact);
+    let node = match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::FocusChanged { node, .. },
+            ..
+        } => node,
+        other => panic!("the outpost said {other:?}, not the focus on {id}"),
+    };
+    if node.role == Role::EditableText {
+        match outpost.next() {
+            OutpostToSupervisor::Event {
+                event: NormalizedEvent::CaretMoved { node_id, .. },
+                ..
+            } if node_id == node.id => {}
+            other => panic!("the outpost said {other:?}, not the document's caret"),
+        }
+    }
+    outpost.settled();
+    node
+}
+
+/// The focus-following subscription moves with the focus as NVDA's local
+/// group does, added to the new focus and removed from the old one alone
+/// (`docs/design/focus-pipeline.md`, section 17): after the focus leaves
+/// the document for a button and returns, a text change the document
+/// raises is heard and reported.
+fn a_text_change_after_the_focus_returns_to_a_document_is_heard() {
+    let title = common::unique_title("mockapp-focus-returns");
+    let mut app = common::spawn("caret_watch.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::new(&app);
 
-    app.send("set-focus btn1");
-    let button = client.focused();
-    let node = focus_not_found(&outpost, &button);
-    assert_eq!(outpost.focus_reads(), 1, "read for the event alone");
+    let notes = focus_in_caret_fixture(&mut app, &client, &outpost, "doc");
+    assert_eq!(notes.name.as_deref(), Some("Notes"));
+    let ok = focus_in_caret_fixture(&mut app, &client, &outpost, "ok");
+    assert_eq!(ok.name.as_deref(), Some("OK"));
+    let returned = focus_in_caret_fixture(&mut app, &client, &outpost, "doc");
+    assert_eq!(returned.id, notes.id);
 
-    assert_followed(&mut app, &outpost, "btn1", &node);
-    assert_eq!(outpost.focus_reads(), 1, "the change brought the element");
-
-    drop(outpost);
-    app.quit();
-}
-
-/// While a focus's element is not known, its subscriptions listen in its
-/// whole window, so another element's change reaches the outpost too: it
-/// is dropped as not the focus's before anything is asked of mockapp, its
-/// nearest window not looked for, as NVDA tells the focus's events first.
-/// mockapp answers only UIA's own delivery of the event and of the
-/// `WinEvent` raised alongside it. Looking for the nearest window first,
-/// as the outpost did before, cost 1 `WM_GETOBJECT`, 10 `ProviderOptions`,
-/// 4 `GetPropertyValue`, 3 `HostRawElementProvider`, 3 `Navigate`, and 1
-/// `FragmentRoot` more. The event's cache, the focus events' request,
-/// has asked for 9 `GetPropertyValue` and 1 `BoundingRectangle` fewer
-/// since it left out the details nothing reads from a change.
-fn another_elements_change_heard_for_the_focus_costs_nothing() {
-    let title = common::unique_title("mockapp-window-wide-other-element");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
-
-    app.send("set-focus btn1");
-    let button = client.focused();
-    let _ = focus_not_found(&outpost, &button);
-    common::reset_hits(hwnd);
-    app.send("set-name slider1 Volume");
+    app.send("text-changed doc");
+    // UIA raises a value change `WinEvent` alongside the text change.
     outpost.heard(&[
-        Heard::UiaProperty(UIA_NamePropertyId.0),
-        Heard::Msaa(WinEventKind::NameChange),
+        Heard::UiaTextChanged,
+        Heard::Msaa(WinEventKind::ValueChange),
     ]);
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::TextChanged { node_id },
+            ..
+        } => assert_eq!(node_id, notes.id),
+        other => panic!("the outpost said {other:?}, not the document's text change"),
+    }
     outpost.settled();
-    assert_eq!(
-        common::read_hits(hwnd),
-        [
-            ("WM_GETOBJECT", 6),
-            ("ProviderOptions", 49),
-            ("GetPatternProvider", 11),
-            ("GetPropertyValue", 16),
-            ("HostRawElementProvider", 18),
-            ("Navigate", 12),
-            ("GetRuntimeId", 6),
-            ("FragmentRoot", 8),
-            ("Value", 1),
-            ("IsReadOnly", 1),
-        ]
-    );
 
     drop(outpost);
     app.quit();
@@ -622,12 +622,8 @@ fn main() {
             a_focus_whose_element_was_not_found_is_followed_from_its_next_focus_event,
         ),
         (
-            "a_focus_whose_element_was_not_found_is_followed_from_its_own_changes",
-            a_focus_whose_element_was_not_found_is_followed_from_its_own_changes,
-        ),
-        (
-            "another_elements_change_heard_for_the_focus_costs_nothing",
-            another_elements_change_heard_for_the_focus_costs_nothing,
+            "a_text_change_after_the_focus_returns_to_a_document_is_heard",
+            a_text_change_after_the_focus_returns_to_a_document_is_heard,
         ),
         (
             "a_selection_of_a_focus_whose_element_was_not_found_finds_its_element",

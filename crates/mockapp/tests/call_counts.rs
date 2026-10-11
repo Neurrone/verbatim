@@ -1286,6 +1286,47 @@ fn uia_focus_changes_cost_exactly_classic() {
     );
 }
 
+/// A focus repeated on the element the focus-following subscription already
+/// follows, under the same node, does not move the subscription, so it costs
+/// the focus's read alone, with no registration's `HostRawElementProvider`
+/// and `FragmentRoot` hits (`docs/design/focus-pipeline.md`, section 17).
+/// The worker does not ask for the move; were it asked, the subscription
+/// would find the element already has its group and make no call either,
+/// which `uia_event_registrations_cost_exactly` pins.
+fn uia_repeated_focus_costs_exactly() {
+    let title = common::unique_title("mockapp-counts-uia-repeated-focus");
+    let mut app = common::spawn("counts.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+    let mut ratchet = Ratchet::default();
+
+    let (first, _) = measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("first", "First"));
+    let (again, cost) =
+        measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("first", "First"));
+    assert_eq!(again.node.id, first.node.id, "the focus keeps its node");
+    ratchet.check(
+        "UIA focus repeated on the element followed",
+        &cost,
+        calls(2, 0, 0),
+        &[
+            ("WM_GETOBJECT", 1),
+            ("ProviderOptions", 24),
+            ("GetPatternProvider", 11),
+            ("GetPropertyValue", 31),
+            ("HostRawElementProvider", 10),
+            ("Navigate", 8),
+            ("GetRuntimeId", 4),
+            ("BoundingRectangle", 1),
+            ("FragmentRoot", 4),
+        ],
+    );
+
+    ratchet.finish();
+    drop(outpost);
+    app.quit();
+}
+
 /// One object-navigation step's cost through an outpost reading UIA as
 /// `remote` says: the next sibling of `First`, then the parent of
 /// `Second`, from the nodes a focus on `First` and the first step reported,
@@ -1417,7 +1458,7 @@ fn uia_navigation_steps_cost_exactly() {
 /// listener's desktop-wide group (an element selected, a menu opened, and
 /// notifications), and an outpost's focus-following property subscription
 /// moved to a focus, `First` inside the group `Settings`, registered on the
-/// focus alone.
+/// focus alone, and moved to it again, which costs nothing.
 fn uia_event_registrations_cost_exactly() {
     let title = common::unique_title("mockapp-counts-uia-registrations");
     let app = common::spawn("counts.json", "uia", &title);
@@ -1463,12 +1504,27 @@ fn uia_event_registrations_cost_exactly() {
         )
         .expect("the focus-following registration")
     });
-    drop(registration);
     ratchet.check(
         "UIA focus-following registration",
         &cost,
         calls(0, 0, 0),
         &[("HostRawElementProvider", 1), ("FragmentRoot", 2)],
+    );
+
+    // A move to the element already followed, by another reference to it,
+    // makes no call: the registration compares the elements and keeps the
+    // group where it is (`docs/design/focus-pipeline.md`, section 17).
+    let again = AgileReference::new(under_test.element("First")).expect("an agile reference");
+    let ((), cost) = under_test.measure(hwnd, |_| {
+        registration.retarget(Scope::Elements(vec![again]));
+        registration.settle();
+    });
+    drop(registration);
+    ratchet.check(
+        "UIA focus-following move to the element already followed",
+        &cost,
+        calls(0, 0, 0),
+        &[],
     );
 
     ratchet.finish();
@@ -3055,6 +3111,10 @@ fn main() {
         (
             "uia_focus_changes_cost_exactly_classic",
             uia_focus_changes_cost_exactly_classic,
+        ),
+        (
+            "uia_repeated_focus_costs_exactly",
+            uia_repeated_focus_costs_exactly,
         ),
         (
             "uia_navigation_steps_cost_exactly",

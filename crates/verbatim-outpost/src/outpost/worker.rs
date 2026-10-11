@@ -490,16 +490,6 @@ fn is_terminal_output_notification(
     role == Role::Terminal && notification.activity_id.as_deref() == Some(TERMINAL_OUTPUT_ACTIVITY)
 }
 
-/// Where the focus-following property subscription listens for a focus
-/// whose live UIA element is `element`: on that element alone, or nowhere
-/// for a focus with no UIA element. The reducer acts on the focus's own
-/// name, value, and state changes and on no other element's. NVDA
-/// registers its local group on the focus with `TreeScope_Ancestors` as
-/// well, but UIA delivers no ancestor's event to such a registration: a
-/// registration on the Windows 11 taskbar clock's child with that scope
-/// did not hear the clock's own name change each minute, which one on the
-/// clock and one on the taskbar's subtree did (`docs/parity.md`, "UIA
-/// event registration").
 /// Whether `hwnd` is one of the shell's windows that take the focus or the
 /// foreground only while a switch is staged: the Alt+Tab switcher's and
 /// Task View's staging windows, the Windows+X menu's host, and the desktop
@@ -513,16 +503,6 @@ fn is_shell_transition_window(hwnd: isize) -> bool {
         window_class_name(hwnd).as_str(),
         "ForegroundStaging" | "LauncherTipWnd" | "ApplicationManager_DesktopShellWindow"
     )
-}
-
-fn following(
-    element: Option<
-        windows::core::AgileReference<windows::Win32::UI::Accessibility::IUIAutomationElement>,
-    >,
-) -> verbatim_uia::Scope {
-    element.map_or(verbatim_uia::Scope::Nothing, |element| {
-        verbatim_uia::Scope::Elements(vec![element])
-    })
 }
 
 /// Why the watchdog abandons a worker at `now`, if it does: the entry it
@@ -1100,10 +1080,7 @@ impl Worker<'_> {
             });
             return;
         }
-        for registration in [context.focus_properties.get(), context.text_events.get()]
-            .into_iter()
-            .flatten()
-        {
+        if let Some(registration) = context.focus_events.get() {
             registration.settle();
         }
         context.outbound.flush();
@@ -1412,12 +1389,11 @@ impl Worker<'_> {
 
     /// Asks for the caret of a newly reported focus that may have text, or
     /// whose role says it may (Core waits to hear which before it speaks
-    /// the line or the value), and moves the subscription to caret and text
-    /// changes to it (to nothing for a focus without text, or one read
-    /// through MSAA, whose caret events come from the hooks).
+    /// the line or the value), and moves the focus-following subscription
+    /// to it ([`follow_focus`](Self::follow_focus)).
     fn follow_text(&self, (node_id, role): (NodeId, Role), trace: TraceId) {
         text_reads::forget_no_text(self.context, node_id);
-        let has_text = self.follow_text_events((node_id, role));
+        let has_text = self.follow_focus((node_id, role));
         let role_has_text = matches!(role, Role::EditableText | Role::Document | Role::Terminal);
         if has_text || role_has_text {
             self.context.intake.push(Entry {
@@ -1432,20 +1408,60 @@ impl Worker<'_> {
         }
     }
 
-    /// Moves the subscription to caret and text changes to `node` when it
-    /// may have text and is read through UIA, and to nothing otherwise
-    /// (an edit control's caret events come from the hooks). Returns
-    /// whether the node may have text.
-    fn follow_text_events(&self, (node_id, role): (NodeId, Role)) -> bool {
+    /// Moves the focus-following subscription to the focus `node`, as NVDA
+    /// moves its local group with the focus (`UIAHandler/__init__.py` 642 to
+    /// 756; `NVDAObjects/UIA/__init__.py` 1623 to 1630;
+    /// `docs/design/focus-pipeline.md`, section 17): to the node's own
+    /// element when the outpost has it, with the extended group when the
+    /// node may have text, and the base group otherwise; and to nothing for
+    /// a focus whose element the outpost does not have, or one read through
+    /// MSAA, whose changes and caret events come from the hooks. The element
+    /// alone, not its descendants, as the reducer acts on the focus's own
+    /// changes. NVDA registers its group with `TreeScope_Ancestors` as well,
+    /// but UIA delivers no ancestor's event to such a registration: one on
+    /// the Windows 11 taskbar clock's child with that scope did not hear the
+    /// clock's own name change each minute, which one on the clock and one
+    /// on the taskbar's subtree did (`docs/parity.md`, "UIA event
+    /// registration"). A move to the node and group already followed is not
+    /// asked of the subscription, so it makes no call; one to the same
+    /// element under another node makes none either, as the subscription
+    /// compares the elements. Returns whether the node may have text.
+    fn follow_focus(&self, (node_id, role): (NodeId, Role)) -> bool {
         let has_text = text_reads::may_have_text(self.context, node_id, role);
-        if let Some(subscription) = self.context.text_events.get() {
-            let element = has_text
-                .then(|| self.context.uia_registry.element_of(node_id))
-                .flatten();
-            subscription.retarget(match element {
-                Some(element) => verbatim_uia::Scope::Elements(vec![element]),
-                None => verbatim_uia::Scope::Nothing,
-            });
+        let element = self.context.uia_registry.element_of(node_id);
+        let group = if has_text {
+            verbatim_uia::Group::Extended
+        } else {
+            verbatim_uia::Group::Base
+        };
+        let wanted = element.as_ref().map(|_| (node_id, group));
+        let mut followed = self
+            .context
+            .followed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *followed == wanted {
+            tracing::debug!(
+                ?wanted,
+                "the focus-following subscription already follows this focus; it is not moved"
+            );
+            return has_text;
+        }
+        tracing::debug!(
+            from = ?*followed,
+            to = ?wanted,
+            runtime_id = ?self.context.uia_registry.runtime_id_of(node_id),
+            "the focus-following subscription is moved"
+        );
+        *followed = wanted;
+        drop(followed);
+        if let Some(subscription) = self.context.focus_events.get() {
+            match element {
+                Some(element) => {
+                    subscription.retarget_to(verbatim_uia::Scope::Elements(vec![element]), group);
+                }
+                None => subscription.retarget(verbatim_uia::Scope::Nothing),
+            }
         }
         has_text
     }
@@ -1587,7 +1603,6 @@ impl Worker<'_> {
             ancestors: ancestors.unwrap_or_default(),
             selected_child,
         };
-        let followed = self.context.uia_registry.element_of(node_id);
         if self.emit(trace, observed_at_ms, backend, window, event) {
             // A caret key's watch on another node ends with the focus,
             // saying nothing, as NVDA's wait gives way to a focus change.
@@ -1601,15 +1616,6 @@ impl Worker<'_> {
             }
             if !foreground {
                 self.context.intake.set_focused(object);
-                // Move the focus-following UIA property subscription to the
-                // new focus, without waiting: selective registration, as
-                // NVDA's, on the focus alone, whose changes are the only
-                // ones the reducer acts on. A focus read through MSAA has no
-                // element and is followed by the hooks, and a foreground
-                // report is a window, not the control focus is in.
-                if let Some(subscription) = self.context.focus_properties.get() {
-                    subscription.retarget(following(followed));
-                }
             }
             let mut tracking = self.context.tracking();
             tracking.role = Some(role);
@@ -1636,6 +1642,9 @@ impl Worker<'_> {
                 }
             }
             drop(tracking);
+            // Move the focus-following subscription to the new focus,
+            // without waiting, and ask for its caret. A foreground report
+            // is a window, not the control focus is in.
             if let Some(node) = text_node {
                 self.follow_text((node.id, node.role), trace);
             }
@@ -2084,12 +2093,6 @@ impl Worker<'_> {
             .element
             .as_ref()
             .and_then(|agile| agile.resolve().ok());
-        // An event the subscriptions that follow the focus's whole window
-        // bring from another element is dropped first, before its nearest
-        // window is looked for.
-        if !self.adopt_focus_element(&event, element.as_ref(), trace) {
-            return;
-        }
         // The event's window: its own, else the recorded window of the focus
         // it concerns, else its element's. Never the system's focus window,
         // which can belong to another application.
@@ -2821,9 +2824,11 @@ impl Worker<'_> {
     /// can leave that read unanswered for more than ten seconds, or answer
     /// with UIA's stand-in for its window (Windows 11 Notepad's text area as
     /// a nameless edit). Without it the focus is still reported, from the
-    /// event alone, with its ancestors unknown, and its subscriptions
-    /// listen in its window until its own next event brings the element
-    /// ([`follow_focus_window`](Self::follow_focus_window)).
+    /// event alone, with its ancestors unknown, and nothing is followed
+    /// until its next focus or selection event brings the element
+    /// ([`element_from_selection`](Self::element_from_selection)), as NVDA
+    /// hears nothing local before its group is added to a focus
+    /// (`docs/design/focus-pipeline.md`, section 17).
     ///
     /// A fact whose element has lost the keyboard focus to another
     /// application is dropped: the newer focus's own event reports it, and
@@ -2918,7 +2923,6 @@ impl Worker<'_> {
                 object,
                 (None, None),
             );
-            self.follow_focus_window(reported);
             return;
         };
         if let Some(held) = held {
@@ -3284,81 +3288,6 @@ impl Worker<'_> {
         Some(element)
     }
 
-    /// Points the focus-following subscriptions at the subtree of `window`'s
-    /// top-level window, else of each of the application's top-level
-    /// windows, for a focus reported from its event alone, whose element
-    /// was not found in time: its own events, from the property and the
-    /// caret and text subscriptions, then bring its element
-    /// ([`adopt_focus_element`](Self::adopt_focus_element)), as its next
-    /// focus or selection event does.
-    fn follow_focus_window(&self, window: Option<isize>) {
-        let windows = match window {
-            Some(window) => vec![top_level_of(window)],
-            None => super::window::top_level_windows(self.context.target_pid),
-        };
-        let scope = || verbatim_uia::Scope::Windows(windows.clone());
-        if let Some(subscription) = self.context.focus_properties.get() {
-            subscription.retarget(scope());
-        }
-        if let Some(subscription) = self.context.text_events.get() {
-            subscription.retarget(scope());
-        }
-        tracing::debug!(
-            ?windows,
-            "the focus's element was not found; its window's events are listened to for it"
-        );
-    }
-
-    /// Whether the focus this outpost last reported is a UIA focus whose
-    /// element is not known: its subscriptions listen in its window
-    /// ([`follow_focus_window`](Self::follow_focus_window)), and the runtime
-    /// id it names.
-    fn focus_without_element(&self) -> Option<Vec<i32>> {
-        let Some(Object::Uia(focus)) = self.context.intake.focused() else {
-            return None;
-        };
-        let registry = &self.context.uia_registry;
-        let known = registry
-            .existing_id(&focus)
-            .and_then(|id| registry.element_of(id))
-            .is_some();
-        (!known).then_some(focus)
-    }
-
-    /// An event from the focus-following subscriptions while the focus's
-    /// element is not known, so they listen in the focus's window: the
-    /// focus's own event brings its element, which is kept and followed
-    /// from then on, and the event is handled; another element's is
-    /// dropped, as the subscriptions follow the focus alone. Answers
-    /// whether the event is to be handled.
-    fn adopt_focus_element(
-        &mut self,
-        event: &UiaEvent,
-        element: Option<&IUIAutomationElement>,
-        trace: TraceId,
-    ) -> bool {
-        let followed = matches!(
-            event.kind,
-            UiaKind::Property(_)
-                | UiaKind::TextSelection
-                | UiaKind::TextChanged
-                | UiaKind::ActiveTextPosition(_)
-        );
-        if !followed {
-            return true;
-        }
-        let Some(focus) = self.focus_without_element() else {
-            return true;
-        };
-        if focus != event.parts.runtime_id {
-            return false;
-        }
-        if let Some(element) = element {
-            self.follow_focus_element(&focus, element, trace);
-        }
-        true
-    }
-
     /// A selection event of the focus `runtime_id` names, which was reported
     /// from its event alone and whose element has not been found since: the
     /// event is evidence that the application answers for the element, so
@@ -3406,15 +3335,15 @@ impl Worker<'_> {
     ) {
         let context = self.context;
         let id = context.uia_registry.id_for_element(runtime_id, element);
-        if let Some(subscription) = context.focus_properties.get() {
-            subscription.retarget(following(context.uia_registry.element_of(id)));
-        }
         // The focus was reported without its element, so its text could not
-        // be read: its caret and text events are followed from now on, and
-        // its caret reported, whose line Core speaks for the focus.
+        // be read: its changes are followed from now on, and its caret
+        // reported, whose line Core speaks for the focus.
         let role = context.tracking().role;
-        if let Some(role) = role {
-            self.follow_text((id, role), trace);
+        match role {
+            Some(role) => self.follow_text((id, role), trace),
+            None => {
+                self.follow_focus((id, Role::Unknown));
+            }
         }
         tracing::debug!("the focus's element was found; its changes are followed");
     }
@@ -3597,7 +3526,7 @@ impl Worker<'_> {
                 // key there is answered by the control's caret events, so
                 // they are followed as a reported focus's are.
                 if let Some(control) = &answer.focus {
-                    self.follow_text_events((control.node.id, control.node.role));
+                    self.follow_focus((control.node.id, control.node.role));
                 }
                 Ok(QueryResult::Focus(answer))
             }

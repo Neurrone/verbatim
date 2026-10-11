@@ -54,7 +54,8 @@ use verbatim_ia2::{
 use verbatim_model::{Backend, Fetches, NodeId, Pid, TraceId};
 use verbatim_uia::map::{cached_native_window_handle, snapshot_parts_from_cached_element};
 use verbatim_uia::{
-    FOCUS_PROPERTIES, NodeIdRegistry as UiaRegistry, Registration, Scope, Subscription, Uia,
+    FOCUS_PROPERTIES, Group, NodeIdRegistry as UiaRegistry, Part, Registration, Scope,
+    Subscription, Uia,
 };
 
 use crate::arbitration::Arbitrator;
@@ -125,8 +126,14 @@ pub(crate) struct Context {
     /// The client on a thread of its own for the worker's operations with a
     /// deadline of their own: searches and a dialog's text.
     bounded: verbatim_uia::BoundedClient,
-    /// The focus-following UIA property subscription, which the worker moves.
-    focus_properties: OnceLock<Registration>,
+    /// The focus-following UIA subscription, one event handler group in
+    /// two forms, which the worker moves with the focus
+    /// ([`register_focus_events`]).
+    focus_events: OnceLock<Registration>,
+    /// The focus's node and group the focus-following subscription was
+    /// last moved to: `None` for nothing. A move to the same node and group
+    /// is not asked of the subscription at all.
+    followed: Mutex<Option<(NodeId, Group)>>,
     /// Whether UIA reads may use remote operations ([`OutpostOptions`]).
     remote_operations: bool,
     /// Windows whose UIA elements could not be imported into a remote
@@ -135,9 +142,6 @@ pub(crate) struct Context {
     /// is kept with the thread that owned it, so a reused handle, whose
     /// destroy event was lost, is not read the classic way by mistake.
     classic_windows: Mutex<HashMap<isize, u32>>,
-    /// The focus-following UIA subscription to a text focus's caret and
-    /// text changes, which the worker moves (milestone M4).
-    text_events: OnceLock<Registration>,
     /// The caret key's watch for evidence the worker keeps open between its
     /// entries, if one is open.
     caret_watch: Mutex<Option<text_reads::OpenWatch>>,
@@ -547,7 +551,7 @@ impl Outpost {
 
     /// Creates an outpost watching `target_pid` for its whole life: starts
     /// the writer, the worker, and the watchdog, installs the MSAA hooks and
-    /// the focus-following UIA property subscription, and announces
+    /// the focus-following UIA subscription, and announces
     /// readiness.
     ///
     /// # Panics
@@ -594,10 +598,10 @@ impl Outpost {
             arbitrator: Mutex::new(Arbitrator::new(&[])),
             tracking: Mutex::new(Tracking::default()),
             bounded: verbatim_uia::BoundedClient::default(),
-            focus_properties: OnceLock::new(),
+            focus_events: OnceLock::new(),
+            followed: Mutex::new(None),
             remote_operations: options.remote_operations,
             classic_windows: Mutex::new(HashMap::new()),
-            text_events: OnceLock::new(),
             caret_watch: Mutex::new(None),
             held_anchors: Arc::clone(&held_anchors),
             uia_anchors: Mutex::new(Anchors::sharing(
@@ -618,11 +622,8 @@ impl Outpost {
             // before this reaches it.
             handover: Mutex::new(handover::Handover::new(verbatim_ia2::event_clock())),
         });
-        if let Some(registration) = register_focus_properties(&context) {
-            let _ = context.focus_properties.set(registration);
-        }
-        if let Some(registration) = register_text_events(&context) {
-            let _ = context.text_events.set(registration);
+        if let Some(registration) = register_focus_events(&context) {
+            let _ = context.focus_events.set(registration);
         }
 
         worker::start(&context);
@@ -723,10 +724,7 @@ impl Outpost {
         } = self;
         drop(context.intake.close());
         drop(event_thread);
-        if let Some(registration) = context.focus_properties.get() {
-            registration.close();
-        }
-        if let Some(registration) = context.text_events.get() {
+        if let Some(registration) = context.focus_events.get() {
             registration.close();
         }
         let handlers_removed = started.elapsed();
@@ -942,75 +940,67 @@ fn capture(element: &IUIAutomationElement, kind: UiaKind) -> UiaEvent {
     }
 }
 
-/// Starts the focus-following UIA property subscription (outpost redesign,
-/// "Focus-following UIA subscriptions"): name, value, and state changes on the
-/// focused element and its ancestors only, moved by the worker each time it
-/// reports a new focus. Selections and notifications come desktop-wide from
-/// the listener instead.
-fn register_focus_properties(context: &Arc<Context>) -> Option<Registration> {
-    let callback_context = Arc::clone(context);
-    let callback = Arc::new(move |element: &IUIAutomationElement, property_id: i32| {
-        // The property element carries cached values.
-        let event = capture(element, UiaKind::Property(property_id));
-        callback_context.take_in(
-            Item::Uia(event),
-            Heard::UiaProperty(property_id),
-            EventTiming {
-                observed_at_us: now_us(),
-                ..EventTiming::default()
-            },
-        );
-    });
-    let subscription = Subscription::Properties {
+/// Starts the focus-following UIA subscription (outpost redesign,
+/// "Focus-following UIA subscriptions"; `docs/design/focus-pipeline.md`,
+/// section 17): one registration, on one thread and client, listening
+/// nowhere until the worker reports a focus whose element it has. Its two
+/// groups are NVDA's two local groups (`UIAHandler/__init__.py`,
+/// `_createLocalEventHandlerGroup`): the base group, given every UIA focus,
+/// holds the name, value, and state changes ([`FOCUS_PROPERTIES`]) and the
+/// caret event (`Text_TextSelectionChanged`); the extended group, given a
+/// focus with text read through UIA, also holds the text changes
+/// (`Text_TextChanged`) and the active text position changes. Selections
+/// and notifications come desktop-wide from the listener instead. A caret
+/// or text change also has the worker check a caret key's watch.
+///
+/// One group carries a cache request per handler, so each event's element
+/// arrives with what its handling reads: a property change with what the
+/// focus's name, value, and states are read from
+/// ([`verbatim_uia::FOCUS_EVENT_PROPERTIES`]), and a caret, text, or active
+/// text position change with little more than its window
+/// ([`verbatim_uia::TEXT_EVENT_PROPERTIES`]), since the worker reads the
+/// text itself.
+fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
+    let property_context = Arc::clone(context);
+    let properties = Subscription::Properties {
         properties: FOCUS_PROPERTIES.to_vec(),
-        callback,
-    };
-    // The element arrives with what the focus's changes are read from, and
-    // nothing that only feeds a node's details.
-    match Registration::with_cache(
-        vec![subscription],
-        Scope::Nothing,
-        verbatim_uia::FOCUS_EVENT_PROPERTIES,
-    ) {
-        Ok(registration) => Some(registration),
-        Err(error) => {
-            fault(
-                context,
-                format!("UIA property subscription failed: {error}"),
+        callback: Arc::new(move |element: &IUIAutomationElement, property_id: i32| {
+            // The property element carries cached values.
+            let event = capture(element, UiaKind::Property(property_id));
+            property_context.take_in(
+                Item::Uia(event),
+                Heard::UiaProperty(property_id),
+                EventTiming {
+                    observed_at_us: now_us(),
+                    ..EventTiming::default()
+                },
             );
-            None
-        }
-    }
-}
-
-/// Starts the focus-following UIA subscription to a text focus's caret and
-/// text changes (`Text_TextSelectionChanged` and `Text_TextChanged`) and
-/// its active text position changes, one event handler group listening
-/// nowhere until the worker reports a focus with text. A caret or text
-/// change also has the worker check a caret key's watch.
-fn register_text_events(context: &Arc<Context>) -> Option<Registration> {
-    let callback_context = Arc::clone(context);
-    let callback = Arc::new(move |element: &IUIAutomationElement, event_id: i32| {
-        let (kind, heard) = if event_id == UIA_Text_TextSelectionChangedEventId.0 {
-            (UiaKind::TextSelection, Heard::UiaTextSelection)
-        } else {
-            (UiaKind::TextChanged, Heard::UiaTextChanged)
-        };
-        callback_context.take_in(
-            Item::Uia(capture(element, kind)),
-            heard,
-            EventTiming {
-                observed_at_us: now_us(),
-                ..EventTiming::default()
-            },
-        );
-    });
-    let subscription = Subscription::Events {
-        events: vec![
-            UIA_Text_TextSelectionChangedEventId,
-            UIA_Text_TextChangedEventId,
-        ],
-        callback,
+        }),
+    };
+    let text_context = Arc::clone(context);
+    let text_callback: verbatim_uia::EventCallback =
+        Arc::new(move |element: &IUIAutomationElement, event_id: i32| {
+            let (kind, heard) = if event_id == UIA_Text_TextSelectionChangedEventId.0 {
+                (UiaKind::TextSelection, Heard::UiaTextSelection)
+            } else {
+                (UiaKind::TextChanged, Heard::UiaTextChanged)
+            };
+            text_context.take_in(
+                Item::Uia(capture(element, kind)),
+                heard,
+                EventTiming {
+                    observed_at_us: now_us(),
+                    ..EventTiming::default()
+                },
+            );
+        });
+    let caret = Subscription::Events {
+        events: vec![UIA_Text_TextSelectionChangedEventId],
+        callback: Arc::clone(&text_callback),
+    };
+    let text = Subscription::Events {
+        events: vec![UIA_Text_TextChangedEventId],
+        callback: text_callback,
     };
     let position_context = Arc::clone(context);
     let position = Subscription::ActiveTextPosition {
@@ -1030,16 +1020,20 @@ fn register_text_events(context: &Arc<Context>) -> Option<Registration> {
             },
         ),
     };
-    // Nothing is spoken from these events' elements: the worker reads the
-    // text itself, so they arrive with little more than their window.
-    match Registration::with_cache(
-        vec![subscription, position],
-        Scope::Nothing,
-        verbatim_uia::TEXT_EVENT_PROPERTIES,
-    ) {
+    let text_properties = verbatim_uia::TEXT_EVENT_PROPERTIES;
+    let parts = vec![
+        Part::new(properties, verbatim_uia::FOCUS_EVENT_PROPERTIES),
+        Part::new(caret, text_properties),
+        Part::extended(text, text_properties),
+        Part::extended(position, text_properties),
+    ];
+    match Registration::with_parts(parts, Scope::Nothing) {
         Ok(registration) => Some(registration),
         Err(error) => {
-            fault(context, format!("UIA text subscription failed: {error}"));
+            fault(
+                context,
+                format!("UIA focus-following subscription failed: {error}"),
+            );
             None
         }
     }

@@ -1268,9 +1268,11 @@ each also costs the same 5 `ProviderOptions`, 3
 `HostRawElementProvider`, 3 `FragmentRoot`, and 2 `GetRuntimeId`. On
 demand because the calls UIA makes to route an event to its registration
 vary from one delivery to another with how busy the machine is, while a
-request's do not. A property change delivered to the outpost
-(`another_elements_change_heard_for_the_focus_costs_nothing`) costs 9
-`GetPropertyValue` and 1 `BoundingRectangle` fewer.
+request's do not. A property change delivered to the outpost cost 9
+`GetPropertyValue` and 1 `BoundingRectangle` fewer, measured while a
+focus without its element was followed in its whole window, a
+subscription removed on 2026-10-11 (`docs/design/focus-pipeline.md`,
+section 17).
 
 ### Several text attributes in one call
 

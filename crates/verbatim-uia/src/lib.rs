@@ -24,8 +24,9 @@
 //!   (its narrow seam is what the M3 sentinel split relocates).
 //! - [`Registration`] — a property-change, automation-event, or notification
 //!   subscription over a [`Scope`] (given windows, the whole desktop, or
-//!   given elements) that can be moved without waiting: the listener's
-//!   desktop-wide subscriptions and an outpost's focus-following property
+//!   given elements) that can be moved without waiting, as two event
+//!   handler groups built once ([`Group`], [`Part`]): the listener's
+//!   desktop-wide subscriptions and an outpost's focus-following
 //!   subscription.
 //! - [`NodeIdRegistry`] — stable [`NodeId`](verbatim_model::NodeId)s from UIA
 //!   runtime IDs, sharing a mint counter with the MSAA backend.
@@ -78,8 +79,8 @@ pub use nearest::nearest_window_handle;
 pub use probe::{PROBE_BUDGET, Probe, has_server_side_provider, probe, probe_server_side_provider};
 pub use registry::{NodeIdRegistry, Released};
 pub use subscribe::{
-    ActiveTextPositionCallback, ElementCallback, EventCallback, FOCUS_PROPERTIES, MOVE_DEADLINE,
-    NotificationCallback, PropertyCallback, Registration, Scope, Subscription,
+    ActiveTextPositionCallback, ElementCallback, EventCallback, FOCUS_PROPERTIES, Group,
+    MOVE_DEADLINE, NotificationCallback, Part, PropertyCallback, Registration, Scope, Subscription,
 };
 
 /// Releases the UIA objects this crate keeps for the calling thread: the

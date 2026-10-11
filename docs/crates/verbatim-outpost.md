@@ -185,22 +185,44 @@ Public API:
     focus, foreground, menu-popup, alert, and tooltip events, which become
     the same facts the listener forwards, value, state, name, selection,
     destroy, and a top-level window shown, for the fixed pid),
-    the focus-following UIA property callback, and the reader's routed facts
+    the focus-following UIA callbacks, and the reader's routed facts
     (the UIA focus, the listener's desktop-wide selections, menus, and
     notifications, and the MSAA facts it forwards until the hand-over ends,
     each matched with the hook's copy first, `outpost::handover`) and
     queries only add an entry to the queue and return. A UIA callback captures the element's cached parts, its cached
     window handle, and an agile reference; it never calls into the
     application.
-  - The focus-following UIA property subscription, following NVDA's
-    selective registration on Windows 11: name, value, and state changes on
-    the focused element only, since the reducer acts on no other element's
-    changes (NVDA's scope also names the focus's ancestors, but UIA
-    delivers no ancestor's event to it; `docs/parity.md`, "UIA event
-    registration"). Its events' elements arrive with
+  - The focus-following UIA subscription, following NVDA's selective
+    registration on Windows 11 (`UIAHandler/__init__.py` 642 to 756,
+    `NVDAObjects/UIA/__init__.py` 1623 to 1630;
+    `docs/design/focus-pipeline.md`, section 17): one registration, on one
+    thread and client, with NVDA's two local groups built once. The base
+    group, given every UIA focus whose element the outpost has, holds the
+    name, value, and state changes and `Text_TextSelectionChanged`; the
+    extended group, given a focus with text read through UIA, also holds
+    `Text_TextChanged` and the active text position changed event. Both
+    are on the focused element only, since the reducer acts on no other
+    element's changes (NVDA's scope also names the focus's ancestors, but
+    UIA delivers no ancestor's event to it; `docs/parity.md`, "UIA event
+    registration"). A property change's element arrives with
     `verbatim_uia::FOCUS_EVENT_PROPERTIES` cached, everything a name,
-    value, or state set is read from and no detail. The worker moves it
-    each time it reports a focus, without waiting. This replaces the
+    value, or state set is read from and no detail; a caret, text, or
+    active text position change's with `verbatim_uia::TEXT_EVENT_PROPERTIES`.
+    The worker moves it each time it reports a focus, without waiting
+    (`follow_focus`): the matching group is added to the new focus, then
+    removed from the previous one alone (`RemoveEventHandlerGroup`);
+    `RemoveAllEventHandlers` is called only at shutdown. A move to the
+    node and group already followed is not asked of the subscription, and
+    one to the same element under another node makes no call, as the
+    subscription compares the elements. A focus whose element the outpost
+    does not have, or one read through MSAA, is followed by nothing. Each
+    move is logged at debug level, by the worker and by the subscription's
+    thread with every call it makes. Until 2026-10-11 there were two
+    registrations, each with its own thread and client, each moved by
+    removing everything and registering again, and a focus without its
+    element was followed by subscriptions on its whole window; an outpost
+    crashed in UIA after such moves (`docs/roadmap.md`, "Outpost
+    crashes"). This replaces the
     subscriptions on the top-level windows that existed at spawn, under
     which a dialog or window opened later received no UIA events at all,
     and, since 2026-10-07, the registrations on each of the focus's
@@ -690,23 +712,18 @@ Implementation notes:
   ancestors, the selected child, the element's window, and navigation.
   Without it the focus is emitted from the event alone, with
   `ancestors_unknown`, and nothing reads again: the element comes from
-  the focus's own next event, keyed by its runtime id. Meanwhile the
-  focus-following property subscription and the caret and text
-  subscription listen in the focus's top-level window, else in each of
-  the application's (`follow_focus_window`), and the first of their
-  events that the focus raises itself brings its element
-  (`adopt_focus_element`), which is kept under the focus's node and
-  followed from then on, the subscriptions moving to it and, for a focus
-  that may have text, its caret asked for, whose line Core then speaks;
-  the event is then handled as any other, and the other elements' events
-  are dropped. A focus event reads the element as any focus does, and
+  the focus's own next event, keyed by its runtime id. Meanwhile nothing
+  is followed, as NVDA hears nothing local before its group is added to a
+  focus (`docs/design/focus-pipeline.md`, section 17; the subscriptions on
+  the focus's whole window that once filled the gap, `follow_focus_window`
+  and `adopt_focus_element`, were removed on 2026-10-11). A focus event reads the element as any focus does, and
   Core takes the same node silently; a selection event of the focus reads
   the focused element once (`element_from_selection`) and keeps it when
-  it is the focus's. Until 2026-10-09 a queued follow-up read the focused
-  element once more, and the subscriptions listened nowhere, so a focus
-  that raised neither a focus nor a selection event was never followed
-  (mockapp's
-  `a_focus_whose_element_was_not_found_is_followed_from_its_own_changes`). When the focused element
+  it is the focus's, the subscription then following it and, for a focus
+  that may have text, its caret asked for, whose line Core then speaks. Until 2026-10-09 a queued follow-up read the focused
+  element once more. A focus that raises neither a focus nor a selection
+  event after its element was not found is not followed, as in NVDA's
+  gap. When the focused element
   read is in another application, the fact is out of date and dropped.
   When it is another element of this application, and the fact's element
   is a window of its own, that window's element is read
@@ -739,7 +756,7 @@ Implementation notes:
   raises its tabs' focus events from elements that are not in its tree;
   its ancestors are read without requiring the keyboard focus
   (`FocusQuery::require_focus`). It is not kept with its element, so the
-  focus-following subscriptions do not move to it; one found nowhere is
+  focus-following subscription does not move to it; one found nowhere is
   gone and is dropped, as File Explorer's "Working on it..." is as a
   folder opens, and so is one that holds the element focused now, a
   container that passed the focus to its content, which the newer focus
@@ -771,9 +788,7 @@ Implementation notes:
   as before. The UIA focus, selection, menu opening, and the outpost's
   own UIA property events pass NVDA's acceptance test after the window's
   UIA test; a notification does not, as NVDA tests none, and neither do a
-  text focus's caret, text, and active text position. An event from the
-  subscriptions that listen in the focus's whole window is told from the
-  focus's own before its nearest window is looked for. An MSAA focus fact is
+  text focus's caret, text, and active text position. An MSAA focus fact is
   acquired with NVDA's child-0-on-a-list redirect, and the redirect of any
   control's own focus to a focused child its `accFocus` names
   (`focus_candidate`), and checked as NVDA checks it before anything else
@@ -1123,8 +1138,9 @@ Implementation notes:
   terminal window or tab says "blank" for its empty line, in Windows
   Terminal as in the console host (`docs/parity.md`). The worker then
   follows its caret:
-  a second focus-following UIA subscription, moved to the focus when it
-  has text and to nothing otherwise, its events' elements arriving with
+  the focus-following UIA subscription, given the focus with its extended
+  group when the focus has text, its caret, text, and active text
+  position events' elements arriving with
   only `verbatim_uia::TEXT_EVENT_PROPERTIES` cached (nothing is spoken
   from them), delivers `Text_TextSelectionChanged`,
   reported as `CaretMoved`, and `Text_TextChanged`, reported as
@@ -1254,7 +1270,7 @@ The outpost's side (`Outpost::shutdown`), in order:
 1. The intake closes: nothing new is taken, and what was waiting is
    dropped.
 2. The `WinEvent` hooks are removed, with the thread that pumped them.
-3. Both focus-following UIA subscriptions are closed: each client removes
+3. The focus-following UIA subscription is closed: its client removes
    everything it registered (`RemoveAllEventHandlers`).
 4. The worker finishes the entry in hand and every abandoned worker
    returns from its call, and so does every thread of the client for
