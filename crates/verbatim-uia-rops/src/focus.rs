@@ -49,10 +49,9 @@ pub struct FocusQuery<'a> {
     /// call and does not check it.
     pub deadline: Option<Instant>,
     /// Whether the element must have the keyboard focus, read live, for
-    /// anything else to be read ([`FocusAncestry::NotFocused`]). False for
-    /// an element whose focus event said it had the focus when the event
-    /// was raised, as NVDA judges a focus event, though the focus has
-    /// moved on since: its ancestry is read all the same.
+    /// anything else to be read ([`FocusAncestry::NotFocused`]), as NVDA's
+    /// `shouldAllowUIAFocusEvent` judges a focus event's sender. False
+    /// reads the ancestry whatever the element's focus.
     pub require_focus: bool,
     /// Whether the element's own cache is filled afresh with
     /// [`FocusQuery::properties`] in the same round trip

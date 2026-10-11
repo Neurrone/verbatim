@@ -43,10 +43,10 @@ pub(super) struct Launched {
 }
 
 /// Launches `verbatim-outpost.exe` from `exe_path` in `role`, contained in
-/// a kill-on-close job with the memory cap (see `verbatim-process`). An
-/// outpost is told `options` on its command line (`--classic-uia` when
-/// remote operations are off); the listener reads no application and takes
-/// none, but is told `ignored`, the pids of the processes ignored entirely,
+/// a kill-on-close job with the memory cap (see `verbatim-process`). Both
+/// roles are told `options` on their command line (`--classic-uia` when
+/// remote operations are off: the listener reads each UIA focus); the
+/// listener is also told `ignored`, the pids of the processes ignored entirely,
 /// separated by commas, and `hooks_in`, the applications whose outposts
 /// have their own `WinEvent` hooks in, as `pid:outpost` pairs separated by
 /// commas, when there are any.
@@ -87,7 +87,9 @@ pub(super) fn launch(
         Role::Listener => (
             "listener".to_owned(),
             Box::new(move |pipe_in, pipe_out| {
-                format!("--listener --pipe-in {pipe_in} --pipe-out {pipe_out}{ignore}{hooked}")
+                format!(
+                    "--listener --pipe-in {pipe_in} --pipe-out {pipe_out}{ignore}{hooked}{classic_uia}"
+                )
             }),
         ),
     };

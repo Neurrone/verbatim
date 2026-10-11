@@ -2,12 +2,18 @@
 //! drive it: the tests hand it facts and queries over its command entry
 //! point and read every message it writes to its pipe.
 //!
-//! The outpost reads a UIA focus's element from the system's keyboard
-//! focus, which a test must not take from the desktop it runs on, so this
-//! outpost reads it from the test instead
-//! ([`Outpost::with_focused_element_reader`]): the test sets the element
-//! mockapp reports focused, and the outpost's read of it counts as the one
-//! call the system read is.
+//! The test stands in for the focus listener for UIA focus events: it
+//! judges and reads each focus from the element mockapp reports focused
+//! with the listener's own reader ([`FocusReader`], on the test's thread,
+//! where its calls are counted apart from the outpost's), and hands the
+//! outpost the read, as the listener sends it
+//! (`docs/design/focus-pipeline.md`, section 12).
+//!
+//! A focus-now query reads the system's keyboard focus, which a test must
+//! not take from the desktop it runs on, so this outpost reads it from the
+//! test instead ([`Outpost::with_focused_element_reader`]): the test sets
+//! the element mockapp reports focused, and the outpost's read of it
+//! counts as the one call the system read is.
 //!
 //! Its arbitration reads the time from the test too
 //! ([`Outpost::set_arbitration_clock`]): the time stands still unless the
@@ -31,6 +37,7 @@
 //! [`OutpostUnderTest::deliver_win_event`] hands over a stamped one, the
 //! listener's copy of an event mockapp raised.
 
+use std::cell::RefCell;
 use std::io::Write;
 use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -41,10 +48,10 @@ use verbatim_model::{
     CallCounts, CallKind, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
     WindowHandle,
 };
-use verbatim_outpost::listener::uia_focus_fact;
+use verbatim_outpost::focus_read::{FocusReader, Judged};
 use verbatim_outpost::protocol::{
-    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, Query, QueryOutcome,
-    QueryResult, SupervisorToOutpost, WinEventStamp, read_message,
+    DeliveredFact, EventTiming, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
+    SupervisorToOutpost, WinEventStamp, read_message,
 };
 use verbatim_outpost::{Heard, Outpost, OutpostOptions};
 use windows::Win32::Foundation::{E_FAIL, HWND};
@@ -118,6 +125,9 @@ pub struct OutpostUnderTest {
     time: Arc<Mutex<Instant>>,
     /// The window the outpost reads as the foreground.
     foreground: Arc<AtomicIsize>,
+    /// The focus listener's reader, standing in for the listener's thread
+    /// for mockapp's application.
+    reader: RefCell<FocusReader>,
 }
 
 impl OutpostUnderTest {
@@ -169,6 +179,8 @@ impl OutpostUnderTest {
             // The test may have finished with what the outpost hears.
             let _ = heard_tx.send(event);
         }));
+        let reader = FocusReader::new(options.remote_operations)
+            .expect("a UIA client for the listener's reads");
         let under_test = Self {
             outpost,
             messages,
@@ -178,6 +190,7 @@ impl OutpostUnderTest {
             focus_reads,
             time,
             foreground,
+            reader: RefCell::new(reader),
         };
         assert_eq!(
             under_test.next(),
@@ -311,7 +324,30 @@ impl OutpostUnderTest {
         request_id
     }
 
-    /// Makes the outpost's read of the focused element answer `element`.
+    /// Judges and reads a UIA focus event whose element is `element`, as
+    /// the focus listener's thread for mockapp does, on this thread, and
+    /// returns what became of it and the calls the read made. `element`
+    /// carries the base cache request, as the listener's registration
+    /// delivers it.
+    pub fn listener_read(&self, element: &IUIAutomationElement) -> (Judged, CallCounts) {
+        let _ = verbatim_uia::calls::take();
+        // mockapp never has the system focus here, so the listener would
+        // find no keyboard focus window for a windowless element.
+        let judged = self.reader.borrow_mut().read(element, 0);
+        (judged, verbatim_uia::calls::take())
+    }
+
+    /// The fact the focus listener sends for a UIA focus event on `element`
+    /// once it has read it, which must not be dropped.
+    pub fn listener_fact(&self, element: &IUIAutomationElement) -> DeliveredFact {
+        match self.listener_read(element).0 {
+            read @ Judged::Read(_) => read.into_fact(0),
+            Judged::Dropped(reason) => panic!("the listener dropped the focus: {reason}"),
+        }
+    }
+
+    /// Makes the outpost's read of the focused element for a focus-now
+    /// query answer `element`.
     pub fn read_focus_as(&self, element: &IUIAutomationElement) {
         *self.focus.lock().unwrap_or_else(PoisonError::into_inner) =
             Some(AgileReference::new(element).expect("an agile reference"));
@@ -365,26 +401,17 @@ impl OutpostUnderTest {
     }
 
     /// Hands the outpost a UIA focus on `element`, which mockapp reports
-    /// focused, as the listener would, and returns the focus it reports.
-    /// `element` carries the listener's cache request, and is what the
-    /// outpost's read of the focused element answers.
+    /// focused, as the listener reads and sends it, and returns the focus
+    /// it reports, with the listener's calls added to the outpost's.
+    /// `element` carries the listener's cache request.
     pub fn uia_focus(&self, element: &IUIAutomationElement) -> Reported {
-        self.uia_focus_read_later(element, element)
-    }
-
-    /// Hands the outpost a UIA focus on `event`, the element as the focus
-    /// event carried it, and returns the focus it reports, when the
-    /// outpost's read of the focused element answers `read`, the same
-    /// element as fetched afresh later, as the system's read is.
-    pub fn uia_focus_read_later(
-        &self,
-        event: &IUIAutomationElement,
-        read: &IUIAutomationElement,
-    ) -> Reported {
-        let ListenerFact { pid: _, fact } =
-            uia_focus_fact(event).expect("mockapp's element has its process");
-        self.read_focus_as(read);
-        self.focus(fact)
+        let (judged, calls) = self.listener_read(element);
+        let Judged::Read(_) = &judged else {
+            panic!("the listener dropped the focus: {judged:?}");
+        };
+        let mut reported = self.focus(judged.into_fact(0));
+        reported.calls = reported.calls + calls;
+        reported
     }
 
     /// Asks the outpost for one object-navigation step, as Core would, and

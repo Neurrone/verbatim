@@ -40,12 +40,8 @@ use verbatim_model::{
     Backend, CallCounts, CaretWatch, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role,
     State, StateSet, TerminalOutput, TextOp, TextReply, TraceId,
 };
-use verbatim_uia::map::{
-    cached_process_id, snapshot_from_cached_element, with_legacy_checked_state,
-};
-use verbatim_uia::{
-    ElementExt as _, map::snapshot_parts_from_cached_element, nearest_window_handle,
-};
+use verbatim_uia::map::{snapshot_from_cached_element, snapshot_parts_from_cached_element};
+use verbatim_uia::nearest_window_handle;
 use windows::Win32::UI::Accessibility::{
     UIA_NamePropertyId, UIA_RangeValueValuePropertyId, UIA_ValueValuePropertyId,
 };
@@ -53,17 +49,18 @@ use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
 use crate::protocol::{
     DeliveredFact, EventTiming, FocusedControl, OutpostToSupervisor, Query, QueryOutcome,
-    QueryResult, UiaSnapshotFact, now_us,
+    QueryResult, UiaFocusRead, UiaSnapshotFact, now_us,
 };
 
 use super::Context;
 use super::acceptance::{self, EventName, SystemWindows};
+use super::focus_path::{self, FocusPath};
 use super::intake::{Entry, Item, Object, Planned, UiaEvent, UiaKind, window_of};
 use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, CONSOLE_WINDOW_CLASS, OpenWatch};
 use super::window::{
     console_client, event_window_unreadable, focus_window_of, foreground_window_handle,
-    front_is_another_thread_of_its_application, now_ms, top_level_of,
+    front_is_another_thread_of_its_application, is_shell_transition_window, now_ms, top_level_of,
     window_belongs_to_hidden_frame, window_facts, window_is_foreground, window_is_hidden_frame,
     window_is_visible, window_owner,
 };
@@ -82,14 +79,6 @@ use windows::Win32::UI::Accessibility::IUIAutomationElement;
 /// (found live in the end-to-end suite); NVDA announces the focus late, and
 /// a shorter deadline here dropped it for good.
 const HANDLING_DEADLINE: Duration = Duration::from_secs(10);
-
-/// How long a search for a UIA focus's element in its window may take, all
-/// its calls together, before it is given up: a `FindFirst` over the
-/// window's subtree makes many provider calls, each of which UIA would wait
-/// its full call timeout for, so the search has this deadline of its own,
-/// enforced by abandonment ([`verbatim_uia::BoundedClient`]). Such a search
-/// normally answers in 10 to 100 ms.
-const SEARCH_DEADLINE: Duration = Duration::from_secs(1);
 
 /// How long the watchdog waits on an entry before abandoning it because the
 /// user has moved on to a window of the same application on another UI
@@ -490,21 +479,6 @@ fn is_terminal_output_notification(
     role == Role::Terminal && notification.activity_id.as_deref() == Some(TERMINAL_OUTPUT_ACTIVITY)
 }
 
-/// Whether `hwnd` is one of the shell's windows that take the focus or the
-/// foreground only while a switch is staged: the Alt+Tab switcher's and
-/// Task View's staging windows, the Windows+X menu's host, and the desktop
-/// shell's application manager window. NVDA's File Explorer app module
-/// ignores focus on them (`appModules/explorer.py` lines 443 to 449,
-/// issues 5116 and 8137), and so does an outpost: on Alt+Tab, Explorer's
-/// `ForegroundStaging` window takes the focus with no name, and was said as
-/// "pane" before the window switched to.
-fn is_shell_transition_window(hwnd: isize) -> bool {
-    matches!(
-        window_class_name(hwnd).as_str(),
-        "ForegroundStaging" | "LauncherTipWnd" | "ApplicationManager_DesktopShellWindow"
-    )
-}
-
 /// Why the watchdog abandons a worker at `now`, if it does: the entry it
 /// started at `started`, concerning `window` (0 for none), has passed its
 /// `deadline`, or has waited [`MOVED_ON_GRACE`] and `moved_on` says the user
@@ -760,6 +734,9 @@ fn describe(item: &Item) -> String {
             format!("MSAA {kind:?} hwnd={hwnd} object={id_object} child={id_child} thread={thread}")
         }
         Item::Uia(event) => format!("UIA {:?}", event.kind),
+        Item::Fact(DeliveredFact::UiaFocusRead { marker, .. }, _) => {
+            format!("UIA focus read {marker}")
+        }
         Item::Fact(fact, _) => format!("fact {:?}", fact.key()),
         Item::Query { query, .. } => format!("query {query:?}"),
         Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
@@ -790,50 +767,8 @@ fn uia_event_name(kind: &UiaKind) -> Option<EventName> {
     }
 }
 
-/// A UIA focus's parts as NVDA reads them when it announces the focus: its
-/// name and role from the event, whose cache NVDA reads them from, and its
-/// value, states, and details from `element`, the focused element the
-/// outpost read live, as NVDA fetches those afresh when the focus is
-/// handled (`docs/parity.md`, "How an outpost turns events into focus
-/// reports"). The element has the keyboard focus, as the event said.
-fn with_live_reads(fact: &UiaSnapshotFact, element: &IUIAutomationElement) -> UiaSnapshotFact {
-    // `element` was read with the base cache request.
-    let live = snapshot_parts_from_cached_element(element);
-    UiaSnapshotFact {
-        runtime_id: fact.runtime_id.clone(),
-        role: fact.role,
-        name: fact.name.clone(),
-        value: live.value,
-        states: live.states.with(State::Focused),
-        details: live.details,
-    }
-}
-
 /// A focus that is not reported, for the reason logged where it was found.
 struct Dropped;
-
-/// The element the registry holds under a focus's runtime id.
-enum Held {
-    /// The element, resolved in this apartment.
-    Element(IUIAutomationElement),
-    /// The element could not be resolved.
-    Unresolved,
-}
-
-/// What reading the focused element found for a focus fact.
-enum LiveFocus {
-    /// The fact's element, live.
-    Found(IUIAutomationElement),
-    /// The keyboard focus is in another application now: the fact is out of
-    /// date, and the newer focus's own event reports it.
-    InAnotherApplication,
-    /// Another element of this application has the keyboard focus, the
-    /// one given: the fact is out of date, or the application is still
-    /// starting and answered with a stand-in for its window.
-    Elsewhere(IUIAutomationElement),
-    /// The read did not answer in time or failed.
-    Unresolved,
-}
 
 /// One entry's handling, by the worker in charge.
 struct Worker<'a> {
@@ -2125,9 +2060,6 @@ impl Worker<'_> {
                 return;
             }
         }
-        if matches!(event.kind, UiaKind::Selection) && of_focus && element.is_none() {
-            self.element_from_selection(&event.parts.runtime_id, trace);
-        }
         if matches!(event.kind, UiaKind::Selection)
             && let Some(selection) = self.controlled_selection(&event.parts.runtime_id)
         {
@@ -2252,7 +2184,7 @@ impl Worker<'_> {
     /// ("Selection in a list the focus controls" in `docs/nvda/events.md`).
     fn controlled_selection(&mut self, runtime_id: &[i32]) -> Option<NormalizedEvent> {
         // The focus this outpost last reported, as NVDA uses its focus
-        // object; read live, briefly, only when its element is not known.
+        // object; found by its path when its element is not known.
         let Some(Object::Uia(focus_id)) = self.context.intake.focused() else {
             return None;
         };
@@ -2263,14 +2195,7 @@ impl Worker<'_> {
             .and_then(|agile| agile.resolve().ok());
         let focused = match known {
             Some(element) => element,
-            None => match self.live_focus_element(&focus_id, 0) {
-                LiveFocus::Found(element) => element,
-                LiveFocus::InAnotherApplication
-                | LiveFocus::Elsewhere(_)
-                | LiveFocus::Unresolved => {
-                    return None;
-                }
-            },
+            None => self.element_by_focus_path(&focus_id)?,
         };
         // NVDA reads the relation live for each selection event; the
         // relation and the search under what it names are one remote
@@ -2328,13 +2253,12 @@ impl Worker<'_> {
     /// in: an MSAA focus, foreground change, menu opening, alert, or
     /// tooltip, whichever brought it.
     fn fact(&mut self, fact: DeliveredFact, trace: TraceId, observed_at_ms: u64) {
+        // The listener refuses a UIA focus in such a window before it
+        // reads it.
         let focus_window = match &fact {
             DeliveredFact::Foreground { hwnd } | DeliveredFact::MsaaFocus { hwnd, .. } => {
                 Some(*hwnd)
             }
-            DeliveredFact::UiaFocus {
-                hwnd, focus_window, ..
-            } => Some(if *hwnd != 0 { *hwnd } else { *focus_window }),
             _ => None,
         };
         if let Some(hwnd) = focus_window
@@ -2353,13 +2277,13 @@ impl Worker<'_> {
                 id_object,
                 id_child,
             } => self.msaa_focus(hwnd, id_object, id_child, trace, observed_at_ms),
-            DeliveredFact::UiaFocus {
-                hwnd,
-                focus_window,
-                snapshot,
-            } => {
-                self.uia_focus((hwnd, focus_window), &snapshot, trace, observed_at_ms);
+            DeliveredFact::UiaFocusRead { read, .. } => {
+                self.uia_focus(&read, trace, observed_at_ms);
             }
+            // The intake resolves these; none reaches the worker.
+            DeliveredFact::UiaFocusMarker { .. }
+            | DeliveredFact::UiaFocusDropped { .. }
+            | DeliveredFact::UiaFocusReadsEnded => {}
             DeliveredFact::UiaSelection {
                 hwnd,
                 focus_window,
@@ -2779,173 +2703,64 @@ impl Worker<'_> {
         }
     }
 
-    /// Whether a UIA focus fact passes the checks made before any read: the
-    /// event's acceptance against the foreground, the element having the
-    /// keyboard focus, and its not being the console host's own window.
-    fn allows_uia_focus(
-        &self,
-        (fact_hwnd, focus_window): (isize, isize),
-        fact: &UiaSnapshotFact,
-    ) -> bool {
+    /// Whether a UIA focus the listener read passes NVDA's acceptance test
+    /// against the foreground window, made as the focus is handled, before
+    /// any call into the application. The listener has judged the rest
+    /// already: the element had the keyboard focus, read live, and the
+    /// console window's own focus never comes.
+    fn allows_uia_focus(&self, (fact_hwnd, focus_window): (isize, isize)) -> bool {
         let window = Some(fact_hwnd).filter(|&hwnd| hwnd != 0);
-        if !self.accepts(EventName::GainFocus, window.unwrap_or(focus_window)) {
-            return false;
-        }
-        if !fact.states.contains(State::Focused) {
-            tracing::debug!("UIA focus dropped: the element does not have the keyboard focus");
-            return false;
-        }
-        // The console host's window element, the parent of its text area,
-        // reports the keyboard focus whenever the text area has it, and its
-        // focus events, which come around the text area's, are never the
-        // focus: NVDA refuses them whatever the element reports
-        // (`consoleUIAWindow.shouldAllowUIAFocusEvent` is false,
-        // `NVDAObjects/UIA/winConsoleUIA.py` 356 to 358, given to the element
-        // whose automation id is "Console Window", 446 and 447; checked in
-        // `UIAHandler/__init__.py` 948 to 953). It is the one element whose
-        // own window is the console window; the text area has none.
-        if fact_hwnd != 0 && window_class_name(fact_hwnd) == CONSOLE_WINDOW_CLASS {
-            tracing::debug!("UIA focus dropped: the console window's own focus");
-            return false;
-        }
-        true
+        self.accepts(EventName::GainFocus, window.unwrap_or(focus_window))
     }
 
-    /// A UIA focus fact. What the focus is comes from the event, as NVDA
-    /// builds the focus from the event's sender, and only when the event
-    /// says the element has the keyboard focus (NVDA's
-    /// `shouldAllowUIAFocusEvent`): its name and role from the event's
-    /// cache, and its value, states, and details from the focused element
-    /// read live, as NVDA reads those afresh when it handles the focus
-    /// ([`with_live_reads`]). The element itself is in the listener's
-    /// process and cannot cross to this one, so the outpost finds its own
-    /// copy, for those reads, the ancestors, and navigation, by reading the
-    /// focused element, with a short wait: an application busy starting up
-    /// can leave that read unanswered for more than ten seconds, or answer
-    /// with UIA's stand-in for its window (Windows 11 Notepad's text area as
-    /// a nameless edit). Without it the focus is still reported, from the
-    /// event alone, with its ancestors unknown, and nothing is followed
-    /// until its next focus or selection event brings the element
-    /// ([`element_from_selection`](Self::element_from_selection)), as NVDA
-    /// hears nothing local before its group is added to a focus
-    /// (`docs/design/focus-pipeline.md`, section 17).
-    ///
-    /// A fact whose element has lost the keyboard focus to another
-    /// application is dropped: the newer focus's own event reports it, and
-    /// NVDA would find the element's window no longer in the foreground.
-    /// One whose element has lost it to another element of this
-    /// application since its event is reported all the same, as the event
-    /// said, found in its window by its runtime id
-    /// ([`element_of_moved_focus`](Self::element_of_moved_focus)), and the
-    /// newer focus's own event follows it: NVDA judges a focus event by its
-    /// sender's keyboard focus as the event arrives
-    /// (`shouldAllowUIAFocusEvent`, `NVDAObjects/UIA/__init__.py` 1632 to
-    /// 1637, read in `UIAHandler/__init__.py` 948 to 953), which the fact's
-    /// cached states carry, where the outpost handles the fact a few
-    /// milliseconds later. Windows Terminal's tab, as Control+Tab moves the
-    /// focus through it to the tab's terminal, is such a focus: NVDA says
-    /// "list" and the tab before the terminal (Dickson, 2026-10-09,
-    /// coherence review).
-    fn uia_focus(
-        &mut self,
-        (fact_hwnd, focus_window): (isize, isize),
-        fact: &UiaSnapshotFact,
-        trace: TraceId,
-        observed_at_ms: u64,
-    ) {
+    /// A UIA focus as the focus listener judged and read it from the
+    /// event's own element (`docs/design/focus-pipeline.md`, section 12):
+    /// the element had the keyboard focus when the listener read it, as
+    /// NVDA's `shouldAllowUIAFocusEvent` requires, and its states, value,
+    /// details, ancestors, and selected child are the element's own, read
+    /// in one remote operation. The outpost reports it at once, its node
+    /// minted from its runtime id; the listener's evidence that the element
+    /// it read before under that runtime id has lost the focus or died
+    /// gives the id a new node first. Only then, off the way to speech,
+    /// does the outpost find its own copy of the element, which no process
+    /// can hand it (experiment E-marshal), by the path the listener read
+    /// ([`find_focus_element`](Self::find_focus_element)).
+    fn uia_focus(&mut self, read: &UiaFocusRead, trace: TraceId, observed_at_ms: u64) {
         let context = self.context;
-        if !self.allows_uia_focus((fact_hwnd, focus_window), fact) {
+        if !self.allows_uia_focus((read.hwnd, read.focus_window)) {
             return;
+        }
+        let Ok(reported) = self.uia_focus_window((read.hwnd, read.focus_window), read.window)
+        else {
+            return;
+        };
+        let runtime_id = &read.snapshot.runtime_id;
+        if read.same_as_last == Some(false) {
+            tracing::debug!(
+                "UIA focus: its runtime id named an element that lost the focus or is gone; a new node is issued"
+            );
+            drop(context.uia_registry.reissue(runtime_id));
         }
         let reading = Instant::now();
-        let Ok((element, moved_on)) = self.uia_focus_element(fact, (fact_hwnd, focus_window))
-        else {
-            return;
-        };
-        let element_us = reading.elapsed().as_micros();
-        // The element the registry holds under this runtime id, if it holds
-        // one: an application can give a dead element's id to a new one.
-        let held = element
-            .as_ref()
-            .and_then(|_| self.held_element(&fact.runtime_id));
         let previous = self.focus_chain();
-        // The window the focus is in, known without a call: the event's
-        // own, else the application's keyboard focus window when the
-        // listener captured the event. A remote operation is tried unless
-        // that window's elements cannot be imported into one.
-        let focus_in = [fact_hwnd, focus_window]
-            .into_iter()
-            .find(|&hwnd| hwnd != 0);
-        let enriching = Instant::now();
-        let held_element = match &held {
-            Some(Held::Element(element)) => Some(element),
-            Some(Held::Unresolved) | None => None,
-        };
-        let (remote, held_focused) = match self.remote_enrichment(
-            element.as_ref(),
-            held_element,
-            &previous,
-            (focus_in, !moved_on),
-        ) {
-            Some(read::RemoteEnrichment::NotFocused) => {
-                // Read live in the same round trip: the focus moved on after
-                // the focused element was read, as for `LiveFocus::Elsewhere`.
-                tracing::debug!("UIA focus dropped: the element lost the keyboard focus");
-                return;
-            }
-            Some(read::RemoteEnrichment::Read {
-                enrichment,
-                window,
-                held_focused,
-            }) => (Some((enrichment, window)), held_focused),
-            None => (None, None),
-        };
-        let remote_window = remote.as_ref().and_then(|(_, window)| *window);
-        let Ok(reported) =
-            self.uia_focus_window((fact_hwnd, focus_window), remote_window, element.as_ref())
-        else {
-            return;
-        };
-        let object = Some(Object::Uia(fact.runtime_id.clone()));
-        let Some(element) = element else {
-            tracing::debug!(
-                moved_on,
-                "UIA focus reported from the event: its element was not found"
-            );
-            let node = Self::uia_node(context, fact, None);
-            self.emit_focus(
-                trace,
-                observed_at_ms,
-                Backend::Uia,
-                reported,
-                node,
-                false,
-                object,
-                (None, None),
-            );
-            return;
-        };
-        if let Some(held) = held {
-            self.reissue_unless_focused(&fact.runtime_id, held, held_focused);
-        }
-        let parts = with_live_reads(fact, &element);
-        // A focus that has moved on is not kept with its element, so the
-        // focus-following subscriptions are not moved to it: its later
-        // changes, such as a tab's selection as the focus passes it, belong
-        // to a focus no longer current, whose successor's event follows.
-        let node = Self::uia_node(context, &parts, (!moved_on).then_some(&element));
-        let node = with_legacy_checked_state(&element, node); // Menu items only.
-        let enrichment = match remote {
-            Some((enrichment, _)) => enrichment,
-            None => self.classic_enrichment(&element, node.role, &previous),
-        };
+        let node = Self::uia_node(context, &read.snapshot, None);
+        let selected = read
+            .selected_child
+            .as_ref()
+            .map(|child| Self::uia_node(context, child, None));
+        let ancestors = read.ancestors.as_ref().and_then(|ancestors| {
+            read::uia_chain_from_read(context, self.client, ancestors, &previous)
+        });
+        *context.focus_path() = Some(FocusPath::of(read));
         tracing::debug!(
             %trace,
-            element_us,
-            enrichment_us = enriching.elapsed().as_micros(),
-            total_us = reading.elapsed().as_micros(),
-            "UIA focus read"
+            enrichment_us = reading.elapsed().as_micros(),
+            "UIA focus reported from the listener's read"
         );
+        // A repeated focus whose element this outpost already found keeps
+        // it: the listener read that it still has the keyboard focus.
+        let found =
+            read.same_as_last == Some(true) && context.uia_registry.element_of(node.id).is_some();
         self.emit_focus(
             trace,
             observed_at_ms,
@@ -2953,70 +2768,56 @@ impl Worker<'_> {
             reported,
             node,
             false,
-            object,
-            enrichment,
+            Some(Object::Uia(runtime_id.clone())),
+            (ancestors, selected),
         );
+        if !found {
+            self.find_focus_element(runtime_id, trace);
+        }
     }
 
-    /// The live element of a UIA focus fact, read as the focused element
-    /// ([`live_focus_element`](Self::live_focus_element)), and whether the
-    /// focus has moved on to another element of this application since the
-    /// event, when the element is found by its runtime id instead
-    /// ([`element_of_moved_focus`](Self::element_of_moved_focus)); no
-    /// element when it was not found. [`Dropped`] when the focus is in
-    /// another application now.
-    fn uia_focus_element(
-        &mut self,
-        fact: &UiaSnapshotFact,
-        (fact_hwnd, focus_window): (isize, isize),
-    ) -> Result<(Option<IUIAutomationElement>, bool), Dropped> {
-        match self.live_focus_element(&fact.runtime_id, fact_hwnd) {
-            LiveFocus::Found(element) => Ok((Some(element), false)),
-            LiveFocus::InAnotherApplication => {
-                tracing::debug!("UIA focus dropped: the focus is in another application now");
-                Err(Dropped)
-            }
-            LiveFocus::Elsewhere(focused) => {
-                // Focus has moved on within the application since the event
-                // was raised; the event said this element had it, and the
-                // newer focus's own event follows.
-                tracing::debug!(
-                    "UIA focus: another element has the keyboard focus since the event; reported as the event said"
-                );
-                // One whose element is found nowhere in its window is gone
-                // already, as File Explorer's "Working on it..." is as a
-                // folder opens, and is dropped.
-                let Some(found) = self.element_of_moved_focus(fact, (fact_hwnd, focus_window))
-                else {
-                    tracing::debug!("UIA focus dropped: moved on, and its element is gone");
-                    return Err(Dropped);
-                };
-                if self.holds_element(&found, &focused) {
-                    // A container that passed the focus to an element
-                    // inside it, as File Explorer's file list does to its
-                    // first item as a folder opens: the newer focus reports
-                    // it as an ancestor.
-                    tracing::debug!("UIA focus dropped: moved on to an element inside it");
-                    return Err(Dropped);
-                }
-                // One whose event said it was selected, and which is no
-                // longer selected, was left: the selection moved on with the
-                // focus, as it does from the tab Windows Terminal's
-                // Control+Tab starts on, the tab being left, to the tab it
-                // selects. Only the item selected now is announced (Dickson,
-                // 2026-10-10; `docs/parity.md`, switching tabs).
-                if fact.states.contains(State::Selected)
-                    && !snapshot_parts_from_cached_element(&found)
-                        .states
-                        .contains(State::Selected)
-                {
-                    tracing::debug!("UIA focus dropped: moved on, and no longer selected");
-                    return Err(Dropped);
-                }
-                Ok((Some(found), true))
-            }
-            LiveFocus::Unresolved => Ok((None, false)),
+    /// Finds this outpost's own copy of the focus `runtime_id` names, just
+    /// reported from the listener's read, by the path the listener read:
+    /// from the nearest window in the focus's chain, down by runtime ids,
+    /// one connection call and one transaction. Found, it is kept under the
+    /// focus's node and the focus-following subscription is moved to it
+    /// ([`follow_focus`](Self::follow_focus)); not found, as Windows
+    /// Terminal's tab focus elements, which are in no tree, are not, nothing
+    /// is followed, as NVDA hears nothing local before its group is added to
+    /// a focus (`docs/design/focus-pipeline.md`, sections 12.5 and 17).
+    /// Nothing is looked for once another focus has been reported.
+    fn find_focus_element(&mut self, runtime_id: &[i32], trace: TraceId) {
+        if self.context.intake.focused() != Some(Object::Uia(runtime_id.to_vec())) {
+            return;
         }
+        let finding = Instant::now();
+        let found = self.element_by_focus_path(runtime_id);
+        tracing::debug!(
+            found = found.is_some(),
+            elapsed_us = finding.elapsed().as_micros(),
+            "the focus's own element looked for by its path"
+        );
+        match found {
+            Some(element) => self.follow_focus_element(runtime_id, &element, trace),
+            None => tracing::debug!("the focus's element was not found; nothing is followed"),
+        }
+    }
+
+    /// The element `runtime_id` names, an element of the chain the
+    /// listener read for the focus this outpost last reported, found by its
+    /// path ([`focus_path::find`]); `None` when it is not in that chain, or
+    /// its path does not lead to it.
+    fn element_by_focus_path(&mut self, runtime_id: &[i32]) -> Option<IUIAutomationElement> {
+        let context = self.context;
+        let route = context.focus_route(runtime_id)?;
+        let uia = self.client.uia()?;
+        let properties = verbatim_uia::cached_properties(context.fetches());
+        let remote = context.tries_remote(Some(route.window));
+        let (found, import_failed) = focus_path::find(uia, &route, &properties, remote);
+        if import_failed {
+            context.read_classically(route.window);
+        }
+        found
     }
 
     /// The window a UIA focus is reported in, or [`Dropped`] when the focus
@@ -3025,30 +2826,18 @@ impl Worker<'_> {
         &self,
         (fact_hwnd, focus_window): (isize, isize),
         remote_window: Option<isize>,
-        element: Option<&IUIAutomationElement>,
     ) -> Result<Option<isize>, Dropped> {
-        // The event's own window; else the element's nearest, which a
-        // remote read found with its ancestors, or, when the provider could
-        // not tell it, the classic walk finds; else, for an element not
-        // resolved, this application's keyboard focus window when the
-        // listener captured the event, which hosts the element when the
-        // event is current but, in an application with several windows, may
-        // be another of its windows when the event is late; else, for
-        // deciding the backend only, this application's focus window now,
-        // which is never reported.
-        //
-        // The console host's provider answers no native window handle for
-        // its window inside a remote operation (only the client side's
-        // window proxy supplies it), and its window is not this process's
-        // by `GetWindowThreadProcessId`, which names the console's client
-        // instead, so for its text area only the classic walk finds the
-        // window.
+        // The event's own window; else the element's nearest, which the
+        // listener's read found with its ancestors; else this application's
+        // keyboard focus window when the listener received the event, which
+        // hosts the element when the event is current but, in an
+        // application with several windows, may be another of its windows
+        // when the event is late; else, for deciding the backend only, this
+        // application's focus window now, which is never reported.
         let reported = if fact_hwnd != 0 {
             Some(fact_hwnd)
         } else {
-            remote_window
-                .or_else(|| element.and_then(nearest_window_handle))
-                .or((focus_window != 0).then_some(focus_window))
+            remote_window.or((focus_window != 0).then_some(focus_window))
         };
         let judged = reported.or_else(|| focus_window_of(self.context.target_pid));
         if judged.is_some_and(window_belongs_to_hidden_frame) {
@@ -3062,266 +2851,6 @@ impl Worker<'_> {
             return Err(Dropped);
         }
         Ok(reported)
-    }
-
-    /// [`read::uia_enrichment`], the classic walk, for a focus's element.
-    fn classic_enrichment(
-        &mut self,
-        element: &IUIAutomationElement,
-        role: Role,
-        previous: &[NodeSnapshot],
-    ) -> read::Enrichment {
-        let Some(uia) = self.client.uia() else {
-            return (None, None);
-        };
-        match self.context.uia_cache(uia) {
-            Ok(cache) => read::uia_enrichment(self.context, uia, &cache, element, role, previous),
-            Err(_) => (None, None),
-        }
-    }
-
-    /// [`read::uia_remote_enrichment`] for a focus's element, when there is
-    /// one and a client to read it with, with `held`, the element the
-    /// registry holds under the same runtime id.
-    fn remote_enrichment(
-        &mut self,
-        element: Option<&IUIAutomationElement>,
-        held: Option<&IUIAutomationElement>,
-        previous: &[NodeSnapshot],
-        (focus_in, require_focus): (Option<isize>, bool),
-    ) -> Option<read::RemoteEnrichment> {
-        let element = element?;
-        let uia = self.client.uia()?;
-        let cache = self.context.uia_cache(uia).ok()?;
-        read::uia_remote_enrichment(
-            self.context,
-            uia,
-            &cache,
-            element,
-            held,
-            previous,
-            (focus_in, require_focus),
-        )
-    }
-
-    /// The element of a UIA focus `fact` whose event said it had the
-    /// keyboard focus, which another element of this application has taken
-    /// since, found within [`SEARCH_DEADLINE`] in the top-level window of
-    /// the event's window, else of the application's keyboard focus window
-    /// when the listener captured the event, else in each of the
-    /// application's top-level windows: by its runtime id, else by its
-    /// name and its position in its set, as the event gave them. Windows
-    /// Terminal raises its tabs' focus events from elements no element of
-    /// its tree is, each with a runtime id of its own, so the tab is the
-    /// element of the tree named and placed as the event's (measured live,
-    /// 2026-10-09: the event named runtime id 17, the tree's tabs had 9 and
-    /// 10). `None` when nothing is found or the read does not answer in
-    /// time.
-    fn element_of_moved_focus(
-        &mut self,
-        fact: &UiaSnapshotFact,
-        (fact_hwnd, focus_window): (isize, isize),
-    ) -> Option<IUIAutomationElement> {
-        let roots: Vec<isize> = match [fact_hwnd, focus_window]
-            .into_iter()
-            .find(|&hwnd| hwnd != 0)
-        {
-            Some(window) => vec![top_level_of(window)],
-            None => super::window::top_level_windows(self.context.target_pid),
-        };
-        let placed = fact.name.clone().zip(
-            fact.details
-                .position_in_set
-                .zip(fact.details.set_size)
-                .and_then(|(position, size)| {
-                    Some((i32::try_from(position).ok()?, i32::try_from(size).ok()?))
-                }),
-        );
-        let (fetches, runtime_id) = (self.context.fetches(), fact.runtime_id.clone());
-        let found = self.context.bounded.run(SEARCH_DEADLINE, move |uia| {
-            let cache = uia.cache_request_for(fetches).ok()?;
-            let element = roots.iter().find_map(|&top| {
-                let root = uia.element_from_handle(top, &cache).ok()?;
-                if let Ok(Some(element)) = uia.element_by_runtime_id(&root, &runtime_id, &cache) {
-                    return Some(element);
-                }
-                let (name, placed) = placed.as_ref()?;
-                uia.element_by_name_and_position(&root, name, *placed, &cache)
-                    .ok()
-                    .flatten()
-            })?;
-            windows::core::AgileReference::new(&element).ok()
-        });
-        match found {
-            Ok(found) => found.and_then(|element| element.resolve().ok()),
-            Err(unanswered) => {
-                tracing::debug!(?unanswered, "the moved focus's element search was given up");
-                None
-            }
-        }
-    }
-
-    /// Whether `inner`, the element that has the keyboard focus now, is
-    /// inside `outer`'s subtree, found by its runtime id within
-    /// [`SEARCH_DEADLINE`]; a search that fails or does not answer in time
-    /// is taken as not.
-    fn holds_element(&self, outer: &IUIAutomationElement, inner: &IUIAutomationElement) -> bool {
-        let Ok(outer) = windows::core::AgileReference::new(outer) else {
-            return false;
-        };
-        // `inner` was built with the base cache request.
-        let runtime_id = snapshot_parts_from_cached_element(inner).runtime_id;
-        let fetches = self.context.fetches();
-        let found = self.context.bounded.run(SEARCH_DEADLINE, move |uia| {
-            let cache = uia.cache_request_for(fetches)?;
-            let outer = outer.resolve()?;
-            uia.element_by_runtime_id(&outer, &runtime_id, &cache)
-                .map(|found| found.is_some())
-        });
-        matches!(found, Ok(Ok(true)))
-    }
-
-    /// The element the registry holds under `runtime_id`, `None` when no
-    /// node with an element has that id.
-    fn held_element(&self, runtime_id: &[i32]) -> Option<Held> {
-        let registry = &self.context.uia_registry;
-        let agile = registry
-            .existing_id(runtime_id)
-            .and_then(|id| registry.element_of(id))?;
-        Some(agile.resolve().map_or(Held::Unresolved, Held::Element))
-    }
-
-    /// Gives `runtime_id` a new node unless `held`, the element its node
-    /// stands for, still has the keyboard focus: `held_focused` when the
-    /// remote enrichment read it, else read now. NVDA treats a focus event
-    /// as a duplicate only while the element it compares equal to still has
-    /// the keyboard focus, read live; a held element that has lost it, or
-    /// cannot be read (it died), is not this focus whatever its runtime id
-    /// says.
-    fn reissue_unless_focused(
-        &mut self,
-        runtime_id: &[i32],
-        held: Held,
-        held_focused: Option<bool>,
-    ) {
-        let keeps = match held {
-            Held::Element(held) => held_focused.unwrap_or_else(|| Self::held_has_focus(&held)),
-            Held::Unresolved => false,
-        };
-        if !keeps {
-            tracing::debug!(
-                "UIA focus: its runtime id named an element without the focus; a new node is issued"
-            );
-            drop(self.context.uia_registry.reissue(runtime_id));
-        }
-    }
-
-    /// Whether `held` has the keyboard focus, read live: the classic
-    /// path's check, where no remote operation read it. One call, which UIA
-    /// ends after its call timeout ([`verbatim_uia::CALL_TIMEOUT`]). A read
-    /// that fails or does not answer in time is an element that is gone.
-    fn held_has_focus(held: &IUIAutomationElement) -> bool {
-        matches!(held.has_keyboard_focus(), Ok(true))
-    }
-
-    /// The live element for the focus `runtime_id` names, read as the
-    /// focused element, one call that UIA ends after its call timeout
-    /// ([`verbatim_uia::CALL_TIMEOUT`]). When the focused element
-    /// read is another element of this application and the focus's element
-    /// is a window of its own, `own_window` (0 for a windowless element),
-    /// that window's element is read and is the focus if it is the same
-    /// element and has the keyboard focus, read live: NVDA accepts a UIA
-    /// focus event whose own element has the keyboard focus
-    /// (`shouldAllowUIAFocusEvent`), whatever the focused element read says.
-    fn live_focus_element(&mut self, runtime_id: &[i32], own_window: isize) -> LiveFocus {
-        let Some(uia) = self.client.uia() else {
-            return LiveFocus::Unresolved;
-        };
-        let Ok(cache) = self.context.uia_cache(uia) else {
-            return LiveFocus::Unresolved;
-        };
-        let read = &self.context.focused_element;
-        let Ok(element) = read(uia, &cache) else {
-            return LiveFocus::Unresolved;
-        };
-        // `element` was built with the base cache request.
-        let (found, process) = (
-            snapshot_parts_from_cached_element(&element).runtime_id,
-            cached_process_id(&element),
-        );
-        if found == runtime_id {
-            LiveFocus::Found(element)
-        } else if process.is_some_and(|pid| pid != 0 && pid != self.context.target_pid) {
-            LiveFocus::InAnotherApplication
-        } else if let Some(own) = self.own_element_focused(runtime_id, own_window) {
-            LiveFocus::Found(own)
-        } else {
-            LiveFocus::Elsewhere(element)
-        }
-    }
-
-    /// The element of `own_window`, the window of the focus `runtime_id`
-    /// names, when it is that element and has the keyboard focus, read in
-    /// two calls, each of which UIA ends after its call timeout; `None`
-    /// otherwise, and for no window. The console host's window never gets
-    /// here: its focus is dropped before any read
-    /// ([`uia_focus`](Self::uia_focus)).
-    fn own_element_focused(
-        &mut self,
-        runtime_id: &[i32],
-        own_window: isize,
-    ) -> Option<IUIAutomationElement> {
-        if own_window == 0 {
-            return None;
-        }
-        let uia = self.client.uia()?;
-        let cache = self.context.uia_cache(uia).ok()?;
-        let element = uia.element_from_handle(own_window, &cache).ok()?;
-        // Built with the base cache request.
-        let same = snapshot_parts_from_cached_element(&element).runtime_id == runtime_id;
-        if !(same && matches!(element.has_keyboard_focus(), Ok(true))) {
-            return None;
-        }
-        tracing::debug!(
-            "UIA focus: the focused element read named another element, but the event's own element has the keyboard focus"
-        );
-        Some(element)
-    }
-
-    /// A selection event of the focus `runtime_id` names, which was reported
-    /// from its event alone and whose element has not been found since: the
-    /// event is evidence that the application answers for the element, so
-    /// the focused element is read once, one call that UIA ends after its
-    /// call timeout, and
-    /// kept and followed when it is that focus. Nothing is read for a focus
-    /// whose element is known.
-    fn element_from_selection(&mut self, runtime_id: &[i32], trace: TraceId) {
-        let context = self.context;
-        if context.intake.focused() != Some(Object::Uia(runtime_id.to_vec())) {
-            return;
-        }
-        let registry = &context.uia_registry;
-        if registry
-            .existing_id(runtime_id)
-            .and_then(|id| registry.element_of(id))
-            .is_some()
-        {
-            return;
-        }
-        let Some(uia) = self.client.uia() else {
-            return;
-        };
-        let Ok(cache) = context.uia_cache(uia) else {
-            return;
-        };
-        let read = &context.focused_element;
-        let Ok(element) = read(uia, &cache) else {
-            return;
-        };
-        // Built with the base cache request.
-        if snapshot_parts_from_cached_element(&element).runtime_id == runtime_id {
-            self.follow_focus_element(runtime_id, &element, trace);
-        }
     }
 
     /// Keeps `element`, found for the focus `runtime_id` names, which was

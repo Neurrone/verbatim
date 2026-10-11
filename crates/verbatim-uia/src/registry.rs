@@ -33,11 +33,12 @@
 //! folder's item that took the focus had the runtime id of the subfolder's
 //! item, destroyed with its list. Mapped to the old node, the new focus
 //! read to Core as the focus it already had, and nothing was spoken. So
-//! before a focus is reported under a node that already exists, the
-//! outpost checks that node's element: when it no longer has the keyboard
-//! focus, or cannot be read at all, the element behind the id is not the
-//! one the node stood for, and [`NodeIdRegistry::reissue`] gives the id a
-//! new node (`docs/parity.md`, "Duplicate focus suppression").
+//! when a focus event names the runtime id of the focus before it, the
+//! focus listener reads whether that earlier element still has the
+//! keyboard focus, in the same round trip as the new focus: when it does
+//! not, or cannot be read at all, the element behind the id is not the one
+//! the node stood for, and the outpost has [`NodeIdRegistry::reissue`] give
+//! the id a new node (`docs/parity.md`, "Duplicate focus suppression").
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};

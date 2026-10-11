@@ -34,6 +34,16 @@
 //!   do). The newest menu opening from each backend is handled last, as
 //!   NVDA keeps only its newest menu event and tries it after the focus
 //!   events.
+//! - A UIA focus waits in the place its marker took
+//!   ([`DeliveredFact::UiaFocusMarker`]): the focus listener sends the
+//!   marker the moment the event arrives and reads the focus from the
+//!   event's own element, and nothing taken in after the marker is planned
+//!   until the read takes the marker's place, or a drop removes it
+//!   (`docs/design/focus-pipeline.md`, section 12.4, decision 1 of section
+//!   15). NVDA's UIA events likewise pass in order through the one thread
+//!   that judges them, so an event raised after a focus is never handled
+//!   before it. A read whose marker the intake never saw, as when the
+//!   outpost started after it, is taken in where it arrives.
 //! - A batch that holds a foreground change is handed out at once, never
 //!   held for its window to become the foreground window: Windows raises
 //!   the foreground event once the change is made, so a foreground event
@@ -217,6 +227,9 @@ struct Waiting {
     /// The thread an MSAA entry is counted by ([`thread_of`]), 0 for one
     /// not counted.
     thread: u32,
+    /// For a UIA focus's marker still waiting for its read, the marker:
+    /// nothing at or after it is planned.
+    marker: Option<u64>,
     entry: Entry,
 }
 
@@ -285,7 +298,9 @@ impl State {
 
 impl Intake {
     /// Adds an entry. The thread it is counted by and the window are read
-    /// here, with local calls, so the limiter never needs them later.
+    /// here, with local calls, so the limiter never needs them later. A UIA
+    /// focus's read takes its marker's place, and a drop, or the end of the
+    /// listener's reads, removes the markers it resolves.
     pub(super) fn push(&self, entry: Entry) {
         let (key, category, hwnd) = classify(&entry.item);
         let thread = thread_of(&entry.item);
@@ -296,6 +311,30 @@ impl Intake {
             drop(state);
             return;
         }
+        let marker = match &entry.item {
+            Item::Fact(DeliveredFact::UiaFocusDropped { marker }, _) => {
+                tracing::debug!(marker, "a UIA focus's marker is dropped with its focus");
+                state
+                    .waiting
+                    .retain(|waiting| waiting.marker != Some(*marker));
+                drop(state);
+                self.ready.notify_one();
+                return;
+            }
+            Item::Fact(DeliveredFact::UiaFocusReadsEnded, _) => {
+                tracing::debug!("the listener's reads ended; no marker is waited on");
+                state.waiting.retain(|waiting| waiting.marker.is_none());
+                drop(state);
+                self.ready.notify_one();
+                return;
+            }
+            Item::Fact(DeliveredFact::UiaFocusMarker { marker }, _) => Some(*marker),
+            _ => None,
+        };
+        let resolves = match &entry.item {
+            Item::Fact(DeliveredFact::UiaFocusRead { marker, .. }, _) => Some(*marker),
+            _ => None,
+        };
         if let Some(key) = &key {
             state
                 .waiting
@@ -311,13 +350,24 @@ impl Intake {
             batch = state.batch_number,
             "intake pushed"
         );
-        state.waiting.push_back(Waiting {
+        let waiting = Waiting {
             key,
             category,
             hwnd,
             thread,
+            marker,
             entry,
+        };
+        let place = resolves.and_then(|resolves| {
+            state
+                .waiting
+                .iter()
+                .position(|waiting| waiting.marker == Some(resolves))
         });
+        match place {
+            Some(place) => state.waiting[place] = waiting,
+            None => state.waiting.push_back(waiting),
+        }
         drop(state);
         self.ready.notify_one();
     }
@@ -333,8 +383,15 @@ impl Intake {
             if let Some(planned) = state.batch.pop_front() {
                 return Some((planned, state.batch_number));
             }
-            if !state.waiting.is_empty() {
-                let waiting: Vec<Waiting> = state.waiting.drain(..).collect();
+            // Everything before the first marker still waiting for its
+            // read; with a marker first, the worker waits for the read.
+            let ready = state
+                .waiting
+                .iter()
+                .position(|waiting| waiting.marker.is_some())
+                .unwrap_or(state.waiting.len());
+            if ready > 0 {
+                let waiting: Vec<Waiting> = state.waiting.drain(..ready).collect();
                 let taken = waiting.len();
                 let focused = state.focused.clone();
                 let batch = plan(waiting, focused.as_ref(), super::window::window_is_hung);
@@ -416,7 +473,20 @@ impl Intake {
         before != state.waiting.len() + state.batch.len()
     }
 
-    /// Whether anything is waiting to be handled, planned or not.
+    /// Whether [`next`](Self::next) has an entry to hand out without
+    /// waiting: one planned, or one waiting ahead of every marker.
+    #[cfg(test)]
+    fn ready_now(&self) -> bool {
+        let state = self.lock();
+        !state.batch.is_empty()
+            || state
+                .waiting
+                .front()
+                .is_some_and(|waiting| waiting.marker.is_none())
+    }
+
+    /// Whether anything is waiting to be handled, planned or not, a UIA
+    /// focus's marker waiting for its read included.
     pub(super) fn busy(&self) -> bool {
         let state = self.lock();
         !state.waiting.is_empty() || !state.batch.is_empty()
@@ -570,15 +640,21 @@ fn classify_fact(fact: &DeliveredFact) -> (Option<Key>, Category, isize) {
             Category::Focus,
             *hwnd,
         ),
-        DeliveredFact::UiaFocus {
-            hwnd,
-            focus_window,
-            snapshot,
-        } => (
-            Some(Key::UiaFocus(snapshot.runtime_id.clone())),
+        DeliveredFact::UiaFocusRead { read, .. } => (
+            Some(Key::UiaFocus(read.snapshot.runtime_id.clone())),
             Category::Uncounted,
-            if *hwnd == 0 { *focus_window } else { *hwnd },
+            if read.hwnd == 0 {
+                read.focus_window
+            } else {
+                read.hwnd
+            },
         ),
+        // A marker is never planned: its read takes its place, or a drop
+        // removes it. A drop and the end of the listener's reads are never
+        // queued.
+        DeliveredFact::UiaFocusMarker { .. }
+        | DeliveredFact::UiaFocusDropped { .. }
+        | DeliveredFact::UiaFocusReadsEnded => (None, Category::Exempt, 0),
         DeliveredFact::MenuPopup {
             hwnd,
             id_object,
@@ -777,6 +853,7 @@ mod tests {
             category,
             hwnd,
             thread: thread_of(&item),
+            marker: None,
             entry: Entry {
                 item,
                 trace: TraceId::mint(),
@@ -799,6 +876,7 @@ mod tests {
             category,
             hwnd,
             thread: 1,
+            marker: None,
             entry: Entry {
                 item,
                 trace: TraceId::mint(),
@@ -832,6 +910,23 @@ mod tests {
         }
     }
 
+    /// The focus listener's read of a UIA focus on `runtime_id` in window
+    /// `hwnd`, resolving marker `marker`.
+    fn uia_focus(marker: u64, hwnd: isize, runtime_id: Vec<i32>) -> DeliveredFact {
+        DeliveredFact::UiaFocusRead {
+            marker,
+            read: Box::new(crate::protocol::UiaFocusRead {
+                hwnd,
+                focus_window: 0,
+                snapshot: snapshot(runtime_id),
+                ancestors: Some(Vec::new()),
+                selected_child: None,
+                window: Some(hwnd),
+                same_as_last: None,
+            }),
+        }
+    }
+
     fn query(request_id: u64) -> Waiting {
         let item = Item::Query {
             request_id,
@@ -843,6 +938,7 @@ mod tests {
             category,
             hwnd,
             thread: 0,
+            marker: None,
             entry: Entry {
                 item,
                 trace: TraceId::mint(),
@@ -963,16 +1059,9 @@ mod tests {
                 )
             })
             .collect();
-        waiting.extend((12..=16).map(|n| {
-            fact(
-                DeliveredFact::UiaFocus {
-                    hwnd: 3,
-                    focus_window: 0,
-                    snapshot: snapshot(vec![42, n]),
-                },
-                u64::try_from(n).unwrap_or(0),
-            )
-        }));
+        waiting.extend(
+            (12..=16).map(|n| fact(uia_focus(0, 3, vec![42, n]), u64::try_from(n).unwrap_or(0))),
+        );
         let planned = plan(waiting, None, never_hung);
         assert_eq!(
             observed(&planned),
@@ -1045,14 +1134,7 @@ mod tests {
                 },
                 4,
             ),
-            fact(
-                DeliveredFact::UiaFocus {
-                    hwnd: 3,
-                    focus_window: 0,
-                    snapshot: snapshot(vec![42]),
-                },
-                5,
-            ),
+            fact(uia_focus(0, 3, vec![42]), 5),
         ];
         let planned = plan(waiting, None, never_hung);
         assert_eq!(
@@ -1068,14 +1150,7 @@ mod tests {
         // Control+Tab in Windows Terminal: the tab the focus leaves, the tab
         // it moves to, and that tab's terminal, in one batch.
         let uia = |runtime_id: i32, observed_at_ms: u64| {
-            fact(
-                DeliveredFact::UiaFocus {
-                    hwnd: 3,
-                    focus_window: 0,
-                    snapshot: snapshot(vec![42, runtime_id]),
-                },
-                observed_at_ms,
-            )
+            fact(uia_focus(0, 3, vec![42, runtime_id]), observed_at_ms)
         };
         let planned = plan(vec![uia(1, 1), uia(2, 2), uia(3, 3)], None, never_hung);
         assert_eq!(observed(&planned), vec![1, 2, 3]);
@@ -1277,5 +1352,111 @@ mod tests {
         });
         assert!(intake.cancel(5));
         assert!(!intake.cancel(5), "already withdrawn");
+    }
+
+    fn push_item(intake: &Intake, item: Item, observed_at_ms: u64) {
+        intake.push(Entry {
+            item,
+            trace: TraceId::mint(),
+            observed_at_ms,
+            timing: crate::protocol::EventTiming::default(),
+        });
+    }
+
+    fn name_change(child: i32) -> Item {
+        Item::Msaa {
+            kind: WinEventKind::NameChange,
+            hwnd: 0,
+            id_object: -4,
+            id_child: child,
+            thread: 0,
+        }
+    }
+
+    fn marker(marker: u64) -> Item {
+        Item::Fact(DeliveredFact::UiaFocusMarker { marker }, None)
+    }
+
+    /// Everything the intake hands out while it has something ready, by
+    /// observation time.
+    fn handed_out(intake: &Intake) -> Vec<u64> {
+        let mut order = Vec::new();
+        while intake.ready_now() {
+            let (planned, _) = intake.next().expect("an entry");
+            order.extend(planned.entries().iter().map(|entry| entry.observed_at_ms));
+        }
+        order
+    }
+
+    #[test]
+    fn what_arrives_after_a_focus_marker_waits_for_its_read_and_the_read_takes_its_place() {
+        let intake = Intake::default();
+        push_item(&intake, name_change(1), 1);
+        push_item(&intake, marker(7), 2);
+        push_item(&intake, name_change(3), 3);
+        assert_eq!(
+            handed_out(&intake),
+            [1],
+            "the change after the marker waits"
+        );
+        assert!(intake.busy(), "the marker and the change still wait");
+        push_item(&intake, Item::Fact(uia_focus(7, 3, vec![42, 7]), None), 4);
+        assert_eq!(
+            handed_out(&intake),
+            [4, 3],
+            "the focus in its marker's place, then the change"
+        );
+        assert!(!intake.busy());
+    }
+
+    #[test]
+    fn a_dropped_focus_releases_what_waited_behind_its_marker() {
+        let intake = Intake::default();
+        push_item(&intake, marker(7), 1);
+        push_item(&intake, marker(8), 2);
+        push_item(&intake, name_change(3), 3);
+        assert_eq!(handed_out(&intake), Vec::<u64>::new());
+        push_item(
+            &intake,
+            Item::Fact(DeliveredFact::UiaFocusDropped { marker: 7 }, None),
+            4,
+        );
+        assert_eq!(
+            handed_out(&intake),
+            Vec::<u64>::new(),
+            "marker 8 still waits"
+        );
+        push_item(
+            &intake,
+            Item::Fact(DeliveredFact::UiaFocusDropped { marker: 8 }, None),
+            5,
+        );
+        assert_eq!(handed_out(&intake), [3]);
+        assert!(!intake.busy());
+    }
+
+    #[test]
+    fn the_end_of_the_listeners_reads_releases_every_marker() {
+        let intake = Intake::default();
+        push_item(&intake, marker(7), 1);
+        push_item(&intake, name_change(2), 2);
+        push_item(&intake, marker(8), 3);
+        push_item(&intake, name_change(4), 4);
+        push_item(
+            &intake,
+            Item::Fact(DeliveredFact::UiaFocusReadsEnded, None),
+            5,
+        );
+        assert_eq!(handed_out(&intake), [2, 4]);
+        assert!(!intake.busy());
+    }
+
+    #[test]
+    fn a_focus_read_whose_marker_never_came_is_taken_where_it_arrives() {
+        let intake = Intake::default();
+        push_item(&intake, name_change(1), 1);
+        push_item(&intake, Item::Fact(uia_focus(9, 3, vec![42, 9]), None), 2);
+        push_item(&intake, name_change(3), 3);
+        assert_eq!(handed_out(&intake), [1, 2, 3]);
     }
 }

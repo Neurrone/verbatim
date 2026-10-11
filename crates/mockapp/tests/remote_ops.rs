@@ -18,8 +18,7 @@ use std::time::{Duration, Instant};
 use common::outpost::OutpostUnderTest;
 use verbatim_model::NormalizedEvent;
 use verbatim_outpost::OutpostOptions;
-use verbatim_outpost::listener::uia_focus_fact;
-use verbatim_outpost::protocol::{ListenerFact, OutpostToSupervisor};
+use verbatim_outpost::protocol::OutpostToSupervisor;
 use verbatim_uia::{CACHED_PROPERTIES, ElementExt, NodeIdRegistry, Uia, map};
 use verbatim_uia_rops::{
     Ancestry, Error, FocusAncestry, FocusAncestryFn, FocusQuery, LEFT_OUT_WHEN_UNSUPPORTED,
@@ -532,11 +531,13 @@ fn a_focus_walk_that_times_out_fails() {
     fixture.app.quit();
 }
 
-/// The outpost, the focus walk's caller, handles a walk that timed out:
-/// with every provider call slow (`slow`), so that a hop filling an
-/// ancestor's cache outlasts UIA's transaction timeout while each read of
-/// the focus itself does not, the focus is reported with its containers
-/// unknown, never as having none, whether remote operations are on or off.
+/// The focus listener, the focus walk's caller, and the outpost handle a
+/// walk that timed out: with every provider call slow (`slow`), so that
+/// filling an element's cache outlasts UIA's transaction timeout while the
+/// live read of the focus's keyboard focus does not, the focus is
+/// reported from its event, as NVDA lets a focus through whose read fails,
+/// with its containers unknown, never as having none, whether remote
+/// operations are on or off.
 /// The timeout is short, and the calls only a little slow, since mockapp
 /// goes on answering a timed-out program's calls, each that much late,
 /// before it takes the next command.
@@ -553,14 +554,13 @@ fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
                 remote_operations: remote,
             },
         );
-        let ListenerFact { fact, .. } =
-            uia_focus_fact(&deep).expect("mockapp's element has its process");
-        outpost.read_focus_as(&deep);
         let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
         let restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
 
         fixture.app.send(&format!("slow {}", SLOW_CALL.as_millis()));
-        outpost.deliver(fact);
+        // The listener's read runs in this process, under the timeout set
+        // for it.
+        outpost.deliver(outpost.listener_fact(&deep));
         let said = outpost.next();
         // Acknowledged once mockapp has answered the calls still queued,
         // among them the rest of a program UIA stopped waiting for.

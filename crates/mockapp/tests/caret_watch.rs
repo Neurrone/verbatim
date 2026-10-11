@@ -18,10 +18,7 @@ use verbatim_model::{
     TextUnit,
 };
 use verbatim_outpost::Heard;
-use verbatim_outpost::listener::uia_focus_fact;
-use verbatim_outpost::protocol::{
-    ListenerFact, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
-};
+use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, QueryResult};
 use verbatim_uia::{ElementExt, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
@@ -47,9 +44,8 @@ fn focused(hwnd: HWND) -> IUIAutomationElement {
         .expect("mockapp reports a focused element")
 }
 
-/// Moves mockapp's focus to `id` and returns the focus fact the listener
-/// would forward for it, with the outpost's read of the focused element
-/// answering that element.
+/// Moves mockapp's focus to `id` and returns the fact the focus listener
+/// sends for it once it has read it.
 fn focus_fact(
     app: &mut common::MockApp,
     outpost: &OutpostUnderTest,
@@ -58,10 +54,7 @@ fn focus_fact(
 ) -> verbatim_outpost::protocol::DeliveredFact {
     app.send(&format!("set-focus {id}"));
     let element = focused(hwnd);
-    outpost.read_focus_as(&element);
-    let ListenerFact { pid: _, fact } =
-        uia_focus_fact(&element).expect("mockapp's element has its process");
-    fact
+    outpost.listener_fact(&element)
 }
 
 /// Focuses mockapp's "Notes" document and returns its node and the caret

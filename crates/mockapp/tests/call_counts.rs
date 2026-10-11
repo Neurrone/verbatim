@@ -1006,8 +1006,12 @@ fn collect(
 }
 
 /// Moves mockapp's focus to `id`, finds the element mockapp then reports
-/// focused, which must be the one named `name`, hands the outpost the
-/// focus, and measures the outpost's handling of it.
+/// focused, which must be the one named `name`, has the focus listener's
+/// reader judge and read it and hands the outpost the read, and measures
+/// both: the listener's calls and the outpost's until it reported the
+/// focus, and every provider call mockapp answered for either, the
+/// outpost's walk to its own copy of the element after the report
+/// included.
 fn measure_uia_focus(
     (app, under_test, hwnd): (&mut common::MockApp, &UiaUnderTest, HWND),
     outpost: &OutpostUnderTest,
@@ -1149,12 +1153,19 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
 /// thread once the focus is reported: one `HostRawElementProvider` and two
 /// `FragmentRoot` hits, as `uia_event_registrations_cost_exactly` pins the
 /// registration alone. It makes no call the worker counts.
+///
+/// Since stage A step 6 the focus listener reads the focus, one remote
+/// operation, and the outpost reads nothing before it reports it: its
+/// only call before the report is the first focus's probe of the window,
+/// a window message. Its walk to its own copy of the element comes after
+/// the report, where the worker's count does not reach, and is seen in
+/// the provider calls alone.
 fn uia_focus_changes_cost_exactly_remote() {
     uia_focus_changes(
         true,
         &FocusCosts {
             cold: (
-                calls(2, 0, 1),
+                calls(1, 0, 1),
                 &[
                     ("WM_GETOBJECT", 4),
                     ("ProviderOptions", 36),
@@ -1168,7 +1179,7 @@ fn uia_focus_changes_cost_exactly_remote() {
                 ],
             ),
             steady: (
-                calls(2, 0, 0),
+                calls(1, 0, 0),
                 &[
                     ("WM_GETOBJECT", 1),
                     ("ProviderOptions", 22),
@@ -1183,7 +1194,7 @@ fn uia_focus_changes_cost_exactly_remote() {
             ),
             // The list's first selected item through `SelectionPattern2`.
             into_list: (
-                calls(2, 0, 0),
+                calls(1, 0, 0),
                 &[
                     ("WM_GETOBJECT", 2),
                     ("ProviderOptions", 24),
@@ -1199,7 +1210,7 @@ fn uia_focus_changes_cost_exactly_remote() {
                 ],
             ),
             next_item: (
-                calls(2, 0, 0),
+                calls(1, 0, 0),
                 &[
                     ("WM_GETOBJECT", 1),
                     ("ProviderOptions", 22),
@@ -1221,7 +1232,7 @@ fn uia_focus_changes_cost_exactly_classic() {
         false,
         &FocusCosts {
             cold: (
-                calls(6, 0, 1),
+                calls(5, 0, 1),
                 &[
                     ("WM_GETOBJECT", 4),
                     ("ProviderOptions", 44),
@@ -1235,7 +1246,7 @@ fn uia_focus_changes_cost_exactly_classic() {
                 ],
             ),
             steady: (
-                calls(3, 0, 0),
+                calls(4, 0, 0),
                 &[
                     ("WM_GETOBJECT", 1),
                     ("ProviderOptions", 27),
@@ -1269,7 +1280,7 @@ fn uia_focus_changes_cost_exactly_classic() {
                 ],
             ),
             next_item: (
-                calls(3, 0, 0),
+                calls(4, 0, 0),
                 &[
                     ("WM_GETOBJECT", 1),
                     ("ProviderOptions", 27),

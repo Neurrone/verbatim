@@ -17,7 +17,10 @@
 //!   (`docs/design/focus-pipeline.md`, section 12.4) always gets through,
 //!   past the bound, and keeps its place behind everything queued before
 //!   it: the listener's "forwarding ended" must reach the outpost after
-//!   every fact the listener sent before it, and is never lost;
+//!   every fact the listener sent before it, and is never lost; so does
+//!   every part of a UIA focus's read (its marker, its read or drop, and
+//!   the end of a listener's reads), since an outpost waits on a marker
+//!   until its read or drop arrives;
 //! - anything else, a query above all, fails at once, so its asker gets an
 //!   outcome straight away instead of waiting behind a stuck outpost.
 
@@ -51,7 +54,8 @@ pub(super) enum Outgoing {
     /// a notification, which nothing replaces).
     Fact(Option<FactKey>, SupervisorToOutpost),
     /// A message of the MSAA hand-over: `ForwardingEnded` to an outpost,
-    /// `HookInstalled` or `HookRemoved` to the listener.
+    /// `HookInstalled` or `HookRemoved` to the listener; and a part of a UIA
+    /// focus's read routed to an outpost, which waits on its marker.
     HandOver(SupervisorToOutpost),
     /// Anything else: a query, an activation, a configuration command.
     Other(SupervisorToOutpost),

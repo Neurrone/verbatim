@@ -683,6 +683,7 @@ impl Owner {
             }
             tracing::warn!(%outpost, "focus listener exited; replacing it");
             self.end_listener("its pipe closed; it is replaced");
+            self.focus_reads_ended();
             self.start_listener(true);
             return;
         }
@@ -859,6 +860,28 @@ impl Owner {
         }
     }
 
+    /// Tells every outpost, ready or starting, that the listener whose UIA
+    /// focus markers it may be waiting on has ended, so it waits on none of
+    /// them any more ([`DeliveredFact::UiaFocusReadsEnded`]). Sent behind
+    /// everything relayed from that listener: its pipe has closed, or it is
+    /// ended now, and a read its reader still relays after this lands where
+    /// no marker waits for it, and is handled where it arrives.
+    fn focus_reads_ended(&mut self) {
+        for record in self.records.values_mut() {
+            let held = HeldFact {
+                trace_id: TraceId::mint(),
+                observed_at_ms: crate::outpost::now_ms(),
+                timing: EventTiming::default(),
+                fact: DeliveredFact::UiaFocusReadsEnded,
+                win_event: None,
+            };
+            match record.child.as_ref().filter(|_| record.ready) {
+                Some(child) => deliver(&child.writer, held),
+                None => record.held.hold(held),
+            }
+        }
+    }
+
     /// Ends the focus listener, shutting its process down cleanly, for
     /// `why`.
     fn end_listener(&mut self, why: &str) {
@@ -936,6 +959,7 @@ impl Owner {
                     if decision == Some(WedgeReason::MissedHeartbeats) {
                         tracing::warn!("focus listener stopped answering; replacing it");
                         self.end_listener("it stopped answering pings; it is replaced");
+                        self.focus_reads_ended();
                         self.start_listener(true);
                     } else {
                         let _ = child.writer.push(Outgoing::Ping(ping));
@@ -990,6 +1014,7 @@ impl Owner {
 /// Queues a routed fact for an outpost.
 fn deliver(writer: &WriterHandle, held: HeldFact) {
     let key = held.fact.key();
+    let focus_read = held.fact.is_focus_read();
     let command = SupervisorToOutpost::DeliverFact {
         trace_id: held.trace_id,
         observed_at_ms: held.observed_at_ms,
@@ -997,7 +1022,14 @@ fn deliver(writer: &WriterHandle, held: HeldFact) {
         fact: held.fact,
         win_event: held.win_event,
     };
-    if let Err(error) = writer.push(Outgoing::Fact(key, command)) {
+    // An outpost waits on a UIA focus's marker until its read or drop
+    // arrives, so no part of a focus's read is dropped or reordered.
+    let outgoing = if focus_read {
+        Outgoing::HandOver(command)
+    } else {
+        Outgoing::Fact(key, command)
+    };
+    if let Err(error) = writer.push(outgoing) {
         tracing::warn!(%error, "a routed fact could not be queued");
     }
 }

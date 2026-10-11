@@ -373,44 +373,80 @@ fn uia_chain_onward(
     chain
 }
 
-/// What reading a focused UIA element's context with a remote operation
-/// found ([`uia_remote_enrichment`]).
-#[expect(
-    clippy::large_enum_variant,
-    reason = "made once per focus and taken apart at once"
-)]
-pub(super) enum RemoteEnrichment {
-    /// The element no longer has the keyboard focus, read live inside the
-    /// provider: the focus it was read for is out of date.
-    NotFocused,
-    /// Its ancestors and selected child, and its nearest window, which the
-    /// same round trip found (NVDA's `getNearestWindowHandle`).
-    Read {
-        /// The ancestors and selected child.
-        enrichment: Enrichment,
-        /// The element's own window or its nearest ancestor's.
-        window: Option<isize>,
-        /// Whether the element held under the focus's runtime id still has
-        /// the keyboard focus, read live in the same round trip: `false`
-        /// when it does not or cannot be read, `None` when none was given
-        /// or the read failed as a whole.
-        held_focused: Option<bool>,
-    },
+/// A UIA focus's ancestors, outermost first, from `ancestors`, the
+/// raw-view chain the focus listener read from the event's own element,
+/// nearest first: filtered as a walk here filters them, stopping at a
+/// container of `previous` and reusing the rest, and, where the chain
+/// reaches the root of a window read through MSAA, continued from that
+/// window's client area through MSAA, as [`uia_ancestors`] does. Each node
+/// is minted from its runtime id, with no element: the outpost finds its
+/// own copy of an element only when it needs one (`super::focus_path`).
+/// `None` when the continuation through MSAA ran out of time.
+pub(super) fn uia_chain_from_read(
+    context: &Context,
+    client: &mut Client,
+    ancestors: &[crate::protocol::UiaAncestorFact],
+    previous: &[NodeSnapshot],
+) -> Option<Vec<NodeSnapshot>> {
+    let desktop = desktop_window();
+    let read_by_msaa = |hwnd: isize| hwnd != desktop && !window_uses_uia(context, hwnd);
+    let known = |id: NodeId| previous.iter().any(|node| node.id == id);
+    let parents: Vec<verbatim_uia::AncestorParts> = ancestors
+        .iter()
+        .map(|ancestor| verbatim_uia::AncestorParts {
+            parts: verbatim_uia::map::CachedUiaParts {
+                runtime_id: ancestor.snapshot.runtime_id.clone(),
+                role: ancestor.snapshot.role,
+                name: ancestor.snapshot.name.clone(),
+                value: ancestor.snapshot.value.clone(),
+                states: ancestor.snapshot.states,
+                details: ancestor.snapshot.details.clone(),
+            },
+            hwnd: ancestor.hwnd,
+            content: ancestor.content,
+        })
+        .collect();
+    let (chain, crossed, walked) = Uia::ancestor_chain_from_parts(
+        &parents,
+        &context.uia_registry,
+        &verbatim_uia::AncestorStops {
+            read_by_other_api: &read_by_msaa,
+            known: &known,
+            deadline: None,
+        },
+    );
+    let deadline = std::time::Instant::now() + ENRICHMENT_BUDGET;
+    match client.uia_and_cache(context) {
+        Ok((uia, cache)) => uia_chain_onward(
+            context,
+            (uia, &cache),
+            (chain, crossed, walked),
+            previous,
+            Some(deadline),
+        ),
+        // Without a client the MSAA continuation cannot cross back into
+        // UIA, so it is not made; the chain read is reported as it is.
+        Err(_) => match walked {
+            AncestorWalk::MetKnown(met) => Some(splice(previous, chain, met)),
+            AncestorWalk::Complete | AncestorWalk::OutOfTime => Some(chain),
+        },
+    }
 }
 
-/// A focused UIA element's ancestors, selected child, and nearest window,
-/// in one round trip run inside the application's provider
-/// ([`verbatim_uia_rops::focus_ancestry`]), with the same stops and the
-/// same continuation through MSAA as [`uia_enrichment`], and whether
-/// `held`, the element the registry holds under the focus's runtime id,
-/// still has the keyboard focus. With `require_focus`, an element that no
-/// longer has the keyboard focus, read live, is answered
-/// [`RemoteEnrichment::NotFocused`] and nothing else is read; without it,
-/// for an element whose focus event said it had the focus, its ancestry is
-/// read all the same. `None`, having
-/// made no call, when remote operations are off or `window`, the window
-/// the focus is in, is read the classic way: the caller reads it as
-/// before.
+/// The element a focus-now query read no longer has the keyboard focus,
+/// read live inside the provider ([`uia_remote_enrichment`]).
+pub(super) struct NotFocused;
+
+/// The ancestors and selected child of `element`, the focused element a
+/// focus-now query read, in one round trip run inside the application's
+/// provider ([`verbatim_uia_rops::focus_ancestry`]), with the same stops and
+/// the same continuation through MSAA as [`uia_enrichment`]. An element
+/// that no longer has the keyboard focus, read live, is answered
+/// [`NotFocused`] and nothing else is read. `None`, having made no call,
+/// when remote operations are off or `window`, the window the focus is in,
+/// is read the classic way: the caller reads it as before. A UIA focus
+/// event's ancestors are the focus listener's read instead
+/// ([`uia_chain_from_read`]).
 ///
 /// A program that fails is answered by the classic walk for this call,
 /// and logged with the instruction that failed and the Rust line that
@@ -420,13 +456,11 @@ pub(super) enum RemoteEnrichment {
 /// way, reports the containers unknown.
 pub(super) fn uia_remote_enrichment(
     context: &Context,
-    uia: &Uia,
-    cache: &IUIAutomationCacheRequest,
+    (uia, cache): (&Uia, &IUIAutomationCacheRequest),
     element: &IUIAutomationElement,
-    held: Option<&IUIAutomationElement>,
     previous: &[NodeSnapshot],
-    (window, require_focus): (Option<isize>, bool),
-) -> Option<RemoteEnrichment> {
+    window: Option<isize>,
+) -> Option<Result<Enrichment, NotFocused>> {
     if !context.tries_remote(window) {
         return None;
     }
@@ -444,11 +478,11 @@ pub(super) fn uia_remote_enrichment(
     let query = FocusQuery {
         element,
         known: &known,
-        previous: held,
+        previous: None,
         depth_limit: MAX_ANCESTOR_HOPS,
         properties: &properties,
         deadline: Some(deadline),
-        require_focus,
+        require_focus: true,
         refresh: false,
     };
     // One remote operation, one transaction, which UIA's transaction
@@ -456,18 +490,13 @@ pub(super) fn uia_remote_enrichment(
     // deadline between its calls.
     let (ancestry, path) = match focus_ancestry(uia, &query, true) {
         Ok((FocusAncestry::Focused(ancestry), path)) => (ancestry, path),
-        Ok((FocusAncestry::NotFocused, _)) => return Some(RemoteEnrichment::NotFocused),
+        Ok((FocusAncestry::NotFocused, _)) => return Some(Err(NotFocused)),
         Err(error) => {
             // The walk failed, by UIA's transaction timeout or otherwise:
             // the focus is reported with its containers unknown, as when
-            // the walk runs out of time, never as having none, and its
-            // window is found the usual way.
+            // the walk runs out of time, never as having none.
             tracing::debug!(%error, "the focus ancestry could not be read");
-            return Some(RemoteEnrichment::Read {
-                enrichment: (None, None),
-                window: verbatim_uia::nearest_window_handle(element),
-                held_focused: None,
-            });
+            return Some(Ok((None, None)));
         }
     };
     if let Path::Fallback(error) = &path {
@@ -518,11 +547,7 @@ pub(super) fn uia_remote_enrichment(
         ancestors = ancestry.ancestors.len(),
         "UIA focus ancestry read"
     );
-    Some(RemoteEnrichment::Read {
-        enrichment: (ancestors, selected),
-        window: ancestry.window,
-        held_focused: ancestry.previous_focused,
-    })
+    Some(Ok((ancestors, selected)))
 }
 
 /// An MSAA node's ancestors, outermost first, without the window objects
@@ -685,10 +710,28 @@ fn dialog_text_of(context: &Context, node: &NodeSnapshot) -> Option<String> {
                 .and_then(|dialog| dialog_text(&dialog))
         }
         Backend::Uia => {
-            let element = context.uia_registry.element_of(node.id)?;
+            // A dialog the focus listener read in the focus's chain, whose
+            // element this outpost does not hold, is found by its path.
+            let element = context.uia_registry.element_of(node.id);
+            let route = match element {
+                Some(_) => None,
+                None => {
+                    let runtime_id = context.uia_registry.runtime_id_of(node.id)?;
+                    Some(context.focus_route(&runtime_id)?)
+                }
+            };
+            let remote = route
+                .as_ref()
+                .is_some_and(|route| context.tries_remote(Some(route.window)));
             let properties = verbatim_uia::cached_properties(context.fetches());
             let gathered = context.bounded.run(DIALOG_TEXT_WAIT, move |uia| {
-                let element = element.resolve().ok()?;
+                let element = match (element, route) {
+                    (Some(element), _) => element.resolve().ok()?,
+                    (None, Some(route)) => {
+                        super::focus_path::find(uia, &route, &properties, remote).0?
+                    }
+                    (None, None) => return None,
+                };
                 dialog_text(&UiaObject::new(uia, &properties, element))
             });
             gathered.unwrap_or_else(|unanswered| {
@@ -718,20 +761,13 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
         console_text_area(&mut node, Some(hwnd));
         // A focus that has moved on since the focused element was read is
         // still this query's answer, read the classic way.
-        let (ancestors, selected_child) = match uia_remote_enrichment(
-            context,
-            uia,
-            &cache,
-            &element,
-            None,
-            &[],
-            (Some(hwnd), true),
-        ) {
-            Some(RemoteEnrichment::Read { enrichment, .. }) => enrichment,
-            Some(RemoteEnrichment::NotFocused) | None => {
-                uia_enrichment(context, uia, &cache, &element, node.role, &[])
-            }
-        };
+        let (ancestors, selected_child) =
+            match uia_remote_enrichment(context, (uia, &cache), &element, &[], Some(hwnd)) {
+                Some(Ok(enrichment)) => enrichment,
+                Some(Err(NotFocused)) | None => {
+                    uia_enrichment(context, uia, &cache, &element, node.role, &[])
+                }
+            };
         let ancestors = ancestors.unwrap_or_default();
         Some(FocusedControl {
             node,
@@ -852,6 +888,20 @@ fn resolve_uia_element(
         .uia_registry
         .runtime_id_of(node_id)
         .ok_or(ReadError::Gone)?;
+    // An element of the chain the focus listener read for the focus is
+    // found by its path, without a search.
+    if let Some(route) = context.focus_route(&runtime_id) {
+        let properties = verbatim_uia::cached_properties(context.fetches());
+        let remote = context.tries_remote(Some(route.window));
+        let (found, import_failed) = super::focus_path::find(uia, &route, &properties, remote);
+        if import_failed {
+            context.read_classically(route.window);
+        }
+        if let Some(element) = found {
+            let _ = context.uia_registry.id_for_element(&runtime_id, &element);
+            return Ok(element);
+        }
+    }
     // Gone only when every search finished without finding it; a search
     // that failed, a timeout above all, may have missed a live element.
     let mut failed = None;

@@ -9,12 +9,15 @@
 //!   every process whose outpost's own hook is not yet in, and the end of a
 //!   menu or of the Alt+Tab switcher, which go to Core rather than to an
 //!   application's outpost;
-//! - the desktop-wide UIA focus subscription;
+//! - the desktop-wide UIA focus subscription, each event judged and read
+//!   from its own element on a thread for its application
+//!   ([`crate::focus_read`]);
 //! - desktop-wide UIA subscriptions for the events NVDA registers globally on
 //!   Windows 11: an element selected, a menu opened, and notifications.
 //!
-//! The listener's one hard rule is that it never makes a cross-process call.
-//! A UIA callback delivers the element with its properties already cached, so
+//! The listener's callbacks, its writer, and its registration threads never
+//! make a cross-process call (decision D13, as amended on 2026-10-11). A UIA
+//! callback delivers the element with its properties already cached, so
 //! building a fact is local memory reads (plus `GetRuntimeId`, a local read
 //! on a cached element); an MSAA `WinEvent` delivers a raw window and object
 //! address, forwarded untouched; the only other reads are hang-safe local
@@ -25,9 +28,21 @@
 //! keyboard focus window. A foreground
 //! event is forwarded unchecked; the outpost's worker checks that its
 //! window is the foreground when it handles it, as NVDA's
-//! `processForegroundWinEvent` does. No cross-process calls means no
-//! deadlines and no way for any application to stall focus detection for
-//! the rest of the desktop.
+//! `processForegroundWinEvent` does.
+//!
+//! The one place the listener calls into applications is the reading
+//! threads, one per application, which judge and read each UIA focus from
+//! the event's own element, as NVDA does, since no other process can hold
+//! that element (`docs/design/focus-pipeline.md`, section 12). The callback
+//! sends the application's outpost a marker at once and queues the element
+//! for its application's thread; the thread's read, or its drop, follows
+//! the marker by the same route. Each read is one remote operation, which
+//! UIA's call timeout ends, and a watchdog abandons a thread whose read
+//! runs past its deadline, so a slow or hung application holds only its
+//! own thread. One exposure is UIA's own and cannot be contained here: a
+//! hung window named in a focus `WinEvent` holds UIA's delivery of every
+//! focus event to the listener until it answers (section 12.11), as it
+//! holds NVDA's.
 //!
 //! The hand-over of MSAA events (`docs/design/focus-pipeline.md`, section
 //! 12.4, "The MSAA hand-over, exactly"): every application's outpost takes
@@ -52,7 +67,9 @@
 //! Outgoing facts are coalesced with NVDA's UIA limiter rule before they are
 //! sent: one waiting fact per element and kind, a newer one replacing it and
 //! moving to the back, so a flood from one busy process cannot pass through
-//! the listener and Core unthrottled. Pongs and `Ready` go ahead of facts.
+//! the listener and Core unthrottled. A UIA focus's marker, read, and drop
+//! are never replaced, since an outpost waits on the marker until its read
+//! or drop arrives. Pongs and `Ready` go ahead of facts.
 //!
 //! The processes Verbatim ignores entirely (`IgnoredProcesses`, which the
 //! end-to-end harness names) are held open here too, and every fact from one
@@ -61,12 +78,13 @@
 //! `WinEvent` delivery cannot be scoped to leave a process out.
 //!
 //! Run as `verbatim-outpost.exe --listener --pipe-in <handle> --pipe-out
-//! <handle> [--ignore-pids <pid,pid>] [--hooks-in <pid:outpost,pid:outpost>]`
-//! — the same binary as a per-application outpost, with no target pid,
-//! supervised by the same machinery.
+//! <handle> [--ignore-pids <pid,pid>] [--hooks-in <pid:outpost,pid:outpost>]
+//! [--classic-uia]` — the same binary as a per-application outpost, with no
+//! target pid, supervised by the same machinery.
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{self, BufReader, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -75,6 +93,7 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, NotificationKind, NotificationProcessing, UIA_MenuOpenedEventId,
     UIA_SelectionItem_ElementSelectedEventId,
 };
+use windows::core::AgileReference;
 
 use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEvent, WinEventCallback, WinEventKind};
 use verbatim_model::{Notification, OutpostId, Pid, TraceId};
@@ -84,8 +103,10 @@ use verbatim_uia::map::{
 };
 use verbatim_uia::{FocusRegistration, Registration, Scope, Subscription};
 
+use crate::OutpostOptions;
 use crate::arbitration::window_class_name;
 use crate::event_thread::EventThread;
+use crate::focus_read::{FocusReader, Judged, Meta, READ_DEADLINE, Readers, Reading};
 use crate::outpost::now_ms;
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::protocol::{
@@ -107,6 +128,8 @@ struct Outgoing {
     ready: Condvar,
     /// The processes whose facts are dropped.
     ignored: IgnoredProcesses,
+    /// Numbers the UIA focus events' markers.
+    markers: AtomicU64,
 }
 
 #[derive(Default)]
@@ -147,18 +170,49 @@ impl Outgoing {
         raised_ms_ago: Option<u32>,
         win_event: Option<WinEventStamp>,
     ) {
+        let timing = EventTiming {
+            raised_ms_ago,
+            observed_at_us: now_us(),
+            ..EventTiming::default()
+        };
+        self.queue(pid, fact, (TraceId::mint(), now_ms(), timing), win_event);
+    }
+
+    /// Queues `fact`, part of the read of the UIA focus event `meta`
+    /// describes: its marker, its read, or its drop, carrying the trace and
+    /// times of the event itself. Never replaced, since an outpost waits on
+    /// the marker until its read or drop arrives.
+    fn focus_read(&self, pid: Pid, fact: DeliveredFact, meta: Meta) {
+        self.queue(
+            pid,
+            fact,
+            (meta.trace, meta.observed_at_ms, meta.timing),
+            None,
+        );
+    }
+
+    /// A new marker's number.
+    fn next_marker(&self) -> u64 {
+        self.markers.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// Queues `fact` with its trace, the time it was observed, and its
+    /// timing, under the rules [`fact`](Self::fact) states.
+    fn queue(
+        &self,
+        pid: Pid,
+        fact: DeliveredFact,
+        (trace_id, observed_at_ms, timing): (TraceId, u64, EventTiming),
+        win_event: Option<WinEventStamp>,
+    ) {
         if self.ignored.contains(pid) {
             return;
         }
         let key = fact.key().map(|key| (pid, key));
         let message = OutpostToSupervisor::FocusFact {
-            trace_id: TraceId::mint(),
-            observed_at_ms: now_ms(),
-            timing: EventTiming {
-                raised_ms_ago,
-                observed_at_us: now_us(),
-                ..EventTiming::default()
-            },
+            trace_id,
+            observed_at_ms,
+            timing,
             fact: ListenerFact { pid, fact },
             win_event,
         };
@@ -270,10 +324,65 @@ impl Outgoing {
 /// life of the process.
 struct Listener {
     outgoing: Arc<Outgoing>,
+    readers: Arc<Readers<UiaFocusReading>>,
     _focus_registration: Option<FocusRegistration>,
     _registration: Option<Registration>,
     _event_thread: EventThread,
     _writer: JoinHandle<()>,
+}
+
+/// The reading threads' work in the listener: each UIA focus event judged
+/// and read from its own element ([`FocusReader`]), and what became of it
+/// sent to its application's outpost behind its marker.
+struct UiaFocusReading {
+    /// Whether reads may use remote operations ([`OutpostOptions`]).
+    remote: bool,
+    outgoing: Arc<Outgoing>,
+}
+
+impl Reading for UiaFocusReading {
+    /// The event's element, and its application's keyboard focus window
+    /// when it arrived, for an element that is not a window.
+    type Job = (AgileReference<IUIAutomationElement>, isize);
+    type Reader = FocusReader;
+
+    fn reader(&self) -> Option<FocusReader> {
+        match FocusReader::new(self.remote) {
+            Ok(reader) => Some(reader),
+            Err(error) => {
+                tracing::warn!(%error, "a reading thread could not create a UIA client");
+                None
+            }
+        }
+    }
+
+    fn read(&self, reader: Option<&mut FocusReader>, (element, focus_window): Self::Job) -> Judged {
+        let Some(reader) = reader else {
+            return Judged::Dropped("its reading thread has no UIA client");
+        };
+        match element.resolve() {
+            Ok(element) => reader.read(&element, focus_window),
+            Err(_) => Judged::Dropped("its element could not be resolved"),
+        }
+    }
+
+    fn finish(&self, reader: Option<FocusReader>) {
+        let joined = reader.is_some();
+        drop(reader);
+        verbatim_uia::release_thread_state();
+        if joined {
+            // Leaves the apartment the reader's client joined.
+            verbatim_uia::leave_mta();
+        }
+    }
+
+    fn outcome(&self, pid: Pid, meta: Meta, judged: Judged) {
+        if let Judged::Dropped(reason) = &judged {
+            tracing::debug!(%pid, marker = meta.marker, reason, "UIA focus dropped");
+        }
+        self.outgoing
+            .focus_read(pid, judged.into_fact(meta.marker), meta);
+    }
 }
 
 impl Listener {
@@ -287,7 +396,8 @@ impl Listener {
     /// The applications in `hooks_in` have outposts with their own hooks
     /// in already: none of their `WinEvent`s is forwarded, and each outpost
     /// is told so first, ending a hand-over the listener this one replaces
-    /// may have left unfinished.
+    /// may have left unfinished. `options` says whether UIA focus reads
+    /// may use remote operations.
     ///
     /// # Panics
     ///
@@ -297,6 +407,7 @@ impl Listener {
         mut pipe: Box<dyn Write + Send>,
         ignored: IgnoredProcesses,
         hooks_in: &[(Pid, OutpostId)],
+        options: OutpostOptions,
     ) -> Self {
         let outgoing = Arc::new(Outgoing {
             ignored,
@@ -322,7 +433,14 @@ impl Listener {
             })
             .expect("spawn the listener writer");
 
-        let focus_registration = install_focus_registration(&outgoing);
+        let readers = Arc::new(Readers::new(
+            UiaFocusReading {
+                remote: options.remote_operations,
+                outgoing: Arc::clone(&outgoing),
+            },
+            READ_DEADLINE,
+        ));
+        let focus_registration = install_focus_registration(&outgoing, &readers);
         let registration = install_desktop_subscriptions(&outgoing);
 
         let msaa_outgoing = Arc::clone(&outgoing);
@@ -341,6 +459,7 @@ impl Listener {
 
         Self {
             outgoing,
+            readers,
             _focus_registration: focus_registration,
             _registration: registration,
             _event_thread: event_thread,
@@ -353,14 +472,15 @@ impl Listener {
     /// thread that pumped them, the desktop-wide UIA focus handler and the
     /// other desktop-wide handlers are removed (each subscription's thread
     /// waits for a callback in progress, releases its client, and leaves
-    /// COM), the writer writes what is queued and closes the pipe, and the
-    /// process's hold on COM's multithreaded apartment is given back. The
-    /// listener makes no call into an application, so nothing else can be
-    /// in progress.
+    /// COM), every reading thread finishes the read in hand, each abandoned
+    /// one returning once UIA gives up on its call, the writer writes what
+    /// is queued and closes the pipe, and the process's hold on COM's
+    /// multithreaded apartment is given back.
     fn shutdown(self) {
         let started = Instant::now();
         let Self {
             outgoing,
+            readers,
             _focus_registration: focus_registration,
             _registration: registration,
             _event_thread: event_thread,
@@ -369,11 +489,13 @@ impl Listener {
         drop(event_thread);
         drop(focus_registration);
         drop(registration);
+        let reading_threads = readers.stop();
         outgoing.close();
         let _ = writer.join();
         verbatim_uia::release_mta_usage();
         tracing::info!(
             elapsed_ms = started.elapsed().as_millis(),
+            reading_threads,
             "the focus listener shut down"
         );
     }
@@ -421,25 +543,6 @@ fn capture(element: &IUIAutomationElement) -> Option<(Pid, isize, UiaSnapshotFac
     ))
 }
 
-/// The fact the listener forwards for a UIA focus event on `element`, which
-/// carries the base cache request's properties (`Uia::base_cache_request`),
-/// as an event's element does: `None` for an element with no owning
-/// process. Local reads only: a windowless element is in the keyboard focus
-/// window of its own process, if that process still has the focus.
-#[must_use]
-pub fn uia_focus_fact(element: &IUIAutomationElement) -> Option<ListenerFact> {
-    let (pid, hwnd, snapshot) = capture(element)?;
-    let focus_window = focus_window_for(pid, hwnd);
-    Some(ListenerFact {
-        pid,
-        fact: DeliveredFact::UiaFocus {
-            hwnd,
-            focus_window,
-            snapshot,
-        },
-    })
-}
-
 /// The window that stands in for a windowless element's own, for the
 /// outpost's acceptance test against the foreground window: the keyboard
 /// focus window of the element's process `pid` now, a local read, when the
@@ -453,14 +556,55 @@ fn focus_window_for(pid: Pid, hwnd: isize) -> isize {
     }
 }
 
-/// Installs the desktop-global UIA focus registration. A failure is reported
-/// as a fault and leaves the MSAA path running on its own.
-fn install_focus_registration(outgoing: &Arc<Outgoing>) -> Option<FocusRegistration> {
+/// Installs the desktop-global UIA focus registration. Its callback makes
+/// no call: it sends the application's outpost a marker for the event at
+/// once and queues the event's element for the application's reading
+/// thread ([`Readers`]), whose read or drop follows the marker. A failure
+/// is reported as a fault and leaves the MSAA path running on its own.
+fn install_focus_registration(
+    outgoing: &Arc<Outgoing>,
+    readers: &Arc<Readers<UiaFocusReading>>,
+) -> Option<FocusRegistration> {
     let callback_outgoing = Arc::clone(outgoing);
+    let callback_readers = Arc::clone(readers);
     let callback = Arc::new(move |element: &IUIAutomationElement| {
         // A cached focus element from the registration's base cache request.
-        if let Some(ListenerFact { pid, fact }) = uia_focus_fact(element) {
-            callback_outgoing.fact(pid, fact, None, None);
+        let Some(pid) = cached_process_id(element).filter(|&pid| pid != 0).map(Pid) else {
+            return;
+        };
+        if callback_outgoing.ignored.contains(pid) {
+            return;
+        }
+        let focus_window = focus_window_for(pid, cached_native_window_handle(element));
+        let meta = Meta {
+            marker: callback_outgoing.next_marker(),
+            trace: TraceId::mint(),
+            observed_at_ms: now_ms(),
+            timing: EventTiming {
+                observed_at_us: now_us(),
+                ..EventTiming::default()
+            },
+        };
+        // The marker goes first, so the read or the drop can only follow it.
+        callback_outgoing.focus_read(
+            pid,
+            DeliveredFact::UiaFocusMarker {
+                marker: meta.marker,
+            },
+            meta,
+        );
+        match AgileReference::new(element) {
+            Ok(element) => callback_readers.push(pid, meta, (element, focus_window)),
+            Err(error) => {
+                tracing::warn!(%error, "a UIA focus's element could not be kept for its read");
+                callback_outgoing.focus_read(
+                    pid,
+                    DeliveredFact::UiaFocusDropped {
+                        marker: meta.marker,
+                    },
+                    meta,
+                );
+            }
         }
     });
     match FocusRegistration::new(callback) {
@@ -672,6 +816,7 @@ fn process_of_thread(thread: u32) -> Option<u32> {
 /// ends, then shuts it down cleanly and returns. Facts from the processes
 /// `ignored` holds are dropped, and so are the `WinEvent` facts of the
 /// applications in `hooks_in`, whose outposts have their own hooks in.
+/// `options` says whether UIA focus reads may use remote operations.
 ///
 /// # Errors
 ///
@@ -681,8 +826,9 @@ pub fn run_listener(
     pipe_out: Box<dyn Write + Send>,
     ignored: IgnoredProcesses,
     hooks_in: &[(Pid, OutpostId)],
+    options: OutpostOptions,
 ) -> io::Result<()> {
-    let listener = Listener::new(pipe_out, ignored, hooks_in);
+    let listener = Listener::new(pipe_out, ignored, hooks_in, options);
     let mut reader = BufReader::new(pipe_in);
     let ended = loop {
         match read_message::<_, SupervisorToOutpost>(&mut reader) {
@@ -764,7 +910,7 @@ mod tests {
         outgoing.fact(Pid(6), msaa_focus(), None, Some(raised_at(101)));
         outgoing.fact(
             Pid(5),
-            DeliveredFact::UiaFocus {
+            DeliveredFact::UiaSelection {
                 hwnd: 1,
                 focus_window: 0,
                 snapshot: uia_snapshot(),
@@ -793,9 +939,47 @@ mod tests {
                 "ended 5 3 100",
                 "5 Some(Foreground(1))",
                 "6 Some(MsaaFocus(1, -4, 0))",
-                "5 Some(UiaFocus([42]))",
+                "5 Some(UiaSelection([42]))",
             ],
             "the fact queued first goes ahead of forwarding ended"
+        );
+    }
+
+    #[test]
+    fn a_focus_reads_marker_read_and_drop_are_never_replaced() {
+        let outgoing = Outgoing::default();
+        let meta = |marker| Meta {
+            marker,
+            trace: TraceId::mint(),
+            observed_at_ms: 0,
+            timing: EventTiming::default(),
+        };
+        // Two focus events on one element, the first read, the second
+        // dropped: an outpost waits on each marker, so all four are sent,
+        // in order.
+        outgoing.focus_read(Pid(5), DeliveredFact::UiaFocusMarker { marker: 1 }, meta(1));
+        outgoing.focus_read(Pid(5), DeliveredFact::UiaFocusMarker { marker: 2 }, meta(2));
+        outgoing.focus_read(Pid(5), Judged::Dropped("read").into_fact(1), meta(1));
+        outgoing.focus_read(
+            Pid(5),
+            DeliveredFact::UiaFocusDropped { marker: 2 },
+            meta(2),
+        );
+        let facts: Vec<DeliveredFact> = sent(&outgoing)
+            .into_iter()
+            .filter_map(|message| match message {
+                OutpostToSupervisor::FocusFact { fact, .. } => Some(fact.fact),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            facts,
+            [
+                DeliveredFact::UiaFocusMarker { marker: 1 },
+                DeliveredFact::UiaFocusMarker { marker: 2 },
+                DeliveredFact::UiaFocusDropped { marker: 1 },
+                DeliveredFact::UiaFocusDropped { marker: 2 },
+            ]
         );
     }
 

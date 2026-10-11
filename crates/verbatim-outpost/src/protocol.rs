@@ -89,6 +89,58 @@ pub struct UiaSnapshotFact {
     pub details: NodeDetails,
 }
 
+/// One raw-view ancestor of a UIA focus, as the focus listener read it from
+/// the event's own element: its cached parts, its own native window handle
+/// (0 for an element that is not a window), and whether UIA counts it both
+/// a control and content. The outpost filters what it reports from these
+/// and finds its own elements by the runtime ids below a window
+/// (`docs/design/focus-pipeline.md`, section 12.5).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UiaAncestorFact {
+    /// The ancestor's cached parts.
+    pub snapshot: UiaSnapshotFact,
+    /// Its own native window handle, or 0.
+    pub hwnd: isize,
+    /// Whether it is both a control and content element.
+    pub content: bool,
+}
+
+/// A UIA focus as the focus listener judged and read it from the event's
+/// own element, on the thread for the element's application
+/// (`docs/design/focus-pipeline.md`, section 12.1): the element had the
+/// keyboard focus, read live, when it was read.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UiaFocusRead {
+    /// The element's cached native window handle, or 0 when it is not a
+    /// window in its own right.
+    pub hwnd: isize,
+    /// For an element that is not a window: the keyboard focus window of
+    /// its application when the listener received the event, else 0, as
+    /// for a [`DeliveredFact::UiaSelection`].
+    pub focus_window: isize,
+    /// The focus: its name and role from the event's cache, as NVDA reads
+    /// them from the event's element, and its value, states, and details
+    /// read afresh.
+    pub snapshot: UiaSnapshotFact,
+    /// Its raw-view ancestors, nearest first, up to its process's
+    /// top-level window: read from the element up to the first one the
+    /// thread already knew from the focus before, and the rest as they were
+    /// read then. `None` when they could not be read.
+    pub ancestors: Option<Vec<UiaAncestorFact>>,
+    /// For a list or tab control, its first selected child.
+    pub selected_child: Option<UiaSnapshotFact>,
+    /// The element's own window or its nearest ancestor's (NVDA's
+    /// `getNearestWindowHandle`), when it was found.
+    pub window: Option<isize>,
+    /// NVDA's duplicate evidence: `None` when the event's runtime id is not
+    /// that of the last focus the listener's thread read for the
+    /// application; else whether that earlier element still had the
+    /// keyboard focus, read live with this focus. `Some(false)`, the
+    /// earlier element without the focus or gone, means the application
+    /// gave the id to a new element after the one it named died.
+    pub same_as_last: Option<bool>,
+}
+
 /// The thread that raised an MSAA `WinEvent` and when, as every hook that
 /// receives the event is told (`idEventThread` and `dwmsEventTime`): with
 /// the event's kind and address, what tells the listener's copy of an event
@@ -127,10 +179,13 @@ pub(crate) fn tick_is_after(a: u32, b: u32) -> bool {
 }
 
 /// A fact the listener forwards to Core, tagged with the pid Core routes it
-/// to (decision D13). The listener reads only what the event itself carries
-/// plus hang-safe local reads (the owning pid, a cached window handle), never
-/// a cross-process call: a UIA fact is built from the element's cached
-/// properties, an MSAA fact forwards the raw `WinEvent` address untouched.
+/// to (decision D13). An MSAA fact forwards the raw `WinEvent` address
+/// untouched, and a UIA selection, menu, or notification fact is built
+/// from the element's cached properties, with hang-safe local reads only
+/// (the owning pid, a cached window handle). A UIA focus is a marker sent
+/// as the event arrives, then the read the listener's thread for the
+/// application made from the event's own element
+/// ([`DeliveredFact::UiaFocusRead`]), or its drop.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ListenerFact {
     /// The process whose outpost handles the fact: the application it
@@ -163,27 +218,37 @@ impl ListenerFact {
 /// ([`DeliveredFact::from_win_event`]).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum DeliveredFact {
-    /// A UIA focus change: the element's cached native window handle (0 when
-    /// the element is not itself a window), the keyboard focus window when
-    /// the event was captured, and its cached snapshot parts.
-    UiaFocus {
-        /// The element's cached native window handle, or 0 when it is not a
-        /// window in its own right.
-        hwnd: isize,
-        /// For an element that is not a window: the foreground thread's
-        /// keyboard focus window when the listener captured the event, if it
-        /// belongs to the element's process, else 0. When the event is
-        /// current it is the window hosting a windowless element, such as
-        /// Explorer's items view, read locally where NVDA walks up to the
-        /// element's nearest window, so a focus the outpost cannot resolve
-        /// can still be judged against the foreground window; for a late
-        /// event in an application with several windows it may be another
-        /// of them. 0 when the focus had already moved to another process.
-        #[serde(default)]
-        focus_window: isize,
-        /// The element's cached snapshot parts.
-        snapshot: UiaSnapshotFact,
+    /// The focus listener received a UIA focus event in this application
+    /// and is reading it: entries the outpost takes in after this wait
+    /// until the read arrives or is dropped, and the focus is handled in
+    /// this place (`docs/design/focus-pipeline.md`, section 12.4, decision
+    /// 1 of section 15), as NVDA's UIA events pass in order through the
+    /// one thread that judges them.
+    UiaFocusMarker {
+        /// The listener's number for this focus event, which its read or
+        /// drop carries.
+        marker: u64,
     },
+    /// The focus listener's read of the UIA focus event `marker` names.
+    UiaFocusRead {
+        /// The marker the read resolves.
+        marker: u64,
+        /// The focus as read.
+        read: Box<UiaFocusRead>,
+    },
+    /// The UIA focus event `marker` names is not reported: its element had
+    /// lost the keyboard focus when it was read, as NVDA drops such an
+    /// event, or its window was hung, a shell window that only stages a
+    /// switch, or the console window's own; or its read did not return in
+    /// time.
+    UiaFocusDropped {
+        /// The marker the drop resolves.
+        marker: u64,
+    },
+    /// The focus listener that sent the markers still waiting has ended:
+    /// none of them will be resolved, so none is waited for any more. Made
+    /// by the supervisor when it replaces the listener.
+    UiaFocusReadsEnded,
     /// An MSAA focus change: the raw `WinEvent` address.
     MsaaFocus {
         /// The event's window handle.
@@ -220,10 +285,14 @@ pub enum DeliveredFact {
     UiaSelection {
         /// The element's cached native window handle, or 0.
         hwnd: isize,
-        /// For an element that is not a window, its process's keyboard
-        /// focus window when the listener captured the event, as for a
-        /// [`DeliveredFact::UiaFocus`], else 0: the window the outpost tests
-        /// the selection's acceptance with.
+        /// For an element that is not a window: the foreground thread's
+        /// keyboard focus window when the listener captured the event, if it
+        /// belongs to the element's process, else 0. When the event is
+        /// current it is the window hosting a windowless element, such as
+        /// Explorer's items view, read locally where NVDA walks up to the
+        /// element's nearest window; for a late event in an application
+        /// with several windows it may be another of them. The window the
+        /// outpost tests the selection's acceptance with.
         #[serde(default)]
         focus_window: isize,
         /// The selected element's cached snapshot parts.
@@ -318,18 +387,37 @@ impl DeliveredFact {
         )
     }
 
+    /// Whether this fact is part of a UIA focus's read: a marker, the read,
+    /// a drop, or the end of a listener's reads. The supervisor relays
+    /// these in order and never drops one, since an outpost waits on a
+    /// marker until its read or drop arrives.
+    #[must_use]
+    pub fn is_focus_read(&self) -> bool {
+        matches!(
+            self,
+            DeliveredFact::UiaFocusMarker { .. }
+                | DeliveredFact::UiaFocusRead { .. }
+                | DeliveredFact::UiaFocusDropped { .. }
+                | DeliveredFact::UiaFocusReadsEnded
+        )
+    }
+
     /// Whether this fact may start an outpost for an application that has
     /// none (outpost redesign, "The focus listener"): focus, foreground,
-    /// menu, and alert facts may, and the shell's window-snap results
-    /// notification, the one Core speaks from any application. A selection
-    /// without an outpost is dropped, and so is any other notification:
-    /// Core speaks a notification only from the focus's application, and an
-    /// application with no outpost cannot hold the focus, as NVDA drops a
-    /// background application's notification.
+    /// menu, and alert facts may, a UIA focus's marker and read among them,
+    /// and the shell's window-snap results notification, the one Core
+    /// speaks from any application. A selection without an outpost is
+    /// dropped, and so is any other notification: Core speaks a
+    /// notification only from the focus's application, and an application
+    /// with no outpost cannot hold the focus, as NVDA drops a background
+    /// application's notification. A focus's drop and the end of a
+    /// listener's reads resolve only markers an outpost already holds.
     #[must_use]
     pub fn may_start_outpost(&self) -> bool {
         match self {
-            DeliveredFact::UiaSelection { .. } => false,
+            DeliveredFact::UiaSelection { .. }
+            | DeliveredFact::UiaFocusDropped { .. }
+            | DeliveredFact::UiaFocusReadsEnded => false,
             DeliveredFact::UiaNotification { notification, .. } => {
                 notification.activity_id.as_deref() == Some(verbatim_core::SNAP_RESULTS_ACTIVITY)
             }
@@ -339,7 +427,9 @@ impl DeliveredFact {
 
     /// The object and kind this fact concerns, for NVDA's limiter rule (one
     /// waiting entry per object and kind, a newer one replacing it). `None`
-    /// for a notification, whose text makes each one distinct.
+    /// for a notification, whose text makes each one distinct, and for the
+    /// parts of a UIA focus's read, which are never replaced on the way:
+    /// the outpost coalesces a read only where it takes its marker's place.
     #[must_use]
     pub fn key(&self) -> Option<FactKey> {
         Some(match self {
@@ -349,9 +439,11 @@ impl DeliveredFact {
                 id_object,
                 id_child,
             } => FactKey::MsaaFocus(*hwnd, *id_object, *id_child),
-            DeliveredFact::UiaFocus { snapshot, .. } => {
-                FactKey::UiaFocus(snapshot.runtime_id.clone())
-            }
+            DeliveredFact::UiaFocusMarker { .. }
+            | DeliveredFact::UiaFocusRead { .. }
+            | DeliveredFact::UiaFocusDropped { .. }
+            | DeliveredFact::UiaFocusReadsEnded
+            | DeliveredFact::UiaNotification { .. } => return None,
             DeliveredFact::MenuPopup {
                 hwnd,
                 id_object,
@@ -373,7 +465,6 @@ impl DeliveredFact {
                 id_object,
                 id_child,
             } => FactKey::Show(*hwnd, *id_object, *id_child),
-            DeliveredFact::UiaNotification { .. } => return None,
         })
     }
 }
@@ -385,8 +476,6 @@ pub enum FactKey {
     Foreground(isize),
     /// An MSAA focus at this address.
     MsaaFocus(isize, i32, i32),
-    /// A UIA focus on this runtime id.
-    UiaFocus(Vec<i32>),
     /// An MSAA menu opening at this address.
     MenuPopup(isize, i32, i32),
     /// A UIA menu opening on this runtime id.
@@ -1103,12 +1192,24 @@ mod tests {
             states: StateSet::new().with(State::Focused),
             details: NodeDetails::default(),
         };
+        let read = UiaFocusRead {
+            hwnd: 0,
+            focus_window: 0x40,
+            snapshot: snapshot.clone(),
+            ancestors: Some(vec![UiaAncestorFact {
+                snapshot: snapshot.clone(),
+                hwnd: 0x40,
+                content: true,
+            }]),
+            selected_child: None,
+            window: Some(0x40),
+            same_as_last: Some(false),
+        };
         let fact = ListenerFact {
             pid: Pid(1234),
-            fact: DeliveredFact::UiaFocus {
-                hwnd: 0,
-                focus_window: 0,
-                snapshot: snapshot.clone(),
+            fact: DeliveredFact::UiaFocusRead {
+                marker: 9,
+                read: Box::new(read.clone()),
             },
         };
         let focus_fact = OutpostToSupervisor::FocusFact {
@@ -1130,12 +1231,29 @@ mod tests {
         assert_eq!(fact.pid(), Pid(1234));
         assert_eq!(
             fact.into_delivered(),
-            DeliveredFact::UiaFocus {
-                hwnd: 0,
-                focus_window: 0,
-                snapshot
+            DeliveredFact::UiaFocusRead {
+                marker: 9,
+                read: Box::new(read)
             }
         );
+        for fact in [
+            DeliveredFact::UiaFocusMarker { marker: 9 },
+            DeliveredFact::UiaFocusDropped { marker: 9 },
+            DeliveredFact::UiaFocusReadsEnded,
+        ] {
+            let deliver = SupervisorToOutpost::DeliverFact {
+                trace_id: TraceId::mint(),
+                timing: EventTiming::default(),
+                observed_at_ms: 1,
+                fact,
+                win_event: None,
+            };
+            let mut buffer = Vec::new();
+            write_message(&mut buffer, &deliver).expect("writes");
+            let read_back: Option<SupervisorToOutpost> =
+                read_message(&mut buffer.as_slice()).expect("reads");
+            assert_eq!(read_back, Some(deliver));
+        }
 
         let deliver = SupervisorToOutpost::DeliverFact {
             trace_id: TraceId::mint(),
@@ -1246,14 +1364,14 @@ mod tests {
             },
         };
         assert!(!notification("Clipboard").may_start_outpost());
+        // A focus's drop, and the end of a listener's reads, only resolve
+        // markers an outpost holds.
+        assert!(!DeliveredFact::UiaFocusDropped { marker: 1 }.may_start_outpost());
+        assert!(!DeliveredFact::UiaFocusReadsEnded.may_start_outpost());
         for fact in [
             notification(verbatim_core::SNAP_RESULTS_ACTIVITY),
             DeliveredFact::Foreground { hwnd: 1 },
-            DeliveredFact::UiaFocus {
-                hwnd: 0,
-                focus_window: 0,
-                snapshot: snapshot.clone(),
-            },
+            DeliveredFact::UiaFocusMarker { marker: 1 },
             DeliveredFact::UiaMenuOpened {
                 hwnd: 0,
                 snapshot: snapshot.clone(),

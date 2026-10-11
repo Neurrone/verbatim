@@ -1,14 +1,17 @@
-//! How a real outpost reports a UIA focus from mockapp's provider: under
-//! which node, when the provider reuses a dead element's runtime id, and
-//! with which states, when they changed after the focus event, when
-//! the focused element read answers a stand-in for a windowed focus, when
-//! a windowless focus's element no longer has the keyboard focus, when a
-//! focus has moved on and lost its selection since its event, when a
-//! focus's element is not found until its next focus or selection event,
-//! and when the focus leaves a document and returns to it.
+//! How a UIA focus from mockapp's provider is judged and read by the focus
+//! listener's reader and reported by a real outpost
+//! (`docs/design/focus-pipeline.md`, section 12): under which node, when
+//! the provider reuses a dead element's runtime id; with which states,
+//! when they changed after the focus event; dropped when its element lost
+//! the keyboard focus before it was read, and reported when it had it
+//! though the focus has moved on since; how the outpost finds its own copy
+//! of the element by its path and follows it, and follows nothing when it
+//! has no path, until a later focus brings one; how a change raised after
+//! a focus event waits for the focus's read; and that a text change raised
+//! after the focus leaves a document and returns to it is heard.
 //!
-//! The outpost runs in this process and reads the focused element from the
-//! test (`common::outpost`), as `call_counts.rs` describes; mockapp's focus
+//! The test stands in for the listener (`common::outpost`), reading each
+//! focus with the listener's own reader on this thread; mockapp's focus
 //! moves with `set-focus`, which raises no event.
 
 mod common;
@@ -17,16 +20,15 @@ mod harness;
 
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{NodeSnapshot, NormalizedEvent, PropertyChange, Role, State, StateSet};
-use verbatim_outpost::listener::uia_focus_fact;
-use verbatim_outpost::protocol::{DeliveredFact, ListenerFact, OutpostToSupervisor};
+use verbatim_outpost::focus_read::Judged;
+use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor};
 use verbatim_outpost::{Heard, OutpostOptions};
-use verbatim_uia::{ElementExt as _, Uia};
+use verbatim_uia::Uia;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, TreeScope_Descendants, UIA_HasKeyboardFocusPropertyId, UIA_NamePropertyId,
 };
-use windows::core::BSTR;
 
 use common::outpost::OutpostUnderTest;
 
@@ -60,41 +62,30 @@ impl Client {
             .expect("the search")
             .expect("mockapp reports a focused element")
     }
-
-    /// The element named `name`, built with the listener's cache request.
-    fn named(&self, name: &str) -> IUIAutomationElement {
-        let cache = self.uia.base_cache_request().expect("a cache request");
-        let root = self
-            .uia
-            .element_from_handle(self.hwnd.0 as isize, &cache)
-            .expect("mockapp's root element");
-        let condition = self
-            .uia
-            .property_condition(UIA_NamePropertyId, &VARIANT::from(BSTR::from(name)))
-            .expect("a condition");
-        root.find_first_build_cache(TreeScope_Descendants, &condition, &cache)
-            .expect("the search")
-            .unwrap_or_else(|| panic!("no element is named {name:?}"))
-    }
 }
 
 /// File Explorer, going back from a subfolder, gave the parent folder's
 /// item the runtime id of the subfolder's item it had just destroyed. The
-/// outpost reports the new focus under a new node, since the element it
-/// held under that id is gone; a focus repeated on the new element keeps
-/// its node, since that element still has the focus. Both ways the outpost
-/// reads a focus: with remote operations, where the held element's focus
-/// is read in the same round trip, and without.
+/// focus listener's reader, which read the dead item as the focus before,
+/// reads with the new focus whether that earlier element still has the
+/// keyboard focus, NVDA's duplicate evidence: it is gone, so the outpost
+/// reports the new focus under a new node; a focus repeated on the new
+/// element keeps its node, since that element still has the focus. Both
+/// ways the reader reads a focus: with remote operations and without.
 ///
-/// The calls each focus makes are pinned. Remotely, the held element's focus
-/// is read in the focus's one round trip, so a repeated focus costs the two
-/// calls any focus does (the focused element and the program); a held
-/// element that is gone fails the whole run before it starts, which is run
-/// again without it, one call more. Classically, the held element's focus
-/// is one call of its own.
+/// The calls each read makes are pinned, the outpost's own included, which
+/// are none: it reads nothing before it reports the focus. Remotely, the
+/// earlier element's focus is read in the focus's one round trip; an
+/// earlier element that is gone fails the whole run before it starts,
+/// which is run again without it, one call more. Classically, each read
+/// makes five calls: the focus's keyboard focus, the earlier element's,
+/// the focus's own cache, and two hops up to an ancestor of the focus
+/// before, with its window, for the new item; and for the repeated one,
+/// one hop to its list, which has no window, and one call more for the
+/// nearest window.
 fn reused_runtime_id(remote: bool) {
     let path = if remote { "remote" } else { "classic" };
-    let (gone_cost, kept_cost) = if remote { (3, 2) } else { (5, 4) };
+    let (gone_cost, kept_cost) = if remote { (2, 1) } else { (5, 5) };
     let title = common::unique_title(&format!("mockapp-reuse-{path}"));
     let mut app = common::spawn("reuse.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
@@ -153,8 +144,9 @@ fn a_reused_runtime_id_names_a_new_node_classic() {
 /// File Explorer, going back from a subfolder, raised Inner's focus event
 /// before it selected Inner, so the event's states said "not selected".
 /// NVDA reads a focus's states when it handles the focus, not from the
-/// event, and said "Inner 1 of 4"; the outpost reports the states it reads
-/// with the focused element, and its name and role from the event.
+/// event, and said "Inner 1 of 2"; the focus listener reads them afresh
+/// in its read of the event's element, and its name and role from the
+/// event.
 fn a_focus_reports_the_states_read_when_it_is_handled() {
     let title = common::unique_title("mockapp-live-states");
     let mut app = common::spawn("reuse.json", "uia", &title);
@@ -164,8 +156,7 @@ fn a_focus_reports_the_states_read_when_it_is_handled() {
     app.send("set-focus inner");
     let event = client.focused();
     app.send("select inner");
-    let read = client.focused();
-    let reported = outpost.uia_focus_read_later(&event, &read);
+    let reported = outpost.uia_focus(&event);
     let node = reported.node;
     assert_eq!(
         (node.role, node.name.as_deref(), node.states),
@@ -239,48 +230,12 @@ fn a_controls_own_focus_reports_its_focused_child() {
     app.quit();
 }
 
-/// An application can raise a UIA focus event on an element that is a
-/// window of its own, as Windows 11 Notepad's text area is, while the
-/// focused element read answers another of its elements: the outpost held
-/// such a focus back and read again. NVDA accepts a UIA focus whose own
-/// element has the keyboard focus, read live; so the outpost reads the
-/// event's own window's element and reports the focus at once, though the
-/// focused element read answers another element of the application.
-fn a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_in() {
-    let title = common::unique_title("mockapp-stand-in");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
-
-    let stand_in = client.named("Original Name");
-    app.send("set-focus root");
-    let cache = client.uia.base_cache_request().expect("a cache request");
-    let window = client
-        .uia
-        .element_from_handle(hwnd.0 as isize, &cache)
-        .expect("mockapp's root element");
-    let reported = outpost.uia_focus_read_later(&window, &stand_in);
-    assert_eq!(
-        (reported.node.role, reported.node.name),
-        (Role::Window, window.cached_string(UIA_NamePropertyId))
-    );
-
-    drop(outpost);
-    app.quit();
-}
-
-/// A UIA focus event whose element has no window of its own and has lost
-/// the keyboard focus to another element of the application by the time
-/// the outpost reads it is reported all the same, as its event said: NVDA
-/// judges a focus event by its sender's keyboard focus as the event
-/// arrives, which the fact carries, and announces the focus before the
-/// newer one, whose own event follows (Windows Terminal's tab, as
-/// Control+Tab moves the focus through it to the tab's terminal). The
-/// element is found by its runtime id in its window, so the focus comes
-/// with its ancestors, after one read of the focused element; the newer
-/// focus is reported from its own event.
-fn a_focus_that_moved_on_since_its_event_is_reported_as_the_event_said() {
+/// A UIA focus event whose element has lost the keyboard focus to another
+/// element by the time the listener reads it is dropped, as NVDA's
+/// `shouldAllowUIAFocusEvent` drops it, and the outpost says nothing for
+/// it; the newer focus is reported from its own event. (The moved-on
+/// rules this replaces reported such a focus as its event said.)
+fn a_focus_whose_element_lost_the_keyboard_focus_before_it_was_read_is_dropped() {
     let title = common::unique_title("mockapp-lost-focus");
     let mut app = common::spawn("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
@@ -288,21 +243,16 @@ fn a_focus_that_moved_on_since_its_event_is_reported_as_the_event_said() {
 
     app.send("set-focus btn1");
     let button = client.focused();
-    let ListenerFact { fact, .. } =
-        uia_focus_fact(&button).expect("mockapp's element has its process");
-
     app.send("set-focus slider1");
-    let slider = client.focused();
-    outpost.read_focus_as(&slider);
-    let reads = outpost.focus_reads();
-    let reported = outpost.focus(fact);
-    assert_eq!(reported.node.name.as_deref(), Some("Original Name"));
-    assert_eq!(
-        outpost.focus_reads() - reads,
-        1,
-        "the focused element was read once, for the event"
-    );
+    let (judged, _) = outpost.listener_read(&button);
+    let Judged::Dropped(reason) = judged else {
+        panic!("the listener read a focus that had moved on: {judged:?}");
+    };
+    assert_eq!(reason, "its element no longer has the keyboard focus");
+    outpost.deliver(judged.into_fact(7));
+    outpost.settled();
 
+    let slider = client.focused();
     let reported = outpost.uia_focus(&slider);
     assert_eq!(reported.node.name.as_deref(), Some("Level"));
 
@@ -310,13 +260,74 @@ fn a_focus_that_moved_on_since_its_event_is_reported_as_the_event_said() {
     app.quit();
 }
 
-/// Hands the outpost a UIA focus on `element` while its read of the focused
-/// element answers nothing, and returns the focus it reports from the event
-/// alone, with its ancestors unknown, which must be the only thing it says.
-fn focus_not_found(outpost: &OutpostUnderTest, element: &IUIAutomationElement) -> NodeSnapshot {
-    let ListenerFact { fact, .. } =
-        uia_focus_fact(element).expect("mockapp's element has its process");
-    outpost.deliver(fact);
+/// A UIA focus event whose element still had the keyboard focus when the
+/// listener read it is reported, whatever has happened since: Windows
+/// Terminal's Control+Tab gives the focus to the tab it leaves, then to
+/// the tab it selects, and NVDA queues both, culling the first once the
+/// second is applied (`docs/design/focus-pipeline.md`, section 10.1, item
+/// 2). The focus is reported with its states as the listener read them,
+/// still selected, and the item moved to after it.
+fn a_focus_read_while_it_had_the_keyboard_focus_is_reported_though_the_focus_moved_on() {
+    let title = common::unique_title("mockapp-left-selection");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("select item1");
+    app.send("set-focus item1");
+    let first = client.focused();
+    let read = outpost.listener_fact(&first);
+
+    app.send("select item2");
+    app.send("set-focus item2");
+    let reported = outpost.focus(read);
+    assert_eq!(
+        (reported.node.name.as_deref(), reported.node.states),
+        (
+            Some("First"),
+            [
+                State::Focused,
+                State::Focusable,
+                State::Selectable,
+                State::Selected
+            ]
+            .into_iter()
+            .collect::<StateSet>()
+        )
+    );
+    assert_eq!(
+        reported.chain(),
+        [
+            Some("Mockapp Events Fixture"),
+            Some("Options"),
+            Some("First")
+        ]
+    );
+
+    let second = client.focused();
+    let reported = outpost.uia_focus(&second);
+    assert_eq!(reported.node.name.as_deref(), Some("Second"));
+
+    drop(outpost);
+    app.quit();
+}
+
+/// Hands the outpost the listener's read of a UIA focus on `element`, as
+/// the listener sends one it could not read beyond the event: its
+/// ancestors and window unknown, so the outpost has no path to its own
+/// copy of the element. Returns the focus it reports from the read, with
+/// its ancestors unknown, which must be the only thing it says.
+fn focus_without_a_path(
+    outpost: &OutpostUnderTest,
+    element: &IUIAutomationElement,
+) -> NodeSnapshot {
+    let (judged, _) = outpost.listener_read(element);
+    let Judged::Read(mut read) = judged else {
+        panic!("the listener dropped the focus: {judged:?}");
+    };
+    read.ancestors = None;
+    read.window = None;
+    outpost.deliver(DeliveredFact::UiaFocusRead { marker: 0, read });
     let node = match outpost.next() {
         OutpostToSupervisor::Event {
             event:
@@ -365,50 +376,36 @@ fn assert_followed(
     outpost.settled();
 }
 
-/// A UIA focus event on an item its event said was selected, which has
-/// since lost both the keyboard focus and the selection to another item,
-/// is dropped: the user has left it, as Windows Terminal's Control+Tab
-/// leaves the tab it gives the focus first. The item moved to is reported.
-fn a_focus_that_moved_on_and_lost_its_selection_is_dropped() {
-    let title = common::unique_title("mockapp-left-selection");
+/// The outpost finds its own copy of a windowless focus's element by the
+/// path the listener read, from mockapp's window down by runtime ids,
+/// after it has reported the focus, and follows the element's changes
+/// from then on.
+fn a_focus_is_found_by_its_path_and_followed() {
+    let title = common::unique_title("mockapp-focus-path");
     let mut app = common::spawn("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::new(&app);
 
-    app.send("select item1");
-    app.send("set-focus item1");
-    let first = client.focused();
-    let ListenerFact { fact, .. } =
-        uia_focus_fact(&first).expect("mockapp's element has its process");
-
-    app.send("select item2");
-    app.send("set-focus item2");
-    let second = client.focused();
-    outpost.read_focus_as(&second);
-    let reads = outpost.focus_reads();
-    outpost.deliver(fact);
-    outpost.settled();
+    app.send("set-focus btn1");
+    let button = client.focused();
+    let reported = outpost.uia_focus(&button);
     assert_eq!(
-        outpost.focus_reads() - reads,
-        1,
-        "the focused element was read once, for the event"
+        reported.chain(),
+        [Some("Mockapp Events Fixture"), Some("Original Name")]
     );
-
-    let reported = outpost.uia_focus(&second);
-    assert_eq!(reported.node.name.as_deref(), Some("Second"));
+    assert_followed(&mut app, &outpost, "btn1", &reported.node);
 
     drop(outpost);
     app.quit();
 }
 
-/// A UIA focus whose element the focused element read does not find is
-/// reported from its event alone, with its ancestors unknown, and nothing
-/// reads again: a follow-up read once more, and before it up to three
-/// times more, with nothing between the reads to say the answer had
-/// changed. The focus's next focus event finds the element: the focus is
-/// reported again under its node, which Core takes silently, now with its
-/// ancestors, and its changes are followed from then on.
-fn a_focus_whose_element_was_not_found_is_followed_from_its_next_focus_event() {
+/// A UIA focus with no path to its element, as Windows Terminal's tab
+/// focus elements, which are in no tree, have none, is reported from the
+/// listener's read, and its next focus event, read in full, finds the
+/// element: the focus is reported again under its node, which Core takes
+/// silently, now with its ancestors, and its changes are followed from
+/// then on.
+fn a_focus_without_a_path_is_followed_from_its_next_focus_event() {
     let title = common::unique_title("mockapp-focus-not-found");
     let mut app = common::spawn("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
@@ -416,69 +413,14 @@ fn a_focus_whose_element_was_not_found_is_followed_from_its_next_focus_event() {
 
     app.send("set-focus btn1");
     let button = client.focused();
-    let node = focus_not_found(&outpost, &button);
-    assert_eq!(
-        outpost.focus_reads(),
-        1,
-        "the focused element was read for the event alone"
-    );
+    let node = focus_without_a_path(&outpost, &button);
 
     let reported = outpost.uia_focus(&button);
     assert_eq!(
         (reported.node.id, reported.node.name.as_deref()),
         (node.id, Some("Original Name"))
     );
-    assert_eq!(outpost.focus_reads(), 2, "read once for the next event");
     assert_followed(&mut app, &outpost, "btn1", &node);
-
-    drop(outpost);
-    app.quit();
-}
-
-/// A selection event of a focus whose element was not found, as a list
-/// item raises when it is selected with the focus, reads the focused
-/// element once and keeps it when it is the focus's: the selection is
-/// reported, and the focus's changes are followed from then on.
-fn a_selection_of_a_focus_whose_element_was_not_found_finds_its_element() {
-    let title = common::unique_title("mockapp-selection-finds-focus");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
-
-    app.send("set-focus item1");
-    let item = client.focused();
-    let node = focus_not_found(&outpost, &item);
-    assert_eq!(outpost.focus_reads(), 1);
-
-    outpost.read_focus_as(&item);
-    let ListenerFact { fact, .. } =
-        uia_focus_fact(&item).expect("mockapp's element has its process");
-    let DeliveredFact::UiaFocus {
-        hwnd,
-        focus_window,
-        snapshot,
-    } = fact
-    else {
-        panic!("a focus fact, not {fact:?}");
-    };
-    outpost.deliver(DeliveredFact::UiaSelection {
-        hwnd,
-        focus_window,
-        snapshot,
-    });
-    match outpost.next() {
-        OutpostToSupervisor::Event {
-            event: NormalizedEvent::SelectionChanged { node: selected },
-            ..
-        } => assert_eq!(
-            (selected.id, selected.name.as_deref()),
-            (node.id, Some("First"))
-        ),
-        other => panic!("the outpost said {other:?}, not the selection"),
-    }
-    outpost.settled();
-    assert_eq!(outpost.focus_reads(), 2, "read once for the selection");
-    assert_followed(&mut app, &outpost, "item1", &node);
 
     drop(outpost);
     app.quit();
@@ -495,10 +437,7 @@ fn focus_in_caret_fixture(
 ) -> NodeSnapshot {
     app.send(&format!("set-focus {id}"));
     let element = client.focused();
-    outpost.read_focus_as(&element);
-    let ListenerFact { fact, .. } =
-        uia_focus_fact(&element).expect("mockapp's element has its process");
-    outpost.deliver(fact);
+    outpost.deliver(outpost.listener_fact(&element));
     let node = match outpost.next() {
         OutpostToSupervisor::Event {
             event: NormalizedEvent::FocusChanged { node, .. },
@@ -556,14 +495,65 @@ fn a_text_change_after_the_focus_returns_to_a_document_is_heard() {
     app.quit();
 }
 
+/// A change raised after a UIA focus event, which the outpost's own
+/// subscriptions bring, waits in the outpost behind the focus's marker
+/// until the listener's read takes its place, so the focus is reported
+/// first, as NVDA's UIA events pass in order through the one thread that
+/// judges them (`docs/design/focus-pipeline.md`, section 12.4). The button
+/// was the focus before, so its subscription hears its rename.
+fn a_change_raised_after_a_focus_event_waits_for_the_focus_read() {
+    let title = common::unique_title("mockapp-marker-wait");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let button = client.focused();
+    let button = outpost.uia_focus(&button).node;
+
+    app.send("set-focus slider1");
+    let slider = client.focused();
+    let (read, _) = outpost.listener_read(&slider);
+    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 3 });
+    app.send("set-name btn1 Renamed");
+    outpost.heard(&[
+        Heard::UiaProperty(UIA_NamePropertyId.0),
+        Heard::Msaa(WinEventKind::NameChange),
+    ]);
+    outpost.deliver(read.into_fact(3));
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::FocusChanged { node, .. },
+            ..
+        } => assert_eq!(node.name.as_deref(), Some("Level")),
+        other => panic!("the outpost said {other:?}, not the slider's focus first"),
+    }
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::PropertyChanged {
+                    node_id,
+                    change: PropertyChange::Name(name),
+                    child_count: None,
+                },
+            ..
+        } => assert_eq!((node_id, name.as_deref()), (button.id, Some("Renamed"))),
+        other => panic!("the outpost said {other:?}, not the button's new name"),
+    }
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
 /// The console host's window is the parent of its text area, reports the
 /// keyboard focus whenever the text area has it, and raises focus events
 /// around the text area's; those are never the focus (NVDA refuses them
 /// whatever the element reports, `consoleUIAWindow` in
-/// `NVDAObjects/UIA/winConsoleUIA.py`). So a UIA focus on a console
-/// window's own element is not reported, even while the focused element
-/// read answers that element itself: the text area's own focus is the one
-/// reported.
+/// `NVDAObjects/UIA/winConsoleUIA.py`). So the focus listener drops a UIA
+/// focus on a console window's own element before it reads anything, even
+/// while that element reports the keyboard focus: the text area's own
+/// focus is the one reported.
 fn a_console_windows_own_focus_is_never_reported() {
     let title = common::unique_title("mockapp-console-window");
     let mut app = common::spawn("console_window.json", "uia", &title);
@@ -577,10 +567,13 @@ fn a_console_windows_own_focus_is_never_reported() {
         .uia
         .element_from_handle(hwnd.0 as isize, &cache)
         .expect("mockapp's root element");
-    let ListenerFact { pid: _, fact } =
-        uia_focus_fact(&window).expect("mockapp's element has its process");
-    outpost.read_focus_as(&window);
-    outpost.deliver(fact);
+    let (judged, calls) = outpost.listener_read(&window);
+    let Judged::Dropped(reason) = judged else {
+        panic!("the listener read the console window's own focus: {judged:?}");
+    };
+    assert_eq!(reason, "the console window's own focus");
+    assert_eq!(calls.uia, 0, "dropped before any read");
+    outpost.deliver(judged.into_fact(0));
     outpost.settled();
 
     drop(outpost);
@@ -606,28 +599,28 @@ fn main() {
             a_controls_own_focus_reports_its_focused_child,
         ),
         (
-            "a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_in",
-            a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_in,
+            "a_focus_whose_element_lost_the_keyboard_focus_before_it_was_read_is_dropped",
+            a_focus_whose_element_lost_the_keyboard_focus_before_it_was_read_is_dropped,
         ),
         (
-            "a_focus_that_moved_on_since_its_event_is_reported_as_the_event_said",
-            a_focus_that_moved_on_since_its_event_is_reported_as_the_event_said,
+            "a_focus_read_while_it_had_the_keyboard_focus_is_reported_though_the_focus_moved_on",
+            a_focus_read_while_it_had_the_keyboard_focus_is_reported_though_the_focus_moved_on,
         ),
         (
-            "a_focus_that_moved_on_and_lost_its_selection_is_dropped",
-            a_focus_that_moved_on_and_lost_its_selection_is_dropped,
+            "a_focus_is_found_by_its_path_and_followed",
+            a_focus_is_found_by_its_path_and_followed,
         ),
         (
-            "a_focus_whose_element_was_not_found_is_followed_from_its_next_focus_event",
-            a_focus_whose_element_was_not_found_is_followed_from_its_next_focus_event,
+            "a_focus_without_a_path_is_followed_from_its_next_focus_event",
+            a_focus_without_a_path_is_followed_from_its_next_focus_event,
         ),
         (
             "a_text_change_after_the_focus_returns_to_a_document_is_heard",
             a_text_change_after_the_focus_returns_to_a_document_is_heard,
         ),
         (
-            "a_selection_of_a_focus_whose_element_was_not_found_finds_its_element",
-            a_selection_of_a_focus_whose_element_was_not_found_finds_its_element,
+            "a_change_raised_after_a_focus_event_waits_for_the_focus_read",
+            a_change_raised_after_a_focus_event_waits_for_the_focus_read,
         ),
         (
             "a_console_windows_own_focus_is_never_reported",

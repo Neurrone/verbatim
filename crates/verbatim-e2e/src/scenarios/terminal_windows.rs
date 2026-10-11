@@ -36,14 +36,14 @@
 //! live on 2026-10-09, queues "list" and the tab ("<title> 1 of 2"), which
 //! holds the keyboard focus until Windows Terminal moves it to the tab's
 //! terminal, then "<title> terminal"; on Control+Tab the tab left comes
-//! first, then the tab moved to ("<title> two 2 of 2"). Verbatim announces
-//! the tab moved to (Dickson, 2026-10-09, coherence review): "tab control",
-//! "list" and the tab, the tab's own name culled once the terminal has the
-//! focus, then the terminal and its line. The tab left, which Windows
-//! Terminal gives the focus first on Control+Tab, is not announced: by the
-//! time it is handled it has lost both the focus and the selection
-//! (Dickson, 2026-10-10). "tab control" is the difference that remains
-//! (`docs/parity.md`).
+//! first, then the tab moved to ("<title> two 2 of 2"). Verbatim does the
+//! same since stage A step 6 (`docs/design/focus-pipeline.md`, section
+//! 10.1, items 2 and 3): the focus listener judges and reads each tab's
+//! focus from the event's own element, so the tab's ancestors are its own
+//! ("list", with no "tab control" above it) and the tab left, which still
+//! has the keyboard focus when its event is read, is announced too; each
+//! tab's name is culled once the next focus is applied, then the terminal
+//! and its line are said (`docs/parity.md`).
 //! Typing after a switch is echoed and its output spoken as in any
 //! terminal.
 //!
@@ -385,7 +385,6 @@ pub(crate) fn body_tabs(scenario: &mut Scenario, state: &mut ScenarioState) {
         .send_keys(&["control+shift+tab"])
         .expect("switches to the first tab");
     scenario.speech().expect_sequence(&[
-        heard("tab control"),
         heard("list"),
         cut_off(&format!("{first} 1 of 2")),
         heard(&format!("{first} terminal")),
@@ -396,9 +395,10 @@ pub(crate) fn body_tabs(scenario: &mut Scenario, state: &mut ScenarioState) {
     scenario
         .send_keys(&["control+tab"])
         .expect("switches to the second tab");
+    // The tab left first, as Windows Terminal gives it the focus first.
     scenario.speech().expect_sequence(&[
-        heard("tab control"),
         heard("list"),
+        cut_off(&format!("{first} 1 of 2")),
         cut_off(&format!("{second} 2 of 2")),
         heard(&format!("{second} terminal")),
         heard(PROMPT),

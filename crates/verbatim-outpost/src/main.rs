@@ -18,8 +18,9 @@
 //!   <pid,pid>] [--hooks-in <pid:outpost,pid:outpost>]`: the focus-listener
 //!   mode (decision D13), spawned by the same supervisor into its dedicated
 //!   slot with no target pid. It holds the desktop-global UIA focus
-//!   registration and the global MSAA hooks and forwards each focus fact to
-//!   Core, except those of the processes `--ignore-pids` names, which
+//!   registration and the global MSAA hooks, reads each UIA focus from the
+//!   event's own element on a thread per application, and forwards each
+//!   focus fact to Core, except those of the processes `--ignore-pids` names, which
 //!   Verbatim ignores entirely, and the MSAA facts of the applications
 //!   `--hooks-in` names, whose outposts have their own hooks in; the same
 //!   pipe conventions apply.
@@ -27,9 +28,9 @@
 //!   outbound messages as JSON lines to stdout, for standalone testing without
 //!   Core.
 //!
-//! An outpost (the first and third modes) also takes `--classic-uia`, which
-//! turns off UIA remote operations for its whole life (`uia.remote_operations
-//! = false` in `settings.toml`, which the supervisor passes on).
+//! Every mode also takes `--classic-uia`, which turns off UIA remote
+//! operations for the process's whole life (`uia.remote_operations = false`
+//! in `settings.toml`, which the supervisor passes on).
 
 use std::process::ExitCode;
 
@@ -86,6 +87,7 @@ fn main() -> ExitCode {
             pipe_out,
             ignore_pids,
             hooks_in,
+            options,
         }) => {
             // Held before anything is installed; Core holds them too, so
             // these pids still name the processes Core was told of.
@@ -105,7 +107,13 @@ fn main() -> ExitCode {
                 }
             };
             let hooks_in = verbatim_outpost::listener::parse_hooks_in(&hooks_in);
-            match run_listener(Box::new(reader), Box::new(writer), ignored, &hooks_in) {
+            match run_listener(
+                Box::new(reader),
+                Box::new(writer),
+                ignored,
+                &hooks_in,
+                options,
+            ) {
                 Ok(()) => end_without_detach(0),
                 Err(error) => {
                     report_error!("listener pipe loop ended with error: {error}");
@@ -185,6 +193,8 @@ enum Mode {
         /// The applications whose outposts have their own hooks in, as
         /// `pid:outpost` pairs separated by commas.
         hooks_in: String,
+        /// Whether its UIA focus reads may use remote operations.
+        options: OutpostOptions,
     },
     Attach {
         pid: u32,
@@ -237,6 +247,7 @@ fn parse_args(args: &[String]) -> Option<Mode> {
                 pipe_out,
                 ignore_pids,
                 hooks_in,
+                options,
             }),
             _ => None,
         };

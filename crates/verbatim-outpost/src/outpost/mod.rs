@@ -28,6 +28,7 @@
 //! not yet reported, is kept: Core may not have seen it yet.
 
 mod acceptance;
+mod focus_path;
 mod handover;
 mod intake;
 mod outbound;
@@ -124,7 +125,7 @@ pub(crate) struct Context {
     arbitrator: Mutex<Arbitrator>,
     tracking: Mutex<Tracking>,
     /// The client on a thread of its own for the worker's operations with a
-    /// deadline of their own: searches and a dialog's text.
+    /// deadline of their own: a dialog's text.
     bounded: verbatim_uia::BoundedClient,
     /// The focus-following UIA subscription, one event handler group in
     /// two forms, which the worker moves with the focus
@@ -172,7 +173,9 @@ pub(crate) struct Context {
     /// Each focused terminal's anchor and memory, by node (milestone M4
     /// item 9).
     terminals: Mutex<HashMap<u64, crate::terminal::Terminal>>,
-    /// How the worker reads the element that has the keyboard focus.
+    /// How the worker reads the element that has the keyboard focus, for a
+    /// focus-now query: a UIA focus event's element comes from the focus
+    /// listener's read instead.
     focused_element: FocusedElementReader,
     /// How the worker reads the foreground window when it records the
     /// window a focus was reported in ([`Outpost::set_foreground_reader`]).
@@ -187,6 +190,10 @@ pub(crate) struct Context {
     /// application's `WinEvent`s and the outpost's own hook's
     /// ([`handover`]).
     handover: Mutex<handover::Handover>,
+    /// The raw-view chain the focus listener read for the UIA focus this
+    /// outpost last reported, by which it finds its own copies of that
+    /// focus's elements ([`focus_path`]).
+    focus_path: Mutex<Option<focus_path::FocusPath>>,
 }
 
 /// An event the outpost's own UIA handlers or `WinEvent` hooks took in from
@@ -217,10 +224,12 @@ pub type HeardObserver = Arc<dyn Fn(Heard) + Send + Sync>;
 pub type ForegroundReader = Arc<dyn Fn() -> isize + Send + Sync>;
 
 /// Reads the UIA element that has the keyboard focus, built with the given
-/// cache request, with the given client, on the worker's thread. An
-/// outpost reads the system's keyboard focus ([`Uia::focused_element`]);
-/// a test that drives a real outpost against an application without taking
-/// the keyboard focus from the desktop it runs on supplies its own
+/// cache request, with the given client, on the worker's thread, for a
+/// focus-now query, the one read of the focused element the outpost makes
+/// (a UIA focus event's element is the focus listener's read). An outpost
+/// reads the system's keyboard focus ([`Uia::focused_element`]); a test
+/// that drives a real outpost against an application without taking the
+/// keyboard focus from the desktop it runs on supplies its own
 /// ([`Outpost::with_focused_element_reader`]).
 pub type FocusedElementReader = Arc<
     dyn Fn(&Uia, &IUIAutomationCacheRequest) -> windows::core::Result<IUIAutomationElement>
@@ -526,6 +535,20 @@ impl Context {
     fn handover(&self) -> MutexGuard<'_, handover::Handover> {
         self.handover.lock().unwrap_or_else(PoisonError::into_inner)
     }
+
+    /// The chain the focus listener read for the UIA focus this outpost
+    /// last reported ([`focus_path`]).
+    fn focus_path(&self) -> MutexGuard<'_, Option<focus_path::FocusPath>> {
+        self.focus_path
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The route to the element `runtime_id` names, when it is in the chain
+    /// the focus listener read for the UIA focus this outpost last reported.
+    fn focus_route(&self, runtime_id: &[i32]) -> Option<focus_path::Route> {
+        self.focus_path().as_ref()?.route_to(runtime_id)
+    }
 }
 
 /// The outpost: owns the context and the event thread for one target
@@ -568,10 +591,10 @@ impl Outpost {
     }
 
     /// [`Outpost::with_options`], reading the element that has the keyboard
-    /// focus with `focused_element` rather than from the system: for a test
-    /// that hands the outpost a UIA focus in an application that does not
-    /// have the keyboard focus, and measures everything the outpost does
-    /// with it.
+    /// focus for a focus-now query with `focused_element` rather than from
+    /// the system: for a test that asks the outpost for the focus of an
+    /// application that does not have the keyboard focus, and measures
+    /// everything the outpost does with it.
     ///
     /// # Panics
     ///
@@ -621,6 +644,7 @@ impl Outpost {
             // Read before the hook below is installed: no event raised
             // before this reaches it.
             handover: Mutex::new(handover::Handover::new(verbatim_ia2::event_clock())),
+            focus_path: Mutex::new(None),
         });
         if let Some(registration) = register_focus_events(&context) {
             let _ = context.focus_events.set(registration);
