@@ -449,6 +449,7 @@ pub(super) fn uia_remote_enrichment(
         properties: &properties,
         deadline: Some(deadline),
         require_focus,
+        refresh: false,
     };
     // One remote operation, one transaction, which UIA's transaction
     // timeout bounds; the classic walk it falls back to checks the

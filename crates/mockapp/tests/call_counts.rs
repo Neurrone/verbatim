@@ -1644,6 +1644,7 @@ fn uia_selected_children_cost_exactly() {
                     properties: CACHED_PROPERTIES,
                     deadline: None,
                     require_focus: true,
+                    refresh: false,
                 },
                 true,
             )

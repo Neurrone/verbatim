@@ -33,9 +33,11 @@
 //!   [`text_units`] (a unit read after a movement, or several ahead for
 //!   say-all), [`text_range`] (the text between two points, or selecting
 //!   it), and [`text_location`]; for object navigation,
-//!   [`navigation_step`]: the neighbor and the nearest window; and, for a
+//!   [`navigation_step`]: the neighbor and the nearest window; for a
 //!   selection inside an element the focus controls,
-//!   [`controlled_selection`].
+//!   [`controlled_selection`]; and, for the outpost finding its own copy
+//!   of an element the focus listener read, [`element_by_path`]: the
+//!   element reached from one the caller has by the runtime ids below it.
 //!
 //! The crate is Windows-specific and GPL like NVDA, from which the
 //! instruction table and builder design are ported.
@@ -50,6 +52,7 @@ mod instruction;
 mod navigate;
 mod opcode;
 mod operation;
+mod path;
 mod terminal;
 mod text;
 
@@ -79,6 +82,9 @@ pub use opcode::{
     pattern_related_object_method,
 };
 pub use operation::{Operation, Outcome, Read, Value, counting};
+pub use path::{
+    ElementByPathFn, PathQuery, element_by_path, element_by_path_classic, element_by_path_remote,
+};
 pub use terminal::{
     SEARCH_MATCHES, Screen, ScreenAnchor, ScreenQuery, TerminalScreenFn, terminal_screen,
     terminal_screen_classic, terminal_screen_remote,

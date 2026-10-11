@@ -61,6 +61,20 @@ pub enum AncestorWalk {
     OutOfTime,
 }
 
+/// One ancestor as another process read it from its cached element
+/// ([`Uia::ancestor_chain_from_parts`]): its parts, its own native window
+/// handle (0 for none), and whether UIA counts it both a control and
+/// content ([`crate::map::cached_is_control_and_content`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AncestorParts {
+    /// The ancestor's cached parts.
+    pub parts: crate::map::CachedUiaParts,
+    /// Its own native window handle, 0 for an element that is not a window.
+    pub hwnd: isize,
+    /// Whether it is both a control and content element.
+    pub content: bool,
+}
+
 /// How long one call waits for an application's provider before UIA ends
 /// it with `UIA_E_TIMEOUT`: both UIA's connection timeout, which bounds
 /// connecting to a provider (`ElementFromHandle`, a first call on an
@@ -541,6 +555,43 @@ impl Uia {
         (chain, None, AncestorWalk::Complete)
     }
 
+    /// The same result as [`Uia::ancestor_chain_from`], from ancestors
+    /// another process read and sent as their parts ([`AncestorParts`]),
+    /// nearest first: the focus listener reads a focus's ancestors from the
+    /// event's own element, and the outpost, which cannot receive that
+    /// element (`docs/design/focus-pipeline.md`, section 12), reports them
+    /// from this. Each node is minted from its runtime id with no element
+    /// kept; the same stops and the same filtering apply.
+    #[must_use]
+    pub fn ancestor_chain_from_parts(
+        parents: &[AncestorParts],
+        registry: &NodeIdRegistry,
+        stops: &AncestorStops<'_>,
+    ) -> (Vec<NodeSnapshot>, Option<isize>, AncestorWalk) {
+        let mut chain = Vec::new();
+        for parent in parents {
+            match take_ancestor_parts(
+                parent,
+                registry,
+                stops.read_by_other_api,
+                stops.known,
+                &mut chain,
+            ) {
+                Taken::Continue => {}
+                Taken::Crossed(hwnd) => {
+                    chain.reverse();
+                    return (chain, Some(hwnd), AncestorWalk::Complete);
+                }
+                Taken::Known(id) => {
+                    chain.reverse();
+                    return (chain, None, AncestorWalk::MetKnown(id));
+                }
+            }
+        }
+        chain.reverse();
+        (chain, None, AncestorWalk::Complete)
+    }
+
     /// The first selected child of a selection container, via the
     /// container's `Selection` pattern: `GetCurrentSelection`, then the
     /// first element of the result rebuilt with `cache` so its snapshot
@@ -768,6 +819,44 @@ fn take_ancestor(
     }
     let snapshot = snapshot_from_cached_element(parent, registry);
     let content = crate::map::cached_is_control_and_content(parent);
+    take_reported(snapshot, content, known, chain)
+}
+
+/// [`take_ancestor`] for an ancestor another process read
+/// ([`AncestorParts`]): its node is minted from its runtime id, with no
+/// element kept.
+fn take_ancestor_parts(
+    parent: &AncestorParts,
+    registry: &NodeIdRegistry,
+    read_by_other_api: &dyn Fn(isize) -> bool,
+    known: &dyn Fn(verbatim_model::NodeId) -> bool,
+    chain: &mut Vec<NodeSnapshot>,
+) -> Taken {
+    if parent.hwnd != 0 && read_by_other_api(parent.hwnd) {
+        return Taken::Crossed(parent.hwnd);
+    }
+    let parts = &parent.parts;
+    let snapshot = NodeSnapshot {
+        id: registry.id_for(&parts.runtime_id),
+        backend: verbatim_model::Backend::Uia,
+        role: parts.role,
+        name: parts.name.clone(),
+        value: parts.value.clone(),
+        states: parts.states,
+        details: parts.details.clone(),
+    };
+    take_reported(snapshot, parent.content, known, chain)
+}
+
+/// The report of one ancestor, filtered, and the stop at a known one: the
+/// part of [`take_ancestor`] that does not depend on where the ancestor
+/// was read.
+fn take_reported(
+    snapshot: NodeSnapshot,
+    content: bool,
+    known: &dyn Fn(verbatim_model::NodeId) -> bool,
+    chain: &mut Vec<NodeSnapshot>,
+) -> Taken {
     if is_presentable_focus_ancestor(&snapshot) && content {
         let id = snapshot.id;
         chain.push(snapshot);
@@ -1132,6 +1221,88 @@ mod presentation_tests {
             Some("named"),
             None
         )));
+    }
+
+    /// An ancestor another process read, named `name` with role `role`,
+    /// runtime id `[42, id]`, window `hwnd`, both a control and content.
+    fn parts(id: i32, role: Role, name: &str, hwnd: isize) -> super::AncestorParts {
+        super::AncestorParts {
+            parts: crate::map::CachedUiaParts {
+                runtime_id: vec![42, id],
+                role,
+                name: Some(name.to_owned()),
+                value: None,
+                states: StateSet::default(),
+                details: NodeDetails::default(),
+            },
+            hwnd,
+            content: true,
+        }
+    }
+
+    fn names(chain: &[NodeSnapshot]) -> Vec<Option<&str>> {
+        chain.iter().map(|node| node.name.as_deref()).collect()
+    }
+
+    #[test]
+    fn ancestors_read_elsewhere_are_filtered_and_stop_at_a_window_of_the_other_api() {
+        let registry =
+            crate::NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
+        let mut hidden = parts(3, Role::Group, "not content", 0);
+        hidden.content = false;
+        // Nearest first: a list, a pane (layout), a group UIA counts no
+        // content, a named group, and the root of a window read through
+        // MSAA, where the chain stops with that window.
+        let parents = [
+            parts(1, Role::List, "Items", 0),
+            parts(2, Role::Pane, "Shell", 0),
+            hidden,
+            parts(4, Role::Group, "Folder", 0),
+            parts(5, Role::Window, "Explorer", 77),
+            parts(6, Role::Window, "Desktop", 0),
+        ];
+        let stops = super::AncestorStops {
+            read_by_other_api: &|hwnd| hwnd == 77,
+            known: &|_| false,
+            deadline: None,
+        };
+        let (chain, crossed, walked) =
+            super::Uia::ancestor_chain_from_parts(&parents, &registry, &stops);
+        assert_eq!(names(&chain), [Some("Folder"), Some("Items")]);
+        assert_eq!((crossed, walked), (Some(77), super::AncestorWalk::Complete));
+        assert_eq!(
+            registry.runtime_id_of(chain[1].id),
+            Some(vec![42, 1]),
+            "each node is minted from its runtime id"
+        );
+        assert!(
+            registry.element_of(chain[1].id).is_none(),
+            "with no element kept"
+        );
+    }
+
+    #[test]
+    fn ancestors_read_elsewhere_stop_at_a_known_one() {
+        let registry =
+            crate::NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
+        let known = registry.id_for(&[42, 4]);
+        let parents = [
+            parts(1, Role::List, "Items", 0),
+            parts(4, Role::Group, "Folder", 0),
+            parts(5, Role::Window, "Explorer", 0),
+        ];
+        let stops = super::AncestorStops {
+            read_by_other_api: &|_| false,
+            known: &|id| id == known,
+            deadline: None,
+        };
+        let (chain, crossed, walked) =
+            super::Uia::ancestor_chain_from_parts(&parents, &registry, &stops);
+        assert_eq!(names(&chain), [Some("Folder"), Some("Items")]);
+        assert_eq!(
+            (crossed, walked),
+            (None, super::AncestorWalk::MetKnown(known))
+        );
     }
 }
 

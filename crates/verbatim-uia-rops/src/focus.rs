@@ -54,6 +54,12 @@ pub struct FocusQuery<'a> {
     /// was raised, as NVDA judges a focus event, though the focus has
     /// moved on since: its ancestry is read all the same.
     pub require_focus: bool,
+    /// Whether the element's own cache is filled afresh with
+    /// [`FocusQuery::properties`] in the same round trip
+    /// ([`Ancestry::element`]): its value, states, and details as they are
+    /// when the focus is read, which the focus listener reports a focus
+    /// with, as NVDA reads those afresh when it handles a focus event.
+    pub refresh: bool,
 }
 
 /// The answer to a [`FocusQuery`].
@@ -96,6 +102,9 @@ pub struct Ancestry {
     /// `false` when it does not, or when the read failed (the element is
     /// gone); `None` when the query gave no previous element.
     pub previous_focused: Option<bool>,
+    /// With [`FocusQuery::refresh`], the element itself with its cache
+    /// filled afresh; `None` without it.
+    pub element: Option<IUIAutomationElement>,
 }
 
 /// The signature both implementations share, so a caller can hold either.
@@ -232,7 +241,9 @@ fn own_window(element: &IUIAutomationElement) -> Option<isize> {
 
 /// The focus ancestry in one cross-process round trip: a program that
 /// reads the element's `HasKeyboardFocus` live and stops if it is false,
-/// then reads the previous element's (`FocusQuery::previous`), then reads a list's or tab control's selected child, then walks
+/// then reads the previous element's (`FocusQuery::previous`), then, with
+/// [`FocusQuery::refresh`], fills the element's own cache afresh, then
+/// reads a list's or tab control's selected child, then walks
 /// raw-view parents, filling each one's cache inside the provider, until
 /// the top-level window, a known ancestor, or the depth limit, and finds
 /// the element's nearest window, walking on past where it stopped if no
@@ -276,6 +287,13 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     }
 
     let cache = RemoteCache::new(&mut b, query.properties);
+
+    // The element's own cache, filled afresh: its register is the element
+    // read back.
+    if query.refresh {
+        cache.populate(&mut b, element);
+        b.add_to_results(element);
+    }
 
     let selected = b.new_null_element();
     let selected = b.add_to_results(selected);
@@ -423,6 +441,11 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             Some(_) => Some(outcome.get(previous_focused)?),
             None => None,
         },
+        element: if query.refresh {
+            outcome.get(element)?
+        } else {
+            None
+        },
     }))
 }
 
@@ -497,8 +520,9 @@ impl RemoteCache {
 }
 
 /// The focus ancestry the classic way, the fallback and the reference:
-/// a live `HasKeyboardFocus` read, the previous element's, the selected
-/// child through the `Selection` pattern ([`Uia::selected_element`], as
+/// a live `HasKeyboardFocus` read, the previous element's, the element's
+/// own cache filled afresh with [`FocusQuery::refresh`]
+/// (`BuildUpdatedCache`), the selected child through the `Selection` pattern ([`Uia::selected_element`], as
 /// `Uia::selected_child` reads it), then one
 /// `GetParentElementBuildCache` round trip per ancestor over the raw view,
 /// the walk `Uia::ancestor_chain` makes. Stops where the remote program
@@ -528,6 +552,11 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         Some(Err(_)) => Some(false),
     };
     let cache = uia.cache_request(query.properties)?;
+    let element = if query.refresh {
+        Some(query.element.build_updated_cache(&cache)?)
+    } else {
+        None
+    };
     // A selection that timed out, or whose container or item is gone, has
     // not said nothing is selected: the walk fails, as a hop's would.
     let selected_child = if wants_selected_child(query.element) {
@@ -546,6 +575,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         selected_child,
         window: own_window(query.element),
         previous_focused,
+        element,
     };
     let out_of_time = || {
         query
