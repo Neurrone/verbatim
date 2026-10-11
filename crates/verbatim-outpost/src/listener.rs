@@ -100,9 +100,9 @@ use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEvent, WinEventCallback, WinEventK
 use verbatim_model::{Notification, OutpostId, Pid, TraceId};
 use verbatim_uia::map::{
     cached_native_window_handle, cached_process_id, notification_kind_from_uia,
-    notification_processing_from_uia, snapshot_parts_from_cached_element,
+    notification_processing_from_uia,
 };
-use verbatim_uia::{FocusRegistration, Registration, Scope, Subscription};
+use verbatim_uia::{FocusRegistration, Part, Registration, Scope, Subscription};
 
 use crate::OutpostOptions;
 use crate::arbitration::window_class_name;
@@ -537,7 +537,7 @@ impl Listener {
 fn capture(element: &IUIAutomationElement) -> Option<(Pid, isize, UiaSnapshotFact)> {
     let pid = cached_process_id(element).filter(|&pid| pid != 0)?;
     let hwnd = cached_native_window_handle(element);
-    let parts = snapshot_parts_from_cached_element(element);
+    let parts = crate::focus_read::event_parts(element);
     Some((
         Pid(pid),
         hwnd,
@@ -630,7 +630,11 @@ fn install_focus_registration(
 
 /// Installs the desktop-wide UIA subscriptions NVDA registers globally on
 /// Windows 11, an element selected, a menu opened, and notifications, as
-/// one event handler group, as NVDA's global handlers also are.
+/// one event handler group, as NVDA's global handlers also are, with
+/// NVDA's base cache request (`verbatim_uia::nvda_base_cache_request`).
+/// The facts carry the element's process, window, runtime id, role, and
+/// name from that cache; anything else in their snapshots is not read
+/// here and is left empty.
 fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Option<Registration> {
     let selection_outgoing = Arc::clone(outgoing);
     let selection = Subscription::Event {
@@ -698,7 +702,16 @@ fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Option<Registratio
         ),
     };
 
-    match Registration::new(vec![selection, menu, notifications], Scope::Desktop) {
+    // NVDA's base cache request, as its global group carries: UIA fills
+    // only these in the application for each event, and the outpost reads
+    // what more it needs of a selected item when it handles the event.
+    let parts = [selection, menu, notifications]
+        .into_iter()
+        .map(|subscription| {
+            Part::new(subscription, verbatim_uia::NVDA_BASE_PROPERTIES).with_text_pattern()
+        })
+        .collect();
+    match Registration::with_parts(parts, Scope::Desktop) {
         Ok(registration) => Some(registration),
         Err(error) => {
             outgoing.fault(format!(

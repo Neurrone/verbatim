@@ -1294,6 +1294,21 @@ cannot hold the focus.
 - Today: the supervisor starts none for it (`DeliveredFact::may_start_outpost`);
   the snap results still start one.
 
+### NVDA's cache for the focus listener's events
+
+Since 2026-10-12 the focus listener's desktop-wide focus registration and
+its event handler group (an element selected, a menu opened, a
+notification) carry NVDA's base cache request, thirteen properties and
+the Text pattern (`verbatim_uia::nvda_base_cache_request`), where they
+carried the base cache request's 34: UIA fills the request inside each
+application for every focus, selection, menu, and notification event on
+the desktop. The reading thread reads what it needs beyond it from the
+sender, as it already did, and an outpost reads a selected item's states,
+value, and details from its focus's subtree, one search, when the
+listener's selection reaches it. No pinned count in `call_counts.rs`
+changed: its test client stands in for the listener's registration with
+the base cache request.
+
 ### Smaller caches for the focus's events
 
 The outpost's two focus-following registrations asked the provider for

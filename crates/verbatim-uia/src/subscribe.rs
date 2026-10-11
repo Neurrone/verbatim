@@ -195,6 +195,9 @@ pub struct Part {
     /// Whether only the extended group ([`Group::Extended`]) holds the part;
     /// otherwise both groups do.
     pub extended_only: bool,
+    /// Whether the cache request also holds the Text pattern, as NVDA's
+    /// base cache request does ([`Part::with_text_pattern`]).
+    pub text_pattern: bool,
 }
 
 impl Part {
@@ -205,6 +208,17 @@ impl Part {
             subscription,
             properties,
             extended_only: false,
+            text_pattern: false,
+        }
+    }
+
+    /// The part, its cache request also holding the Text pattern: with
+    /// [`crate::NVDA_BASE_PROPERTIES`], NVDA's base cache request.
+    #[must_use]
+    pub fn with_text_pattern(self) -> Self {
+        Self {
+            text_pattern: true,
+            ..self
         }
     }
 
@@ -215,6 +229,7 @@ impl Part {
             subscription,
             properties,
             extended_only: true,
+            text_pattern: false,
         }
     }
 }
@@ -696,8 +711,12 @@ fn run(
         let built = parts
             .into_iter()
             .map(|part| {
+                let cache = uia.cache_request(part.properties)?;
+                if part.text_pattern {
+                    crate::cache::add_text_pattern(&cache)?;
+                }
                 Ok(Built {
-                    cache: uia.cache_request(part.properties)?,
+                    cache,
                     handler: Handler::of(part.subscription, &thread.live),
                     extended_only: part.extended_only,
                 })

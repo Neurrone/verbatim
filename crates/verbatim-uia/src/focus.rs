@@ -129,7 +129,8 @@ fn run(
 ) {
     let setup = (|| -> windows::core::Result<(Uia, IUIAutomationFocusChangedEventHandler)> {
         let uia = Uia::new()?;
-        let cache = uia.base_cache_request()?;
+        // NVDA's base cache request, which its focus handler carries.
+        let cache = crate::cache::nvda_base_cache_request(uia.client())?;
         let handler: IUIAutomationFocusChangedEventHandler = FocusHandler { callback }.into();
         // SAFETY: `cache` and `handler` are live; the client is this thread's
         // own. UIA keeps its own references to both the handler and the

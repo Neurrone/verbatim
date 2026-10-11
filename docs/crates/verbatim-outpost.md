@@ -78,6 +78,15 @@ judged and read by the listener, since a UIA element cannot be handed to
 another process and the listener is the one process that receives the
 event's own element:
 
+- The listener's focus registration and its desktop-wide event handler
+  group carry NVDA's base cache request (`verbatim_uia::nvda_base_cache_request`,
+  since 2026-10-12), so the events' elements arrive with their process,
+  window, runtime id, control type, name, keyboard focus, and NVDA's other
+  base properties alone (`focus_read::event_parts` reads just those). The
+  reading thread takes the role, value, states, and details from its read
+  of the sender, and an outpost reads a selected item it was sent from its
+  focus's subtree (`Worker::fresh_selection`); a menu opening and a
+  notification are reported from the role and name.
 - The listener's focus callback makes no call. It sends the element's
   application a marker (`DeliveredFact::UiaFocusMarker`, numbered by the
   listener) and queues the element, as an agile reference, for that

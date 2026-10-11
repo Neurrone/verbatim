@@ -20,6 +20,10 @@ use windows::Win32::UI::Accessibility::{
     UIA_SizeOfSetPropertyId, UIA_ToggleToggleStatePropertyId, UIA_ValueIsReadOnlyPropertyId,
     UIA_ValueValuePropertyId,
 };
+use windows::Win32::UI::Accessibility::{
+    UIA_AutomationIdPropertyId, UIA_FrameworkIdPropertyId, UIA_IsTextPatternAvailablePropertyId,
+    UIA_LocalizedControlTypePropertyId, UIA_ProviderDescriptionPropertyId, UIA_TextPatternId,
+};
 
 use verbatim_model::Fetches;
 
@@ -141,6 +145,59 @@ pub const FOCUS_EVENT_PROPERTIES: &[windows::Win32::UI::Accessibility::UIA_PROPE
     UIA_IsRangeValuePatternAvailablePropertyId,
     UIA_RangeValueValuePropertyId,
 ];
+
+/// NVDA's base cache request's properties: the window handle its window
+/// cache request starts with, and the twelve it adds
+/// (`baseCachePropertyIDs`, `UIAHandler/__init__.py` 61 to 74 and 547 to
+/// 555). NVDA attaches that request, with the Text pattern, to its focus
+/// handler and its global event handler group, so UIA fills just these in
+/// the application for each of their events. The focus listener's
+/// registrations, which see every application's events, use the same
+/// ([`nvda_base_cache_request`]): what Verbatim then needs of an event's
+/// element beyond them it reads afresh, as NVDA reads it when it handles
+/// the event.
+pub const NVDA_BASE_PROPERTIES: &[UIA_PROPERTY_ID] = &[
+    UIA_NativeWindowHandlePropertyId,
+    UIA_FrameworkIdPropertyId,
+    UIA_AutomationIdPropertyId,
+    UIA_ClassNamePropertyId,
+    UIA_ControlTypePropertyId,
+    UIA_ProviderDescriptionPropertyId,
+    UIA_ProcessIdPropertyId,
+    UIA_IsTextPatternAvailablePropertyId,
+    UIA_IsContentElementPropertyId,
+    UIA_IsControlElementPropertyId,
+    UIA_NamePropertyId,
+    UIA_LocalizedControlTypePropertyId,
+    UIA_HasKeyboardFocusPropertyId,
+];
+
+/// NVDA's base cache request ([`NVDA_BASE_PROPERTIES`] and the Text
+/// pattern), with UIA's default scope (the element alone) and filter, as
+/// NVDA leaves them.
+///
+/// # Errors
+///
+/// Returns the COM error if the client cannot create or populate the cache
+/// request.
+pub fn nvda_base_cache_request(
+    client: &IUIAutomation,
+) -> windows::core::Result<IUIAutomationCacheRequest> {
+    let request = cache_request(client, NVDA_BASE_PROPERTIES)?;
+    add_text_pattern(&request)?;
+    Ok(request)
+}
+
+/// Adds the Text pattern to `request`, as NVDA's base cache request has it.
+///
+/// # Errors
+///
+/// Returns the COM error if the pattern cannot be added.
+pub(crate) fn add_text_pattern(request: &IUIAutomationCacheRequest) -> windows::core::Result<()> {
+    // SAFETY: `request` is a live cache request; a pattern id is a plain
+    // value.
+    unsafe { request.AddPattern(UIA_TextPatternId) }
+}
 
 /// Builds the base cache request: every [`CACHED_PROPERTIES`] entry, prefetched
 /// so the mapping in [`crate::map`] reads only cached values and never blocks.

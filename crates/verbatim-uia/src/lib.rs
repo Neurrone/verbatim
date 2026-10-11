@@ -63,8 +63,8 @@ pub mod text;
 
 pub use bounded::{BoundedClient, Unanswered};
 pub use cache::{
-    CACHED_PROPERTIES, FOCUS_EVENT_PROPERTIES, TEXT_EVENT_PROPERTIES, base_cache_request,
-    cache_request_for, cached_properties,
+    CACHED_PROPERTIES, FOCUS_EVENT_PROPERTIES, NVDA_BASE_PROPERTIES, TEXT_EVENT_PROPERTIES,
+    base_cache_request, cache_request_for, cached_properties, nvda_base_cache_request,
 };
 pub use checks::{console_reports_formatting, is_windows_forms};
 pub use client::{

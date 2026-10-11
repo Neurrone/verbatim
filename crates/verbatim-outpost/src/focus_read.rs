@@ -250,8 +250,8 @@ impl FocusReader {
         if let Some(reason) = refused(hwnd, window) {
             return Judged::Dropped(reason);
         }
-        // The element arrives with the registration's base cache request.
-        let event = snapshot_parts_from_cached_element(element);
+        // The element arrives with NVDA's base cache request.
+        let event = event_parts(element);
         let nearest = match self.judge_before_reading(element, hwnd, &event.runtime_id) {
             Ok(nearest) => nearest,
             Err(reason) => return Judged::Dropped(reason),
@@ -356,13 +356,16 @@ impl FocusReader {
             .element
             .as_ref()
             .map(snapshot_parts_from_cached_element);
-        let (value, states, details) = match live {
-            Some(live) => (live.value, live.states, live.details),
-            None => (event.value, event.states, event.details),
+        // The role from the fresh read too: the event's cache holds the
+        // control type but not what refines it, such as the Toggle pattern
+        // a toggle button has, which NVDA reads when it needs it.
+        let (role, value, states, details) = match live {
+            Some(live) => (live.role, live.value, live.states, live.details),
+            None => (event.role, event.value, event.states, event.details),
         };
         let mut snapshot = UiaSnapshotFact {
             runtime_id: event.runtime_id,
-            role: event.role,
+            role,
             name: event.name,
             value,
             states: states.with(State::Focused),
@@ -511,8 +514,9 @@ impl FocusReader {
     /// and own native window handle, `hwnd`, and whether UI Automation
     /// counts it as the same element as the last focus any of the
     /// listener's readers accepted, in any application
-    /// (`same_as_last_accepted`, the duplicate rule's comparison). The
-    /// framework is one call, made only while debug logging is on.
+    /// (`same_as_last_accepted`, the duplicate rule's comparison). All but
+    /// the comparison come from the event's cache, as NVDA's debug strings
+    /// do; nothing is read live for the log.
     fn log_sender(
         element: &IUIAutomationElement,
         hwnd: isize,
@@ -520,7 +524,9 @@ impl FocusReader {
         same_as_last_accepted: Option<&windows::core::Result<bool>>,
     ) {
         let class_name = element.cached_string(UIA_ClassNamePropertyId);
-        let framework = element.current_framework_id().ok();
+        // From the event's cache, NVDA's base cache request, as NVDA's
+        // debug strings read it.
+        let framework = element.cached_framework_id();
         tracing::debug!(
             ?runtime_id,
             ?class_name,
@@ -703,6 +709,29 @@ fn log_ancestor_fact(path: &str, fact: &UiaAncestorFact) {
 /// just above it.
 fn reused_ancestors(before: &[UiaAncestorFact], met: usize) -> Vec<UiaAncestorFact> {
     before.get(met..).map(<[_]>::to_vec).unwrap_or_default()
+}
+
+/// What an event's element tells from its cache, NVDA's base cache request
+/// (`verbatim_uia::NVDA_BASE_PROPERTIES`): its runtime id, its role from
+/// its control type, its name, and, as its only state, whether it has the
+/// keyboard focus. Nothing else of the element is in that cache, so its
+/// value, other states, and details are left empty rather than read as the
+/// defaults an uncached property gives (an uncached `IsEnabled` would read
+/// as unavailable); what Verbatim needs of them is read afresh.
+pub(crate) fn event_parts(element: &IUIAutomationElement) -> CachedUiaParts {
+    let parts = snapshot_parts_from_cached_element(element);
+    let mut states = verbatim_model::StateSet::new();
+    if element.cached_bool(windows::Win32::UI::Accessibility::UIA_HasKeyboardFocusPropertyId) {
+        states.insert(State::Focused);
+    }
+    CachedUiaParts {
+        runtime_id: parts.runtime_id,
+        role: parts.role,
+        name: parts.name,
+        value: None,
+        states,
+        details: verbatim_model::NodeDetails::default(),
+    }
 }
 
 /// The fact made of an element's cached parts.

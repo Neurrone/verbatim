@@ -102,14 +102,6 @@ pub trait ElementExt {
     /// The COM error if the provider fails the read.
     fn current_control_type(&self) -> windows::core::Result<UIA_CONTROLTYPE_ID>;
 
-    /// The UIA framework, such as `WinForm` or `XAML`, read live.
-    /// Cross-process.
-    ///
-    /// # Errors
-    ///
-    /// The COM error if the provider fails the read.
-    fn current_framework_id(&self) -> windows::core::Result<String>;
-
     /// An integer property read live, `Ok(None)` when the element does not
     /// support it, UIA only supplies its default, or it is not an integer.
     /// Cross-process.
@@ -237,13 +229,6 @@ impl ElementExt for IUIAutomationElement {
         count(CallKind::Uia);
         // SAFETY: `self` is a live element (see the module comment).
         unsafe { self.CurrentControlType() }
-    }
-
-    fn current_framework_id(&self) -> windows::core::Result<String> {
-        count(CallKind::Uia);
-        // SAFETY: `self` is a live element (see the module comment); the
-        // BSTR is owned by the result.
-        unsafe { self.CurrentFrameworkId() }.map(|framework| framework.to_string())
     }
 
     fn current_i32_ignoring_default(

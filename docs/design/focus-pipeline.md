@@ -453,7 +453,7 @@ Conclusion: no route was found, documented or not, for giving another process th
 
 ### 12.1 The shape
 
-- The listener keeps the one desktop-wide UIA focus registration it has today (`install_focus_registration`, `crates/verbatim-outpost/src/listener.rs` 362), with a smaller cache request (process id, runtime id, native window handle, class name, `HasKeyboardFocus`). Its callback only puts the sender on the queue of the thread for the sender's application and returns. Nothing is discarded: every UIA focus event goes to its application's thread.
+- The listener keeps the one desktop-wide UIA focus registration it has today (`install_focus_registration`, `crates/verbatim-outpost/src/listener.rs` 362), with a smaller cache request: NVDA's base cache request, as built on 2026-10-12 (`verbatim_uia::nvda_base_cache_request`: native window handle, framework id, automation id, class name, control type, provider description, process id, whether the Text pattern is available, whether the element is content and a control, name, localized control type, `HasKeyboardFocus`, and the Text pattern, `UIAHandler/__init__.py` 61 to 74 and 547 to 555), which the listener's desktop-wide event handler group carries too, as NVDA's global group does. What the reading thread needs beyond it is read afresh; a selected item's states and value are read by its outpost from the focus's subtree. Its callback only puts the sender on the queue of the thread for the sender's application and returns. Nothing is discarded: every UIA focus event goes to its application's thread.
 - One reading thread per application in the listener process, created when that application's first UIA focus event arrives. It takes its application's events in arrival order and, for each, does NVDA's flusher-thread work (`UIAHandler/__init__.py` 874 to 958):
   - `IsHungAppWindow` on the cached window (local); a hung window's event is dropped, as NVDA's `_shouldSkipEventForHungWindow` drops it;
   - the shell's staging windows and the console host's "Console Window" element are refused (local, from the cache);
@@ -519,7 +519,7 @@ With a spare, the first focus is spoken after about the remote operation's time;
 
 ### 12.7 Cost per focus change
 
-- One cache fill for the listener's registration, with the smaller cache request (today's is 34 properties).
+- One cache fill for the listener's registration, with the smaller cache request: NVDA's thirteen properties and the Text pattern since 2026-10-12, where it was the base cache request's 34.
 - In the listener: one remote operation, plus one live `HasKeyboardFocus` read on the previous element for a repeated runtime id.
 - In the outpost, after reporting: one `ElementFromHandle` and one remote operation to find its own element.
 - Today the outpost makes `GetFocusedElementBuildCache` (which reads whichever application has the focus; 574 ms median on a first File Explorer focus in release) and one remote operation, plus up to two subtree searches when the focus has moved on. Option (b) makes about the same number of calls, all inside the application, and none of the outpost's is on the way to speech.

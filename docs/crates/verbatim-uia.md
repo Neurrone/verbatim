@@ -214,8 +214,7 @@ Public API:
   `cached_bool`, `cached_optional_bool`,
   `cached_f64`, `cached_string`, `cached_bounding_rectangle`,
   `cached_control_type`, `cached_framework_id`), which are local, and the
-  live calls (`current_control_type`, `current_framework_id`,
-  `current_i32_ignoring_default`,
+  live calls (`current_control_type`, `current_i32_ignoring_default`,
   `has_keyboard_focus`,
   `build_updated_cache`, `current_pattern`, `controller_for`,
   `find_first`, `find_first_build_cache`), each of which counts one UIA
@@ -275,8 +274,13 @@ Public API:
   `Role::Terminal`. The console host's text area is recognized by its
   window, in the outpost.
 - `FocusRegistration::new(callback)` — the self-contained, desktop-global
-  UIA focus registration; drop unregisters and tears down its own thread,
-  which leaves COM's multithreaded apartment as it ends.
+  UIA focus registration, carrying NVDA's base cache request
+  (`nvda_base_cache_request`: `NVDA_BASE_PROPERTIES`, thirteen properties,
+  and the Text pattern, with UIA's default scope and filter); drop
+  unregisters and tears down its own thread, which leaves COM's
+  multithreaded apartment as it ends. A `Part` built `with_text_pattern`
+  adds the Text pattern to its cache request, so a `Registration` of parts
+  with `NVDA_BASE_PROPERTIES` carries the same request.
   UIA's focus registration is desktop-global and unscopeable, so exactly one
   exists per process. Under decision D13 the one process that holds it is the
   focus listener, which watches every application at once; the per-application
