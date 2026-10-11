@@ -2755,9 +2755,10 @@ impl Worker<'_> {
             elapsed_us = finding.elapsed().as_micros(),
             "the focus's own element looked for by its path"
         );
-        match found {
-            Some(element) => self.follow_focus_element(runtime_id, &element, trace),
-            None => tracing::debug!("the focus's element was not found; nothing is followed"),
+        if let Some(element) = found {
+            self.follow_focus_element(runtime_id, &element, trace);
+        } else {
+            tracing::debug!("the focus's element was not found; nothing is followed");
         }
     }
 

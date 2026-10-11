@@ -1273,11 +1273,18 @@ fn uia_focus_changes_cost_exactly_classic() {
 
 /// A focus repeated on the element the focus-following subscription already
 /// follows, under the same node, does not move the subscription, so it costs
-/// the focus's read alone, with no registration's `HostRawElementProvider`
-/// and `FragmentRoot` hits (`docs/design/focus-pipeline.md`, section 17).
+/// the focus's read alone (`docs/design/focus-pipeline.md`, section 17).
 /// The worker does not ask for the move; were it asked, the subscription
 /// would find the element already has its group and make no call either,
-/// which `uia_event_registrations_cost_exactly` pins.
+/// which `uia_event_registrations_cost_exactly` pins. With the listener
+/// reading each focus (stage A step 6), the read is the listener's one
+/// remote operation: the sender's and the previous element's keyboard
+/// focus, the sender's cache filled afresh, and its ancestors up to the
+/// first one known from the focus before. The outpost makes no call: it
+/// already holds the element, which the listener read as still focused, so
+/// it does not look for it by its path. Measured against main's outpost,
+/// which read the focused element and then ran its own remote operation,
+/// it is one call fewer and more of mockapp's work, the fresh cache's.
 fn uia_repeated_focus_costs_exactly() {
     let title = common::unique_title("mockapp-counts-uia-repeated-focus");
     let mut app = common::spawn("counts.json", "uia", &title);
@@ -1293,17 +1300,17 @@ fn uia_repeated_focus_costs_exactly() {
     ratchet.check(
         "UIA focus repeated on the element followed",
         &cost,
-        calls(2, 0, 0),
+        calls(1, 0, 0),
         &[
             ("WM_GETOBJECT", 1),
-            ("ProviderOptions", 24),
-            ("GetPatternProvider", 11),
-            ("GetPropertyValue", 31),
-            ("HostRawElementProvider", 10),
-            ("Navigate", 8),
-            ("GetRuntimeId", 4),
-            ("BoundingRectangle", 1),
-            ("FragmentRoot", 4),
+            ("ProviderOptions", 30),
+            ("GetPatternProvider", 22),
+            ("GetPropertyValue", 54),
+            ("HostRawElementProvider", 14),
+            ("Navigate", 9),
+            ("GetRuntimeId", 7),
+            ("BoundingRectangle", 2),
+            ("FragmentRoot", 7),
         ],
     );
 
