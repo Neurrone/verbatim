@@ -39,9 +39,14 @@
 //! abandoned thread, once UIA gives up, says nothing more and ends. An
 //! application whose abandoned threads reach [`ABANDONED_LIMIT`] gets no
 //! new thread until one returns, and its events are dropped meanwhile, as
-//! NVDA drops a hung window's. A thread ends after [`IDLE_END`] with no
-//! event of its application; all it loses is the focus before, which costs
-//! the next focus a fuller ancestor read.
+//! NVDA drops a hung window's.
+//!
+//! A thread keeps its focus before, NVDA's duplicate evidence, for as long
+//! as its application has an outpost: it ends, once it has read every event
+//! waiting, when the listener learns that the application's outpost has
+//! ended ([`Readers::outpost_ended`]), and at the listener's shutdown
+//! (`docs/design/focus-pipeline.md`, section 16.6). An event that arrives
+//! after that, for an application still running, starts a new thread.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -83,10 +88,6 @@ pub(crate) const READ_DEADLINE: Duration =
 /// How many of an application's reading threads may be abandoned and still
 /// in their calls before its focus events are dropped without a read.
 const ABANDONED_LIMIT: usize = 2;
-
-/// How long a reading thread waits for its application's next focus event
-/// before it ends.
-const IDLE_END: Duration = Duration::from_secs(60);
 
 /// What became of one focus event.
 #[derive(Debug)]
@@ -436,6 +437,9 @@ struct App<J> {
     running: Option<(Instant, Meta)>,
     /// Its threads abandoned to reads that have not returned yet.
     abandoned: usize,
+    /// Whether its outpost has ended, so the thread in charge ends once no
+    /// event is waiting.
+    ending: bool,
     /// Wakes the thread in charge when an event is queued.
     wake: Arc<Condvar>,
 }
@@ -447,6 +451,7 @@ impl<J> App<J> {
             live: None,
             running: None,
             abandoned: 0,
+            ending: false,
             wake: Arc::new(Condvar::new()),
         }
     }
@@ -531,12 +536,32 @@ impl<R: Reading> Readers<R> {
             );
             return;
         }
+        // An event after its outpost ended: the application runs on, and
+        // its thread with it.
+        app.ending = false;
         app.queue.push_back((meta, job));
         if app.live.is_some() {
             app.wake.notify_one();
         } else {
             start(shared, &mut state, pid);
         }
+    }
+
+    /// Ends `pid`'s reading thread, the listener having learned that its
+    /// outpost has ended: the thread reads the events already waiting, then
+    /// releases its reader and ends, unless another event comes first.
+    /// Never waits on a read.
+    pub(crate) fn outpost_ended(&self, pid: Pid) {
+        let mut state = self.shared.lock();
+        let Some(app) = state.apps.get_mut(&pid) else {
+            return;
+        };
+        if app.live.is_none() && app.abandoned == 0 && app.queue.is_empty() {
+            state.apps.remove(&pid);
+            return;
+        }
+        app.ending = true;
+        app.wake.notify_one();
     }
 
     /// Stops every reading thread for the listener's shutdown: nothing is
@@ -633,7 +658,8 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
 
 /// The next event for the thread `generation` to read for `pid`, waiting
 /// for one; `None` when the thread is no longer in charge, the readers are
-/// stopping, or no event came for [`IDLE_END`].
+/// stopping, or the application's outpost has ended and no event is
+/// waiting ([`Readers::outpost_ended`]).
 fn next_job<R: Reading>(shared: &Shared<R>, pid: Pid, generation: u64) -> Option<(Meta, R::Job)> {
     let mut state = shared.lock();
     loop {
@@ -649,21 +675,15 @@ fn next_job<R: Reading>(shared: &Shared<R>, pid: Pid, generation: u64) -> Option
             shared.changed.notify_all();
             return Some((meta, job));
         }
-        let wake = Arc::clone(&app.wake);
-        let (guard, waited) = wake
-            .wait_timeout(state, IDLE_END)
-            .unwrap_or_else(PoisonError::into_inner);
-        state = guard;
-        if waited.timed_out() {
-            let app = state.apps.get_mut(&pid)?;
-            if app.live == Some(generation) && app.queue.is_empty() {
-                app.live = None;
-                if app.abandoned == 0 {
-                    state.apps.remove(&pid);
-                }
-                return None;
+        if app.ending {
+            app.live = None;
+            if app.abandoned == 0 {
+                state.apps.remove(&pid);
             }
+            return None;
         }
+        let wake = Arc::clone(&app.wake);
+        state = wake.wait(state).unwrap_or_else(PoisonError::into_inner);
     }
 }
 
@@ -752,10 +772,11 @@ mod tests {
 
     /// A stand-in reading: each job is held until its gate opens, if it
     /// has one, and every outcome is sent to the test with the thread that
-    /// read the event and the reason.
+    /// read the event and the reason, as is each thread that ends.
     struct Script {
         outcomes: Mutex<Sender<(Pid, u64, &'static str)>>,
         read_on: Mutex<Sender<(u64, ThreadId)>>,
+        finished: Mutex<Sender<ThreadId>>,
     }
 
     impl Reading for Script {
@@ -781,7 +802,15 @@ mod tests {
             Judged::Dropped("read")
         }
 
-        fn finish(&self, _: Option<ThreadId>) {}
+        fn finish(&self, reader: Option<ThreadId>) {
+            if let Some(thread) = reader {
+                let _ = self
+                    .finished
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .send(thread);
+            }
+        }
 
         fn outcome(&self, pid: Pid, meta: Meta, judged: Judged) {
             let Judged::Dropped(reason) = judged else {
@@ -799,21 +828,25 @@ mod tests {
         readers: Readers<Script>,
         outcomes: Receiver<(Pid, u64, &'static str)>,
         read_on: Receiver<(u64, ThreadId)>,
+        finished: Receiver<ThreadId>,
     }
 
     fn fixture(deadline: Duration) -> Fixture {
         let (outcomes_tx, outcomes) = mpsc::channel();
         let (read_tx, read_on) = mpsc::channel();
+        let (finished_tx, finished) = mpsc::channel();
         Fixture {
             readers: Readers::new(
                 Script {
                     outcomes: Mutex::new(outcomes_tx),
                     read_on: Mutex::new(read_tx),
+                    finished: Mutex::new(finished_tx),
                 },
                 deadline,
             ),
             outcomes,
             read_on,
+            finished,
         }
     }
 
@@ -893,6 +926,36 @@ mod tests {
         open.send(()).expect("the held read waits");
         assert_eq!(fixture.readers.stop(), 2);
         assert_eq!(fixture.outcomes.try_recv().ok(), None);
+    }
+
+    #[test]
+    fn a_thread_ends_when_its_applications_outpost_ends() {
+        let fixture = fixture(Duration::from_secs(60));
+        let (open, gate) = mpsc::channel();
+        fixture.readers.push(Pid(5), meta(1), (1, Some(gate)));
+        let (_, first) = fixture.read_on.recv_timeout(WAIT).expect("a read");
+        // The outpost ends while the thread reads: the read is finished
+        // and sent, then the thread ends.
+        fixture.readers.outpost_ended(Pid(5));
+        open.send(()).expect("the held read waits");
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (Pid(5), 1, "read")
+        );
+        assert_eq!(
+            fixture.finished.recv_timeout(WAIT).expect("a thread ended"),
+            first
+        );
+        // The application runs on: its next event starts a new thread.
+        fixture.readers.push(Pid(5), meta(2), (2, None));
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (Pid(5), 2, "read")
+        );
+        let (_, second) = fixture.read_on.recv_timeout(WAIT).expect("a read");
+        assert_ne!(second, first, "a new thread read the next event");
+        let _ = fixture.readers.stop();
+        assert_eq!(fixture.finished.try_recv().ok(), Some(second));
     }
 
     #[test]

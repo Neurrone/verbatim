@@ -60,7 +60,8 @@
 //! outpost matches the two hooks' copies of an event by counting. When the
 //! application has no outpost with its hook in any more
 //! ([`SupervisorToOutpost::HookRemoved`]), the listener forwards its events
-//! again. A listener that replaces another is told on its command line the
+//! again, and its reading thread ends once the events waiting for it are
+//! read. A listener that replaces another is told on its command line the
 //! applications whose outposts' hooks are in, and forwards none of their
 //! events from the start.
 //!
@@ -502,7 +503,9 @@ impl Listener {
 
     /// Answers `Ping` with a `Pong` (the listener never abandons a worker, so
     /// its count is always zero), takes the hand-over's news of outposts'
-    /// hooks, and ignores everything else.
+    /// hooks, and ignores everything else. An application with no outpost
+    /// any more has its reading thread ended too
+    /// ([`Readers::outpost_ended`]).
     fn handle_command(&self, command: &SupervisorToOutpost) {
         match command {
             SupervisorToOutpost::Ping { seq } => {
@@ -515,7 +518,10 @@ impl Listener {
                 self.outgoing
                     .hook_installed(*pid, *outpost, verbatim_ia2::event_clock());
             }
-            SupervisorToOutpost::HookRemoved { pid } => self.outgoing.hook_removed(*pid),
+            SupervisorToOutpost::HookRemoved { pid } => {
+                self.outgoing.hook_removed(*pid);
+                self.readers.outpost_ended(*pid);
+            }
             _ => {}
         }
     }

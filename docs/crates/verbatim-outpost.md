@@ -82,8 +82,13 @@ event's own element:
   application a marker (`DeliveredFact::UiaFocusMarker`, numbered by the
   listener) and queues the element, as an agile reference, for that
   application's reading thread (`focus_read::Readers`): one thread per
-  application, created on its first focus event, ended after a minute
-  without one.
+  application, created on its first focus event, and ended once the
+  events waiting for it are read when the supervisor's `HookRemoved` tells
+  the listener the application's outpost has ended
+  (`Readers::outpost_ended`), or at the listener's shutdown, so it keeps
+  its last focus for as long as the application has an outpost
+  (`docs/design/focus-pipeline.md`, section 16.6). A later event of an
+  application still running starts a new thread.
 - The thread judges and reads each event in arrival order
   (`focus_read::FocusReader::read`). An event from a hung window, a shell
   window that only stages a switch, or the console window's own element
@@ -499,7 +504,8 @@ Public API:
   kind (`DeliveredFact::key`; notifications and a focus's marker, read, and
   drop are never merged), with pongs
   and `Ready` first. It answers `Ping` with a `Pong`, takes the hand-over's
-  `HookInstalled` and `HookRemoved` (above), and ignores everything else.
+  `HookInstalled` and `HookRemoved` (above), `HookRemoved` also ending the
+  application's reading thread, and ignores everything else.
   Its per-application state is which applications' outposts have their
   hooks in, which a replacement is given on its command line
   (`--hooks-in`, `listener::parse_hooks_in`), and each reading thread's
