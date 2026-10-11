@@ -507,6 +507,15 @@ Other open items, taken after the steps above unless they fold into one:
 - `settings_system_page` once heard "Windows isn't activated"; the
   settings package above says 14 settings but names 13.
 - `verbatim-gui`'s rlib is 375 MB.
+- An audit of every end-to-end scenario for timing races (2026-10-11):
+  any step that passes only if something happens within a time the test
+  does not control, such as `*_leave_flood`'s window switch racing a
+  320 ms line (fixed by design on its branch) and `*_control_flood`'s
+  key racing a playing line, which also carries the loosened assertion
+  listed above. Each race is fixed by making the test wait for evidence,
+  not by a longer bound. Separately, the agent's bring-forward always
+  takes its slowest path (minimize, wait, restore, set the foreground),
+  once taking 1.4 s; its cause is open, with per-step timing now logged.
 - Scheduled for later (Dickson, 2026-10-11), found by the communication
   design (`docs/design/communication.md`): the mixer retries opening a
   failed audio device after a fixed second, its idle wait doubling as the
