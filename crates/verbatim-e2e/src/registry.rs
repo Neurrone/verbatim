@@ -117,12 +117,13 @@
 //! a pass. The skip comes from that setting alone, never from detecting
 //! the machine.
 
-use std::io;
+use std::io::{self, Write as _};
 use std::panic::{self, AssertUnwindSafe};
+use std::sync::{Mutex, PoisonError};
 
 use verbatim_config::Settings;
 
-use crate::artifacts::{self, ScenarioSummary};
+use crate::artifacts::{self, OutpostCrash, ScenarioSummary};
 use crate::scenario::{Document, Scenario};
 use crate::scenarios::{
     demo_notepad_editing, demo_review_cursor, demo_say_all, demo_settings_dialog_keys,
@@ -1452,6 +1453,13 @@ fn run(def: &ScenarioDef) {
     }
     problems.extend(scenario.clean_up());
     problems.extend(scenario.collect_run_artifacts(&dir));
+    let outpost_crashes = match scenario.outpost_crashes(&dir) {
+        Ok(crashes) => Some(crashes),
+        Err(error) => {
+            problems.push(format!("could not read which outposts crashed: {error}"));
+            None
+        }
+    };
     // A failed speech assertion is reported once the logs holding its
     // step's trace are collected.
     let speech_report = body_outcome
@@ -1491,7 +1499,10 @@ fn run(def: &ScenarioDef) {
     }
 
     let passed = body_outcome.is_ok() && problems.is_empty();
-    if let Err(error) = ScenarioSummary::new(def.name, passed, latency.as_deref()).write(&dir) {
+    report_outpost_crashes(def.name, outpost_crashes.as_deref());
+    let mut summary = ScenarioSummary::new(def.name, passed, latency.as_deref());
+    summary.outpost_crashes = outpost_crashes;
+    if let Err(error) = summary.write(&dir) {
         problems.push(format!("could not write the run summary: {error}"));
     }
     if let Err(error) = artifacts::archive_run(&artifacts::artifacts_root(), def.name, &dir, passed)
@@ -1525,6 +1536,42 @@ fn run(def: &ScenarioDef) {
         "scenario {:?} failed after its body:\n{problems}",
         def.name
     );
+}
+
+/// The scenarios this test process has run, and the outpost crashes they
+/// saw, for [`report_outpost_crashes`]'s running total. The suite runs
+/// every scenario in one test process, so the total on its last scenario's
+/// line is the suite's.
+static OUTPOST_CRASH_TOTALS: Mutex<(usize, usize)> = Mutex::new((0, 0));
+
+/// Writes one line to stderr after each scenario: the outpost crashes it
+/// saw, each with its pid, exit code and dump, and the running total of
+/// crashes and scenarios in this test process, so a run's crash frequency
+/// is known. It is written to the stderr handle itself rather than with
+/// `eprintln!`, which the test harness captures and shows only for a
+/// failed test, so the line appears for a passing scenario too.
+fn report_outpost_crashes(name: &str, crashes: Option<&[OutpostCrash]>) {
+    let (total, scenarios) = {
+        let mut totals = OUTPOST_CRASH_TOTALS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        totals.0 += crashes.map_or(0, <[OutpostCrash]>::len);
+        totals.1 += 1;
+        *totals
+    };
+    let seen = crashes.map_or_else(
+        || "could not be read".to_owned(),
+        |crashes| {
+            std::iter::once(crashes.len().to_string())
+                .chain(crashes.iter().map(ToString::to_string))
+                .collect::<Vec<_>>()
+                .join("; ")
+        },
+    );
+    let line = format!(
+        "scenario {name:?}: outpost crashes: {seen}; in this test run so far: {total} in {scenarios} scenario(s)\n"
+    );
+    let _ = io::stderr().write_all(line.as_bytes());
 }
 
 /// How many latency timelines a scenario's summary is built from.

@@ -36,7 +36,8 @@
 //!   wrote to its artifacts directory (`verbatim_e2e::artifacts`) — rather
 //!   than parsing the subprocess's stdout — and prints one line per
 //!   scenario at the end: pass or fail, and how many of its latency
-//!   timelines reached audio. A selected scenario that exited but wrote *no*
+//!   timelines reached audio, with each outpost crash it saw, and then the
+//!   run's total of outpost crashes. A selected scenario that exited but wrote *no*
 //!   summary is reported as a failure of the run, never a pass: a
 //!   `--scenario` typo or a scenario missing from `tests/e2e.rs` makes
 //!   `cargo test --test e2e <name> -- --exact` match zero tests and still exit 0, and
@@ -350,10 +351,13 @@ fn print_scenario_list() {
 }
 
 /// The one-line-per-scenario report `cargo xtask vm test` prints at the end
-/// of a multi-scenario run: pass or fail, and how many of that scenario's
-/// latency timelines reached audio, when known.
+/// of a multi-scenario run: pass or fail, how many of that scenario's
+/// latency timelines reached audio, when known, and its outpost crashes,
+/// each on a line of its own; then the run's total of outpost crashes.
 fn print_run_summary(results: &[(String, Option<ScenarioSummary>)]) {
     println!("xtask vm test: run summary");
+    let mut crashes = 0;
+    let mut unknown = 0;
     for (name, summary) in results {
         let latency_text = summary.as_ref().map_or_else(
             || {
@@ -374,7 +378,28 @@ fn print_run_summary(results: &[(String, Option<ScenarioSummary>)]) {
             "  {:<4} {name:<28} {latency_text}",
             result_word(summary.as_ref())
         );
+        match summary
+            .as_ref()
+            .and_then(|summary| summary.outpost_crashes.as_ref())
+        {
+            Some(found) => {
+                crashes += found.len();
+                for crash in found {
+                    println!("       outpost crash: {crash}");
+                }
+            }
+            None => unknown += 1,
+        }
     }
+    println!(
+        "xtask vm test: outpost crashes: {crashes} in {} scenario(s){}",
+        results.len(),
+        if unknown > 0 {
+            format!("; not known for {unknown} of them")
+        } else {
+            String::new()
+        }
+    );
 }
 
 /// The pass/fail word for a scenario's run summary. A missing summary is

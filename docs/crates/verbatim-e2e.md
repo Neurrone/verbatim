@@ -243,7 +243,26 @@ before Verbatim did; one that Verbatim's supervisor had to kill exits with
 (`Scenario::outposts_shut_down_cleanly`; `docs/crates/verbatim-outpost.md`,
 "Shutting down"). When crash dumps are configured
 (`vm/scripts/Enable-VerbatimCrashDumps.ps1`), the dumps that appeared in
-`CRASH_DUMP_FOLDER` during the run are copied into its artifacts.
+`CRASH_DUMP_FOLDER` during the run are copied into its artifacts, in
+chunks, since an outpost's dump is a full-memory dump of a few hundred
+megabytes.
+
+Outpost crashes are also counted, so how often they happen is known.
+Once the artifacts are collected, `Scenario::outpost_crashes` reads the
+job's exits again and returns an `artifacts::OutpostCrash` for each
+outpost or focus listener the scenario did not end on purpose whose exit
+Windows called abnormal or whose exit code is an exception code (an
+`NTSTATUS` of `0xC0000000` or above, such as `0xC0000005` for an access
+violation or `0xC0000409` for a fail-fast): its pid, its exit code, and
+the path of its dump in the artifacts (`verbatim-outpost.exe.<pid>.dmp`),
+when one was written. The run records them in its summary as the field
+`ScenarioSummary::outpost_crashes` whether or not its steps passed, and
+each is also an unexpected exit, so the scenario fails as well. After every
+scenario the run writes one line to the stderr handle itself, which the
+test harness does not capture, so it shows for a passing scenario too:
+that scenario's crashes, and the running total of crashes and scenarios
+in this test process. The suite runs every scenario in one test process,
+so the last scenario's line holds the suite's total.
 
 ### The user's Windows Terminal
 
@@ -293,7 +312,7 @@ new crash dumps, the video `<name>.mp4` and ffmpeg's logs
 `recording-check.log`) when recording, and `summary.txt`.
 Losing any of them fails the run. `archive_run` copies each run into
 `history/<scenario>/<UTC time>-<pass or fail>`, keeping the newest 100,
-without the video.
+without the video; crash dumps are archived with their run.
 
 ## Recording
 
@@ -544,8 +563,9 @@ debug log can be larger than one read of the agent's.
   failure with each earlier step shortened to one line.
 - `artifacts::trace_lines`: every line carrying a trace ID in a run's
   collected logs and flight recorder, in time order.
-- `artifacts`: `artifacts_root`, `scenario_dir`, `ScenarioSummary`, and
-  `archive_run`, shared with `xtask vm test` without argument passing.
+- `artifacts`: `artifacts_root`, `scenario_dir`, `ScenarioSummary` (with
+  its `OutpostCrash` list), and `archive_run`, shared with `xtask vm test`
+  without argument passing.
 - `latency`: `fetch` and `report` read the control plane's latency
   timelines; budgets are reported, not enforced. Enforcing them by
   default in local runs, and only recording them on GitHub's runners, is

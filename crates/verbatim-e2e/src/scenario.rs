@@ -43,6 +43,7 @@ use verbatim_control::client::{Client as ControlClient, ok_or_error};
 use verbatim_control::protocol::{Frame, LatencyRecord, ReplyPayload, Request, StatusInfo};
 
 use crate::agent_client::{AgentClient, Launched as AgentLaunch};
+use crate::artifacts::OutpostCrash;
 use crate::recording::Recording;
 use crate::speech::SpeechCollector;
 use crate::timeline::Timeline;
@@ -212,6 +213,9 @@ pub struct Scenario {
     expected_exits: Vec<u32>,
     /// The crash dumps that were already there when the scenario started.
     dumps_before: Option<Vec<String>>,
+    /// The crash dumps written during the run that were copied into its
+    /// artifacts, by file name.
+    dumps_collected: Vec<String>,
     /// Whether [`Scenario::clean_up`] has run.
     cleaned_up: bool,
     /// Whether Verbatim has been asked to quit.
@@ -426,6 +430,7 @@ impl Scenario {
             last_input: None,
             expected_exits: Vec::new(),
             dumps_before,
+            dumps_collected: Vec::new(),
             cleaned_up: false,
             quit: false,
         })
@@ -1587,14 +1592,56 @@ impl Scenario {
         let mut problems = Vec::new();
         for name in after.into_iter().filter(|name| !before.contains(name)) {
             let remote = format!(r"{CRASH_DUMP_FOLDER}\{name}");
+            // In chunks: a full dump of an outpost is a few hundred
+            // megabytes.
             match self.agent.copy_file(&remote, &dir.join(&name)) {
-                Ok(()) => problems.push(format!("a Verbatim process crashed: its dump is {name}")),
+                Ok(()) => {
+                    problems.push(format!("a Verbatim process crashed: its dump is {name}"));
+                    self.dumps_collected.push(name);
+                }
                 Err(error) => problems.push(format!(
                     "a Verbatim process crashed, and its dump {remote} could not be copied: {error}"
                 )),
             }
         }
         problems
+    }
+
+    /// The outposts that crashed during the run, read from the exits the
+    /// agent recorded for Verbatim's job once Verbatim has exited and
+    /// [`Scenario::collect_run_artifacts`] has copied the crash dumps into
+    /// `dir`: every `verbatim-outpost.exe` the scenario did not end on
+    /// purpose whose exit Windows called abnormal or whose exit code is an
+    /// exception code, each with the copy of its dump in `dir` when Windows
+    /// Error Reporting wrote one (`verbatim-outpost.exe.<pid>.dmp`). Each is
+    /// also one of [`Scenario::unexpected_exits`], so a crash fails the
+    /// scenario as well as being counted here.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the job's exits cannot be read.
+    pub fn outpost_crashes(&mut self, dir: &Path) -> io::Result<Vec<OutpostCrash>> {
+        let exits = self.agent.job_exits(self.verbatim_pid)?;
+        Ok(exits
+            .into_iter()
+            .filter(|exit| {
+                exit.image.eq_ignore_ascii_case(OUTPOST_IMAGE)
+                    && !self.expected_exits.contains(&exit.pid)
+                    && (exit.abnormal || exit.exit_code.is_some_and(is_exception_code))
+            })
+            .map(|exit| {
+                let name = format!("{OUTPOST_IMAGE}.{}.dmp", exit.pid);
+                OutpostCrash {
+                    pid: exit.pid,
+                    exit_code: exit.exit_code,
+                    dump: self
+                        .dumps_collected
+                        .iter()
+                        .find(|collected| collected.eq_ignore_ascii_case(&name))
+                        .map(|collected| dir.join(collected).display().to_string()),
+                }
+            })
+            .collect())
     }
 
     /// Finishes this run's video and saves it, with Verbatim's audio, to
@@ -1774,6 +1821,13 @@ fn ready_event_name() -> String {
 /// The crash dumps in [`CRASH_DUMP_FOLDER`] of Verbatim's processes, or
 /// `None` when the folder does not exist, which is when crash dumps are
 /// not configured.
+/// Whether `exit_code` is an exception code, an `NTSTATUS` of error
+/// severity (`0xC0000000` and above), as a process ended by an unhandled
+/// exception or a fail-fast exits with.
+fn is_exception_code(exit_code: i32) -> bool {
+    u32::from_ne_bytes(exit_code.to_ne_bytes()) >= 0xC000_0000
+}
+
 fn crash_dumps(agent: &mut AgentClient) -> Option<Vec<String>> {
     agent.list_files(CRASH_DUMP_FOLDER).ok().map(|names| {
         names

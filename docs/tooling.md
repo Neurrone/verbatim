@@ -718,7 +718,7 @@ describes every video). Like any local run, it takes over the desktop.
 
 Every scenario run, pass or fail, keeps its artifacts, and losing any of
 them fails the run. It writes a one-line-per-fact summary (name,
-pass or fail, latency counts) to `target/e2e-artifacts/<scenario name>/
+pass or fail, latency counts, and the outpost crashes it saw) to `target/e2e-artifacts/<scenario name>/
 summary.txt` under the workspace root (`VERBATIM_E2E_ARTIFACTS_DIR`
 overrides the root), whether run runner-direct or through `cargo xtask vm
 test`; `xtask vm test` reads this back to build its own run summary rather
@@ -1155,10 +1155,37 @@ Verbatim's job. To keep a dump of the crash too, run
 `vm\scripts\Enable-VerbatimCrashDumps.ps1` once from an elevated
 PowerShell: it sets Windows Error Reporting's LocalDumps keys for
 `verbatim.exe`, `verbatim-outpost.exe`, and `verbatim-synth-host.exe`,
-writing minidumps into `C:\ProgramData\Verbatim\CrashDumps`, and the
+writing dumps into `C:\ProgramData\Verbatim\CrashDumps`, and the
 suite copies every dump written during a scenario into its artifacts.
-Until it has been run, an unexpected exit still fails the run, without a
-dump. The script is never run by the harness; Dickson runs it himself.
+Verbatim and the synthesizer host get minidumps. An outpost gets a
+full-memory dump, with handle data and thread information (DumpType 0,
+CustomDumpFlags 0x1826), so that the heap, and with it the UI Automation
+event and handler group behind a crash inside UI Automation's own code,
+can be read in cdb; expect each to be 100 to 300 megabytes, and at most
+10 are kept. The dumps come from Windows Error Reporting rather than from
+the outpost itself because a fail-fast, one of the two crashes seen so
+far, ends a process without running any handler of its own. Windows holds
+the crashed process until its dump is written, so the dump is complete
+when the suite sees the exit. A machine set up before the outpost's dumps
+became full ones needs the script run again. Until it has been run, an
+unexpected exit still fails the run, without a dump. The script is never
+run by the harness; Dickson runs it himself.
+
+**Counting outpost crashes.** After each scenario the suite writes a line
+to stderr, shown for a passing scenario as well as a failing one, naming
+the outpost crashes that scenario saw, each with its pid, its exit code
+(the exception code, such as `0xC0000005` for an access violation or
+`0xC0000409` for a fail-fast) and its dump, followed by the running total
+for the test process, as in "in this test run so far: 1 in 20
+scenario(s)". A full suite runs in one test process, so its last
+scenario's line is the suite's total. The same crashes are kept in each
+scenario's `summary.txt`, as an `outpost_crashes` count and one
+`outpost_crash` line each, and `cargo xtask vm test`, which runs each
+scenario in a process of its own, prints them under each scenario of its
+run summary and then the run's total. To count crashes across separate
+runs, such as twenty runs of one scenario with `--exact`, read the
+`outpost_crashes` lines of the archived summaries under
+`target/e2e-artifacts/history/<scenario>`.
 
 **Stray processes survive a failed run.** Cleanup closes what a scenario
 opened, by process id or window, and fails the run when something will

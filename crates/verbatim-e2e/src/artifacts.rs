@@ -100,6 +100,43 @@ pub struct ScenarioSummary {
     /// instant sink this is close to the pipeline latency; under a real synth
     /// it includes synthesis and is the looser end-to-end smoke number.
     pub max_event_to_audio_ms: Option<u64>,
+    /// The outposts that crashed during the run, whether or not its steps
+    /// passed ([`crate::scenario::Scenario::outpost_crashes`]), or `None`
+    /// when they could not be read. [`ScenarioSummary::new`] leaves it
+    /// `None`; the run sets it once Verbatim has exited.
+    pub outpost_crashes: Option<Vec<OutpostCrash>>,
+}
+
+/// One outpost (a `verbatim-outpost.exe` process, the focus listener
+/// included) that crashed during a scenario: it ended on an unhandled
+/// exception or a fail-fast, which Windows reports as an abnormal exit or
+/// an exit code that is an exception code, and the scenario did not end it
+/// on purpose.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutpostCrash {
+    /// The process id it had.
+    pub pid: u32,
+    /// Its exit code, which for a crash is the exception code, such as
+    /// `0xC0000005` for an access violation or `0xC0000409` for a
+    /// fail-fast; `None` when it could not be read.
+    pub exit_code: Option<i32>,
+    /// Where its crash dump was copied on this machine, or `None` when no
+    /// dump of it was written or it could not be copied.
+    pub dump: Option<String>,
+}
+
+impl std::fmt::Display for OutpostCrash {
+    /// `pid 1234, code 0xC0000005, dump <path>`, with `unknown` for an
+    /// unread code and `none` for a missing dump: the form a summary line
+    /// holds and [`parse_outpost_crash`] reads back.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "pid {}, code ", self.pid)?;
+        match self.exit_code {
+            Some(code) => write!(f, "0x{:08X}", u32::from_ne_bytes(code.to_ne_bytes()))?,
+            None => f.write_str("unknown")?,
+        }
+        write!(f, ", dump {}", self.dump.as_deref().unwrap_or("none"))
+    }
 }
 
 impl ScenarioSummary {
@@ -137,6 +174,7 @@ impl ScenarioSummary {
                     })
                     .max()
             }),
+            outpost_crashes: None,
         }
     }
 
@@ -177,6 +215,17 @@ impl ScenarioSummary {
             "max_event_to_audio_ms: {}",
             format_optional_u64(self.max_event_to_audio_ms)
         );
+        match &self.outpost_crashes {
+            Some(crashes) => {
+                let _ = writeln!(text, "outpost_crashes: {}", crashes.len());
+                for crash in crashes {
+                    let _ = writeln!(text, "outpost_crash: {crash}");
+                }
+            }
+            None => {
+                let _ = writeln!(text, "outpost_crashes: unknown");
+            }
+        }
         fs::write(dir.join(SUMMARY_FILE_NAME), text)
     }
 
@@ -454,6 +503,8 @@ fn parse_summary(text: &str) -> Option<ScenarioSummary> {
     let mut saw_latency_reached_audio_line = false;
     let mut max_event_to_queue_ms = None;
     let mut max_event_to_audio_ms = None;
+    let mut outpost_crash_count: Option<Option<usize>> = None;
+    let mut outpost_crashes = Vec::new();
 
     for line in text.lines() {
         let (key, value) = line.split_once(": ")?;
@@ -478,6 +529,8 @@ fn parse_summary(text: &str) -> Option<ScenarioSummary> {
             // written before they existed simply leaves them `None`.
             "max_event_to_queue_ms" => max_event_to_queue_ms = parse_optional_u64(value),
             "max_event_to_audio_ms" => max_event_to_audio_ms = parse_optional_u64(value),
+            "outpost_crashes" => outpost_crash_count = Some(parse_optional_count(value)),
+            "outpost_crash" => outpost_crashes.push(parse_outpost_crash(value)?),
             _ => {}
         }
     }
@@ -493,6 +546,31 @@ fn parse_summary(text: &str) -> Option<ScenarioSummary> {
             .flatten(),
         max_event_to_queue_ms,
         max_event_to_audio_ms,
+        // A summary written before crashes were counted has no count line,
+        // and its crashes are unknown; a count that disagrees with the
+        // crash lines is malformed.
+        outpost_crashes: match outpost_crash_count {
+            Some(Some(count)) if count == outpost_crashes.len() => Some(outpost_crashes),
+            Some(Some(_)) => return None,
+            _ => None,
+        },
+    })
+}
+
+/// Reads back one crash as [`OutpostCrash`]'s `Display` writes it.
+fn parse_outpost_crash(value: &str) -> Option<OutpostCrash> {
+    let (pid, rest) = value.strip_prefix("pid ")?.split_once(", code ")?;
+    let (code, dump) = rest.split_once(", dump ")?;
+    let exit_code = if code == "unknown" {
+        None
+    } else {
+        let code = u32::from_str_radix(code.strip_prefix("0x")?, 16).ok()?;
+        Some(i32::from_ne_bytes(code.to_ne_bytes()))
+    };
+    Some(OutpostCrash {
+        pid: pid.parse().ok()?,
+        exit_code,
+        dump: (dump != "none").then(|| dump.to_owned()),
     })
 }
 
@@ -644,6 +722,33 @@ mod tests {
         assert_eq!(read_back, summary);
         assert_eq!(read_back.latency_records, None);
         assert_eq!(read_back.latency_reached_audio, None);
+    }
+
+    #[test]
+    fn summary_round_trips_its_outpost_crashes() {
+        let dir = temp_dir("round-trip-crashes");
+        let mut summary = ScenarioSummary::new("conhost_leave_flood", false, None);
+        summary.outpost_crashes = Some(vec![
+            OutpostCrash {
+                pid: 1234,
+                exit_code: Some(i32::from_ne_bytes(0xC000_0005_u32.to_ne_bytes())),
+                dump: Some(r"C:\artifacts\verbatim-outpost.exe.1234.dmp".to_owned()),
+            },
+            OutpostCrash {
+                pid: 5678,
+                exit_code: None,
+                dump: None,
+            },
+        ]);
+        summary.write(&dir).expect("writes the summary");
+
+        let text = fs::read_to_string(dir.join(SUMMARY_FILE_NAME)).expect("reads the file");
+        assert!(text.ends_with(concat!(
+            "outpost_crashes: 2\n",
+            r"outpost_crash: pid 1234, code 0xC0000005, dump C:\artifacts\verbatim-outpost.exe.1234.dmp",
+            "\noutpost_crash: pid 5678, code unknown, dump none\n",
+        )));
+        assert_eq!(ScenarioSummary::read(&dir).expect("reads it back"), summary);
     }
 
     #[test]
