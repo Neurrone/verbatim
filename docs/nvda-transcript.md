@@ -53,6 +53,15 @@ A step is a key to press, or one of these:
   starts a program through the agent, so its first announcement is
   recorded too; `--launch explorer.exe --arg ms-settings:clipboard`
   opens a page of the Settings app.
+- `--launch-minimized <program>`, with its `--arg`s, starts the program
+  exactly as the end-to-end harness starts a terminal
+  (`Scenario::launch_owning_window`, through the agent's
+  `launch_minimized`): its first window opens minimized and inactive
+  (`SW_SHOWMINNOACTIVE`), and the agent's right to the foreground is not
+  withheld. The harness then waits for the window's shell to write its
+  process id and brings the window forward; `--wait-file <path>` waits,
+  through the agent, for a file to exist, and `--front` brings the
+  window forward as the harness does.
 - `--front <image>[=<title>]` brings a window of that program, with a
   title containing the text if given, to the foreground through the
   agent, as the end-to-end suite does. With `*` for the program,
@@ -87,6 +96,15 @@ A step is a key to press, or one of these:
   down. For example, `--hold control shift+tab --release control` presses
   Shift+Tab with Control held, and records what is said before Control
   is released and after.
+
+A capture that compares a scenario's opening, the burst of focus events a
+window raises as it opens, must launch the program exactly as the
+scenario does: how a window opens, behind or already in front, decides
+which of those events are accepted, by NVDA as by Verbatim. A window
+opened in front with `--launch` while the scenario's opens minimized
+gives a different burst, and the comparison says nothing. For a terminal
+scenario that is `--launch-minimized` with the scenario's own arguments,
+`--wait-file` on its shell's process id file, and `--front` on its title.
 
 A key step can also name several keys joined by commas, such as
 `numpad8,numpad8`, pressed in one batch, so that both screen readers

@@ -65,7 +65,9 @@ pub fn run(args: &[String]) -> ExitCode {
                 "  capture  [--agent <address>] [--quiet-ms <ms>] [--timeout-ms <ms>] [--verbatim] \
                  [--json] <step>...: run each step through the agent and print what NVDA (or, \
                  with --verbatim, the local Verbatim) speaks after it, as JSON lines with \
-                 --json; a step is a key, --launch <program> [--arg <arg>]..., --front \
+                 --json; a step is a key, --launch <program> [--arg <arg>]... (or \
+                 --launch-minimized, as the end-to-end harness launches a terminal), \
+                 --wait-file <path>, --front \
                  <image>[=<title>] (* for any image), --type <text>, --hold <key> or \
                  --release <key> (a key held down across the steps between them, released \
                  when the capture ends or fails), or --gesture <id> (sent to the local \
@@ -213,8 +215,19 @@ enum Step {
     /// Press a key combination through the agent, or several joined by
     /// commas in one batch, so `numpad8,numpad8` is a double press.
     Key(String),
-    /// Start a program through the agent, in its session.
-    Launch { program: String, args: Vec<String> },
+    /// Start a program through the agent, in its session; with
+    /// `minimized`, as the end-to-end harness launches a terminal
+    /// (`AgentClient::launch_minimized`): its first window minimized and
+    /// inactive, the agent's right to the foreground not withheld.
+    Launch {
+        program: String,
+        args: Vec<String>,
+        minimized: bool,
+    },
+    /// Wait, through the agent, for a file to exist, as the harness waits
+    /// for a shell to write its process id before bringing its window
+    /// forward.
+    WaitFile(String),
     /// Bring a window of an image, optionally with a title containing some
     /// text, to the foreground through the agent.
     Front {
@@ -243,7 +256,16 @@ impl Step {
             Self::Type(text) => format!("type {text:?}"),
             Self::Hold(key) => format!("hold {key}"),
             Self::Release(key) => format!("release {key}"),
-            Self::Launch { program, args } => format!("launch {program} {}", args.join(" ")),
+            Self::Launch {
+                program,
+                args,
+                minimized,
+            } => format!(
+                "launch{} {program} {}",
+                if *minimized { " minimized" } else { "" },
+                args.join(" ")
+            ),
+            Self::WaitFile(path) => format!("wait for {path}"),
             Self::Front { image, title } => match title {
                 Some(title) => format!("front {image} \"{title}\""),
                 None => format!("front {image}"),
@@ -293,12 +315,23 @@ fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
             "--launch" => options.steps.push(Step::Launch {
                 program: value()?.clone(),
                 args: Vec::new(),
+                minimized: false,
             }),
+            "--launch-minimized" => options.steps.push(Step::Launch {
+                program: value()?.clone(),
+                args: Vec::new(),
+                minimized: true,
+            }),
+            "--wait-file" => options.steps.push(Step::WaitFile(value()?.clone())),
             "--arg" => {
                 let arg = value()?.clone();
                 match options.steps.last_mut() {
                     Some(Step::Launch { args, .. }) => args.push(arg),
-                    _ => return Err(io::Error::other("--arg must follow --launch")),
+                    _ => {
+                        return Err(io::Error::other(
+                            "--arg must follow --launch or --launch-minimized",
+                        ));
+                    }
                 }
             }
             "--gesture" => options.steps.push(Step::Gesture(value()?.clone())),
@@ -623,9 +656,25 @@ fn run_step(
                 agent.send_keys(&[key.to_owned()])?;
             }
         }
-        Step::Launch { program, args } => {
-            agent.launch_process(program, args, None, &[], None)?;
+        Step::Launch {
+            program,
+            args,
+            minimized,
+        } => {
+            if *minimized {
+                agent.launch_minimized(program, args)?;
+            } else {
+                agent.launch_process(program, args, None, &[], None)?;
+            }
             *target = None;
+        }
+        Step::WaitFile(path) => {
+            if !agent.wait_for_file(path, verbatim_e2e::scenario::WINDOW_TIMEOUT)? {
+                return Err(io::Error::other(format!(
+                    "{path} was not written within {:?}; the remaining steps were not run",
+                    verbatim_e2e::scenario::WINDOW_TIMEOUT
+                )));
+            }
         }
         Step::Front { image, title } => {
             // The window, found by its image and title, is brought
@@ -853,6 +902,31 @@ mod tests {
                 Step::Hold("control".to_owned()),
                 Step::Key("shift+tab".to_owned()),
                 Step::Release("control".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_minimized_launch_takes_its_args_and_a_file_is_waited_for() {
+        let args = [
+            "--launch-minimized",
+            "wt.exe",
+            "--arg",
+            "-w",
+            "--wait-file",
+            r"C:\run\pid",
+        ]
+        .map(str::to_owned);
+        let options = parse_capture_args(&args).unwrap();
+        assert_eq!(
+            options.steps,
+            [
+                Step::Launch {
+                    program: "wt.exe".to_owned(),
+                    args: vec!["-w".to_owned()],
+                    minimized: true,
+                },
+                Step::WaitFile(r"C:\run\pid".to_owned()),
             ]
         );
     }
