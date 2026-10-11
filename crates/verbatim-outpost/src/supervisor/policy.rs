@@ -122,6 +122,8 @@ pub(super) struct HeldFact {
     pub(super) fact: DeliveredFact,
     /// For an MSAA `WinEvent`'s fact, the thread that raised it and when.
     pub(super) win_event: Option<crate::protocol::WinEventStamp>,
+    /// When verbatim.exe read it from the listener.
+    pub(super) received: super::writer::Received,
 }
 
 /// Facts that arrive while an outpost is starting, held in arrival order and
@@ -244,6 +246,7 @@ mod tests {
             timing: crate::protocol::EventTiming::default(),
             fact,
             win_event: None,
+            received: crate::supervisor::writer::Received::now(),
         }
     }
 

@@ -314,7 +314,7 @@ impl Supervisor {
             .get(&outpost)
             .cloned()
             .ok_or(QueueError::Closed)?;
-        writer.push(writer::Outgoing::Other(command))
+        writer.push(writer::Outgoing::Other(command, writer::Received::now()))
     }
 
     /// Tells one outpost incarnation which of its nodes and text anchors Core

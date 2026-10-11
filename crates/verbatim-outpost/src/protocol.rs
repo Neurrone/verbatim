@@ -45,6 +45,28 @@ pub struct EventTiming {
     /// The part of `calls` a caret key's watch made in the checks that found
     /// no evidence, before `awaited_at_us`.
     pub awaited_calls: CallCounts,
+    /// When verbatim.exe took in what it relayed to the outpost: for a
+    /// listener's fact, when its relay thread took the read's completion;
+    /// for a request Core made, when the request was queued for the
+    /// outpost (`docs/design/relay.md`, section 4.5). 0 for an event the
+    /// outpost observed itself.
+    pub core_received_at_us: u64,
+    /// How long verbatim.exe held it, in microseconds, measured on one
+    /// clock in verbatim.exe from `core_received_at_us`'s moment to the
+    /// moment its relay thread began encoding it for the write to the
+    /// outpost; the time waiting in the outpost's command queue counts, and
+    /// so does `core_held_us`.
+    pub core_relay_us: u64,
+    /// The part of `core_relay_us` a listener's fact was held while its
+    /// outpost started, before the outpost said it was ready; 0 for a fact
+    /// delivered at once.
+    pub core_held_us: u64,
+    /// `core_received_at_us` plus `core_relay_us`: when verbatim.exe
+    /// relayed it, on the clock the other stamps share.
+    pub core_sent_at_us: u64,
+    /// When verbatim.exe read the outpost's message carrying this timing
+    /// off the outpost's pipe, parsed; 0 until then.
+    pub core_read_at_us: u64,
 }
 
 /// Microseconds since the Unix epoch, the clock [`EventTiming`] and the
@@ -395,7 +417,8 @@ impl DeliveredFact {
     }
 
     /// Whether this fact is part of a UIA focus's read: a marker, the read,
-    /// a drop, or the end of a listener's reads. The supervisor relays
+    /// a drop, a marked selection or notification, which resolves its
+    /// marker as a read does, or the end of a listener's reads. The supervisor relays
     /// these in order and never drops one, since an outpost waits on a
     /// marker until its read or drop arrives.
     #[must_use]
@@ -405,6 +428,7 @@ impl DeliveredFact {
             DeliveredFact::UiaFocusMarker { .. }
                 | DeliveredFact::UiaFocusRead { .. }
                 | DeliveredFact::UiaFocusDropped { .. }
+                | DeliveredFact::UiaMarked { .. }
                 | DeliveredFact::UiaFocusReadsEnded
         )
     }
@@ -519,10 +543,6 @@ pub enum FactKey {
 /// handle; there is no shutdown message.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a command is built, queued, written once, and dropped; the writer's queue holds at most 64"
-)]
 pub enum SupervisorToOutpost {
     /// Forces one backend for every window of the target application,
     /// overriding arbitration; used by tests and per-app config overrides.
@@ -603,6 +623,11 @@ pub enum SupervisorToOutpost {
         request_id: u64,
         /// What to do.
         query: Query,
+        /// verbatim.exe's relay stamps (`EventTiming::core_received_at_us`
+        /// and the two after it), filled in as the request is written, which
+        /// the outpost carries into its reply's timing; default as sent.
+        #[serde(default)]
+        timing: EventTiming,
     },
     /// Withdraws a query that has not started: it is answered
     /// [`QueryOutcome::NotStarted`] instead of being run. A query already
@@ -917,6 +942,16 @@ impl OutpostToSupervisor {
                     ..
                 }
         )
+    }
+
+    /// Records, in an event's or a reply's timing, when verbatim.exe read
+    /// the message off the outpost's pipe (`EventTiming::core_read_at_us`).
+    pub fn core_read(&mut self, at_us: u64) {
+        if let OutpostToSupervisor::Event { timing, .. }
+        | OutpostToSupervisor::Reply { timing, .. } = self
+        {
+            timing.core_read_at_us = at_us;
+        }
     }
 
     /// Stamps `outpost` on every node id this message carries. Core applies
@@ -1485,6 +1520,7 @@ mod tests {
                 trace_id: TraceId::mint(),
                 request_id: 3,
                 query,
+                timing: EventTiming::default(),
             })
             .chain([SupervisorToOutpost::Cancel { request_id: 3 }])
             .collect();

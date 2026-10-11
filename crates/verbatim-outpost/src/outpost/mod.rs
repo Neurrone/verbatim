@@ -843,6 +843,7 @@ impl Outpost {
                 trace_id,
                 request_id,
                 query,
+                timing,
             } => context.push(
                 Item::Query {
                     request_id: *request_id,
@@ -850,8 +851,12 @@ impl Outpost {
                 },
                 *trace_id,
                 now_ms(),
+                // Only Core's relay stamps come with a request.
                 EventTiming {
                     relayed_at_us: now_us(),
+                    core_received_at_us: timing.core_received_at_us,
+                    core_relay_us: timing.core_relay_us,
+                    core_sent_at_us: timing.core_sent_at_us,
                     ..EventTiming::default()
                 },
             ),
@@ -1144,6 +1149,7 @@ pub fn run_attach(target_pid: u32, options: OutpostOptions) -> io::Result<()> {
         trace_id: TraceId::mint(),
         request_id: 0,
         query: Query::FocusNow,
+        timing: EventTiming::default(),
     });
     loop {
         thread::park();

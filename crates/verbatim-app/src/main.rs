@@ -46,7 +46,9 @@ use verbatim_model::{
     CaretKey, Earcon, Effect, GestureId, Input, OutpostId, Pid, ReaderSettings, SpeechPriority,
     TextRequest, TraceId, Utterance, UtteranceSegment,
 };
-use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost};
+use verbatim_outpost::protocol::{
+    EventTiming, OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost,
+};
 use verbatim_outpost::supervisor::EndReason;
 use verbatim_outpost::{OutpostMessage, OutpostOptions, Supervisor};
 use verbatim_speech::hosting::synth_ids;
@@ -1084,6 +1086,7 @@ impl ReducerThread<'_> {
                 trace_id,
                 request_id: id.0,
                 query: Query::FocusNow,
+                timing: EventTiming::default(),
             },
         );
     }
@@ -1144,6 +1147,7 @@ impl ReducerThread<'_> {
                 trace_id,
                 request_id: id.0,
                 query: Query::FocusNow,
+                timing: EventTiming::default(),
             },
         );
     }
@@ -1527,6 +1531,7 @@ impl ReducerThread<'_> {
                         node_id: query.node_id,
                         kind: query.kind,
                     },
+                    timing: EventTiming::default(),
                 };
                 self.send(outpost, id, command);
             }
@@ -1537,6 +1542,7 @@ impl ReducerThread<'_> {
                     trace_id,
                     request_id: id.0,
                     query: Query::Activate { node_id },
+                    timing: EventTiming::default(),
                 };
                 self.send(outpost, id, command);
             }
@@ -1573,6 +1579,7 @@ impl ReducerThread<'_> {
             trace_id,
             request_id: id.0,
             query: Query::Text { node_id, op },
+            timing: EventTiming::default(),
         };
         self.send(outpost, id, command);
     }
@@ -1605,6 +1612,7 @@ impl ReducerThread<'_> {
             trace_id: TraceId::mint(),
             request_id: id.0,
             query: Query::DumpTree,
+            timing: EventTiming::default(),
         };
         self.send(outpost, id, command);
     }

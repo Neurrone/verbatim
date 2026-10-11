@@ -332,6 +332,7 @@ impl OutpostUnderTest {
             trace_id: TraceId::mint(),
             request_id,
             query,
+            timing: EventTiming::default(),
         });
         request_id
     }

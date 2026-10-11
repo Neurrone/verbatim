@@ -16,7 +16,7 @@ use verbatim_model::{OutpostId, Pid, TraceId};
 
 use crate::protocol::{
     DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
-    WinEventStamp, read_message,
+    WinEventStamp, now_us, read_message,
 };
 
 use super::ignored::IgnoredProcesses;
@@ -25,7 +25,7 @@ use super::policy::{
 };
 use super::process::{self, Launched, Role, Target};
 use super::retire::{Ending, ShutdownSummary, retire};
-use super::writer::{self, Outgoing, WriterHandle};
+use super::writer::{self, Outgoing, Received, WriterHandle};
 use super::{
     ABANDONED_WORKER_LIMIT, CRASH_LIMIT, CRASH_WINDOW, EndReason, EventSink, IDLE_RETIREMENT,
     MISSED_PONG_THRESHOLD, OutpostMessage, PING_INTERVAL, SWEEP_INTERVAL, Writers,
@@ -56,6 +56,8 @@ pub(super) enum OwnerEvent {
         timing: EventTiming,
         fact: ListenerFact,
         win_event: Option<WinEventStamp>,
+        /// When verbatim.exe read it from the listener.
+        received: Received,
     },
     /// From the listener's reader: it forwards none of `pid`'s `WinEvent`
     /// facts raised after `through`, the answer to the hand-over for
@@ -282,6 +284,7 @@ impl Owner {
                 timing,
                 fact,
                 win_event,
+                received,
             } => self.route_fact(
                 HeldFact {
                     trace_id,
@@ -289,6 +292,7 @@ impl Owner {
                     timing,
                     fact: fact.fact,
                     win_event,
+                    received,
                 },
                 fact.pid,
             ),
@@ -645,7 +649,10 @@ impl Owner {
         let Some(writer) = record.child.as_ref().map(|child| child.writer.clone()) else {
             return;
         };
-        for held in record.held.take() {
+        for mut held in record.held.take() {
+            // The time it was held for the outpost's start, reported apart
+            // from the relay's own (`docs/design/relay.md`, section 7).
+            held.timing.core_held_us = held.received.elapsed_us();
             deliver(&writer, held);
         }
         // An outpost is ready once its own `WinEvent` hook is in: the
@@ -897,6 +904,7 @@ impl Owner {
                 timing: EventTiming::default(),
                 fact: DeliveredFact::UiaFocusReadsEnded,
                 win_event: None,
+                received: crate::supervisor::writer::Received::now(),
             };
             match record.child.as_ref().filter(|_| record.ready) {
                 Some(child) => deliver(&child.writer, held),
@@ -1048,9 +1056,9 @@ fn deliver(writer: &WriterHandle, held: HeldFact) {
     // An outpost waits on a UIA focus's marker until its read or drop
     // arrives, so no part of a focus's read is dropped or reordered.
     let outgoing = if focus_read {
-        Outgoing::HandOver(command)
+        Outgoing::FocusRead(command, held.received)
     } else {
-        Outgoing::Fact(key, command)
+        Outgoing::Fact(key, command, held.received)
     };
     if let Err(error) = writer.push(outgoing) {
         tracing::warn!(%error, "a routed fact could not be queued");
@@ -1141,6 +1149,7 @@ fn read_outpost(
                 break;
             }
         };
+        message.core_read(now_us());
         // Node ids name the incarnation whose pipe they arrived on, never
         // whatever the message body claims.
         message.assign_outpost(outpost);
@@ -1181,6 +1190,7 @@ fn read_outpost(
 fn read_listener(outpost: OutpostId, from_child: File, own_tx: &Sender<OwnerEvent>) {
     let mut reader = BufReader::new(from_child);
     while let Ok(Some(message)) = read_message::<_, OutpostToSupervisor>(&mut reader) {
+        let received = Received::now();
         let event = match message {
             OutpostToSupervisor::FocusFact {
                 trace_id,
@@ -1194,6 +1204,7 @@ fn read_listener(outpost: OutpostId, from_child: File, own_tx: &Sender<OwnerEven
                 timing,
                 fact,
                 win_event,
+                received,
             },
             OutpostToSupervisor::ForwardingEnded {
                 pid,

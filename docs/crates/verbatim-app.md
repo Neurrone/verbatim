@@ -303,8 +303,15 @@ knowing for review:
   `pressed_at_us`, sent with the key as `ShellCommand::CaretKey`), and the
   ledger keeps the reducer's handling of the key (`requested`, any
   reduction before an outpost answered) apart from its handling of the
-  answer, so the line names the hook to Core, Core to outpost, and caret
-  wait stages as well. The event's stages are one message's own: the
+  answer, so the line names the hook to Core, the request's way to the
+  outpost, and caret wait stages as well. verbatim.exe's relay stamps
+  (`EventTiming::core_received_at_us` and those after it, and
+  `core_read_at_us` on the way back; `docs/design/relay.md`, section 4.5)
+  split the spans across verbatim.exe: the listener's or the reducer's
+  span to verbatim.exe, the time a fact was held for its starting outpost,
+  verbatim.exe's own relay time, and verbatim.exe to the outpost; and, back
+  from the outpost, the outpost to verbatim.exe's reader and the wait for
+  the reducer. The event's stages are one message's own: the
   message whose reduction first asked for speech on the trace, which Core
   tells the ledger as it hands the utterance to the pipeline
   (`speech_requested`, on the reducer thread, so a message received before

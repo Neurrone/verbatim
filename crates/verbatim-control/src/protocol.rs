@@ -355,11 +355,35 @@ pub enum LatencyStageKind {
     /// From the keyboard hook seeing a caret key to the reducer having
     /// handled it and asked the outpost for the caret.
     HookToCore,
-    /// From the listener observing a focus to its outpost receiving it.
+    /// From the listener observing a focus to its outpost receiving it, for
+    /// a timeline without verbatim.exe's relay stamps; one with them has
+    /// [`ListenerToRelay`](Self::ListenerToRelay) and the stages after it
+    /// instead.
     ListenerToOutpost,
     /// From the reducer asking an outpost (a caret key's watch, a command's
-    /// query) to the outpost receiving the request.
+    /// query) to the outpost receiving the request, for a timeline without
+    /// verbatim.exe's relay stamps; one with them has
+    /// [`RequestToRelay`](Self::RequestToRelay) and the stages after it
+    /// instead.
     CoreToOutpost,
+    /// From the listener observing a focus to verbatim.exe's relay thread
+    /// taking it off the listener's pipe: the listener's queue and writer,
+    /// the pipe, and the relay thread's wake.
+    ListenerToRelay,
+    /// From the reducer having handled the input to the request being
+    /// queued for the outpost: the reducer's other effects before it.
+    RequestToRelay,
+    /// A listener's fact held in verbatim.exe while its outpost started,
+    /// until the outpost said it was ready; reported apart from the relay.
+    OutpostStart,
+    /// verbatim.exe's own time relaying it: from taking it in to its relay
+    /// thread beginning the write to the outpost, measured on one clock in
+    /// verbatim.exe, the time any earlier command to the same outpost took
+    /// to write included, and the outpost's start not.
+    Relay,
+    /// From verbatim.exe's relay thread beginning the write to the outpost
+    /// receiving it: the encoding, the pipe, and the outpost reader's wake.
+    RelayToOutpost,
     /// Waiting in the outpost's queue.
     OutpostQueue,
     /// A caret key's watch for evidence that the key did something, open
@@ -369,8 +393,17 @@ pub enum LatencyStageKind {
     /// The outpost's worker reading the application: the stage that makes
     /// cross-process calls (after the caret wait, for a caret key).
     OutpostRead,
-    /// From the outpost publishing to Core receiving it.
+    /// From the outpost publishing to Core receiving it, for a timeline
+    /// without verbatim.exe's read stamp; one with it has
+    /// [`OutpostToRelay`](Self::OutpostToRelay) and
+    /// [`ReducerWait`](Self::ReducerWait) instead.
     ToCore,
+    /// From the outpost publishing to verbatim.exe's reader having read and
+    /// parsed the message: the outpost's writer, the pipe, and the reader.
+    OutpostToRelay,
+    /// From verbatim.exe's reader having the message to the reducer taking
+    /// it: the reducer busy with what came before, not the relay.
+    ReducerWait,
     /// The reducer.
     Reducer,
     /// From the reducer to the speech queue.
@@ -393,10 +426,17 @@ impl LatencyStageKind {
             Self::HookToCore => "hook to Core",
             Self::ListenerToOutpost => "listener to outpost",
             Self::CoreToOutpost => "Core to outpost",
+            Self::ListenerToRelay => "listener to verbatim.exe",
+            Self::RequestToRelay => "reducer to verbatim.exe's relay",
+            Self::OutpostStart => "waiting for the outpost to start",
+            Self::Relay => "verbatim.exe",
+            Self::RelayToOutpost => "verbatim.exe to outpost",
             Self::OutpostQueue => "outpost queue",
             Self::CaretWait => "caret wait",
             Self::OutpostRead => "outpost read",
             Self::ToCore => "to Core",
+            Self::OutpostToRelay => "outpost to verbatim.exe",
+            Self::ReducerWait => "waiting for the reducer",
             Self::Reducer => "reducer",
             Self::ToSpeech => "to speech",
             Self::Synthesis => "synthesis",

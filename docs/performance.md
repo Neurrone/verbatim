@@ -187,6 +187,36 @@ trace's cost is visible in the debug log, not in the ledger.
   read's call count, by kind. It has no calibrated per-call cost of its
   own, so it says the floor needs calibration instead of printing a ratio.
 
+## verbatim.exe's relay
+
+Every fact the focus listener sees passes through verbatim.exe on its way
+to the application's outpost, and every request Core makes goes the same
+way, so verbatim.exe's share of the time is a stage of its own in the
+latency line and in `verbatim-inspect latency` (`docs/design/relay.md`,
+sections 4.5 and 7; `docs/tooling.md` lists the stages). Its budget is
+that verbatim.exe adds at most 1 to 2 ms, read as section 9 of the design
+defines it: verbatim.exe's own stage at most 1 to 2 ms, and its added hop
+no worse than the platform's floor, every exception attributed.
+
+- verbatim.exe's own time is measured inside verbatim.exe on its
+  monotonic clock alone, from taking a fact in (its relay thread taking
+  the listener read's completion) or queuing a request, to its relay
+  thread beginning the write to the outpost, and travels to the outpost
+  as a duration (`EventTiming::core_relay_us`). It does not depend on
+  clocks agreeing across processes.
+- The spans either side of it, from the listener to verbatim.exe and from
+  verbatim.exe to the outpost, are on the wall clock every process shares
+  (`now_us`), as the other cross-process stages are.
+- A fact held while its outpost started is reported as "waiting for the
+  outpost to start", never pooled with verbatim.exe's own time.
+- On the way back, verbatim.exe's reader stamps when it read and parsed
+  each outpost message, which divides the old "to Core" stage into the
+  pipe and the wait for the reducer, which is the reducer busy with
+  earlier input, not the relay.
+- Nothing on the relay's path logs: stamps travel in the messages, and
+  the platform floor's benchmark (`cargo xtask relay-floor`,
+  `docs/tooling.md`) keeps its stamps in memory until it exits.
+
 ## The ledger
 
 Each operation gives the minimum call count and the reasoning for it, the

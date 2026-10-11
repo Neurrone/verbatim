@@ -200,7 +200,7 @@ Verbatim's own log also carries one line per announcement, always, at
 `info` on the `verbatim::latency` target, written when its audio starts.
 For example:
 
-`12.3 ms for "Voice combo box English (Great Britain) collapsed Alt+v": 9.5 ms to speech and 2.8 ms to sound, not counting 0.0 ms waiting behind earlier speech. Event: Windows 0.0, listener to outpost 0.2, outpost queue 3.5, outpost read 5.5 (4 calls), to Core 0.2, reducer 0.0, to speech 0.1. Speech: synthesis 0.6, leading silence 0.1, mixer and device 2.0.`
+`12.3 ms for "Voice combo box English (Great Britain) collapsed Alt+v": 9.5 ms to speech and 2.8 ms to sound, not counting 0.0 ms waiting behind earlier speech. Event: Windows 0.0, listener to verbatim.exe 0.1, verbatim.exe 0.0, verbatim.exe to outpost 0.1, outpost queue 3.5, outpost read 5.5 (4 calls), outpost to verbatim.exe 0.1, waiting for the reducer 0.1, reducer 0.0, to speech 0.1. Speech: synthesis 0.6, leading silence 0.1, mixer and device 2.0.`
 
 The total is everything from Windows raising the event to the audio engine
 taking the first sample, except time spent waiting behind earlier speech,
@@ -210,10 +210,24 @@ which is reported separately. The stages, in milliseconds:
   (whole milliseconds, and only for WinEvents).
 - Hook to Core: for a caret key, from the keyboard hook seeing the key to
   the reducer having handled it and asked the outpost for the caret.
-- Listener to outpost: from the listener observing the event, through
-  Core, to the application's outpost, for focus the listener sees.
-- Core to outpost: from the reducer asking the outpost (a caret key's
-  watch, a command's query) to the outpost receiving the request.
+- Listener to verbatim.exe: for focus the listener sees, from the
+  listener observing the event to verbatim.exe's relay thread taking it
+  off the listener's pipe: the listener's queue and writer, the pipe, and
+  the relay thread's wake.
+- Reducer to verbatim.exe's relay: for a request Core makes (a caret key's
+  watch, a command's query), from the reducer having handled the input to
+  the request being queued for the outpost.
+- Waiting for the outpost to start: a listener's fact that arrived while
+  its outpost was starting, held until the outpost said it was ready.
+  Reported apart from verbatim.exe's own time.
+- verbatim.exe: verbatim.exe's own time relaying the fact or request, from
+  taking it in to its relay thread beginning the write to the outpost,
+  measured on one clock inside verbatim.exe, the outpost's start aside.
+- verbatim.exe to outpost: from the relay thread beginning the write to
+  the outpost receiving it: the encoding, the pipe, and the outpost
+  reader's wake.
+- Listener to outpost, Core to outpost: the two spans above taken whole,
+  for a timeline that lacks verbatim.exe's relay stamps.
 - Outpost queue: waiting for the outpost's worker, behind the
   application's other events.
 - Caret wait: for a caret key whose first check found no evidence that
@@ -226,8 +240,14 @@ which is reported separately. The stages, in milliseconds:
 - Outpost read: the worker's cross-process UIA and MSAA calls and window
   messages, after the caret wait for a caret key, with how many it made
   when it made any (`docs/performance.md` says what counts).
-- To Core, reducer, to speech: the pipe to Core, the reducer, and the
-  hand-off to the speech manager.
+- Outpost to verbatim.exe: from the outpost publishing to verbatim.exe's
+  reader having read and parsed the message.
+- Waiting for the reducer: from verbatim.exe's reader having the message
+  to the reducer taking it. This is the reducer busy with what came
+  before, not the relay. A timeline without the reader's stamp has one
+  stage, to Core, in place of these two.
+- Reducer, to speech: the reducer, and the hand-off to the speech
+  manager.
 - Synthesis: from synthesis starting to the synthesizer's first audio,
   including the pipes to and from the synthesizer host.
 - Leading silence: audio the trimmer held back as leading silence.

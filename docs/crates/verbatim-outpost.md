@@ -207,8 +207,17 @@ Public API:
   taken from the queue (`awaited_at_us`) and how many of its calls the
   checks before it made (`awaited_calls`, a part of `calls`); the
   listener's `FocusFact`, Core's
-  `DeliverFact`, and the outpost's `Event` and `Reply` carry it, and Core's
-  latency ledger reads it.
+  `DeliverFact` and `Query`, and the outpost's `Event` and `Reply` carry
+  it, and Core's latency ledger reads it. verbatim.exe adds its own stamps
+  (`docs/design/relay.md`, section 4.5): `core_received_at_us`, when it
+  took in a listener's fact or queued a request; `core_relay_us`, its own
+  time from then to its relay thread beginning the write, measured on its
+  monotonic clock alone; `core_held_us`, the part of that a fact was held
+  for its starting outpost; `core_sent_at_us`, the first plus the second;
+  and `core_read_at_us`, when its reader read an outpost's `Event` or
+  `Reply` (`OutpostToSupervisor::core_read`). A `Query` carries
+  `core_received_at_us`, `core_relay_us`, and `core_sent_at_us` to the
+  outpost, which copies them into its reply.
   `SupervisorToOutpost`: `SetBackendOverride` (forces one backend for every
   window of the target, or restores normal arbitration), `DeliverFact` (a
   focus fact the listener captured, routed to this outpost — a UIA focus's

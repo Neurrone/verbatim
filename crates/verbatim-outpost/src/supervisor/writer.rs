@@ -31,10 +31,9 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread;
+use std::time::Instant;
 
-use crate::protocol::{SupervisorToOutpost, write_message};
-
-use crate::protocol::FactKey;
+use crate::protocol::{EventTiming, FactKey, SupervisorToOutpost, now_us, write_message};
 
 /// How many commands may wait for one child before the overload policy
 /// applies.
@@ -51,27 +50,92 @@ pub(super) enum Outgoing {
     /// The nodes Core holds.
     NodesHeld(SupervisorToOutpost),
     /// A routed fact, keyed by the object and kind it concerns (`None` for
-    /// a notification, which nothing replaces).
-    Fact(Option<FactKey>, SupervisorToOutpost),
+    /// a notification, which nothing replaces), with when verbatim.exe read
+    /// it from the listener.
+    Fact(Option<FactKey>, SupervisorToOutpost, Received),
     /// A message of the MSAA hand-over: `ForwardingEnded` to an outpost,
-    /// `HookInstalled` or `HookRemoved` to the listener; a part of a UIA
-    /// focus's read routed to an outpost, which waits on its marker; and
-    /// `FocusQueued` to the listener, which its duplicate rule depends on.
+    /// `HookInstalled` or `HookRemoved` to the listener; and `FocusQueued`
+    /// to the listener, which its duplicate rule depends on.
     HandOver(SupervisorToOutpost),
-    /// Anything else: a query, an activation, a configuration command.
-    Other(SupervisorToOutpost),
+    /// A part of a UIA focus's read routed to an outpost, which waits on
+    /// its marker, so it gets through as a hand-over message does, with
+    /// when verbatim.exe read it from the listener.
+    FocusRead(SupervisorToOutpost, Received),
+    /// Anything else: a query, an activation, a configuration command, with
+    /// when it was queued.
+    Other(SupervisorToOutpost, Received),
 }
 
 impl Outgoing {
+    #[cfg(test)]
     fn command(&self) -> &SupervisorToOutpost {
         match self {
             Outgoing::Shutdown => &SupervisorToOutpost::Shutdown,
             Outgoing::Ping(command)
             | Outgoing::NodesHeld(command)
-            | Outgoing::Fact(_, command)
+            | Outgoing::Fact(_, command, _)
             | Outgoing::HandOver(command)
-            | Outgoing::Other(command) => command,
+            | Outgoing::FocusRead(command, _)
+            | Outgoing::Other(command, _) => command,
         }
+    }
+
+    /// The command to write now, a fact or a request stamped with
+    /// verbatim.exe's relay time up to this moment ([`Received::stamp`]).
+    pub(super) fn relayed(self) -> SupervisorToOutpost {
+        match self {
+            Outgoing::Shutdown => SupervisorToOutpost::Shutdown,
+            Outgoing::Fact(_, mut command, received)
+            | Outgoing::FocusRead(mut command, received)
+            | Outgoing::Other(mut command, received) => {
+                match &mut command {
+                    SupervisorToOutpost::DeliverFact { timing, .. }
+                    | SupervisorToOutpost::Query { timing, .. } => received.stamp(timing),
+                    _ => {}
+                }
+                command
+            }
+            Outgoing::Ping(command)
+            | Outgoing::NodesHeld(command)
+            | Outgoing::HandOver(command) => command,
+        }
+    }
+}
+
+/// When verbatim.exe took in something it relays to an outpost: a
+/// listener's fact as its read completed, or a request as it was queued
+/// (`docs/design/relay.md`, section 4.5). Read on two clocks: the monotonic
+/// one, for verbatim.exe's own duration, and the wall clock the other
+/// processes' stamps share, for the spans across processes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Received {
+    at: Instant,
+    at_us: u64,
+}
+
+impl Received {
+    /// Now.
+    pub(super) fn now() -> Self {
+        Self {
+            at: Instant::now(),
+            at_us: now_us(),
+        }
+    }
+
+    /// How long ago, in microseconds.
+    pub(super) fn elapsed_us(self) -> u64 {
+        u64::try_from(self.at.elapsed().as_micros()).unwrap_or(u64::MAX)
+    }
+
+    /// Fills in `timing`'s relay stamps: received then, relayed now. The
+    /// duration is measured on the monotonic clock alone, so it does not
+    /// depend on clocks agreeing across processes, and the time sent is
+    /// derived from it.
+    pub(super) fn stamp(self, timing: &mut EventTiming) {
+        let relay_us = self.elapsed_us();
+        timing.core_received_at_us = self.at_us;
+        timing.core_relay_us = relay_us;
+        timing.core_sent_at_us = self.at_us.saturating_add(relay_us);
     }
 }
 
@@ -108,15 +172,18 @@ impl Queue {
             return Err(QueueError::Closed);
         }
         match item {
-            Outgoing::Ping(_) | Outgoing::Shutdown | Outgoing::HandOver(_) => {}
+            Outgoing::Ping(_)
+            | Outgoing::Shutdown
+            | Outgoing::HandOver(_)
+            | Outgoing::FocusRead(..) => {}
             Outgoing::NodesHeld(_) => {
                 self.items
                     .retain(|waiting| !matches!(waiting, Outgoing::NodesHeld(_)));
             }
-            Outgoing::Fact(ref key, _) => {
+            Outgoing::Fact(ref key, ..) => {
                 let same = key.as_ref().and_then(|key| {
                     self.items.iter().position(
-                        |waiting| matches!(waiting, Outgoing::Fact(Some(other), _) if other == key),
+                        |waiting| matches!(waiting, Outgoing::Fact(Some(other), ..) if other == key),
                     )
                 });
                 if let Some(index) = same {
@@ -133,7 +200,7 @@ impl Queue {
                     return Err(QueueError::Full);
                 }
             }
-            Outgoing::Other(_) => {
+            Outgoing::Other(..) => {
                 if self.items.len() >= capacity {
                     return Err(QueueError::Full);
                 }
@@ -205,7 +272,7 @@ pub(super) fn start(to_child: File, name: &str) -> std::io::Result<WriterHandle>
                     }
                 };
                 let Some(item) = next else { return };
-                if write_message(&mut pipe, item.command())
+                if write_message(&mut pipe, &item.relayed())
                     .and_then(|()| pipe.flush())
                     .is_err()
                 {
@@ -227,11 +294,15 @@ mod tests {
     }
 
     fn query() -> Outgoing {
-        Outgoing::Other(SupervisorToOutpost::Query {
-            trace_id: TraceId::mint(),
-            request_id: 1,
-            query: crate::protocol::Query::DumpTree,
-        })
+        Outgoing::Other(
+            SupervisorToOutpost::Query {
+                trace_id: TraceId::mint(),
+                request_id: 1,
+                query: crate::protocol::Query::DumpTree,
+                timing: EventTiming::default(),
+            },
+            Received::now(),
+        )
     }
 
     fn fact(hwnd: isize) -> Outgoing {
@@ -240,6 +311,7 @@ mod tests {
             SupervisorToOutpost::Ping {
                 seq: hwnd.cast_unsigned() as u64,
             },
+            Received::now(),
         )
     }
 

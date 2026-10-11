@@ -101,11 +101,31 @@ fn calls_besides(total: CallCounts, part: CallCounts) -> CallCounts {
     }
 }
 
+/// One stage of an announcement: its kind, its duration if the
+/// announcement passed it, and its cross-process calls where they count.
+type Stage = (LatencyStageKind, Option<u64>, Option<CallCounts>);
+
 impl Stages {
     /// How long each stage the announcement has passed took, in pipeline
     /// order, with the cross-process calls of the caret wait and the
     /// outpost read.
     fn breakdown(&self) -> Vec<LatencyStage> {
+        self.to_outpost_read()
+            .into_iter()
+            .chain(self.after_outpost_read())
+            .filter_map(|(kind, duration_us, calls)| {
+                Some(LatencyStage {
+                    kind,
+                    duration_us: duration_us?,
+                    calls,
+                })
+            })
+            .collect()
+    }
+
+    /// The stages from the operating system's event to the outpost's read,
+    /// each with its duration if the announcement passed it, and its calls.
+    fn to_outpost_read(&self) -> Vec<Stage> {
         let event = self.event.unwrap_or_default();
         let at = |us: u64| (us != 0).then_some(us);
         let span = |from: Option<u64>, to: Option<u64>| Some(to?.saturating_sub(from?));
@@ -115,6 +135,17 @@ impl Stages {
         let dequeued = at(event.dequeued_at_us);
         let awaited = at(event.awaited_at_us);
         let read_calls = calls_besides(event.calls, event.awaited_calls);
+        // verbatim.exe's relay stamps, on what it relayed to the outpost
+        // (`docs/design/relay.md`, section 4.5): with them, the span from
+        // the listener or the reducer to the outpost is split at
+        // verbatim.exe, and its own time is its own stage. A relay time of
+        // 0 is a real one, under a microsecond.
+        let relayed_by_core = at(event.core_received_at_us);
+        let relay = relayed_by_core.map(|_| event.core_relay_us);
+        let held = relay
+            .and_then(|_| at(event.core_held_us))
+            .map(|held| held.min(event.core_relay_us));
+        let published = at(event.published_at_us);
         [
             (
                 LatencyStageKind::Windows,
@@ -128,17 +159,43 @@ impl Stages {
             ),
             (
                 LatencyStageKind::ListenerToOutpost,
-                span(observed, relayed),
+                relayed_by_core
+                    .is_none()
+                    .then(|| span(observed, relayed))
+                    .flatten(),
                 None,
             ),
             // A request Core made, not an event it relayed from the
             // listener, which the stage before covers.
             (
                 LatencyStageKind::CoreToOutpost,
-                observed
-                    .is_none()
+                (observed.is_none() && relayed_by_core.is_none())
                     .then(|| span(self.requested, relayed))
                     .flatten(),
+                None,
+            ),
+            (
+                LatencyStageKind::ListenerToRelay,
+                span(observed, relayed_by_core),
+                None,
+            ),
+            (
+                LatencyStageKind::RequestToRelay,
+                observed
+                    .is_none()
+                    .then(|| span(self.requested, relayed_by_core))
+                    .flatten(),
+                None,
+            ),
+            (LatencyStageKind::OutpostStart, held, None),
+            (
+                LatencyStageKind::Relay,
+                relay.map(|relay| relay - held.unwrap_or(0)),
+                None,
+            ),
+            (
+                LatencyStageKind::RelayToOutpost,
+                span(at(event.core_sent_at_us), relayed),
                 None,
             ),
             (
@@ -153,12 +210,38 @@ impl Stages {
             ),
             (
                 LatencyStageKind::OutpostRead,
-                span(awaited.or(dequeued), at(event.published_at_us)),
+                span(awaited.or(dequeued), published),
                 Some(read_calls),
             ),
+        ]
+        .into()
+    }
+
+    /// The stages from the outpost's read to the first sound, each with its
+    /// duration if the announcement passed it.
+    fn after_outpost_read(&self) -> Vec<Stage> {
+        let event = self.event.unwrap_or_default();
+        let at = |us: u64| (us != 0).then_some(us);
+        let span = |from: Option<u64>, to: Option<u64>| Some(to?.saturating_sub(from?));
+        let read_by_core = at(event.core_read_at_us);
+        let published = at(event.published_at_us);
+        [
             (
                 LatencyStageKind::ToCore,
-                span(at(event.published_at_us), self.core_received),
+                read_by_core
+                    .is_none()
+                    .then(|| span(published, self.core_received))
+                    .flatten(),
+                None,
+            ),
+            (
+                LatencyStageKind::OutpostToRelay,
+                span(published, read_by_core),
+                None,
+            ),
+            (
+                LatencyStageKind::ReducerWait,
+                span(read_by_core, self.core_received),
                 None,
             ),
             (
@@ -187,15 +270,7 @@ impl Stages {
                 None,
             ),
         ]
-        .into_iter()
-        .filter_map(|(kind, duration_us, calls)| {
-            Some(LatencyStage {
-                kind,
-                duration_us: duration_us?,
-                calls,
-            })
-        })
-        .collect()
+        .into()
     }
 
     /// The announcement's latency line, or `None` when it was not spoken.
@@ -723,6 +798,73 @@ mod tests {
                  outpost read 7.0, to Core 0.3, reducer 0.1, to speech 0.1. \
                  Speech: synthesis 1.0, leading silence 0.2, mixer and device 1.8."
             )
+        );
+    }
+
+    /// With verbatim.exe's relay stamps, the listener's stage is split at
+    /// verbatim.exe, the time its fact was held for a starting outpost is
+    /// its own stage, and the way back is split at verbatim.exe's reader.
+    #[test]
+    fn verbatim_exes_stamps_split_the_stages_at_verbatim_exe() {
+        let stages = Stages {
+            event: Some(EventTiming {
+                observed_at_us: 1_000,
+                core_received_at_us: 1_200,
+                core_relay_us: 35_050,
+                core_held_us: 35_000,
+                core_sent_at_us: 36_250,
+                relayed_at_us: 36_400,
+                dequeued_at_us: 36_500,
+                published_at_us: 40_000,
+                core_read_at_us: 40_150,
+                ..EventTiming::default()
+            }),
+            core_received: Some(40_400),
+            ..Stages::default()
+        };
+        let breakdown: Vec<_> = stages
+            .breakdown()
+            .iter()
+            .map(|stage| (stage.kind, stage.duration_us))
+            .collect();
+        assert_eq!(
+            breakdown,
+            [
+                (LatencyStageKind::ListenerToRelay, 200),
+                (LatencyStageKind::OutpostStart, 35_000),
+                (LatencyStageKind::Relay, 50),
+                (LatencyStageKind::RelayToOutpost, 150),
+                (LatencyStageKind::OutpostQueue, 100),
+                (LatencyStageKind::OutpostRead, 3_500),
+                (LatencyStageKind::OutpostToRelay, 150),
+                (LatencyStageKind::ReducerWait, 250),
+            ]
+        );
+        // A request: the reducer's span ends where verbatim.exe took it in,
+        // and a relay under a microsecond is still a stage.
+        let request = Stages {
+            requested: Some(1_000),
+            event: Some(EventTiming {
+                core_received_at_us: 1_100,
+                core_relay_us: 0,
+                core_sent_at_us: 1_100,
+                relayed_at_us: 1_300,
+                ..EventTiming::default()
+            }),
+            ..Stages::default()
+        };
+        let breakdown: Vec<_> = request
+            .breakdown()
+            .iter()
+            .map(|stage| (stage.kind, stage.duration_us))
+            .collect();
+        assert_eq!(
+            breakdown,
+            [
+                (LatencyStageKind::RequestToRelay, 100),
+                (LatencyStageKind::Relay, 0),
+                (LatencyStageKind::RelayToOutpost, 200),
+            ]
         );
     }
 
