@@ -514,6 +514,21 @@ Other open items, taken after the steps above unless they fold into one:
   process brokers its children's, are reconsidered with those numbers. The
   message types move to a platform-neutral crate after that migration
   (`docs/design/communication.md`, decision 13, approved).
+- `notepad_say_all` fails, a known failure from a race in Verbatim
+  (2026-10-11), exposed when the harness stopped waiting about 15 ms (a
+  1 ms socket timeout rounded to the timer tick) before each injected key
+  (bb1a5d7). During say-all, Core asks the outpost to move the caret to
+  each piece as it starts playing; a key pressed within about 2 ms goes
+  straight to the application and is applied before that caret move, so
+  the caret is left where say-all put it, not where the key moved it, and
+  the key's caret read speaks the wrong character ("M" for "o"). NVDA
+  cannot race here: a caret key in a text field is a script, held from
+  the application and queued on its main thread behind say-all's caret
+  move (`inputCore.py` 641 to 646, `speech/sayAll.py` 330 to 376,
+  `editableText.py` 181 to 188), and keys after a held one are held too
+  (#2953). Holding keys (stage C, step 8) would fix it; this race is the
+  first case the key-holding prototype must fix, with `notepad_say_all`
+  unchanged as its test (Dickson, 2026-10-11).
 - An audit of every end-to-end scenario for timing races (2026-10-11):
   any step that passes only if something happens within a time the test
   does not control, such as `*_leave_flood`'s window switch racing a
