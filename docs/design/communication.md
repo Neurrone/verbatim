@@ -522,6 +522,8 @@ Each step is small, builds and passes `cargo xtask ci`, and is verified before t
 
 ### Step 1. Make the paused branch's measurement parts build, and record the baseline
 
+Also measured in this step: the JSON parse and re-serialize cost of decision 1, and, before step 4, the evaluation of `mio::windows::NamedPipe` in place of the hand-written overlapped module (Dickson, 2026-10-11), including whether a write that completes at once leaves the pipe free for the next write without the I/O thread waking.
+
 - Builds from the branch: f94e761 (one write per message), 43adba8 (the relay stages), and the `overlapped` module and the scheduling module as libraries only, split out of db16548 and 7e6e562, with no behaviour change.
 - Extends the ledger with the return-path and speech stages of 10.1 that today's architecture can stamp (synth request, host first chunk, host return, device clock).
 - Removes: nothing. Adds the measurement.
@@ -645,7 +647,7 @@ Changed:
 
 ## 13. Decisions for Dickson
 
-1. Keep JSON bodies, and route on a binary frame header so verbatim.exe never parses or re-serializes a fact. NVDA: no IPC, so no equivalent. Recommend: adopt; revisit binary bodies only if the ledger shows encoding above 5 percent of a stage.
+1. Keep JSON bodies, and route on a binary frame header so verbatim.exe never parses or re-serializes a fact. NVDA: no IPC, so no equivalent. Revised with Dickson (2026-10-11): measure first, in step 1, the release-build cost of parsing and re-serializing a focus fact with its ancestors, a typical reply, and a 1 MB terminal frame; if the typical messages cost a few tens of microseconds at most, keep plain JSON with a readable text length header (as the Language Server Protocol's `Content-Length: N`, a blank line, then the JSON), so the pipes stay readable by eye and a reader still asks for a whole message in one read; stamps are then JSON fields set just before encoding. The binary header comes back only if the measurement shows the cost matters.
 2. Children's pipe ends become overlapped too, and every producer writes its own message when nothing is ahead of it, which removes the listener's and the outposts' writer threads. Recommend: adopt.
 3. Who reads the outposts' pipes. Two choices.
    - The relay thread reads them, handles pongs, `Ready`, `TargetExited` and the pipe's end itself, and posts every other frame whole to the reducer's completion port, whose order is the reducer's one order of arrival (sections 4.5, 6.2). It keeps today's order of outposts' events against keys and against each other, keeps today's continuous draining so no merge rule starts acting because the reducer is busy, and keeps pongs independent of the reducer. NVDA: the same order for UIA events, which its flusher queues as they come; for MSAA NVDA lets keys overtake unflushed events, which Verbatim does not do today and would not do.
