@@ -184,14 +184,15 @@ pub enum Subscription {
     },
     /// Focus changes anywhere on the desktop. Not part of the event handler
     /// groups: the handler is registered on the registration's client
-    /// itself, before the groups, as NVDA registers its focus handler on
-    /// the client that holds its global group (`_registerGlobalEventHandlers`).
-    /// The two must share a client: Windows Terminal's XAML raises some
-    /// focus events from a second identity of the focused control (runtime
-    /// ids starting 14, not 42), and UIA delivers those to a client whose
-    /// only registration is the focus handler, but not to one that also
-    /// has a group registered on the desktop's root (measured 2026-10-12,
-    /// `docs/design/focus-pipeline.md`, section 16.8).
+    /// itself, as NVDA registers its focus handler on the client that holds
+    /// its global group (`_registerGlobalEventHandlers`), and in NVDA's
+    /// order: over the desktop, its root element fetched first, then the
+    /// focus handler, then the group on that root. Windows Terminal's XAML
+    /// raises some focus events from a second identity of the focused
+    /// control (runtime ids starting 14, not 42), and UIA delivers those to
+    /// a client whose focus handler is alone, or registered after its
+    /// group, but not to one whose focus handler came first (measured
+    /// 2026-10-12, `docs/design/focus-pipeline.md`, section 16.8).
     Focus {
         /// Called for each focus change.
         callback: FocusCallback,
@@ -705,6 +706,10 @@ struct Follower {
     uia: Uia,
     client: IUIAutomation6,
     built: Vec<Built>,
+    /// The desktop's root element, fetched before a focus handler was
+    /// registered, for the group to be registered on, as NVDA registers its
+    /// global group on the root it fetched first.
+    desktop_root: Option<IUIAutomationElement>,
     groups: Vec<BuiltGroup>,
     registered: Vec<Registered>,
 }
@@ -728,6 +733,77 @@ impl Thread {
     }
 }
 
+/// Sets a registration's thread up: its client, each part's handler with
+/// its cache request, and any focus handler registered on the client
+/// in NVDA's order (the desktop's root fetched first, for a desktop
+/// registration), before any group is.
+fn set_up(parts: Vec<Part>, target: &Target, thread: &Thread) -> windows::core::Result<Follower> {
+    let uia = Uia::new()?;
+    // Parts asking for the same properties share one cache request, as
+    // every one of NVDA's global handlers carries its one base cache
+    // request.
+    let mut caches: Vec<(&'static [UIA_PROPERTY_ID], bool, IUIAutomationCacheRequest)> = Vec::new();
+    let built = parts
+        .into_iter()
+        .map(|part| {
+            let shared = caches.iter().find(|(properties, text_pattern, _)| {
+                *properties == part.properties && *text_pattern == part.text_pattern
+            });
+            let cache = if let Some((_, _, cache)) = shared {
+                cache.clone()
+            } else {
+                let cache = uia.cache_request(part.properties)?;
+                if part.text_pattern {
+                    crate::cache::add_text_pattern(&cache)?;
+                }
+                caches.push((part.properties, part.text_pattern, cache.clone()));
+                cache
+            };
+            Ok(Built {
+                cache,
+                handler: Handler::of(part.subscription, &thread.live),
+                extended_only: part.extended_only,
+            })
+        })
+        .collect::<windows::core::Result<Vec<_>>>()?;
+    // NVDA's order (`UIAHandler/__init__.py` 547 to 593): the desktop's
+    // root element is fetched first, then the focus handler goes on the
+    // client, and only then is the group registered, on that root. A
+    // focus handler registered after the group receives the second
+    // identity Windows Terminal raises focus from (NVDA itself does,
+    // its handler registered again after its group: 55 times in 40
+    // openings; `docs/design/focus-pipeline.md`, section 16.8).
+    let has_focus = built
+        .iter()
+        .any(|built| matches!(built.handler, Handler::Focus(_)));
+    let desktop_root = match (&target.scope, built.first()) {
+        (Scope::Desktop, Some(first)) if has_focus => {
+            // SAFETY: the cache request is live and owned by this
+            // thread's client.
+            Some(unsafe { uia.client().GetRootElementBuildCache(&first.cache) }?)
+        }
+        _ => None,
+    };
+    for built in &built {
+        if let Handler::Focus(handler) = &built.handler {
+            // SAFETY: the cache and handler are live and owned by this
+            // thread's client, which keeps its own references to both.
+            unsafe {
+                uia.client()
+                    .AddFocusChangedEventHandler(&built.cache, handler)
+            }?;
+        }
+    }
+    Ok(Follower {
+        client: uia.client().cast()?,
+        uia,
+        built,
+        desktop_root,
+        groups: Vec::new(),
+        registered: Vec::new(),
+    })
+}
+
 fn run(
     parts: Vec<Part>,
     target: &Target,
@@ -735,42 +811,7 @@ fn run(
     ready: &mpsc::Sender<windows::core::Result<()>>,
     retarget: &mpsc::Receiver<Command>,
 ) {
-    let setup = (|| -> windows::core::Result<Follower> {
-        let uia = Uia::new()?;
-        let built = parts
-            .into_iter()
-            .map(|part| {
-                let cache = uia.cache_request(part.properties)?;
-                if part.text_pattern {
-                    crate::cache::add_text_pattern(&cache)?;
-                }
-                Ok(Built {
-                    cache,
-                    handler: Handler::of(part.subscription, &thread.live),
-                    extended_only: part.extended_only,
-                })
-            })
-            .collect::<windows::core::Result<Vec<_>>>()?;
-        // The focus handler goes on the client before any group is
-        // registered, as NVDA registers it.
-        for built in &built {
-            if let Handler::Focus(handler) = &built.handler {
-                // SAFETY: the cache and handler are live and owned by this
-                // thread's client, which keeps its own references to both.
-                unsafe {
-                    uia.client()
-                        .AddFocusChangedEventHandler(&built.cache, handler)
-                }?;
-            }
-        }
-        Ok(Follower {
-            client: uia.client().cast()?,
-            uia,
-            built,
-            groups: Vec::new(),
-            registered: Vec::new(),
-        })
-    })();
+    let setup = set_up(parts, target, thread);
     let mut follower = match setup {
         Ok(follower) => follower,
         Err(error) => {
@@ -936,12 +977,15 @@ impl Follower {
                 TreeScope_Subtree,
             ),
             Scope::Desktop => (
-                // SAFETY: `cache` is a live cache request owned by this
-                // thread.
-                unsafe { self.uia.client().GetRootElementBuildCache(cache) }
-                    .ok()
-                    .into_iter()
-                    .collect(),
+                match &self.desktop_root {
+                    Some(root) => vec![root.clone()],
+                    // SAFETY: `cache` is a live cache request owned by this
+                    // thread.
+                    None => unsafe { self.uia.client().GetRootElementBuildCache(cache) }
+                        .ok()
+                        .into_iter()
+                        .collect(),
+                },
                 TreeScope_Subtree,
             ),
             Scope::Elements(elements) => (
