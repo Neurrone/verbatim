@@ -507,6 +507,13 @@ Other open items, taken after the steps above unless they fold into one:
 - `settings_system_page` once heard "Windows isn't activated"; the
   settings package above says 14 settings but names 13.
 - `verbatim-gui`'s rlib is 375 MB.
+- Communication stays routed through verbatim.exe (Dickson, 2026-10-11),
+  unless the communication design's measurements show the route through
+  verbatim.exe costing more than a couple of milliseconds; then direct
+  listener-to-outpost pipes, brokered by verbatim.exe as Chromium's browser
+  process brokers its children's, are reconsidered with those numbers. The
+  message types move to a platform-neutral crate after that migration
+  (`docs/design/communication.md`, decision 13, approved).
 - An audit of every end-to-end scenario for timing races (2026-10-11):
   any step that passes only if something happens within a time the test
   does not control, such as `*_leave_flood`'s window switch racing a

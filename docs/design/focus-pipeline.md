@@ -767,6 +767,7 @@ NVDA keeps one last focused UIA element for the whole program and treats an even
 
 - One last accepted focus for the listener, shared by its reading threads, not one per thread, so a focus in another application in between makes the next one new, as in NVDA.
 - `CompareElements` in place of comparing runtime ids, then the live `HasKeyboardFocus`.
+- The check comes first, before any read, as NVDA's does (`UIAHandler/__init__.py` 899 to 921, before `getNearestWindowHandle` and before the object is made): a repeated focus is dropped without refreshing its properties or walking its ancestors. Step 6 as built reads every focus in full and leaves the repeat to the outpost, so a repeated focus costs mockapp 54 property reads where main's cost 31 (2026-10-11); NVDA's order makes it two calls.
 - Before building on it: log, for each read, the sender's runtime id, class name, framework id and window handle, and the `CompareElements` result against the last focus, and run `windows_terminal_short_output` to see whether UIA equates Windows Terminal's two senders. If it does not, take an NVDA capture of the same terminal opening to see what NVDA does with the second sender, and bring that to Dickson rather than add a rule.
 
 ### 16.4 Windows announced from the focus's ancestry
