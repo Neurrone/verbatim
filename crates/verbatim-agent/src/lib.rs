@@ -34,6 +34,7 @@ mod jobs;
 mod keys;
 mod process;
 pub mod protocol;
+mod scenario_windows;
 pub mod server;
 pub mod session;
 mod terminals;

@@ -8,6 +8,11 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
 - **Agent** — `verbatim-agent`, the in-guest test doorway: launches
   processes and tunnels the control plane over TCP for the E2E suite.
   [verbatim-agent](crates/verbatim-agent.md).
+- **Abandoned scenario** — an E2E scenario whose agent connection ended
+  before its cleanup proved it left no window open, because its test
+  process was killed or the check failed; the next scenario's start
+  closes, by handle, the windows it left.
+  [verbatim-e2e](crates/verbatim-e2e.md).
 - **Abandoned worker** — an outpost worker whose call passed its
   deadline; the watchdog replaces it, since a thread stuck in a hung
   application's COM call cannot be safely killed. If the call ever

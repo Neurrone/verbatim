@@ -9,7 +9,9 @@
 //! its window, since Notepad keeps the tabs of a closed window for its next
 //! session), checks that the process that owned it has exited when the
 //! scenario started that program, ends anything else it launched by its
-//! process id, and fails the scenario when anything will not close.
+//! process id, and fails the scenario when anything will not close. It
+//! then proves nothing was left: every window shown that was not open when
+//! the scenario started must have gone, whatever its title has become.
 //! Nothing is ever ended by its image name.
 //!
 //! Configuration is always fixed and isolated, never the developer's own
@@ -241,8 +243,10 @@ impl Scenario {
     /// tabs, and ends every process the agent launched for an earlier run
     /// that is still running, by its own handle; stages the binaries and
     /// writes the settings (runner-direct mode); closes any window an
-    /// earlier run left open by its harness title (a Notepad harness tab as
-    /// a tab) and deletes the harness files it left; opens `document`
+    /// earlier run left open: those of a scenario abandoned before its
+    /// cleanup by handle, the rest by their harness title (a Notepad harness
+    /// tab as a tab), and deletes the harness files it left; records the
+    /// windows the scenario starts with, for its cleanup; opens `document`
     /// ([`Document`]), and closes it again if the launch fails after; minimizes every
     /// window, as Show Desktop does, and waits until they are and the
     /// desktop is in front; starts the recording, when recording; creates the
@@ -329,6 +333,11 @@ impl Scenario {
         // Leftovers are closed first, while a window of theirs is still where
         // it was, not minimized.
         sweep_leftovers(&mut agent, &run_dir)?;
+        // The windows the scenario starts with, recorded before it opens
+        // anything, its document included, so cleanup can prove that every
+        // window it opened has gone whatever the window's title has become.
+        // Minimizing, which comes after, changes no window's identity.
+        agent.record_windows()?;
         let mut opened = Vec::new();
         if let Some(document) = document {
             opened.push(open_document(&mut agent, &run_dir, &document)?);
@@ -1666,8 +1675,12 @@ impl Scenario {
     /// its title (a Notepad harness tab as a tab), waiting for it to go and,
     /// when the scenario started its program, for the process that owned
     /// it to exit; anything launched without a window of its own by its
-    /// process id; then the harness documents, folders, and files. Returns
-    /// everything that could not be closed or deleted, each a failure.
+    /// process id; then the harness documents, folders, and files. Last, it
+    /// checks that every window shown now that was not open when the
+    /// scenario started has gone, whatever its title has become, waiting
+    /// for them on window events up to the close timeout and closing none
+    /// itself. Returns everything that could not be closed or deleted, and
+    /// each window left open, each a failure.
     pub fn clean_up(&mut self) -> Vec<String> {
         self.cleaned_up = true;
         let mut problems = Vec::new();
@@ -1685,6 +1698,21 @@ impl Scenario {
             if let Err(error) = self.agent.delete_file(&file) {
                 problems.push(format!("could not delete the harness file {file}: {error}"));
             }
+        }
+        // Closing by title is how the scenario closes its own windows; this
+        // proves nothing was left. A window left open stays open, and the
+        // next scenario's start reports it again and closes it by handle.
+        match self.agent.wait_for_new_windows_gone(CLOSE_TIMEOUT) {
+            Ok(remaining) => problems.extend(remaining.iter().map(|window| {
+                format!(
+                    "a window that was not open when the scenario started was still open \
+                     {CLOSE_TIMEOUT:?} after the scenario's closing steps: {}",
+                    describe_window(window)
+                )
+            })),
+            Err(error) => problems.push(format!(
+                "could not check that the scenario left no window open: {error}"
+            )),
         }
         problems
     }
@@ -1843,9 +1871,11 @@ fn crash_dumps(agent: &mut AgentClient) -> Option<Vec<String>> {
 
 /// Cleans up what an earlier run that ended without its own cleanup left
 /// behind: every process the agent launched that is still running is ended
-/// by its own handle; every window titled with [`DOCUMENT_MARKER`] is
-/// closed (a Notepad harness tab as a tab); and the harness documents,
-/// files, and folders left in `directory` are deleted.
+/// by its own handle; every window an abandoned scenario left
+/// ([`AgentClient::close_abandoned_windows`]) is reported and closed by its
+/// handle; every window titled with [`DOCUMENT_MARKER`] is closed (a
+/// Notepad harness tab as a tab); and the harness documents, files, and
+/// folders left in `directory` are deleted.
 ///
 /// # Errors
 ///
@@ -1857,6 +1887,29 @@ fn sweep_leftovers(agent: &mut AgentClient, directory: &str) -> io::Result<()> {
     let ended = agent.end_launched()?;
     if ended > 0 {
         println!("ended {ended} process(es) an earlier run left running");
+    }
+    // The windows an earlier scenario opened and still had open when its
+    // test process ended before its cleanup, or when its cleanup found
+    // them open, whatever their titles have become. The agent closes only
+    // windows absent from that scenario's starting windows, never the
+    // owner's own (`scenario_windows` in the agent says why that is safe).
+    let (found, remaining) = agent.close_abandoned_windows(CLOSE_TIMEOUT)?;
+    for window in &found {
+        eprintln!(
+            "an earlier scenario ended before its cleanup proved it left no window open; \
+             closing the window it left: {}",
+            describe_window(window)
+        );
+    }
+    if !remaining.is_empty() {
+        return Err(io::Error::other(format!(
+            "window(s) an earlier scenario left open did not close within {CLOSE_TIMEOUT:?}: {}",
+            remaining
+                .iter()
+                .map(describe_window)
+                .collect::<Vec<_>>()
+                .join("; ")
+        )));
     }
     let remaining = agent.close_windows(DOCUMENT_MARKER, CLOSE_TIMEOUT)?;
     if remaining > 0 {
@@ -1882,6 +1935,14 @@ fn sweep_leftovers(agent: &mut AgentClient, directory: &str) -> io::Result<()> {
         agent.delete_folder(&format!(r"{directory}\{name}"))?;
     }
     Ok(())
+}
+
+/// `window`'s title, class, process id, and program, for a report.
+fn describe_window(window: &WindowInfo) -> String {
+    format!(
+        "{:?} (class {}, pid {}, {})",
+        window.title, window.class, window.pid, window.image
+    )
 }
 
 /// A harness document a scenario edits in Windows 11 Notepad, opened

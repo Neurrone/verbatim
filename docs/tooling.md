@@ -1200,15 +1200,39 @@ fails saying so. The harness closes its tab with Control+W, saving it
 first when it has unsaved changes, waits for Notepad to exit, and deletes
 the document, and the folders the harness made for Explorer and terminal
 windows, each named with `verbatim-e2e-`; nothing without that marker in
-its name is ever deleted. None of this runs if the test process itself is
-killed outright (Ctrl+C, a CI job cancellation). The next launch then
+its name is ever deleted.
+
+Closing by title cannot prove nothing was left, since a window can lose
+its title: File Explorer folder windows left open by killed runs were
+retitled with the parent folder once their folders were deleted, escaped
+every title-based close, and were later found on the desktop. So the
+agent records every top-level window there is when a scenario starts,
+before it opens anything, and the cleanup's last step waits, on window
+events and up to the close timeout, for every shown window not among
+those to be gone. A window still open fails the run with its title,
+class, process id, and program, and is left open for you to see.
+
+None of the cleanup runs if the test process itself is
+killed outright (Ctrl+C, a CI job cancellation). The agent outlives the
+test process and notices its connection end with the scenario's starting
+windows still recorded, and notes the windows the scenario had open that
+were not among them. The next launch then
 sweeps: Notepad harness tabs are closed as tabs first, since a Windows 11
 Notepad ended by its handle keeps its tabs and opens them again next
 time, without their documents, behind a "Cannot find the file" dialog
 that blocks closing them; then every process the agent launched that is
-still running is ended by its own handle (`EndLaunched`), harness windows
-are closed, and harness files and folders in `target/e2e-stage` are
-deleted, before the desktop is minimized. A launch that fails after
+still running is ended by its own handle (`EndLaunched`); then each
+window the abandoned scenario left that is still open is printed, with
+its title, class, and process id, and closed by its handle, the launch
+failing only if one will not close; then harness windows
+are closed by title, and harness files and folders in `target/e2e-stage` are
+deleted, before the desktop is minimized. Closing by handle there is
+safe: only windows that were not open when the abandoned scenario
+started, and were open when its test process ended, are closed, so a
+window of your own, opened before the run or after you stopped it, is
+never touched. The same happens to the windows a cleanup reported left
+open. Restarting the agent forgets the recorded windows, and then only
+the title sweep remains. A launch that fails after
 opening its Notepad document closes that tab and deletes the document
 before it reports the failure. Minimizing sends the taskbar's Minimize
 All and waits for the taskbar to handle it, then logs and minimizes

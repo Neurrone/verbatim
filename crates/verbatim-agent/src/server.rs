@@ -21,13 +21,29 @@ use crate::protocol::{
     AGENT_PROTOCOL_VERSION, Frame, IGNORE_PIDS_ENV, ReplyPayload, Request, RequestEnvelope,
 };
 use crate::{
-    desktop, events, files, focus, jobs, keys, process, session, terminals, tunnel, typing,
+    desktop, events, files, focus, jobs, keys, process, scenario_windows, session, terminals,
+    tunnel, typing,
 };
 
 /// The number the next key stroke or typed character the agent injects
 /// carries for the end-to-end harness (`verbatim_input::harness`), shared by
 /// every connection so numbers never repeat while the agent runs.
 static NEXT_INPUT: AtomicU64 = AtomicU64::new(1);
+
+/// The number the next connection is known by, so a scenario's recorded
+/// windows belong to the connection that recorded them
+/// ([`scenario_windows`]).
+static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(1);
+
+/// Ends a connection's watch of its scenario's windows when the connection
+/// ends, however it ends ([`scenario_windows::connection_ended`]).
+struct ConnectionEnd(u64);
+
+impl Drop for ConnectionEnd {
+    fn drop(&mut self) {
+        scenario_windows::connection_ended(self.0);
+    }
+}
 
 /// Accepts connections on `listener` until it errors, spawning a thread
 /// per connection. Each connection is pointed at `pipe_name` for
@@ -72,6 +88,7 @@ fn reject_malformed(writer: &mut TcpStream, error: &io::Error) {
 /// request is not [`Request::Hello`], or [`Request::OpenControlTunnel`]
 /// hands the connection off to [`tunnel::run`].
 fn handle_connection(stream: &TcpStream, pipe_name: &str) {
+    let connection = ConnectionEnd(NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed));
     let mut writer = match stream.try_clone() {
         Ok(writer) => writer,
         Err(error) => {
@@ -167,16 +184,16 @@ fn handle_connection(stream: &TcpStream, pipe_name: &str) {
             }
         }
 
-        let frame = dispatch(envelope.id, envelope.request);
+        let frame = dispatch(connection.0, envelope.id, envelope.request);
         if write_message(&mut writer, &frame).is_err() {
             return;
         }
     }
 }
 
-/// Dispatches one already-validated (post-`Hello`, non-tunnel) request to
-/// a [`Frame`] reply or error.
-fn dispatch(id: u64, request: Request) -> Frame {
+/// Dispatches one already-validated (post-`Hello`, non-tunnel) request,
+/// made on `connection`, to a [`Frame`] reply or error.
+fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
     match request {
         Request::Hello { .. } => Frame::Reply {
             to: id,
@@ -244,6 +261,11 @@ fn dispatch(id: u64, request: Request) -> Frame {
         | Request::WriteFile { .. }
         | Request::DeleteFile { .. }
         | Request::DeleteFolder { .. }) => desktop_request(id, request),
+        request @ (Request::RecordWindows
+        | Request::WaitForNewWindowsGone { .. }
+        | Request::CloseAbandonedWindows { .. }) => {
+            scenario_windows_request(connection, id, request)
+        }
         request @ (Request::FocusedElement
         | Request::FocusByAutomationId { .. }
         | Request::MisspeltWords
@@ -562,6 +584,33 @@ fn desktop_request(id: u64, request: Request) -> Frame {
             to: id,
             message: format!("not a desktop request: {other:?}"),
         },
+    }
+}
+
+/// Answers the requests that prove a scenario left no window open, made on
+/// `connection`: recording its starting windows, waiting at its cleanup for
+/// the windows it opened to be gone, and closing what an abandoned scenario
+/// left.
+fn scenario_windows_request(connection: u64, id: u64, request: Request) -> Frame {
+    let payload = match request {
+        Request::RecordWindows => {
+            scenario_windows::record(connection).map(|count| ReplyPayload::WindowsRecorded { count })
+        }
+        Request::WaitForNewWindowsGone { timeout_ms } => {
+            scenario_windows::wait_for_new_gone(connection, Duration::from_millis(timeout_ms))
+                .map(|remaining| ReplyPayload::NewWindows { remaining })
+        }
+        Request::CloseAbandonedWindows { timeout_ms } => {
+            scenario_windows::close_abandoned(Duration::from_millis(timeout_ms))
+                .map(|(found, remaining)| ReplyPayload::AbandonedWindows { found, remaining })
+        }
+        other => Err(io::Error::other(format!(
+            "not a scenario windows request: {other:?}"
+        ))),
+    };
+    match payload {
+        Ok(payload) => Frame::Reply { to: id, payload },
+        Err(error) => error_frame(id, &error),
     }
 }
 

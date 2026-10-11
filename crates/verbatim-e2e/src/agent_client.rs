@@ -743,6 +743,75 @@ impl AgentClient {
         }
     }
 
+    /// Records every top-level window on the guest as the baseline of the
+    /// scenario about to start, on this connection, and returns how many
+    /// there are.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, including while another
+    /// scenario's baseline is held or an abandoned scenario's windows are
+    /// not yet closed.
+    pub fn record_windows(&mut self) -> io::Result<u32> {
+        match self.request(Request::RecordWindows)? {
+            Frame::Reply {
+                payload: ReplyPayload::WindowsRecorded { count },
+                ..
+            } => Ok(count),
+            other => Err(unexpected("RecordWindows", &other)),
+        }
+    }
+
+    /// Waits up to `timeout`, on window events, for every shown window not
+    /// in this connection's baseline to be gone, and returns those still
+    /// shown; the agent closes none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, including when this
+    /// connection recorded no baseline.
+    pub fn wait_for_new_windows_gone(&mut self, timeout: Duration) -> io::Result<Vec<WindowInfo>> {
+        match self.request_waiting(
+            Request::WaitForNewWindowsGone {
+                timeout_ms: millis(timeout),
+            },
+            timeout,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::NewWindows { remaining },
+                ..
+            } => Ok(remaining),
+            other => Err(unexpected("WaitForNewWindowsGone", &other)),
+        }
+    }
+
+    /// Closes, by handle, the windows an abandoned scenario left, waiting up
+    /// to `timeout` for a scenario still watched on another connection to
+    /// end and then up to `timeout` for the windows to go. Returns the
+    /// windows found and asked to close, and those still shown.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, including when another
+    /// connection's scenario is still watched after `timeout`.
+    pub fn close_abandoned_windows(
+        &mut self,
+        timeout: Duration,
+    ) -> io::Result<(Vec<WindowInfo>, Vec<WindowInfo>)> {
+        match self.request_waiting(
+            Request::CloseAbandonedWindows {
+                timeout_ms: millis(timeout),
+            },
+            timeout * 2,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::AbandonedWindows { found, remaining },
+                ..
+            } => Ok((found, remaining)),
+            other => Err(unexpected("CloseAbandonedWindows", &other)),
+        }
+    }
+
     /// Writes a small file on the guest, creating or replacing it.
     ///
     /// # Errors

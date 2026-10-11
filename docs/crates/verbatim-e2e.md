@@ -54,9 +54,15 @@ every scenario, recorded or not, and recording changes nothing else:
    closed as tabs first (a Notepad ended by its handle keeps its tabs for
    its next session, without their documents), then every process the
    agent launched that still runs is ended by its own handle
-   (`EndLaunched`), other windows titled with
+   (`EndLaunched`), the windows an abandoned scenario left are reported
+   and closed by handle (`CloseAbandonedWindows`, described under
+   Cleanup), other windows titled with
    `DOCUMENT_MARKER` are closed, and harness files and folders in the run
-   directory are deleted. Anything that will not go fails the launch.
+   directory are deleted. Anything that will not go fails the launch. The
+   agent then records every top-level window there is as the scenario's
+   starting windows (`RecordWindows`), before the scenario opens anything,
+   its document included; minimizing, which comes later, changes no
+   window's identity.
 3. Opens the scenario's Windows 11 Notepad document, when its definition
    names one (`ScenarioDef::document`, a `Document`), and waits on window
    events until it is in the foreground titled with the document; it
@@ -227,6 +233,33 @@ with the windows it still has. A program with no window of its own is
 ended by its process id. Nothing is ever ended by its image name. The
 `Drop` impl quits or ends Verbatim and runs the cleanup when a panic
 skipped it.
+
+Closing by title is how a scenario closes its own windows, but it cannot
+prove that nothing was left: a window can lose the title it was found
+by, as a File Explorer window whose folder is deleted is retitled with
+the parent folder. So the cleanup's last step asks the agent to wait, on
+window events and up to the close timeout, for every shown window that
+was not among the scenario's starting windows to be gone
+(`WaitForNewWindowsGone`). Each window still open fails the run, named by
+its title, class, process id, and program, and is left open: the cleanup
+closes none of them itself. Windows are identified by handle, owning
+process, and class, never by title; a window counts as gone once it is
+closed, hidden, or cloaked, as the Settings app keeps its closed window.
+
+The agent keeps the starting windows, which outlive the test process, with
+the connection that recorded them. When that connection ends before the
+check has found nothing left, because the test process was killed or the
+check failed, the scenario is abandoned, and the agent notes the windows
+it had open then. The next scenario's start prints each of them that is
+still open and closes it by handle, and fails only if one will not close.
+That is safe because only windows absent from the abandoned scenario's
+starting windows and open when its connection ended are closed: the
+owner's own windows, including the Windows Terminal running the suite,
+were open before it started, or were opened after its test process ended.
+
+The title sweep at the start (`DOCUMENT_MARKER`) is kept: it still closes
+a harness window left by a run whose starting windows the agent no longer
+holds, because the agent was restarted in between.
 
 ### Crashes
 

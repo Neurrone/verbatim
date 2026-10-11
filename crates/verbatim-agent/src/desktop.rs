@@ -301,7 +301,7 @@ pub(crate) fn window_info(window: HWND) -> WindowInfo {
 /// close request judges windows by these, so a cloaked window is absent
 /// to all of them alike; the report ([`foreground_info`]) still lists it,
 /// marked cloaked.
-fn shown_top_level_windows() -> Vec<HWND> {
+pub(crate) fn shown_top_level_windows() -> Vec<HWND> {
     top_level_windows()
         .into_iter()
         .filter(|&window| !is_cloaked(window))
@@ -310,16 +310,27 @@ fn shown_top_level_windows() -> Vec<HWND> {
 
 /// The visible, titled, unowned top-level windows, in Z order.
 fn top_level_windows() -> Vec<HWND> {
+    all_top_level_windows()
+        .into_iter()
+        .filter(|&window| {
+            // SAFETY: tolerates any handle.
+            let visible = unsafe { IsWindowVisible(window) }.as_bool();
+            // SAFETY: as above.
+            visible
+                && unsafe { GetWindow(window, GW_OWNER) }.is_err()
+                && !window_text(window).is_empty()
+        })
+        .collect()
+}
+
+/// Every top-level window, shown or not, titled or not, in Z order: what a
+/// scenario's starting windows are recorded from
+/// ([`crate::scenario_windows`]).
+pub(crate) fn all_top_level_windows() -> Vec<HWND> {
     unsafe extern "system" fn visit(window: HWND, lparam: LPARAM) -> BOOL {
         // SAFETY: `lparam` is the vector passed below, alive for the call.
         let windows = unsafe { &mut *(lparam.0 as *mut Vec<HWND>) };
-        // SAFETY: tolerates any handle.
-        let visible = unsafe { IsWindowVisible(window) }.as_bool();
-        // SAFETY: as above.
-        let candidate = visible && unsafe { GetWindow(window, GW_OWNER) }.is_err();
-        if candidate && !window_text(window).is_empty() {
-            windows.push(window);
-        }
+        windows.push(window);
         BOOL(1)
     }
     let mut windows: Vec<HWND> = Vec::new();
@@ -342,7 +353,7 @@ fn window_text(window: HWND) -> String {
     String::from_utf16_lossy(&buffer[..usize::try_from(length).unwrap_or(0)])
 }
 
-fn class_name(window: HWND) -> String {
+pub(crate) fn class_name(window: HWND) -> String {
     let mut buffer = [0u16; 256];
     // SAFETY: writes at most the buffer's length; 0 for an invalid handle.
     let length = unsafe { GetClassNameW(window, &mut buffer) };

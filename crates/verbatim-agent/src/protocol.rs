@@ -39,11 +39,14 @@ use serde::{Deserialize, Serialize};
 /// and added `hung` to [`WindowInfo`]; version 13 added
 /// `withhold_foreground` to [`Request::LaunchProcess`]; version 14 added
 /// `stdin_piped` to [`Request::LaunchProcess`] and [`Request::WriteStdin`],
-/// so a recording's ffmpeg is told to stop rather than killed. A test run
+/// so a recording's ffmpeg is told to stop rather than killed; version 15
+/// added [`Request::RecordWindows`], [`Request::WaitForNewWindowsGone`],
+/// and [`Request::CloseAbandonedWindows`], so a scenario's cleanup proves
+/// it left no window open, whatever the window's title. A test run
 /// against
 /// an older agent is refused at `Hello` instead of losing its connection
 /// mid-run, or running without the exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 14;
+pub const AGENT_PROTOCOL_VERSION: u32 = 15;
 
 /// The environment variable that names, to the Verbatim under test, the
 /// processes it ignores entirely (`ignore_foreign_terminals` in
@@ -312,6 +315,42 @@ pub enum Request {
         /// How long to wait for them to close, in milliseconds.
         timeout_ms: u64,
     },
+    /// Records every top-level window there is, shown, hidden, or cloaked,
+    /// each by its handle, process, and class, as the baseline of the
+    /// scenario about to start: no window in it is the scenario's. The
+    /// baseline belongs to this connection, and outlives the test process
+    /// only as the windows an abandoned scenario left
+    /// ([`Request::CloseAbandonedWindows`]). Refused while another
+    /// scenario's baseline is held, or an abandoned scenario's windows are
+    /// not yet closed. Answered by [`ReplyPayload::WindowsRecorded`].
+    RecordWindows,
+    /// At a scenario's cleanup, after its own closing steps: waits up to
+    /// `timeout_ms`, on window events, for every shown top-level window
+    /// (visible, titled, unowned, and not cloaked, as for
+    /// [`Request::CloseWindows`]) that is not in this connection's baseline
+    /// to be gone, and reports those still shown, closing none. The
+    /// baseline is forgotten when none is left; when some are, it is kept,
+    /// so that once this connection ends they are the windows an abandoned
+    /// scenario left. Refused when this connection recorded no baseline.
+    /// Answered by [`ReplyPayload::NewWindows`].
+    WaitForNewWindowsGone {
+        /// How long to wait, in milliseconds.
+        timeout_ms: u64,
+    },
+    /// At a scenario's start: closes, by handle, the windows an abandoned
+    /// scenario left, one whose connection ended while its baseline was
+    /// still held, because its test process was killed before its cleanup
+    /// or its cleanup found windows open. Those are the shown windows that
+    /// were not in its baseline when its connection ended, and only those
+    /// still shown are closed. Waits up to `timeout_ms` for a scenario
+    /// still watched on another connection to end, and then up to
+    /// `timeout_ms` for the windows to go. Answered by
+    /// [`ReplyPayload::AbandonedWindows`]; empty when no scenario was
+    /// abandoned.
+    CloseAbandonedWindows {
+        /// How long each wait may take, in milliseconds.
+        timeout_ms: u64,
+    },
     /// Writes a small file, creating or replacing it and any missing parent
     /// directories: a test's own document for an application to open, or a
     /// folder of files, named so its window can be told apart.
@@ -549,6 +588,25 @@ pub enum ReplyPayload {
     WindowsClosed {
         /// Windows still open.
         remaining: u32,
+    },
+    /// Answer to [`Request::RecordWindows`].
+    WindowsRecorded {
+        /// How many top-level windows the baseline holds.
+        count: u32,
+    },
+    /// Answer to [`Request::WaitForNewWindowsGone`].
+    NewWindows {
+        /// The shown windows not in the baseline that were still shown
+        /// when the wait ended; empty means the scenario left none.
+        remaining: Vec<WindowInfo>,
+    },
+    /// Answer to [`Request::CloseAbandonedWindows`].
+    AbandonedWindows {
+        /// The windows the abandoned scenario left that were still shown,
+        /// each asked to close, as they were before the close.
+        found: Vec<WindowInfo>,
+        /// Those still shown when the wait ended.
+        remaining: Vec<WindowInfo>,
     },
     /// Answer to [`Request::WriteFile`].
     FileWritten,
@@ -874,6 +932,70 @@ mod tests {
             .expect("not end of stream");
         assert_eq!(read_request, request);
         assert_eq!(read_frame, frame);
+    }
+
+    #[test]
+    fn the_scenario_window_checks_round_trip() {
+        let left = WindowInfo {
+            window: 0x0004_0a2e,
+            pid: 5120,
+            title: "e2e-stage".to_owned(),
+            class: "CabinetWClass".to_owned(),
+            image: "explorer.exe".to_owned(),
+            cloaked: false,
+            minimized: false,
+            hung: false,
+        };
+        let messages = [
+            Frame::Reply {
+                to: 1,
+                payload: ReplyPayload::WindowsRecorded { count: 312 },
+            },
+            Frame::Reply {
+                to: 2,
+                payload: ReplyPayload::NewWindows {
+                    remaining: vec![left.clone()],
+                },
+            },
+            Frame::Reply {
+                to: 3,
+                payload: ReplyPayload::AbandonedWindows {
+                    found: vec![left],
+                    remaining: Vec::new(),
+                },
+            },
+        ];
+        let requests = [
+            RequestEnvelope {
+                id: 1,
+                request: Request::RecordWindows,
+            },
+            RequestEnvelope {
+                id: 2,
+                request: Request::WaitForNewWindowsGone { timeout_ms: 15_000 },
+            },
+            RequestEnvelope {
+                id: 3,
+                request: Request::CloseAbandonedWindows { timeout_ms: 15_000 },
+            },
+        ];
+
+        let mut buffer = Vec::new();
+        for (request, frame) in requests.iter().zip(&messages) {
+            write_message(&mut buffer, request).expect("writes");
+            write_message(&mut buffer, frame).expect("writes");
+        }
+        let mut reader = buffer.as_slice();
+        for (request, frame) in requests.iter().zip(&messages) {
+            let read_request: RequestEnvelope = read_message(&mut reader)
+                .expect("reads")
+                .expect("not end of stream");
+            let read_frame: Frame = read_message(&mut reader)
+                .expect("reads")
+                .expect("not end of stream");
+            assert_eq!(&read_request, request);
+            assert_eq!(&read_frame, frame);
+        }
     }
 
     #[test]

@@ -18,7 +18,7 @@ it when the suite is done.
 Public API:
 
 - `protocol` — the agent's own wire vocabulary, versioned separately from
-  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 14) and framed
+  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 15) and framed
   with the same newline-JSON helpers the control plane uses
   (`verbatim_control::protocol::write_message`/`read_message`). Its pids
   are raw OS process ids naming a process a test is driving, not
@@ -69,6 +69,37 @@ Public API:
     anything else reaching the user's own Windows Terminal; the first
     request starts the watch, a `WinEvent` hook for windows shown on a
     thread of its own, and reports nothing).
+  - A scenario's windows, proving it left none open whatever their titles
+    have become (protocol version 15, private `scenario_windows` module):
+    `RecordWindows` records every top-level window there is, shown,
+    hidden, or cloaked, titled or not, each identified by its handle with
+    its owning process and class, never its title, as the baseline of the
+    scenario about to start. A window that existed before the scenario is
+    never the scenario's, whatever its state, so a window of the owner's
+    that was hidden or cloaked then and is shown later is neither reported
+    nor closed. `WaitForNewWindowsGone`, at the scenario's cleanup, waits
+    on window events for every shown window (visible, titled, unowned, and
+    not cloaked, the windows every condition judges by, so the Settings
+    app's closed, cloaked window has gone) that is not in the baseline to
+    be gone, and answers `NewWindows` with those still shown, closing none.
+    The baseline belongs to the connection that recorded it and lives in
+    the agent, which outlives each test process. When that connection ends
+    while the baseline is still held, because its test process was killed
+    before its cleanup or the cleanup found windows open, the scenario is
+    abandoned: the agent notes the shown windows not in the baseline at
+    that moment, and `CloseAbandonedWindows`, at the next scenario's start,
+    sends each of those still shown an ordinary close request by its
+    handle, its identity checked again first, and answers
+    `AbandonedWindows` with the windows it found and those that would not
+    close. Only windows absent from the abandoned scenario's baseline and
+    open when its connection ended are ever closed, so the owner's own
+    windows, open before the scenario or opened after its test process
+    ended, are never touched. `RecordWindows` is refused while a baseline
+    is held or abandoned windows are not yet closed, and
+    `CloseAbandonedWindows` first waits for a scenario still watched on
+    another connection to end, since a killed test process's connection is
+    seen to end only once the agent has answered the request it was
+    making.
   - State a test fixes its expectations from, read independently of any
     screen reader: `FocusedElement` (UI Automation's focused element: its
     name, its position and the size of its set, counted among its parent's
