@@ -613,8 +613,11 @@ impl FocusReader {
     }
 
     /// Gives the ancestor that is window `hwnd`'s own element its handle,
-    /// read as the window's element's runtime id: one call. Nothing changes
-    /// when the window's element cannot be read or is no ancestor read.
+    /// read as the window's element's runtime id: one call, through the
+    /// client side's window proxy, whose properties and content flag then
+    /// replace the in-provider read's (16.4: the console window's title).
+    /// Nothing changes when the window's element cannot be read or is no
+    /// ancestor read.
     fn mark_window(&self, hwnd: isize, ancestors: &mut [UiaAncestorFact]) {
         let Ok(cache) = self.uia.base_cache_request() else {
             return;
@@ -628,7 +631,16 @@ impl FocusReader {
             .iter_mut()
             .find(|ancestor| ancestor.hwnd == 0 && ancestor.snapshot.runtime_id == runtime_id)
         {
+            // What the in-provider read gave this element is not what a
+            // client sees: the console host's provider names no window, and
+            // the client side's window proxy supplies its title, as NVDA's
+            // raw-view parent read through the proxy has it
+            // (`NVDAObjects/UIA/__init__.py` 2136 to 2141). So the window's
+            // properties and standing as content are taken from this
+            // client-side read, already made.
             ancestor.hwnd = hwnd;
+            ancestor.snapshot = fact_of(snapshot_parts_from_cached_element(&window));
+            ancestor.content = cached_is_control_and_content(&window);
             log_ancestor_fact("mark_window", ancestor);
         } else {
             tracing::debug!(
