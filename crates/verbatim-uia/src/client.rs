@@ -1107,6 +1107,20 @@ fn is_layout(snapshot: &NodeSnapshot) -> bool {
     }
 }
 
+/// Whether `element`, read into `snapshot`, is worth speaking as focus
+/// context by NVDA's rule for a UIA object: presentable by its role, name,
+/// and description (`is_presentable_focus_ancestor`), and counted by UI
+/// Automation both a control and content, without which NVDA takes a UIA
+/// object for layout (`_get_presentationType`,
+/// `NVDAObjects/UIA/__init__.py` 2121 to 2130). Every UIA ancestor a walk
+/// reports passes it; the outpost applies it as well to the element of a
+/// window read through UIA that an MSAA walk crosses into. `element` should
+/// carry a cache holding the snapshot's properties. Local.
+#[must_use]
+pub fn is_focus_context(element: &IUIAutomationElement, snapshot: &NodeSnapshot) -> bool {
+    is_presentable_focus_ancestor(snapshot) && crate::map::cached_is_control_and_content(element)
+}
+
 /// NVDA's `isPresentableFocusAncestor`: whether an ancestor is worth
 /// speaking as focus context. Layout elements are not; neither are roles
 /// that never meaningfully contain the focus for announcement purposes —

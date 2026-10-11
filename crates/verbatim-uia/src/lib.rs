@@ -68,7 +68,8 @@ pub use cache::{
 };
 pub use checks::{console_reports_formatting, is_windows_forms};
 pub use client::{
-    AncestorParts, AncestorStops, AncestorWalk, CALL_TIMEOUT, Uia, release_mta_usage,
+    AncestorParts, AncestorStops, AncestorWalk, CALL_TIMEOUT, Uia, is_focus_context,
+    release_mta_usage,
 };
 pub use com::{
     element_is_gone, init_mta, is_mixed, is_not_supported, leave_mta, runtime_id, timed_out,

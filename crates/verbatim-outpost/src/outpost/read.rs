@@ -556,8 +556,12 @@ pub(super) fn uia_remote_enrichment(
 /// a parent lies in a window read through UIA, the walk continues from that
 /// window's UIA element, as NVDA switches API when a parent is in such a
 /// window (`correctAPIForRelation`): in a Save As dialog, the file name
-/// box's containers above the shell's UIA view are UIA's. Without `uia` the
-/// walk stays in MSAA.
+/// box's containers above the shell's UIA view are UIA's. The window's own
+/// element, the UIA object NVDA switches to there (`correctAPIForRelation`,
+/// `NVDAObjects/window/__init__.py` 319), is reported only when it is focus
+/// context by UIA's rule, as every UIA ancestor is
+/// ([`verbatim_uia::is_focus_context`]). Without `uia` the walk stays in
+/// MSAA.
 fn msaa_ancestors(
     context: &Context,
     uia: Option<(&Uia, &IUIAutomationCacheRequest)>,
@@ -592,11 +596,16 @@ fn msaa_ancestors(
                 return Some(chain);
             };
             let top = snapshot_from_cached_element(&element, &context.uia_registry);
-            let top_id = top.id;
-            let below: Vec<NodeSnapshot> = std::iter::once(top).chain(chain).collect();
-            if known(top_id) {
-                return Some(splice(previous, below, top_id));
-            }
+            let below: Vec<NodeSnapshot> = if verbatim_uia::is_focus_context(&element, &top) {
+                let top_id = top.id;
+                let below: Vec<NodeSnapshot> = std::iter::once(top).chain(chain).collect();
+                if known(top_id) {
+                    return Some(splice(previous, below, top_id));
+                }
+                below
+            } else {
+                chain
+            };
             let above = uia_ancestors(context, uia, cache, &element, previous, deadline)?;
             Some(above.into_iter().chain(below).collect())
         }

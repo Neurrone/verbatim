@@ -90,7 +90,10 @@ Public API:
   nameless windows, property pages, and groupings) plus list items, tree
   items, and editable text — are crossed but never reported, matching
   what NVDA speaks as entered containers regardless of its review-mode
-  setting. `Uia::ancestor_chain_from(parents, registry, stops)` gives the
+  setting; a UIA element must also be both a control and content.
+  `is_focus_context(element, snapshot)` is that whole test, public so the
+  outpost applies it to the element of a UIA window that an MSAA walk
+  crosses into. `Uia::ancestor_chain_from(parents, registry, stops)` gives the
   same result from ancestors already fetched, nearest first, with their
   caches filled: what `verbatim-uia-rops`'s `focus_ancestry` returns after
   reading the same raw-view ancestors in one round trip inside the

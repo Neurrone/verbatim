@@ -1105,7 +1105,13 @@ verified.
   ancestry was already matched. Checked live in Notepad's Save As dialog:
   the file name box's ancestry continues through the shell's UIA view,
   and navigating to its parents switches to UIA there. Until 2026-10-03
-  an MSAA walk or navigation step stayed in MSAA across windows.
+  an MSAA walk or navigation step stayed in MSAA across windows. Where a
+  focus's MSAA walk crosses into a UIA window, the window's element is
+  presented by NVDA's rule for a UIA object, as every UIA ancestor is:
+  only when it is presentable by role, name, and description and UI
+  Automation counts it both a control and content (since 2026-10-11;
+  before, it was reported whatever it was, and the reducer judged it by
+  role and name alone).
 - Navigator follows focus; review follows navigator. NVDA coupling
   rules ([Review modes](nvda/review-modes.md)). Verbatim: **matched
   (unverified)** for the follow-focus default. Following the caret
