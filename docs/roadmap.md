@@ -169,7 +169,12 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    pass; `conhost_typing`, `conhost_two_windows`,
    `menu_and_settings_dialog` and `explorer_folder_window` passed once
    each, and the console host's own hook was seen taking its console
-   windows' foreground and focus events. The full suite is still to run.
+   windows' foreground and focus events. Done (2026-10-11): every
+   `conhost_` scenario and `settings_system_page` passed once but
+   `conhost_marker_list` (the unsettled-read bug below, not this step's);
+   ten runs each of twelve related scenarios passed but one run of
+   `conhost_leave_flood` (an outpost crash inside UI Automation, below);
+   the full suite passed 90 of 90.
    The five kinds of
    section 12.4 moved (focus, foreground, menu-popup start, alert,
    tooltip); every MSAA fact carries the thread that raised it, so the
@@ -436,7 +441,21 @@ Other open items, taken after the steps above unless they fold into one:
   response; `phase6-design.md`, "Console windows as one application"). Keep
   a full dump of every outpost crash, so the event that carried it can be
   found, since a minidump holds no heap; and count outpost crashes across
-  runs, in the suite's summary, so how often it happens is known.
+  runs, in the suite's summary, so how often it happens is known. It
+  happened again in step 5's runs, in the same scenario, as a fail-fast in
+  `EventRecord::CallbackAdapter::GetCacheRequest` under the same
+  `SavedEvent::OnMessage`: twice in about twenty runs of
+  `conhost_leave_flood`. Suspected, not proven: a saved event delivered
+  for a handler group already removed, since every move of a
+  focus-following registration removes all handlers and adds the group
+  again while the console host floods text events.
+- A terminal read that comes back unsettled still marks every change
+  observed before it began as covered, so a change queued behind it is
+  skipped and, when the program has finished writing, the rest of its
+  output is never read (`conhost_marker_list`, 2026-10-09 and
+  2026-10-11). Fix: only a settled read sets the time that marks changes
+  covered. An unsettled read with nothing queued behind it is still never
+  retried; that belongs to step 9.
 - Verbatim's own outpost once left a fact in its intake for 6.37 seconds
   (2026-10-11): its worker logged nothing from 18:22:28.52 to 18:22:34.90,
   and the menu window's SHOW event reached the outpost only at 34.896.
