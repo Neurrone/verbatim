@@ -491,6 +491,39 @@ fn a_focus_without_a_path_is_followed_from_its_next_focus_event() {
     app.quit();
 }
 
+/// NVDA compares a UIA focus event with the last focus it queued, whatever
+/// reported it (`lastQueuedFocusObject`): a focus Core queued that was
+/// observed before the one the listener last accepted changes nothing, and
+/// a repeat on that element is dropped; once Core has queued a newer focus
+/// the listener did not accept, as an MSAA menu's or a foreground change's,
+/// a focus event on the element, which never lost the keyboard focus, is
+/// read in full.
+fn a_focus_is_no_repeat_once_another_focus_was_queued() {
+    let title = common::unique_title("mockapp-focus-queued");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let button = client.focused();
+    let _ = outpost.listener_fact(&button);
+    outpost.listener_focus_queued(1);
+    let (judged, _) = outpost.listener_read(&button);
+    assert!(
+        matches!(judged, Judged::Dropped(_)),
+        "after an older focus, a repeat is dropped, not {judged:?}"
+    );
+    outpost.listener_focus_queued(u64::MAX);
+    let (judged, _) = outpost.listener_read(&button);
+    assert!(
+        matches!(judged, Judged::Read(_)),
+        "after a newer focus, the focus is read, not {judged:?}"
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 /// Focuses `id` in mockapp's caret watch fixture and returns the focus the
 /// outpost reports, which must be the next thing it says, followed by the
 /// caret it reports for a document, and nothing more.
@@ -972,6 +1005,10 @@ fn a_windowless_selection_is_given_its_nearest_window() {
 
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_focus_is_no_repeat_once_another_focus_was_queued",
+            a_focus_is_no_repeat_once_another_focus_was_queued,
+        ),
         (
             "a_windowless_selection_is_given_its_nearest_window",
             a_windowless_selection_is_given_its_nearest_window,

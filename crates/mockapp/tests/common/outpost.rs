@@ -50,7 +50,7 @@ use verbatim_model::{
     CallCounts, CallKind, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
     WindowHandle,
 };
-use verbatim_outpost::focus_read::{FocusEvent, FocusReader, Judged, LastAccepted};
+use verbatim_outpost::focus_read::{Arrival, FocusEvent, FocusReader, Judged, LastAccepted};
 use verbatim_outpost::protocol::{
     DeliveredFact, EventTiming, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
     SupervisorToOutpost, WinEventStamp, read_message,
@@ -130,6 +130,9 @@ pub struct OutpostUnderTest {
     /// The focus listener's reader, standing in for the listener's thread
     /// for mockapp's application.
     reader: RefCell<FocusReader>,
+    /// The last focus the listener's reader accepted, which Core's queued
+    /// focuses supersede.
+    last_accepted: LastAccepted,
 }
 
 impl OutpostUnderTest {
@@ -181,7 +184,8 @@ impl OutpostUnderTest {
             // The test may have finished with what the outpost hears.
             let _ = heard_tx.send(event);
         }));
-        let mut reader = FocusReader::new(options.remote_operations, LastAccepted::default())
+        let last_accepted = LastAccepted::default();
+        let mut reader = FocusReader::new(options.remote_operations, last_accepted.clone())
             .expect("a UIA client for the listener's reads");
         // The listener's acceptance test reads the same foreground window.
         let listener_foreground = Arc::clone(&foreground);
@@ -198,6 +202,7 @@ impl OutpostUnderTest {
             time,
             foreground,
             reader: RefCell::new(reader),
+            last_accepted,
         };
         assert_eq!(
             under_test.next(),
@@ -350,8 +355,19 @@ impl OutpostUnderTest {
         let _ = verbatim_uia::calls::take();
         // mockapp never has the system focus here, so the listener would
         // find no keyboard focus window for a windowless element.
-        let judged = self.reader.borrow_mut().read(element, 0, kind);
+        let arrival = Arrival {
+            trace: TraceId::mint(),
+            observed_at_ms: now_ms(),
+        };
+        let judged = self.reader.borrow_mut().read(element, 0, kind, arrival);
         (judged, verbatim_uia::calls::take())
+    }
+
+    /// Tells the listener's reader that Core took another event, observed
+    /// at `observed_at_ms`, as the focus, as the supervisor tells the
+    /// listener ([`SupervisorToOutpost::FocusQueued`]).
+    pub fn listener_focus_queued(&self, observed_at_ms: u64) {
+        self.last_accepted.queued(TraceId::mint(), observed_at_ms);
     }
 
     /// The fact the focus listener sends for a UIA focus event on `element`
@@ -456,4 +472,14 @@ impl OutpostUnderTest {
         self.settled();
         answer
     }
+}
+
+/// Milliseconds since the Unix epoch, as the listener stamps an event's
+/// arrival.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
 }

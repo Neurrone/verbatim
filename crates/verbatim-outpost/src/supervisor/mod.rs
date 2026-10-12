@@ -40,7 +40,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use crossbeam_channel::{Sender, unbounded};
-use verbatim_model::{OutpostId, Pid};
+use verbatim_model::{OutpostId, Pid, TraceId};
 
 use crate::protocol::{OutpostToSupervisor, SupervisorToOutpost};
 
@@ -373,5 +373,15 @@ impl Supervisor {
         let _ = self
             .owner
             .send(owner::OwnerEvent::Views { attention, holding });
+    }
+
+    /// Tells the focus listener that Core took the event traced
+    /// `trace_id`, observed at `observed_at_ms`, as the focus
+    /// ([`SupervisorToOutpost::FocusQueued`]).
+    pub fn focus_queued(&self, trace_id: TraceId, observed_at_ms: u64) {
+        let _ = self.owner.send(owner::OwnerEvent::FocusQueued {
+            trace_id,
+            observed_at_ms,
+        });
     }
 }

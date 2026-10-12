@@ -19,7 +19,10 @@ Public API:
 - `SrState` — `new()`; `focused()`, the live focus and its application;
   `focus_report()`, the focus's snapshot, its ancestors, and the navigator
   object, which the control plane's `DumpFocus` answers with for a test's
-  artifacts; `attention()`, the application holding attention; `held_nodes()`,
+  artifacts; `focuses_queued()`, how many focuses the reducer has taken as
+  the focus, which the host compares across an input to tell the focus
+  listener a focus was queued; `attention()`, the application holding
+  attention; `held_nodes()`,
   every node id the state refers to grouped by the outpost that issued it;
   and `held_anchors()` (milestone M4), every text anchor the state refers
   to, grouped the same way: the caret's line and selection, the review

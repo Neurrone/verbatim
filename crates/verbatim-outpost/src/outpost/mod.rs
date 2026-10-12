@@ -890,7 +890,8 @@ impl Outpost {
             // the listener alone.
             SupervisorToOutpost::Shutdown
             | SupervisorToOutpost::HookInstalled { .. }
-            | SupervisorToOutpost::HookRemoved { .. } => {}
+            | SupervisorToOutpost::HookRemoved { .. }
+            | SupervisorToOutpost::FocusQueued { .. } => {}
             SupervisorToOutpost::NodesHeld {
                 nodes,
                 anchors,

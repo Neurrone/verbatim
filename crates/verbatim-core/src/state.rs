@@ -432,6 +432,13 @@ pub(crate) struct PendingNavigation {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SrState {
     pub(crate) focus: Option<FocusContext>,
+    /// How many focuses the reducer has taken as the focus, the silent
+    /// re-read of a replacement outpost's report included: what NVDA's
+    /// last queued focus follows, so the host can tell the focus listener
+    /// when a focus it did not accept was queued (`docs/parity.md`,
+    /// "Duplicate focus suppression").
+    #[serde(default)]
+    pub(crate) focuses_queued: u64,
     pub(crate) attention: Option<Attention>,
     pub(crate) next_query_id: u64,
     /// The navigator object and review cursor (roadmap M3). `None` until
@@ -543,6 +550,14 @@ impl SrState {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// How many focuses the reducer has taken as the focus so far; it grows
+    /// by one with each, so a host that compares it before and after an
+    /// input knows whether that input's focus was queued.
+    #[must_use]
+    pub fn focuses_queued(&self) -> u64 {
+        self.focuses_queued
     }
 
     /// Forgets the focus's caret and its timed reports.

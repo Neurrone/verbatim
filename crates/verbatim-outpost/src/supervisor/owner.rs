@@ -44,6 +44,11 @@ pub(super) enum OwnerEvent {
         attention: Option<Pid>,
         holding: BTreeSet<OutpostId>,
     },
+    /// From the app: Core took the event traced `trace_id` as the focus.
+    FocusQueued {
+        trace_id: TraceId,
+        observed_at_ms: u64,
+    },
     /// From the listener's reader: a focus fact to route.
     Fact {
         trace_id: TraceId,
@@ -238,6 +243,24 @@ impl Owner {
                     } else {
                         let _ = self.start_outpost(pid, None);
                     }
+                }
+            }
+            OwnerEvent::FocusQueued {
+                trace_id,
+                observed_at_ms,
+            } => {
+                // A listener still launching has accepted no focus to
+                // forget.
+                if let Some(child) = self.listener.as_ref().and_then(|l| l.child.as_ref())
+                    && let Err(error) =
+                        child
+                            .writer
+                            .push(Outgoing::HandOver(SupervisorToOutpost::FocusQueued {
+                                trace_id,
+                                observed_at_ms,
+                            }))
+                {
+                    tracing::warn!(%error, "a queued focus could not be told to the listener");
                 }
             }
             OwnerEvent::Views { attention, holding } => {

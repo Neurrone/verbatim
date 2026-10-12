@@ -541,7 +541,14 @@ Other open items, taken after the steps above unless they fold into one:
   text area registration hearing nothing after a removed subtree
   registration. The fix, following the focus as NVDA does, is
   `docs/design/focus-pipeline.md` section 17 (approved 2026-10-11), first
-  in the work order.
+  in the work order. Section 17 is built (152f09a), but the crash came
+  again on 2026-10-12, in one run of every scenario on the step 6 branch:
+  `conhost_leave_flood`'s console host outpost failed fast (0xC0000409)
+  about four seconds after its last logged work, its replacement read the
+  console, and the scenario heard "terminal" for "ready>". Its full dump
+  was kept outside the repository; there is no debugger on the
+  development machine to read it, so whether it is the same saved event
+  is not yet known. Section 17's fifty-run check is still to be made.
 - Windows Terminal faults on our `FindText` (2026-10-11): when the search
   finds nothing, Windows Terminal (1.24 to 1.26 and main, unreported
   upstream) returns a range wrapping no range, and the next call on it is

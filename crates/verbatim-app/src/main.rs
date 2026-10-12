@@ -1372,7 +1372,17 @@ impl ReducerThread<'_> {
             | Input::ClearingKey { trace_id } => *trace_id,
             _ => TraceId::mint(),
         };
+        let queued = self.state.focuses_queued();
         let effects = reduce(&mut self.state, &input);
+        if self.state.focuses_queued() != queued {
+            let observed_at_ms = match &input {
+                Input::Event { observed_at_ms, .. } => *observed_at_ms,
+                _ => 0,
+            };
+            self.context
+                .supervisor
+                .focus_queued(trace_id, observed_at_ms);
+        }
         if self.state.focused().is_some() && !self.context.focus_known.swap(true, Ordering::AcqRel)
         {
             self.context.readiness.notify();

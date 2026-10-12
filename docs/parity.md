@@ -561,6 +561,18 @@ verified.
   makes next, and has been read, as NVDA records only a focus it queues
   (mockapp's
   `a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read`).
+  NVDA's last queued focus is replaced by every focus it queues, MSAA's
+  and a foreground change's included, and its UIA handler compares with
+  it only while it is a UIA object. Until 2026-10-12 the listener's last
+  accepted focus was replaced only by the UIA focuses it accepted itself,
+  so after Verbatim's own context menu (MSAA) and Escape, Notepad's
+  editor, which had kept the keyboard focus, was dropped as a repeat and
+  never announced (`notepad_editing`, once in a run of every scenario).
+  Since then Core tells the listener each focus it queues, by the event's
+  trace and observation time (`SupervisorToOutpost::FocusQueued`), and
+  the listener's last accepted focus stops counting once Core has queued
+  a newer, other focus. **matched since 2026-10-12** (mockapp's
+  `a_focus_is_no_repeat_once_another_focus_was_queued`).
 - Stale focus events: NVDA has no timestamp arbitration; it relies on
   queue-time freshness plus cancellable speech
   ([Event handling](nvda/events.md), [Speech](nvda/speech.md)), and its

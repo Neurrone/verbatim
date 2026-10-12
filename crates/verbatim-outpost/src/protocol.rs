@@ -571,6 +571,19 @@ pub enum SupervisorToOutpost {
         /// The application.
         pid: Pid,
     },
+    /// To the focus listener: Core has taken as the focus the event traced
+    /// `trace_id`, observed at `observed_at_ms` (0 for a focus Core asked
+    /// for). NVDA's duplicate rule compares a UIA focus event with the last
+    /// focus queued, whatever reported it, so the listener forgets the
+    /// last focus it accepted when a newer, other focus was queued
+    /// (`focus_read::LastAccepted`).
+    FocusQueued {
+        /// The trace of the event Core took.
+        trace_id: TraceId,
+        /// When that event was observed, in milliseconds since the Unix
+        /// epoch.
+        observed_at_ms: u64,
+    },
     /// To an outpost: the listener forwards none of the application's
     /// `WinEvent` facts raised after `through`, and every one it forwarded
     /// before is ahead of this message, so the listener's copies and the

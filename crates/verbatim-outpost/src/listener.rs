@@ -118,7 +118,7 @@ use crate::OutpostOptions;
 use crate::arbitration::window_class_name;
 use crate::event_thread::EventThread;
 use crate::focus_read::{
-    FocusEvent, FocusReader, Judged, LastAccepted, Meta, READ_DEADLINE, Readers, Reading,
+    Arrival, FocusEvent, FocusReader, Judged, LastAccepted, Meta, READ_DEADLINE, Readers, Reading,
 };
 use crate::outpost::now_ms;
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
@@ -338,6 +338,9 @@ impl Outgoing {
 struct Listener {
     outgoing: Arc<Outgoing>,
     readers: Arc<Readers<UiaFocusReading>>,
+    /// The last focus any reading thread accepted, which Core's queued
+    /// focuses supersede ([`SupervisorToOutpost::FocusQueued`]).
+    last_accepted: LastAccepted,
     _registration: Option<Registration>,
     _event_thread: EventThread,
     _writer: JoinHandle<()>,
@@ -381,6 +384,7 @@ impl Reading for UiaFocusReading {
     fn read(
         &self,
         reader: Option<&mut FocusReader>,
+        meta: Meta,
         (element, focus_window, _, kind, fact): Self::Job,
     ) -> Judged {
         let Some(reader) = reader else {
@@ -388,7 +392,15 @@ impl Reading for UiaFocusReading {
         };
         match (element.resolve(), fact) {
             (Ok(element), Some(fact)) => reader.check_fact(&element, fact),
-            (Ok(element), None) => reader.read(&element, focus_window, kind),
+            (Ok(element), None) => reader.read(
+                &element,
+                focus_window,
+                kind,
+                Arrival {
+                    trace: meta.trace,
+                    observed_at_ms: meta.observed_at_ms,
+                },
+            ),
             (Err(_), _) => Judged::Dropped("its element could not be resolved"),
         }
     }
@@ -469,11 +481,12 @@ impl Listener {
             })
             .expect("spawn the listener writer");
 
+        let last_accepted = LastAccepted::default();
         let readers = Arc::new(Readers::new(
             UiaFocusReading {
                 remote: options.remote_operations,
                 outgoing: Arc::clone(&outgoing),
-                last_accepted: LastAccepted::default(),
+                last_accepted: last_accepted.clone(),
             },
             READ_DEADLINE,
         ));
@@ -501,6 +514,7 @@ impl Listener {
         Self {
             outgoing,
             readers,
+            last_accepted,
             _registration: registration,
             _event_thread: event_thread,
             _writer: writer,
@@ -521,6 +535,7 @@ impl Listener {
         let Self {
             outgoing,
             readers,
+            last_accepted: _,
             _registration: registration,
             _event_thread: event_thread,
             _writer: writer,
@@ -559,6 +574,10 @@ impl Listener {
                 self.outgoing.hook_removed(*pid);
                 self.readers.outpost_ended(*pid);
             }
+            SupervisorToOutpost::FocusQueued {
+                trace_id,
+                observed_at_ms,
+            } => self.last_accepted.queued(*trace_id, *observed_at_ms),
             _ => {}
         }
     }

@@ -164,12 +164,36 @@ struct LastFocus {
 /// dropped before it is read ([`FocusReader::read`]). Each thread's own
 /// focus before still serves the ancestor read's stop and the evidence
 /// that a runtime id now names another element (`same_as_last`).
+///
+/// NVDA compares with the last focus it queued, whatever reported it, and
+/// only while that is a UIA object (`lastQueuedFocusObject`), so once Core
+/// queues a newer focus that is not this one, from an outpost's MSAA
+/// events, a foreground change, or a focus it asked for, the element no
+/// longer counts ([`queued`](Self::queued)).
 #[derive(Clone, Default)]
 pub struct LastAccepted(Arc<Mutex<Option<Accepted>>>);
 
-/// The last focus accepted, as the number of the reader that accepted it
-/// and the element.
-type Accepted = (u64, AgileReference<IUIAutomationElement>);
+/// The last focus accepted: the number of the reader that accepted it, the
+/// element, the event it came in, and whether a newer focus has been queued
+/// since, after which it is no repeat's evidence. It is kept until its
+/// reader replaces or releases it, so it is released on a thread in COM's
+/// apartment.
+struct Accepted {
+    reader: u64,
+    element: AgileReference<IUIAutomationElement>,
+    arrival: Arrival,
+    superseded: bool,
+}
+
+/// The UIA event a focus came in: its trace, and when the listener
+/// received it, in milliseconds since the Unix epoch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Arrival {
+    /// The trace minted for the event.
+    pub trace: TraceId,
+    /// When the event was received.
+    pub observed_at_ms: u64,
+}
 
 impl LastAccepted {
     fn lock(&self) -> MutexGuard<'_, Option<Accepted>> {
@@ -181,17 +205,46 @@ impl LastAccepted {
     fn element(&self) -> Option<IUIAutomationElement> {
         self.lock()
             .as_ref()
-            .and_then(|(_, element)| element.resolve().ok())
+            .filter(|accepted| !accepted.superseded)
+            .and_then(|accepted| accepted.element.resolve().ok())
     }
 
-    /// Makes `element`, which reader `reader` accepted, the last focus
-    /// accepted.
-    fn accept(&self, reader: u64, element: &IUIAutomationElement) {
+    /// Makes `element`, which reader `reader` accepted from the event
+    /// `arrival`, the last focus accepted.
+    fn accept(&self, reader: u64, element: &IUIAutomationElement, arrival: Arrival) {
         match AgileReference::new(element) {
-            Ok(element) => *self.lock() = Some((reader, element)),
+            Ok(element) => {
+                *self.lock() = Some(Accepted {
+                    reader,
+                    element,
+                    arrival,
+                    superseded: false,
+                });
+            }
             Err(error) => {
                 tracing::debug!(%error, "the last focus accepted could not be kept");
             }
+        }
+    }
+
+    /// Core took the event traced `trace`, observed at `observed_at_ms`
+    /// (0 for a focus it asked for), as the focus. Unless that is the last
+    /// focus accepted, or was observed before it, so that the accepted one
+    /// is the newer and Core takes it next, the last focus accepted is no
+    /// longer the last focus queued, and is no repeat's evidence.
+    pub fn queued(&self, trace: TraceId, observed_at_ms: u64) {
+        let mut slot = self.lock();
+        if let Some(accepted) = slot.as_mut()
+            && !accepted.superseded
+            && accepted.arrival.trace != trace
+            && (observed_at_ms == 0 || observed_at_ms >= accepted.arrival.observed_at_ms)
+        {
+            tracing::debug!(
+                ?trace,
+                observed_at_ms,
+                "another focus was queued; the last focus accepted is no repeat's evidence"
+            );
+            accepted.superseded = true;
         }
     }
 
@@ -200,7 +253,10 @@ impl LastAccepted {
     /// thread is still in COM's apartment.
     fn release(&self, reader: u64) {
         let mut slot = self.lock();
-        if slot.as_ref().is_some_and(|(owner, _)| *owner == reader) {
+        if slot
+            .as_ref()
+            .is_some_and(|accepted| accepted.reader == reader)
+        {
             *slot = None;
         }
     }
@@ -274,14 +330,16 @@ impl FocusReader {
 
     /// Judges and reads the UIA focus event, or menu opening (`kind`),
     /// whose sender is `element`, built with the base cache request as the
-    /// registration delivers it. `focus_window` is the keyboard focus
-    /// window of the element's application when the event arrived, for an
-    /// element that is not a window (0 otherwise).
+    /// registration delivers it, and which came as `arrival`.
+    /// `focus_window` is the keyboard focus window of the element's
+    /// application when the event arrived, for an element that is not a
+    /// window (0 otherwise).
     pub fn read(
         &mut self,
         element: &IUIAutomationElement,
         focus_window: isize,
         kind: FocusEvent,
+        arrival: Arrival,
     ) -> Judged {
         let hwnd = cached_native_window_handle(element);
         let window = if hwnd == 0 { focus_window } else { hwnd };
@@ -342,6 +400,7 @@ impl FocusReader {
                     (hwnd, focus_window, nearest),
                     event,
                     (&ancestry, path.name()),
+                    arrival,
                 )
             }
             Err(error) => {
@@ -361,7 +420,7 @@ impl FocusReader {
                     element: element.clone(),
                     ancestors: Vec::new(),
                 });
-                self.last_accepted.accept(self.number, element);
+                self.last_accepted.accept(self.number, element, arrival);
                 Judged::Read(Box::new(UiaFocusRead {
                     hwnd,
                     focus_window,
@@ -441,13 +500,14 @@ impl FocusReader {
     /// and role from the event's cache, `event`, as NVDA reads them from
     /// the event's element, and its value, states, and details afresh; its
     /// ancestors as read, followed by those of the focus before above the
-    /// one the read stopped at.
+    /// one the read stopped at. `arrival` is the event it came in.
     fn focused(
         &mut self,
         element: &IUIAutomationElement,
         (hwnd, focus_window, nearest): (isize, isize, isize),
         event: CachedUiaParts,
         (ancestry, path): (&Ancestry, &'static str),
+        arrival: Arrival,
     ) -> Judged {
         let live = ancestry
             .element
@@ -530,7 +590,7 @@ impl FocusReader {
             element: element.clone(),
             ancestors: ancestors.clone().unwrap_or_default(),
         });
-        self.last_accepted.accept(self.number, element);
+        self.last_accepted.accept(self.number, element, arrival);
         Judged::Read(Box::new(UiaFocusRead {
             hwnd,
             focus_window,
@@ -934,8 +994,8 @@ pub(crate) trait Reading: Send + Sync + 'static {
     /// Makes a thread's reader, on that thread; `None` when it cannot be
     /// made.
     fn reader(&self) -> Option<Self::Reader>;
-    /// Judges and reads one event.
-    fn read(&self, reader: Option<&mut Self::Reader>, job: Self::Job) -> Judged;
+    /// Judges and reads one event, which `meta` describes.
+    fn read(&self, reader: Option<&mut Self::Reader>, meta: Meta, job: Self::Job) -> Judged;
     /// The kind of event `job` is and the element it is of, by runtime id,
     /// for NVDA's UIA limiter rule: a newer event of one kind of one
     /// element replaces one still waiting ([`Readers::push`]). `None`, the
@@ -1195,7 +1255,7 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
     let mut generation = generation;
     let mut reader = shared.reading.reader();
     while let Some((meta, job)) = next_job(shared, pid, generation) {
-        let judged = shared.reading.read(reader.as_mut(), job);
+        let judged = shared.reading.read(reader.as_mut(), meta, job);
         let mut guard = shared.lock();
         let state = &mut *guard;
         let Some(app) = state.apps.get_mut(&pid) else {
@@ -1362,7 +1422,12 @@ mod tests {
             (!element.is_empty()).then_some((FocusEvent::Focus, element.as_slice()))
         }
 
-        fn read(&self, reader: Option<&mut ThreadId>, (marker, gate, _): Self::Job) -> Judged {
+        fn read(
+            &self,
+            reader: Option<&mut ThreadId>,
+            _: Meta,
+            (marker, gate, _): Self::Job,
+        ) -> Judged {
             if let Some(thread) = reader {
                 let _ = self
                     .read_on

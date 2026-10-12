@@ -217,6 +217,10 @@ Public API:
   timestamp so the latency timeline starts at the OS event, its
   `EventTiming`, and for a `WinEvent`'s fact its `WinEventStamp`),
   `HookInstalled` and `HookRemoved` (to the listener, the hand-over above),
+  `FocusQueued` (to the listener: the trace and observation time of each
+  focus Core queued, after which the last focus the listener accepted is
+  no repeat's evidence unless it is that focus or newer, as NVDA's last
+  queued focus is replaced by every focus it queues),
   `ForwardingEnded` (to an outpost, the hand-over's end), `Query` (a
   request id and a `Query`: `FocusNow`, `Navigate` with a model `QueryKind`,
   `Activate`, `Ancestors`, `DumpTree`, or `Text`, a node and a model

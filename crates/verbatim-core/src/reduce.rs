@@ -715,6 +715,7 @@ fn reduce_focus_changed(
         // The silent re-read: the replacement outpost reports the focus the
         // user already heard, so take its ids without speaking.
         state.focus = Some(new_focus);
+        state.focuses_queued += 1;
         if state.navigator.is_none() {
             state.navigator = Some(Navigator::on(report.node.clone()));
         }
@@ -756,6 +757,7 @@ fn reduce_focus_changed(
     // containers (`focus_speech`).
     end_text_activity(state, report.node.id, foreground_changed, &mut effects);
     state.focus = Some(new_focus);
+    state.focuses_queued += 1;
     state.navigator = Some(navigator);
     if report.foreground && !has_text(report.node.name.as_deref()) {
         return effects;

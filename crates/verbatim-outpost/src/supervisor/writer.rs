@@ -54,8 +54,9 @@ pub(super) enum Outgoing {
     /// a notification, which nothing replaces).
     Fact(Option<FactKey>, SupervisorToOutpost),
     /// A message of the MSAA hand-over: `ForwardingEnded` to an outpost,
-    /// `HookInstalled` or `HookRemoved` to the listener; and a part of a UIA
-    /// focus's read routed to an outpost, which waits on its marker.
+    /// `HookInstalled` or `HookRemoved` to the listener; a part of a UIA
+    /// focus's read routed to an outpost, which waits on its marker; and
+    /// `FocusQueued` to the listener, which its duplicate rule depends on.
     HandOver(SupervisorToOutpost),
     /// Anything else: a query, an activation, a configuration command.
     Other(SupervisorToOutpost),
