@@ -270,6 +270,16 @@ calls and 3 provider calls, where it was read in full, 1 call and 146
 provider calls, and then dropped by Core (`call_counts.rs`,
 `uia_repeated_focus_costs_exactly`).
 
+With NVDA's last check before it takes a focus, the sender's own keyboard
+focus read with a plain property read (`shouldAllowUIAFocusEvent`;
+2026-10-12, `docs/design/focus-pipeline.md`, section 16.8), every UIA
+focus that passes the acceptance test costs one call more before its
+read (`CurrentHasKeyboardFocus`), 3 provider calls in mockapp: the
+property, the host provider, and the fragment root. The remote
+operation's own check stays, for a focus that moves on while it is read
+(`call_counts.rs`, `uia_focus_changes_cost_exactly_remote` and
+`uia_focus_changes_cost_exactly_classic`).
+
 ### A focus change, UIA, steady state
 
 - Minimum: 2 UIA calls. The outpost must have a live element, confirm that

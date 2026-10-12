@@ -450,10 +450,10 @@ impl FocusReader {
 
     /// What a focus event goes through before anything of its sender,
     /// `element`, whose own window is `hwnd` and whose runtime id is
-    /// `runtime_id`, is read, in NVDA's order: the repeat check, then the
-    /// acceptance test against its nearest window. Answers that window,
-    /// `None` when the element has none above it, or why the event is
-    /// dropped.
+    /// `runtime_id`, is read, in NVDA's order: the repeat check, the
+    /// acceptance test against its nearest window, then the sender's own
+    /// keyboard focus. Answers that window, `None` when the element has
+    /// none above it, or why the event is dropped.
     fn judge_before_reading(
         &self,
         element: &IUIAutomationElement,
@@ -504,6 +504,19 @@ impl FocusReader {
             &RequestedEvents::default(),
         ) {
             return Err("its window is not related to the foreground window");
+        }
+        // NVDA's last check before it queues the focus,
+        // `shouldAllowUIAFocusEvent` (`UIAHandler/__init__.py` 948,
+        // `NVDAObjects/UIA/__init__.py` 1632): the sender's keyboard focus,
+        // read live with a plain property read, a failed read letting the
+        // event through. Read so here, not in the remote operation that
+        // reads the focus afterwards: an element imported into a remote
+        // operation is the provider's own, and Windows Terminal's second
+        // identity of its terminal answers there that it has the keyboard
+        // focus while read plainly it answers that it has not, so NVDA never
+        // takes it (`docs/design/focus-pipeline.md`, section 16.8).
+        if matches!(element.has_keyboard_focus(), Ok(false)) {
+            return Err("its element no longer has the keyboard focus");
         }
         Ok(nearest)
     }

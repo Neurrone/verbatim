@@ -83,7 +83,8 @@ impl Client {
 /// the listener compares the sender with the last focus it accepted and,
 /// UI Automation equating them, reads that element's keyboard focus: two
 /// calls; then, for the acceptance test, the windowless item's nearest
-/// window, one call. Remotely, the earlier element's focus is read in the focus's one
+/// window, one call; then the sender's own keyboard focus, read plainly as
+/// NVDA reads it, one call. Remotely, the earlier element's focus is read in the focus's one
 /// round trip; an earlier element that is gone fails the whole run before
 /// it starts, which is run again without it, one call more. Classically,
 /// the read makes five calls: the focus's keyboard focus, the earlier
@@ -92,7 +93,7 @@ impl Client {
 /// and the keyboard focus read alone.
 fn reused_runtime_id(remote: bool) {
     let path = if remote { "remote" } else { "classic" };
-    let gone_cost = if remote { 5 } else { 8 };
+    let gone_cost = if remote { 6 } else { 9 };
     let title = common::unique_title(&format!("mockapp-reuse-{path}"));
     let mut app = common::spawn("reuse.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
