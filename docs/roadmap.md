@@ -258,7 +258,12 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
 7. The UIA probe asks once.
 8. Two reserved spare outposts.
 9. verbatim.exe's relay: fewer hand-offs, its own stage in the latency
-   ledger, and the platform's floor measured under Balanced.
+   ledger, and the platform's floor measured under Balanced. Replaced by
+   the communication design's migration (`docs/design/communication.md`
+   section 11, steps 1 to 12, every decision approved, 2026-10-13), which
+   includes step 10 below as its step 6a. Order (Dickson, 2026-10-13):
+   this migration and then step 8, each merged into main, before the
+   terminal redesign.
 10. The harness's idle barrier covers outposts' and the listener's work in
     flight.
 11. Measure again (debug and release), full suite, push.
