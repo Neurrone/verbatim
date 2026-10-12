@@ -389,7 +389,12 @@ const _: () = {
 /// milliseconds: the `slow` command's delay, 0 for none.
 static DELAY_MS: AtomicU64 = AtomicU64::new(0);
 
-/// Counts one call to `method`, then waits the `slow` command's delay, so
+/// How long each pattern request waits more: the `slow-patterns`
+/// command's delay, 0 for none.
+static PATTERN_DELAY_MS: AtomicU64 = AtomicU64::new(0);
+
+/// Counts one call to `method`, then waits the `slow` command's delay, and
+/// for a pattern request the `slow-patterns` command's as well, so
 /// the call is answered that much later, as by an application busy
 /// building a window; or, when the `hold` command asked for it, says
 /// `held <method>` on stdout and waits until `release`, so a test knows a
@@ -412,7 +417,10 @@ pub(crate) fn hit(method: Method) {
             .wait_while(released, |released| !*released)
             .unwrap_or_else(std::sync::PoisonError::into_inner);
     }
-    let delay = DELAY_MS.load(Ordering::Relaxed);
+    let mut delay = DELAY_MS.load(Ordering::Relaxed);
+    if matches!(method, Method::GetPatternProvider) {
+        delay += PATTERN_DELAY_MS.load(Ordering::Relaxed);
+    }
     if delay > 0 {
         std::thread::sleep(std::time::Duration::from_millis(delay));
     }
@@ -470,6 +478,12 @@ pub(crate) fn advised(event: i32) -> i64 {
 /// is answered; 0 answers at once again.
 pub(crate) fn set_delay(ms: u64) {
     DELAY_MS.store(ms, Ordering::Relaxed);
+}
+
+/// Makes every pattern request from now on wait `ms` milliseconds more
+/// before it is answered; 0 adds nothing again.
+pub(crate) fn set_pattern_delay(ms: u64) {
+    PATTERN_DELAY_MS.store(ms, Ordering::Relaxed);
 }
 
 /// The count for the method at `index` in [`Method::ALL`], or 0 for an

@@ -409,6 +409,11 @@ fn drain_commands(hwnd: HWND, context: &WindowContext) {
             acknowledge("applied");
             continue;
         }
+        if let Command::SlowPatterns(ms) = command {
+            hits::set_pattern_delay(ms);
+            acknowledge("applied");
+            continue;
+        }
         if let Command::RefuseText(refuse) = command {
             uia::refuse_text(refuse);
             acknowledge("applied");

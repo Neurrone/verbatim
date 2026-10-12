@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use common::outpost::OutpostUnderTest;
 use verbatim_model::NormalizedEvent;
 use verbatim_outpost::OutpostOptions;
+use verbatim_outpost::focus_read::Judged;
 use verbatim_outpost::protocol::OutpostToSupervisor;
 use verbatim_uia::{CACHED_PROPERTIES, ElementExt, NodeIdRegistry, Uia, map};
 use verbatim_uia_rops::{
@@ -63,21 +64,21 @@ impl Fixture {
         let timeout = TRANSACTION_TIMEOUT
             .read()
             .unwrap_or_else(PoisonError::into_inner);
-        Self::with(prefix, Timeout::Shared(timeout))
+        Self::with(prefix, "ancestry.json", Timeout::Shared(timeout))
     }
 
-    /// A fixture for the test that changes the transaction timeout, run
-    /// while no other test in this process runs.
-    fn start_alone(prefix: &str) -> Self {
+    /// A fixture of `file` for a test that changes the transaction
+    /// timeout, run while no other test in this process runs.
+    fn start_alone(prefix: &str, file: &str) -> Self {
         let timeout = TRANSACTION_TIMEOUT
             .write()
             .unwrap_or_else(PoisonError::into_inner);
-        Self::with(prefix, Timeout::Alone(timeout))
+        Self::with(prefix, file, Timeout::Alone(timeout))
     }
 
-    fn with(prefix: &str, timeout: Timeout) -> Self {
+    fn with(prefix: &str, file: &str, timeout: Timeout) -> Self {
         let title = common::unique_title(prefix);
-        let app = common::spawn("ancestry.json", "uia", &title);
+        let app = common::spawn(file, "uia", &title);
         let hwnd = common::find_window(&title).0 as isize;
         let uia = Uia::new().expect("Uia::new");
         let cache = uia.base_cache_request().expect("base cache request");
@@ -423,7 +424,7 @@ fn a_stalled_provider_holds_execute_until_the_transaction_timeout() {
     // The transaction timeout is process-wide, so no other test in this
     // binary runs meanwhile ([`TRANSACTION_TIMEOUT`]).
     const TIMEOUT: Duration = Duration::from_millis(1000);
-    let mut fixture = Fixture::start_alone("mockapp-rops-stall");
+    let mut fixture = Fixture::start_alone("mockapp-rops-stall", "ancestry.json");
     let deep = fixture.focus("deep", "Deep button");
 
     // Each run starts once mockapp has acknowledged that its window thread
@@ -491,7 +492,7 @@ fn a_focus_walk_that_times_out_fails() {
     const TIMEOUT: Duration = Duration::from_millis(1000);
     const SLOW_CALL: Duration = Duration::from_millis(50);
     const STALL: Duration = Duration::from_millis(1500);
-    let mut fixture = Fixture::start_alone("mockapp-rops-timed-out");
+    let mut fixture = Fixture::start_alone("mockapp-rops-timed-out", "ancestry.json");
     let deep = fixture.focus("deep", "Deep button");
     let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
     let _restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
@@ -531,41 +532,99 @@ fn a_focus_walk_that_times_out_fails() {
     fixture.app.quit();
 }
 
-/// The focus listener, the focus walk's caller, and the outpost handle a
-/// walk that timed out: with every provider call slow (`slow`), so that
-/// filling an element's cache outlasts UIA's transaction timeout while the
-/// live read of the focus's keyboard focus does not, the focus is
-/// reported from its event, as NVDA lets a focus through whose read fails,
-/// with its containers unknown, never as having none, whether remote
-/// operations are on or off.
-/// The timeout is short, and the calls only a little slow, since mockapp
-/// goes on answering a timed-out program's calls, each that much late,
-/// before it takes the next command.
-fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
+/// The focus listener drops a focus whose walk to its nearest window does
+/// not answer within UIA's transaction timeout, every provider call slow
+/// (`slow`): NVDA's walk (`getNearestWindowHandle`) answers no window when
+/// it fails, and NVDA makes no object for an element with none, so it
+/// drops the event (`docs/design/focus-pipeline.md`, section 16.8).
+fn a_focus_whose_nearest_window_walk_times_out_is_dropped() {
     const TIMEOUT: Duration = Duration::from_millis(300);
     const SLOW_CALL: Duration = Duration::from_millis(15);
+    let mut fixture = Fixture::start_alone("mockapp-rops-no-window", "ancestry.json");
+    let deep = fixture.focus("deep", "Deep button");
+    let outpost = OutpostUnderTest::new(&fixture.app);
+    let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
+    let restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
+    fixture.app.send(&format!("slow {}", SLOW_CALL.as_millis()));
+    let (judged, _) = outpost.listener_read(&deep);
+    // Acknowledged once mockapp has answered the calls still queued.
+    fixture.app.send("slow 0");
+    drop(restored);
+    let Judged::Dropped(reason) = judged else {
+        panic!("the listener took a focus whose nearest window it could not find: {judged:?}");
+    };
+    assert_eq!(
+        reason,
+        "it has no window above it, so NVDA makes no object for it"
+    );
+    drop(outpost);
+    fixture.app.quit();
+}
+
+/// The focus listener, the focus walk's caller, and the outpost handle a
+/// walk that timed out: with every pattern request slow (`slow-patterns`),
+/// so that filling an element's cache outlasts UIA's transaction timeout
+/// while the walk to its nearest window and the live read of its keyboard
+/// focus, which request no pattern, do not, the focus is reported from its
+/// event, as NVDA lets a focus through whose read fails, with its
+/// containers unknown, never as having none, whether remote operations are
+/// on or off. (With every provider call slow, the walk to the nearest
+/// window times out first, and the focus is dropped, as
+/// `a_focus_whose_nearest_window_walk_times_out_is_dropped` shows.)
+/// The timeout is short, and the requests only a little slow, since
+/// mockapp goes on answering a timed-out program's calls, each that much
+/// late, before it takes the next command.
+fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
+    const TIMEOUT: Duration = Duration::from_millis(300);
+    const SLOW_CALL: Duration = Duration::from_millis(40);
     for remote in [true, false] {
         let path = if remote { "remote" } else { "classic" };
-        let mut fixture = Fixture::start_alone(&format!("mockapp-rops-unknown-{path}"));
-        let deep = fixture.focus("deep", "Deep button");
+        let mut fixture =
+            Fixture::start_alone(&format!("mockapp-rops-unknown-{path}"), "ancestry.json");
         let outpost = OutpostUnderTest::with_options(
             &fixture.app,
             OutpostOptions {
                 remote_operations: remote,
             },
         );
+        // A focus before, in the same window, read at mockapp's own pace:
+        // the outpost probes the window for arbitration and keeps the
+        // answer, as it has for a window it already reads. (Here the
+        // listener's read shares the outpost's process, whose UI Automation
+        // answers a probe of the window that it has no provider once a
+        // transaction with it has timed out; a listener of its own does not
+        // touch the outpost's.)
+        let check = fixture.focus("check", "Remember");
+        outpost.deliver(outpost.listener_fact(&check));
+        assert!(
+            matches!(
+                outpost.next(),
+                OutpostToSupervisor::Event {
+                    event: NormalizedEvent::FocusChanged { .. },
+                    ..
+                }
+            ),
+            "{path}: the focus before is reported"
+        );
+        outpost.settled();
+        let deep = fixture.focus("deep", "Deep button");
         let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
         let restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
 
-        fixture.app.send(&format!("slow {}", SLOW_CALL.as_millis()));
+        fixture
+            .app
+            .send(&format!("slow-patterns {}", SLOW_CALL.as_millis()));
         // The listener's read runs in this process, under the timeout set
         // for it.
-        outpost.deliver(outpost.listener_fact(&deep));
-        let said = outpost.next();
+        let fact = outpost.listener_fact(&deep);
         // Acknowledged once mockapp has answered the calls still queued,
-        // among them the rest of a program UIA stopped waiting for.
-        fixture.app.send("slow 0");
+        // among them the rest of a program UIA stopped waiting for: until
+        // then its window, busy, answers the outpost's probe that it has no
+        // UIA provider.
+        fixture.app.send("slow-patterns 0");
         drop(restored);
+        outpost.deliver(fact);
+        let said = outpost.next();
         match said {
             OutpostToSupervisor::Event {
                 event:
@@ -601,7 +660,7 @@ fn a_selection_read_that_times_out_or_finds_the_list_gone_fails() {
     const TIMEOUT: Duration = Duration::from_millis(1000);
     const SLOW_CALL: Duration = Duration::from_millis(50);
     const STALL: Duration = Duration::from_millis(1500);
-    let mut fixture = Fixture::start_alone("mockapp-rops-selection-timeout");
+    let mut fixture = Fixture::start_alone("mockapp-rops-selection-timeout", "ancestry.json");
     let cache = fixture
         .uia
         .cache_request(CACHED_PROPERTIES)
@@ -777,6 +836,10 @@ fn main() {
         (
             "a_focus_walk_that_times_out_fails",
             a_focus_walk_that_times_out_fails,
+        ),
+        (
+            "a_focus_whose_nearest_window_walk_times_out_is_dropped",
+            a_focus_whose_nearest_window_walk_times_out_is_dropped,
         ),
         (
             "a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown",

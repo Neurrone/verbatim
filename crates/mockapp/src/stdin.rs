@@ -93,6 +93,10 @@ pub(crate) enum Command {
     /// answers at once again. Applied on the window thread, so the calls
     /// before it are answered at the old pace.
     Slow(u64),
+    /// `slow-patterns <ms>`: as `slow`, for pattern requests alone
+    /// (`GetPatternProvider`), which filling an element's cache makes and a
+    /// walk to its nearest window does not; 0 answers them at once again.
+    SlowPatterns(u64),
     /// `refuse-text on` or `refuse-text off`: while on, every request for a
     /// node's text pattern fails (`E_FAIL`) rather than answering, as a
     /// provider that is not ready yet does while its application starts.
@@ -166,6 +170,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "text-changed" if !rest.is_empty() => Some(Command::TextChanged(rest.to_owned())),
         "stall" => rest.parse().ok().map(Command::Stall),
         "slow" => rest.parse().ok().map(Command::Slow),
+        "slow-patterns" => rest.parse().ok().map(Command::SlowPatterns),
         "refuse-text" => match rest {
             "on" => Some(Command::RefuseText(true)),
             "off" => Some(Command::RefuseText(false)),
@@ -398,6 +403,10 @@ mod tests {
     #[test]
     fn parses_slow_and_take_runtime_id() {
         assert!(matches!(parse_command("slow 20"), Some(Command::Slow(20))));
+        assert!(matches!(
+            parse_command("slow-patterns 20"),
+            Some(Command::SlowPatterns(20))
+        ));
         assert!(parse_command("slow soon").is_none());
         match parse_command("take-runtime-id inner delta") {
             Some(Command::TakeRuntimeId(id, from)) => {

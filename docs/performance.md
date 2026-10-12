@@ -289,7 +289,14 @@ operation's own check stays, for a focus that moves on while it is read
   operations program does all of that after the element is in hand: it
   reads `HasKeyboardFocus` first and returns early if it is false (Option
   B, agreed on 2026-10-06), then walks the raw-view parents until it meets
-  a known runtime id, and reads the nearest window handle on the way. But
+  a known runtime id, and reads the nearest window handle on the way.
+  Since 2026-10-12 the listener reads the sender's keyboard focus plainly
+  as well, before the program, as NVDA does: read inside the program, the
+  element is the provider's own, which for Windows Terminal's second focus
+  identity answers that it has the focus where the plain read, NVDA's,
+  answers that it has not (`docs/design/focus-pipeline.md`, section 16.8).
+  The program's own check stays, for a focus that moves on while it is
+  read. But
   the element itself costs a call: the focus event's sender is held by the
   focus listener, a separate process, and cannot cross to the outpost, so
   the outpost reads the focused element (`GetFocusedElementBuildCache`).

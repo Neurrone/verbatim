@@ -333,7 +333,7 @@ impl FocusReader {
                     snapshot: fact_of(event),
                     ancestors: None,
                     selected_child: None,
-                    window: nearest,
+                    window: Some(nearest),
                     same_as_last: None,
                 }))
             }
@@ -348,7 +348,7 @@ impl FocusReader {
     fn focused(
         &mut self,
         element: &IUIAutomationElement,
-        (hwnd, focus_window, nearest): (isize, isize, Option<isize>),
+        (hwnd, focus_window, nearest): (isize, isize, isize),
         event: CachedUiaParts,
         (ancestry, path): (&Ancestry, &'static str),
     ) -> Judged {
@@ -413,7 +413,7 @@ impl FocusReader {
         // from.
         let mut window = ancestry.window;
         if window.is_none() && hwnd == 0 {
-            window = nearest;
+            window = Some(nearest);
             if let (Some(found), Some(ancestors)) = (window, ancestors.as_mut()) {
                 self.mark_window(found, ancestors);
             }
@@ -452,14 +452,13 @@ impl FocusReader {
     /// `element`, whose own window is `hwnd` and whose runtime id is
     /// `runtime_id`, is read, in NVDA's order: the repeat check, the
     /// acceptance test against its nearest window, then the sender's own
-    /// keyboard focus. Answers that window, `None` when the element has
-    /// none above it, or why the event is dropped.
+    /// keyboard focus. Answers that window, or why the event is dropped.
     fn judge_before_reading(
         &self,
         element: &IUIAutomationElement,
         hwnd: isize,
         runtime_id: &[i32],
-    ) -> Result<Option<isize>, &'static str> {
+    ) -> Result<isize, &'static str> {
         // NVDA's duplicate rule, before anything of the sender is read
         // (`UIAHandler/__init__.py` 899 to 921; `docs/design/focus-pipeline.md`,
         // section 16.3): the sender is the last focus accepted, by any of
@@ -484,22 +483,28 @@ impl FocusReader {
         // window (`getNearestWindowHandle`, then `shouldAcceptEvent`,
         // `UIAHandler/__init__.py` 920 to 925;
         // `docs/design/focus-pipeline.md`, sections 16.2 and 16.3): its own
-        // window, else, one call, the nearest ancestor's. An element with no
-        // window anywhere above it is not tested, as NVDA cannot test it. A
-        // focus that fails is dropped and never becomes the last accepted,
-        // so the same element's focus once its window is in front, as a
-        // console's text area's comes, is no repeat.
+        // window, else, one call, the nearest ancestor's. A focus that fails
+        // is dropped and never becomes the last accepted, so the same
+        // element's focus once its window is in front, as a console's text
+        // area's comes, is no repeat. An element with no window anywhere
+        // above it, or whose walk to one fails, is dropped: NVDA makes no
+        // object for it (`NVDAObjects/UIA/__init__.py` 1598 to 1606, "no
+        // windowHandle"), so its handler drops the event ("Could not create
+        // an NVDAObject"). Windows Terminal's second identity of its
+        // terminal can be such an element, its island not yet joined to
+        // its window (`docs/design/focus-pipeline.md`, section 16.8).
         let nearest = if hwnd == 0 {
             verbatim_uia::nearest_window_handle(element)
+                .ok_or("it has no window above it, so NVDA makes no object for it")?
         } else {
-            Some(hwnd)
+            hwnd
         };
         let windows = SystemWindows {
             foreground: (self.foreground)(),
         };
         if !accepts_event(
             EventName::GainFocus,
-            nearest.unwrap_or(0),
+            nearest,
             &windows,
             &RequestedEvents::default(),
         ) {
@@ -508,13 +513,27 @@ impl FocusReader {
         // NVDA's last check before it queues the focus,
         // `shouldAllowUIAFocusEvent` (`UIAHandler/__init__.py` 948,
         // `NVDAObjects/UIA/__init__.py` 1632): the sender's keyboard focus,
-        // read live with a plain property read, a failed read letting the
-        // event through. Read so here, not in the remote operation that
-        // reads the focus afterwards: an element imported into a remote
-        // operation is the provider's own, and Windows Terminal's second
-        // identity of its terminal answers there that it has the keyboard
-        // focus while read plainly it answers that it has not, so NVDA never
-        // takes it (`docs/design/focus-pipeline.md`, section 16.8).
+        // read live with a plain property read (`CurrentHasKeyboardFocus`
+        // on the event's element, client side), a failed read letting the
+        // event through.
+        //
+        // Until 2026-10-12 this check was made only inside the remote
+        // operation that reads the focus (Option B, 2026-10-06), its first
+        // instruction, to save this call. That is not the same read. An
+        // element imported into a remote operation is the provider's own
+        // object, in the application, while a plain read goes through the
+        // element as this client holds it. For almost every element the
+        // two answer alike, but Windows Terminal raises some focus events
+        // from a second identity of its terminal (a runtime id starting
+        // 14), and for that identity they differ: the remote operation
+        // answered that it had the keyboard focus, the plain read that it
+        // had not. NVDA, reading plainly, never took one (captured 6 times
+        // in 15 second windows, 9 ms after it took the same terminal's
+        // focus by its usual identity); the listener took them and
+        // "terminal" was said twice. So the check must be this plain read,
+        // here, before the read; the remote operation keeps its own check,
+        // for a focus that moves on while it is read
+        // (`docs/design/focus-pipeline.md`, section 16.8).
         if matches!(element.has_keyboard_focus(), Ok(false)) {
             return Err("its element no longer has the keyboard focus");
         }

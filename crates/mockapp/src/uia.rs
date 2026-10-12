@@ -200,6 +200,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         // Handled by the window thread before dispatch.
         Command::Stall(_)
         | Command::Slow(_)
+        | Command::SlowPatterns(_)
         | Command::RefuseText(_)
         | Command::Hold
         | Command::Release
