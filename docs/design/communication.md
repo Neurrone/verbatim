@@ -534,6 +534,23 @@ Evaluated 2026-10-11 against mio 1.2.4 (79d1417): mio never sets skip-completion
 - Tests: the ledger's unit tests for each new stage; the host protocol's round-trip test with the timing block.
 - Pass: CI green; one run of the measure set in debug and release produces every stage. These figures are the baseline every later step is compared with.
 
+Done on 2026-10-13, on main at 670ccff, one run of the measure set in each build on this development machine, about 2,240 announcements each, the suite's silent audio device (so no device clock stage, which waits for step 2's real device). Per stage, as count, median, 99.9th percentile and maximum in milliseconds, debug then release:
+
+- verbatim.exe (relay): 438, 0.1, 4.9, 4.9; 442, 0.0, 3.0, 3.0. Over 2 ms: 1.37 and 0.68 percent.
+- verbatim.exe to outpost: 438, 0.1, 1.4, 1.4; 442, 0.0, 0.9, 0.9.
+- Listener to verbatim.exe: only 12 samples in each, median about 17 to 22 ms, which are facts that waited for an outpost to start (step 8's case); with the four "waiting for the outpost to start" samples of 33 to 58 ms.
+- Outpost queue: 1,977, 0.1, 17.2, 324.4; 1,984, 0.1, 15.6, 283.5.
+- Outpost read: 1,977, 1.8, 29.5, 35.6; 1,984, 1.1, 25.8, 35.8.
+- Outpost to verbatim.exe: 1,977, 0.2, 2.3, 2.7; 1,984, 0.1, 1.7, 9.1.
+- Waiting for the reducer: 1,977, 0.1, 4.1, 4.7; 1,984, 0.0, 6.4, 8.8.
+- Hook to Core: 410, 0.1, 4.1, 4.1; 414, 0.0, 5.8, 5.8. Over 2 ms: 3.66 and 6.52 percent.
+- Reducer to verbatim.exe's relay: 416, 0.0, 2.9, 2.9; 420, 0.0, 0.1, 0.1.
+- To speech: 2,235, 0.1, 60.7, 106.8; 2,242, 0.0, 61.9, 155.9.
+- Synthesizer request: 0.0, 1.5, 2.0; 0.0, 1.2, 2.8. To the synthesizer host: 0.0, 0.2, 0.3; 0.0, 0.1, 0.5. The host's first chunk: 0.1, 0.9, 1.3; 0.1, 0.8, 1.1. Back from the synthesizer host: 0.1, 4.3, 6.2; 0.0, 6.6, 10.5, over 2 ms 1.43 and 2.23 percent.
+- Mixer and device: 2,235, 0.4, 78.5, 79.6; 2,242, 0.1, 79.4, 94.5.
+
+The figures come from the ledger's latency lines, which round to 0.1 ms, through a scratch script; the latency line counts only announcements, so a stage on a path that speaks nothing (the Pause keys of `measure_keys_text_box`) has no figure.
+
 ### Step 2. The platform floor and the speech-path scenario
 
 - The relay floor benchmark (5cbcb4e) as `relay.md` section 6 specifies, F0 to F4, plus F5: sender and receiver both overlapped with inline writes (this design's child side), and F6: a host-shaped round trip (command, a fixed CPU burst standing in for a first chunk, paced reply).
