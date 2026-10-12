@@ -48,6 +48,18 @@ Public API:
   each value must be an inherited pipe handle the process owns and nothing
   else uses, which no check can prove. `verbatim-synth-host` and the
   outpost binary use it.
+- `scheduling` (Dickson's decision of 2026-10-08;
+  `docs/design/communication.md`, section 6.1) —
+  `opt_out_of_power_throttling()` opts the process out of execution-speed
+  power throttling (`EcoQoS`, `SetProcessInformation` with
+  `ProcessPowerThrottling`), which Windows otherwise applies to a
+  windowless background process; the power plan is untouched.
+  `prioritize_current_thread(priority)` runs the calling thread at a
+  `ThreadPriority` (`Normal`, `AboveNormal`, `Highest`, `TimeCritical`)
+  and opts it out of power throttling too; `prioritize_role(role,
+  priority)` does the same and logs a refusal. Nothing calls them yet: the
+  communication design's migration step 3 gives every process and
+  hot-path thread its level. Timer resolution is not raised.
 - `session::current()` — the calling process's `Session`: its session
   `id`, whether its window station is interactive
   (`interactive_window_station`), and the input desktop's name when it can

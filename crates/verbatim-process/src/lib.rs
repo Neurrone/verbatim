@@ -20,6 +20,7 @@
 //! The [`session`] module reads the calling process's own session, which
 //! Verbatim and the test agent check before starting.
 
+pub mod scheduling;
 pub mod session;
 
 use std::ffi::c_void;
