@@ -27,7 +27,7 @@ pub mod session;
 use std::ffi::c_void;
 use std::fs::File;
 use std::os::windows::ffi::OsStrExt;
-use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
+use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle, RawHandle};
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
@@ -159,7 +159,8 @@ pub struct ChildPipes {
     pub from_child: File,
 }
 
-/// Launches a contained child as `spec` describes.
+/// Launches a contained child as `spec` describes, over two new anonymous
+/// pipes whose ends on Core's side are synchronous [`File`]s.
 ///
 /// # Errors
 ///
@@ -168,12 +169,66 @@ pub struct ChildPipes {
 pub fn launch(spec: &ChildSpec<'_>) -> io::Result<(Contained, ChildPipes)> {
     let job = create_job(spec.memory_cap)?;
     let pipes = Pipes::create(spec.from_child_buffer)?;
-    let arguments = (spec.arguments)(pipes.child_in.0 as usize, pipes.child_out.0 as usize);
+    let contained = spawn_contained(spec, job, [pipes.child_in, pipes.child_out])?;
+    Ok((
+        contained,
+        ChildPipes {
+            to_child: pipes.parent_out,
+            from_child: pipes.parent_in,
+        },
+    ))
+}
+
+/// The child's ends of two pipes the caller made, for
+/// [`launch_with_ends`]: typically the other ends of
+/// [`overlapped::pipe`]s, whose Verbatim ends the caller keeps.
+pub struct ChildEnds {
+    /// The end the child reads commands from.
+    pub commands: OwnedHandle,
+    /// The end the child writes messages to.
+    pub messages: OwnedHandle,
+}
+
+/// Launches a contained child as `spec` describes, over pipes the caller
+/// made: the child inherits `ends`, and the caller keeps its own ends of
+/// those pipes, overlapped or synchronous as it made them.
+/// `spec.from_child_buffer` is not used, since the caller's pipes already
+/// have their buffers. The ends are closed here once the child has
+/// inherited them, whether or not the spawn succeeded, so the child's exit
+/// is seen as the end of the stream on the caller's end.
+///
+/// # Errors
+///
+/// Returns the error of whichever step failed: creating the job or
+/// spawning the process.
+pub fn launch_with_ends(spec: &ChildSpec<'_>, ends: ChildEnds) -> io::Result<Contained> {
+    let child_in = HANDLE(ends.commands.into_raw_handle());
+    let child_out = HANDLE(ends.messages.into_raw_handle());
+    match create_job(spec.memory_cap) {
+        Ok(job) => spawn_contained(spec, job, [child_in, child_out]),
+        Err(error) => {
+            close_handle(child_in);
+            close_handle(child_out);
+            Err(error)
+        }
+    }
+}
+
+/// Spawns `spec`'s executable in `job`, inheriting `pipe_ends` (the end it
+/// reads commands from, then the end it writes messages to), which are
+/// closed here whatever the outcome.
+fn spawn_contained(
+    spec: &ChildSpec<'_>,
+    job: OwnedHandle,
+    pipe_ends: [HANDLE; 2],
+) -> io::Result<Contained> {
+    let [child_in, child_out] = pipe_ends;
+    let arguments = (spec.arguments)(child_in.0 as usize, child_out.0 as usize);
     let command_line = format!("\"{}\" {arguments}", spec.exe.display());
     // Best-effort: a failed log open leaves the child unredirected, never
     // unspawned.
     let log = child_log_handle(spec.exe, spec.log_stem);
-    let spawned = spawn_in_job(&command_line, &job, &pipes, log);
+    let spawned = spawn_in_job(&command_line, &job, pipe_ends, log);
     if let Some(log) = log {
         // The child inherited its own copy; drop ours whether or not the
         // spawn succeeded.
@@ -181,21 +236,15 @@ pub fn launch(spec: &ChildSpec<'_>) -> io::Result<(Contained, ChildPipes)> {
     }
     // The child has inherited its pipe ends; close ours so end of stream is
     // seen when it exits.
-    close_handle(pipes.child_in);
-    close_handle(pipes.child_out);
+    close_handle(child_in);
+    close_handle(child_out);
     let spawned = spawned?;
-    Ok((
-        Contained {
-            job,
-            // SAFETY: `spawned.process` is a valid process handle we now own.
-            process: unsafe { OwnedHandle::from_raw_handle(spawned.process.0 as RawHandle) },
-            pid: spawned.pid,
-        },
-        ChildPipes {
-            to_child: pipes.parent_out,
-            from_child: pipes.parent_in,
-        },
-    ))
+    Ok(Contained {
+        job,
+        // SAFETY: `spawned.process` is a valid process handle we now own.
+        process: unsafe { OwnedHandle::from_raw_handle(spawned.process.0 as RawHandle) },
+        pid: spawned.pid,
+    })
 }
 
 /// The four pipe handles: parent and child ends of two anonymous pipes.
@@ -315,20 +364,20 @@ struct Spawned {
 
 /// Creates the child inside `job`. The child inherits only the handles
 /// named in a `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`:
-/// its two pipe ends and, when `log` is `Some`, the log file its standard
-/// output and error are redirected to (its standard input too, harmlessly — a
-/// child reads its command pipe, never stdin).
+/// its two pipe ends, `pipe_ends`, and, when `log` is `Some`, the log file
+/// its standard output and error are redirected to (its standard input
+/// too, harmlessly — a child reads its command pipe, never stdin).
 fn spawn_in_job(
     command_line: &str,
     job: &OwnedHandle,
-    pipes: &Pipes,
+    pipe_ends: [HANDLE; 2],
     log: Option<HANDLE>,
 ) -> io::Result<Spawned> {
     let mut command: Vec<u16> = command_line
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
-    let mut inherited = vec![pipes.child_in, pipes.child_out];
+    let mut inherited = pipe_ends.to_vec();
     inherited.extend(log);
     let jobs = [HANDLE(job.as_raw_handle().cast::<c_void>())];
 
@@ -541,11 +590,31 @@ fn child_log_handle(exe_path: &Path, file_stem: &str) -> Option<HANDLE> {
 
 /// Turns the raw values of a child's two inherited pipe handles, as its
 /// command line passed them, into the files it reads commands from and
-/// writes messages to.
+/// writes messages to: [`inherited_pipe_handles`], each wrapped in a
+/// [`File`]. For synchronous ends only: a `File` must never be given an
+/// overlapped handle.
+///
+/// # Errors
+///
+/// As [`inherited_pipe_handles`].
+///
+/// # Safety
+///
+/// As [`inherited_pipe_handles`].
+pub unsafe fn inherited_pipes(pipe_in: usize, pipe_out: usize) -> io::Result<(File, File)> {
+    // SAFETY: the caller's guarantee, passed on.
+    let (reader, writer) = unsafe { inherited_pipe_handles(pipe_in, pipe_out) }?;
+    Ok((File::from(reader), File::from(writer)))
+}
+
+/// Turns the raw values of a child's two inherited pipe handles, as its
+/// command line passed them, into the handles it reads commands from and
+/// writes messages to, whether they were opened synchronous or overlapped
+/// ([`launch_with_ends`]).
 ///
 /// The values come from the command line, so what can be checked is: they
 /// must differ, and each must name an open pipe handle in this process. A
-/// value that fails the check is an error rather than a file that would
+/// value that fails the check is an error rather than a handle that would
 /// close some other handle when dropped.
 ///
 /// # Errors
@@ -556,10 +625,13 @@ fn child_log_handle(exe_path: &Path, file_stem: &str) -> Option<HANDLE> {
 /// # Safety
 ///
 /// Each value must be an inherited pipe handle this process owns and
-/// nothing else uses; each is owned by exactly one returned file. The
+/// nothing else uses; each is owned by exactly one returned handle. The
 /// checks above catch a malformed command line, not a pipe handle some
 /// other part of the process owns.
-pub unsafe fn inherited_pipes(pipe_in: usize, pipe_out: usize) -> io::Result<(File, File)> {
+pub unsafe fn inherited_pipe_handles(
+    pipe_in: usize,
+    pipe_out: usize,
+) -> io::Result<(OwnedHandle, OwnedHandle)> {
     if pipe_in == pipe_out {
         return Err(io::Error::other(
             "the two pipe handle values on the command line are the same",
@@ -582,9 +654,9 @@ pub unsafe fn inherited_pipes(pipe_in: usize, pipe_out: usize) -> io::Result<(Fi
     // SAFETY: both values name open pipe handles (checked above), distinct
     // from each other, and the caller guarantees they are owned and
     // unshared.
-    let reader = unsafe { File::from_raw_handle(pipe_in as *mut c_void) };
+    let reader = unsafe { OwnedHandle::from_raw_handle(pipe_in as *mut c_void) };
     // SAFETY: as above.
-    let writer = unsafe { File::from_raw_handle(pipe_out as *mut c_void) };
+    let writer = unsafe { OwnedHandle::from_raw_handle(pipe_out as *mut c_void) };
     Ok((reader, writer))
 }
 

@@ -40,9 +40,8 @@ use windows::Win32::Foundation::{
     WAIT_TIMEOUT, WIN32_ERROR,
 };
 use windows::Win32::Storage::FileSystem::{
-    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, ReadFile, SYNCHRONIZE,
-    SetFileCompletionNotificationModes, WriteFile,
+    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    FILE_WRITE_ATTRIBUTES, ReadFile, SYNCHRONIZE, SetFileCompletionNotificationModes, WriteFile,
 };
 use windows::Win32::System::IO::{
     CreateIoCompletionPort, GetOverlappedResult, GetQueuedCompletionStatusEx, IO_STATUS_BLOCK,
@@ -282,8 +281,7 @@ impl Port {
         let handle = HANDLE(file.as_raw_handle());
         // SAFETY: both handles are open; the association lasts as long as
         // the file's handle.
-        unsafe { CreateIoCompletionPort(handle, Some(self.raw()), key, 0) }
-            .map_err(win32_error)?;
+        unsafe { CreateIoCompletionPort(handle, Some(self.raw()), key, 0) }.map_err(win32_error)?;
         // SAFETY: an open handle; the call only changes how its
         // completions are reported.
         unsafe {
@@ -515,14 +513,7 @@ impl PipeIo {
         // the read completes: at once (handled here), or by its completion
         // through the port, which `complete` alone accepts. No reference to
         // them is used again before then.
-        let result = unsafe {
-            ReadFile(
-                file.raw(),
-                Some(buffer),
-                None,
-                Some(overlapped),
-            )
-        };
+        let result = unsafe { ReadFile(file.raw(), Some(buffer), None, Some(overlapped)) };
         self.started(file, result, true)
     }
 
@@ -571,18 +562,16 @@ impl PipeIo {
         // SAFETY: as for `read`: the bytes and the OVERLAPPED stay in the
         // slot's allocation, untouched and not freed, until the write
         // completes.
-        let result = unsafe {
-            WriteFile(
-                file.raw(),
-                Some(buffer),
-                None,
-                Some(overlapped),
-            )
-        };
+        let result = unsafe { WriteFile(file.raw(), Some(buffer), None, Some(overlapped)) };
         Ok(self.started(file, result, false))
     }
 
-    fn started(&mut self, file: &PortFile, result: windows::core::Result<()>, read: bool) -> Started {
+    fn started(
+        &mut self,
+        file: &PortFile,
+        result: windows::core::Result<()>,
+        read: bool,
+    ) -> Started {
         match result {
             // Completed at once, so no completion will come: the slot's
             // memory is free again, and the count is in the OVERLAPPED.
@@ -629,14 +618,7 @@ impl PipeIo {
         // slot's and is only read.
         let overlapped = unsafe { &raw const (*self.operation.as_ptr()).overlapped };
         // SAFETY: as above; `bwait` is false, so nothing waits.
-        let result = unsafe {
-            GetOverlappedResult(
-                file.raw(),
-                overlapped,
-                &raw mut moved,
-                false,
-            )
-        };
+        let result = unsafe { GetOverlappedResult(file.raw(), overlapped, &raw mut moved, false) };
         result.map_err(win32_error)?;
         let moved = moved as usize;
         if read {

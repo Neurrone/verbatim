@@ -19,9 +19,21 @@ Public API:
   per-process memory limit; and `from_child_buffer`, the buffer size in
   bytes to ask for on the pipe the child writes to, `0` for the system
   default.
-- `launch(spec)` — launches the child and returns a `Contained` and a
-  `ChildPipes`, or the error of whichever step failed (creating the job,
-  creating the pipes, or spawning).
+- `launch(spec)` — launches the child over two new anonymous pipes and
+  returns a `Contained` and a `ChildPipes`, or the error of whichever
+  step failed (creating the job, creating the pipes, or spawning).
+- `launch_with_ends(spec, ends)` — launches the child over pipes the
+  caller made, typically with `overlapped::pipe`: `ChildEnds` holds the
+  child's two ends (`commands`, the one it reads, and `messages`, the one
+  it writes), which the child inherits and which are closed in Core once
+  it has, whether or not the spawn succeeded; the caller keeps its own
+  ends, overlapped or synchronous as it made them. Returns the
+  `Contained`. `spec.from_child_buffer` is not used, since the caller's
+  pipes have their buffers already. The containment, the inheritance list
+  and the log are `launch`'s. The relay floor's benchmark launches its
+  children with it; migration step 4 of `docs/design/communication.md`
+  moves every child onto it, after which `launch` and its anonymous pipes
+  go.
 - `Contained` — the launched child: `job`, the kill-on-close job handle,
   whose closing kills the process; `process`, the process handle (closing
   it only releases the reference); and `pid`, for logs. Dropping a
@@ -47,7 +59,13 @@ Public API:
   malformed command line fails the start. It is still `unsafe` because
   each value must be an inherited pipe handle the process owns and nothing
   else uses, which no check can prove. `verbatim-synth-host` and the
-  outpost binary use it.
+  outpost binary use it. Its ends must be synchronous: a `File` must
+  never hold an overlapped handle.
+- `inherited_pipe_handles(pipe_in, pipe_out)` — the same checks, giving
+  the two handles as `OwnedHandle`s, for a child whose ends are
+  overlapped (`launch_with_ends` over `overlapped::pipe` with
+  `End::Overlapped`), which it uses only through `overlapped`'s types.
+  `inherited_pipes` is this with each handle wrapped in a `File`.
 - `overlapped` (`docs/design/communication.md`, sections 4 and 6) —
   `pipe(flow, buffer, other)` makes a pipe with no name, as the standard
   library makes its child pipes (`NtCreateNamedPipeFile` on the named
@@ -59,8 +77,9 @@ Public API:
   once, `post(key)` wakes the waiting thread, and `wait` takes
   completions into `Completions`. `PipeIo` is one operation slot, a read
   or a write at a time, whose `OVERLAPPED` and buffer stay put, untouched
-  and not freed, while its operation is in flight. Nothing uses it yet:
-  the floor benchmark and then the transport will.
+  and not freed, while its operation is in flight. The relay floor's
+  benchmark (`verbatim-relay-floor`) uses it; the transport of migration
+  step 4 will.
 - `scheduling` (Dickson's decision of 2026-10-08;
   `docs/design/communication.md`, section 6.1) —
   `opt_out_of_power_throttling()` opts the process out of execution-speed
@@ -70,9 +89,9 @@ Public API:
   `prioritize_current_thread(priority)` runs the calling thread at a
   `ThreadPriority` (`Normal`, `AboveNormal`, `Highest`, `TimeCritical`)
   and opts it out of power throttling too; `prioritize_role(role,
-  priority)` does the same and logs a refusal. Nothing calls them yet: the
-  communication design's migration step 3 gives every process and
-  hot-path thread its level. Timer resolution is not raised.
+  priority)` does the same and logs a refusal. Only the relay floor's
+  benchmark calls them so far: the communication design's migration step
+  3 gives every process and hot-path thread its level. Timer resolution is not raised.
 - `session::current()` — the calling process's `Session`: its session
   `id`, whether its window station is interactive
   (`interactive_window_station`), and the input desktop's name when it can
@@ -83,7 +102,7 @@ Public API:
   or secure input desktop is not refused.
 
 Implementation notes, launching. `launch` creates the job, then the two
-anonymous pipes, then asks `arguments` for the command line with the
+anonymous pipes (`launch_with_ends` is given its pipes instead), then asks `arguments` for the command line with the
 child ends' handle values, and spawns the executable with
 `CREATE_NO_WINDOW`, naming the job in a `PROC_THREAD_ATTRIBUTE_JOB_LIST`
 attribute, so `CreateProcessW` creates the process already inside the
