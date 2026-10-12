@@ -239,6 +239,9 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
       and, for a menu, its plain keyboard focus read and ancestors (done,
       2026-10-12; NVDA's Voice Access app module, which lets every
       notification through, is for the app-module track).
+   Items 8 to 11 are deferred (Dickson, 2026-10-12): no capture has shown
+   a speech difference from 8 or 9, and 10 and 11 add what is missing;
+   they come back after the roadmap's queue.
    8. One duplicate test and one acceptance test per focus, where NVDA
       makes them; Core's extra node-id duplicate rule and its second
       acceptance test narrowed to what NVDA does.
