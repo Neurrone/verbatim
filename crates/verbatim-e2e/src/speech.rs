@@ -88,10 +88,6 @@ pub enum Ending {
     /// Cut off, by the step that interrupts it or by speech that replaces
     /// it.
     Cancelled,
-    /// Either: only the first hearing of an utterance heard twice, which
-    /// its repeat may cut off
-    /// ([`SpeechCollector::expect_allowing_one_repeat`]).
-    Either,
 }
 
 /// One expected utterance: its exact text and how it must end.
@@ -501,104 +497,6 @@ impl SpeechCollector {
         self.expect_sequence_within(&expected, timeout);
     }
 
-    /// [`expect`](Self::expect), except that `repeatable`, one of `texts`
-    /// and not the last, may be heard a second time straight after it,
-    /// once, its first hearing then heard in full or cut off by the second.
-    ///
-    /// For Windows Terminal's announcement of its terminal alone (Dickson,
-    /// 2026-10-12; the exception is recorded in `docs/roadmap.md`): Windows
-    /// Terminal sometimes raises its terminal's focus a second time, from a
-    /// second identity of the control, which passes NVDA's checks, and NVDA
-    /// says the terminal twice then too (`docs/design/focus-pipeline.md`,
-    /// section 16.8). Whether it does is Windows Terminal's race, not
-    /// Verbatim's.
-    ///
-    /// # Panics
-    ///
-    /// As [`expect`](Self::expect); and if `repeatable` is not one of
-    /// `texts` before the last.
-    ///
-    /// Returns whether the repeat was heard.
-    pub fn expect_allowing_one_repeat(&mut self, texts: &[&str], repeatable: &str) -> bool {
-        let at = texts
-            .iter()
-            .position(|text| *text == repeatable)
-            .filter(|&at| at + 1 < texts.len())
-            .unwrap_or_else(|| panic!("{repeatable:?} must be one of {texts:?}, before the last"));
-        let timeout = self.step_timeout;
-        let mut expected: Vec<Expected> = texts.iter().map(|text| heard(text)).collect();
-        let mut actual: Vec<Utterance> = Vec::new();
-        let mut index = 0;
-        let mut repeated = false;
-        while index < expected.len() {
-            let want = expected[index].text.clone();
-            let deadline = Instant::now() + timeout;
-            let Some(got) = self.next_utterance(deadline) else {
-                self.fail(&format!(
-                    "{}
-utterance {index} ({want:?}) was not queued within {timeout:?}",
-                    describe_mismatch(&expected, &actual),
-                ));
-            };
-            if index == at + 1 && !repeated && got.text == repeatable {
-                // The repeat: its first hearing may have been cut off by it.
-                repeated = true;
-                expected[at] = Expected {
-                    text: repeatable.to_owned(),
-                    ending: Ending::Either,
-                };
-                expected.insert(index, heard(repeatable));
-            }
-            actual.push(got.clone());
-            if got.text != expected[index].text {
-                self.fail_at(&describe_mismatch(&expected, &actual), got.utterance);
-            }
-            index += 1;
-        }
-        self.expect_endings(&expected, &actual, timeout);
-        repeated
-    }
-
-    /// [`expect`](Self::expect), after up to `repeats` hearings of
-    /// `repeatable`, each perhaps followed by `follow`, heard first and
-    /// however they end: for Windows Terminal's terminal announced again,
-    /// with its line, once its announcement was heard, as
-    /// [`expect_allowing_one_repeat`](Self::expect_allowing_one_repeat)
-    /// explains. Windows Terminal raises its terminal's focus at most
-    /// three times as one of its windows opens (its usual identity, the
-    /// second identity, and the usual one again), so at most two hearings
-    /// more than the announcement's own.
-    ///
-    /// # Panics
-    ///
-    /// As [`expect`](Self::expect).
-    pub fn expect_after_repeats(
-        &mut self,
-        texts: &[&str],
-        (repeatable, follow): (&str, &str),
-        repeats: usize,
-    ) {
-        let mut heard_again = 0;
-        while heard_again < repeats {
-            let deadline = Instant::now() + self.step_timeout;
-            let Some(got) = self.next_utterance(deadline) else {
-                break;
-            };
-            if got.text != repeatable {
-                self.pending.push_front(got);
-                break;
-            }
-            heard_again += 1;
-            let deadline = Instant::now() + self.step_timeout;
-            if let Some(next) = self.next_utterance(deadline)
-                && next.text != follow
-            {
-                self.pending.push_front(next);
-            }
-        }
-        self.expect(texts);
-    }
-
     fn expect_sequence_within(&mut self, expected: &[Expected], timeout: Duration) {
         let mut actual: Vec<Utterance> = Vec::new();
         for (index, want) in expected.iter().enumerate() {
@@ -615,24 +513,13 @@ utterance {index} ({want:?}) was not queued within {timeout:?}",
                 self.fail_at(&describe_mismatch(expected, &actual), got.utterance);
             }
         }
-        self.expect_endings(expected, &actual, timeout);
-    }
-
-    /// Asserts that each of `actual`, matched to `expected` by position,
-    /// ends as expected, waiting up to `timeout` for each.
-    fn expect_endings(&mut self, expected: &[Expected], actual: &[Utterance], timeout: Duration) {
-        for (want, got) in expected.iter().zip(actual) {
+        for (want, got) in expected.iter().zip(&actual) {
             let deadline = Instant::now() + timeout;
             let ending = self.ending_by(got.utterance, deadline);
             let ok = matches!(
                 (want.ending, &ending),
-                (
-                    Ending::Completed | Ending::Either,
-                    Some(UtteranceEnding::Completed)
-                ) | (
-                    Ending::Cancelled | Ending::Either,
-                    Some(UtteranceEnding::Cancelled)
-                )
+                (Ending::Completed, Some(UtteranceEnding::Completed))
+                    | (Ending::Cancelled, Some(UtteranceEnding::Cancelled))
             );
             if !ok {
                 self.fail_at(

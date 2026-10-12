@@ -175,27 +175,12 @@ pub fn skips(def: &ScenarioDef, setting: Option<&str>) -> Result<bool, String> {
     Ok(skip_local_only && def.local_only)
 }
 
-/// Why Windows Terminal's scenarios that its duplicate focus breaks
-/// beyond the announcement allowance are disabled
-/// (`docs/testing.md`, third exception; `docs/roadmap.md`).
-const WINDOWS_TERMINAL_DUPLICATE_FOCUS: &str = "Windows Terminal raises its terminal's focus a second time, from a second identity of the control (docs/design/focus-pipeline.md, section 16.8); when that focus is the last one taken, the outpost cannot find its element to read the terminal's line, and a second window raises it in ways the announcement allowance does not cover. Disabled until a Windows Terminal app module handles it (Dickson, 2026-10-12)";
-
 /// The disabled scenarios, each with why and what re-enables it. None has
 /// a `#[test]` in `tests/e2e.rs`, so no run includes one and none is ever
 /// reported as passing; [`select`] leaves them out, and refuses one asked
 /// for by name, giving its reason; [`run_named`] fails one run anyway. Each
 /// stays registered and compiled as it is, to be enabled again unchanged.
-pub const DISABLED: &[(&str, &str)] = &[
-    (
-        "windows_terminal_leave_flood",
-        WINDOWS_TERMINAL_DUPLICATE_FOCUS,
-    ),
-    (
-        "windows_terminal_two_windows",
-        WINDOWS_TERMINAL_DUPLICATE_FOCUS,
-    ),
-    ("windows_terminal_tabs", WINDOWS_TERMINAL_DUPLICATE_FOCUS),
-];
+pub const DISABLED: &[(&str, &str)] = &[];
 
 /// Why scenario `name` is disabled, if it is ([`DISABLED`]).
 #[must_use]

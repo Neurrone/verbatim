@@ -598,10 +598,12 @@ impl FocusReader {
         // from a second identity of its terminal (a runtime id starting
         // 14), and for that identity they differ: the remote operation
         // answered that it had the keyboard focus, the plain read that it
-        // had not. NVDA, reading plainly, never took one (captured 6 times
-        // in 15 second windows, 9 ms after it took the same terminal's
-        // focus by its usual identity); the listener took them and
-        // "terminal" was said twice. So the check must be this plain read,
+        // had not. NVDA never took one (captured 6 times in 15 second
+        // windows, 9 ms after it took the same terminal's focus by its
+        // usual identity; that NVDA, alpha-57645, read the event's cached
+        // value, and NVDA has read it plainly since its #20764, as here,
+        // sections 16.8 and 16.9); the listener took them and "terminal"
+        // was said twice. So the check must be this plain read,
         // here, before the read; the remote operation keeps its own check,
         // for a focus that moves on while it is read
         // (`docs/design/focus-pipeline.md`, section 16.8).

@@ -566,14 +566,7 @@ pub(crate) fn title(state: &ScenarioState) -> &str {
 }
 
 /// Asserts that Verbatim says exactly `announcement` as the terminal's
-/// window takes the foreground, but that Windows Terminal's terminal, named
-/// by the window's title, may be announced again, as NVDA announces it when
-/// Windows Terminal raises its focus more than once: straight after the
-/// first, which it may cut off
-/// ([`crate::speech::SpeechCollector::expect_allowing_one_repeat`]), or
-/// with its line before the prompt
-/// ([`crate::speech::SpeechCollector::expect_after_repeats`]), three
-/// announcements at most; lets the shell show its first prompt, and
+/// window takes the foreground, lets the shell show its first prompt, and
 /// reads the review
 /// cursor's line, which follows the caret onto it: the evidence that
 /// Verbatim reads this terminal's text before a scenario types into it.
@@ -593,23 +586,7 @@ pub(crate) fn expect_prompt_read(
     else {
         panic!("a terminal scenario's setup opens a terminal window");
     };
-    // Windows Terminal's terminal, named by its window's title, may be
-    // announced up to three times in all (`expect_after_repeats`).
-    let terminal = format!("{title} terminal");
-    let windows_terminal = announcement.contains(&terminal.as_str());
-    let repeats_left = if windows_terminal {
-        if scenario
-            .speech()
-            .expect_allowing_one_repeat(announcement, &terminal)
-        {
-            1
-        } else {
-            2
-        }
-    } else {
-        scenario.speech().expect(announcement);
-        0
-    };
+    scenario.speech().expect(announcement);
     let mut events = scenario
         .subscribe_events()
         .expect("subscribes to Verbatim's events");
@@ -619,9 +596,7 @@ pub(crate) fn expect_prompt_read(
     scenario
         .wait_for_agent_file(&format!(r"{directory}\{READY_FILE}"), READY_TIMEOUT)
         .expect("the shell shows its first prompt");
-    scenario
-        .speech()
-        .expect_after_repeats(&[PROMPT], (&terminal, "blank"), repeats_left);
+    scenario.speech().expect(&[PROMPT]);
     wait_for_caret_on(&mut events, PROMPT, STEP_TIMEOUT)
         .expect("Core receives the caret on the prompt");
     let shell = scenario

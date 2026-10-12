@@ -201,16 +201,15 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    the listener's focus handler on its group's client in NVDA's order,
    NVDA's plain keyboard focus read, and a focus with no window above it
    dropped). Decided by Dickson (2026-10-12): the listener keeps NVDA's
-   base cache request (d2c97f8); Windows Terminal's terminal may be
-   announced again as its window opens, as NVDA announces it, the third
-   exception in `docs/testing.md`.
-   Windows Terminal's duplicate focus is left for a Windows Terminal app
-   module (Dickson, 2026-10-12): when the second identity is the last
-   focus taken, the outpost cannot find its element by its path, so the
-   terminal's line is not read, and a second window raises it in ways the
-   allowance does not cover. Until the module handles it,
-   `windows_terminal_two_windows`, `windows_terminal_leave_flood`, and
-   `windows_terminal_tabs` are disabled (`registry::DISABLED`). Decision
+   base cache request (d2c97f8).
+   Windows Terminal's terminal announced twice no longer happens with one
+   screen reader running (design section 16.9, rechecked with NVDA
+   alpha-58022 on 2026-10-12): `windows_terminal_two_windows`,
+   `windows_terminal_leave_flood`, and `windows_terminal_tabs`, disabled
+   earlier that day for it, are enabled again, and the allowance for a
+   repeated "terminal" is withdrawn, after 135 runs of the Windows
+   Terminal scenarios with none repeated, 54 of them of those three with
+   no allowance (Dickson asked for the evidence, 2026-10-12). Decision
    D15 stays (Dickson, 2026-10-12). The listener's judgement is now a port
    of NVDA's focus handler in its order (design section 18), and two
    route-level audits, of NVDA's MSAA path and core focus processing and of
