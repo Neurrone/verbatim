@@ -210,6 +210,16 @@ pub fn variant_bool(value: &VARIANT) -> bool {
     bool::try_from(value).unwrap_or(false)
 }
 
+/// Logs, at debug, that a UIA event of kind `event` (`id`, its event or
+/// property id, 0 for a focus) from `element` was received, the first
+/// thing each handler does, so its arrival time shows whatever becomes of
+/// it. The runtime id is a local read.
+pub(crate) fn log_arrival(event: &str, id: i32, element: &IUIAutomationElement) {
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        tracing::debug!(event, id, runtime_id = ?runtime_id(element), "UIA event received");
+    }
+}
+
 /// `element`'s runtime id, empty when the read fails or the array is not
 /// one of `i32`. The array UIA returns is owned here and destroyed once, so
 /// no caller handles it.

@@ -1099,6 +1099,7 @@ mod handlers {
             range: windows_core::Ref<IUIAutomationTextRange>,
         ) -> windows_core::Result<()> {
             if let Some(element) = sender.as_ref() {
+                crate::com::log_arrival("active text position", 0, element);
                 crate::com::guarded("active text position", || {
                     (self.callback)(element, range.as_ref());
                 });
@@ -1121,6 +1122,7 @@ mod handlers {
             _newvalue: &VARIANT,
         ) -> windows_core::Result<()> {
             if let Some(element) = sender.as_ref() {
+                crate::com::log_arrival("property", propertyid.0, element);
                 crate::com::guarded("property", || (self.callback)(element, propertyid.0));
             }
             Ok(())
@@ -1140,6 +1142,7 @@ mod handlers {
             eventid: UIA_EVENT_ID,
         ) -> windows_core::Result<()> {
             if let Some(element) = sender.as_ref() {
+                crate::com::log_arrival("event", eventid.0, element);
                 crate::com::guarded("event", || (self.callback)(element, eventid.0));
             }
             Ok(())
@@ -1162,6 +1165,7 @@ mod handlers {
             activityid: &windows_core::BSTR,
         ) -> windows_core::Result<()> {
             if let Some(element) = sender.as_ref() {
+                crate::com::log_arrival("notification", notificationkind.0, element);
                 crate::com::guarded("notification", || {
                     let display = (!displaystring.is_empty()).then(|| displaystring.to_string());
                     let activity = (!activityid.is_empty()).then(|| activityid.to_string());

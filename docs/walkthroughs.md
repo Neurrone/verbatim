@@ -701,7 +701,7 @@ same suite on GitHub's runner or against a Hyper-V guest
    minimizes every window and brings the desktop forward, starts the
    recording (step 7), and launches `verbatim.exe` through the agent with
    its output sent to a file and `RUST_LOG` set to
-   `info,verbatim_outpost=debug,verbatim_uia::subscribe=debug`. Verbatim sets a named event the agent
+   `info,verbatim_outpost=debug,verbatim_uia::subscribe=debug,verbatim_uia::com=debug,verbatim_ia2::hook=debug`. Verbatim sets a named event the agent
    created once it is ready for input; the harness then opens the command
    tunnel and a second tunnel used only for speech (the agent relays bytes
    between its TCP connection and Verbatim's named pipe).

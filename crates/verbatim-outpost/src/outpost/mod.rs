@@ -668,17 +668,6 @@ impl Outpost {
                 {
                     return;
                 }
-                // Every event's arrival with how long ago its application
-                // raised it, so a delay before Verbatim received it shows
-                // whatever becomes of the event.
-                tracing::debug!(
-                    kind = ?event.kind,
-                    hwnd = event.hwnd,
-                    id_object = event.id_object,
-                    id_child = event.id_child,
-                    raised_ms_ago = event.raised_ms_ago,
-                    "WinEvent received"
-                );
                 context.take_in_win_event(
                     event,
                     EventTiming {

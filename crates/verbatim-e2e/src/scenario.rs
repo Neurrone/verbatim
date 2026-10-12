@@ -155,10 +155,12 @@ pub const RUST_LOG_ENV: &str = "VERBATIM_E2E_RUST_LOG";
 /// [`RUST_LOG_ENV`] says otherwise: everything at info, and the outposts'
 /// and the focus listener's debug lines, so a failed run's artifacts say
 /// what each outpost read and when, what it released, and what the listener
-/// reported, not only what the flight recorder kept; and every move of a UIA
+/// reported, not only what the flight recorder kept; every move of a UIA
 /// subscription, with each call it made and its result
-/// (`docs/design/focus-pipeline.md`, section 17).
-pub const DEFAULT_RUST_LOG: &str = "info,verbatim_outpost=debug,verbatim_uia::subscribe=debug";
+/// (`docs/design/focus-pipeline.md`, section 17); and the arrival of every
+/// UIA event and `WinEvent` in each process, a `WinEvent` with how long
+/// ago it was raised, so a delay before an event reached Verbatim shows.
+pub const DEFAULT_RUST_LOG: &str = "info,verbatim_outpost=debug,verbatim_uia::subscribe=debug,verbatim_uia::com=debug,verbatim_ia2::hook=debug";
 
 /// Enforces one live Verbatim instance at a time within this process; the
 /// tests also run with `--test-threads=1`.

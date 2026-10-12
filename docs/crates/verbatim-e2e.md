@@ -84,7 +84,7 @@ every scenario, recorded or not, and recording changes nothing else:
    connection and checks the status reports it ready.
 
 Verbatim is launched with `RUST_LOG` set to `DEFAULT_RUST_LOG`
-(`info,verbatim_outpost=debug,verbatim_uia::subscribe=debug`), which its outposts inherit, so a run's
+(`info,verbatim_outpost=debug,verbatim_uia::subscribe=debug,verbatim_uia::com=debug,verbatim_ia2::hook=debug`), which its outposts inherit, so a run's
 artifacts hold the outposts' debug lines: what each read and when, what it
 released, and what it reported, and every move of a UIA subscription with
 each call it made and its result. The focus listener runs in the same

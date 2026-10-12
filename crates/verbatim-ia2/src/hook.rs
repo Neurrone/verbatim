@@ -432,6 +432,17 @@ unsafe extern "system" fn win_event_proc(
         } else {
             id_object
         };
+        // Every wanted event's arrival with how long ago it was raised, so
+        // a delay before it reached this process shows whatever becomes of
+        // it.
+        tracing::debug!(
+            ?kind,
+            hwnd = hwnd.0 as isize,
+            id_object,
+            id_child,
+            raised_ms_ago,
+            "WinEvent received"
+        );
         let delivered = WinEvent {
             kind,
             hwnd: hwnd.0 as isize,

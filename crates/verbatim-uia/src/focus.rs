@@ -46,6 +46,7 @@ mod handler {
             sender: windows_core::Ref<IUIAutomationElement>,
         ) -> windows_core::Result<()> {
             if let Some(element) = sender.as_ref() {
+                crate::com::log_arrival("focus", 0, element);
                 crate::com::guarded("focus", || (self.callback)(element));
             }
             Ok(())

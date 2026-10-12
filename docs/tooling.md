@@ -500,11 +500,14 @@ More environment variables matter for less common cases:
   `C:\VerbatimLab\tools\ffmpeg.exe`.
 - `VERBATIM_E2E_RUST_LOG` is passed to the Verbatim a scenario launches
   as `RUST_LOG`, and its outposts inherit it. Unset, every scenario's
-  Verbatim logs with `info,verbatim_outpost=debug,verbatim_uia::subscribe=debug`
+  Verbatim logs with `info,verbatim_outpost=debug,verbatim_uia::subscribe=debug,verbatim_uia::com=debug,verbatim_ia2::hook=debug`
   (`DEFAULT_RUST_LOG`), so a failed run's artifacts hold the outposts'
   debug lines: what each read and how long it took, what it released, and
-  what it reported. The focus listener runs from the outpost binary, so
-  the filter covers it, but it has no log lines of its own yet. The
+  what it reported; and, in every process, each UIA event's arrival ("UIA
+  event received") and each `WinEvent`'s with how long ago it was raised
+  ("WinEvent received"), so a delay before an event reached Verbatim
+  shows, whatever became of the event. The focus listener runs from the
+  outpost binary, so the filter covers it too. The
   debug lines cost nothing measurable: over six runs each of
   `menu_and_settings_dialog` and `settings_dialog_keys` (2026-10-07),
   event to queued speech had a median of 7 ms and a 90th percentile of
