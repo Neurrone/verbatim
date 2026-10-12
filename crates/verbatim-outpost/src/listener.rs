@@ -349,9 +349,10 @@ struct UiaFocusReading {
 }
 
 impl Reading for UiaFocusReading {
-    /// The event's element, and its application's keyboard focus window
-    /// when it arrived, for an element that is not a window.
-    type Job = (AgileReference<IUIAutomationElement>, isize);
+    /// The event's element, its application's keyboard focus window when
+    /// it arrived, for an element that is not a window, and its runtime
+    /// id from the event's cache.
+    type Job = (AgileReference<IUIAutomationElement>, isize, Vec<i32>);
     type Reader = FocusReader;
 
     fn reader(&self) -> Option<FocusReader> {
@@ -364,7 +365,11 @@ impl Reading for UiaFocusReading {
         }
     }
 
-    fn read(&self, reader: Option<&mut FocusReader>, (element, focus_window): Self::Job) -> Judged {
+    fn read(
+        &self,
+        reader: Option<&mut FocusReader>,
+        (element, focus_window, _): Self::Job,
+    ) -> Judged {
         let Some(reader) = reader else {
             return Judged::Dropped("its reading thread has no UIA client");
         };
@@ -372,6 +377,10 @@ impl Reading for UiaFocusReading {
             Ok(element) => reader.read(&element, focus_window),
             Err(_) => Judged::Dropped("its element could not be resolved"),
         }
+    }
+
+    fn key<'a>(&self, (_, _, runtime_id): &'a Self::Job) -> Option<&'a [i32]> {
+        Some(runtime_id)
     }
 
     fn finish(&self, reader: Option<FocusReader>) {
@@ -607,7 +616,11 @@ fn focus_subscription(
             meta,
         );
         match AgileReference::new(element) {
-            Ok(element) => callback_readers.push(pid, meta, (element, focus_window)),
+            Ok(agile) => callback_readers.push(
+                pid,
+                meta,
+                (agile, focus_window, verbatim_uia::runtime_id(element)),
+            ),
             Err(error) => {
                 tracing::warn!(%error, "a UIA focus's element could not be kept for its read");
                 callback_outgoing.focus_read(

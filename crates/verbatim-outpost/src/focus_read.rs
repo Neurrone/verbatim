@@ -836,6 +836,13 @@ pub(crate) trait Reading: Send + Sync + 'static {
     fn reader(&self) -> Option<Self::Reader>;
     /// Judges and reads one event.
     fn read(&self, reader: Option<&mut Self::Reader>, job: Self::Job) -> Judged;
+    /// The element `job` is an event of, by runtime id, for NVDA's UIA
+    /// limiter rule: a newer event of one element replaces one still
+    /// waiting ([`Readers::push`]). `None`, the default, for an event
+    /// that is never replaced.
+    fn key<'a>(&self, _job: &'a Self::Job) -> Option<&'a [i32]> {
+        None
+    }
     /// Releases a thread's reader as the thread ends, on that thread.
     fn finish(&self, reader: Option<Self::Reader>);
     /// Sends what became of an event of `pid`'s. Called under the readers'
@@ -957,6 +964,26 @@ impl<R: Reading> Readers<R> {
         // An event after its outpost ended: the application runs on, and
         // its thread with it.
         app.ending = false;
+        // NVDA's UIA limiter keeps one waiting focus event per element: a
+        // newer one erases the older and takes the back of the queue
+        // (`rateLimitedEventHandler.cpp`), so an element that raises its
+        // focus twice before the first is handled is read once. The one
+        // replaced is reported dropped, which resolves its marker.
+        if let Some(key) = shared.reading.key(&job) {
+            let mut kept = VecDeque::with_capacity(app.queue.len());
+            for (waiting_meta, waiting) in app.queue.drain(..) {
+                if shared.reading.key(&waiting) == Some(key) {
+                    shared.reading.outcome(
+                        pid,
+                        waiting_meta,
+                        Judged::Dropped("a newer focus event of its element replaced it"),
+                    );
+                } else {
+                    kept.push_back((waiting_meta, waiting));
+                }
+            }
+            app.queue = kept;
+        }
         app.queue.push_back((meta, job));
         if app.live.is_some() {
             app.wake.notify_one();
@@ -1198,14 +1225,20 @@ mod tests {
     }
 
     impl Reading for Script {
-        type Job = (u64, Option<Receiver<()>>);
+        /// The event's marker, its gate, and the element it is of, if
+        /// any.
+        type Job = (u64, Option<Receiver<()>>, Vec<i32>);
         type Reader = ThreadId;
 
         fn reader(&self) -> Option<ThreadId> {
             Some(thread::current().id())
         }
 
-        fn read(&self, reader: Option<&mut ThreadId>, (marker, gate): Self::Job) -> Judged {
+        fn key<'a>(&self, (_, _, element): &'a Self::Job) -> Option<&'a [i32]> {
+            (!element.is_empty()).then_some(element.as_slice())
+        }
+
+        fn read(&self, reader: Option<&mut ThreadId>, (marker, gate, _): Self::Job) -> Judged {
             if let Some(thread) = reader {
                 let _ = self
                     .read_on
@@ -1283,7 +1316,9 @@ mod tests {
     fn an_applications_events_are_read_in_the_order_they_arrived_on_one_thread() {
         let fixture = fixture(Duration::from_secs(60));
         for marker in 1..=3 {
-            fixture.readers.push(Pid(5), meta(marker), (marker, None));
+            fixture
+                .readers
+                .push(Pid(5), meta(marker), (marker, None, Vec::new()));
         }
         let outcomes: Vec<(Pid, u64, &str)> = (0..3)
             .map(|_| fixture.outcomes.recv_timeout(WAIT).expect("an outcome"))
@@ -1304,12 +1339,49 @@ mod tests {
     }
 
     #[test]
+    fn a_newer_event_of_an_element_replaces_its_waiting_one() {
+        let fixture = fixture(Duration::from_secs(60));
+        let (open, gate) = mpsc::channel();
+        fixture
+            .readers
+            .push(Pid(5), meta(1), (1, Some(gate), vec![42, 1]));
+        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
+        // Event 1 is being read, so it stays; 2 waits and is replaced by 4,
+        // another element's 3 stays.
+        fixture
+            .readers
+            .push(Pid(5), meta(2), (2, None, vec![42, 2]));
+        fixture
+            .readers
+            .push(Pid(5), meta(3), (3, None, vec![42, 3]));
+        fixture
+            .readers
+            .push(Pid(5), meta(4), (4, None, vec![42, 2]));
+        open.send(()).expect("the gate opens");
+        let outcomes: Vec<(Pid, u64, &str)> = (0..4)
+            .map(|_| fixture.outcomes.recv_timeout(WAIT).expect("an outcome"))
+            .collect();
+        assert_eq!(
+            outcomes,
+            [
+                (Pid(5), 2, "a newer focus event of its element replaced it"),
+                (Pid(5), 1, "read"),
+                (Pid(5), 3, "read"),
+                (Pid(5), 4, "read"),
+            ]
+        );
+        assert_eq!(fixture.readers.stop(), 1);
+    }
+
+    #[test]
     fn an_application_whose_read_is_held_does_not_hold_another() {
         let fixture = fixture(Duration::from_secs(60));
         let (open, gate) = mpsc::channel();
-        fixture.readers.push(Pid(5), meta(1), (1, Some(gate)));
+        fixture
+            .readers
+            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
-        fixture.readers.push(Pid(6), meta(2), (2, None));
+        fixture.readers.push(Pid(6), meta(2), (2, None, Vec::new()));
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
             (Pid(6), 2, "read"),
@@ -1327,9 +1399,11 @@ mod tests {
     fn a_read_past_its_deadline_is_dropped_and_a_new_thread_reads_on() {
         let fixture = fixture(Duration::from_millis(50));
         let (open, gate) = mpsc::channel();
-        fixture.readers.push(Pid(5), meta(1), (1, Some(gate)));
+        fixture
+            .readers
+            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         let (_, held_on) = fixture.read_on.recv_timeout(WAIT).expect("a read");
-        fixture.readers.push(Pid(5), meta(2), (2, None));
+        fixture.readers.push(Pid(5), meta(2), (2, None, Vec::new()));
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
             (Pid(5), 1, "its read did not return in time")
@@ -1350,7 +1424,9 @@ mod tests {
     fn a_thread_ends_when_its_applications_outpost_ends() {
         let fixture = fixture(Duration::from_secs(60));
         let (open, gate) = mpsc::channel();
-        fixture.readers.push(Pid(5), meta(1), (1, Some(gate)));
+        fixture
+            .readers
+            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         let (_, first) = fixture.read_on.recv_timeout(WAIT).expect("a read");
         // The outpost ends while the thread reads: the read is finished
         // and sent, then the thread ends.
@@ -1365,7 +1441,7 @@ mod tests {
             first
         );
         // The application runs on: its next event starts a new thread.
-        fixture.readers.push(Pid(5), meta(2), (2, None));
+        fixture.readers.push(Pid(5), meta(2), (2, None, Vec::new()));
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
             (Pid(5), 2, "read")
