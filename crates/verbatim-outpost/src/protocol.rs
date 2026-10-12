@@ -61,7 +61,8 @@ pub fn now_us() -> u64 {
 }
 use verbatim_model::{
     Backend, CallCounts, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Notification,
-    OutpostId, Pid, QueryKind, Role, StateSet, TextOp, TextReply, TraceId, TreeNode, WindowFacts,
+    NotificationKind, NotificationProcessing, OutpostId, Pid, QueryKind, Role, StateSet, TextOp,
+    TextReply, TraceId, TreeNode, WindowFacts,
 };
 
 /// The identity-free contents of a UIA focus element, as the focus listener
@@ -432,10 +433,13 @@ impl DeliveredFact {
     }
 
     /// The object and kind this fact concerns, for NVDA's limiter rule (one
-    /// waiting entry per object and kind, a newer one replacing it). `None`
-    /// for a notification, whose text makes each one distinct, and for the
-    /// parts of a UIA focus's read, which are never replaced on the way:
-    /// the outpost coalesces a read only where it takes its marker's place.
+    /// waiting entry per object and kind, a newer one replacing it); for a
+    /// notification, its element, kind, processing, and activity id, not
+    /// its text, as NVDA's UIA limiter keys one (`eventRecord.h`), so a
+    /// newer notification of the same activity replaces one still waiting.
+    /// `None` for the parts of a UIA focus's read, which are never replaced
+    /// on the way: the outpost coalesces a read only where it takes its
+    /// marker's place.
     #[must_use]
     pub fn key(&self) -> Option<FactKey> {
         Some(match self {
@@ -448,8 +452,17 @@ impl DeliveredFact {
             DeliveredFact::UiaFocusMarker { .. }
             | DeliveredFact::UiaFocusRead { .. }
             | DeliveredFact::UiaFocusDropped { .. }
-            | DeliveredFact::UiaFocusReadsEnded
-            | DeliveredFact::UiaNotification { .. } => return None,
+            | DeliveredFact::UiaFocusReadsEnded => return None,
+            DeliveredFact::UiaNotification {
+                snapshot,
+                notification,
+                ..
+            } => FactKey::UiaNotification(
+                snapshot.runtime_id.clone(),
+                notification.kind,
+                notification.processing,
+                notification.activity_id.clone(),
+            ),
             DeliveredFact::MenuPopup {
                 hwnd,
                 id_object,
@@ -488,6 +501,14 @@ pub enum FactKey {
     UiaMenuOpened(Vec<i32>),
     /// A UIA selection of this runtime id.
     UiaSelection(Vec<i32>),
+    /// A UIA notification of this runtime id, with this kind, processing,
+    /// and activity id.
+    UiaNotification(
+        Vec<i32>,
+        NotificationKind,
+        NotificationProcessing,
+        Option<String>,
+    ),
     /// An MSAA alert at this address.
     Alert(isize, i32, i32),
     /// A tooltip shown at this address.

@@ -63,7 +63,7 @@ use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::Instant;
 
 use verbatim_ia2::WinEventKind;
-use verbatim_model::{Notification, TraceId};
+use verbatim_model::{Notification, NotificationKind, NotificationProcessing, TraceId};
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange};
 use windows::core::AgileReference;
 
@@ -175,6 +175,12 @@ pub(super) enum Key {
     UiaFocus(Vec<i32>),
     MenuPopup(isize, i32, i32),
     UiaMenuOpened(Vec<i32>),
+    UiaNotification(
+        Vec<i32>,
+        NotificationKind,
+        NotificationProcessing,
+        Option<String>,
+    ),
     NodesHeld,
     CaretOf(u64),
 }
@@ -189,7 +195,8 @@ impl Key {
             | Key::MenuPopup(hwnd, object, child) => Some(Object::Msaa(*hwnd, *object, *child)),
             Key::Uia(_, _, runtime_id)
             | Key::UiaFocus(runtime_id)
-            | Key::UiaMenuOpened(runtime_id) => Some(Object::Uia(runtime_id.clone())),
+            | Key::UiaMenuOpened(runtime_id)
+            | Key::UiaNotification(runtime_id, ..) => Some(Object::Uia(runtime_id.clone())),
             Key::Foreground(_) | Key::NodesHeld | Key::CaretOf(_) => None,
         }
     }
@@ -576,9 +583,9 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
                 UiaKind::ActiveTextPosition(_) => {
                     Some(Key::Uia(4, 0, event.parts.runtime_id.clone()))
                 }
-                // Each notification carries its own text, so none replaces
-                // another.
-                UiaKind::Notification(_) => None,
+                UiaKind::Notification(notification) => {
+                    Some(notification_key(&event.parts.runtime_id, notification))
+                }
             };
             (key, Category::Uncounted, event.hwnd)
         }
@@ -592,6 +599,18 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
     }
 }
 
+/// A notification's key: its element, kind, processing, and activity id,
+/// not its text, as NVDA's UIA limiter keys one (`eventRecord.h`), so a
+/// newer notification of the same activity replaces one still waiting.
+fn notification_key(runtime_id: &[i32], notification: &Notification) -> Key {
+    Key::UiaNotification(
+        runtime_id.to_vec(),
+        notification.kind,
+        notification.processing,
+        notification.activity_id.clone(),
+    )
+}
+
 /// The key, category, and window of a fact, from the listener or the
 /// outpost's own hook.
 fn classify_fact(fact: &DeliveredFact) -> (Option<Key>, Category, isize) {
@@ -603,7 +622,15 @@ fn classify_fact(fact: &DeliveredFact) -> (Option<Key>, Category, isize) {
             Category::Uncounted,
             *hwnd,
         ),
-        DeliveredFact::UiaNotification { hwnd, .. } => (None, Category::Uncounted, *hwnd),
+        DeliveredFact::UiaNotification {
+            hwnd,
+            snapshot,
+            notification,
+        } => (
+            Some(notification_key(&snapshot.runtime_id, notification)),
+            Category::Uncounted,
+            *hwnd,
+        ),
         // Alerts and shows are ordinary MSAA events, limited per thread.
         DeliveredFact::Alert {
             hwnd,
@@ -1114,6 +1141,38 @@ mod tests {
             observed(&planned),
             vec![1, 0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 1]
         );
+    }
+
+    /// A notification raised on element 42 with `activity` and `text`.
+    fn notification_fact(activity: &str, text: &str) -> Item {
+        Item::Fact(
+            DeliveredFact::UiaNotification {
+                hwnd: 0,
+                snapshot: snapshot(vec![42]),
+                notification: Notification {
+                    kind: NotificationKind::ActionCompleted,
+                    processing: NotificationProcessing::All,
+                    display_string: Some(text.to_owned()),
+                    activity_id: Some(activity.to_owned()),
+                },
+            },
+            None,
+        )
+    }
+
+    #[test]
+    fn a_newer_notification_of_the_same_activity_replaces_one_waiting_whatever_its_text() {
+        let intake = Intake::default();
+        push_item(&intake, notification_fact("progress", "10 percent"), 10);
+        push_item(&intake, notification_fact("other", "saved"), 20);
+        push_item(&intake, notification_fact("progress", "20 percent"), 30);
+        let mut order = Vec::new();
+        for _ in 0..2 {
+            if let Some((Planned::Run(entry), _)) = intake.next() {
+                order.push(entry.observed_at_ms);
+            }
+        }
+        assert_eq!(order, vec![20, 30]);
     }
 
     #[test]

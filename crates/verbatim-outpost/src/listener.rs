@@ -676,6 +676,9 @@ fn install_desktop_subscriptions(
                   processing: NotificationProcessing,
                   display_string: Option<String>,
                   activity_id: Option<String>| {
+                if verbatim_uia::map::cached_ignores_notifications(element) {
+                    return;
+                }
                 if let Some((pid, hwnd, snapshot)) = capture(element) {
                     let notification = Notification {
                         kind: notification_kind_from_uia(kind),

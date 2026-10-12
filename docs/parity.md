@@ -2138,9 +2138,10 @@ verified.
   (`diffHandler.py` 36 to 48, `DiffMatchPatch.diff` keeping only `+`
   pieces and dropping white-space ones), lines only deleted, and a line
   that only lost text or gained white space, say nothing. Windows
-  Terminal's `TerminalTextOutput` notifications from a terminal are
-  ignored, so nothing is spoken twice (as NVDA's diffing overlay blocks
-  them, `winConsoleUIA.py` 474 to 476); a redraw with the same text
+  Terminal's notifications from a terminal, and the console host's from
+  its text area, are all ignored, whatever their activity id, so nothing
+  is spoken twice (as NVDA's overlays block them, `winConsoleUIA.py` 431
+  to 440 and 474 to 476); a redraw with the same text
   speaks nothing; blank lines are not spoken but every line counts,
   blank ones included (Dickson, 2026-10-07, confirmed in the coherence
   review of 2026-10-09): rows a program passed over without writing (a

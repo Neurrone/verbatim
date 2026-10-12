@@ -323,7 +323,7 @@ pub struct ProgressReading {
 
 /// What kind of change a [`NormalizedEvent::Notification`] reports —
 /// UIA's `NotificationKind`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum NotificationKind {
     /// An item was added.
@@ -340,7 +340,7 @@ pub enum NotificationKind {
 
 /// How urgently a [`NormalizedEvent::Notification`] should be processed —
 /// UIA's `NotificationProcessing`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum NotificationProcessing {
     /// Important; process every notification of this kind.

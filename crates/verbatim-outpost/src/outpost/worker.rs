@@ -454,23 +454,6 @@ fn terminal_event_of(op: &TextOp) -> Option<Event> {
     }
 }
 
-/// The activity id of Windows Terminal's output notifications, each a piece
-/// of what a program wrote.
-const TERMINAL_OUTPUT_ACTIVITY: &str = "TerminalTextOutput";
-
-/// Whether a UIA notification is a terminal's output notification, which
-/// the generic notification handling ignores: the outpost finds a
-/// terminal's output by diffing its text, and speaking the notifications
-/// too would speak every line twice (`phase6-design.md`, "Why notifications
-/// exist, and what went wrong with them"). Only a terminal's own are
-/// ignored, keyed by the control, as NVDA's terminal overlays ignore them.
-fn is_terminal_output_notification(
-    role: Role,
-    notification: &verbatim_model::Notification,
-) -> bool {
-    role == Role::Terminal && notification.activity_id.as_deref() == Some(TERMINAL_OUTPUT_ACTIVITY)
-}
-
 /// Why the watchdog abandons a worker at `now`, if it does: the entry it
 /// started at `started`, concerning `window` (0 for none), has passed its
 /// `deadline`, or has waited [`MOVED_ON_GRACE`] and `moved_on` says the user
@@ -2039,13 +2022,11 @@ impl Worker<'_> {
         } else {
             element.as_ref().and_then(nearest_window_handle)
         };
-        if let UiaKind::Notification(notification) = &event.kind {
-            // NVDA neither arbitrates nor tests a notification: it is
-            // spoken only from the focus's application, which Core judges.
-            if is_terminal_output_notification(event.parts.role, notification) {
-                return; // The diff of the terminal's text reports it.
-            }
-        } else {
+        // NVDA neither arbitrates nor tests a notification against the
+        // foreground: it is spoken only from the focus's application, which
+        // Core judges. A terminal's were ignored by the listener
+        // (`verbatim_uia::map::ignores_notifications`).
+        if !matches!(event.kind, UiaKind::Notification(_)) {
             if let Some(hwnd) = hwnd
                 && !read::window_uses_uia(self.context, hwnd)
             {
@@ -3110,30 +3091,6 @@ impl Worker<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn only_a_terminals_output_notifications_are_ignored() {
-        let notification = |activity: &str| verbatim_model::Notification {
-            kind: verbatim_model::NotificationKind::ActionCompleted,
-            processing: verbatim_model::NotificationProcessing::All,
-            display_string: Some("hello".to_owned()),
-            activity_id: Some(activity.to_owned()),
-        };
-        assert!(is_terminal_output_notification(
-            Role::Terminal,
-            &notification("TerminalTextOutput")
-        ));
-        // Another of a terminal's notifications, or another control's with
-        // the same activity id, is spoken as usual.
-        assert!(!is_terminal_output_notification(
-            Role::Terminal,
-            &notification("Windows.Shell.SnapComponent.SnapHotKeyResults")
-        ));
-        assert!(!is_terminal_output_notification(
-            Role::EditableText,
-            &notification("TerminalTextOutput")
-        ));
-    }
 
     #[test]
     fn a_returning_abandoned_worker_never_publishes_and_lowers_the_count() {

@@ -267,6 +267,10 @@ Public API:
   sentence, which UIA does not have. Every method is a cross-process call,
   counted once: a text range is a provider object in the application, so
   even copying one is a round trip.
+- `map::ignores_notifications(class, automation_id)` and
+  `map::cached_ignores_notifications(element)` — a terminal control's and
+  the console host's text area's (automation id "Text Area")
+  notifications are all ignored, as NVDA's terminal overlays ignore them.
 - `map::is_terminal_class(class)` — Windows Terminal's text control
   (`TermControl`) and the one embedded in .NET applications
   (`WPFTermControl`) are terminals, by their UIA class as NVDA recognizes

@@ -1615,12 +1615,14 @@ finds it.
   `SupervisorToOutpost::TerminalLines` (`SrState::terminal_read_lines`, as
   many as the flood policy's limits keep, 30 by default), sent when an
   outpost starts and whenever it changes, beside `Fetches`.
-- Windows Terminal's UIA notifications with the activity id
-  `TerminalTextOutput` from a terminal control are ignored by the
-  notification handling (`is_terminal_output_notification`), as NVDA's
-  terminal overlays ignore them, or every line would be spoken twice; a
-  terminal's other notifications, and other controls' with that activity
-  id, are reported as usual.
+- Every UIA notification from a terminal control or the console host's
+  text area is ignored by the focus listener
+  (`verbatim_uia::map::cached_ignores_notifications`), whatever its
+  activity id, as NVDA's terminal overlays ignore them, or output would
+  be spoken twice.
+- A UIA notification waiting in the listener or the intake is replaced
+  by a newer one from the same element with the same kind, processing,
+  and activity id, whatever its text, as NVDA's UIA limiter keys one.
 - The unit tests: `terminal/screen.rs` holds the screen diff's table of
   cases (insertion at the end, in the middle and above a footer; deletion
   only; scrolling up and down; repeated identical lines; a selection

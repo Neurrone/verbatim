@@ -11,17 +11,17 @@ use windows::Win32::UI::Accessibility::{
     NotificationProcessing_CurrentThenMostRecent, NotificationProcessing_ImportantMostRecent,
     NotificationProcessing_MostRecent, ToggleState_Indeterminate, ToggleState_On,
     UIA_AcceleratorKeyPropertyId, UIA_AccessKeyPropertyId, UIA_AppBarControlTypeId,
-    UIA_ButtonControlTypeId, UIA_CONTROLTYPE_ID, UIA_CalendarControlTypeId,
-    UIA_CheckBoxControlTypeId, UIA_ClassNamePropertyId, UIA_ComboBoxControlTypeId,
-    UIA_ControlTypePropertyId, UIA_CustomControlTypeId, UIA_DataGridControlTypeId,
-    UIA_DataItemControlTypeId, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
-    UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_FullDescriptionPropertyId,
-    UIA_GroupControlTypeId, UIA_HasKeyboardFocusPropertyId, UIA_HeaderControlTypeId,
-    UIA_HeaderItemControlTypeId, UIA_HelpTextPropertyId, UIA_HyperlinkControlTypeId,
-    UIA_ImageControlTypeId, UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId,
-    UIA_IsDataValidForFormPropertyId, UIA_IsDialogPropertyId, UIA_IsEnabledPropertyId,
-    UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
-    UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
+    UIA_AutomationIdPropertyId, UIA_ButtonControlTypeId, UIA_CONTROLTYPE_ID,
+    UIA_CalendarControlTypeId, UIA_CheckBoxControlTypeId, UIA_ClassNamePropertyId,
+    UIA_ComboBoxControlTypeId, UIA_ControlTypePropertyId, UIA_CustomControlTypeId,
+    UIA_DataGridControlTypeId, UIA_DataItemControlTypeId, UIA_DocumentControlTypeId,
+    UIA_EditControlTypeId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
+    UIA_FullDescriptionPropertyId, UIA_GroupControlTypeId, UIA_HasKeyboardFocusPropertyId,
+    UIA_HeaderControlTypeId, UIA_HeaderItemControlTypeId, UIA_HelpTextPropertyId,
+    UIA_HyperlinkControlTypeId, UIA_ImageControlTypeId, UIA_IsContentElementPropertyId,
+    UIA_IsControlElementPropertyId, UIA_IsDataValidForFormPropertyId, UIA_IsDialogPropertyId,
+    UIA_IsEnabledPropertyId, UIA_IsExpandCollapsePatternAvailablePropertyId,
+    UIA_IsKeyboardFocusablePropertyId, UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
     UIA_IsRangeValuePatternAvailablePropertyId, UIA_IsRequiredForFormPropertyId,
     UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTogglePatternAvailablePropertyId,
     UIA_IsValuePatternAvailablePropertyId, UIA_LegacyIAccessibleStatePropertyId,
@@ -509,6 +509,29 @@ pub fn is_terminal_class(class_name: Option<&str>) -> bool {
     matches!(class_name, Some("TermControl" | "WPFTermControl"))
 }
 
+/// Whether the notifications of an element of UIA class `class_name` and
+/// automation id `automation_id` are ignored: a terminal control's, whose
+/// output the outpost finds by diffing its text
+/// (`_DiffBasedWinTerminalUIA.event_UIA_notification`), and the console
+/// host's text area's, automation id "Text Area" (`WinConsoleUIA`), as
+/// NVDA's terminal overlays ignore every one of them, whatever its
+/// activity, so that no output is spoken twice
+/// (`NVDAObjects/UIA/winConsoleUIA.py`).
+#[must_use]
+pub fn ignores_notifications(class_name: Option<&str>, automation_id: Option<&str>) -> bool {
+    is_terminal_class(class_name) || automation_id == Some("Text Area")
+}
+
+/// [`ignores_notifications`] for `element`, from its cached class name and
+/// automation id, both in NVDA's base cache request.
+#[must_use]
+pub fn cached_ignores_notifications(element: &IUIAutomationElement) -> bool {
+    ignores_notifications(
+        element.cached_string(UIA_ClassNamePropertyId).as_deref(),
+        element.cached_string(UIA_AutomationIdPropertyId).as_deref(),
+    )
+}
+
 /// Whether an element of UIA class `class_name` reports no value. The
 /// Windows shell's file and folder items (UIA class `UIItem`, in File
 /// Explorer and the file dialogs) expose their name again as their value;
@@ -595,6 +618,18 @@ pub fn notification_processing_from_uia(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_notification_of_a_terminal_or_a_console_text_area_is_ignored() {
+        assert!(ignores_notifications(Some("TermControl"), None));
+        assert!(ignores_notifications(Some("WPFTermControl"), None));
+        assert!(ignores_notifications(None, Some("Text Area")));
+        // Another control's, a calculator's display say, is spoken.
+        assert!(!ignores_notifications(
+            Some("TextBlock"),
+            Some("CalculatorResults")
+        ));
+    }
 
     /// The exact state set holding `states` and nothing else.
     fn set<const N: usize>(states: [State; N]) -> StateSet {
