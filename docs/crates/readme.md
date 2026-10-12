@@ -42,7 +42,11 @@ commit updated only the changed crate's own guide.
 - [verbatim-synth-capture](verbatim-synth-capture.md) — the audio-free test
   synthesizer.
 - [verbatim-process](verbatim-process.md) — contained child processes:
-  kill-on-close jobs, inherited pipes, and per-launch child logs.
+  kill-on-close jobs, inherited pipes, and per-launch child logs; unnamed
+  overlapped pipes and a completion port; and the scheduling requests
+  (power throttling, thread priority).
+- [verbatim-relay-floor](verbatim-relay-floor.md) — the platform floor's
+  benchmark for Verbatim's pipes and relay (`cargo xtask relay-floor`).
 - [verbatim-synth-hosted](verbatim-synth-hosted.md) — `HostedSynth`, the
   driver that runs a synthesizer in a host process (D18).
 - [verbatim-synth-host](verbatim-synth-host.md) — `verbatim-synth-host.exe`,

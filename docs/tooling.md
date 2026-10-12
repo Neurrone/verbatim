@@ -293,6 +293,98 @@ line with no matching `event` line above it is Core-originated speech (for
 instance the startup announcement), which has no triggering accessibility
 event.
 
+## Measuring the platform floor
+
+`cargo xtask relay-floor` builds `verbatim-relay-floor` in release and
+measures how long a message takes to cross processes on this machine,
+under its own power plan, with Verbatim's pipes, so verbatim.exe's stages
+in the latency line can be judged against what the platform allows
+(`docs/design/relay.md`, sections 6 and 7; `docs/design/communication.md`,
+section 11, step 2). It runs headless and does not take over the desktop,
+but it loads the processors when asked to, so run it when nothing else is
+being measured. Each variant sends 20,000 frames by default, a burst of
+one every 20 ms on average (exponential gaps clipped to 1 to 100 ms,
+waited out on a high-resolution waitable timer, so every thread is idle
+when a frame arrives, as with events), which is about 7 minutes per
+variant.
+
+The variants, all with every process opted out of power throttling:
+
+- F0: two threads in one process and a condition variable: one wake-up.
+- F1: a thread writes straight to a receiver process: one hop.
+- F2: sender process, a relay process that reads synchronously and writes
+  at once, receiver process: the floor for any third process.
+- F3: the same with the relay on a completion port, its own ends
+  overlapped and the children's synchronous (`relay.md` 4.1).
+- F4: the same with the relay built as verbatim.exe's was before stage A
+  step 9: reader thread, channel, owner thread, condition variable, writer
+  thread.
+- F5: F3's relay with the children's ends overlapped too: the sender's
+  producing threads write their own frames, an I/O thread finishing only
+  writes that pended, and the receiver reads on its I/O thread's port
+  (`communication.md` 4.3 and 4.6).
+- F6: a synthesizer host's round trip: Core's thread sends a command, the
+  host burns a fixed burst of CPU standing in for a first chunk, and
+  replies with more bytes than its 4 KiB pipe holds, which paces it; Core
+  waits on its port with the reply's read already waiting.
+- `frames`: how many reads a 1, 2 and 32 MB frame takes over a 64 KiB
+  event pipe, with the read waiting first and with the data arriving
+  first, and a child that writes 2 MB and exits only once that write has
+  completed, which must arrive whole.
+
+The options, each followed by its value:
+
+- `--variant`: `f0` to `f6`, `frames`, or `all` (the default).
+- `--messages`: frames per variant (default 20,000; the design asks for
+  100,000 for the chosen design, idle and loaded).
+- `--priority`: `normal`, `above-normal`, `highest` (the default), or
+  `time-critical`, for every thread on the measured path: the senders'
+  producing threads, the relay's threads, the receiver's reading thread,
+  the host's thread, and every I/O thread.
+- `--load`: `idle` (the default), `all` (a spinning normal-priority
+  thread per logical processor), or `all-but-one`.
+- `--burst`: frames sent back to back after each gap (default 1), for
+  back-to-back frames and the send call's time during a flood.
+- `--producers`: the sender's producing threads, all writing to one pipe
+  (default 1).
+- `--writes`: `inline` (the default), where F5's producing thread writes
+  its own frame when no write is in flight, or `io-thread`, where it hands
+  every frame to the I/O thread, the simpler form the design compares
+  with.
+- `--burst-us` and `--reply-bytes`: F6's burst of CPU (default 1,000
+  microseconds) and reply size (default 8,192 bytes).
+- `--mean-gap-us` and `--seed`: the mean gap and the gap sequence's seed,
+  which the run prints so it can be repeated.
+
+For example, `cargo xtask relay-floor --variant f5 --burst 8 --producers
+4 --writes io-thread`. Each variant prints one line per hop (for F2 to
+F5: sender to relay, relay, relay to receiver, end to end, and the
+sender's send call): the sample count, the median, 99th, 99.9th and
+99.99th percentiles, the maximum, and how many samples were over 0.5, 1
+and 2 ms, with the share over 1 and 2 ms. Then come the counts: each
+process's heap allocations per frame, and how many overlapped writes
+pended rather than completing at once. A frame's time starts when its
+producer begins to encode it. The stamps are kept in memory until the run
+ends; times are read with `GetSystemTimePreciseAsFileTime`, which is
+derived from the performance counter and the same in every process.
+
+Conditions the command does not set up itself, done by hand:
+
+- Under a real end-to-end flood: run a flood scenario ("Running the E2E
+  suite runner-direct") in another console while the benchmark runs.
+- Once, for attribution only: under the High performance plan, with
+  `timeBeginPeriod(1)` in effect (any program that raises the timer
+  resolution while it runs), and on bare metal, so the VM's share and
+  Windows' can be told apart.
+- Attribution of each slow sample (a manual step, which needs an elevated
+  prompt): record the run with `wpr -start CPU -filemode` and `wpr -stop
+  relay-floor.etl`, the CPU usage profile with context switches and
+  ready-thread events, and open it in Windows Performance Analyzer. For
+  every sample over 1 ms, find each involved thread's ready-to-running
+  delay in the CPU Usage (Precise) table and what ran instead: another
+  thread (pre-emption or priority), nothing in the guest (a vCPU stall), or
+  an idle processor waking.
+
 ## Test-audio mode
 
 `VERBATIM_TEST_AUDIO=null`, set in the environment before starting

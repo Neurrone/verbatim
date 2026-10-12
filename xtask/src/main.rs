@@ -66,6 +66,7 @@ fn main() -> ExitCode {
         Some("demo") => demo::run(&args[1..]),
         Some("nvda") => nvda::run(&args[1..]),
         Some("windows-terminal") => windows_terminal(),
+        Some("relay-floor") => relay_floor(&args[1..]),
         _ => {
             eprintln!("usage: cargo xtask <command>");
             eprintln!("commands:");
@@ -85,7 +86,38 @@ fn main() -> ExitCode {
             eprintln!(
                 "  windows-terminal  download and unpack the terminal scenarios' pinned portable Windows Terminal into target/e2e-stage"
             );
+            eprintln!(
+                "  relay-floor  measure the platform's floor for Verbatim's pipes and relay, in release (docs/tooling.md)"
+            );
             ExitCode::from(2)
+        }
+    }
+}
+
+/// Builds the platform floor's benchmark in release and runs it with
+/// `args` (`docs/design/relay.md`, section 6; `docs/tooling.md`). It takes
+/// minutes per variant and loads the processors it is told to load.
+fn relay_floor(args: &[String]) -> ExitCode {
+    let mut command = Command::new(env!("CARGO"));
+    command
+        .args([
+            "run",
+            "--release",
+            "-p",
+            "verbatim-relay-floor",
+            "--",
+            "run",
+        ])
+        .args(args);
+    match command.status() {
+        Ok(status) if status.success() => ExitCode::SUCCESS,
+        Ok(status) => {
+            eprintln!("xtask relay-floor: the benchmark failed ({status})");
+            ExitCode::FAILURE
+        }
+        Err(error) => {
+            eprintln!("xtask relay-floor: could not run cargo: {error}");
+            ExitCode::FAILURE
         }
     }
 }
