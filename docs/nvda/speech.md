@@ -303,9 +303,10 @@ letter (`sayCapForCapitals`) and a short beep (`beepForCapitals`).
   - the object is the foreground object, so a dialog's title survives
     the focus moving into the dialog;
   - the object is an MSAA menu item, check menu item, or radio menu item
-    with a parent, and the focus is now a popup menu: some applications
-    focus a submenu's first item and then the submenu itself, and the
-    item must still be spoken (NVDA issues 12624 and 14550).
+    with a parent, the focus is now an MSAA popup menu, and that menu is
+    one of the item's ancestors: some applications focus a submenu's
+    first item and then the submenu itself, and the item must still be
+    spoken (NVDA issues 12624 and 14550).
 
   The check runs at two moments. On each focus change, after the new
   focus and its ancestors are set (`doPreGainFocus`), the manager looks

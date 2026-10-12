@@ -19,7 +19,7 @@ use verbatim_model::{
     Query, QueryId, QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority, State,
     StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
 };
-use verbatim_model::{FocusNow, FocusValidity};
+use verbatim_model::{Backend, FocusNow, FocusValidity};
 
 use crate::state::{
     Attention, FocusContext, Navigator, NavigatorRead, PendingNavigation, SrState, TextFollowUp,
@@ -748,6 +748,7 @@ fn reduce_focus_changed(
             .map(|ancestor| ancestor.id)
             .collect(),
         foreground: state.foreground,
+        menu_item_of_focus: menu_item_of_focus(state.focus.as_ref(), report.node),
     })];
     end_text_activity(
         state,
@@ -904,6 +905,25 @@ fn focus_speech(
         }),
     }));
     effects
+}
+
+/// The focus the user is leaving, `previous`, when its speech stays valid
+/// although the focus moves to `node`: an MSAA menu item whose ancestors
+/// hold `node`, an MSAA popup menu, as when an application focuses a
+/// submenu's first item and then the submenu itself (`docs/nvda/speech.md`,
+/// "Expired focus speech").
+fn menu_item_of_focus(previous: Option<&FocusContext>, node: &NodeSnapshot) -> Option<NodeId> {
+    let previous = previous?;
+    let item = &previous.snapshot;
+    (item.backend == Backend::Msaa
+        && item.role == Role::MenuItem
+        && node.backend == Backend::Msaa
+        && node.role == Role::Menu
+        && previous
+            .ancestors
+            .iter()
+            .any(|ancestor| ancestor.id == node.id))
+    .then_some(item.id)
 }
 
 /// Whether a name or description has real, non-whitespace text.

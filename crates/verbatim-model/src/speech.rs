@@ -394,9 +394,10 @@ pub struct Utterance {
 /// What focus speech is about, for dropping it once the focus has moved on
 /// (`docs/nvda/speech.md`, "Cancellation", and `docs/nvda/events.md`):
 /// queued or playing speech announcing a node stays valid while that node
-/// is the focus, an ancestor of the focus, or the foreground window, or if
+/// is the focus, an ancestor of the focus, or the foreground window, if
 /// the node never had the focus at all, as a dialog announced on entering
-/// it never does.
+/// it never does, or if it is the menu item the focus just left for a
+/// menu above it ([`FocusNow::menu_item_of_focus`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FocusValidity {
     /// The node the speech announces.
@@ -414,6 +415,7 @@ impl FocusValidity {
             || self.node == now.focus
             || now.ancestors.contains(&self.node)
             || now.foreground == Some(self.node)
+            || now.menu_item_of_focus == Some(self.node)
     }
 }
 
@@ -426,6 +428,12 @@ pub struct FocusNow {
     pub ancestors: Vec<NodeId>,
     /// The foreground window's node, when known.
     pub foreground: Option<NodeId>,
+    /// The MSAA menu item the focus has just moved from to an MSAA popup
+    /// menu that contains it, as some applications focus a submenu's first
+    /// item and then the submenu: the item's speech is still heard
+    /// (`docs/nvda/speech.md`, "Expired focus speech").
+    #[serde(default)]
+    pub menu_item_of_focus: Option<NodeId>,
 }
 
 #[cfg(test)]

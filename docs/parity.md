@@ -784,10 +784,12 @@ verified.
     when anything handed to the synthesizer or the mixer has expired,
     everything handed on is stopped; NVDA stops up to the newest expired
     utterance and keeps what was handed on after it.
-  - The validity check has no clause for a menu item whose focus has
-    moved to a popup menu (NVDA issues 12624 and 14550, MSAA only);
-    `FocusValidity::holds` keeps speech for the focus, its ancestors, the
-    foreground window, and a node that never had the focus.
+  - The clause for a menu item whose focus has moved to a popup menu
+    above it (NVDA issues 12624 and 14550, MSAA only) is **matched since
+    2026-10-12**, against the focus the user just left only: Core names
+    that item in `FocusNow::menu_item_of_focus`, where NVDA tests the
+    object of every utterance still waiting. Speech for an older focus
+    has already been dropped by the focus change that left it.
   - The foreground node the check uses is the window most recently
     reported as the foreground; NVDA asks for the real foreground object
     on every focus change that changes the top of the ancestry, so a

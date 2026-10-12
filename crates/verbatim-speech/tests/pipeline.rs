@@ -774,6 +774,7 @@ fn expired_focus_speech_is_dropped_with_what_came_before_it() {
         focus: NodeId::new(3),
         ancestors: Vec::new(),
         foreground: None,
+        menu_item_of_focus: None,
     });
 
     assert_eq!(recv_started(&harness.started), "a message");
@@ -1322,6 +1323,7 @@ fn waiting_focus_speech_is_judged_when_its_turn_comes() {
         focus: NodeId::new(3),
         ancestors: Vec::new(),
         foreground: None,
+        menu_item_of_focus: None,
     });
 
     harness.finish.send(()).unwrap();
@@ -1354,6 +1356,7 @@ fn a_focus_change_just_after_a_cancel_spares_speech_handed_on_since() {
         focus: NodeId::new(3),
         ancestors: vec![NodeId::new(2)],
         foreground: None,
+        menu_item_of_focus: None,
     });
     assert_eq!(recv_started(&harness.started), "a dialog");
     harness.finish.send(()).unwrap();

@@ -263,6 +263,7 @@ fn focus_now(
             .map(|&ancestor| NodeId::in_outpost(outpost, ancestor))
             .collect(),
         foreground: foreground.map(|(outpost, node)| NodeId::in_outpost(outpost, node)),
+        menu_item_of_focus: None,
     }
 }
 
@@ -4959,6 +4960,7 @@ fn focus_speech_holds_while_its_node_is_the_focus_or_contains_it() {
         focus: NodeId::new(3),
         ancestors: vec![NodeId::new(1)],
         foreground: Some(NodeId::new(9)),
+        menu_item_of_focus: None,
     };
     let left = FocusValidity {
         node: NodeId::new(2),
@@ -4980,6 +4982,54 @@ fn focus_speech_holds_while_its_node_is_the_focus_or_contains_it() {
         never_focused.holds(&now),
         "a dialog announced on entering it"
     );
+}
+
+/// An MSAA submenu item's speech stays valid when the application then
+/// focuses the submenu that holds it, and only then: not for a menu that
+/// does not hold it, nor for UIA (`docs/nvda/speech.md`, "Expired focus
+/// speech").
+#[test]
+fn a_submenu_items_speech_holds_when_its_submenu_takes_the_focus() {
+    let source = Pid(1);
+    let msaa = |id: u64, role: Role| NodeSnapshot {
+        backend: Backend::Msaa,
+        ..node(id, role, Some("Node"), None, states(&[State::Focused]))
+    };
+    let focus = |snapshot: NodeSnapshot, ancestors: Vec<NodeSnapshot>| Input::Event {
+        observed_at_ms: 0,
+        trace_id: TraceId::mint(),
+        source,
+        backend: snapshot.backend,
+        window: None,
+        event: NormalizedEvent::FocusChanged {
+            foreground: false,
+            node: snapshot,
+            ancestors,
+            ancestors_unknown: false,
+            selected_child: None,
+        },
+    };
+    let menu_item_of_focus = |effects: &[Effect]| match effects.first() {
+        Some(Effect::DropExpiredSpeech(now)) => now.menu_item_of_focus.map(NodeId::number),
+        other => panic!("the speech manager is told where the focus is first: {other:?}"),
+    };
+    let item_in_submenu = |state: &SrState, item: NodeSnapshot| {
+        reduce(state, &focus(item, vec![msaa(5, Role::Menu)])).0
+    };
+
+    let state = item_in_submenu(&SrState::new(), msaa(6, Role::MenuItem));
+    let (_, effects) = reduce(&state, &focus(msaa(5, Role::Menu), Vec::new()));
+    assert_eq!(menu_item_of_focus(&effects), Some(6), "its submenu");
+    let (_, effects) = reduce(&state, &focus(msaa(7, Role::Menu), Vec::new()));
+    assert_eq!(menu_item_of_focus(&effects), None, "another menu");
+
+    let uia_item = NodeSnapshot {
+        backend: Backend::Uia,
+        ..msaa(6, Role::MenuItem)
+    };
+    let state = item_in_submenu(&SrState::new(), uia_item);
+    let (_, effects) = reduce(&state, &focus(msaa(5, Role::Menu), Vec::new()));
+    assert_eq!(menu_item_of_focus(&effects), None, "a UIA item");
 }
 
 /// Spelling marks each capital so the theme raises its pitch, as NVDA

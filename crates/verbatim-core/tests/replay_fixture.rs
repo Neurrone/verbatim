@@ -106,6 +106,7 @@ fn expected_effects(traces: &[TraceId]) -> Vec<Vec<Effect>> {
                 focus: slider,
                 ancestors: Vec::new(),
                 foreground: None,
+                menu_item_of_focus: None,
             }),
             speech(
                 traces[0],
