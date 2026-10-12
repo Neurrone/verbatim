@@ -434,7 +434,7 @@ a second terminal:
 
 ```
 $env:VERBATIM_E2E_ENDPOINT = '127.0.0.1:44001'
-cargo test -p verbatim-e2e -- --ignored --skip demo_ --test-threads=1
+cargo test -p verbatim-e2e -- --ignored --skip demo_ --skip measure_ --test-threads=1
 ```
 
 `--test-threads=1` is not optional: every live test in this crate launches
@@ -446,7 +446,7 @@ would each think they own an instance the other just replaced out from
 under it (`single_instance::acquire_replacing`'s own algorithm).
 `.github/workflows/ci.yml`'s `e2e` job runs, on a plain `windows-latest`
 runner with the same environment variable,
-`cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip notepad_ --test-threads=1`,
+`cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip measure_ --skip notepad_ --test-threads=1`,
 with `VERBATIM_E2E_SKIP_LOCAL_ONLY=1` as well (see the local-only scenarios
 below).
 
@@ -838,6 +838,89 @@ its own, apart from the utterances, after the key that caused it. Every
 Shift pressed with another key, such as Shift+Tab, pauses speech and the
 key after it resumes it, as in NVDA, so one no step asserted is left
 behind at the next input.
+
+### The measure set
+
+The registry's `measure` group holds the measure set, the measurement
+workloads that `docs/design/communication.md` section 11 runs at every
+migration step: its first step records the baseline, and later steps
+compare their figures with it. They are measurement, not tests
+(`docs/testing.md`): they assert Verbatim's startup speech and the
+desktop's, then collect every utterance without asserting it, and pass by
+completing. The figures come from Verbatim's latency ledger, the
+`verbatim::latency` lines at info in Verbatim's log (described above),
+which every run keeps in its artifacts as `stderr.log`. Each scenario also
+writes `measure-truth.jsonl` to its artifacts directory: one JSON line per
+step, with what was typed or what each key removed, the harness numbers of
+its keys, and the speech collected around it.
+
+The eight scenarios, all named `measure_`:
+
+- `measure_focus_windows_terminal`: two Windows Terminal windows, brought
+  forward 20 times by turns as a taskbar button does.
+- `measure_focus_windows_terminal_tabs`: two tabs of one Windows Terminal
+  window, 20 switches with Control+Tab and Control+Shift+Tab.
+- `measure_focus_explorer`: 10 new File Explorer windows, each opened and
+  closed (the first focus in a new window), then 20 rounds of arrows,
+  Enter into a subfolder and Backspace back.
+- `measure_focus_text_box`: two Windows Forms text boxes, brought forward
+  20 times by turns.
+- `measure_focus_new_application`: 12 newly started applications, each
+  with a fresh outpost, the Windows Forms text box (MSAA) and `mockapp`'s
+  text box (UIA) by turns, each closed before the next.
+- `measure_keys_text_box`: 20 Pause keys injected by Verbatim itself
+  through its control plane's `SendKeys` (the held-key re-injection
+  workload; Pause is not announced, so the ledger logs no line for them),
+  then three rounds of typing at 150 ms and 60 ms a character and
+  Backspace at 33 ms, in the Windows Forms text box.
+- `measure_keys_conhost` and `measure_keys_windows_terminal`: in each
+  terminal, three rounds of typing at 150 ms then Escape, and typing at
+  60 ms then Backspace at 33 ms; typing while a script prints a line
+  every 50 ms; and five rounds of typing a line that wraps onto a second
+  row, then Escape.
+
+The agent paces the typing and Backspace with a high-resolution waitable
+timer (`SendKeysPaced` and `TypeTextPaced`); the pace is the workload, not
+a wait. Like the demonstrations, the measure set is never part of the
+suite: its `#[test]` wrappers are ignored and named `measure_`, so the
+suite's runs deselect them with `--skip measure_`, and `registry::select`
+leaves them out when no `--scenario` or `--group` is given.
+
+To run one locally, start the agent as for any local run, then, in a
+second terminal:
+
+```
+$env:VERBATIM_E2E_ENDPOINT = '127.0.0.1:44001'
+$env:VERBATIM_E2E_RECORD = '0'
+cargo test -p verbatim-e2e --test e2e -- --ignored --exact measure_focus_explorer --test-threads=1
+```
+
+`VERBATIM_E2E_RECORD = '0'` leaves out the video, which a measurement does
+not need and whose encoding adds load. Run the whole set with
+`cargo test -p verbatim-e2e --test e2e -- --ignored measure_ --test-threads=1`.
+Against the VM, `cargo xtask vm test --group measure` runs the set and
+`cargo xtask vm test --scenario measure_keys_conhost` one of it, in debug.
+
+Section 11 compares debug and release, so measure both. Debug is what a
+run stages by default: it builds the debug binaries and stages them from
+`target\debug`. For release, build every binary the run stages, then name
+the release `verbatim.exe` with `VERBATIM_E2E_VERBATIM_EXE`: the run then
+stages `verbatim.exe`, `verbatim-outpost.exe`, `verbatim-synth-host.exe`,
+`mockapp.exe`, `espeak-ng-data` and `sounds` from that executable's folder
+and skips its own debug build. The agent can stay a debug build.
+
+```
+cargo build --release -p verbatim-app -p verbatim-outpost -p verbatim-synth-host -p mockapp
+$env:VERBATIM_E2E_VERBATIM_EXE = "$PWD\target\release\verbatim.exe"
+cargo test -p verbatim-e2e --test e2e -- --ignored --exact measure_focus_explorer --test-threads=1
+```
+
+Remove the variable (`Remove-Item Env:VERBATIM_E2E_VERBATIM_EXE`) to go
+back to debug. The stage is replaced file by file, so the two never mix.
+Both profiles write the same scenario folders under
+`target\e2e-artifacts`, so copy the artifacts away between a debug and a
+release run; the history under `target\e2e-artifacts\history` keeps each
+run too.
 
 ### Hearing and recording a run
 

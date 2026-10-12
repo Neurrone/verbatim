@@ -138,6 +138,22 @@ scenario_tests! {
     demo_settings_dialog_keys
 }
 
+// The measure set, the measurement workloads of
+// `docs/design/communication.md` section 11: ignored, run by name or with
+// `cargo xtask vm test --group measure`, never by the suite, whose runs
+// deselect them with `--skip measure_` (docs/tooling.md).
+scenario_tests! {
+    "a measurement workload, run by name (docs/tooling.md)":
+    measure_focus_windows_terminal
+    measure_focus_windows_terminal_tabs
+    measure_focus_explorer
+    measure_focus_text_box
+    measure_focus_new_application
+    measure_keys_text_box
+    measure_keys_conhost
+    measure_keys_windows_terminal
+}
+
 /// The agent reports an interactive session on the default desktop: the
 /// precondition every scenario depends on, not itself a scenario. A screen
 /// reader driven from a non-interactive session (session 0, `WinRM`,

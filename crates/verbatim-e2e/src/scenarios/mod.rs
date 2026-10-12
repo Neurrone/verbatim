@@ -22,6 +22,7 @@ pub(crate) mod demo_terminal_session;
 pub(crate) mod editing;
 pub(crate) mod explorer_folder_window;
 pub(crate) mod lock_key_announcements;
+pub(crate) mod measure;
 pub(crate) mod menu_and_settings_dialog;
 pub(crate) mod notepad_say_all;
 pub(crate) mod notepad_spelling_errors;

@@ -107,6 +107,15 @@
 //!   wrappers are `#[ignore]`d, so a plain `cargo test -p verbatim-e2e`, as
 //!   CI's `e2e` job runs it, skips them. Each still asserts what it shows,
 //!   so a broken feature fails rather than recording a misleading video.
+//! - [`Group::Measure`]: the measure set, workloads that make Verbatim's
+//!   latency ledger log the figures `docs/design/communication.md`
+//!   section 11 compares at every migration step. They are measurement,
+//!   not tests, and are left out like the demonstrations: a selection
+//!   with no `--scenario` or `--group` leaves them out ([`select`]), and
+//!   their `#[test]` wrappers are ignored and named `measure_`, so the
+//!   suite's runs deselect them with `--skip measure_`. Their speech is
+//!   collected without being asserted ([`SpeechCollector::collect_only`](crate::speech::SpeechCollector::collect_only));
+//!   `docs/tooling.md` says how to run them.
 //!
 //! A scenario marked [`ScenarioDef::local_only`] tests Windows 11 Notepad,
 //! which GitHub's Windows Server runner, with classic Notepad, lacks; its
@@ -127,7 +136,7 @@ use crate::artifacts::{self, OutpostCrash, ScenarioSummary};
 use crate::scenario::{Document, Scenario};
 use crate::scenarios::{
     demo_notepad_editing, demo_review_cursor, demo_say_all, demo_settings_dialog_keys,
-    demo_terminal_session, editing, explorer_folder_window, lock_key_announcements,
+    demo_terminal_session, editing, explorer_folder_window, lock_key_announcements, measure,
     menu_and_settings_dialog, notepad_say_all, notepad_spelling_errors,
     object_navigation_in_settings, object_navigation_over_uia, outpost_crash_recovery,
     rapid_tabbing_in_settings, review_cursor, review_words, second_application_and_verbatim_menu,
@@ -208,6 +217,9 @@ pub enum Group {
     /// Demonstrations, recorded by `cargo xtask demo` and left out of the
     /// suite.
     Demo,
+    /// The measure set: measurement workloads, which assert no speech,
+    /// left out of the suite.
+    Measure,
 }
 
 impl Group {
@@ -222,6 +234,7 @@ impl Group {
             Self::Navigation => "navigation",
             Self::Text => "text",
             Self::Demo => "demo",
+            Self::Measure => "measure",
         }
     }
 
@@ -235,6 +248,7 @@ impl Group {
             "navigation" => Some(Self::Navigation),
             "text" => Some(Self::Text),
             "demo" => Some(Self::Demo),
+            "measure" => Some(Self::Measure),
             _ => None,
         }
     }
@@ -1261,6 +1275,86 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         body: demo_settings_dialog_keys::body,
         teardown: demo_settings_dialog_keys::teardown,
     },
+    ScenarioDef {
+        name: "measure_focus_windows_terminal",
+        group: Group::Measure,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: measure::setup_focus_windows_terminal,
+        body: measure::body_focus_windows_terminal,
+        teardown: measure::teardown,
+    },
+    ScenarioDef {
+        name: "measure_focus_windows_terminal_tabs",
+        group: Group::Measure,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: measure::setup_focus_tabs,
+        body: measure::body_focus_tabs,
+        teardown: measure::teardown,
+    },
+    ScenarioDef {
+        name: "measure_focus_explorer",
+        group: Group::Measure,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: measure::setup_focus_explorer,
+        body: measure::body_focus_explorer,
+        teardown: measure::teardown,
+    },
+    ScenarioDef {
+        name: "measure_focus_text_box",
+        group: Group::Measure,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: measure::setup_focus_text_box,
+        body: measure::body_focus_text_box,
+        teardown: measure::teardown,
+    },
+    ScenarioDef {
+        name: "measure_focus_new_application",
+        group: Group::Measure,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: crate::scenarios::no_setup,
+        body: measure::body_focus_new_application,
+        teardown: measure::teardown,
+    },
+    ScenarioDef {
+        name: "measure_keys_text_box",
+        group: Group::Measure,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: measure::setup_keys_text_box,
+        body: measure::body_keys_text_box,
+        teardown: measure::teardown,
+    },
+    ScenarioDef {
+        name: "measure_keys_conhost",
+        group: Group::Measure,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: measure::setup_keys_console_host,
+        body: measure::body_keys_console_host,
+        teardown: measure::teardown,
+    },
+    ScenarioDef {
+        name: "measure_keys_windows_terminal",
+        group: Group::Measure,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: measure::setup_keys_windows_terminal,
+        body: measure::body_keys_windows_terminal,
+        teardown: measure::teardown,
+    },
 ];
 
 /// Looks up a scenario or a demonstration by [`ScenarioDef::name`].
@@ -1273,7 +1367,7 @@ pub fn find(name: &str) -> Option<&'static ScenarioDef> {
 /// (always [`SCENARIOS`] outside tests) into an ordered, deduplicated list
 /// of matching definitions, preserving registry order. Empty `names` and
 /// `groups` selects every scenario but the demonstrations
-/// ([`Group::Demo`]) — the default, no-flags behavior of
+/// ([`Group::Demo`]) and the measure set ([`Group::Measure`]) — the default, no-flags behavior of
 /// `cargo xtask vm test`. A disabled scenario ([`DISABLED`]) is never
 /// selected.
 ///
@@ -1291,7 +1385,10 @@ pub fn select<'a>(
     if names.is_empty() && groups.is_empty() {
         return Ok(scenarios
             .iter()
-            .filter(|def| def.group != Group::Demo && disabled_reason(def.name).is_none())
+            .filter(|def| {
+                !matches!(def.group, Group::Demo | Group::Measure)
+                    && disabled_reason(def.name).is_none()
+            })
             .collect());
     }
 
@@ -1414,6 +1511,10 @@ fn run(def: &ScenarioDef) {
     let body_outcome = panic::catch_unwind(AssertUnwindSafe(|| {
         scenario.speech().expect_sequence(&startup_speech());
         crate::scenarios::expect_desktop(&mut scenario);
+        // The measure set asserts no speech after the desktop's.
+        if def.group == Group::Measure {
+            scenario.speech().collect_only();
+        }
         let mut created = (def.setup)(&mut scenario)
             .unwrap_or_else(|error| panic!("scenario {:?}: setup failed: {error}", def.name));
         let result = panic::catch_unwind(AssertUnwindSafe(|| {
@@ -1692,6 +1793,7 @@ mod tests {
             Group::Navigation,
             Group::Text,
             Group::Demo,
+            Group::Measure,
         ] {
             assert_eq!(Group::parse(group.name()), Some(group));
         }
@@ -1727,6 +1829,19 @@ mod tests {
         assert_eq!(names, vec!["alpha", "beta"]);
         let demos = select(&scenarios, &[], &["demo".to_owned()]).expect("demo is a real group");
         assert_eq!(demos.len(), 1);
+    }
+
+    #[test]
+    fn select_with_no_filters_leaves_the_measure_set_out() {
+        let mut scenarios = fixture();
+        scenarios[1].group = Group::Measure;
+        let selected = select(&scenarios, &[], &[]).expect("no filters never errors");
+        let names: Vec<&str> = selected.iter().map(|def| def.name).collect();
+        assert_eq!(names, vec!["alpha", "gamma"]);
+        let measure =
+            select(&scenarios, &[], &["measure".to_owned()]).expect("measure is a real group");
+        let names: Vec<&str> = measure.iter().map(|def| def.name).collect();
+        assert_eq!(names, vec!["beta"]);
     }
 
     #[test]

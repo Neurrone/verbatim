@@ -283,6 +283,13 @@ pub struct SpeechCollector {
     /// Pauses, `true`, and resumes, `false`, read and not yet matched by
     /// an assertion, oldest first.
     pauses: VecDeque<bool>,
+    /// Whether the scenario asserts no speech, as the measurement
+    /// workloads do ([`Self::collect_only`]): unmatched utterances are
+    /// collected in [`Self::collected`] instead of failing it.
+    collect_only: bool,
+    /// Utterances collected in collect-only mode and not yet taken, oldest
+    /// first.
+    collected: Vec<Heard>,
 }
 
 impl SpeechCollector {
@@ -338,6 +345,8 @@ impl SpeechCollector {
             order: Vec::new(),
             next_sound: u64::MAX,
             pauses: VecDeque::new(),
+            collect_only: false,
+            collected: Vec::new(),
         })
     }
 
@@ -839,6 +848,12 @@ impl SpeechCollector {
     /// that no assertion matched, or if Verbatim does not become idle.
     pub fn expect_nothing_more(&mut self, after_input: Option<u64>) {
         self.await_idle(after_input);
+        if self.collect_only {
+            // Collected, never failed on: the timeline keeps every
+            // utterance with its time, and Verbatim's log its latency.
+            self.require_all_asserted("after the scenario's last step");
+            return;
+        }
         self.require_all_asserted("after the scenario's last assertion");
         let unended: Vec<UtteranceId> = self.unended.iter().copied().collect();
         for utterance in unended {
@@ -878,6 +893,38 @@ impl SpeechCollector {
             })
             .collect();
         taken
+    }
+
+    /// For the measurement workloads, which assert no speech: every
+    /// utterance collected or not yet matched once Verbatim is idle after
+    /// the input numbered `after_input`, and every frame that has reached
+    /// the harness since, each counted as matched without its content
+    /// being asserted. Taken just before an input, it leaves nothing for
+    /// that input's own check, including speech that comes after Verbatim
+    /// reports itself idle, such as an application's event after a key.
+    ///
+    /// # Panics
+    ///
+    /// Panics if Verbatim does not become idle or the connection fails.
+    pub fn take_all_queued(&mut self, after_input: Option<u64>) -> Vec<Heard> {
+        let mut taken = std::mem::take(&mut self.collected);
+        self.await_idle(after_input);
+        self.read_arrived();
+        self.pauses.clear();
+        taken.extend(self.pending.drain(..).map(|utterance| Heard {
+            text: utterance.text,
+            utterance: utterance.utterance,
+        }));
+        taken
+    }
+
+    /// From now on this scenario asserts no speech, as the measurement
+    /// workloads do. Every utterance is still read, timed and kept on the
+    /// timeline, and unmatched ones are collected for
+    /// [`Self::take_all_queued`] rather than failing the scenario, before
+    /// an input or at its end. Only the registry's `measure` group sets it.
+    pub fn collect_only(&mut self) {
+        self.collect_only = true;
     }
 
     /// Asks Verbatim, on this connection, to answer once it has handled
@@ -929,6 +976,14 @@ impl SpeechCollector {
         // about pausing asserts it. So a pause asserted after an input
         // is one that input caused.
         self.pauses.clear();
+        if self.collect_only {
+            let pending = self.pending.drain(..).map(|utterance| Heard {
+                text: utterance.text,
+                utterance: utterance.utterance,
+            });
+            self.collected.extend(pending);
+            return;
+        }
         if let Some(first) = self.pending.front() {
             let unmatched: Vec<&str> = self.pending.iter().map(|u| u.text.as_str()).collect();
             self.fail_at(
@@ -1339,6 +1394,20 @@ mod tests {
         speech.expect(&["expected"]);
         let message = fails(move || speech.expect_nothing_more(Some(7)));
         assert!(message.contains("\"extra\""), "{message}");
+    }
+
+    #[test]
+    fn collect_only_collects_unasserted_speech_for_the_measure_set_instead_of_failing() {
+        let mut speech = collector(vec![queued(1, "first"), queued(2, "second")]);
+        speech.collect_only();
+        speech.require_all_asserted("before keys tab");
+        let taken: Vec<String> = speech
+            .take_all_queued(Some(3))
+            .into_iter()
+            .map(|heard| heard.text)
+            .collect();
+        assert_eq!(taken, vec!["first", "second"]);
+        speech.expect_nothing_more(Some(3));
     }
 
     #[test]

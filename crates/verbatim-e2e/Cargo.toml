@@ -8,6 +8,8 @@ license.workspace = true
 
 [dependencies]
 base64.workspace = true
+# The measure set's ground-truth lines (scenarios/measure.rs).
+serde_json.workspace = true
 tracing.workspace = true
 verbatim-agent.workspace = true
 verbatim-config.workspace = true

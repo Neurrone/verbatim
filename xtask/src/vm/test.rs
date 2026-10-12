@@ -11,7 +11,8 @@
 //!   choose which of `verbatim_e2e::registry::SCENARIOS` to run; with
 //!   neither given, every registered scenario runs except the
 //!   demonstrations (the `demo` group), which are recorded with
-//!   `cargo xtask demo` on a development machine and refused here.
+//!   `cargo xtask demo` on a development machine and refused here, and
+//!   the measure set (the `measure` group), which runs only when named.
 //!   `--list` prints the registry (name and group, one per line) and exits
 //!   without touching the VM at all — no build, no restore, no deploy.
 //! - `session_info` (`agent_reports_an_interactive_window_station` in

@@ -38,7 +38,7 @@
 //! `verbatim_agent::protocol::DEFAULT_PORT`, is deliberately not in the
 //! 47000s — see that constant's doc comment for why), export
 //! `VERBATIM_E2E_ENDPOINT=127.0.0.1:44001`, and run
-//! `cargo test -p verbatim-e2e -- --ignored --skip demo_ --test-threads=1`. Tests run strictly
+//! `cargo test -p verbatim-e2e -- --ignored --skip demo_ --skip measure_ --test-threads=1`. Tests run strictly
 //! serially by design (documented on [`scenario::Scenario`]): this suite
 //! launches a real Verbatim on the developer's live desktop, and
 //! `--test-threads=1` is how both a local run and CI honor that.

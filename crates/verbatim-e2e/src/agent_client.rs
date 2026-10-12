@@ -929,6 +929,56 @@ impl AgentClient {
         }
     }
 
+    /// Injects `keys` as [`AgentClient::send_keys`] does, one stroke every
+    /// `interval_ms` (`Request::SendKeysPaced`), for a measurement
+    /// workload's rate of key presses. Returns the last stroke's number.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, including when a key name is
+    /// unknown, in which case nothing was sent.
+    pub fn send_keys_paced(&mut self, keys: &[String], interval_ms: u32) -> io::Result<u64> {
+        let wait = Duration::from_millis(u64::from(interval_ms) * keys.len() as u64);
+        match self.request_waiting(
+            Request::SendKeysPaced {
+                keys: keys.to_vec(),
+                interval_ms,
+            },
+            wait,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::KeysSent { input },
+                ..
+            } => Ok(input),
+            other => Err(unexpected("SendKeysPaced", &other)),
+        }
+    }
+
+    /// Types `text` as [`AgentClient::type_text`] does, one character
+    /// every `interval_ms` (`Request::TypeTextPaced`), for a measurement
+    /// workload's typing rate. Returns the last character's number.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, including when a character
+    /// cannot be typed in that layout, in which case nothing was typed.
+    pub fn type_text_paced(&mut self, text: &str, interval_ms: u32) -> io::Result<u64> {
+        let wait = Duration::from_millis(u64::from(interval_ms) * text.chars().count() as u64);
+        match self.request_waiting(
+            Request::TypeTextPaced {
+                text: text.to_owned(),
+                interval_ms,
+            },
+            wait,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::TextTyped { input },
+                ..
+            } => Ok(input),
+            other => Err(unexpected("TypeTextPaced", &other)),
+        }
+    }
+
     /// Asks whether `pid` is still running on the guest.
     ///
     /// # Errors

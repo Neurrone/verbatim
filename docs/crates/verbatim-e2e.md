@@ -22,7 +22,7 @@ and how to read a failure.
   `#[ignore]`d with the reason "live", so a workspace test run (and
   `cargo xtask ci`) lists them as ignored rather than reporting them as
   passed. The end-to-end job runs them with
-  `cargo test -p verbatim-e2e -- --ignored --skip demo_ --skip notepad_ --test-threads=1`.
+  `cargo test -p verbatim-e2e -- --ignored --skip demo_ --skip measure_ --skip notepad_ --test-threads=1`.
 - `endpoint()` reads `ENDPOINT_ENV` (`VERBATIM_E2E_ENDPOINT`). A live test
   run without it fails: a scenario that cannot reach an agent has not
   passed. `session_info`, the precondition check that the agent runs in an
@@ -37,6 +37,10 @@ and how to read a failure.
   an error. Nothing detects the machine.
 - Demonstrations (the Demo group, `demo_` names) run only through
   `cargo xtask demo`.
+- The measure set (the Measure group, `measure_` names) is measurement,
+  not tests: ignored, run only by name or with `--group measure`, and
+  deselected from every suite run with `--skip measure_`
+  (`docs/tooling.md`, "The measure set").
 
 ## The starting state
 
@@ -150,6 +154,16 @@ an utterance is named in its text.
   happen, and fails, as a harness error, if any utterance is waiting that
   no assertion matched. A scenario never moves past speech it has not
   asserted.
+- `collect_only()` and `take_all_queued(after_input)`, for the measure set
+  only, which asserts no speech: the registry sets collect-only mode for a
+  Measure scenario once the startup speech and the desktop's announcement
+  are asserted. From then on every utterance is still read and kept on
+  the timeline, but `require_all_asserted` and `expect_nothing_more`
+  collect unmatched utterances instead of failing, and `expect_nothing_more`
+  no longer waits for each utterance to end. `take_all_queued` returns
+  everything collected or unmatched once Verbatim is idle after the given
+  input, together with every frame that has reached the harness since,
+  each counted as matched without its content being asserted.
 
 A failed assertion unwinds with a `SpeechFailure`, without the panic
 hook, and the run reports it once the logs are collected
@@ -178,7 +192,16 @@ one key, such as Control, down across the keys sent between them, through
 the agent's `PressKey` and `ReleaseKey`; a key still held when the body
 ends, passed or failed, is released then and fails the run
 (`release_held_keys`, run again by the cleanup). `send_gesture` sends a gesture by
-its identifier through the control plane. Nothing taps keys or uses
+its identifier through the control plane. For the measure set,
+`send_keys_paced(keys, interval_ms)` and `type_text_paced(text,
+interval_ms)` inject one stroke or character every `interval_ms` through
+the agent's `SendKeysPaced` and `TypeTextPaced`, numbered like any other
+input, and return the first and last numbers; `send_keys_from_verbatim`
+injects keys through Verbatim's own control plane (`Request::SendKeys`),
+which carry no harness number; and `take_all_queued` and
+`close_windows_titled` (close every window whose title contains the text,
+failing unless all closed) serve their steps. The matching
+`AgentClient` methods are `send_keys_paced` and `type_text_paced`. Nothing taps keys or uses
 Alt+Tab to move the foreground, not even in a scenario about switching
 windows: the window is brought forward through the agent, as its
 taskbar button does; a window that does not take the foreground fails
@@ -452,6 +475,15 @@ The groups:
 - Demo: `demo_notepad_editing`, `demo_review_cursor`, `demo_say_all`,
   `demo_terminal_session`, `demo_settings_dialog_keys`. Everything a
   demonstration shows is covered by a test scenario.
+- Measure: the measure set in `scenarios/measure.rs`,
+  `measure_focus_windows_terminal`, `measure_focus_windows_terminal_tabs`,
+  `measure_focus_explorer`, `measure_focus_text_box`,
+  `measure_focus_new_application`, `measure_keys_text_box`,
+  `measure_keys_conhost` and `measure_keys_windows_terminal`: workloads
+  for Verbatim's latency ledger, which assert no speech after the
+  desktop's and write each step's ground truth to `measure-truth.jsonl`
+  in their artifacts. `docs/tooling.md`, "The measure set", describes
+  each and how to run them in debug and release.
 
 ### Shared setups
 

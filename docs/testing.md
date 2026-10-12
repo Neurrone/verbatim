@@ -4,6 +4,8 @@ Every test in Verbatim meets this standard: unit tests, `mockapp`'s cross-proces
 
 The standard was set on 2026-10-07, after an audit found tests that passed without testing what they claimed: speech checks that skipped unexpected utterances, scenarios that accepted whichever of two applications a machine had, and tolerances that let real regressions through.
 
+The measure set, the end-to-end registry's `measure` group (`measure_` scenarios), is measurement, not tests, and is outside this standard's assertion rules. It is the workload `docs/design/communication.md` section 11 measures Verbatim's latency with, and it is excluded from the suite: no suite run includes it, and every suite command deselects it with `--skip measure_`. Its scenarios assert the startup speech and the desktop's announcement, then collect every utterance without asserting it, and pass by completing. They keep the rules that make a measurement sound: the same starting desktop, one fixed target each, waits only for evidence, and windows brought forward as a taskbar button does. A measure scenario passing is never evidence that Verbatim behaves correctly.
+
 ## One target, one code path
 
 A test runs against one fixed application and exercises one backend. Nothing about what it runs against, or what it expects, depends on the machine.

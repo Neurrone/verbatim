@@ -673,6 +673,97 @@ impl Scenario {
         self.speech.take_until_idle(self.last_input)
     }
 
+    /// For the measurement workloads, which assert no speech: everything
+    /// Verbatim queued that no assertion matched, once it is idle after the
+    /// scenario's last input, and every frame that has reached the speech
+    /// connection since ([`SpeechCollector::take_all_queued`]).
+    ///
+    /// # Panics
+    ///
+    /// Panics if Verbatim does not become idle.
+    pub fn take_all_queued(&mut self) -> Vec<crate::speech::Heard> {
+        self.speech.take_all_queued(self.last_input)
+    }
+
+    /// [`Scenario::send_keys`], one stroke every `interval_ms`, for a
+    /// measurement workload's rate of key presses, such as auto-repeat's.
+    /// Returns the first and last strokes' numbers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an utterance no assertion matched is waiting.
+    pub fn send_keys_paced(&mut self, keys: &[&str], interval_ms: u32) -> io::Result<(u64, u64)> {
+        self.speech
+            .require_all_asserted(&format!("before the keys {keys:?}"));
+        self.timeline.push_keys(keys);
+        let keys: Vec<String> = keys.iter().map(|key| (*key).to_owned()).collect();
+        let last = self.agent.send_keys_paced(&keys, interval_ms)?;
+        self.last_input = Some(last);
+        Ok((last + 1 - keys.len() as u64, last))
+    }
+
+    /// [`Scenario::type_text`], one character every `interval_ms`, for a
+    /// measurement workload's typing rate. Returns the first and last
+    /// characters' numbers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an utterance no assertion matched is waiting.
+    pub fn type_text_paced(&mut self, text: &str, interval_ms: u32) -> io::Result<(u64, u64)> {
+        self.speech
+            .require_all_asserted(&format!("before typing {text:?}"));
+        self.timeline.push_text(text);
+        let last = self.agent.type_text_paced(text, interval_ms)?;
+        self.last_input = Some(last);
+        Ok((last + 1 - text.chars().count() as u64, last))
+    }
+
+    /// Injects `keys` through Verbatim's own control plane
+    /// (`Request::SendKeys`), from inside `verbatim.exe`, so the time from
+    /// its `SendInput` to its own hook seeing the key is what re-injecting
+    /// a held key would cost. The keys carry no harness number, so the
+    /// scenario's last input stays what it was.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an utterance no assertion matched is waiting.
+    pub fn send_keys_from_verbatim(&mut self, keys: &[&str]) -> io::Result<()> {
+        self.speech
+            .require_all_asserted(&format!("before Verbatim injects the keys {keys:?}"));
+        self.timeline.push_keys(keys);
+        ok_or_error(self.control.request(Request::SendKeys {
+            keys: keys.iter().map(|key| (*key).to_owned()).collect(),
+        })?)?;
+        Ok(())
+    }
+
+    /// Closes every window whose title contains `title`, as the harness's
+    /// cleanup closes them, and fails unless all of them closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails or a window stays open.
+    pub fn close_windows_titled(&mut self, title: &str) -> io::Result<()> {
+        match self.agent.close_windows(title, CLOSE_TIMEOUT)? {
+            0 => Ok(()),
+            remaining => Err(io::Error::other(format!(
+                "{remaining} window(s) titled {title:?} did not close within {CLOSE_TIMEOUT:?}"
+            ))),
+        }
+    }
+
     /// The directory, on the agent's machine, that this run's harness
     /// files go in: the one holding Verbatim's executable.
     #[must_use]
