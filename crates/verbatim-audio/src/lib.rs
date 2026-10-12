@@ -70,6 +70,18 @@ impl fmt::Display for AudioError {
 
 impl std::error::Error for AudioError {}
 
+/// Where a device's own clock had got to: how many frames it had played
+/// since it last started, and how long before the reading was returned
+/// that was so (`docs/design/communication.md`, section 10.1, "Device
+/// clock").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClockReading {
+    /// Frames played by the device's clock since it last started.
+    pub frames: u64,
+    /// How long ago the device's clock was at `frames`.
+    pub age: Duration,
+}
+
 /// Wakes a device's [`AudioDevice::wait`] early, from any thread.
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
@@ -124,5 +136,13 @@ pub trait AudioDevice: Send {
     /// system's default output device changed.
     fn needs_reopen(&self) -> bool {
         false
+    }
+
+    /// Where the device's own clock has got to, while it plays, for a
+    /// device that has one; `None` by default, and when it cannot be read.
+    /// It is what the latency ledger's device clock stage measures, and
+    /// nothing else depends on it.
+    fn clock_position(&mut self) -> Option<ClockReading> {
+        None
     }
 }

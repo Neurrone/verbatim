@@ -67,12 +67,25 @@ const REOPEN_RETRY: Duration = Duration::from_secs(1);
 /// Something the mixer reports about one utterance, on its audio thread.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PlaybackEvent {
-    /// The utterance's first frame has played.
+    /// The utterance's first frame has played: the device has taken it
+    /// from its queue.
     Started {
         /// The utterance.
         utterance: UtteranceId,
         /// Its trace.
         trace_id: TraceId,
+    },
+    /// The device's own clock has passed the utterance's first frame, `ago`
+    /// before this is reported: reported only by a device with a clock
+    /// ([`AudioDevice::clock_position`](crate::AudioDevice::clock_position)),
+    /// after [`Started`](Self::Started), unless playback stopped first.
+    Heard {
+        /// The utterance.
+        utterance: UtteranceId,
+        /// Its trace.
+        trace_id: TraceId,
+        /// How long before this report the clock passed the frame.
+        ago: Duration,
     },
     /// Playback has reached an index mark.
     Mark {
@@ -249,6 +262,9 @@ struct SourceState {
     resumed: bool,
     /// Sounds mixed over the source's audio, until they have played.
     voices: Vec<Voice>,
+    /// Utterances whose start has played, with the mix position of their
+    /// first frame, until the device's clock passes it.
+    awaiting_clock: Vec<(UtteranceId, TraceId, u64)>,
 }
 
 impl Mixer {
@@ -355,6 +371,7 @@ impl Mixer {
                 paused: false,
                 resumed: false,
                 voices: Vec::new(),
+                awaiting_clock: Vec::new(),
             },
         );
         Source {
@@ -741,10 +758,16 @@ impl SourceState {
             }
             let pending = self.events.pop_front().expect("front was just read");
             let event = match pending.kind {
-                Kind::Start => PlaybackEvent::Started {
-                    utterance: pending.utterance,
-                    trace_id: pending.trace_id,
-                },
+                Kind::Start => {
+                    if let Some(mix) = self.mix_position(pending.position) {
+                        self.awaiting_clock
+                            .push((pending.utterance, pending.trace_id, mix));
+                    }
+                    PlaybackEvent::Started {
+                        utterance: pending.utterance,
+                        trace_id: pending.trace_id,
+                    }
+                }
                 Kind::Mark(mark) => PlaybackEvent::Mark {
                     utterance: pending.utterance,
                     trace_id: pending.trace_id,
@@ -976,6 +999,8 @@ fn run(shared: &Shared, device: &mut dyn AudioDevice, mut tap: Option<Box<dyn Au
     let mut tap_pending: VecDeque<f32> = VecDeque::new();
     let mut tapped: u64 = 0;
     let mut running = false;
+    // The mix position at which the device's clock last started from zero.
+    let mut clock_base: u64 = 0;
     let mut mix: Vec<f32> = Vec::new();
     // The device ran dry while an utterance was part-way through. It is an
     // audible gap if more of that utterance then plays; an utterance whose
@@ -1024,6 +1049,7 @@ fn run(shared: &Shared, device: &mut dyn AudioDevice, mut tap: Option<Box<dyn Au
             if running {
                 device.stop();
                 running = false;
+                forget_clock(&mut state);
             }
             written = played;
             tap_pending.clear();
@@ -1034,19 +1060,19 @@ fn run(shared: &Shared, device: &mut dyn AudioDevice, mut tap: Option<Box<dyn Au
         for source in state.sources.values_mut() {
             source.fire(played, &mut notes);
         }
+        if running {
+            heard_by_clock(&mut state, device, clock_base, &mut notes);
+        }
 
         let frames = frames_to_mix(&state, queued, running, written);
         if frames > 0 {
-            if ran_dry && state.sources.values().any(SourceState::mid_utterance) {
-                state.underruns += 1;
-                warn!(
-                    target: "verbatim::audio",
-                    underruns = state.underruns,
-                    "the device ran dry in the middle of an utterance: an audible gap"
-                );
-            }
+            note_underrun(&mut state, ran_dry);
             ran_dry = false;
             mix_sources(&mut state, frames, written, &mut mix);
+            if !running {
+                // The device's clock starts again from zero at this frame.
+                clock_base = written;
+            }
             let result = device
                 .write(&mix)
                 .and_then(|()| if running { Ok(()) } else { device.start() });
@@ -1067,11 +1093,80 @@ fn run(shared: &Shared, device: &mut dyn AudioDevice, mut tap: Option<Box<dyn Au
         } else if running && queued == 0 {
             device.stop();
             running = false;
+            forget_clock(&mut state);
         }
         drop(state);
         shared.changed.notify_all();
         deliver(notes);
         device.wait(if running { PLAYING_WAIT } else { IDLE_WAIT });
+    }
+}
+
+/// Counts and reports an underrun when the device ran dry, `ran_dry`, and
+/// more of an utterance it was part-way through is about to play.
+fn note_underrun(state: &mut State, ran_dry: bool) {
+    if ran_dry && state.sources.values().any(SourceState::mid_utterance) {
+        state.underruns += 1;
+        warn!(
+            target: "verbatim::audio",
+            underruns = state.underruns,
+            "the device ran dry in the middle of an utterance: an audible gap"
+        );
+    }
+}
+
+/// Reports, for each utterance whose start has played, whether the
+/// device's clock has passed its first frame, and when, from one reading of
+/// the clock; `clock_base` is the mix position at which the clock started.
+fn heard_by_clock(
+    state: &mut State,
+    device: &mut dyn AudioDevice,
+    clock_base: u64,
+    notes: &mut Vec<(PlaybackListener, PlaybackEvent)>,
+) {
+    if state
+        .sources
+        .values()
+        .all(|source| source.awaiting_clock.is_empty())
+    {
+        return;
+    }
+    let Some(reading) = device.clock_position() else {
+        return;
+    };
+    let rate = f64::from(state.format.sample_rate.max(1));
+    let clock = clock_base + reading.frames;
+    for source in state.sources.values_mut() {
+        let listener = &source.listener;
+        source.awaiting_clock.retain(|&(utterance, trace_id, mix)| {
+            if mix >= clock {
+                return true;
+            }
+            // The clock was at `clock` `reading.age` ago, and passed the
+            // frame `clock - mix` frames before that.
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "a few seconds of frames, far inside f64's exact range"
+            )]
+            let behind = Duration::from_secs_f64((clock - mix) as f64 / rate);
+            notes.push((
+                Arc::clone(listener),
+                PlaybackEvent::Heard {
+                    utterance,
+                    trace_id,
+                    ago: reading.age + behind,
+                },
+            ));
+            false
+        });
+    }
+}
+
+/// Forgets every start waiting for the device's clock: the device has
+/// stopped, and its clock starts again from zero.
+fn forget_clock(state: &mut State) {
+    for source in state.sources.values_mut() {
+        source.awaiting_clock.clear();
     }
 }
 
@@ -1282,6 +1377,7 @@ fn recover(shared: &Shared, device: &mut dyn AudioDevice, played: u64, error: &A
     let mut notes = Vec::new();
     {
         let mut state = shared.lock();
+        forget_clock(&mut state);
         for source in state.sources.values_mut() {
             source.rewind(played);
             source.fire(played, &mut notes);

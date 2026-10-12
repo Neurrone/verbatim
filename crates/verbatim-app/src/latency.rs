@@ -79,6 +79,8 @@ struct Stages {
     synth_timing: Option<SynthTiming>,
     audio_to_mixer: Option<u64>,
     audio_started: Option<u64>,
+    /// When the device's own clock passed the first frame.
+    audio_heard: Option<u64>,
 }
 
 impl Entry {
@@ -293,6 +295,11 @@ impl Stages {
             (
                 LatencyStageKind::MixerAndDevice,
                 span(self.audio_to_mixer, self.audio_started),
+                None,
+            ),
+            (
+                LatencyStageKind::DeviceClock,
+                span(self.audio_started, self.audio_heard),
                 None,
             ),
         ]
@@ -626,6 +633,17 @@ impl SpeechEvents for LatencyLedger {
         self.speech_stage(utterance, trace_id, |stages| &mut stages.synthesizer_audio);
     }
 
+    fn audio_heard(&self, utterance: UtteranceId, trace_id: TraceId, at: std::time::Instant) {
+        // Reported after the moment it names, on the ledger's clock.
+        let ago = u64::try_from(at.elapsed().as_micros()).unwrap_or(u64::MAX);
+        let heard = (self.clock)().saturating_sub(ago);
+        self.update(trace_id, |entry| {
+            if entry.stages.utterance == Some(utterance) {
+                entry.stages.audio_heard.get_or_insert(heard);
+            }
+        });
+    }
+
     fn synth_timing(&self, utterance: UtteranceId, trace_id: TraceId, timing: SynthTiming) {
         self.update(trace_id, |entry| {
             if entry.stages.utterance == Some(utterance) {
@@ -823,6 +841,7 @@ mod tests {
             synth_timing: None,
             audio_to_mixer: Some(60_700),
             audio_started: Some(62_500),
+            audio_heard: None,
         };
         assert_eq!(
             stages.line().as_deref(),
@@ -1027,6 +1046,7 @@ mod tests {
             synth_timing: None,
             audio_to_mixer: Some(105_600),
             audio_started: Some(106_500),
+            audio_heard: None,
         };
         let kinds: Vec<_> = stages.breakdown().iter().map(|stage| stage.kind).collect();
         assert_eq!(

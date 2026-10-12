@@ -104,7 +104,9 @@ pub struct HostTiming {
 pub fn now_us() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| u64::try_from(since.as_micros()).unwrap_or(u64::MAX))
+        .map_or(0, |since| {
+            u64::try_from(since.as_micros()).unwrap_or(u64::MAX)
+        })
 }
 
 /// The JSON-encoded part of [`FromHost`]: everything but PCM.

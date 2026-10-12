@@ -27,6 +27,11 @@ pub trait SpeechEvents: Send + Sync {
     /// The utterance's first audio frame has played.
     fn audio_started(&self, utterance: UtteranceId, trace_id: TraceId, at: Instant);
 
+    /// The audio device's own clock passed the utterance's first frame, at
+    /// `at`, after [`audio_started`](Self::audio_started): reported only
+    /// for a device with a clock, and not when playback stopped first.
+    fn audio_heard(&self, _utterance: UtteranceId, _trace_id: TraceId, _at: Instant) {}
+
     /// Synthesis of the utterance has begun. The time since it was queued
     /// was spent waiting behind earlier speech.
     fn synthesis_started(&self, _utterance: UtteranceId, _trace_id: TraceId, _at: Instant) {}

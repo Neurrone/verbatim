@@ -643,6 +643,12 @@ impl SpeechEvents for Observer {
         }
     }
 
+    fn audio_heard(&self, utterance: UtteranceId, trace_id: TraceId, at: Instant) {
+        if let Some(inner) = &self.inner {
+            inner.audio_heard(utterance, trace_id, at);
+        }
+    }
+
     fn synthesis_started(&self, utterance: UtteranceId, trace_id: TraceId, at: Instant) {
         if let Some(inner) = &self.inner {
             inner.synthesis_started(utterance, trace_id, at);
@@ -743,6 +749,15 @@ fn playback_listener(
                 trace!(target: "verbatim::speech", %utterance, trace_id = %trace_id, mark, "mark_reached");
                 if let Some(events) = &events {
                     events.mark_reached(utterance, trace_id, IndexMark(mark), now);
+                }
+            }
+            PlaybackEvent::Heard {
+                utterance,
+                trace_id,
+                ago,
+            } => {
+                if let Some(events) = &events {
+                    events.audio_heard(utterance, trace_id, now.checked_sub(ago).unwrap_or(now));
                 }
             }
             PlaybackEvent::Ended {

@@ -21,8 +21,11 @@ Public API:
   `queued_frames` (written but not yet played), `write`, `start`, `stop`
   (which discards everything queued), `wait` (until frames play, the
   waker is called, or a timeout passes), `waker` (a `Waker` handle that
-  ends a `wait` early from any thread), and `needs_reopen` (for example
-  after the system's default device changed; defaults to `false`).
+  ends a `wait` early from any thread), `needs_reopen` (for example
+  after the system's default device changed; defaults to `false`), and
+  `clock_position` (the device's own clock as a `ClockReading`: frames
+  played since it last started, and how long ago that held; defaults to
+  `None`, and only the latency ledger's device clock stage uses it).
 - `Mixer` — `start(device)` spawns the `verbatim-audio` thread and opens
   the device on it, returning the open error if there is one;
   `start_with_tap(device, tap)` does the same and also gives `tap` every
@@ -66,9 +69,14 @@ Public API:
   returns its interleaved samples in that format. It is converted
   to the device's format through the same converter as speech the first
   time it plays in that format, and kept converted.
-- `PlaybackEvent` — `Started` (the utterance's first frame has played),
-  `Mark` (playback reached an index mark), and `Ended` with an
-  `UtteranceEnding`. Each carries the utterance id and trace id.
+- `PlaybackEvent` — `Started` (the utterance's first frame has played:
+  the device has taken it from its queue), `Heard` (the device's own
+  clock passed that frame, `ago` before the report; only from a device
+  with a clock, and dropped when playback stops first: after each wake the
+  mixer compares the clock, from the mix position at which the device
+  last started, with each start waiting for it), `Mark` (playback reached
+  an index mark), and `Ended` with an `UtteranceEnding`. Each carries the
+  utterance id and trace id.
 - `PlaybackListener` — the callback a source's events go to. It runs on
   the audio thread, so it must be quick and must not call back into the
   mixer.

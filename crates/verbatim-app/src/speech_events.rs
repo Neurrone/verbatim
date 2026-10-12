@@ -37,6 +37,10 @@ impl SpeechEvents for ShellSpeechEvents {
         self.ledger.audio_started(utterance, trace_id, at);
     }
 
+    fn audio_heard(&self, utterance: UtteranceId, trace_id: TraceId, at: Instant) {
+        self.ledger.audio_heard(utterance, trace_id, at);
+    }
+
     fn synthesis_started(&self, utterance: UtteranceId, trace_id: TraceId, at: Instant) {
         self.ledger.synthesis_started(utterance, trace_id, at);
     }

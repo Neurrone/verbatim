@@ -8,8 +8,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use verbatim_audio::{
-    AudioDevice, AudioError, AudioTap, DeviceFormat, Mixer, PcmFormat, PlaybackEvent, Sound,
-    Source, Waker,
+    AudioDevice, AudioError, AudioTap, ClockReading, DeviceFormat, Mixer, PcmFormat, PlaybackEvent,
+    Sound, Source, Waker,
 };
 use verbatim_model::{TraceId, UtteranceEnding, UtteranceId};
 
@@ -50,6 +50,8 @@ struct ManualDevice {
     fail: Arc<AtomicBool>,
     /// The format the device comes back in when reopened, if not [`FORMAT`].
     reopened_format: Arc<Mutex<Option<DeviceFormat>>>,
+    /// What the device's clock reads, if it has one.
+    clock: Arc<Mutex<Option<ClockReading>>>,
 }
 
 impl ManualDevice {
@@ -154,6 +156,10 @@ impl AudioDevice for ManualDevice {
 
     fn needs_reopen(&self) -> bool {
         self.reopen.load(Ordering::SeqCst)
+    }
+
+    fn clock_position(&mut self) -> Option<ClockReading> {
+        *self.clock.lock().unwrap()
     }
 }
 
@@ -270,6 +276,35 @@ fn an_utterance_completes_only_when_the_device_has_played_its_last_frame() {
     harness.nothing_more();
     harness.play(1);
     assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Completed));
+}
+
+#[test]
+fn a_start_is_heard_when_the_devices_clock_passes_its_first_frame() {
+    let harness = harness();
+    let trace = harness.speak(1, 20);
+    harness.play(1);
+    assert_eq!(harness.next(), started(1, trace));
+    *harness.device.clock.lock().unwrap() = Some(ClockReading {
+        frames: 0,
+        age: Duration::from_millis(2),
+    });
+    harness.nothing_more();
+    // Three frames past the first, at one frame a millisecond, read two
+    // milliseconds ago: the clock passed it five milliseconds ago.
+    *harness.device.clock.lock().unwrap() = Some(ClockReading {
+        frames: 3,
+        age: Duration::from_millis(2),
+    });
+    harness.device.settle();
+    assert_eq!(
+        harness.next(),
+        PlaybackEvent::Heard {
+            utterance: utterance(1),
+            trace_id: trace,
+            ago: Duration::from_millis(5),
+        }
+    );
+    harness.nothing_more();
 }
 
 #[test]

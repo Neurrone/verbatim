@@ -109,7 +109,8 @@ Public API:
   during a synthesizer switch").
 - `SpeechEvents` — the observability seam, one call per milestone of each
   utterance: `utterance_queued` (with its rendered text), `audio_started`
-  (its first frame has played), `mark_reached` (playback reached an index
+  (its first frame has played), `audio_heard` (the device's clock passed
+  that frame; a default no-op, for the latency log), `mark_reached` (playback reached an index
   mark; a default no-op), `synthesis_started`, `synthesizer_audio` (the
   driver's first audio), `synth_timing` (the driver's `SynthTiming`, for
   a synthesizer host), and `audio_to_mixer` (its first audio past the

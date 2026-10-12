@@ -429,6 +429,10 @@ pub enum LatencyStageKind {
     LeadingSilence,
     /// From the mixer to the audio device starting.
     MixerAndDevice,
+    /// From the audio device taking the first frame to its own clock
+    /// passing it: the device's buffer and the engine, read from the
+    /// device's clock, for a device that has one.
+    DeviceClock,
 }
 
 impl LatencyStageKind {
@@ -461,6 +465,7 @@ impl LatencyStageKind {
             Self::HostReturn => "back from the synthesizer host",
             Self::LeadingSilence => "leading silence",
             Self::MixerAndDevice => "mixer and device",
+            Self::DeviceClock => "device clock",
         }
     }
 
@@ -477,6 +482,7 @@ impl LatencyStageKind {
                 | Self::HostReturn
                 | Self::LeadingSilence
                 | Self::MixerAndDevice
+                | Self::DeviceClock
         )
     }
 }

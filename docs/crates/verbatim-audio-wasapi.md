@@ -24,7 +24,9 @@ work while Verbatim or the system is busy.
 render buffer, `start` starts the stream, and `stop` issues Stop plus
 Reset to discard everything queued, which is how speech interruption
 sounds instant. `wait` blocks on the stream's render event and a wake
-event that the mixer's `Waker` signals.
+event that the mixer's `Waker` signals. `clock_position` reads the
+stream's `IAudioClock` position, converted to frames, and how long ago it
+was taken, from the performance counter's value the position carries.
 
 Recovery. An `IMMNotificationClient` registered with the device
 enumerator sets a flag and wakes the audio thread when the default render

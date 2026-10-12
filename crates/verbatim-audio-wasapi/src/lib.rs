@@ -18,17 +18,19 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
-use verbatim_audio::{AudioDevice, AudioError, DeviceFormat, SilentDevice, Waker};
+use verbatim_audio::{AudioDevice, AudioError, ClockReading, DeviceFormat, SilentDevice, Waker};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, RPC_E_CHANGED_MODE};
 use windows::Win32::Media::Audio::{
     AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
     AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, IAudioClient,
-    IAudioRenderClient, IMMDeviceEnumerator, IMMNotificationClient, MMDeviceEnumerator,
-    WAVEFORMATEX, WAVEFORMATEXTENSIBLE, WAVEFORMATEXTENSIBLE_0, eConsole, eRender,
+    IAudioClock, IAudioRenderClient, IMMDeviceEnumerator, IMMNotificationClient,
+    MMDeviceEnumerator, WAVEFORMATEX, WAVEFORMATEXTENSIBLE, WAVEFORMATEXTENSIBLE_0, eConsole,
+    eRender,
 };
 use windows::Win32::System::Com::{
     CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
 };
+use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 use windows::Win32::System::Threading::{
     AvSetMmThreadCharacteristicsW, CreateEventW, INFINITE, SetEvent, WaitForMultipleObjects,
     WaitForSingleObject,
@@ -170,6 +172,11 @@ mod watcher {
 struct Stream {
     client: IAudioClient,
     render: IAudioRenderClient,
+    /// The stream's clock, with its frequency in units a second and the
+    /// stream's sample rate, for the latency ledger's device clock stage.
+    clock: IAudioClock,
+    clock_frequency: u64,
+    sample_rate: u32,
     event: Event,
     channels: usize,
     running: bool,
@@ -361,10 +368,19 @@ impl WasapiDevice {
         // SAFETY: as above.
         let render: IAudioRenderClient = unsafe { client.GetService() }
             .map_err(|error| device_error("get the render client", &error))?;
+        // SAFETY: as above.
+        let clock: IAudioClock = unsafe { client.GetService() }
+            .map_err(|error| device_error("get the stream's clock", &error))?;
+        // SAFETY: a plain COM call on the clock just obtained.
+        let clock_frequency = unsafe { clock.GetFrequency() }
+            .map_err(|error| device_error("read the clock's frequency", &error))?;
         Ok((
             Stream {
                 client,
                 render,
+                clock,
+                clock_frequency,
+                sample_rate,
                 event,
                 channels: usize::from(channels),
                 running: false,
@@ -503,6 +519,38 @@ impl AudioDevice for WasapiDevice {
             }
             Output::Silent(silent) => silent.stop(),
         }
+    }
+
+    fn clock_position(&mut self) -> Option<ClockReading> {
+        let Output::Stream(stream) = &self.output else {
+            return None;
+        };
+        let mut position = 0u64;
+        // The performance counter's value when the position was taken, in
+        // 100-nanosecond units.
+        let mut taken = 0u64;
+        // SAFETY: a plain COM call on the stream's clock, writing two locals.
+        unsafe {
+            stream
+                .clock
+                .GetPosition(&raw mut position, Some(&raw mut taken))
+        }
+        .ok()?;
+        let mut counter = 0i64;
+        let mut frequency = 0i64;
+        // SAFETY: each writes one local; neither fails on Windows XP or later.
+        unsafe { QueryPerformanceCounter(&raw mut counter) }.ok()?;
+        // SAFETY: as above.
+        unsafe { QueryPerformanceFrequency(&raw mut frequency) }.ok()?;
+        let now =
+            u128::try_from(counter).ok()? * 10_000_000 / u128::try_from(frequency).ok()?.max(1);
+        let age_units = now.saturating_sub(u128::from(taken));
+        let frames = u128::from(position) * u128::from(stream.sample_rate)
+            / u128::from(stream.clock_frequency.max(1));
+        Some(ClockReading {
+            frames: u64::try_from(frames).ok()?,
+            age: Duration::from_nanos(u64::try_from(age_units * 100).ok()?),
+        })
     }
 
     fn wait(&mut self, timeout: Duration) {

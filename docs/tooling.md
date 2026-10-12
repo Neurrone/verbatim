@@ -257,6 +257,9 @@ which is reported separately. The stages, in milliseconds:
   driver takes it in).
 - Leading silence: audio the trimmer held back as leading silence.
 - Mixer and device: until the audio engine took the first sample.
+- Device clock: from the engine taking the first sample until the
+  device's own clock passed it, read from the audio device's clock; only
+  with a real device, so not in the suite's silent audio mode.
 
 A stage is left out when the announcement did not pass it; speech from a
 read Core asked for (the focus after a menu closes, at startup) has no

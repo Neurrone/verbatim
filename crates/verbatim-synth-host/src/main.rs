@@ -23,8 +23,7 @@ use std::time::Instant;
 use crossbeam_channel::unbounded;
 use verbatim_audio::PcmFormat;
 use verbatim_speech::hosting::{
-    FromHost, HostDescription, HostTiming, ToHost, now_us, read_to_host, synth_ids,
-    write_from_host,
+    FromHost, HostDescription, HostTiming, ToHost, now_us, read_to_host, synth_ids, write_from_host,
 };
 use verbatim_speech::{IndexMark, SynthDriver, SynthError, SynthSink};
 
