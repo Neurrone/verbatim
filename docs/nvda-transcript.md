@@ -53,6 +53,12 @@ A step is a key to press, or one of these:
   starts a program through the agent, so its first announcement is
   recorded too; `--launch explorer.exe --arg ms-settings:clipboard`
   opens a page of the Settings app.
+- `--launch-without-foreground <program>`, with its `--arg`s, starts the
+  program as the harness opens a File Explorer folder
+  (`Scenario::open_folder`, through the agent's
+  `launch_without_foreground_right`): its window opens as the program
+  opens it, with the agent's right to the foreground withheld, for a
+  `--front` to bring it forward as the harness does.
 - `--launch-minimized <program>`, with its `--arg`s, starts the program
   exactly as the end-to-end harness starts a terminal
   (`Scenario::launch_owning_window`, through the agent's
@@ -64,7 +70,8 @@ A step is a key to press, or one of these:
   window forward as the harness does.
 - `--front <image>[=<title>]` brings a window of that program, with a
   title containing the text if given, to the foreground through the
-  agent, as the end-to-end suite does. With `*` for the program,
+  agent, as the end-to-end suite does; a window named by its title is
+  waited for until it is present first, as the suite waits for it. With `*` for the program,
   `--front *=<title>` brings forward whichever program's window has that
   title, for a window whose program is not obvious, such as a console
   window, which belongs to the console host or to the shell it runs

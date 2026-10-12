@@ -31,7 +31,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
-use verbatim_agent::protocol::WindowInfo;
+use verbatim_agent::protocol::{WindowCondition, WindowInfo};
 use verbatim_control::client::Client as ControlClient;
 use verbatim_control::protocol::{Frame, Request};
 use verbatim_e2e::agent_client::AgentClient;
@@ -66,7 +66,8 @@ pub fn run(args: &[String]) -> ExitCode {
                  [--json] <step>...: run each step through the agent and print what NVDA (or, \
                  with --verbatim, the local Verbatim) speaks after it, as JSON lines with \
                  --json; a step is a key, --launch <program> [--arg <arg>]... (or \
-                 --launch-minimized, as the end-to-end harness launches a terminal), \
+                 --launch-minimized, as the end-to-end harness launches a terminal, or \
+                 --launch-without-foreground, as it opens a File Explorer folder), \
                  --wait-file <path>, --front \
                  <image>[=<title>] (* for any image), --type <text>, --hold <key> or \
                  --release <key> (a key held down across the steps between them, released \
@@ -208,6 +209,24 @@ fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
+/// How a [`Step::Launch`] starts its program, as the end-to-end harness
+/// starts one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LaunchKind {
+    /// As a program starts, the agent's right to the foreground passed on
+    /// (`AgentClient::launch_process`).
+    Normal,
+    /// As the harness launches a terminal (`AgentClient::launch_minimized`):
+    /// its first window minimized and inactive, the agent's right to the
+    /// foreground not withheld.
+    Minimized,
+    /// As the harness opens a File Explorer folder
+    /// (`AgentClient::launch_without_foreground_right`): its window opens
+    /// as the program opens it, the agent's right to the foreground
+    /// withheld, for a `--front` to bring it forward.
+    WithoutForeground,
+}
+
 /// One thing `capture` does, in the order given, before waiting for NVDA's
 /// speech to settle and printing it.
 #[derive(Debug, PartialEq, Eq)]
@@ -215,14 +234,11 @@ enum Step {
     /// Press a key combination through the agent, or several joined by
     /// commas in one batch, so `numpad8,numpad8` is a double press.
     Key(String),
-    /// Start a program through the agent, in its session; with
-    /// `minimized`, as the end-to-end harness launches a terminal
-    /// (`AgentClient::launch_minimized`): its first window minimized and
-    /// inactive, the agent's right to the foreground not withheld.
+    /// Start a program through the agent, in its session, as `how` says.
     Launch {
         program: String,
         args: Vec<String>,
-        minimized: bool,
+        how: LaunchKind,
     },
     /// Wait, through the agent, for a file to exist, as the harness waits
     /// for a shell to write its process id before bringing its window
@@ -256,13 +272,13 @@ impl Step {
             Self::Type(text) => format!("type {text:?}"),
             Self::Hold(key) => format!("hold {key}"),
             Self::Release(key) => format!("release {key}"),
-            Self::Launch {
-                program,
-                args,
-                minimized,
-            } => format!(
+            Self::Launch { program, args, how } => format!(
                 "launch{} {program} {}",
-                if *minimized { " minimized" } else { "" },
+                match how {
+                    LaunchKind::Normal => "",
+                    LaunchKind::Minimized => " minimized",
+                    LaunchKind::WithoutForeground => " without the foreground right",
+                },
                 args.join(" ")
             ),
             Self::WaitFile(path) => format!("wait for {path}"),
@@ -315,12 +331,17 @@ fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
             "--launch" => options.steps.push(Step::Launch {
                 program: value()?.clone(),
                 args: Vec::new(),
-                minimized: false,
+                how: LaunchKind::Normal,
             }),
             "--launch-minimized" => options.steps.push(Step::Launch {
                 program: value()?.clone(),
                 args: Vec::new(),
-                minimized: true,
+                how: LaunchKind::Minimized,
+            }),
+            "--launch-without-foreground" => options.steps.push(Step::Launch {
+                program: value()?.clone(),
+                args: Vec::new(),
+                how: LaunchKind::WithoutForeground,
             }),
             "--wait-file" => options.steps.push(Step::WaitFile(value()?.clone())),
             "--arg" => {
@@ -329,7 +350,7 @@ fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
                     Some(Step::Launch { args, .. }) => args.push(arg),
                     _ => {
                         return Err(io::Error::other(
-                            "--arg must follow --launch or --launch-minimized",
+                            "--arg must follow --launch, --launch-minimized, or --launch-without-foreground",
                         ));
                     }
                 }
@@ -656,15 +677,17 @@ fn run_step(
                 agent.send_keys(&[key.to_owned()])?;
             }
         }
-        Step::Launch {
-            program,
-            args,
-            minimized,
-        } => {
-            if *minimized {
-                agent.launch_minimized(program, args)?;
-            } else {
-                agent.launch_process(program, args, None, &[], None)?;
+        Step::Launch { program, args, how } => {
+            match how {
+                LaunchKind::Normal => {
+                    agent.launch_process(program, args, None, &[], None)?;
+                }
+                LaunchKind::Minimized => {
+                    agent.launch_minimized(program, args)?;
+                }
+                LaunchKind::WithoutForeground => {
+                    agent.launch_without_foreground_right(program, args)?;
+                }
             }
             *target = None;
         }
@@ -677,6 +700,17 @@ fn run_step(
             }
         }
         Step::Front { image, title } => {
+            // A window named by its title is waited for until it is
+            // present, as the harness waits before it brings one forward
+            // (`Scenario::bring_forward`).
+            if let Some(title) = title {
+                agent.wait_for_window(
+                    WindowCondition::Present {
+                        title_contains: title.clone(),
+                    },
+                    verbatim_e2e::scenario::WINDOW_TIMEOUT,
+                )?;
+            }
             // The window, found by its image and title, is brought
             // forward with SetForegroundWindow, which injects no input;
             // Windows allows it when the agent injected the last input.
@@ -924,7 +958,7 @@ mod tests {
                 Step::Launch {
                     program: "wt.exe".to_owned(),
                     args: vec!["-w".to_owned()],
-                    minimized: true,
+                    how: LaunchKind::Minimized,
                 },
                 Step::WaitFile(r"C:\run\pid".to_owned()),
             ]
