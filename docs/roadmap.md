@@ -220,6 +220,37 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    `processDesktopSwitchWinEvent` and its locked-screen checks, both in
    NVDA's core) wait for UIAccess support, without which Verbatim cannot
    read the secure desktop (Dickson, 2026-10-12).
+   The audits' items, to be fixed in this order (Dickson, 2026-10-12;
+   the reports are `audit-msaa-and-gainfocus.md` and
+   `audit-uia-other-handlers.md` in the scratchpad, by NVDA step):
+   1. Local fixes: the hung-window test on the event's own window, not
+      its root; a null MSAA window taken as the desktop window; NVDA's
+      `EXCEL7` child-object drop; the window checks for a foreground fact.
+   2. Notifications: NVDA's coalescing key (element, kind, processing,
+      activity id, not the text); every notification of a terminal
+      control or the console's text area ignored, as NVDA's overlays
+      ignore them.
+   3. The focus's own events: help text, ControllerFor, and item status
+      followed, as NVDA's local group follows them.
+   4. Speech validity: NVDA's `isMenuItemOfCurrentFocus` clause.
+   5. The MSAA duplicate test against the last focus's resolved child.
+   6. Every code comment the audits found wrong about NVDA, corrected.
+   7. UIA menu openings, selections, and notifications through the
+      listener's reading threads: NVDA's nearest window, native check,
+      and, for a menu, its plain keyboard focus read and ancestors.
+   8. One duplicate test and one acceptance test per focus, where NVDA
+      makes them; Core's extra node-id duplicate rule and its second
+      acceptance test narrowed to what NVDA does.
+   9. The window switch: foreground events in the focus run, newest
+      first, as NVDA's `pumpAll` takes them; run boundaries as NVDA's.
+   10. The events NVDA registers desktop-wide that Verbatim lacks, each
+      from an NVDA capture: live regions, selection added and removed,
+      progress values, window opened (toasts), layout invalidated
+      (suggestion counts), system alerts, drag and drop.
+   11. The smaller ones: the MSAA caret in UIA windows, the staging
+      windows' focus, live reads of the focus's property events, NVDA's
+      Windows Forms and UWP combo box rules, and the controlled
+      selection's route compared with NVDA's.
 7. The UIA probe asks once.
 8. Two reserved spare outposts.
 9. verbatim.exe's relay: fewer hand-offs, its own stage in the latency
