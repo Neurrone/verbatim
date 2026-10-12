@@ -216,6 +216,10 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    route-level audits, of NVDA's MSAA path and core focus processing and of
    its other UIA event handlers, are in the scratchpad, to be folded into
    the parity work.
+   From the audits, the secure desktop and the lock screen (NVDA's
+   `processDesktopSwitchWinEvent` and its locked-screen checks, both in
+   NVDA's core) wait for UIAccess support, without which Verbatim cannot
+   read the secure desktop (Dickson, 2026-10-12).
 7. The UIA probe asks once.
 8. Two reserved spare outposts.
 9. verbatim.exe's relay: fewer hand-offs, its own stage in the latency

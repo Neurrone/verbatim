@@ -445,6 +445,20 @@ verified.
   window-switch, `conhost_` and `explorer_folder_window` scenarios are to
   verify it live, and what NVDA says when a console window comes in
   front some 400 ms after its text area's focus is still to be captured.
+- A File Explorer folder window opening, as `explorer_folder_window`
+  opens it (launched without the foreground right, then brought forward).
+  NVDA, captured ten times so (2026-10-12), says the window's title,
+  "pane", "Items View list", and the first item in nine, and leaves out
+  "pane" in one. Its "pane" comes from MSAA focus events on the items
+  view's window that File Explorer raises while the window is still
+  behind: NVDA queues them and, in those captures, processed them some
+  600 ms later, after the window had come in front, so they passed its
+  acceptance test. It is NVDA's own delay racing the window's activation,
+  not a rule. Verbatim judges an MSAA focus as it is handled, when the
+  window is still behind, drops those events, and says the title, "Items
+  View list", and the first item every time. **differs (decided)**:
+  Dickson, 2026-10-12, keeps Verbatim's deterministic result, and the
+  scenario asserts it.
 - The desktop's announcement. NVDA, starting with the desktop focused,
   and after Escape from Verbatim's settings dialog back to the desktop,
   says "Desktop list" and the focused icon, such as "NVDA 3 of 12", and
