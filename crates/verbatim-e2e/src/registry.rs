@@ -1355,6 +1355,16 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         body: measure::body_keys_windows_terminal,
         teardown: measure::teardown,
     },
+    ScenarioDef {
+        name: "measure_speech_real",
+        group: Group::Measure,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: measure::setup_speech_real,
+        body: measure::body_speech_real,
+        teardown: measure::teardown,
+    },
 ];
 
 /// Looks up a scenario or a demonstration by [`ScenarioDef::name`].

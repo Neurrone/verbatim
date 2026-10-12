@@ -359,6 +359,89 @@ pub(crate) fn body_focus_new_application(scenario: &mut Scenario, _state: &mut S
     }
 }
 
+/// The long line `measure_speech_real` reads with a review key, so that a
+/// key pressed after it lands while it is still being spoken.
+const LONG_LINE: &str = "This line is long on purpose: it keeps the synthesizer speaking for \
+several seconds, so that the caret key pressed after the review key that reads it arrives \
+while it is still being spoken, and the echo of that key must cut it off and start at once.";
+
+pub(crate) fn setup_speech_real(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    assert!(
+        crate::scenario::is_audible(),
+        "measure_speech_real measures the real synthesizer host and audio device: run it with \
+         {}=1",
+        crate::scenario::AUDIBLE_ENV
+    );
+    text_box::open(scenario, "m-real-long", BOX_NAME, LONG_LINE)?;
+    Ok(ScenarioState::None)
+}
+
+/// `measure_speech_real` (`docs/design/communication.md`, section 10.3):
+/// the speech path through the real synthesizer host and audio device, so
+/// the ledger's host and device stages, the device clock among them, have
+/// figures. In two Windows Forms text boxes: focus changes into each by
+/// turns, typing at 150 ms a character and Backspace at 33 ms, caret keys,
+/// the review key that reads the current line, and a caret key pressed
+/// 300 ms after a review key starts the long line, while it is still
+/// spoken. Only in an audible run ([`crate::scenario::AUDIBLE_ENV`]).
+pub(crate) fn body_speech_real(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    let truth = Truth {
+        name: "measure_speech_real",
+    };
+    truth.drain(scenario, "first opened");
+    text_box::open(scenario, "m-real-short", BOX_NAME, "").expect("opens the second box");
+    truth.drain(scenario, "second opened");
+    let long = harness_marker("m-real-long");
+    let short = harness_marker("m-real-short");
+    switch_between(scenario, &truth, &long, &short);
+    scenario
+        .bring_window_forward(&short)
+        .expect("brings the short box forward");
+    let target = (short.as_str(), "forms_text_box");
+    for _ in 0..ROUNDS {
+        type_paced(scenario, &truth, target, TYPED, 150);
+        caret_keys(scenario, &truth, &short, "leftarrow", 10);
+        caret_keys(scenario, &truth, &short, "rightarrow", 10);
+        backspace_paced(scenario, &truth, target, TYPED);
+    }
+    scenario
+        .bring_window_forward(&long)
+        .expect("brings the long box forward");
+    for _ in 0..REPEATS {
+        ready(scenario, &truth, &long);
+        scenario
+            .send_keys(&["numpad8"])
+            .expect("presses the review key");
+        truth.write(&serde_json::json!({ "step": "review_line" }));
+        truth.drain(scenario, "after review");
+        ready(scenario, &truth, &long);
+        let (first, last) = scenario
+            .send_keys_paced(&["numpad8", "rightarrow"], 300)
+            .expect("presses the review key, then a caret key during it");
+        truth.write(&serde_json::json!({
+            "step": "key_during_announcement", "first": first, "last": last, "interval_ms": 300,
+        }));
+        truth.drain(scenario, "after the key during the announcement");
+        ready(scenario, &truth, &long);
+        scenario.send_keys(&["home"]).expect("presses home");
+        truth.drain(scenario, "after home");
+    }
+}
+
+/// Presses `key` `count` times, one every 150 ms, in the window titled
+/// `title`.
+fn caret_keys(scenario: &mut Scenario, truth: &Truth, title: &str, key: &str, count: usize) {
+    ready(scenario, truth, title);
+    let keys = vec![key; count];
+    let (first, last) = scenario
+        .send_keys_paced(&keys, 150)
+        .expect("presses the caret keys");
+    truth.write(&serde_json::json!({
+        "step": "caret_keys", "key": key, "first": first, "last": last, "interval_ms": 150,
+    }));
+    truth.drain(scenario, "after caret keys");
+}
+
 pub(crate) fn setup_keys_text_box(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     text_box::open(scenario, "m-keys-box", BOX_NAME, "")?;
     Ok(ScenarioState::None)

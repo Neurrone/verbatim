@@ -878,6 +878,17 @@ The eight scenarios, all named `measure_`:
   60 ms then Backspace at 33 ms; typing while a script prints a line
   every 50 ms; and five rounds of typing a line that wraps onto a second
   row, then Escape.
+- `measure_speech_real` (`docs/design/communication.md`, section 10.3):
+  the speech path through the real synthesizer host and audio device, so
+  the ledger's host and device clock stages have figures: two Windows
+  Forms text boxes brought forward 20 times by turns, three rounds of
+  typing at 150 ms, caret keys and Backspace, and 20 rounds of the review
+  key that reads the current line, the same key on a long line followed
+  300 ms later by a caret key pressed while it is spoken, and Home. It
+  needs an audible run, `$env:VERBATIM_E2E_AUDIBLE = '1'`, and fails at
+  once without it, so a silent run of the whole set passes
+  `--skip measure_speech_real`. It runs where a real audio device exists:
+  this machine and bare metal, not GitHub's runners.
 
 The agent paces the typing and Backspace with a high-resolution waitable
 timer (`SendKeysPaced` and `TypeTextPaced`); the pace is the workload, not
@@ -896,9 +907,11 @@ cargo test -p verbatim-e2e --test e2e -- --ignored --exact measure_focus_explore
 ```
 
 `VERBATIM_E2E_RECORD = '0'` leaves out the video, which a measurement does
-not need and whose encoding adds load. Run the whole set with
-`cargo test -p verbatim-e2e --test e2e -- --ignored measure_ --test-threads=1`.
-Against the VM, `cargo xtask vm test --group measure` runs the set and
+not need and whose encoding adds load. Run the whole set silently with
+`cargo test -p verbatim-e2e --test e2e -- --ignored measure_ --skip measure_speech_real --test-threads=1`,
+and `measure_speech_real` on its own in an audible run.
+Against the VM, `cargo xtask vm test --group measure` runs the set, with
+`measure_speech_real` failing at once in a silent run, and
 `cargo xtask vm test --scenario measure_keys_conhost` one of it, in debug.
 
 Section 11 compares debug and release, so measure both. Debug is what a
