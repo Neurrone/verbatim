@@ -681,9 +681,13 @@ fn thread_of(item: &Item) -> u32 {
 }
 
 /// What the batch limits keep of everything that was waiting, oldest
-/// first, as NVDA's limiter flushes it: events from hung windows are
-/// dropped, and so are all but the newest MSAA focus events and the newest
-/// other MSAA events of each thread, those of the focused object excepted.
+/// first, as NVDA's limiters flush it: UIA events from hung windows are
+/// dropped, as NVDA's UIA handlers drop them as they arrive, and so are
+/// all but the newest MSAA focus events and the newest other MSAA events of
+/// each thread, those of the focused object excepted. An MSAA event from a
+/// hung window is counted and kept here, as NVDA's limiter counts it, and
+/// dropped by the worker when it is handled, as NVDA drops it when it
+/// makes its object (`winEventToNVDAEvent`).
 fn admit(
     waiting: Vec<Waiting>,
     focused: Option<&Object>,
@@ -694,7 +698,12 @@ fn admit(
     let mut focus_kept = 0;
     let mut per_thread: HashMap<u32, usize> = HashMap::new();
     for (index, item) in waiting.iter().enumerate().rev() {
-        if item.category != Category::Exempt
+        let msaa = matches!(
+            item.key,
+            Some(Key::Msaa(..) | Key::MsaaFocus(..) | Key::Foreground(_) | Key::MenuPopup(..))
+        );
+        if !msaa
+            && item.category != Category::Exempt
             && item.hwnd != 0
             && *hung
                 .entry(item.hwnd)
@@ -1108,10 +1117,25 @@ mod tests {
     }
 
     #[test]
-    fn events_from_a_hung_window_are_dropped_but_queries_are_not() {
-        let waiting = vec![msaa(WinEventKind::ValueChange, 9, 1), query(1)];
+    fn a_hung_windows_uia_events_are_dropped_its_msaa_events_kept_for_the_worker() {
+        // The MSAA event is counted and kept, for the worker to drop as
+        // NVDA drops it when it makes its object; the UIA selection is
+        // dropped, as NVDA's UIA handler drops it on arrival; a query is
+        // never dropped.
+        let waiting = vec![
+            msaa(WinEventKind::ValueChange, 9, 1),
+            fact(
+                DeliveredFact::UiaSelection {
+                    hwnd: 9,
+                    focus_window: 0,
+                    snapshot: snapshot(vec![42]),
+                },
+                5,
+            ),
+            query(1),
+        ];
         let planned = plan(waiting, None, |hwnd| hwnd == 9);
-        assert_eq!(observed(&planned), vec![0]);
+        assert_eq!(observed(&planned), vec![1, 0]);
     }
 
     #[test]

@@ -2524,6 +2524,12 @@ impl Worker<'_> {
             tracing::debug!(hwnd, "foreground dropped: not the foreground window");
             return;
         }
+        // NVDA makes the foreground's object as it makes any MSAA event's
+        // (`processForegroundWinEvent` through `winEventToNVDAEvent`): a
+        // window gone, ghosted, or hung is dropped before the UIA test.
+        if !Self::readable(hwnd) {
+            return;
+        }
         if read::window_uses_uia(self.context, hwnd) {
             tracing::debug!(hwnd, "foreground dropped: UIA owns the window");
             return;

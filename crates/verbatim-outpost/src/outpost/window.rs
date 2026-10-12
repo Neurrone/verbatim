@@ -227,14 +227,16 @@ pub(crate) fn is_shell_transition_window(hwnd: isize) -> bool {
     )
 }
 
-/// Whether `handle`'s top-level window is reported hung by the system
-/// (`IsHungAppWindow`). Events from a hung window are dropped before any
-/// read, as NVDA's `_shouldSkipEventForHungWindow` does.
+/// Whether window `handle` itself is reported hung by the system
+/// (`IsHungAppWindow`): the window an event names, not its top-level
+/// window, as NVDA tests it, for a UIA event its sender's cached window
+/// (`_shouldSkipEventForHungWindow`, `UIAHandler/utils.py` 438) and for an
+/// MSAA event its window (`winEventToNVDAEvent`,
+/// `IAccessibleHandler/__init__.py` 570). A child window whose own thread
+/// answers is not hung though its top-level window's thread is not.
 pub(crate) fn window_is_hung(handle: isize) -> bool {
-    let root = top_level_of(handle);
-    let target = if root == 0 { handle } else { root };
     // SAFETY: IsHungAppWindow tolerates any handle.
-    unsafe { IsHungAppWindow(hwnd(target)) }.as_bool()
+    unsafe { IsHungAppWindow(hwnd(handle)) }.as_bool()
 }
 
 /// Why an event's own window, `handle`, cannot be read, or `None` when it

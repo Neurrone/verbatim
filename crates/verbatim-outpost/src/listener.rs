@@ -741,6 +741,11 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) {
         outgoing.menu_or_switch_ended();
         return;
     }
+    // NVDA takes a null window as the desktop window
+    // (`internalWinEventHandler.py` 113 to 129), whose process is the
+    // client server, whose objects NVDA's focused-state test refuses
+    // (`shouldAllowIAccessibleFocusEvent` on the desktop window's object)
+    // and Verbatim cannot open: dropping it here is the same outcome.
     if hwnd == 0 {
         return;
     }

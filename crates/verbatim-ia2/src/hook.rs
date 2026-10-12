@@ -356,8 +356,12 @@ fn kinds_among(event: u32, kinds: &[WinEventKind]) -> Vec<WinEventKind> {
 /// change matters only for the caret; object ids at or below `OBJID_ALERT`
 /// are not accessible objects; a focus on a menu bar object itself is not a
 /// real focus; Program Manager and the taskbar never report a foreground
-/// change; and the IME candidate window's menu events are not menus (NVDA's
-/// `winEventCallback` and its event limiter).
+/// change; the IME candidate window's menu events are not menus; and
+/// Excel's `EXCEL7` window's events on its child objects, which are its UIA
+/// events proxied into MSAA, are dropped before anything asks the window
+/// for its provider, which freezes some builds of Excel 2016 (NVDA's
+/// `winEventCallback`, `internalWinEventHandler.py` 139 to 150, and its
+/// event limiter).
 fn is_wanted(kind: WinEventKind, hwnd: HWND, id_object: i32, id_child: i32) -> bool {
     if kind == WinEventKind::Caret {
         return id_object == OBJID_CARET.0;
@@ -372,6 +376,9 @@ fn is_wanted(kind: WinEventKind, hwnd: HWND, id_object: i32, id_child: i32) -> b
         return false;
     }
     let class = || crate::window::class_name(hwnd.0 as isize);
+    if id_object > 0 && class() == "EXCEL7" {
+        return false;
+    }
     match kind {
         WinEventKind::Foreground => !matches!(class().as_str(), "Progman" | "Shell_TrayWnd"),
         WinEventKind::MenuPopupStart | WinEventKind::MenuEnd => {
