@@ -5,7 +5,9 @@
 //! setup is described in the `terminal` module.
 //!
 //! NVDA was captured first on each (2026-10-09, an NVDA alpha build,
-//! alpha-57645, with the same start script). Every scenario here switches
+//! alpha-57645, with the same start script; the window switches replayed
+//! on 2026-10-12 with alpha-58022, the build the pinned source is, say the
+//! same). Every scenario here switches
 //! windows by bringing the window it opened, found by its title marker, to
 //! the front, as clicking its taskbar button does and as NVDA's system
 //! tests do with `SetForegroundWindow` (`Scenario::bring_window_forward`;
@@ -38,7 +40,9 @@
 //! released at once, gives NVDA's speech by timing, only the terminal in
 //! one capture of 2026-10-09 and the list and the tab in another. NVDA,
 //! captured live on 2026-10-12 (alpha-57645, the portable Windows Terminal
-//! 1.24, two tabs, shells started with `-NonInteractive`), with Control
+//! 1.24, two tabs, shells started with `-NonInteractive`; again three
+//! times that day with alpha-58022, the build the pinned source is, which
+//! says the same), with Control
 //! held then Shift+Tab, says "Tab switcher grouping", "list", and the tab
 //! moved to ("<title> 1 of 2"), each in full; on releasing Control, the
 //! tab's terminal, "<title> terminal", with the line the caret is on; with

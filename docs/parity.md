@@ -477,8 +477,9 @@ verified.
   and after Escape from Verbatim's settings dialog back to the desktop,
   says "Desktop list" and the focused icon, such as "NVDA 3 of 12", and
   never "Program Manager", the desktop window's title (captures of
-  2026-10-11, NVDA alpha-57645, on this project's development machine;
-  Dickson confirms it never says it). Starting, NVDA announces the
+  2026-10-11, NVDA alpha-57645, on this project's development machine,
+  and again in every capture of 2026-10-12 with alpha-58022, the build
+  the pinned source is; Dickson confirms it never says it). Starting, NVDA announces the
   system's focus with its newly entered presentable ancestors, and
   Program Manager's client area, a pane with no system menu, is not one;
   NVDA also drops every foreground event for the Program Manager and the
@@ -2250,7 +2251,9 @@ verified.
 
   Checked against NVDA captured live on 2026-10-09 (NVDA alpha-57645, both
   terminals, the keys of `conhost_typing` and `windows_terminal_typing`
-  and of the NVDA study's cases, each typed a character at a time):
+  and of the NVDA study's cases, each typed a character at a time;
+  replayed on 2026-10-12 with alpha-58022, the build the pinned source
+  is, which says the same, its typed echo split by timing only):
 
   - The same: every character typed is echoed as typed; a space typed at
     a line's end is echoed at once ("space"); characters typed past the
@@ -2312,7 +2315,9 @@ verified.
   flood policy).
 
   Two windows of each terminal and two tabs of Windows Terminal, captured
-  live from NVDA on 2026-10-09 (an alpha build, alpha-57645). Switching to
+  live from NVDA on 2026-10-09 (an alpha build, alpha-57645; the switches
+  replayed on 2026-10-12 with alpha-58022, the build the pinned source
+  is, say the same). Switching to
   the other window, as clicking its taskbar button does, both say the
   window's title and "window", then the terminal and the caret's line:
   "<title> terminal" in Windows Terminal, whose text area is named for its
@@ -2380,7 +2385,9 @@ verified.
   speech by timing: of two captures on 2026-10-09, one had only the
   terminal, the other the list and the tab. With Control held through the
   tab switcher, as a person switches, NVDA's speech is fixed: captured on
-  2026-10-12 (alpha-57645, the portable Windows Terminal 1.24, two tabs),
+  2026-10-12 (alpha-57645, the portable Windows Terminal 1.24, two tabs,
+  and again three times the same day with alpha-58022, the build the
+  pinned source is, which says the same),
   Control held then Shift+Tab says "Tab switcher grouping", "list", and
   the tab moved to ("<title> 1 of 2") in full, and releasing Control the
   tab's terminal and its line; Control held then Tab the same for the
