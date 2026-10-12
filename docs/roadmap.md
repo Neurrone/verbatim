@@ -195,6 +195,15 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    acceptance test left in the outpost, the reading threads ended when
    idle rather than when their application exits, and whether
    `windows_terminal_tabs` hears the tab left in every run.
+   Revised from NVDA captures (2026-10-11 and 12, design section 16):
+   the desktop's announcement, the console's title, the tab switcher held
+   with Control, and Windows Terminal's double "terminal" (section 16.8:
+   the listener's focus handler on its group's client in NVDA's order,
+   NVDA's plain keyboard focus read, and a focus with no window above it
+   dropped). Decided by Dickson (2026-10-12): the listener keeps NVDA's
+   base cache request (d2c97f8); Windows Terminal's terminal may be
+   announced again as its window opens, as NVDA announces it, the third
+   exception in `docs/testing.md`.
 7. The UIA probe asks once.
 8. Two reserved spare outposts.
 9. verbatim.exe's relay: fewer hand-offs, its own stage in the latency
