@@ -204,6 +204,18 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    base cache request (d2c97f8); Windows Terminal's terminal may be
    announced again as its window opens, as NVDA announces it, the third
    exception in `docs/testing.md`.
+   Windows Terminal's duplicate focus is left for a Windows Terminal app
+   module (Dickson, 2026-10-12): when the second identity is the last
+   focus taken, the outpost cannot find its element by its path, so the
+   terminal's line is not read, and a second window raises it in ways the
+   allowance does not cover. Until the module handles it,
+   `windows_terminal_two_windows`, `windows_terminal_leave_flood`, and
+   `windows_terminal_tabs` are disabled (`registry::DISABLED`). Decision
+   D15 stays (Dickson, 2026-10-12). The listener's judgement is now a port
+   of NVDA's focus handler in its order (design section 18), and two
+   route-level audits, of NVDA's MSAA path and core focus processing and of
+   its other UIA event handlers, are in the scratchpad, to be folded into
+   the parity work.
 7. The UIA probe asks once.
 8. Two reserved spare outposts.
 9. verbatim.exe's relay: fewer hand-offs, its own stage in the latency

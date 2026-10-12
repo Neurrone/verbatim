@@ -31,6 +31,8 @@ macro_rules! scenario_tests {
     };
 }
 
+// The disabled scenarios (`registry::DISABLED`, each with its reason) have
+// no test here.
 scenario_tests! {
     "live: drives a real Verbatim through a running agent; the end-to-end job runs it with --ignored (docs/tooling.md)":
     menu_and_settings_dialog
@@ -80,7 +82,6 @@ scenario_tests! {
     conhost_raised_flood
     windows_terminal_redraw_limit
     conhost_redraw_limit
-    windows_terminal_leave_flood
     conhost_leave_flood
     windows_terminal_close_tab
     conhost_wrapped_flood
@@ -117,9 +118,7 @@ scenario_tests! {
     conhost_footer_overflow
     windows_terminal_short_output
     conhost_short_output
-    windows_terminal_two_windows
     conhost_two_windows
-    windows_terminal_tabs
     object_navigation_over_uia
     system_information_tree
 }

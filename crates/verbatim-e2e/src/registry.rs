@@ -175,6 +175,37 @@ pub fn skips(def: &ScenarioDef, setting: Option<&str>) -> Result<bool, String> {
     Ok(skip_local_only && def.local_only)
 }
 
+/// Why Windows Terminal's scenarios that its duplicate focus breaks
+/// beyond the announcement allowance are disabled
+/// (`docs/testing.md`, third exception; `docs/roadmap.md`).
+const WINDOWS_TERMINAL_DUPLICATE_FOCUS: &str = "Windows Terminal raises its terminal's focus a second time, from a second identity of the control (docs/design/focus-pipeline.md, section 16.8); when that focus is the last one taken, the outpost cannot find its element to read the terminal's line, and a second window raises it in ways the announcement allowance does not cover. Disabled until a Windows Terminal app module handles it (Dickson, 2026-10-12)";
+
+/// The disabled scenarios, each with why and what re-enables it. None has
+/// a `#[test]` in `tests/e2e.rs`, so no run includes one and none is ever
+/// reported as passing; [`select`] leaves them out, and refuses one asked
+/// for by name, giving its reason; [`run_named`] fails one run anyway. Each
+/// stays registered and compiled as it is, to be enabled again unchanged.
+pub const DISABLED: &[(&str, &str)] = &[
+    (
+        "windows_terminal_leave_flood",
+        WINDOWS_TERMINAL_DUPLICATE_FOCUS,
+    ),
+    (
+        "windows_terminal_two_windows",
+        WINDOWS_TERMINAL_DUPLICATE_FOCUS,
+    ),
+    ("windows_terminal_tabs", WINDOWS_TERMINAL_DUPLICATE_FOCUS),
+];
+
+/// Why scenario `name` is disabled, if it is ([`DISABLED`]).
+#[must_use]
+pub fn disabled_reason(name: &str) -> Option<&'static str> {
+    DISABLED
+        .iter()
+        .find(|(disabled, _)| *disabled == name)
+        .map(|(_, reason)| *reason)
+}
+
 /// A coarse selector for `cargo xtask vm test --group` — see this module's
 /// own doc comment for what each group is meant to hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1258,13 +1289,15 @@ pub fn find(name: &str) -> Option<&'static ScenarioDef> {
 /// of matching definitions, preserving registry order. Empty `names` and
 /// `groups` selects every scenario but the demonstrations
 /// ([`Group::Demo`]) — the default, no-flags behavior of
-/// `cargo xtask vm test`.
+/// `cargo xtask vm test`. A disabled scenario ([`DISABLED`]) is never
+/// selected.
 ///
 /// # Errors
 ///
 /// Returns the first unrecognized scenario name or group name as `Err`, so a
 /// typo is reported before anything is built or restored, not discovered
-/// partway through a run.
+/// partway through a run; and a disabled scenario's name, with why it is
+/// disabled.
 pub fn select<'a>(
     scenarios: &'a [ScenarioDef],
     names: &[String],
@@ -1273,7 +1306,7 @@ pub fn select<'a>(
     if names.is_empty() && groups.is_empty() {
         return Ok(scenarios
             .iter()
-            .filter(|def| def.group != Group::Demo)
+            .filter(|def| def.group != Group::Demo && disabled_reason(def.name).is_none())
             .collect());
     }
 
@@ -1286,12 +1319,16 @@ pub fn select<'a>(
         if !scenarios.iter().any(|def| def.name == name) {
             return Err(format!("unknown scenario {name:?}"));
         }
+        if let Some(reason) = disabled_reason(name) {
+            return Err(format!("{name:?} is disabled: {reason}"));
+        }
     }
 
     Ok(scenarios
         .iter()
         .filter(|def| {
-            names.iter().any(|name| name == def.name) || parsed_groups.contains(&def.group)
+            disabled_reason(def.name).is_none()
+                && (names.iter().any(|name| name == def.name) || parsed_groups.contains(&def.group))
         })
         .collect())
 }
@@ -1317,7 +1354,8 @@ pub fn startup_speech() -> [crate::speech::Expected; 1] {
 /// since a live scenario that cannot reach an agent has not passed; if the
 /// scenario is local-only and [`SKIP_LOCAL_ONLY_ENV`] is `1`, since such a
 /// run deselects it by name instead (a local-only scenario's name starts
-/// with [`LOCAL_ONLY_PREFIX`]); and if the scenario itself fails.
+/// with [`LOCAL_ONLY_PREFIX`]); if the scenario is disabled
+/// ([`DISABLED`]), giving why; and if the scenario itself fails.
 pub fn run_named(name: &str) {
     let Some(def) = find(name) else {
         panic!(
@@ -1329,6 +1367,9 @@ pub fn run_named(name: &str) {
                 .join(", ")
         );
     };
+    if let Some(reason) = disabled_reason(name) {
+        panic!("{name:?} is disabled: {reason}");
+    }
     let setting = std::env::var(SKIP_LOCAL_ONLY_ENV).ok();
     match skips(def, setting.as_deref()) {
         Ok(true) => panic!(
@@ -1825,7 +1866,11 @@ mod tests {
     #[test]
     fn the_test_binary_has_a_test_for_every_scenario_and_no_other() {
         let tests = names_in_the_test_binary();
-        let registered: Vec<&str> = SCENARIOS.iter().map(|def| def.name).collect();
+        let registered: Vec<&str> = SCENARIOS
+            .iter()
+            .map(|def| def.name)
+            .filter(|name| disabled_reason(name).is_none())
+            .collect();
         let untested: Vec<&str> = registered
             .iter()
             .copied()
@@ -1838,7 +1883,22 @@ mod tests {
             .collect();
         assert!(
             untested.is_empty() && unregistered.is_empty(),
-            "registered scenarios with no test in tests/e2e.rs: {untested:?}; tests in tests/e2e.rs with no registered scenario: {unregistered:?}"
+            "registered scenarios with no test in tests/e2e.rs: {untested:?}; tests in tests/e2e.rs with no registered scenario, or a disabled one: {unregistered:?}"
         );
+    }
+
+    #[test]
+    fn a_disabled_scenario_is_registered_never_selected_and_refused_by_name() {
+        for (name, _) in DISABLED {
+            assert!(find(name).is_some(), "{name} stays registered");
+            let all = select(SCENARIOS, &[], &[]).expect("the default selection");
+            assert!(
+                all.iter().all(|def| def.name != *name),
+                "{name} is left out of the default selection"
+            );
+            let refused = select(SCENARIOS, &[(*name).to_owned()], &[])
+                .expect_err("a disabled scenario named is refused");
+            assert!(refused.contains("is disabled"), "{refused}");
+        }
     }
 }
