@@ -24,7 +24,7 @@ use verbatim_control::protocol::{LatencyRecord, LatencyStage, LatencyStageKind};
 use verbatim_control::server::ControlServer;
 use verbatim_model::{CallCounts, Indication, TraceId, UtteranceEnding, UtteranceId};
 use verbatim_outpost::protocol::{EventTiming, now_us};
-use verbatim_speech::SpeechEvents;
+use verbatim_speech::{SpeechEvents, SynthTiming};
 
 /// Milliseconds since the Unix epoch, the ledger's shared time base — the
 /// outpost stamps its observations with the same clock.
@@ -74,6 +74,9 @@ struct Stages {
     queued: Option<u64>,
     synthesis_started: Option<u64>,
     synthesizer_audio: Option<u64>,
+    /// The synthesizer's own account of its start, from a driver that
+    /// tells its parts apart.
+    synth_timing: Option<SynthTiming>,
     audio_to_mixer: Option<u64>,
     audio_started: Option<u64>,
 }
@@ -256,7 +259,30 @@ impl Stages {
             ),
             (
                 LatencyStageKind::Synthesis,
-                span(self.synthesis_started, self.synthesizer_audio),
+                self.synth_timing
+                    .is_none()
+                    .then(|| span(self.synthesis_started, self.synthesizer_audio))
+                    .flatten(),
+                None,
+            ),
+            (
+                LatencyStageKind::SynthRequest,
+                self.synth_timing.map(|timing| timing.request_us),
+                None,
+            ),
+            (
+                LatencyStageKind::ToHost,
+                self.synth_timing.map(|timing| timing.to_host_us),
+                None,
+            ),
+            (
+                LatencyStageKind::HostFirstChunk,
+                self.synth_timing.map(|timing| timing.first_chunk_us),
+                None,
+            ),
+            (
+                LatencyStageKind::HostReturn,
+                self.synth_timing.map(|timing| timing.return_us),
                 None,
             ),
             (
@@ -600,6 +626,14 @@ impl SpeechEvents for LatencyLedger {
         self.speech_stage(utterance, trace_id, |stages| &mut stages.synthesizer_audio);
     }
 
+    fn synth_timing(&self, utterance: UtteranceId, trace_id: TraceId, timing: SynthTiming) {
+        self.update(trace_id, |entry| {
+            if entry.stages.utterance == Some(utterance) {
+                entry.stages.synth_timing.get_or_insert(timing);
+            }
+        });
+    }
+
     fn audio_to_mixer(&self, utterance: UtteranceId, trace_id: TraceId, _at: std::time::Instant) {
         self.speech_stage(utterance, trace_id, |stages| &mut stages.audio_to_mixer);
     }
@@ -786,6 +820,7 @@ mod tests {
             queued: Some(9_500),
             synthesis_started: Some(59_500),
             synthesizer_audio: Some(60_500),
+            synth_timing: None,
             audio_to_mixer: Some(60_700),
             audio_started: Some(62_500),
         };
@@ -928,6 +963,38 @@ mod tests {
     }
 
     #[test]
+    fn a_synthesizer_hosts_timing_replaces_synthesis_with_its_parts() {
+        let stages = Stages {
+            utterance: Some(UtteranceId(1)),
+            queued: Some(1_000),
+            synthesis_started: Some(1_000),
+            synthesizer_audio: Some(6_000),
+            synth_timing: Some(SynthTiming {
+                request_us: 100,
+                to_host_us: 400,
+                first_chunk_us: 4_000,
+                return_us: 500,
+            }),
+            ..Stages::default()
+        };
+        let speech: Vec<_> = stages
+            .breakdown()
+            .iter()
+            .filter(|stage| !stage.kind.is_event_side())
+            .map(|stage| (stage.kind, stage.duration_us))
+            .collect();
+        assert_eq!(
+            speech,
+            [
+                (LatencyStageKind::SynthRequest, 100),
+                (LatencyStageKind::ToHost, 400),
+                (LatencyStageKind::HostFirstChunk, 4_000),
+                (LatencyStageKind::HostReturn, 500),
+            ]
+        );
+    }
+
+    #[test]
     fn a_caret_keys_line_starts_at_the_hook_and_divides_the_wait_from_the_read() {
         let stages = Stages {
             speech_requested: true,
@@ -957,6 +1024,7 @@ mod tests {
             queued: Some(104_500),
             synthesis_started: Some(104_500),
             synthesizer_audio: Some(105_500),
+            synth_timing: None,
             audio_to_mixer: Some(105_600),
             audio_started: Some(106_500),
         };

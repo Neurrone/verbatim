@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use verbatim_model::{Indication, Input, SpeechMark, TraceId, UtteranceEnding, UtteranceId};
-use verbatim_speech::{IndexMark, SpeechEvents};
+use verbatim_speech::{IndexMark, SpeechEvents, SynthTiming};
 
 use crate::ShellCommand;
 use crate::latency::LatencyLedger;
@@ -43,6 +43,10 @@ impl SpeechEvents for ShellSpeechEvents {
 
     fn synthesizer_audio(&self, utterance: UtteranceId, trace_id: TraceId, at: Instant) {
         self.ledger.synthesizer_audio(utterance, trace_id, at);
+    }
+
+    fn synth_timing(&self, utterance: UtteranceId, trace_id: TraceId, timing: SynthTiming) {
+        self.ledger.synth_timing(utterance, trace_id, timing);
     }
 
     fn audio_to_mixer(&self, utterance: UtteranceId, trace_id: TraceId, at: Instant) {

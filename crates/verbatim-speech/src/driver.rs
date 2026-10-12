@@ -232,6 +232,24 @@ impl fmt::Display for SynthError {
 
 impl std::error::Error for SynthError {}
 
+/// How long the parts of a synthesizer's start took, for a driver that can
+/// tell them apart, as a synthesizer host's driver can
+/// (`docs/design/communication.md`, section 10.1): the request made and
+/// written, its trip to the host, the host's synthesizer to its first
+/// chunk, and that chunk's trip back. Each in microseconds; together they
+/// are the span from synthesis started to the synthesizer's first audio.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SynthTiming {
+    /// From the driver asked to speak to its request written.
+    pub request_us: u64,
+    /// From the request written to the host taking it in.
+    pub to_host_us: u64,
+    /// From the host taking the request to its synthesizer's first chunk.
+    pub first_chunk_us: u64,
+    /// From the host writing the first chunk to the driver taking it in.
+    pub return_us: u64,
+}
+
 /// Receives a driver's output during [`SynthDriver::speak`].
 pub trait SynthSink {
     /// Accepts interleaved 16-bit PCM in `format`.
@@ -250,6 +268,12 @@ pub trait SynthSink {
     /// while before it has audio to push: it can stop its synthesis early
     /// rather than learn of the cancel at its first push.
     fn is_cancelled(&self) -> bool;
+
+    /// Reports how long the parts of the synthesizer's start took, before
+    /// the first audio is pushed, by a driver that can tell them apart.
+    fn synth_timing(&mut self, timing: SynthTiming) {
+        let _ = timing;
+    }
 }
 
 /// A speech synthesizer, whatever its origin: built-in, Wasm component, or

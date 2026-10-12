@@ -18,11 +18,13 @@ use std::ops::ControlFlow;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use crossbeam_channel::unbounded;
 use verbatim_audio::PcmFormat;
 use verbatim_speech::hosting::{
-    FromHost, HostDescription, ToHost, read_to_host, synth_ids, write_from_host,
+    FromHost, HostDescription, HostTiming, ToHost, now_us, read_to_host, synth_ids,
+    write_from_host,
 };
 use verbatim_speech::{IndexMark, SynthDriver, SynthError, SynthSink};
 
@@ -67,21 +69,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let description = HostDescription {
-        display_name: driver.display_name(),
-        places_marks: driver.places_marks(),
-        changes_pitch: driver.changes_pitch(),
-        settings: driver.supported_settings(),
-        values: driver
-            .supported_settings()
-            .iter()
-            .filter_map(|descriptor| {
-                let id = descriptor.id().clone();
-                driver.setting(&id).map(|value| (id, value))
-            })
-            .collect(),
-    };
-    if write_from_host(&mut to_core, &FromHost::Ready(description)).is_err() {
+    if write_from_host(&mut to_core, &FromHost::Ready(describe(driver.as_ref()))).is_err() {
         return ExitCode::FAILURE;
     }
     tracing::info!(%synth, elapsed_ms = building.elapsed().as_millis(), "synthesizer host ready");
@@ -96,7 +84,7 @@ fn main() -> ExitCode {
         std::thread::spawn(move || {
             loop {
                 let request = match read_to_host(&mut from_core) {
-                    Ok(Some(request)) => request,
+                    Ok(Some(request)) => (request, now_us()),
                     // Core closed the command pipe: it is done with this host.
                     Ok(None) => return,
                     Err(error) => {
@@ -105,7 +93,9 @@ fn main() -> ExitCode {
                     }
                 };
                 match request {
-                    ToHost::Cancel(utterance) => cancelled.store(utterance.0, Ordering::Release),
+                    (ToHost::Cancel(utterance), _) => {
+                        cancelled.store(utterance.0, Ordering::Release);
+                    }
                     other => {
                         if requests_tx.send(other).is_err() {
                             return;
@@ -116,7 +106,7 @@ fn main() -> ExitCode {
         });
     }
 
-    while let Ok(request) = requests.recv() {
+    while let Ok((request, received_at_us)) = requests.recv() {
         let reply = match request {
             ToHost::Speak(sequence) => {
                 tracing::trace!(target: "verbatim::stage", trace = %sequence.trace_id, stage = "host request");
@@ -127,6 +117,8 @@ fn main() -> ExitCode {
                     cancelled: &cancelled,
                     broken: false,
                     audio: false,
+                    received_at_us,
+                    started: Instant::now(),
                 };
                 let result = driver.speak(&sequence, &mut sink);
                 if sink.broken {
@@ -154,6 +146,24 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// What the host's synthesizer is, for Core.
+fn describe(driver: &dyn SynthDriver) -> HostDescription {
+    HostDescription {
+        display_name: driver.display_name(),
+        places_marks: driver.places_marks(),
+        changes_pitch: driver.changes_pitch(),
+        settings: driver.supported_settings(),
+        values: driver
+            .supported_settings()
+            .iter()
+            .filter_map(|descriptor| {
+                let id = descriptor.id().clone();
+                driver.setting(&id).map(|value| (id, value))
+            })
+            .collect(),
+    }
+}
+
 /// Builds the driver of the named synthesizer.
 fn build(synth: &str) -> Result<Box<dyn SynthDriver>, SynthError> {
     match synth {
@@ -178,6 +188,10 @@ struct PipeSink<'a, W: Write> {
     /// audio yet, for the stage log.
     trace_id: verbatim_model::TraceId,
     audio: bool,
+    /// When the request was read, on the shared clock, and when the driver
+    /// was started on it, for the first audio's timing.
+    received_at_us: u64,
+    started: Instant,
 }
 
 impl<W: Write> SynthSink for PipeSink<'_, W> {
@@ -188,6 +202,16 @@ impl<W: Write> SynthSink for PipeSink<'_, W> {
         if !self.audio {
             self.audio = true;
             tracing::trace!(target: "verbatim::stage", trace = %self.trace_id, stage = "host audio");
+            let timing = HostTiming {
+                received_at_us: self.received_at_us,
+                first_chunk_us: u64::try_from(self.started.elapsed().as_micros())
+                    .unwrap_or(u64::MAX),
+                sent_at_us: now_us(),
+            };
+            if write_from_host(self.to_core, &FromHost::FirstAudio(timing)).is_err() {
+                self.broken = true;
+                return ControlFlow::Break(());
+            }
         }
         // Blocks while Core is behind: the pipe's small buffer is the
         // backpressure that paces the synthesizer.

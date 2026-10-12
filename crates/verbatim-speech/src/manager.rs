@@ -54,6 +54,7 @@ use verbatim_model::{
 
 use crate::driver::{
     IndexMark, SoundCue, SpeechItem, SpeechSequence, SynthDriver, SynthError, SynthSink,
+    SynthTiming,
 };
 use crate::events::SpeechEvents;
 use crate::registry::SynthRegistry;
@@ -651,6 +652,12 @@ impl SpeechEvents for Observer {
     fn synthesizer_audio(&self, utterance: UtteranceId, trace_id: TraceId, at: Instant) {
         if let Some(inner) = &self.inner {
             inner.synthesizer_audio(utterance, trace_id, at);
+        }
+    }
+
+    fn synth_timing(&self, utterance: UtteranceId, trace_id: TraceId, timing: SynthTiming) {
+        if let Some(inner) = &self.inner {
+            inner.synth_timing(utterance, trace_id, timing);
         }
     }
 
@@ -1363,6 +1370,12 @@ impl SynthSink for PipelineSink<'_> {
         }
         let pieces = self.trimmer.push(format, samples);
         self.forward(pieces)
+    }
+
+    fn synth_timing(&mut self, timing: SynthTiming) {
+        if let Some(events) = self.events {
+            events.synth_timing(self.utterance, self.trace_id, timing);
+        }
     }
 
     fn index_reached(&mut self, mark: IndexMark) {

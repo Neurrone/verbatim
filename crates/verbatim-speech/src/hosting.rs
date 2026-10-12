@@ -65,6 +65,10 @@ pub enum FromHost {
     Ready(HostDescription),
     /// The synthesizer could not start; the host exits after sending it.
     Unavailable(String),
+    /// Sent just before an utterance's first audio: when the host took in
+    /// its request and when it wrote this, and how long its synthesizer
+    /// took to the first chunk, for the latency ledger.
+    FirstAudio(HostTiming),
     /// Audio of the utterance being spoken.
     Pcm(PcmFormat, Vec<i16>),
     /// The audio sent so far reaches this mark.
@@ -78,10 +82,36 @@ pub enum FromHost {
     SettingApplied(Option<String>),
 }
 
+/// The host's stamps on an utterance's start ([`FromHost::FirstAudio`]):
+/// times on the clock every process shares ([`now_us`]), and one duration
+/// measured in the host alone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostTiming {
+    /// When the host read the request, in microseconds since the Unix
+    /// epoch.
+    pub received_at_us: u64,
+    /// From the host taking the request to its synthesizer's first chunk.
+    pub first_chunk_us: u64,
+    /// When the host wrote this message, just before the first chunk, in
+    /// microseconds since the Unix epoch.
+    pub sent_at_us: u64,
+}
+
+/// Microseconds since the Unix epoch on the system's precise clock, which
+/// is the same in every process, for the stamps that cross a process
+/// boundary.
+#[must_use]
+pub fn now_us() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| u64::try_from(since.as_micros()).unwrap_or(u64::MAX))
+}
+
 /// The JSON-encoded part of [`FromHost`]: everything but PCM.
 #[derive(Serialize, Deserialize)]
 enum Control {
     Ready(HostDescription),
+    FirstAudio(HostTiming),
     Unavailable(String),
     Mark(IndexMark),
     Done,
@@ -147,6 +177,7 @@ pub fn write_from_host(writer: &mut impl Write, message: &FromHost) -> io::Resul
             return write_frame(writer, PCM, &body);
         }
         FromHost::Ready(description) => Control::Ready(description.clone()),
+        FromHost::FirstAudio(timing) => Control::FirstAudio(*timing),
         FromHost::Unavailable(reason) => Control::Unavailable(reason.clone()),
         FromHost::Mark(mark) => Control::Mark(*mark),
         FromHost::Done => Control::Done,
@@ -185,6 +216,7 @@ pub fn read_from_host(reader: &mut impl Read) -> io::Result<Option<FromHost>> {
         }
         JSON => Ok(Some(match parse_json::<Control>(&body)? {
             Control::Ready(description) => FromHost::Ready(description),
+            Control::FirstAudio(timing) => FromHost::FirstAudio(timing),
             Control::Unavailable(reason) => FromHost::Unavailable(reason),
             Control::Mark(mark) => FromHost::Mark(mark),
             Control::Done => FromHost::Done,
@@ -294,6 +326,11 @@ mod tests {
                 },
                 vec![1, -2, i16::MAX, i16::MIN],
             ),
+            FromHost::FirstAudio(HostTiming {
+                received_at_us: 1_000,
+                first_chunk_us: 2_500,
+                sent_at_us: 3_600,
+            }),
             FromHost::Mark(IndexMark(1)),
             FromHost::Done,
             FromHost::Failed("no".to_owned()),

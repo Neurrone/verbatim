@@ -249,7 +249,12 @@ which is reported separately. The stages, in milliseconds:
 - Reducer, to speech: the reducer, and the hand-off to the speech
   manager.
 - Synthesis: from synthesis starting to the synthesizer's first audio,
-  including the pipes to and from the synthesizer host.
+  for a synthesizer in Verbatim's own process. A synthesizer host's is
+  split in four: synthesizer request (the driver asked to speak until its
+  request is written), to the synthesizer host (until the host reads it),
+  the host's first chunk (the host's synthesizer to its first audio), and
+  back from the synthesizer host (the host writing that audio until the
+  driver takes it in).
 - Leading silence: audio the trimmer held back as leading silence.
 - Mixer and device: until the audio engine took the first sample.
 

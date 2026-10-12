@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use verbatim_model::{Indication, TraceId, UtteranceEnding, UtteranceId};
 
-use crate::driver::IndexMark;
+use crate::driver::{IndexMark, SynthTiming};
 
 /// Receives pipeline milestones for each utterance.
 ///
@@ -33,6 +33,10 @@ pub trait SpeechEvents: Send + Sync {
 
     /// The synthesizer has given the utterance's first audio.
     fn synthesizer_audio(&self, _utterance: UtteranceId, _trace_id: TraceId, _at: Instant) {}
+
+    /// The synthesizer's driver told how long the parts of its start took,
+    /// just before its first audio ([`SynthTiming`]).
+    fn synth_timing(&self, _utterance: UtteranceId, _trace_id: TraceId, _timing: SynthTiming) {}
 
     /// The utterance's first audio past leading silence has gone to the
     /// mixer.

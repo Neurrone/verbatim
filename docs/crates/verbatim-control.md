@@ -54,7 +54,9 @@ Public API:
   to verbatim.exe's relay, waiting for the outpost to start, verbatim.exe,
   verbatim.exe to outpost, outpost queue, caret wait, outpost read, to
   Core, outpost to verbatim.exe, waiting for the reducer, reducer, to
-  speech, synthesis, leading silence, mixer and device; `label` names each
+  speech, synthesis, or for a synthesizer host its parts, synthesizer
+  request, to the synthesizer host, the host's first chunk, and back from
+  the synthesizer host; leading silence, mixer and device; `label` names each
   as the latency log does, and `docs/tooling.md` says what each covers;
   listener to outpost, Core to outpost, and to Core are the whole spans a
   timeline without verbatim.exe's relay stamps has instead of the split

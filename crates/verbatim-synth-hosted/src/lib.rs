@@ -32,10 +32,12 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, RecvTimeoutError, bounded};
 use tracing::warn;
 use verbatim_process::{ChildSpec, Contained};
-use verbatim_speech::hosting::{FromHost, HostDescription, ToHost, read_from_host, write_to_host};
+use verbatim_speech::hosting::{
+    FromHost, HostDescription, ToHost, now_us, read_from_host, write_to_host,
+};
 use verbatim_speech::{
     SettingDescriptor, SettingId, SettingValue, SpeechSequence, SynthDriver, SynthError,
-    SynthFactory, SynthId, SynthSink,
+    SynthFactory, SynthId, SynthSink, SynthTiming,
 };
 
 /// How long a host may stay silent while starting or speaking before it is
@@ -329,7 +331,10 @@ fn speak_with(
     sink: &mut dyn SynthSink,
     attempt: &mut Attempt,
 ) -> Result<Result<(), SynthError>, SynthError> {
+    let asked = Instant::now();
     host.send(&ToHost::Speak(sequence.clone()))?;
+    let request_us = elapsed_us(asked);
+    let sent_at_us = now_us();
     let mut cancelled = false;
     let mut last_heard = Instant::now();
     loop {
@@ -362,6 +367,16 @@ fn speak_with(
             }
         };
         match reply {
+            FromHost::FirstAudio(timing) => {
+                // The trip back ends as the reply is taken here, on the
+                // synth thread, after the host reader thread's hand-off.
+                sink.synth_timing(SynthTiming {
+                    request_us,
+                    to_host_us: timing.received_at_us.saturating_sub(sent_at_us),
+                    first_chunk_us: timing.first_chunk_us,
+                    return_us: now_us().saturating_sub(timing.sent_at_us),
+                });
+            }
             FromHost::Pcm(format, samples) => {
                 attempt.relayed |= !cancelled;
                 if !cancelled && sink.push_pcm(format, &samples).is_break() {
@@ -385,6 +400,11 @@ fn speak_with(
             }
         }
     }
+}
+
+/// Microseconds since `from`.
+fn elapsed_us(from: Instant) -> u64 {
+    u64::try_from(from.elapsed().as_micros()).unwrap_or(u64::MAX)
 }
 
 /// A [`SynthFactory`] that starts a host for `synth` from `exe`.

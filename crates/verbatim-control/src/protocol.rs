@@ -408,8 +408,23 @@ pub enum LatencyStageKind {
     Reducer,
     /// From the reducer to the speech queue.
     ToSpeech,
-    /// From synthesis starting to the synthesizer's first audio.
+    /// From synthesis starting to the synthesizer's first audio, for a
+    /// synthesizer that does not tell its parts apart; one that does has
+    /// [`SynthRequest`](Self::SynthRequest), [`ToHost`](Self::ToHost),
+    /// [`HostFirstChunk`](Self::HostFirstChunk) and
+    /// [`HostReturn`](Self::HostReturn) instead.
     Synthesis,
+    /// From the synthesizer's driver asked to speak to its request written
+    /// to the synthesizer host.
+    SynthRequest,
+    /// From the request written to the synthesizer host taking it in.
+    ToHost,
+    /// From the synthesizer host taking the request to its synthesizer's
+    /// first chunk of audio.
+    HostFirstChunk,
+    /// From the synthesizer host writing the first chunk to the driver
+    /// taking it in.
+    HostReturn,
     /// The synthesizer's leading silence, skipped before the mixer.
     LeadingSilence,
     /// From the mixer to the audio device starting.
@@ -440,6 +455,10 @@ impl LatencyStageKind {
             Self::Reducer => "reducer",
             Self::ToSpeech => "to speech",
             Self::Synthesis => "synthesis",
+            Self::SynthRequest => "synthesizer request",
+            Self::ToHost => "to the synthesizer host",
+            Self::HostFirstChunk => "the host's first chunk",
+            Self::HostReturn => "back from the synthesizer host",
             Self::LeadingSilence => "leading silence",
             Self::MixerAndDevice => "mixer and device",
         }
@@ -451,7 +470,13 @@ impl LatencyStageKind {
     pub fn is_event_side(self) -> bool {
         !matches!(
             self,
-            Self::Synthesis | Self::LeadingSilence | Self::MixerAndDevice
+            Self::Synthesis
+                | Self::SynthRequest
+                | Self::ToHost
+                | Self::HostFirstChunk
+                | Self::HostReturn
+                | Self::LeadingSilence
+                | Self::MixerAndDevice
         )
     }
 }

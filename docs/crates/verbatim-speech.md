@@ -21,7 +21,10 @@ Public API:
   returns `ControlFlow::Break` to request cooperative cancellation, and
   `index_reached(mark)` says the audio pushed so far reaches a mark, and
   `is_cancelled()` lets a driver that works a while before it has audio
-  (OneCore) stop early.
+  (OneCore) stop early; `synth_timing(timing)`, a default no-op, takes a
+  `SynthTiming` from a driver that can tell the parts of its start apart
+  (the request, its trip to the host, the host's first chunk, and the
+  trip back, each in microseconds), before its first audio.
 - `SpeechSequence` — what a synthesizer is asked to speak: the utterance
   id, the trace id, an optional BCP 47 language, and `items`, a list of
   `SpeechItem::Text`, `SpeechItem::Mark`, `SpeechItem::Pitch` (an
@@ -108,7 +111,8 @@ Public API:
   utterance: `utterance_queued` (with its rendered text), `audio_started`
   (its first frame has played), `mark_reached` (playback reached an index
   mark; a default no-op), `synthesis_started`, `synthesizer_audio` (the
-  driver's first audio), and `audio_to_mixer` (its first audio past the
+  driver's first audio), `synth_timing` (the driver's `SynthTiming`, for
+  a synthesizer host), and `audio_to_mixer` (its first audio past the
   trimmer; these three are default no-ops, called on the synth thread,
   for the latency log), `utterance_ended` (its one ending, as an
   `UtteranceEnding`), and `sound_played` (an event's sound played at once,
@@ -184,7 +188,11 @@ Public API:
   runs any driver unchanged. `ToHost` is what Core sends: `Speak(sequence)`,
   `Cancel(utterance_id)`, and `SetSetting { id, value }`. `FromHost` is
   what a host sends: `Ready(HostDescription)` first, or `Unavailable(reason)`
-  before exiting; then `Pcm(format, samples)`, `Mark`, and `Done` or
+  before exiting; then, for each utterance, `FirstAudio(HostTiming)` just
+  before its first audio (when the host read the request and when it
+  wrote this, on the clock every process shares, `hosting::now_us()`, and
+  how long its synthesizer took to the first chunk), `Pcm(format,
+  samples)`, `Mark`, and `Done` or
   `Failed(reason)` for each utterance, and `SettingApplied(refusal)` for
   each setting. `HostDescription` carries the display name,
   `places_marks`, `changes_pitch`, the setting descriptors, and their
