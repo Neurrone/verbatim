@@ -76,7 +76,9 @@ Established from the code unless marked.
 
 ### 4.2 Framing
 
-Every message on every pipe is one frame:
+Settled by decision 1's measurement (2026-10-13, release build, this development machine, serde_json): parsing and re-serializing a relayed UIA focus read with 12 ancestors (4,475 bytes) costs about 15 microseconds; encoding and parsing a small terminal event (723 bytes) about 2.4 microseconds; and a 1 MB terminal event about 1.8 to 2.0 milliseconds. The typical messages cost a few tens of microseconds at most, so the frames are plain JSON behind a readable text length header, as the Language Server Protocol's (`Content-Length: N`, a blank line, then the JSON body), the stamps are JSON fields set just before encoding, and verbatim.exe parses what it routes. Frames over 256 KiB are parsed by a helper, as section 6.2 says. The binary header below is kept as the alternative it was, should a later measurement show the cost to matter.
+
+The binary alternative: every message on every pipe is one frame:
 
 - a little-endian `u32`: the length of everything after it;
 - a `u8` kind and a `u8` of flags;
@@ -651,7 +653,7 @@ Changed:
 
 All approved: decisions 2 to 12 as recommended (Dickson, 2026-10-13), decision 1 as revised with him and decision 13 (2026-10-11).
 
-1. Keep JSON bodies, and route on a binary frame header so verbatim.exe never parses or re-serializes a fact. NVDA: no IPC, so no equivalent. Revised with Dickson (2026-10-11): measure first, in step 1, the release-build cost of parsing and re-serializing a focus fact with its ancestors, a typical reply, and a 1 MB terminal frame; if the typical messages cost a few tens of microseconds at most, keep plain JSON with a readable text length header (as the Language Server Protocol's `Content-Length: N`, a blank line, then the JSON), so the pipes stay readable by eye and a reader still asks for a whole message in one read; stamps are then JSON fields set just before encoding. The binary header comes back only if the measurement shows the cost matters.
+1. Measured on 2026-10-13 (section 4.2): about 15 microseconds to parse and re-serialize a relayed focus read, so plain JSON with a text length header is kept. As first proposed: keep JSON bodies, and route on a binary frame header so verbatim.exe never parses or re-serializes a fact. NVDA: no IPC, so no equivalent. Revised with Dickson (2026-10-11): measure first, in step 1, the release-build cost of parsing and re-serializing a focus fact with its ancestors, a typical reply, and a 1 MB terminal frame; if the typical messages cost a few tens of microseconds at most, keep plain JSON with a readable text length header (as the Language Server Protocol's `Content-Length: N`, a blank line, then the JSON), so the pipes stay readable by eye and a reader still asks for a whole message in one read; stamps are then JSON fields set just before encoding. The binary header comes back only if the measurement shows the cost matters.
 2. Children's pipe ends become overlapped too, and every producer writes its own message when nothing is ahead of it, which removes the listener's and the outposts' writer threads. Recommend: adopt.
 3. Who reads the outposts' pipes. Two choices.
    - The relay thread reads them, handles pongs, `Ready`, `TargetExited` and the pipe's end itself, and posts every other frame whole to the reducer's completion port, whose order is the reducer's one order of arrival (sections 4.5, 6.2). It keeps today's order of outposts' events against keys and against each other, keeps today's continuous draining so no merge rule starts acting because the reducer is busy, and keeps pongs independent of the reducer. NVDA: the same order for UIA events, which its flusher queues as they come; for MSAA NVDA lets keys overtake unflushed events, which Verbatim does not do today and would not do.
