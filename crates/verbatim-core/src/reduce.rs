@@ -742,9 +742,6 @@ fn reduce_focus_changed(
         state.foreground = Some(report.node.id);
     }
     let entered = entered_ancestors(state.focus.as_ref(), window, report);
-    let entering_menu = entered
-        .iter()
-        .any(|ancestor| matches!(ancestor.role, Role::MenuBar | Role::Menu | Role::MenuItem));
     let mut effects = vec![Effect::DropExpiredSpeech(FocusNow {
         focus: report.node.id,
         ancestors: new_focus
@@ -755,12 +752,9 @@ fn reduce_focus_changed(
         foreground: state.foreground,
         menu_item_of_focus: menu_item_of_focus(state.focus.as_ref(), report.node),
     })];
-    end_text_activity(
-        state,
-        report.node.id,
-        foreground_changed || entering_menu,
-        &mut effects,
-    );
+    // Entering a menu cuts speech too, at its place among the entered
+    // containers (`focus_speech`).
+    end_text_activity(state, report.node.id, foreground_changed, &mut effects);
     state.focus = Some(new_focus);
     state.navigator = Some(navigator);
     if report.foreground && !has_text(report.node.name.as_deref()) {
@@ -851,7 +845,8 @@ fn foreground_changed(
 }
 
 /// The speech for a new focus: each entered container as its own
-/// utterance, outermost first, valid while the focus is inside it, then the
+/// utterance, outermost first, valid while the focus is inside it, an
+/// entered menu cutting speech in its place instead ([`is_menu`]), then the
 /// focus, valid while it is the focus. When the focus has entered another
 /// top-level window, the window is the outermost entered container, spoken
 /// first whenever it is presentable, whether or not a foreground report
@@ -867,10 +862,18 @@ fn focus_speech(
     let last_level = &mut state.last_tree_level;
     let reads_text = editing::may_have_text(report.node.role);
     let mut effects = Vec::new();
-    for container in entered
-        .into_iter()
-        .filter(|ancestor| is_presentable_container(ancestor))
-    {
+    for container in entered {
+        // Entering a menu bar, menu, or menu item cuts speech and says
+        // nothing, in its place among the entered containers, outermost
+        // first: speech for a container entered outside the menu is cut
+        // too (`docs/parity.md`, "Entered menus").
+        if is_menu(container) {
+            effects.push(Effect::StopSpeech);
+            continue;
+        }
+        if !is_presentable_container(container) {
+            continue;
+        }
         let segments = container_segments(container);
         if segments.is_empty() {
             continue;
@@ -930,6 +933,12 @@ fn menu_item_of_focus(previous: Option<&FocusContext>, node: &NodeSnapshot) -> O
             .iter()
             .any(|ancestor| ancestor.id == node.id))
     .then_some(item.id)
+}
+
+/// Whether `node` is a menu bar, a menu, or a menu item, whose entering
+/// cuts speech and says nothing.
+fn is_menu(node: &NodeSnapshot) -> bool {
+    matches!(node.role, Role::MenuBar | Role::Menu | Role::MenuItem)
 }
 
 /// Whether a name or description has real, non-whitespace text.

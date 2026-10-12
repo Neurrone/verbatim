@@ -605,13 +605,15 @@ verified.
 - Entered menus. NVDA: when focus newly enters a menu bar, a popup
   menu, or a menu item as an ancestor, speech is cancelled and the
   ancestor is not announced; the focused item is announced as usual
-  ([Event handling](nvda/events.md), "The focus gate"). Verbatim: entering
-  one cancels current speech (`Effect::StopSpeech`) and it is not
-  announced. **matched (unverified)**. **Different:** NVDA cancels as it
-  reaches the menu among the entered ancestors, outermost first, so a
-  container entered outside the menu in the same focus change (a newly
-  entered window, say) is cut off too; Verbatim cancels before any of the
-  new focus's speech, so that container is still spoken.
+  ([Event handling](nvda/events.md), "The focus gate"). NVDA cancels as
+  it reaches the menu among the entered ancestors, outermost first, so a
+  container entered outside the menu in the same focus change is cut off
+  too: in Windows 11 Notepad, Alt+F queues "Popup window" for the menu's
+  popup and cancels it at the menu, so it is not heard (NVDA alpha-58022,
+  2026-10-12). Verbatim: **matched since 2026-10-12**, entering one cuts
+  speech (`Effect::StopSpeech`) at its place among the entered
+  containers and it is not announced; before, Verbatim cut before any of
+  the new focus's speech, so the popup was heard.
 - Event acceptance. NVDA: every event except UIA notifications must
   come from a window related to the system's foreground window: a
   descendant of it, sharing its root owner, a topmost window or one

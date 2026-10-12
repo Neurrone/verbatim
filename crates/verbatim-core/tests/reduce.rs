@@ -3300,9 +3300,36 @@ fn entering_menus_is_silent_and_only_the_item_is_announced() {
         vec![
             Heard::Expire(focus_now(OutpostId(1), 3, &[1, 2], None)),
             Heard::Stop,
+            Heard::Stop,
             queued(vec![UtteranceSegment::label("Open")]),
         ],
-        "entering a menu cancels speech, and only the item is announced"
+        "entering each menu cancels speech, and only the item is announced"
+    );
+}
+
+/// A container entered outside a menu in the same focus change is cut off
+/// as the menu is entered, as NVDA cancels in the menu's place among the
+/// entered containers: Windows 11 Notepad's File menu queues its popup
+/// window and cancels it (`docs/parity.md`, "Entered menus").
+#[test]
+fn a_container_entered_before_a_menu_is_cut_off_by_it() {
+    let popup = node(1, Role::Window, Some("Popup"), None, StateSet::new());
+    let menu = node(2, Role::Menu, None, None, StateSet::new());
+    let item = node(3, Role::MenuItem, Some("New tab"), None, StateSet::new());
+
+    let (_, effects) = reduce(
+        &SrState::new(),
+        &focus_event_with_ancestors(TraceId::mint(), Pid(1), item, vec![popup, menu]),
+    );
+
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(1), 3, &[1, 2], None)),
+            queued(vec![UtteranceSegment::label("Popup"), role(Role::Window)]),
+            Heard::Stop,
+            queued(vec![UtteranceSegment::label("New tab")]),
+        ]
     );
 }
 
