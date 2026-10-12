@@ -197,7 +197,9 @@ The subcommands:
   default is on.
 
 Verbatim's own log also carries one line per announcement, always, at
-`info` on the `verbatim::latency` target, written when its audio starts.
+`info` on the `verbatim::latency` target, written once the audio device's
+clock has passed its first frame, or, with no such clock (the silent test
+device) or when playback stopped first, when the utterance ends.
 For example:
 
 `12.3 ms for "Voice combo box English (Great Britain) collapsed Alt+v": 9.5 ms to speech and 2.8 ms to sound, not counting 0.0 ms waiting behind earlier speech. Event: Windows 0.0, listener to verbatim.exe 0.1, verbatim.exe 0.0, verbatim.exe to outpost 0.1, outpost queue 3.5, outpost read 5.5 (4 calls), outpost to verbatim.exe 0.1, waiting for the reducer 0.1, reducer 0.0, to speech 0.1. Speech: synthesis 0.6, leading silence 0.1, mixer and device 2.0.`

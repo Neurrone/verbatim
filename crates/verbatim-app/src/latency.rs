@@ -81,6 +81,10 @@ struct Stages {
     audio_started: Option<u64>,
     /// When the device's own clock passed the first frame.
     audio_heard: Option<u64>,
+    /// Whether the latency line has been written: once the device's clock
+    /// passed the first frame, or, for a device without a clock or
+    /// playback that stopped first, once the utterance ended.
+    line_written: bool,
 }
 
 impl Entry {
@@ -499,6 +503,33 @@ impl LatencyLedger {
         });
     }
 
+    /// Writes the latency line of `trace_id`'s timeline once, if its
+    /// first utterance is `utterance` and its audio has started.
+    fn write_line(&self, utterance: UtteranceId, trace_id: TraceId) {
+        let line = {
+            let mut timelines = self.timelines.lock().expect("ledger lock");
+            timelines
+                .entries
+                .iter_mut()
+                .rev()
+                .find(|entry| entry.trace_id == trace_id)
+                .and_then(|entry| {
+                    let stages = &mut entry.stages;
+                    if stages.utterance != Some(utterance)
+                        || stages.audio_started.is_none()
+                        || stages.line_written
+                    {
+                        return None;
+                    }
+                    stages.line_written = true;
+                    stages.line()
+                })
+        };
+        if let Some(line) = line {
+            tracing::info!(target: "verbatim::latency", "{line}");
+        }
+    }
+
     /// The most recent timelines, newest first, at most `n`.
     pub fn recent(&self, n: u32) -> Vec<LatencyRecord> {
         let timelines = self.timelines.lock().expect("ledger lock");
@@ -599,17 +630,14 @@ impl SpeechEvents for LatencyLedger {
         // utterances share a trace, the first to be heard counts.
         let now = (self.clock)();
         let at_ms = now / 1_000;
-        let line = self.update(trace_id, |entry| {
+        // The line waits for the device's clock or the utterance's end
+        // ([`Stages::line_written`]).
+        self.update(trace_id, |entry| {
             entry.audio_started_at_ms.get_or_insert(at_ms);
-            if entry.stages.utterance != Some(utterance) || entry.stages.audio_started.is_some() {
-                return None;
+            if entry.stages.utterance == Some(utterance) && entry.stages.audio_started.is_none() {
+                entry.stages.audio_started = Some(now);
             }
-            entry.stages.audio_started = Some(now);
-            entry.stages.line()
         });
-        if let Some(line) = line {
-            tracing::info!(target: "verbatim::latency", "{line}");
-        }
         if let Some(server) = self.server.get() {
             server.broadcast_speech_started(utterance, at_ms);
         }
@@ -642,6 +670,7 @@ impl SpeechEvents for LatencyLedger {
                 entry.stages.audio_heard.get_or_insert(heard);
             }
         });
+        self.write_line(utterance, trace_id);
     }
 
     fn synth_timing(&self, utterance: UtteranceId, trace_id: TraceId, timing: SynthTiming) {
@@ -680,13 +709,15 @@ impl SpeechEvents for LatencyLedger {
     fn utterance_ended(
         &self,
         utterance: UtteranceId,
-        _trace_id: TraceId,
+        trace_id: TraceId,
         ending: &UtteranceEnding,
         _at: std::time::Instant,
     ) {
-        // No ledger field to fill — the timeline stops at audio-started — so
-        // this only mirrors the ending to speech subscribers, letting a
-        // consumer wait for an utterance to be heard in full.
+        // The line of an utterance whose device has no clock, or whose
+        // playback stopped before the clock passed its first frame.
+        self.write_line(utterance, trace_id);
+        // Mirrored to speech subscribers, letting a consumer wait for an
+        // utterance to be heard in full.
         if let Some(server) = self.server.get() {
             server.broadcast_speech_ended(utterance, ending.clone());
         }
@@ -842,6 +873,7 @@ mod tests {
             audio_to_mixer: Some(60_700),
             audio_started: Some(62_500),
             audio_heard: None,
+            line_written: false,
         };
         assert_eq!(
             stages.line().as_deref(),
@@ -1047,6 +1079,7 @@ mod tests {
             audio_to_mixer: Some(105_600),
             audio_started: Some(106_500),
             audio_heard: None,
+            line_written: false,
         };
         let kinds: Vec<_> = stages.breakdown().iter().map(|stage| stage.kind).collect();
         assert_eq!(
