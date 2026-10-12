@@ -19,17 +19,17 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
     IRawElementProviderFragment, IRawElementProviderSimple, NotificationKind_Other,
     NotificationProcessing_All, UIA_AutomationFocusChangedEventId, UIA_ButtonControlTypeId,
-    UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId, UIA_EditControlTypeId,
-    UIA_GroupControlTypeId, UIA_HyperlinkControlTypeId, UIA_ListControlTypeId,
-    UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId, UIA_MenuControlTypeId,
-    UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_PROPERTY_ID, UIA_PaneControlTypeId,
-    UIA_RadioButtonControlTypeId, UIA_SelectionItem_ElementSelectedEventId,
-    UIA_SliderControlTypeId, UIA_SpinnerControlTypeId, UIA_StatusBarControlTypeId,
-    UIA_TabControlTypeId, UIA_TabItemControlTypeId, UIA_Text_TextChangedEventId,
-    UIA_Text_TextSelectionChangedEventId, UIA_TextControlTypeId, UIA_ToolBarControlTypeId,
-    UIA_TreeControlTypeId, UIA_TreeItemControlTypeId, UIA_ValueValuePropertyId,
-    UIA_WindowControlTypeId, UiaRaiseActiveTextPositionChangedEvent, UiaRaiseAutomationEvent,
-    UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent,
+    UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId, UIA_ControllerForPropertyId,
+    UIA_EditControlTypeId, UIA_GroupControlTypeId, UIA_HelpTextPropertyId,
+    UIA_HyperlinkControlTypeId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
+    UIA_MenuBarControlTypeId, UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_NamePropertyId,
+    UIA_PROPERTY_ID, UIA_PaneControlTypeId, UIA_RadioButtonControlTypeId,
+    UIA_SelectionItem_ElementSelectedEventId, UIA_SliderControlTypeId, UIA_SpinnerControlTypeId,
+    UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
+    UIA_Text_TextChangedEventId, UIA_Text_TextSelectionChangedEventId, UIA_TextControlTypeId,
+    UIA_ToolBarControlTypeId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId,
+    UIA_ValueValuePropertyId, UIA_WindowControlTypeId, UiaRaiseActiveTextPositionChangedEvent,
+    UiaRaiseAutomationEvent, UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent,
 };
 use windows_core::Interface;
 
@@ -119,7 +119,28 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             raise_selection(tree, hwnd, index)?;
         }
         Command::Notify(text) => raise_notification(tree, hwnd, &text)?,
-        Command::SetDescription(..) | Command::SetStates(..) => {
+        Command::SetDescription(id, text) => {
+            let index = with_node(tree, &id, |node| {
+                node.description = (!text.is_empty()).then_some(text);
+            })
+            .ok_or_else(|| unknown(&id))?;
+            raise_property_changed(tree, hwnd, index, UIA_HelpTextPropertyId)?;
+        }
+        Command::SetControllerFor(id, controlled) => {
+            let controlled_index = match &controlled {
+                Some(controlled) => Some(
+                    tree.lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .index_of(controlled)
+                        .ok_or_else(|| unknown(controlled))?,
+                ),
+                None => None,
+            };
+            let index = with_node(tree, &id, |node| node.controller_for = controlled_index)
+                .ok_or_else(|| unknown(&id))?;
+            raise_property_changed(tree, hwnd, index, UIA_ControllerForPropertyId)?;
+        }
+        Command::SetStates(..) => {
             return Err("this command is supported on the msaa backend only".into());
         }
         Command::ActiveTextPosition(id, start, end) => {
@@ -223,6 +244,20 @@ fn focus_node(tree: &SharedTree, id: &str) -> Option<usize> {
     guard.nodes[index]
         .states
         .insert(verbatim_model::State::Focused);
+    Some(index)
+}
+
+/// Applies `change` to the node with fixture id `id`, answering its index.
+fn with_node(
+    tree: &SharedTree,
+    id: &str,
+    change: impl FnOnce(&mut crate::tree::NodeData),
+) -> Option<usize> {
+    let mut guard = tree
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let index = guard.index_of(id)?;
+    change(&mut guard.nodes[index]);
     Some(index)
 }
 
@@ -431,7 +466,7 @@ mod props {
         ToggleState_Indeterminate, ToggleState_On, UIA_AccessKeyPropertyId,
         UIA_ClassNamePropertyId, UIA_ControlTypePropertyId, UIA_ControllerForPropertyId,
         UIA_E_ELEMENTNOTAVAILABLE, UIA_ExpandCollapseExpandCollapseStatePropertyId,
-        UIA_FullDescriptionPropertyId, UIA_HasKeyboardFocusPropertyId,
+        UIA_FullDescriptionPropertyId, UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId,
         UIA_IsContentElementPropertyId, UIA_IsEnabledPropertyId,
         UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
         UIA_IsOffscreenPropertyId, UIA_IsSelectionItemPatternAvailablePropertyId,
@@ -708,7 +743,7 @@ mod props {
             bool_variant(selection_available(node.states))
         } else if id == UIA_SelectionItemIsSelectedPropertyId.0 {
             bool_variant(node.states.contains(State::Selected))
-        } else if id == UIA_FullDescriptionPropertyId.0 {
+        } else if id == UIA_FullDescriptionPropertyId.0 || id == UIA_HelpTextPropertyId.0 {
             node.description
                 .as_deref()
                 .map_or_else(empty_variant, bstr_variant)

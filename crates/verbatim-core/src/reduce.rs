@@ -542,6 +542,7 @@ fn reduce_event(
             PropertyChange::Description(description) => {
                 reduce_description_changed(state, trace_id, *node_id, description.as_ref())
             }
+            PropertyChange::Suggestions(open) => reduce_suggestions(state, *node_id, *open),
             // `PropertyChange` is `#[non_exhaustive]`.
             _ => Vec::new(),
         },
@@ -1899,6 +1900,18 @@ fn reduce_ancestor_states_changed(
 /// it ("The focus gate" in `docs/nvda/events.md`): the new description
 /// alone, queued, when it differs from the one last known and has text, and
 /// is not the focus's name over again. Ignored for any other node.
+/// An editable field's suggestions appeared (`open`) or went away: the
+/// focus's opening plays the suggestions-opened indication, and any other
+/// change the suggestions-closed one, the focus test applying only to an
+/// opening (`docs/parity.md`, "Suggestions appearing and going away").
+fn reduce_suggestions(state: &SrState, node_id: NodeId, open: bool) -> Vec<Effect> {
+    if open && state.focus_matches(node_id) {
+        vec![Effect::PlayEarcon(Earcon::SuggestionsOpened)]
+    } else {
+        vec![Effect::PlayEarcon(Earcon::SuggestionsClosed)]
+    }
+}
+
 fn reduce_description_changed(
     state: &mut SrState,
     trace_id: TraceId,

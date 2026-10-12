@@ -35,8 +35,14 @@ pub(crate) enum Command {
     /// `set-value <id> <text>`, same empty-text convention as `SetName`.
     SetValue(String, String),
     /// `set-description <id> <text>`, same empty-text convention as
-    /// `SetName`; raises `EVENT_OBJECT_DESCRIPTIONCHANGE`. MSAA-only.
+    /// `SetName`; raises `EVENT_OBJECT_DESCRIPTIONCHANGE`, or in the UIA
+    /// backend a help text change, the description being served as both
+    /// the full description and the help text.
     SetDescription(String, String),
+    /// `set-controller-for <id> [<controlled>]`: makes the node's UIA
+    /// `ControllerFor` relation name node `controlled`, or nothing when it
+    /// is left out, and raises its property change. UIA-only.
+    SetControllerFor(String, Option<String>),
     /// `set-states <id> <state>...`: replaces the node's states with those
     /// named, in the fixture's snake case, and raises
     /// `EVENT_OBJECT_STATECHANGE`. MSAA-only.
@@ -227,6 +233,14 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "set-description" => {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
             (!id.is_empty()).then(|| Command::SetDescription(id.to_owned(), text.trim().to_owned()))
+        }
+        "set-controller-for" => {
+            let mut parts = rest.split_whitespace();
+            let id = parts.next()?;
+            Some(Command::SetControllerFor(
+                id.to_owned(),
+                parts.next().map(str::to_owned),
+            ))
         }
         "set-states" => {
             let mut parts = rest.split_whitespace();

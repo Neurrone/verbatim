@@ -919,6 +919,49 @@ fn a_description_change_on_the_focus_is_spoken() {
     assert_eq!(heard(&effects), vec![], "not the focus");
 }
 
+/// A field's suggestions appearing play the suggestions-opened indication
+/// only while the field is the focus; their going away, or a change of
+/// another node, plays the suggestions-closed one
+/// (`docs/parity.md`, "Suggestions appearing and going away").
+#[test]
+fn suggestions_opening_on_the_focus_and_closing_play_their_indications() {
+    let source = Pid(1);
+    let field = node(
+        41,
+        Role::EditableText,
+        Some("Search"),
+        None,
+        states(&[State::Focusable, State::Focused]),
+    );
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), source, field),
+    );
+    let suggestions = |node: u64, open: bool| Input::Event {
+        observed_at_ms: 0,
+        trace_id: TraceId::mint(),
+        source,
+        backend: Backend::Uia,
+        window: None,
+        event: NormalizedEvent::PropertyChanged {
+            node_id: NodeId::new(node),
+            change: PropertyChange::Suggestions(open),
+            child_count: None,
+        },
+    };
+
+    let (state, effects) = reduce(&state, &suggestions(41, true));
+    assert_eq!(effects, vec![Effect::PlayEarcon(Earcon::SuggestionsOpened)]);
+    let (state, effects) = reduce(&state, &suggestions(41, false));
+    assert_eq!(effects, vec![Effect::PlayEarcon(Earcon::SuggestionsClosed)]);
+    let (_, effects) = reduce(&state, &suggestions(42, true));
+    assert_eq!(
+        effects,
+        vec![Effect::PlayEarcon(Earcon::SuggestionsClosed)],
+        "not the focus"
+    );
+}
+
 #[test]
 fn expanding_a_tree_view_item_says_how_many_items_it_holds() {
     let source = Pid(1);

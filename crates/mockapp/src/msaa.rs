@@ -207,6 +207,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         // MSAA has no notification event; `notify` is a UIA-backend command
         // (see crate::stdin::Command::Notify).
         Command::Notify(_) => return Err("notify is not supported on the msaa backend".into()),
+        Command::SetControllerFor(..) => {
+            return Err("set-controller-for is not supported on the msaa backend".into());
+        }
         Command::CaretEvent(_) => raise_caret_event(hwnd)?,
         Command::Caret(_, start, end) => {
             // The text is the edit control's, in its own offsets.

@@ -267,6 +267,13 @@ Public API:
   sentence, which UIA does not have. Every method is a cross-process call,
   counted once: a text range is a provider object in the application, so
   even copying one is a round trip.
+- `map::cached_description(element)` with `map::DESCRIPTION_PROPERTIES`
+  (the full description, else the help text), and
+  `map::cached_reports_suggestions(element)` with
+  `map::SUGGESTIONS_PROPERTIES` (a text pattern, or the automation id
+  `SearchTextBox` or `TextBox`): what a help text or `ControllerFor`
+  change of the focus reads when the outpost handles it, in one cache
+  refresh.
 - `map::ignores_notifications(class, automation_id)` and
   `map::cached_ignores_notifications(element)` — a terminal control's and
   the console host's text area's (automation id "Text Area")
@@ -288,7 +295,8 @@ Public API:
   `retarget_to(scope, group)` — one
   subscription type for every event: `Subscription::Properties`
   (a list of property ids, such as `FOCUS_PROPERTIES`: name, value,
-  toggle state, enabled, and expand/collapse), `Subscription::Event` (an
+  range value, toggle state, enabled, expand/collapse, help text, and
+  `ControllerFor`), `Subscription::Event` (an
   automation event id, such as `SelectionItem_ElementSelected` or
   `MenuOpened`), `Subscription::Events` (several automation event ids
   through one handler whose callback receives the event id, such as a text

@@ -118,7 +118,10 @@ pub const TEXT_EVENT_PROPERTIES: &[windows::Win32::UI::Accessibility::UIA_PROPER
 /// details (its description, shortcut, position, level, and location) or
 /// its standing as focus context, which no property change reports. A
 /// change of states carries the node's whole state set, so every property
-/// a state, the role, the name, or the value is mapped from stays.
+/// a state, the role, the name, or the value is mapped from stays. The
+/// rarer help text and `ControllerFor` changes read what they need when
+/// they are handled ([`crate::map::DESCRIPTION_PROPERTIES`],
+/// [`crate::map::SUGGESTIONS_PROPERTIES`]), as NVDA reads them.
 pub const FOCUS_EVENT_PROPERTIES: &[windows::Win32::UI::Accessibility::UIA_PROPERTY_ID] = &[
     UIA_NamePropertyId,
     UIA_ControlTypePropertyId,

@@ -41,9 +41,10 @@ use verbatim_model::{
     State, StateSet, TerminalOutput, TextOp, TextReply, TraceId,
 };
 use verbatim_uia::map::{snapshot_from_cached_element, snapshot_parts_from_cached_element};
-use verbatim_uia::nearest_window_handle;
+use verbatim_uia::{ElementExt as _, nearest_window_handle};
 use windows::Win32::UI::Accessibility::{
-    UIA_NamePropertyId, UIA_RangeValueValuePropertyId, UIA_ValueValuePropertyId,
+    UIA_ControllerForPropertyId, UIA_HelpTextPropertyId, UIA_NamePropertyId,
+    UIA_RangeValueValuePropertyId, UIA_ValueValuePropertyId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
@@ -728,6 +729,9 @@ fn describe(item: &Item) -> String {
 fn uia_event_name(kind: &UiaKind) -> Option<EventName> {
     match kind {
         UiaKind::Property(id) if *id == UIA_NamePropertyId.0 => Some(EventName::NameChange),
+        UiaKind::Property(id) if *id == UIA_HelpTextPropertyId.0 => {
+            Some(EventName::DescriptionChange)
+        }
         UiaKind::Property(id)
             if *id == UIA_ValueValuePropertyId.0 || *id == UIA_RangeValueValuePropertyId.0 =>
         {
@@ -740,6 +744,91 @@ fn uia_event_name(kind: &UiaKind) -> Option<EventName> {
         | UiaKind::TextChanged
         | UiaKind::ActiveTextPosition(_) => None,
     }
+}
+
+/// The event for a change of property `id` of the node read as `node`,
+/// whose element is `element` (for a help text or `ControllerFor` change,
+/// with what that change needs cached, [`refreshed_for`]), or `None` when
+/// the change reports nothing.
+fn property_event(
+    id: i32,
+    node: NodeSnapshot,
+    element: Option<&IUIAutomationElement>,
+) -> Option<NormalizedEvent> {
+    Some(match id {
+        id if id == UIA_NamePropertyId.0 => NormalizedEvent::PropertyChanged {
+            node_id: node.id,
+            change: PropertyChange::Name(node.name),
+            child_count: None,
+        },
+        id if id == UIA_ValueValuePropertyId.0 || id == UIA_RangeValueValuePropertyId.0 => {
+            NormalizedEvent::ValueChanged {
+                node_id: node.id,
+                value: node.value,
+            }
+        }
+        // NVDA maps the help text to a description change
+        // (`UIAPropertyIdsToNVDAEventNames`), whose description is the
+        // full description or the help text, read when it is handled.
+        id if id == UIA_HelpTextPropertyId.0 => NormalizedEvent::PropertyChanged {
+            node_id: node.id,
+            change: PropertyChange::Description(
+                element.and_then(verbatim_uia::map::cached_description),
+            ),
+            child_count: None,
+        },
+        id if id == UIA_ControllerForPropertyId.0 => {
+            let open = suggestions_open(element)?;
+            NormalizedEvent::PropertyChanged {
+                node_id: node.id,
+                change: PropertyChange::Suggestions(open),
+                child_count: None,
+            }
+        }
+        _ => NormalizedEvent::PropertyChanged {
+            node_id: node.id,
+            change: PropertyChange::States(node.states),
+            child_count: None,
+        },
+    })
+}
+
+/// `element` refreshed with what a change of property `id` reads when it is
+/// handled, in one call: the description for a help text change, and
+/// whether it is editable text or a search field for a `ControllerFor`
+/// change; any other change is reported from the event's cache as it
+/// stands. `None` when the refresh fails.
+fn refreshed_for(
+    uia: Option<&verbatim_uia::Uia>,
+    id: i32,
+    element: Option<IUIAutomationElement>,
+) -> Option<IUIAutomationElement> {
+    let properties: &[_] = if id == UIA_HelpTextPropertyId.0 {
+        &verbatim_uia::map::DESCRIPTION_PROPERTIES
+    } else if id == UIA_ControllerForPropertyId.0 {
+        &verbatim_uia::map::SUGGESTIONS_PROPERTIES
+    } else {
+        return element;
+    };
+    let cache = uia?.cache_request(properties).ok()?;
+    element?.build_updated_cache(&cache).ok()
+}
+
+/// For a `ControllerFor` change of `element`, whether its suggestions are
+/// now open, or `None` when it does not report them. Only editable text and
+/// search fields report suggestions
+/// (`EditableTextWithSuggestions.event_controllerForChange`,
+/// `NVDAObjects/behaviors.py` 231): whether the relation now names any
+/// element, read live, as NVDA reads `controllerFor` (not in its base
+/// cache). A failed read names none.
+fn suggestions_open(element: Option<&IUIAutomationElement>) -> Option<bool> {
+    let element =
+        element.filter(|element| verbatim_uia::map::cached_reports_suggestions(element))?;
+    Some(
+        element
+            .controller_for()
+            .is_ok_and(|controlled| !controlled.is_empty()),
+    )
 }
 
 /// A focus that is not reported, for the reason logged where it was found.
@@ -2075,26 +2164,13 @@ impl Worker<'_> {
         let (parts, element) = self.fresh_selection(&event, element);
         let node = Self::uia_node(self.context, &parts, element.as_ref());
         let normalized = match event.kind {
-            UiaKind::Property(id) if id == UIA_NamePropertyId.0 => {
-                NormalizedEvent::PropertyChanged {
-                    node_id: node.id,
-                    change: PropertyChange::Name(node.name),
-                    child_count: None,
-                }
+            UiaKind::Property(id) => {
+                let element = refreshed_for(self.client.uia(), id, element);
+                let Some(normalized) = property_event(id, node, element.as_ref()) else {
+                    return;
+                };
+                normalized
             }
-            UiaKind::Property(id)
-                if id == UIA_ValueValuePropertyId.0 || id == UIA_RangeValueValuePropertyId.0 =>
-            {
-                NormalizedEvent::ValueChanged {
-                    node_id: node.id,
-                    value: node.value,
-                }
-            }
-            UiaKind::Property(_) => NormalizedEvent::PropertyChanged {
-                node_id: node.id,
-                change: PropertyChange::States(node.states),
-                child_count: None,
-            },
             UiaKind::Selection => NormalizedEvent::SelectionChanged { node },
             UiaKind::Notification(notification) => NormalizedEvent::Notification {
                 node_id: node.id,

@@ -85,6 +85,11 @@ pub enum PropertyChange {
     /// carrying the new description; `None` also when the active theme does
     /// not read descriptions.
     Description(Option<String>),
+    /// An editable field's `ControllerFor` relation changed: `true` when
+    /// it now names elements, a list of suggestions having appeared, and
+    /// `false` when it names none, the list gone (`docs/parity.md`,
+    /// "Suggestions appearing and going away").
+    Suggestions(bool),
 }
 
 /// An accessibility event, normalized by an outpost from either backend.

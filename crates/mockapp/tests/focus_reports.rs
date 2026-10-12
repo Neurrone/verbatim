@@ -30,7 +30,8 @@ use verbatim_uia::{ElementExt as _, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, TreeScope_Descendants, UIA_HasKeyboardFocusPropertyId, UIA_NamePropertyId,
+    IUIAutomationElement, TreeScope_Descendants, UIA_ControllerForPropertyId,
+    UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId, UIA_NamePropertyId,
 };
 
 use common::outpost::OutpostUnderTest;
@@ -757,8 +758,88 @@ fn a_focus_whose_window_has_no_uia_provider_is_dropped() {
     app.quit();
 }
 
+/// The focus's help text and `ControllerFor` relation are followed, as
+/// NVDA's local group follows them: a help text change is reported as the
+/// focus's new description, and a search box's relation naming its list
+/// and then nothing as its suggestions opening and closing.
+fn a_focus_s_help_text_and_suggestions_are_followed() {
+    let title = common::unique_title("mockapp-suggestions");
+    let mut app = common::spawn("controller.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    // The search box has no text pattern in mockapp, so its focus is
+    // followed by the outpost's word that it has no text.
+    app.send("set-focus search");
+    let (judged, _) = outpost.listener_read(&client.focused());
+    assert!(matches!(judged, Judged::Read(_)), "dropped: {judged:?}");
+    outpost.deliver(judged.into_fact(0));
+    let node = match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::FocusChanged { node, .. },
+            ..
+        } => node,
+        other => panic!("the outpost said {other:?}, not the search box's focus"),
+    };
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::NoText { node_id },
+            ..
+        } => assert_eq!(node_id, node.id),
+        other => panic!("the outpost said {other:?}, not that the search box has no text"),
+    }
+    outpost.settled();
+
+    app.send("set-description search Type to search");
+    outpost.heard(&[Heard::UiaProperty(UIA_HelpTextPropertyId.0)]);
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::PropertyChanged {
+                    node_id,
+                    change: PropertyChange::Description(description),
+                    child_count: None,
+                },
+            ..
+        } => assert_eq!(
+            (node_id, description.as_deref()),
+            (node.id, Some("Type to search"))
+        ),
+        other => panic!("the outpost said {other:?}, not the focus's new description"),
+    }
+    outpost.settled();
+
+    for (command, open) in [
+        ("set-controller-for search results", true),
+        ("set-controller-for search", false),
+    ] {
+        app.send(command);
+        outpost.heard(&[Heard::UiaProperty(UIA_ControllerForPropertyId.0)]);
+        match outpost.next() {
+            OutpostToSupervisor::Event {
+                event:
+                    NormalizedEvent::PropertyChanged {
+                        node_id,
+                        change: PropertyChange::Suggestions(reported),
+                        child_count: None,
+                    },
+                ..
+            } => assert_eq!((node_id, reported), (node.id, open), "{command}"),
+            other => panic!("the outpost said {other:?}, not the suggestions after {command}"),
+        }
+        outpost.settled();
+    }
+
+    drop(outpost);
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_focus_s_help_text_and_suggestions_are_followed",
+            a_focus_s_help_text_and_suggestions_are_followed,
+        ),
         (
             "a_reused_runtime_id_names_a_new_node_remote",
             a_reused_runtime_id_names_a_new_node_remote,

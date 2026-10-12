@@ -7,6 +7,7 @@
       "id": "search",
       "role": "editable_text",
       "name": "Search box",
+      "automation_id": "SearchTextBox",
       "states": ["focusable"],
       "controller_for": "results"
     },

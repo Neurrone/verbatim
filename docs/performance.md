@@ -1362,6 +1362,13 @@ focus without its element was followed in its whole window, a
 subscription removed on 2026-10-11 (`docs/design/focus-pipeline.md`,
 section 17).
 
+The two rarer property changes of the focus read what they need when
+the outpost handles them, as NVDA reads them, not in every property
+change's request: a help text change refreshes the element's full
+description and help text, one call, and a `ControllerFor` change its
+text pattern availability and automation id and then reads the relation
+itself, two calls (`a_focus_s_help_text_and_suggestions_are_followed`).
+
 ### Several text attributes in one call
 
 The classic reads of a stretch's formatting fetch all its attributes in

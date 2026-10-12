@@ -55,10 +55,10 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationEventHandler, IUIAutomationEventHandlerGroup,
     IUIAutomationFocusChangedEventHandler, IUIAutomationNotificationEventHandler,
     IUIAutomationPropertyChangedEventHandler, IUIAutomationTextRange, NotificationKind,
-    NotificationProcessing, TreeScope, TreeScope_Element, TreeScope_Subtree, UIA_EVENT_ID,
-    UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_IsEnabledPropertyId, UIA_NamePropertyId,
-    UIA_PROPERTY_ID, UIA_RangeValueValuePropertyId, UIA_ToggleToggleStatePropertyId,
-    UIA_ValueValuePropertyId,
+    NotificationProcessing, TreeScope, TreeScope_Element, TreeScope_Subtree,
+    UIA_ControllerForPropertyId, UIA_EVENT_ID, UIA_ExpandCollapseExpandCollapseStatePropertyId,
+    UIA_HelpTextPropertyId, UIA_IsEnabledPropertyId, UIA_NamePropertyId, UIA_PROPERTY_ID,
+    UIA_RangeValueValuePropertyId, UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId,
 };
 use windows::core::AgileReference;
 use windows_core::Interface;
@@ -102,17 +102,22 @@ pub type ActiveTextPositionCallback =
     Arc<dyn Fn(&IUIAutomationElement, Option<&IUIAutomationTextRange>) + Send + Sync>;
 
 /// The properties an outpost follows on the focus, and only there: name,
-/// value (of the `Value` or the `RangeValue` pattern, as NVDA follows both),
-/// and the state-bearing toggle, enabled, and expand/collapse properties,
-/// all in the base cache request, so the state set is rebuilt from the
-/// cache.
-pub const FOCUS_PROPERTIES: [UIA_PROPERTY_ID; 6] = [
+/// value (of the `Value` or the `RangeValue` pattern), the state-bearing
+/// toggle, enabled, and expand/collapse properties, the help text (a
+/// description change), and the `ControllerFor` relation (suggestions
+/// opened or closed), as NVDA's local group follows them
+/// (`localEventHandlerGroupUIAPropertyIds`, `UIAHandler/__init__.py` 247).
+/// NVDA follows the range value desktop-wide instead, for progress bars
+/// anywhere, and the item status too, which only its app modules act on.
+pub const FOCUS_PROPERTIES: [UIA_PROPERTY_ID; 8] = [
     UIA_NamePropertyId,
     UIA_ValueValuePropertyId,
     UIA_RangeValueValuePropertyId,
     UIA_ToggleToggleStatePropertyId,
     UIA_IsEnabledPropertyId,
     UIA_ExpandCollapseExpandCollapseStatePropertyId,
+    UIA_HelpTextPropertyId,
+    UIA_ControllerForPropertyId,
 ];
 
 /// How long a registration's thread may take over one move (registering on

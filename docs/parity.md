@@ -921,6 +921,21 @@ verified.
   for the selected element since 2026-10-10. Start's
   results are partly in a Chromium document NVDA reads through IA2,
   which belongs to the phase that implements IA2 (browsers).
+- Suggestions appearing and going away. NVDA: when the ControllerFor
+  relation of a focused editable field or search field changes, NVDA
+  plays its suggestions-opened sound if the field is the focus and now
+  names elements, and its suggestions-closed sound otherwise
+  (`EditableTextWithSuggestions.event_controllerForChange`,
+  `NVDAObjects/behaviors.py` 231 to 236; the property is in its local,
+  focus-following group). Verbatim: **matched since 2026-10-12**: the
+  outpost follows ControllerFor on the focus, reads it live for an
+  element with a text pattern or the automation id "SearchTextBox" or
+  "TextBox", and Core plays the suggestions-opened or suggestions-closed
+  indication. NVDA's editable-text condition also asks for navigable
+  text or a text selection; Verbatim takes the text pattern alone. Help
+  text changes on the focus are followed too, and spoken as NVDA speaks
+  a description change. The item status is not followed: NVDA's own
+  handling of it is in app modules only.
 - Value change on focused node speaks bare value (slider drag), not
   for an edit field or document, not when unchanged, and not for a role
   that never speaks its value. Verbatim: **matched since 2026-10-02**
@@ -1542,9 +1557,11 @@ verified.
     invalidation, drag and drop, and range values anywhere (progress
     bars); Verbatim subscribes to none of these until it handles them.
   - The local group, on the focus: name, value, range value, toggle,
-    enabled, and expand and collapse changes. NVDA registers its local
-    group (those, help text, ControllerFor, item status, and caret
-    events) on the focused element with
+    enabled, expand and collapse, help text, and ControllerFor changes
+    (the last two since 2026-10-12). NVDA registers its local group
+    (those but the range value, which it follows desktop-wide, the item
+    status, which only its app modules act on, and caret events) on the
+    focused element with
     `TreeScope_Element | TreeScope_Ancestors`, when it handles a UIA
     focus. Verbatim registers on the focus with `TreeScope_Element`
     alone, and the outcome is the same, because UIA delivers no

@@ -23,20 +23,21 @@ use windows::Win32::UI::Accessibility::{
     UIA_IsEnabledPropertyId, UIA_IsExpandCollapsePatternAvailablePropertyId,
     UIA_IsKeyboardFocusablePropertyId, UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
     UIA_IsRangeValuePatternAvailablePropertyId, UIA_IsRequiredForFormPropertyId,
-    UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTogglePatternAvailablePropertyId,
-    UIA_IsValuePatternAvailablePropertyId, UIA_LegacyIAccessibleStatePropertyId,
-    UIA_LevelPropertyId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
-    UIA_MenuBarControlTypeId, UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_NamePropertyId,
-    UIA_NativeWindowHandlePropertyId, UIA_PROPERTY_ID, UIA_PaneControlTypeId,
-    UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId, UIA_ProgressBarControlTypeId,
-    UIA_RadioButtonControlTypeId, UIA_RangeValueValuePropertyId, UIA_ScrollBarControlTypeId,
-    UIA_SelectionItemIsSelectedPropertyId, UIA_SeparatorControlTypeId, UIA_SizeOfSetPropertyId,
-    UIA_SliderControlTypeId, UIA_SpinnerControlTypeId, UIA_SplitButtonControlTypeId,
-    UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
-    UIA_TableControlTypeId, UIA_TextControlTypeId, UIA_ThumbControlTypeId,
-    UIA_TitleBarControlTypeId, UIA_ToggleToggleStatePropertyId, UIA_ToolBarControlTypeId,
-    UIA_ToolTipControlTypeId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId,
-    UIA_ValueIsReadOnlyPropertyId, UIA_ValueValuePropertyId, UIA_WindowControlTypeId,
+    UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTextPatternAvailablePropertyId,
+    UIA_IsTogglePatternAvailablePropertyId, UIA_IsValuePatternAvailablePropertyId,
+    UIA_LegacyIAccessibleStatePropertyId, UIA_LevelPropertyId, UIA_ListControlTypeId,
+    UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId, UIA_MenuControlTypeId,
+    UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_NativeWindowHandlePropertyId,
+    UIA_PROPERTY_ID, UIA_PaneControlTypeId, UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId,
+    UIA_ProgressBarControlTypeId, UIA_RadioButtonControlTypeId, UIA_RangeValueValuePropertyId,
+    UIA_ScrollBarControlTypeId, UIA_SelectionItemIsSelectedPropertyId, UIA_SeparatorControlTypeId,
+    UIA_SizeOfSetPropertyId, UIA_SliderControlTypeId, UIA_SpinnerControlTypeId,
+    UIA_SplitButtonControlTypeId, UIA_StatusBarControlTypeId, UIA_TabControlTypeId,
+    UIA_TabItemControlTypeId, UIA_TableControlTypeId, UIA_TextControlTypeId,
+    UIA_ThumbControlTypeId, UIA_TitleBarControlTypeId, UIA_ToggleToggleStatePropertyId,
+    UIA_ToolBarControlTypeId, UIA_ToolTipControlTypeId, UIA_TreeControlTypeId,
+    UIA_TreeItemControlTypeId, UIA_ValueIsReadOnlyPropertyId, UIA_ValueValuePropertyId,
+    UIA_WindowControlTypeId,
 };
 
 use crate::element::ElementExt;
@@ -351,15 +352,27 @@ fn cached_rect(element: &IUIAutomationElement) -> Option<Rect> {
     })
 }
 
+/// The properties an element's description is read from
+/// ([`cached_description`]).
+pub const DESCRIPTION_PROPERTIES: [UIA_PROPERTY_ID; 2] =
+    [UIA_FullDescriptionPropertyId, UIA_HelpTextPropertyId];
+
+/// An element's description from its cache: its full description, else
+/// its help text, as NVDA's UIA objects describe themselves.
+#[must_use]
+pub fn cached_description(element: &IUIAutomationElement) -> Option<String> {
+    element
+        .cached_string(UIA_FullDescriptionPropertyId)
+        .or_else(|| element.cached_string(UIA_HelpTextPropertyId))
+}
+
 /// Builds a [`NodeDetails`] from an element's cached properties: description
 /// (`FullDescription`, falling back to `HelpText`), keyboard shortcut
 /// (`AccessKey` and `AcceleratorKey`, joined as NVDA joins them), `PositionInSet`,
 /// `SizeOfSet`, `Level`, and `BoundingRectangle`. Every field maps UIA's
 /// "not supported" default (an empty string or zero) to `None`.
 fn details_from_cached(element: &IUIAutomationElement) -> NodeDetails {
-    let description = element
-        .cached_string(UIA_FullDescriptionPropertyId)
-        .or_else(|| element.cached_string(UIA_HelpTextPropertyId));
+    let description = cached_description(element);
     let keyboard_shortcut = keyboard_shortcut(
         element.cached_string(UIA_AccessKeyPropertyId),
         element.cached_string(UIA_AcceleratorKeyPropertyId),
@@ -520,6 +533,30 @@ pub fn is_terminal_class(class_name: Option<&str>) -> bool {
 #[must_use]
 pub fn ignores_notifications(class_name: Option<&str>, automation_id: Option<&str>) -> bool {
     is_terminal_class(class_name) || automation_id == Some("Text Area")
+}
+
+/// The properties [`cached_reports_suggestions`] reads.
+pub const SUGGESTIONS_PROPERTIES: [UIA_PROPERTY_ID; 2] = [
+    UIA_IsTextPatternAvailablePropertyId,
+    UIA_AutomationIdPropertyId,
+];
+
+/// Whether an element reports suggestions opening and closing when its
+/// `ControllerFor` relation changes: editable text, which NVDA's UIA
+/// objects with a text pattern become (`EditableText`, through
+/// `EditableTextWithAutoSelectDetection`), and the search fields NVDA
+/// knows by automation id `SearchTextBox` or `TextBox` (`SearchField`,
+/// `NVDAObjects/UIA/__init__.py` 1418 to 1421), from its cached text
+/// pattern availability and automation id ([`SUGGESTIONS_PROPERTIES`]).
+/// NVDA's own condition also asks the text for navigable text or a
+/// selection; a text pattern is taken here as enough.
+#[must_use]
+pub fn cached_reports_suggestions(element: &IUIAutomationElement) -> bool {
+    element.cached_bool(UIA_IsTextPatternAvailablePropertyId)
+        || matches!(
+            element.cached_string(UIA_AutomationIdPropertyId).as_deref(),
+            Some("SearchTextBox" | "TextBox")
+        )
 }
 
 /// [`ignores_notifications`] for `element`, from its cached class name and

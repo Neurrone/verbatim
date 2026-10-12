@@ -97,9 +97,14 @@ response; for the tests that count an operation's calls exactly, which
 hand the focus to the outpost themselves), `set-name <id> <text>`
 and `set-value <id> <text>` (update the tree and raise the matching
 property-change or name/value-change notification), `set-description <id>
-<text>` and `set-states <id> <state>...` (MSAA only: replace the
-description, or the whole state set, named as in fixtures, and raise
-`EVENT_OBJECT_DESCRIPTIONCHANGE` or `EVENT_OBJECT_STATECHANGE`), `focus-child
+<text>` (replaces the description and raises
+`EVENT_OBJECT_DESCRIPTIONCHANGE`, or in the UIA backend a help text
+change, the description being served as both the full description and
+the help text), `set-states <id> <state>...` (MSAA only: replaces the
+whole state set, named as in fixtures, and raises
+`EVENT_OBJECT_STATECHANGE`), `set-controller-for <id> [<controlled>]`
+(UIA only: the node's `ControllerFor` relation names node `controlled`,
+or nothing, and its property change is raised), `focus-child
 <container> <child>` (addresses the container's children as numbered
 simple children from then on, as a Win32 tree view's items are, so its
 `accFocus` names the focused child by child id and its `accChild` has no
