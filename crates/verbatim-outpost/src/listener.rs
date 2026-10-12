@@ -653,6 +653,10 @@ fn queue_for_reading(
             ..EventTiming::default()
         },
     };
+    let runtime_id = verbatim_uia::runtime_id(element);
+    // Every event's arrival, by its marker, whatever its read makes of it,
+    // so a delay before the listener received it shows.
+    tracing::debug!(%pid, marker = meta.marker, ?kind, ?runtime_id, "UIA focus event received");
     // The marker goes first, so the read or the drop can only follow it.
     outgoing.focus_read(
         pid,
@@ -662,11 +666,7 @@ fn queue_for_reading(
         meta,
     );
     match AgileReference::new(element) {
-        Ok(agile) => readers.push(
-            pid,
-            meta,
-            (agile, focus_window, verbatim_uia::runtime_id(element), kind),
-        ),
+        Ok(agile) => readers.push(pid, meta, (agile, focus_window, runtime_id, kind)),
         Err(error) => {
             tracing::warn!(%error, "a UIA focus's element could not be kept for its read");
             outgoing.focus_read(
