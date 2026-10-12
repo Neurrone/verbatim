@@ -481,8 +481,12 @@ verified.
   ported NVDA's class rule for foreground events; the harness expects
   NVDA's speech there (`close_settings_to_desktop`).
 - Duplicate focus suppression (same control announced once when two
-  paths report it). NVDA: "already the focus" early return, comparing
-  the focus object by identity only. Since 2026-10-02 Verbatim compares
+  paths report it). NVDA: each backend's own duplicate test, the MSAA
+  one by event address and the UIA one by `CompareElements` while the
+  last focus keeps the keyboard focus; NVDA has no test across backends,
+  and none for a foreground or menu focus, and the "already the focus"
+  early return this entry once named is not in NVDA's code. Core's rule
+  below is Verbatim's own (roadmap, the audits' items). Since 2026-10-02 Verbatim compares
   the node id too, not its states, name, or ancestors, which a second
   report can read mid-change (Notepad's edit control settling, File
   Explorer's title being filled in), and keeps the newer reading. Since
@@ -987,7 +991,11 @@ verified.
   window, the focus's recorded window for the focus's own events, or, for
   a windowless element not found, its application's focus window as the
   listener captured it, where NVDA walks to the nearest window. Tested so:
-  the UIA menu opening (as gain focus), property changes, and selections.
+  the UIA menu opening (as gain focus), property changes, selections,
+  and, since 2026-10-12, a text control's caret and text changes, which
+  NVDA's automation event handler tests as any other event; a
+  notification and an active text position are not, as NVDA's handlers
+  for them do not test them.
   The UIA focus is tested by the focus listener instead, since stage A
   step 6's revision (Dickson, 2026-10-11; `docs/design/focus-pipeline.md`,
   sections 16.2 and 16.3), in NVDA's order: after the repeat check and
@@ -1164,11 +1172,15 @@ verified.
   menu, File Explorer gives the focus or the foreground to windows that
   only stage the switch (`ForegroundStaging`, `LauncherTipWnd`,
   `ApplicationManager_DesktopShellWindow`), with no name. NVDA's File
-  Explorer app module ignores focus on them (`appModules/explorer.py`
-  lines 443 to 449). Verbatim: **matched since 2026-10-09**: the outpost
+  Explorer app module leaves the focus on them unsaid
+  (`appModules/explorer.py` lines 443 to 449), after NVDA has made the
+  window its focus and run its foreground event, which cuts speech.
+  Verbatim: **matched since 2026-10-09** for what is said: the outpost
   drops a focus or foreground fact on such a window; before, Alt+Tab
   between two terminal windows was sometimes said as "pane" before the
-  window switched to (the two-window scenarios).
+  window switched to (the two-window scenarios). **Different:** since
+  the focus is dropped, speech is not cut at the staging window, only at
+  the window switched to (roadmap, the audits' items).
 
 ## Object navigation and review
 

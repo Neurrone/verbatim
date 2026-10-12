@@ -12,8 +12,13 @@
 //! - the desktop-wide UIA focus subscription, each event judged and read
 //!   from its own element on a thread for its application
 //!   ([`crate::focus_read`]);
-//! - desktop-wide UIA subscriptions for the events NVDA registers globally on
-//!   Windows 11: an element selected, a menu opened, and notifications.
+//! - desktop-wide UIA subscriptions for some of the events NVDA registers
+//!   globally on Windows 11: an element selected, a menu opened, and
+//!   notifications. NVDA's global group also takes live regions, selection
+//!   added and removed, range values, windows and tool tips opened, system
+//!   alerts, layout invalidation, drag and drop, and the active text
+//!   position, which Verbatim does not yet subscribe to (`docs/parity.md`,
+//!   "UIA event registration").
 //!
 //! The listener's callbacks, its writer, and its registration threads never
 //! make a cross-process call (decision D13, as amended on 2026-10-11). A UIA
@@ -66,8 +71,9 @@
 //! events from the start.
 //!
 //! Outgoing facts are coalesced with NVDA's UIA limiter rule before they are
-//! sent: one waiting fact per element and kind, a newer one replacing it and
-//! moving to the back, so a flood from one busy process cannot pass through
+//! sent: one waiting fact per element and kind (for a notification, per
+//! element, kind, processing, and activity id), a newer one replacing it
+//! and moving to the back, so a flood from one busy process cannot pass through
 //! the listener and Core unthrottled. A UIA focus's marker, read, and drop
 //! are never replaced, since an outpost waits on the marker until its read
 //! or drop arrives. Pongs and `Ready` go ahead of facts.
@@ -617,8 +623,9 @@ fn focus_subscription(
     Subscription::Focus { callback }
 }
 
-/// Installs the desktop-wide UIA subscriptions NVDA registers globally on
-/// Windows 11: `focus` ([`focus_subscription`]) on the registration's
+/// Installs the desktop-wide UIA subscriptions, some of those NVDA
+/// registers globally on Windows 11 (the module's documentation lists the
+/// rest): `focus` ([`focus_subscription`]) on the registration's
 /// client, then an element selected, a menu opened, and notifications as
 /// one event handler group on the desktop's root, all on one client as
 /// NVDA's global handlers are (`verbatim_uia::Subscription::Focus` says why

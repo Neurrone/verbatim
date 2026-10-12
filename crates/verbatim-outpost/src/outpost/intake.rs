@@ -20,20 +20,26 @@
 //!   it the same. UIA events, menu openings, queries and housekeeping
 //!   entries are not counted. A newer list of the nodes Core holds replaces
 //!   a waiting one.
-//! - Events from a window the system reports as hung are dropped before any
-//!   read.
+//! - UIA events from a window the system reports as hung are dropped
+//!   before any read; an MSAA event from one is counted and kept, and the
+//!   worker drops it before it reads anything, as NVDA's limiter counts it
+//!   and `winEventToNVDAEvent` drops it.
 //! - Within a batch only the newest foreground change is handled. Each
 //!   consecutive run of MSAA focus events is tried newest first, until one
-//!   is reported, at the place of the run's newest, as NVDA's `pumpAll`
-//!   collects a run of focus events and processes it newest first when the
-//!   next other event comes; any other entry ends a run, and a foreground
-//!   change within one, handled at its own place, does not. Every UIA focus
-//!   event is handled in turn at its own place, as NVDA's UIA handler
-//!   queues each one (the worker's arbitration then drops a focus whose
-//!   backend does not own the window, as NVDA's separate MSAA and UIA paths
-//!   do). The newest menu opening from each backend is handled last, as
-//!   NVDA keeps only its newest menu event and tries it after the focus
-//!   events.
+//!   is reported, at the place of the run's newest. NVDA's `pumpAll`
+//!   collects a run of focus and foreground events together and tries it
+//!   newest first when the next accepted event that is neither comes;
+//!   Verbatim's runs differ: any other entry ends one, and a foreground
+//!   change is not in one but handled at its own place (roadmap, the
+//!   audits' items). Every UIA focus event is handled in turn at its own
+//!   place, as NVDA's UIA handler queues each one (the worker's
+//!   arbitration then drops a focus whose backend does not own the window,
+//!   as NVDA's separate MSAA and UIA paths do). The newest menu opening
+//!   from each backend is handled last: NVDA keeps only its newest MSAA
+//!   menu event, a menu end included, which Verbatim sends elsewhere, and
+//!   tries it after the focus events; NVDA's UIA menu opening is instead
+//!   an event of its own in arrival order, which Verbatim does not yet
+//!   follow.
 //! - A UIA focus waits in the place its marker took
 //!   ([`DeliveredFact::UiaFocusMarker`]): the focus listener sends the
 //!   marker the moment the event arrives and reads the focus from the
@@ -216,10 +222,10 @@ enum Category {
     Focus,
     /// Any other MSAA event, limited per thread that raised it.
     Other,
-    /// Not counted, but dropped with its window when that is hung: a UIA
-    /// event, which NVDA's limiter never sees, and a menu opening, of which
-    /// only the newest is handled, as NVDA's limiter keeps its newest menu
-    /// event apart from both limits.
+    /// Not counted: a UIA event, which NVDA's MSAA limiter never sees,
+    /// dropped with its window when that is hung, and an MSAA menu
+    /// opening, of which only the newest is handled, as NVDA's limiter
+    /// keeps its newest menu event apart from both limits.
     Uncounted,
     /// Always kept: queries and housekeeping.
     Exempt,

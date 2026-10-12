@@ -12,18 +12,24 @@
 //! does NVDA's flusher-thread work for each of its application's events in
 //! arrival order ([`FocusReader::read`]):
 //!
-//! - an event from a window the system reports hung is dropped, as NVDA's
-//!   `_shouldSkipEventForHungWindow` drops it; so are a shell window that
-//!   only stages a switch, which NVDA's File Explorer app module ignores,
-//!   and the console window's own element, which NVDA's
-//!   `consoleUIAWindow` refuses;
-//! - then NVDA's duplicate rule, before anything of the sender is read: a
+//! - NVDA's focus handler's checks, in its order, before anything of the
+//!   sender is read (`FocusReader::judge_before_reading`;
+//!   `docs/design/focus-pipeline.md`, section 18): a sender whose cached
+//!   window the system reports hung is dropped; one whose nearest window
+//!   does not use UIA, or that has none, is not native and is dropped; a
 //!   sender UI Automation counts as the last focus any of the listener's
-//!   readers accepted (`CompareElements`), while that element still has the
-//!   keyboard focus, read live, is a repeat and is dropped ([`LastAccepted`]);
+//!   readers accepted (`CompareElements`), while that element still has
+//!   the keyboard focus, read live, is a repeat and is dropped
+//!   ([`LastAccepted`]); one whose nearest window fails NVDA's acceptance
+//!   test is dropped; the console window's own element, which NVDA's
+//!   `consoleUIAWindow` refuses, and a shell window that only stages a
+//!   switch, whose focus NVDA's File Explorer app module leaves unsaid,
+//!   are dropped; and a sender without the keyboard focus, read with a
+//!   plain property read, is dropped, as NVDA's `shouldAllowUIAFocusEvent`
+//!   drops it;
 //! - then one remote operation from the sender: its `HasKeyboardFocus`
-//!   read live first, a sender without the keyboard focus dropped, as
-//!   NVDA's `shouldAllowUIAFocusEvent` drops it; then, when the sender has
+//!   read again first, for a focus that moves on while it is read; then,
+//!   when the sender has
 //!   the runtime id of the focus the thread read before, whether that
 //!   earlier element still has the keyboard focus, the evidence that the
 //!   runtime id still names it; then the sender's own value, states, and

@@ -216,10 +216,14 @@ pub(super) fn desktop_window() -> isize {
 /// foreground only while a switch is staged: the Alt+Tab switcher's and
 /// Task View's staging windows, the Windows+X menu's host, and the desktop
 /// shell's application manager window. NVDA's File Explorer app module
-/// ignores focus on them (`appModules/explorer.py` lines 443 to 449,
-/// issues 5116 and 8137), and so do the outposts and the focus listener:
-/// on Alt+Tab, Explorer's `ForegroundStaging` window takes the focus with
-/// no name, and was said as "pane" before the window switched to.
+/// leaves the focus on them unsaid (`appModules/explorer.py` lines 443 to
+/// 449, issues 5116 and 8137): NVDA still makes such a window its focus
+/// and runs its foreground event, which cuts speech, and only the
+/// announcement is skipped. The outposts and the focus listener drop the
+/// focus on them altogether, so speech is not cut there (`docs/parity.md`,
+/// "The shell's staging windows"): on Alt+Tab, Explorer's
+/// `ForegroundStaging` window takes the focus with no name, and was said
+/// as "pane" before the window switched to.
 pub(crate) fn is_shell_transition_window(hwnd: isize) -> bool {
     matches!(
         window_class_name(hwnd).as_str(),

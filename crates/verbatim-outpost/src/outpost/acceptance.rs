@@ -59,6 +59,10 @@ pub(crate) enum EventName {
     DescriptionChange,
     /// An item becoming the selection.
     Selection,
+    /// A UIA text control's caret or selection moved.
+    Caret,
+    /// A UIA text control's text changed.
+    TextChange,
 }
 
 impl EventName {

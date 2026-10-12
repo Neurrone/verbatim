@@ -72,7 +72,9 @@ pub enum WinEventKind {
     /// `EVENT_SYSTEM_MENUPOPUPEND` or `EVENT_SYSTEM_MENUEND` — a popup menu
     /// closed, or menu mode ended. The focus listener forwards it to Core,
     /// which reads the real focus of the foreground application if no focus
-    /// change follows, as NVDA does.
+    /// change follows, as NVDA reads the system's focus 50 ms after one
+    /// when no valid focus event came with it and its focus has not
+    /// changed.
     MenuEnd,
     /// `EVENT_SYSTEM_SWITCHEND` — the Alt+Tab switcher closed. Handled like
     /// [`WinEventKind::MenuEnd`], as NVDA handles it.

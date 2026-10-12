@@ -169,12 +169,14 @@ fn classify(
             foreground: true, ..
         }
         | NormalizedEvent::ControlledSelection { .. } => Acceptance::Attended,
-        // Any other focus is judged by NVDA's own test against the system's
-        // foreground window, made by its outpost when it read the event,
-        // not against the attention record: a focus can reach Core before
-        // the foreground change that moved the foreground away from its
-        // window (D14, amended 2026-10-05). With no window facts, the
-        // application decides.
+        // Any other focus is judged against the system's foreground window
+        // as its outpost found it when it published the event, not against
+        // the attention record: a focus can reach Core before the
+        // foreground change that moved the foreground away from its window
+        // (D14, amended 2026-10-05). With no window facts, the application
+        // decides. This is a second test, after the read, which NVDA does
+        // not make; it tests once, before reading (`docs/parity.md`, "Event
+        // acceptance in the outpost").
         NormalizedEvent::FocusChanged { .. } => {
             let attended = match window {
                 Some(event) => event_window_is_foreground(event),
@@ -249,11 +251,14 @@ fn is_stale_focus(
         })
 }
 
-/// NVDA's duplicate-focus rule (`docs/design/focus-pipeline.md`, section
+/// Core's duplicate-focus rule (`docs/design/focus-pipeline.md`, section
 /// 4.2; `docs/parity.md`, "Duplicate focus suppression"): a focus whose
 /// element is the same as the last focus Core queued, while that element
 /// still has the keyboard focus, is dropped before anything else judges
-/// it, so it neither moves attention nor orders later focus events.
+/// it, so it neither moves attention nor orders later focus events. NVDA
+/// has no rule across its backends like it: each backend's own duplicate
+/// test, which the outposts and the focus listener make, is its only one,
+/// and a foreground or menu focus has none.
 ///
 /// The last focus Core queued is the focus it holds: every focus Core
 /// accepts becomes it, and a focus it refuses (stale, not in the
@@ -770,11 +775,12 @@ fn reduce_focus_changed(
 
 /// Moves attention and the foreground to a focus in the system's
 /// foreground window that is unrelated to the attention window: the
-/// foreground moved without a foreground fact, so attention follows, as
-/// NVDA takes the foreground from the focus's ancestry. The foreground
-/// object moves with it (`docs/nvda/events.md`, step 3 of a focus change:
-/// the top of the focus's ancestry, its top-level window), so speech for
-/// the window left behind is no longer held valid as the foreground's.
+/// foreground moved without a foreground fact, so attention follows. The
+/// foreground object moves with it, to the top of the focus's ancestry,
+/// its top-level window, so speech for the window left behind is no
+/// longer held valid as the foreground's; NVDA asks for the real
+/// foreground window instead and takes the ancestry only when that fails
+/// (`docs/nvda/events.md`, step 3 of a focus change).
 /// With the ancestry unread, the new foreground is not known.
 fn follow_an_unreported_foreground(
     state: &mut SrState,

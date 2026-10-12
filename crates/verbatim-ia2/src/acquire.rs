@@ -436,9 +436,12 @@ impl FocusCandidate {
     }
 
     /// Whether the object or one of its ancestors has the focused state,
-    /// NVDA's `shouldAllowIAccessibleFocusEvent`, which weeds out stale and
-    /// spurious focus events: the object's own state first, then each
-    /// ancestor's, read live through `accParent`, up to `max_hops` of them.
+    /// as NVDA's `shouldAllowIAccessibleFocusEvent` asks, which weeds out
+    /// stale and spurious focus events: the object's own state first, then
+    /// each ancestor's, read live through raw `accParent`, up to `max_hops`
+    /// of them. NVDA walks its own parents instead, with no limit, which
+    /// repair a server that skips the window object and can cross into a
+    /// UIA parent.
     /// A simple child's first ancestor is the object it is a child of. The
     /// object's own state word is kept for the read that follows.
     pub fn has_focused_state(&mut self, max_hops: u32) -> bool {

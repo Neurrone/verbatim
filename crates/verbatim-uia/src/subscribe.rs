@@ -1035,8 +1035,11 @@ impl Follower {
 
     /// Whether `a` and `b` are the same element, by UIA's own comparison,
     /// which compares their runtime ids, kept with each element
-    /// (`docs/performance.md`, "What counts as a call"), as NVDA compares a
-    /// focus with the elements that have its group.
+    /// (`docs/performance.md`, "What counts as a call"). NVDA tests whether
+    /// an element has its group by membership of a set of the element
+    /// pointers it added the group to, not by `CompareElements`, so it
+    /// removes and adds the group again for a new pointer to the same
+    /// element, where Verbatim keeps it; what is registered is the same.
     fn same(&self, a: &IUIAutomationElement, b: &IUIAutomationElement) -> bool {
         // SAFETY: both elements are live, owned by this thread.
         unsafe { self.uia.client().CompareElements(a, b) }.is_ok_and(windows_core::BOOL::as_bool)

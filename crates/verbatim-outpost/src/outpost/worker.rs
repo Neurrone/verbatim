@@ -727,9 +727,11 @@ fn describe(item: &Item) -> String {
 }
 
 /// The name NVDA's acceptance test knows a UIA event of `kind` by, or `None`
-/// for one it does not test: a notification, and a text focus's caret,
-/// text, and active text position, which are Verbatim's own events of the
-/// focus (`docs/parity.md`, "Event acceptance in the outpost").
+/// for one it does not test: a notification and an active text position,
+/// which NVDA's handlers for them never test (`UIAHandler/__init__.py`
+/// 1063 and 1158). A caret and a text change go through NVDA's automation
+/// event handler, which tests them as any other (`docs/parity.md`, "Event
+/// acceptance in the outpost").
 fn uia_event_name(kind: &UiaKind) -> Option<EventName> {
     match kind {
         UiaKind::Property(id) if *id == UIA_NamePropertyId.0 => Some(EventName::NameChange),
@@ -743,10 +745,9 @@ fn uia_event_name(kind: &UiaKind) -> Option<EventName> {
         }
         UiaKind::Property(_) => Some(EventName::StateChange),
         UiaKind::Selection => Some(EventName::Selection),
-        UiaKind::Notification(_)
-        | UiaKind::TextSelection
-        | UiaKind::TextChanged
-        | UiaKind::ActiveTextPosition(_) => None,
+        UiaKind::TextSelection => Some(EventName::Caret),
+        UiaKind::TextChanged => Some(EventName::TextChange),
+        UiaKind::Notification(_) | UiaKind::ActiveTextPosition(_) => None,
     }
 }
 
@@ -2094,10 +2095,13 @@ impl Worker<'_> {
 
     /// A UIA event from this outpost's own subscriptions, or a selection or
     /// notification fact from the listener. NVDA's order: whether the event
-    /// is the focus's, then whether its window is UIA's, then the acceptance
+    /// is the focus's, else whether its window is UIA's, then the acceptance
     /// test against the foreground window, and only then the event's own
     /// handling (`IUIAutomationPropertyChangedEventHandler_HandlePropertyChangedEvent`
-    /// and its siblings, `source/UIAHandler/__init__.py`).
+    /// and its siblings, `source/UIAHandler/__init__.py`). Verbatim makes
+    /// the window's UIA test for the focus's own events too, where NVDA
+    /// skips it; the focus's window passed it when the focus was taken, so
+    /// the outcome is the same.
     fn uia_event(&mut self, event: UiaEvent, trace: TraceId, observed_at_ms: u64) {
         let element = event
             .element
@@ -2117,7 +2121,9 @@ impl Worker<'_> {
         };
         // NVDA neither arbitrates nor tests a notification against the
         // foreground: it is spoken only from the focus's application, which
-        // Core judges. A terminal's were ignored by the listener
+        // Core judges. NVDA's app module does drop one whose element has no
+        // window above it, which is not ported yet (roadmap, the audits'
+        // items). A terminal's were ignored by the listener
         // (`verbatim_uia::map::ignores_notifications`).
         if !matches!(event.kind, UiaKind::Notification(_)) {
             if let Some(hwnd) = hwnd
@@ -2687,8 +2693,11 @@ impl Worker<'_> {
         }
         // A control taking the focus raised focus on itself and then on its
         // focused child, and the control's event was already reported as
-        // the child (`verbatim_ia2::acquire::focus_candidate`): NVDA handles
-        // the two together and reports the child once.
+        // the child (`verbatim_ia2::acquire::focus_candidate`): NVDA reports
+        // the child once when the two events fall in one of its pumps,
+        // trying them newest first; when the child's comes in a later pump,
+        // NVDA reports the control and then the child (`docs/parity.md`,
+        // "A control's own focus with a focused child").
         if self
             .context
             .intake
@@ -2734,7 +2743,7 @@ impl Worker<'_> {
         // NVDA accepts an MSAA focus only when the object or one of its
         // ancestors has the focused state (`shouldAllowIAccessibleFocusEvent`),
         // which weeds out stale and spurious focus events. It checks the
-        // states first, reading them live, before anything else.
+        // states after the duplicate test, reading them live.
         if !candidate.has_focused_state(read::MAX_ANCESTOR_HOPS) {
             tracing::debug!(
                 hwnd,
@@ -2947,9 +2956,11 @@ impl Worker<'_> {
 
     /// A menu opening, handled after the batch's focus events, as NVDA's
     /// MSAA handler does. Ignored when a focus reported in the same batch
-    /// already put focus on a menu or menu item, when the window belongs to
-    /// UIA (NVDA does not use MSAA objects proxied from native UIA), or when
-    /// its object is not a popup menu; otherwise it becomes a focus on the
+    /// already put focus on a menu or menu item (NVDA's condition is a
+    /// valid focus in its pump, a duplicate included, while its last
+    /// queued focus is a menu or menu item), when the window belongs to UIA
+    /// (NVDA does not use MSAA objects proxied from native UIA), or when its
+    /// object is not a popup menu; otherwise it becomes a focus on the
     /// popup menu.
     fn menu_opened(&mut self, entry: &Entry) {
         if let Item::Fact(DeliveredFact::UiaMenuOpened { hwnd, snapshot }, _) = &entry.item {
@@ -3021,8 +3032,11 @@ impl Worker<'_> {
     }
 
     /// A UIA menu opening, which NVDA treats as a focus on the menu unless a
-    /// focus is already pending: ignored when a focus was reported in the same
-    /// batch, or when the window does not belong to UIA.
+    /// focus is already pending, then subject to its plain keyboard focus
+    /// read. Verbatim handles it after the batch, as an MSAA menu opening,
+    /// and ignores it when a focus was reported in the same batch, or when
+    /// the window does not belong to UIA; NVDA's keyboard focus read is not
+    /// made yet (roadmap, the audits' items).
     fn uia_menu_opened(&mut self, fact_hwnd: isize, parts: &UiaSnapshotFact, entry: &Entry) {
         if self.context.tracking().batch == Some(self.batch) {
             return;
