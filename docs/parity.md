@@ -447,18 +447,32 @@ verified.
   front some 400 ms after its text area's focus is still to be captured.
 - A File Explorer folder window opening, as `explorer_folder_window`
   opens it (launched without the foreground right, then brought forward).
-  NVDA, captured ten times so (2026-10-12), says the window's title,
-  "pane", "Items View list", and the first item in nine, and leaves out
-  "pane" in one. Its "pane" comes from MSAA focus events on the items
-  view's window that File Explorer raises while the window is still
-  behind: NVDA queues them and, in those captures, processed them some
-  600 ms later, after the window had come in front, so they passed its
-  acceptance test. It is NVDA's own delay racing the window's activation,
-  not a rule. Verbatim judges an MSAA focus as it is handled, when the
+  NVDA alpha-58022, captured 29 times so (2026-10-12), says the window's
+  title, "Items View list", and the first item in 27, and "pane" before
+  "Items View list" in 2. Its "pane" comes from MSAA focus events on the
+  items view's window that File Explorer raises while the window is
+  still behind: NVDA queues them and, when it processes them only after
+  the window has come in front, they pass its acceptance test. It is
+  NVDA's own delay racing the window's activation, not a rule; the older
+  alpha-57645 said "pane" in nine of ten, since its event processing
+  was slower. Verbatim judges an MSAA focus as it is handled, when the
   window is still behind, drops those events, and says the title, "Items
-  View list", and the first item every time. **differs (decided)**:
-  Dickson, 2026-10-12, keeps Verbatim's deterministic result, and the
-  scenario asserts it.
+  View list", and the first item. **matched** in what is said in the
+  usual case; **different** in NVDA's rare "pane" (Dickson, 2026-10-12,
+  keeps Verbatim's deterministic result, and the scenario asserts it).
+  NVDA also says the folder's tab, "<folder> tab selected 1 of 1", after
+  the item in 16 of the 29: File Explorer's app module speaks a tab of
+  the tab list (automation id "TabListView") when its element-selected
+  event comes with no second one pending (`appModules/explorer.py`,
+  `event_UIA_elementSelected`, NVDA #14388), which only some openings
+  meet. **Not yet:** that rule belongs to the app-module porting track.
+  Verbatim said "pane" in place of "Items View list", in 2 of 29
+  openings: its focus listener took a UIA focus event on the items
+  view's own window element, raised just before the first item's, and
+  read it before its content was ready, as an unnamed pane; the item's
+  focus then had that element as its previous focus, not an entered
+  container. NVDA received no such event in 30 openings. To be
+  investigated before `explorer_folder_window` can be counted on.
 - The desktop's announcement. NVDA, starting with the desktop focused,
   and after Escape from Verbatim's settings dialog back to the desktop,
   says "Desktop list" and the focused icon, such as "NVDA 3 of 12", and
