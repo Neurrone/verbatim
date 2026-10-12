@@ -559,6 +559,14 @@ Other open items, taken after the steps above unless they fold into one:
   inside UI Automation, not investigated (no dumps kept then). Removed by
   the terminal redesign, which drops `FindText`
   (`docs/design/terminal-reading.md`, corrections of 2026-10-11).
+- File Explorer's folder window is sometimes announced with "pane" where
+  NVDA says "Items View list" (`explorer_folder_window`, 2 of 29 openings
+  on 2026-10-12, and twice more in that day's scenario runs): the
+  listener receives a UIA focus on the items view's DirectUIHWND window
+  element, read as an unnamed pane before its native provider is ready.
+  In 20 openings with NVDA running, neither NVDA nor a bare UIA client
+  received such an event, and in 20 with Verbatim running, neither did a
+  bare client nor Verbatim's listener. Not yet explained.
 - A terminal read that comes back unsettled still marks every change
   observed before it began as covered, so a change queued behind it is
   skipped and, when the program has finished writing, the rest of its
