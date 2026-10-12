@@ -427,6 +427,14 @@ impl FocusCandidate {
         self.key
     }
 
+    /// The child id of the object acquired, as `AccessibleObjectFromEvent`
+    /// returned it: greater than 0 for a simple child of its parent, 0 for
+    /// a full object, even one an event named by a negative unique id.
+    #[must_use]
+    pub fn resolved_child(&self) -> i32 {
+        self.acc.child()
+    }
+
     /// Whether the object or one of its ancestors has the focused state,
     /// NVDA's `shouldAllowIAccessibleFocusEvent`, which weeds out stale and
     /// spurious focus events: the object's own state first, then each

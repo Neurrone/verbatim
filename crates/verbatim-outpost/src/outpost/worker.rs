@@ -300,6 +300,10 @@ pub(super) struct Tracking {
     /// focus may then have been elsewhere meanwhile, so a focus event that
     /// repeats it is not a duplicate.
     foreground_since_focus: bool,
+    /// Whether the last MSAA focus reported was a simple child, by the
+    /// child id its object was acquired with: a child id can be reused, so
+    /// a focus event at its address is never a duplicate of it.
+    focus_was_simple_child: bool,
     /// The dialog the last foreground report gathered text for, which the
     /// focus that follows it reuses.
     dialog: read::DialogMemo,
@@ -2704,13 +2708,16 @@ impl Worker<'_> {
             return;
         };
         // NVDA drops a focus event naming the address of the focus it last
-        // queued, unless that focus was a child by id, whose id can be
-        // reused (`isDuplicateIAccessibleEvent`), before reading anything
-        // of it. The focus may have been in another application since a
-        // foreground change, which this outpost does not see, so a focus
-        // after one is never a duplicate.
+        // queued, after acquiring the object and making the list redirect,
+        // unless that last focus was a simple child, by the child id its
+        // object was acquired with, whose id can be reused
+        // (`isDuplicateIAccessibleEvent`, `IAccessibleChildID > 0`). The
+        // focus may have been in another application since a foreground
+        // change, which this outpost does not see, so a focus after one is
+        // never a duplicate.
         let (address_hwnd, address_object, address_child) = candidate.key();
-        let repeated = address_child == CHILDID_SELF
+        let resolved_child = candidate.resolved_child();
+        let repeated = !self.context.tracking().focus_was_simple_child
             && !self.context.tracking().foreground_since_focus
             && self.context.intake.focused()
                 == Some(Object::Msaa(address_hwnd, address_object, address_child));
@@ -2758,8 +2765,11 @@ impl Worker<'_> {
             object.clone(),
             enrichment,
         );
-        if redirected && self.context.intake.focused() == object {
-            self.context.intake.set_focus_redirected();
+        if self.context.intake.focused() == object {
+            self.context.tracking().focus_was_simple_child = resolved_child > 0;
+            if redirected {
+                self.context.intake.set_focus_redirected();
+            }
         }
     }
 

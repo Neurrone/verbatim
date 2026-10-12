@@ -238,6 +238,53 @@ fn a_controls_own_focus_reports_its_focused_child() {
     app.quit();
 }
 
+/// An MSAA focus event at the address of the focus last reported is a
+/// duplicate, dropped, when that focus was a full object, and reported
+/// again when it was a simple child, whose child id can be reused, as
+/// NVDA's `isDuplicateIAccessibleEvent` judges by the last focus's own
+/// child id. Both events are raised before the outpost is made, so its own
+/// hook has neither.
+fn a_repeated_msaa_focus_is_a_duplicate_only_of_a_full_object() {
+    let title = common::unique_title("mockapp-msaa-duplicate");
+    let mut app = common::spawn("small.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    // The button is node 1, after the root, so its object id is 2.
+    let button = DeliveredFact::MsaaFocus {
+        hwnd: hwnd.0 as isize,
+        id_object: 2,
+        id_child: 0,
+    };
+    common::apply(&mut app, hwnd, "set-focus btn1");
+    let outpost = OutpostUnderTest::new(&app);
+    let reported = outpost.focus(button.clone());
+    assert_eq!(reported.node.role, Role::Button);
+    outpost.deliver(button);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+
+    let title = common::unique_title("mockapp-msaa-child-repeat");
+    let mut app = common::spawn("focus_child.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    // The tree is node 1, so its object id is 2; General is child 1.
+    let general = DeliveredFact::MsaaFocus {
+        hwnd: hwnd.0 as isize,
+        id_object: 2,
+        id_child: 1,
+    };
+    common::apply(&mut app, hwnd, "focus-child categories general");
+    let outpost = OutpostUnderTest::new(&app);
+    for _ in 0..2 {
+        let reported = outpost.focus(general.clone());
+        assert_eq!(
+            (reported.node.role, reported.node.name.as_deref()),
+            (Role::TreeItem, Some("General"))
+        );
+    }
+    drop(outpost);
+    app.quit();
+}
+
 /// A UIA focus event whose element has lost the keyboard focus to another
 /// element by the time the listener reads it is dropped, as NVDA's
 /// `shouldAllowUIAFocusEvent` drops it, and the outpost says nothing for
@@ -836,6 +883,10 @@ fn a_focus_s_help_text_and_suggestions_are_followed() {
 
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_repeated_msaa_focus_is_a_duplicate_only_of_a_full_object",
+            a_repeated_msaa_focus_is_a_duplicate_only_of_a_full_object,
+        ),
         (
             "a_focus_s_help_text_and_suggestions_are_followed",
             a_focus_s_help_text_and_suggestions_are_followed,
