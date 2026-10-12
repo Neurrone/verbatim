@@ -1628,6 +1628,15 @@ finds it.
   (`verbatim_uia::map::cached_ignores_notifications`), whatever its
   activity id, as NVDA's terminal overlays ignore them, or output would
   be spoken twice.
+- A UIA selection or notification goes, like a focus event, through its
+  application's reading thread behind a marker
+  (`DeliveredFact::UiaMarked` takes the marker's place in the intake):
+  for a sender that is not a window, the thread walks up to its nearest
+  window, one call, as NVDA does. A selection whose sender has none is
+  dropped, and the window found is the one the outpost tests the
+  selection's window and acceptance with; a notification whose sender
+  has none is dropped, as NVDA's app module default drops it, but for the
+  shell's window snap results.
 - A UIA notification waiting in the listener or the intake is replaced
   by a newer one from the same element with the same kind, processing,
   and activity id, whatever its text, as NVDA's UIA limiter keys one.

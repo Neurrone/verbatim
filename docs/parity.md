@@ -1030,7 +1030,13 @@ verified.
   set only for a focus it queues (mockapp's
   `a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is`). Not tested, as in NVDA: notifications (spoken only from the
   focus's application, which Core judges) and the active text position;
-  Verbatim's own, kept: a text focus's caret and text changes. UIA's MSAA
+  but since 2026-10-12 a notification whose sender has no window above it
+  is dropped, as NVDA's app module default drops it (the shell's window
+  snap results excepted, as File Explorer's app module lets them
+  through), and a windowless selection is tested with its nearest window,
+  both found by the focus listener's reading thread
+  (`FocusReader::check_fact`); a text focus's caret and text changes are
+  tested, as NVDA's automation event handler tests them. UIA's MSAA
   proxy is told never to raise, from `WinEvent`s, the UIA events Verbatim
   subscribes to, as NVDA's `ignoreWinEventsMap` tells it (issue 7345);
   focus changes keep their mapping, as in NVDA.

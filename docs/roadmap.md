@@ -236,8 +236,9 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    6. Every code comment the audits found wrong about NVDA, corrected.
    7. UIA menu openings, selections, and notifications through the
       listener's reading threads: NVDA's nearest window, native check,
-      and, for a menu, its plain keyboard focus read and ancestors (menu
-      openings done, 2026-10-12).
+      and, for a menu, its plain keyboard focus read and ancestors (done,
+      2026-10-12; NVDA's Voice Access app module, which lets every
+      notification through, is for the app-module track).
    8. One duplicate test and one acceptance test per focus, where NVDA
       makes them; Core's extra node-id duplicate rule and its second
       acceptance test narrowed to what NVDA does.

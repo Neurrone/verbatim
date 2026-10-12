@@ -917,8 +917,65 @@ fn a_focus_s_help_text_and_suggestions_are_followed() {
     app.quit();
 }
 
+/// A selection from a windowless element is given its nearest window by
+/// the listener's reading thread, as NVDA walks up to it
+/// (`getNearestWindowHandle`), for the outpost's window and acceptance
+/// tests; a notification from one that has a window above it is passed on
+/// unchanged.
+fn a_windowless_selection_is_given_its_nearest_window() {
+    let title = common::unique_title("mockapp-nearest-window");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus item1");
+    let item = client.focused();
+    let snapshot = || verbatim_outpost::protocol::UiaSnapshotFact {
+        runtime_id: verbatim_uia::runtime_id(&item),
+        role: Role::ListItem,
+        name: None,
+        value: None,
+        states: verbatim_model::StateSet::new(),
+        details: verbatim_model::NodeDetails::default(),
+    };
+    let selection = DeliveredFact::UiaSelection {
+        hwnd: 0,
+        focus_window: 0,
+        snapshot: snapshot(),
+    };
+    match outpost.listener_check(&item, selection) {
+        Judged::Passed(fact) => assert!(
+            matches!(*fact, DeliveredFact::UiaSelection { focus_window, .. } if focus_window == hwnd.0 as isize),
+            "{fact:?}"
+        ),
+        other => panic!("the selection was not passed on: {other:?}"),
+    }
+    let notification = DeliveredFact::UiaNotification {
+        hwnd: 0,
+        snapshot: snapshot(),
+        notification: verbatim_model::Notification {
+            kind: verbatim_model::NotificationKind::Other,
+            processing: verbatim_model::NotificationProcessing::All,
+            display_string: Some("saved".to_owned()),
+            activity_id: None,
+        },
+    };
+    assert!(
+        matches!(outpost.listener_check(&item, notification.clone()), Judged::Passed(fact) if *fact == notification),
+        "the notification passes unchanged"
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_windowless_selection_is_given_its_nearest_window",
+            a_windowless_selection_is_given_its_nearest_window,
+        ),
         (
             "a_menu_opening_is_judged_as_a_focus_on_the_menu",
             a_menu_opening_is_judged_as_a_focus_on_the_menu,

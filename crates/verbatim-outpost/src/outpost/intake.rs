@@ -313,6 +313,17 @@ impl Intake {
     /// focus's read takes its marker's place, and a drop, or the end of the
     /// listener's reads, removes the markers it resolves.
     pub(super) fn push(&self, entry: Entry) {
+        // A marked UIA event takes its marker's place as itself.
+        let (entry, resolved_by_read) = match entry.item {
+            Item::Fact(DeliveredFact::UiaMarked { marker, fact }, stamp) => (
+                Entry {
+                    item: Item::Fact(*fact, stamp),
+                    ..entry
+                },
+                Some(marker),
+            ),
+            item => (Entry { item, ..entry }, None),
+        };
         let (key, category, hwnd) = classify(&entry.item);
         let thread = thread_of(&entry.item);
         let mut state = self.lock();
@@ -344,7 +355,7 @@ impl Intake {
         };
         let resolves = match &entry.item {
             Item::Fact(DeliveredFact::UiaFocusRead { marker, .. }, _) => Some(*marker),
-            _ => None,
+            _ => resolved_by_read,
         };
         if let Some(key) = &key {
             state
@@ -619,6 +630,8 @@ fn notification_key(runtime_id: &[i32], notification: &Notification) -> Key {
 /// outpost's own hook.
 fn classify_fact(fact: &DeliveredFact) -> (Option<Key>, Category, isize) {
     match fact {
+        // Unwrapped as it is pushed (`Intake::push`); as itself otherwise.
+        DeliveredFact::UiaMarked { fact, .. } => classify_fact(fact),
         // Selections and notifications routed from the listener are
         // UIA events, never counted.
         DeliveredFact::UiaSelection { hwnd, snapshot, .. } => (
@@ -1487,6 +1500,35 @@ mod tests {
             "the focus in its marker's place, then the change"
         );
         assert!(!intake.busy());
+    }
+
+    #[test]
+    fn a_marked_selection_takes_its_markers_place_as_itself() {
+        let intake = Intake::default();
+        push_item(&intake, marker(8), 1);
+        push_item(&intake, name_change(3), 2);
+        assert_eq!(
+            handed_out(&intake),
+            Vec::<u64>::new(),
+            "all wait on the marker"
+        );
+        let selection = DeliveredFact::UiaSelection {
+            hwnd: 0,
+            focus_window: 9,
+            snapshot: snapshot(vec![42, 8]),
+        };
+        let marked = DeliveredFact::UiaMarked {
+            marker: 8,
+            fact: Box::new(selection.clone()),
+        };
+        push_item(&intake, Item::Fact(marked, None), 3);
+        let (planned, _) = intake.next().expect("an entry");
+        let entries = planned.entries();
+        assert!(
+            matches!(&entries[0].item, Item::Fact(fact, None) if *fact == selection),
+            "the selection, unwrapped, in its marker's place"
+        );
+        assert_eq!(handed_out(&intake), [2], "then the change");
     }
 
     #[test]

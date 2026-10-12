@@ -2116,6 +2116,10 @@ impl Worker<'_> {
             Some(event.hwnd)
         } else if of_focus {
             self.context.tracking().window
+        } else if event.focus_window != 0 && element.is_none() {
+            // A windowless selection's nearest window, which the listener's
+            // reading thread walked up to (`FocusReader::check_fact`).
+            Some(event.focus_window)
         } else {
             element.as_ref().and_then(nearest_window_handle)
         };
@@ -2407,6 +2411,8 @@ impl Worker<'_> {
             DeliveredFact::UiaFocusMarker { .. }
             | DeliveredFact::UiaFocusDropped { .. }
             | DeliveredFact::UiaFocusReadsEnded => {}
+            // The intake unwraps a marked event as it takes it in.
+            DeliveredFact::UiaMarked { fact, .. } => self.fact(*fact, trace, observed_at_ms),
             DeliveredFact::UiaSelection {
                 hwnd,
                 focus_window,

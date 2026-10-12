@@ -360,7 +360,15 @@ impl OutpostUnderTest {
         match self.listener_read(element).0 {
             read @ Judged::Read(_) => read.into_fact(0),
             Judged::Dropped(reason) => panic!("the listener dropped the focus: {reason}"),
+            Judged::Passed(fact) => panic!("a focus read passed a fact on: {fact:?}"),
         }
+    }
+
+    /// What the focus listener's reading thread makes of `fact`, a
+    /// selection or a notification captured from `element`, as its
+    /// application's thread checks it (`FocusReader::check_fact`).
+    pub fn listener_check(&self, element: &IUIAutomationElement, fact: DeliveredFact) -> Judged {
+        self.reader.borrow_mut().check_fact(element, fact)
     }
 
     /// Makes the outpost's read of the focused element for a focus-now

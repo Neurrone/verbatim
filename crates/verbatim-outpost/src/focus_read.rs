@@ -105,7 +105,7 @@ pub(crate) const READ_DEADLINE: Duration =
 /// in their calls before its focus events are dropped without a read.
 const ABANDONED_LIMIT: usize = 2;
 
-/// The kind of UIA event a reading thread judges as a focus.
+/// The kind of UIA event a reading thread takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FocusEvent {
     /// A focus change (`HandleFocusChangedEvent`).
@@ -115,6 +115,12 @@ pub enum FocusEvent {
     /// (`IUIAutomationEventHandler_HandleAutomationEvent`,
     /// `UIAHandler/__init__.py` 757 to 868).
     MenuOpened,
+    /// An element selected, judged by its sender's nearest window
+    /// ([`FocusReader::check_fact`]).
+    Selection,
+    /// A notification, judged by its sender's nearest window
+    /// ([`FocusReader::check_fact`]).
+    Notification,
 }
 
 /// What became of one focus event.
@@ -124,6 +130,9 @@ pub enum Judged {
     Read(Box<UiaFocusRead>),
     /// Not reported, for the reason given.
     Dropped(&'static str),
+    /// A selection or notification that passed its checks, to be passed on
+    /// as it now stands ([`FocusReader::check_fact`]).
+    Passed(Box<DeliveredFact>),
 }
 
 impl Judged {
@@ -133,6 +142,7 @@ impl Judged {
         match self {
             Judged::Read(read) => DeliveredFact::UiaFocusRead { marker, read },
             Judged::Dropped(_) => DeliveredFact::UiaFocusDropped { marker },
+            Judged::Passed(fact) => DeliveredFact::UiaMarked { marker, fact },
         }
     }
 }
@@ -362,6 +372,68 @@ impl FocusReader {
                     same_as_last: None,
                 }))
             }
+        }
+    }
+
+    /// What NVDA checks of a selection's or a notification's sender,
+    /// `element`, before it handles one, here where a cross-process call
+    /// may be made: for a sender that is not a window, its nearest window,
+    /// one call (`getNearestWindowHandle`). A selection whose sender has
+    /// none is dropped, as NVDA's object for it could not be made, and one
+    /// found is the window the outpost tests the selection's window and
+    /// acceptance with, as NVDA tests them with the nearest window
+    /// (`HandleAutomationEvent`, `UIAHandler/__init__.py` 819 to 855). A
+    /// notification whose sender has none is dropped, as the app module
+    /// default drops it (`shouldProcessUIANotificationEvent`,
+    /// `appModuleHandler.py` 842 to 845), unless it is the shell's window
+    /// snap results, which File Explorer's app module lets through
+    /// (`appModules/explorer.py` 519 to 535). A sender that is a window
+    /// takes no call.
+    pub fn check_fact(&mut self, element: &IUIAutomationElement, fact: DeliveredFact) -> Judged {
+        match fact {
+            DeliveredFact::UiaSelection {
+                hwnd,
+                focus_window: _,
+                snapshot,
+            } => {
+                let nearest = if hwnd == 0 {
+                    match verbatim_uia::nearest_window_handle(element) {
+                        Some(nearest) => nearest,
+                        None => {
+                            return Judged::Dropped(
+                                "it has no window above it, so NVDA makes no object for it",
+                            );
+                        }
+                    }
+                } else {
+                    0
+                };
+                Judged::Passed(Box::new(DeliveredFact::UiaSelection {
+                    hwnd,
+                    focus_window: nearest,
+                    snapshot,
+                }))
+            }
+            DeliveredFact::UiaNotification {
+                hwnd,
+                snapshot,
+                notification,
+            } => {
+                let snap_results = notification.activity_id.as_deref()
+                    == Some(verbatim_core::SNAP_RESULTS_ACTIVITY);
+                if hwnd == 0
+                    && !snap_results
+                    && verbatim_uia::nearest_window_handle(element).is_none()
+                {
+                    return Judged::Dropped("its sender has no window above it");
+                }
+                Judged::Passed(Box::new(DeliveredFact::UiaNotification {
+                    hwnd,
+                    snapshot,
+                    notification,
+                }))
+            }
+            other => Judged::Passed(Box::new(other)),
         }
     }
 

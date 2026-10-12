@@ -14,7 +14,11 @@
 //!   ([`crate::focus_read`]);
 //! - desktop-wide UIA subscriptions for some of the events NVDA registers
 //!   globally on Windows 11: an element selected, a menu opened, and
-//!   notifications. NVDA's global group also takes live regions, selection
+//!   notifications, each taken, as a focus event is, through its
+//!   application's reading thread behind a marker, the menu opening judged
+//!   and read as a focus, a selection and a notification checked by their
+//!   sender's nearest window (`FocusReader::check_fact`), so all keep the
+//!   order they came in. NVDA's global group also takes live regions, selection
 //!   added and removed, range values, windows and tool tips opened, system
 //!   alerts, layout invalidation, drag and drop, and the active text
 //!   position, which Verbatim does not yet subscribe to (`docs/parity.md`,
@@ -353,12 +357,14 @@ struct UiaFocusReading {
 impl Reading for UiaFocusReading {
     /// The event's element, its application's keyboard focus window when
     /// it arrived, for an element that is not a window, its runtime id
-    /// from the event's cache, and the kind of event.
+    /// from the event's cache, the kind of event, and, for a selection or a
+    /// notification, the fact captured from it.
     type Job = (
         AgileReference<IUIAutomationElement>,
         isize,
         Vec<i32>,
         FocusEvent,
+        Option<DeliveredFact>,
     );
     type Reader = FocusReader;
 
@@ -375,19 +381,25 @@ impl Reading for UiaFocusReading {
     fn read(
         &self,
         reader: Option<&mut FocusReader>,
-        (element, focus_window, _, kind): Self::Job,
+        (element, focus_window, _, kind, fact): Self::Job,
     ) -> Judged {
         let Some(reader) = reader else {
             return Judged::Dropped("its reading thread has no UIA client");
         };
-        match element.resolve() {
-            Ok(element) => reader.read(&element, focus_window, kind),
-            Err(_) => Judged::Dropped("its element could not be resolved"),
+        match (element.resolve(), fact) {
+            (Ok(element), Some(fact)) => reader.check_fact(&element, fact),
+            (Ok(element), None) => reader.read(&element, focus_window, kind),
+            (Err(_), _) => Judged::Dropped("its element could not be resolved"),
         }
     }
 
-    fn key<'a>(&self, (_, _, runtime_id, kind): &'a Self::Job) -> Option<(FocusEvent, &'a [i32])> {
-        Some((*kind, runtime_id))
+    fn key<'a>(
+        &self,
+        (_, _, runtime_id, kind, _): &'a Self::Job,
+    ) -> Option<(FocusEvent, &'a [i32])> {
+        // A notification is replaced only by one of the same kind,
+        // processing, and activity, as the intake replaces it.
+        (*kind != FocusEvent::Notification).then_some((*kind, runtime_id.as_slice()))
     }
 
     fn finish(&self, reader: Option<FocusReader>) {
@@ -467,6 +479,7 @@ impl Listener {
         ));
         let registration = install_desktop_subscriptions(
             &outgoing,
+            &readers,
             focus_subscription(&outgoing, &readers),
             menu_subscription(&outgoing, &readers),
         );
@@ -600,7 +613,7 @@ fn focus_subscription(
     let outgoing = Arc::clone(outgoing);
     let readers = Arc::clone(readers);
     let callback = Arc::new(move |element: &IUIAutomationElement| {
-        queue_for_reading(&outgoing, &readers, element, FocusEvent::Focus);
+        queue_for_reading(&outgoing, &readers, element, FocusEvent::Focus, None);
     });
     Subscription::Focus { callback }
 }
@@ -623,19 +636,22 @@ fn menu_subscription(
                 tracing::debug!("UIA menu opening dropped: a focus is pending");
                 return;
             }
-            queue_for_reading(&outgoing, &readers, element, FocusEvent::MenuOpened);
+            queue_for_reading(&outgoing, &readers, element, FocusEvent::MenuOpened, None);
         }),
     }
 }
 
 /// Queues the UIA event `kind` whose sender is `element`, a cached element
 /// from the registration's base cache request, for its application's
-/// reading thread, after sending its marker. Makes no cross-process call.
+/// reading thread, after sending its marker; `fact`, for a selection or a
+/// notification, is what was captured from it. Makes no cross-process
+/// call.
 fn queue_for_reading(
     outgoing: &Outgoing,
     readers: &Readers<UiaFocusReading>,
     element: &IUIAutomationElement,
     kind: FocusEvent,
+    fact: Option<DeliveredFact>,
 ) {
     let Some(pid) = cached_process_id(element).filter(|&pid| pid != 0).map(Pid) else {
         return;
@@ -666,7 +682,7 @@ fn queue_for_reading(
         meta,
     );
     match AgileReference::new(element) {
-        Ok(agile) => readers.push(pid, meta, (agile, focus_window, runtime_id, kind)),
+        Ok(agile) => readers.push(pid, meta, (agile, focus_window, runtime_id, kind, fact)),
         Err(error) => {
             tracing::warn!(%error, "a UIA focus's element could not be kept for its read");
             outgoing.focus_read(
@@ -695,31 +711,39 @@ fn queue_for_reading(
 /// own.
 fn install_desktop_subscriptions(
     outgoing: &Arc<Outgoing>,
+    readers: &Arc<Readers<UiaFocusReading>>,
     focus: Subscription,
     menu: Subscription,
 ) -> Option<Registration> {
+    // A selection and a notification go through their application's
+    // reading thread, behind a marker, for NVDA's checks of their sender's
+    // nearest window (`FocusReader::check_fact`), in the order they came
+    // with the focus events.
     let selection_outgoing = Arc::clone(outgoing);
+    let selection_readers = Arc::clone(readers);
     let selection = Subscription::Event {
         event: UIA_SelectionItem_ElementSelectedEventId,
         callback: Arc::new(move |element: &IUIAutomationElement| {
             // A cached element from the registration's cache request.
-            if let Some((pid, hwnd, snapshot)) = capture(element) {
-                let focus_window = focus_window_for(pid, hwnd);
-                selection_outgoing.fact(
-                    pid,
-                    DeliveredFact::UiaSelection {
-                        hwnd,
-                        focus_window,
-                        snapshot,
-                    },
-                    None,
-                    None,
+            if let Some((_, hwnd, snapshot)) = capture(element) {
+                let fact = DeliveredFact::UiaSelection {
+                    hwnd,
+                    focus_window: 0,
+                    snapshot,
+                };
+                queue_for_reading(
+                    &selection_outgoing,
+                    &selection_readers,
+                    element,
+                    FocusEvent::Selection,
+                    Some(fact),
                 );
             }
         }),
     };
 
     let notification_outgoing = Arc::clone(outgoing);
+    let notification_readers = Arc::clone(readers);
     let notifications = Subscription::Notifications {
         callback: Arc::new(
             move |element: &IUIAutomationElement,
@@ -730,22 +754,23 @@ fn install_desktop_subscriptions(
                 if verbatim_uia::map::cached_ignores_notifications(element) {
                     return;
                 }
-                if let Some((pid, hwnd, snapshot)) = capture(element) {
+                if let Some((_, hwnd, snapshot)) = capture(element) {
                     let notification = Notification {
                         kind: notification_kind_from_uia(kind),
                         processing: notification_processing_from_uia(processing),
                         display_string,
                         activity_id,
                     };
-                    notification_outgoing.fact(
-                        pid,
-                        DeliveredFact::UiaNotification {
+                    queue_for_reading(
+                        &notification_outgoing,
+                        &notification_readers,
+                        element,
+                        FocusEvent::Notification,
+                        Some(DeliveredFact::UiaNotification {
                             hwnd,
                             snapshot,
                             notification,
-                        },
-                        None,
-                        None,
+                        }),
                     );
                 }
             },

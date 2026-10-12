@@ -279,19 +279,27 @@ pub enum DeliveredFact {
         /// The event's `idChild`.
         id_child: i32,
     },
+    /// A UIA event the focus listener took to its application's reading
+    /// thread for NVDA's checks of its sender (a selection's or a
+    /// notification's nearest window), behind marker `marker`: what the
+    /// thread found, which takes the marker's place in the outpost's
+    /// intake as a focus's read does.
+    UiaMarked {
+        /// The marker this resolves.
+        marker: u64,
+        /// The event, as the reading thread passed it.
+        fact: Box<DeliveredFact>,
+    },
     /// A UIA element selected within its container
     /// (`SelectionItem_ElementSelected`).
     UiaSelection {
         /// The element's cached native window handle, or 0.
         hwnd: isize,
-        /// For an element that is not a window: the foreground thread's
-        /// keyboard focus window when the listener captured the event, if it
-        /// belongs to the element's process, else 0. When the event is
-        /// current it is the window hosting a windowless element, such as
-        /// Explorer's items view, read locally where NVDA walks up to the
-        /// element's nearest window; for a late event in an application
-        /// with several windows it may be another of them. The window the
-        /// outpost tests the selection's acceptance with.
+        /// For an element that is not a window: its nearest window, which
+        /// the listener's reading thread walked up to as NVDA does
+        /// (`getNearestWindowHandle`), else 0. The window the outpost tests
+        /// the selection's window and acceptance with, as NVDA tests them
+        /// with the nearest window.
         #[serde(default)]
         focus_window: isize,
         /// The selected element's cached snapshot parts.
@@ -444,7 +452,8 @@ impl DeliveredFact {
             DeliveredFact::UiaFocusMarker { .. }
             | DeliveredFact::UiaFocusRead { .. }
             | DeliveredFact::UiaFocusDropped { .. }
-            | DeliveredFact::UiaFocusReadsEnded => return None,
+            | DeliveredFact::UiaFocusReadsEnded
+            | DeliveredFact::UiaMarked { .. } => return None,
             DeliveredFact::UiaNotification {
                 snapshot,
                 notification,
