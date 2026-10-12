@@ -2301,11 +2301,15 @@ verified.
   output's last (matched). A footer below a scroll region that a flood
   scrolls above, redrawn unchanged during the flood and changed after it,
   captured the same day: both say the footer, "status: busy", when it is
-  drawn; for the flood NVDA, with no flood policy, said lines 35 to 38, 98
-  to 100 and "status: done" in the console host, and lines 2 to 100 and
-  "done" in Windows Terminal; Verbatim applies the flood policy (lines 1
-  to 30, "skipped 41 lines", lines 72 to 100) and says the footer only as
-  it changed, "done", in both (**different**: the flood policy).
+  drawn; for the flood NVDA alpha-57645, with no flood policy, said lines
+  35 to 38, 98 to 100 and "status: done" in the console host, and lines 2
+  to 100 and "done" in Windows Terminal, leaving lines out as that build
+  did; NVDA alpha-58022, which speaks every new line (the floods replayed
+  on 2026-10-12, `docs/design/terminal-reading.md`, "Known weaknesses"),
+  is still to be captured on this script. Verbatim applies the flood
+  policy (lines 1 to 30, "skipped 41 lines", lines 72 to 100) and says
+  the footer only as it changed, "done", in both (**different**: the
+  flood policy).
 
   Two windows of each terminal and two tabs of Windows Terminal, captured
   live from NVDA on 2026-10-09 (an alpha build, alpha-57645). Switching to

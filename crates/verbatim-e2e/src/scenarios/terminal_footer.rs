@@ -32,10 +32,12 @@
 //! when the footer was no longer on its row, and the view moves under
 //! nearly every read of such a flood, so it went unread until it ended.
 //!
-//! NVDA, captured live on 2026-10-09 with the same script, said "status:
-//! busy" too, then, having no flood policy, lines 35 to 38, 98 to 100 and
-//! "status: done" in the console host, and lines 2 to 100 and "done" in
-//! Windows Terminal (`docs/parity.md`, "New terminal output").
+//! NVDA alpha-57645, captured live on 2026-10-09 with the same script,
+//! said "status: busy" too, then, having no flood policy, lines 35 to 38,
+//! 98 to 100 and "status: done" in the console host, and lines 2 to 100
+//! and "done" in Windows Terminal, leaving lines out as that build did;
+//! NVDA alpha-58022 speaks every new line and is still to be captured on
+//! this script (`docs/parity.md`, "New terminal output").
 
 use std::io;
 use std::time::Duration;
