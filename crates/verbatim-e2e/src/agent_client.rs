@@ -43,9 +43,10 @@ pub const CONTROL_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 /// Read timeout of a control-plane tunnel once it is subscribed to frames:
 /// how often a reader waiting for speech or events gets the chance to
 /// check its own deadline for what it waits for. A read that times out is
-/// not a failure by itself. Set by the speech collector and by
-/// `Scenario::subscribe_events` after their subscribe request, whose reply
-/// is read with [`CONTROL_REPLY_TIMEOUT`].
+/// not a failure by itself. Set by `Scenario::subscribe_events` after its
+/// subscribe request, whose reply is read with [`CONTROL_REPLY_TIMEOUT`].
+/// The speech collector sets none: its reader thread's read ends when a
+/// frame arrives or the collector shuts the connection down.
 pub const CONTROL_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Bounds every reply and write on the agent's own protocol for a request

@@ -794,7 +794,12 @@ matches assertions against queue-time frames only, then waits for the
 matched utterance's ending. The rendered timeline records all three, the
 start as an `audio` line and the ending as a `completed`, `cancelled`, or
 `failed` line (with the reason), so a failure readout shows real audio
-timing and how each utterance ended. An assertion that fails because its
+timing and how each utterance ended. Each frame is recorded when it
+reaches the harness, by a thread that reads the speech connection
+throughout, so its time is true even while the scenario waits on the
+agent; before that thread, frames that arrived during a slow request,
+such as a window brought forward, were recorded only when the request
+was answered. An assertion that fails because its
 utterance was cancelled usually means something cut it off: a key press
 (injected keys included), a new foreground window, entering a menu, a
 focus change that left the focus it announced, or interrupting speech;
@@ -1139,6 +1144,13 @@ took the foreground a moment after the `false` answer, which the harness
 had already failed on. A window restored from minimized and set as the
 foreground is in front when `SetForegroundWindow` returns (37 of 37,
 measured 2026-10-09), so `SetForeground` reads the foreground then.
+Every `SetForeground` logs a "bring forward steps" line at info, with the
+window's title and when each step finished from the call's start (the
+minimize requested and observed, the restore, and
+`SetForegroundWindow`'s answer), so a slow switch can be explained. Over
+148 switches in 50 runs of `conhost_leave_flood` on 2026-10-11 the whole
+switch took 150 to 282 milliseconds, and once 1.4 seconds; a scenario
+that switches while speech plays must give the switch that long.
 `phase6-design.md`, "Test isolation and the foreground lock (2026-10-08)",
 has the evidence.
 
