@@ -117,6 +117,8 @@ features = [
     "Storage_Streams",
     "UI_UIAutomation",
     "UI_UIAutomation_Core",
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",
     "Win32_Foundation",
     "Win32_Globalization",
     "Win32_Graphics_Dwm",

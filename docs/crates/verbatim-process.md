@@ -48,6 +48,19 @@ Public API:
   each value must be an inherited pipe handle the process owns and nothing
   else uses, which no check can prove. `verbatim-synth-host` and the
   outpost binary use it.
+- `overlapped` (`docs/design/communication.md`, sections 4 and 6) —
+  `pipe(flow, buffer, other)` makes a pipe with no name, as the standard
+  library makes its child pipes (`NtCreateNamedPipeFile` on the named
+  pipe file system's root with an empty name, the other end opened
+  relative to the first with `NtOpenFile`): Verbatim's end overlapped,
+  the other end overlapped or synchronous as `End` says, neither
+  inheritable. `Port` is an I/O completion port: `associate(handle,
+  key)` joins a handle and skips the port for operations that complete at
+  once, `post(key)` wakes the waiting thread, and `wait` takes
+  completions into `Completions`. `PipeIo` is one operation slot, a read
+  or a write at a time, whose `OVERLAPPED` and buffer stay put, untouched
+  and not freed, while its operation is in flight. Nothing uses it yet:
+  the floor benchmark and then the transport will.
 - `scheduling` (Dickson's decision of 2026-10-08;
   `docs/design/communication.md`, section 6.1) —
   `opt_out_of_power_throttling()` opts the process out of execution-speed
