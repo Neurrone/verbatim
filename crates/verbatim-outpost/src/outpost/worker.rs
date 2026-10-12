@@ -2723,6 +2723,12 @@ impl Worker<'_> {
         else {
             return;
         };
+        // The listener took the focus only because its window uses UIA
+        // (section 18): this outpost keeps that verdict for the window, so
+        // the two decide the window alike and it is not probed again.
+        if let Some(window) = read.window {
+            context.arbitrator().record_probe(window, true);
+        }
         let runtime_id = &read.snapshot.runtime_id;
         if read.same_as_last == Some(false) {
             tracing::debug!(
@@ -2814,7 +2820,10 @@ impl Worker<'_> {
     }
 
     /// The window a UIA focus is reported in, or [`Dropped`] when the focus
-    /// is in Core's hidden frame or in a window MSAA owns.
+    /// is in Core's hidden frame. Whether the window uses UIA was decided
+    /// by the listener before it took the focus, as NVDA decides it before
+    /// it takes one (`isNativeUIAElement`; `docs/design/focus-pipeline.md`,
+    /// section 18), and is not decided again here.
     fn uia_focus_window(
         &self,
         (fact_hwnd, focus_window): (isize, isize),
@@ -2834,13 +2843,6 @@ impl Worker<'_> {
         };
         let judged = reported.or_else(|| focus_window_of(self.context.target_pid));
         if judged.is_some_and(window_belongs_to_hidden_frame) {
-            return Err(Dropped);
-        }
-        if let Some(hwnd) = judged
-            && !read::window_uses_uia(self.context, hwnd)
-        {
-            // MSAA owns this window; its MSAA fact reports the focus.
-            tracing::debug!(hwnd, "UIA focus dropped: MSAA owns the window");
             return Err(Dropped);
         }
         Ok(reported)

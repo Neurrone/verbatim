@@ -89,8 +89,8 @@ impl Client {
 /// it starts, which is run again without it, one call more. Classically,
 /// the read makes five calls: the focus's keyboard focus, the earlier
 /// element's, the focus's own cache, and two hops up to an ancestor of the
-/// focus before, with its window. The repeated focus makes the comparison
-/// and the keyboard focus read alone.
+/// focus before, with its window. The repeated focus makes the nearest
+/// window, the comparison, and the keyboard focus read alone.
 fn reused_runtime_id(remote: bool) {
     let path = if remote { "remote" } else { "classic" };
     let gone_cost = if remote { 6 } else { 9 };
@@ -132,7 +132,7 @@ fn reused_runtime_id(remote: bool) {
         matches!(judged, Judged::Dropped(_)),
         "{path}: the repeated focus is dropped, not {judged:?}"
     );
-    assert_eq!(calls.uia, 2, "{path}: the calls the repeated focus made");
+    assert_eq!(calls.uia, 3, "{path}: the calls the repeated focus made");
     outpost.deliver(judged.into_fact(0));
     outpost.settled();
 
@@ -636,9 +636,10 @@ fn a_foreground_event_for_a_window_read_through_uia_is_dropped() {
 /// A focus event repeated on the element the listener last accepted, which
 /// still has the keyboard focus, is dropped before anything of it is read,
 /// as NVDA's duplicate rule drops it (`docs/design/focus-pipeline.md`,
-/// section 16.3): the listener makes two calls, the comparison of the
-/// sender with that element and the element's keyboard focus, and the
-/// outpost says nothing. Once another focus has been accepted in between,
+/// section 16.3): the listener makes three calls, the windowless sender's
+/// nearest window for NVDA's native check, which comes first (section 18),
+/// the comparison of the sender with that element, and the element's
+/// keyboard focus, and the outpost says nothing. Once another focus has been accepted in between,
 /// the same element's focus is read and reported again.
 fn a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read() {
     let title = common::unique_title("mockapp-repeated-focus");
@@ -658,8 +659,8 @@ fn a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read() {
     );
     assert_eq!(
         (calls.uia, calls.msaa, calls.window_messages),
-        (2, 0, 0),
-        "the comparison and the keyboard focus read, and nothing else"
+        (3, 0, 0),
+        "the nearest window, the comparison, and the keyboard focus read, and nothing else"
     );
     outpost.deliver(Judged::Dropped(reason).into_fact(0));
     outpost.settled();
@@ -683,9 +684,12 @@ fn a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read() {
 /// around the text area's; those are never the focus (NVDA refuses them
 /// whatever the element reports, `consoleUIAWindow` in
 /// `NVDAObjects/UIA/winConsoleUIA.py`). So the focus listener drops a UIA
-/// focus on a console window's own element before it reads anything, even
-/// while that element reports the keyboard focus: the text area's own
-/// focus is the one reported.
+/// focus on a console window's own element before it reads the element,
+/// even while that element reports the keyboard focus: the text area's own
+/// focus is the one reported. As in NVDA, the refusal is the object's, so
+/// it comes after the native check, which asks the console window whether
+/// its provider reports formatting (NVDA's check for a console's UIA, five
+/// calls here; section 18), and nothing of the element is read.
 fn a_console_windows_own_focus_is_never_reported() {
     let title = common::unique_title("mockapp-console-window");
     let mut app = common::spawn("console_window.json", "uia", &title);
@@ -704,7 +708,48 @@ fn a_console_windows_own_focus_is_never_reported() {
         panic!("the listener read the console window's own focus: {judged:?}");
     };
     assert_eq!(reason, "the console window's own focus");
-    assert_eq!(calls.uia, 0, "dropped before any read");
+    assert_eq!(
+        calls.uia, 5,
+        "the console check, and no read of the element"
+    );
+    outpost.deliver(judged.into_fact(0));
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A UIA focus whose window has no UIA provider of its own, here an MSAA
+/// window's element as UI Automation's MSAA proxy gives it, is not native
+/// UIA, as NVDA's `isNativeUIAElement` decides (`docs/design/focus-pipeline.md`,
+/// section 18): the listener drops it once it has asked the window for its
+/// provider, one window message and no UIA call, before anything of the
+/// element is read, and the window's MSAA focus speaks for it.
+fn a_focus_whose_window_has_no_uia_provider_is_dropped() {
+    let title = common::unique_title("mockapp-msaa-window-focus");
+    let app = common::spawn("small.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    let cache = client.uia.base_cache_request().expect("a cache request");
+    let window = client
+        .uia
+        .element_from_handle(hwnd.0 as isize, &cache)
+        .expect("mockapp's window element, through the MSAA proxy");
+    let (judged, calls) = outpost.listener_read(&window);
+    let Judged::Dropped(reason) = judged else {
+        panic!("the listener read a focus in a window without UIA: {judged:?}");
+    };
+    assert_eq!(
+        reason,
+        "its window does not use UIA, so its MSAA events speak for it"
+    );
+    assert_eq!(
+        (calls.uia, calls.msaa, calls.window_messages),
+        (0, 0, 1),
+        "the window's provider asked for, and nothing read"
+    );
     outpost.deliver(judged.into_fact(0));
     outpost.settled();
 
@@ -761,6 +806,10 @@ fn main() {
         (
             "a_console_windows_own_focus_is_never_reported",
             a_console_windows_own_focus_is_never_reported,
+        ),
+        (
+            "a_focus_whose_window_has_no_uia_provider_is_dropped",
+            a_focus_whose_window_has_no_uia_provider_is_dropped,
         ),
         (
             "a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read",

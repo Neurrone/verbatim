@@ -280,6 +280,17 @@ operation's own check stays, for a focus that moves on while it is read
 (`call_counts.rs`, `uia_focus_changes_cost_exactly_remote` and
 `uia_focus_changes_cost_exactly_classic`).
 
+With the listener's judgement ported from NVDA's focus handler in its order
+(2026-10-12, `docs/design/focus-pipeline.md`, section 18), NVDA's native
+check comes before the duplicate rule, so a repeated focus on a windowless
+element costs one call more, its nearest window
+(`NormalizeElementBuildCache`), 3 calls in all
+(`uia_repeated_focus_costs_exactly`); the window's verdict is kept, so it
+asks the window nothing. A focus on a console window's own element is
+dropped after the console's provider check instead of before any call.
+Every other focus costs what it did: the outpost takes the listener's
+verdict for the focus's window rather than asking the window again.
+
 ### A focus change, UIA, steady state
 
 - Minimum: 2 UIA calls. The outpost must have a live element, confirm that

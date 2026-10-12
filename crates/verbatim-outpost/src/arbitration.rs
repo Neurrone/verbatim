@@ -37,7 +37,7 @@
 //! change.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::HWND;
@@ -298,6 +298,63 @@ pub fn post_probe_check(classes: &WindowClasses) -> Option<PostProbeCheck> {
         "SysListView32" => Some(PostProbeCheck::WindowsFormsListView),
         _ => None,
     }
+}
+
+/// Decides window `hwnd`'s backend with `arbitrator`, as NVDA's
+/// `isUIAWindow` decides it, for an outpost's events and for the focus
+/// listener's UIA focus judgement alike: the class lists and kept verdicts first, then
+/// the provider probe, whose answer the arbitrator keeps (a provider for the
+/// window's lifetime, none for a short while). A window that did not answer
+/// the probe is read through MSAA for the event at hand, as NVDA does when
+/// its probe is cancelled, and is probed again next time. Returns `true` for
+/// UIA.
+pub(crate) fn uses_uia(arbitrator: &Mutex<Arbitrator>, hwnd: isize) -> bool {
+    let classes = WindowClasses::of(hwnd);
+    if let Some(verdict) = lock(arbitrator).verdict(hwnd, &classes) {
+        return verdict;
+    }
+    let started = std::time::Instant::now();
+    let answer = verbatim_uia::probe_server_side_provider(hwnd);
+    tracing::debug!(
+        hwnd,
+        class = classes.raw,
+        ?answer,
+        elapsed_ms = started.elapsed().as_millis(),
+        "arbitration probed"
+    );
+    let Some(is_uia) = answer else {
+        return false;
+    };
+    if is_uia && let Some(check) = post_probe_check(&classes) {
+        // NVDA uses some providers only after checking them.
+        let usable = match check {
+            PostProbeCheck::Console => verbatim_uia::console_reports_formatting(hwnd),
+            PostProbeCheck::WindowsFormsListView => verbatim_uia::is_windows_forms(hwnd),
+        };
+        tracing::debug!(hwnd, ?check, ?usable, "arbitration checked the provider");
+        return match usable {
+            Some(true) => {
+                lock(arbitrator).record_probe(hwnd, true);
+                true
+            }
+            Some(false) => {
+                lock(arbitrator).record_excluded(hwnd);
+                false
+            }
+            // The application did not answer: asked again next time.
+            None => false,
+        };
+    }
+    lock(arbitrator).record_probe(hwnd, is_uia);
+    is_uia
+}
+
+/// `arbitrator`, locked: a poisoned lock is taken as it is, as its state
+/// stays consistent.
+fn lock(arbitrator: &Mutex<Arbitrator>) -> std::sync::MutexGuard<'_, Arbitrator> {
+    arbitrator
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Reads a window's class name, an inexpensive local call safe on any thread.

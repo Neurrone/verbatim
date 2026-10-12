@@ -1286,12 +1286,18 @@ fn uia_focus_changes_cost_exactly_classic() {
 /// A focus event repeated on the element the listener last accepted, which
 /// still has the keyboard focus, is dropped before anything of it is read,
 /// as NVDA drops it (`docs/design/focus-pipeline.md`, section 16.3): the
-/// listener compares the sender with that element (`CompareElements`) and
-/// reads the earlier element's keyboard focus, two calls, and the outpost,
-/// handed the drop, makes none and says nothing, so the focus-following
-/// subscription is not moved either (section 17). The comparison costs
-/// mockapp nothing; the keyboard focus read, 1 `GetPropertyValue`, 1
-/// `HostRawElementProvider`, and 1 `FragmentRoot`. Before the listener
+/// listener first finds the windowless sender's nearest window, for NVDA's
+/// native check, which comes before the duplicate rule (section 18; one
+/// call, `NormalizeElementBuildCache`, the window's verdict already kept),
+/// then compares the sender with that element (`CompareElements`) and
+/// reads the earlier element's keyboard focus, three calls in all, and the
+/// outpost, handed the drop, makes none and says nothing, so the
+/// focus-following subscription is not moved either (section 17). The
+/// comparison costs mockapp nothing; the nearest window, 1 `WM_GETOBJECT`,
+/// 14 `ProviderOptions`, 6 `GetPropertyValue`, 4 `HostRawElementProvider`,
+/// 5 `Navigate`, and 1 `FragmentRoot`; the keyboard focus read, 1
+/// `GetPropertyValue`, 1 `HostRawElementProvider`, and 1 `FragmentRoot`.
+/// Before the listener
 /// judged repeats, the repeat was read in full, one remote operation
 /// filling the sender's cache afresh and walking to its first known
 /// ancestor, which cost mockapp 54 `GetPropertyValue`, 22
@@ -1326,11 +1332,14 @@ fn uia_repeated_focus_costs_exactly() {
     ratchet.check(
         "UIA focus repeated on the element followed",
         &cost,
-        calls(2, 0, 0),
+        calls(3, 0, 0),
         &[
-            ("GetPropertyValue", 1),
-            ("HostRawElementProvider", 1),
-            ("FragmentRoot", 1),
+            ("WM_GETOBJECT", 1),
+            ("ProviderOptions", 14),
+            ("GetPropertyValue", 7),
+            ("HostRawElementProvider", 5),
+            ("Navigate", 5),
+            ("FragmentRoot", 2),
         ],
     );
 

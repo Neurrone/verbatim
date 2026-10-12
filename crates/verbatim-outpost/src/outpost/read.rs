@@ -16,13 +16,13 @@ use verbatim_uia::map::{
     cached_native_window_handle, cached_process_id, snapshot_from_cached_element,
     with_legacy_checked_state,
 };
-use verbatim_uia::{AncestorWalk, ElementExt, Uia, probe_server_side_provider};
+use verbatim_uia::{AncestorWalk, ElementExt, Uia};
 use verbatim_uia_rops::{
     FocusAncestry, FocusQuery, NavigationDirection, Path, StepQuery, focus_ancestry,
     navigation_step,
 };
 
-use crate::arbitration::{PostProbeCheck, WindowClasses, post_probe_check, window_class_name};
+use crate::arbitration::window_class_name;
 use crate::protocol::{DumpedTree, FocusNow, FocusedControl};
 
 use super::Context;
@@ -123,51 +123,10 @@ impl Client {
     }
 }
 
-/// Decides a window's backend: the class lists and kept verdicts first, then
-/// the provider probe, whose answer the arbitrator keeps (a provider for the
-/// window's lifetime, none for a short while). A window that did not answer
-/// the probe is read through MSAA for the event at hand, as NVDA does when
-/// its probe is cancelled, and is probed again next time. Returns `true` for
-/// UIA.
+/// Decides a window's backend with the outpost's arbitrator
+/// ([`crate::arbitration::uses_uia`]). Returns `true` for UIA.
 pub(super) fn window_uses_uia(context: &Context, hwnd: isize) -> bool {
-    let classes = WindowClasses::of(hwnd);
-    if let Some(verdict) = context.arbitrator().verdict(hwnd, &classes) {
-        return verdict;
-    }
-    let started = std::time::Instant::now();
-    let answer = probe_server_side_provider(hwnd);
-    tracing::debug!(
-        hwnd,
-        class = classes.raw,
-        ?answer,
-        elapsed_ms = started.elapsed().as_millis(),
-        "arbitration probed"
-    );
-    let Some(is_uia) = answer else {
-        return false;
-    };
-    if is_uia && let Some(check) = post_probe_check(&classes) {
-        // NVDA uses some providers only after checking them.
-        let usable = match check {
-            PostProbeCheck::Console => verbatim_uia::console_reports_formatting(hwnd),
-            PostProbeCheck::WindowsFormsListView => verbatim_uia::is_windows_forms(hwnd),
-        };
-        tracing::debug!(hwnd, ?check, ?usable, "arbitration checked the provider");
-        return match usable {
-            Some(true) => {
-                context.arbitrator().record_probe(hwnd, true);
-                true
-            }
-            Some(false) => {
-                context.arbitrator().record_excluded(hwnd);
-                false
-            }
-            // The application did not answer: asked again next time.
-            None => false,
-        };
-    }
-    context.arbitrator().record_probe(hwnd, is_uia);
-    is_uia
+    crate::arbitration::uses_uia(&context.arbitrator, hwnd)
 }
 
 /// The snapshot of the top-level window `hwnd` for a foreground report. A

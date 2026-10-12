@@ -72,7 +72,7 @@ use verbatim_uia::{ElementExt as _, Uia, WalkerExt as _};
 use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, Path, focus_ancestry};
 
 use crate::ForegroundReader;
-use crate::arbitration::window_class_name;
+use crate::arbitration::{Arbitrator, uses_uia, window_class_name};
 use crate::outpost::acceptance::{EventName, RequestedEvents, SystemWindows, accepts_event};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::outpost::window::{
@@ -200,6 +200,10 @@ pub struct FocusReader {
     /// system's, unless a test supplies its own
     /// ([`set_foreground_reader`](Self::set_foreground_reader)).
     foreground: ForegroundReader,
+    /// Which of this application's windows use UIA, for NVDA's native
+    /// check (`isNativeUIAElement`), decided as an outpost decides it
+    /// ([`crate::arbitration::uses_uia`]).
+    arbitrator: Mutex<Arbitrator>,
 }
 
 impl Drop for FocusReader {
@@ -227,6 +231,7 @@ impl FocusReader {
             number: NEXT_READER.fetch_add(1, Ordering::Relaxed),
             last_accepted,
             foreground: Arc::new(crate::outpost::window::foreground_window_handle),
+            arbitrator: Mutex::new(Arbitrator::new(&[])),
         })
     }
 
@@ -247,9 +252,6 @@ impl FocusReader {
     pub fn read(&mut self, element: &IUIAutomationElement, focus_window: isize) -> Judged {
         let hwnd = cached_native_window_handle(element);
         let window = if hwnd == 0 { focus_window } else { hwnd };
-        if let Some(reason) = refused(hwnd, window) {
-            return Judged::Dropped(reason);
-        }
         // The element arrives with NVDA's base cache request.
         let event = event_parts(element);
         let nearest = match self.judge_before_reading(element, hwnd, &event.runtime_id) {
@@ -450,17 +452,49 @@ impl FocusReader {
 
     /// What a focus event goes through before anything of its sender,
     /// `element`, whose own window is `hwnd` and whose runtime id is
-    /// `runtime_id`, is read, in NVDA's order: the repeat check, the
-    /// acceptance test against its nearest window, then the sender's own
-    /// keyboard focus. Answers that window, or why the event is dropped.
+    /// `runtime_id`, is read: a port of NVDA's focus handler,
+    /// `IUIAutomationFocusChangedEventHandler_HandleFocusChangedEvent`
+    /// (`UIAHandler/__init__.py` 874 to 958), step by step in its order
+    /// (`docs/design/focus-pipeline.md`, section 18). Answers the sender's
+    /// nearest window, or why the event is dropped.
     fn judge_before_reading(
         &self,
         element: &IUIAutomationElement,
         hwnd: isize,
         runtime_id: &[i32],
     ) -> Result<isize, &'static str> {
-        // NVDA's duplicate rule, before anything of the sender is read
-        // (`UIAHandler/__init__.py` 899 to 921; `docs/design/focus-pipeline.md`,
+        // 1. A sender whose own window, from the event's cache, the system
+        // reports hung (`_shouldSkipEventForHungWindow`, `utils.py` 438):
+        // its cached handle only, so a windowless sender is not tested
+        // here, and nothing is read live from a hung application.
+        if hwnd != 0 && window_is_hung(hwnd) {
+            return Err("its window is hung");
+        }
+        // 2. Whether the sender is native UIA (`isNativeUIAElement`,
+        // `UIAHandler/__init__.py` 1515 to 1575): its nearest window, its
+        // own else the nearest ancestor's (`getNearestWindowHandle`, one
+        // call), must use UIA as NVDA decides it (`isUIAWindow`: the class
+        // lists, then the window's own provider), or NVDA ignores the event
+        // ("Ignoring for non native element") and the window's MSAA events
+        // speak for it. A sender with no window anywhere above it, or whose
+        // walk to one fails, is not native either, and NVDA's object for it
+        // could not be made without a window ("no windowHandle",
+        // `NVDAObjects/UIA/__init__.py` 1598 to 1606). Windows Terminal's
+        // second identity of its terminal can be such an element, its
+        // island not yet joined to its window (section 16.8). NVDA's two
+        // exceptions, a NetUI container in a Word document and Internet
+        // Explorer 9's downloads list, are Office's and Internet
+        // Explorer's, and are not ported.
+        let nearest = if hwnd == 0 {
+            verbatim_uia::nearest_window_handle(element)
+                .ok_or("it has no window above it, so NVDA makes no object for it")?
+        } else {
+            hwnd
+        };
+        if !uses_uia(&self.arbitrator, nearest) {
+            return Err("its window does not use UIA, so its MSAA events speak for it");
+        }
+        // 3. NVDA's duplicate rule (`UIAHandler/__init__.py` 902 to 923;
         // section 16.3): the sender is the last focus accepted, by any of
         // the listener's readers, as UIA compares them, and that element
         // still has the keyboard focus, read live. A comparison that fails
@@ -479,26 +513,12 @@ impl FocusReader {
         {
             return Err("a repeat of the last focus, which still has the keyboard focus");
         }
-        // NVDA's acceptance test, next, against the element's nearest
-        // window (`getNearestWindowHandle`, then `shouldAcceptEvent`,
-        // `UIAHandler/__init__.py` 920 to 925;
-        // `docs/design/focus-pipeline.md`, sections 16.2 and 16.3): its own
-        // window, else, one call, the nearest ancestor's. A focus that fails
-        // is dropped and never becomes the last accepted, so the same
-        // element's focus once its window is in front, as a console's text
-        // area's comes, is no repeat. An element with no window anywhere
-        // above it, or whose walk to one fails, is dropped: NVDA makes no
-        // object for it (`NVDAObjects/UIA/__init__.py` 1598 to 1606, "no
-        // windowHandle"), so its handler drops the event ("Could not create
-        // an NVDAObject"). Windows Terminal's second identity of its
-        // terminal can be such an element, its island not yet joined to
-        // its window (`docs/design/focus-pipeline.md`, section 16.8).
-        let nearest = if hwnd == 0 {
-            verbatim_uia::nearest_window_handle(element)
-                .ok_or("it has no window above it, so NVDA makes no object for it")?
-        } else {
-            hwnd
-        };
+        // 4. NVDA's acceptance test against the same nearest window
+        // (`shouldAcceptEvent`, `UIAHandler/__init__.py` 924 to 930;
+        // sections 16.2 and 16.3). A focus that fails is dropped and never
+        // becomes the last accepted, so the same element's focus once its
+        // window is in front, as a console's text area's comes, is no
+        // repeat.
         let windows = SystemWindows {
             foreground: (self.foreground)(),
         };
@@ -510,7 +530,26 @@ impl FocusReader {
         ) {
             return Err("its window is not related to the foreground window");
         }
-        // NVDA's last check before it queues the focus,
+        // 5. The refusals of NVDA's object for the sender, before its
+        // keyboard focus is read (`shouldAllowUIAFocusEvent` overridden):
+        // the console host's window element, which reports the keyboard
+        // focus whenever its text area has it, and whose focus events, which
+        // come around the text area's, are never the focus
+        // (`consoleUIAWindow`, `NVDAObjects/UIA/winConsoleUIA.py` 358). It
+        // is the one element whose own window is the console window; the
+        // text area has none.
+        if hwnd != 0 && window_class_name(hwnd) == CONSOLE_WINDOW_CLASS {
+            return Err("the console window's own focus");
+        }
+        // The shell's windows that take the focus only while a switch is
+        // staged, which NVDA's File Explorer app module ignores when it
+        // handles the focus (`appModules/explorer.py` 443 to 449). NVDA
+        // makes such a window its focus object before the app module
+        // ignores it; that is not ported here.
+        if is_shell_transition_window(nearest) {
+            return Err("a shell window that only stages a switch");
+        }
+        // 6. NVDA's last check before it queues the focus,
         // `shouldAllowUIAFocusEvent` (`UIAHandler/__init__.py` 948,
         // `NVDAObjects/UIA/__init__.py` 1632): the sender's keyboard focus,
         // read live with a plain property read (`CurrentHasKeyboardFocus`
@@ -688,28 +727,6 @@ impl FocusReader {
             );
         }
     }
-}
-
-/// Why a focus event whose element's own window is `hwnd` (0 for none),
-/// in window `window` (its own, or its application's keyboard focus
-/// window), is dropped before anything is read, if it is: local reads only.
-fn refused(hwnd: isize, window: isize) -> Option<&'static str> {
-    if window != 0 && window_is_hung(window) {
-        return Some("its window is hung");
-    }
-    if window != 0 && is_shell_transition_window(window) {
-        return Some("a shell window that only stages a switch");
-    }
-    // The console host's window element reports the keyboard focus
-    // whenever its text area has it, and its focus events, which come
-    // around the text area's, are never the focus: NVDA refuses them
-    // whatever the element reports (`consoleUIAWindow` in
-    // `NVDAObjects/UIA/winConsoleUIA.py`). It is the one element whose own
-    // window is the console window; the text area has none.
-    if hwnd != 0 && window_class_name(hwnd) == CONSOLE_WINDOW_CLASS {
-        return Some("the console window's own focus");
-    }
-    None
 }
 
 /// Logs, at debug, each of a focus's ancestor facts, nearest first, with

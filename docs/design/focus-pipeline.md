@@ -861,3 +861,27 @@ NVDA (`UIAHandler/__init__.py` 642 to 756; `NVDAObjects/UIA/__init__.py` 1623 to
 ### 17.5 Order and decisions
 
 Built on main before step 6's revisions, which then rebase onto it. Decisions for Dickson: nothing followed during the gap before the element is found, as NVDA; dropping `follow_focus_window` and the adoption of an element from its own events; withdrawing 16.5's lazy element.
+
+## 18. The listener's focus judgement as a port of NVDA's focus handler (2026-10-12)
+
+Three parity bugs in step 6 had one cause: NVDA's focus handler was rebuilt piece by piece, each check placed where it suited Verbatim, rather than ported as one sequence. The keyboard focus check had moved into the remote operation, where it reads a different element (section 16.8); a sender with no window above it was taken, from a misreading of NVDA; and whether the sender is native UIA was decided after the acceptance test, in the outpost, so the UIA and MSAA paths raced in File Explorer. Dickson asked for the handler to be ported as one function, and the rest of the event pipeline to be audited the same way, route by route (2026-10-12).
+
+The listener's judgement, `FocusReader::judge_before_reading` in `crates/verbatim-outpost/src/focus_read.rs`, is now NVDA's `IUIAutomationFocusChangedEventHandler_HandleFocusChangedEvent` (`UIAHandler/__init__.py` 874 to 958) step by step, in its order, each step citing NVDA's lines:
+
+1. The hung window (`_shouldSkipEventForHungWindow`, `utils.py` 438): `IsHungAppWindow` on the sender's own cached window handle only, a local call. Before, Verbatim tested the top-level window, and for a windowless sender its application's keyboard focus window, which NVDA does not.
+2. Whether the sender is native UIA (`isNativeUIAElement`, 1515 to 1575): the nearest window, the sender's own else one `NormalizeElementBuildCache` call (`getNearestWindowHandle`); none, or a walk that fails, is not native; a window that does not use UIA, decided as an outpost decides it (`arbitration::uses_uia`: the class lists, then the window's provider, NVDA's `isUIAWindow`), is not native, and its MSAA events speak for it. New: before, a UIA focus in a window without a provider was taken by the listener and dropped later by the outpost, after the acceptance test and the read.
+3. The duplicate rule (902 to 923): unchanged (section 16.3).
+4. The acceptance test against the same nearest window (924 to 930): unchanged (section 16.2).
+5. The object's own refusals, `shouldAllowUIAFocusEvent` overridden: the console window's element (`consoleUIAWindow`), and the shell's windows that only stage a switch (`appModules/explorer.py` 443 to 449). Both were made before anything else; NVDA makes them after the native check and the acceptance test.
+6. The sender's keyboard focus, read plainly (`shouldAllowUIAFocusEvent`, `NVDAObjects/UIA/__init__.py` 1632): unchanged since section 16.8.
+
+Each process keeps its own arbitrator, as an outpost reads its application's MSAA events and the listener its UIA focus events, where NVDA keeps one cache for both. So that the two never decide one window differently, the outpost takes the listener's verdict for the window of each UIA focus it is handed (`record_probe`), and no longer decides that focus's window again. The window is then probed once, as before. Decision D15 still applies to both: a window found to have a provider keeps that verdict for its lifetime, where NVDA asks again after half a second; a window found without one is asked again after half a second, as NVDA asks.
+
+Costs (`docs/performance.md`): a focus on a windowless element repeated while it keeps the keyboard focus costs one call more, its nearest window, which NVDA's native check needs before the duplicate rule. A focus on a console window's element is dropped after the console's provider check (NVDA's `isUIAWindow` makes it too) instead of before any call. Every other focus costs what it did. Tests: `focus_reports.rs`, `a_focus_whose_window_has_no_uia_provider_is_dropped`, and the pinned counts in `call_counts.rs` and `focus_reports.rs`.
+
+Not ported, each recorded for the audit:
+
+- NVDA's exceptions to the native check, a NetUI container inside a Word document and Internet Explorer 9's downloads list: Office's and Internet Explorer's, for the app-module porting track.
+- NVDA's duplicate rule compares with the last focus queued from any API (`eventHandler.lastQueuedFocusObject`), and only when that is a UIA object; the listener compares with the last UIA focus it accepted and never hears of MSAA focuses. A UIA focus repeated after an MSAA one is therefore dropped where NVDA would speak it. To be checked with a mockapp test of mixed backends before changing.
+- NVDA makes a shell staging window its focus object before File Explorer's app module ignores it; the listener drops it before. Part of the audit of NVDA's core focus processing.
+- File Explorer's app module refuses the focus of Windows 11's task switching pane (`MultitaskingViewFrameWindow`, a `Windows.UI.Input.InputSite.WindowClass` pane); not ported, and to be checked with an NVDA capture of Alt+Tab first.
