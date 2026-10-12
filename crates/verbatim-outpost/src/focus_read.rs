@@ -105,6 +105,18 @@ pub(crate) const READ_DEADLINE: Duration =
 /// in their calls before its focus events are dropped without a read.
 const ABANDONED_LIMIT: usize = 2;
 
+/// The kind of UIA event a reading thread judges as a focus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FocusEvent {
+    /// A focus change (`HandleFocusChangedEvent`).
+    Focus,
+    /// A menu opened (`MenuOpened`), which NVDA maps to a focus on the menu
+    /// and handles in its automation event handler
+    /// (`IUIAutomationEventHandler_HandleAutomationEvent`,
+    /// `UIAHandler/__init__.py` 757 to 868).
+    MenuOpened,
+}
+
 /// What became of one focus event.
 #[derive(Debug)]
 pub enum Judged {
@@ -250,17 +262,22 @@ impl FocusReader {
         self.foreground = reader;
     }
 
-    /// Judges and reads the UIA focus event whose sender is `element`,
-    /// built with the base cache request as the focus registration
-    /// delivers it. `focus_window` is the keyboard focus window of the
-    /// element's application when the event arrived, for an element that
-    /// is not a window (0 otherwise).
-    pub fn read(&mut self, element: &IUIAutomationElement, focus_window: isize) -> Judged {
+    /// Judges and reads the UIA focus event, or menu opening (`kind`),
+    /// whose sender is `element`, built with the base cache request as the
+    /// registration delivers it. `focus_window` is the keyboard focus
+    /// window of the element's application when the event arrived, for an
+    /// element that is not a window (0 otherwise).
+    pub fn read(
+        &mut self,
+        element: &IUIAutomationElement,
+        focus_window: isize,
+        kind: FocusEvent,
+    ) -> Judged {
         let hwnd = cached_native_window_handle(element);
         let window = if hwnd == 0 { focus_window } else { hwnd };
         // The element arrives with NVDA's base cache request.
         let event = event_parts(element);
-        let nearest = match self.judge_before_reading(element, hwnd, &event.runtime_id) {
+        let nearest = match self.judge_before_reading(element, hwnd, &event.runtime_id, kind) {
             Ok(nearest) => nearest,
             Err(reason) => return Judged::Dropped(reason),
         };
@@ -463,11 +480,19 @@ impl FocusReader {
     /// (`UIAHandler/__init__.py` 874 to 958), step by step in its order
     /// (`docs/design/focus-pipeline.md`, section 18). Answers the sender's
     /// nearest window, or why the event is dropped.
+    ///
+    /// A menu opening (`kind`) goes through NVDA's automation event
+    /// handler instead, which makes the same checks in the same order but
+    /// the duplicate test (step 3), which is the focus handler's alone; its
+    /// drop while a focus is pending is made as it arrives
+    /// (`Readers::focus_pending`). As NVDA queues it as a focus on the
+    /// menu, it becomes the last focus accepted.
     fn judge_before_reading(
         &self,
         element: &IUIAutomationElement,
         hwnd: isize,
         runtime_id: &[i32],
+        kind: FocusEvent,
     ) -> Result<isize, &'static str> {
         // 1. A sender whose own window, from the event's cache, the system
         // reports hung (`_shouldSkipEventForHungWindow`, `utils.py` 438):
@@ -514,7 +539,8 @@ impl FocusReader {
         if tracing::enabled!(tracing::Level::DEBUG) {
             Self::log_sender(element, hwnd, runtime_id, same_as_last_accepted.as_ref());
         }
-        if let (Some(Ok(true)), Some(last)) = (&same_as_last_accepted, &last)
+        if kind == FocusEvent::Focus
+            && let (Some(Ok(true)), Some(last)) = (&same_as_last_accepted, &last)
             && last.has_keyboard_focus().unwrap_or(false)
         {
             return Err("a repeat of the last focus, which still has the keyboard focus");
@@ -836,11 +862,11 @@ pub(crate) trait Reading: Send + Sync + 'static {
     fn reader(&self) -> Option<Self::Reader>;
     /// Judges and reads one event.
     fn read(&self, reader: Option<&mut Self::Reader>, job: Self::Job) -> Judged;
-    /// The element `job` is an event of, by runtime id, for NVDA's UIA
-    /// limiter rule: a newer event of one element replaces one still
-    /// waiting ([`Readers::push`]). `None`, the default, for an event
-    /// that is never replaced.
-    fn key<'a>(&self, _job: &'a Self::Job) -> Option<&'a [i32]> {
+    /// The kind of event `job` is and the element it is of, by runtime id,
+    /// for NVDA's UIA limiter rule: a newer event of one kind of one
+    /// element replaces one still waiting ([`Readers::push`]). `None`, the
+    /// default, for an event that is never replaced.
+    fn key<'a>(&self, _job: &'a Self::Job) -> Option<(FocusEvent, &'a [i32])> {
         None
     }
     /// Releases a thread's reader as the thread ends, on that thread.
@@ -857,9 +883,9 @@ struct App<J> {
     queue: VecDeque<(Meta, J)>,
     /// The thread in charge of its events, by generation, if one is.
     live: Option<u64>,
-    /// When the thread in charge began the event it is reading, and that
-    /// event.
-    running: Option<(Instant, Meta)>,
+    /// When the thread in charge began the event it is reading, that
+    /// event, and its kind (a focus when the job has no key).
+    running: Option<(Instant, Meta, FocusEvent)>,
     /// Its threads abandoned to reads that have not returned yet.
     abandoned: usize,
     /// Whether its outpost has ended, so the thread in charge ends once no
@@ -992,6 +1018,26 @@ impl<R: Reading> Readers<R> {
         }
     }
 
+    /// Whether a focus event of any application is waiting for its read or
+    /// being read: NVDA drops a menu opening that arrives while a focus is
+    /// pending (`isPendingEvents("gainFocus")`, `UIAHandler/__init__.py`
+    /// 772 to 777), and here a focus still to be judged stands for one
+    /// NVDA has queued and not yet run.
+    pub(crate) fn focus_pending(&self) -> bool {
+        let shared = &self.shared;
+        let state = shared.lock();
+        state.apps.values().any(|app| {
+            app.running
+                .is_some_and(|(_, _, kind)| kind == FocusEvent::Focus)
+                || app.queue.iter().any(|(_, job)| {
+                    shared
+                        .reading
+                        .key(job)
+                        .is_some_and(|(kind, _)| kind == FocusEvent::Focus)
+                })
+        })
+    }
+
     /// Ends `pid`'s reading thread, the listener having learned that its
     /// outpost has ended: the thread reads the events already waiting, then
     /// releases its reader and ends, unless another event comes first.
@@ -1116,7 +1162,11 @@ fn next_job<R: Reading>(shared: &Shared<R>, pid: Pid, generation: u64) -> Option
             return None;
         }
         if let Some((meta, job)) = app.queue.pop_front() {
-            app.running = Some((Instant::now(), meta));
+            let kind = shared
+                .reading
+                .key(&job)
+                .map_or(FocusEvent::Focus, |(kind, _)| kind);
+            app.running = Some((Instant::now(), meta, kind));
             shared.changed.notify_all();
             return Some((meta, job));
         }
@@ -1144,7 +1194,7 @@ fn watchdog<R: Reading>(shared: &Arc<Shared<R>>) {
         let due = state
             .apps
             .values()
-            .filter_map(|app| app.running.map(|(started, _)| started + shared.deadline))
+            .filter_map(|app| app.running.map(|(started, _, _)| started + shared.deadline))
             .min();
         let Some(due) = due else {
             state = shared
@@ -1167,7 +1217,7 @@ fn watchdog<R: Reading>(shared: &Arc<Shared<R>>) {
             .iter()
             .filter(|(_, app)| {
                 app.running
-                    .is_some_and(|(started, _)| now >= started + shared.deadline)
+                    .is_some_and(|(started, _, _)| now >= started + shared.deadline)
             })
             .map(|(pid, _)| *pid)
             .collect();
@@ -1183,7 +1233,7 @@ fn abandon<R: Reading>(shared: &Arc<Shared<R>>, state: &mut ReadersState<R::Job>
     let Some(app) = state.apps.get_mut(&pid) else {
         return;
     };
-    let Some((_, meta)) = app.running.take() else {
+    let Some((_, meta, _)) = app.running.take() else {
         return;
     };
     app.live = None;
@@ -1234,8 +1284,8 @@ mod tests {
             Some(thread::current().id())
         }
 
-        fn key<'a>(&self, (_, _, element): &'a Self::Job) -> Option<&'a [i32]> {
-            (!element.is_empty()).then_some(element.as_slice())
+        fn key<'a>(&self, (_, _, element): &'a Self::Job) -> Option<(FocusEvent, &'a [i32])> {
+            (!element.is_empty()).then_some((FocusEvent::Focus, element.as_slice()))
         }
 
         fn read(&self, reader: Option<&mut ThreadId>, (marker, gate, _): Self::Job) -> Judged {

@@ -279,14 +279,6 @@ pub enum DeliveredFact {
         /// The event's `idChild`.
         id_child: i32,
     },
-    /// A UIA menu opening (`MenuOpened`), which NVDA treats as a focus on
-    /// the menu.
-    UiaMenuOpened {
-        /// The element's cached native window handle, or 0.
-        hwnd: isize,
-        /// The menu's cached snapshot parts.
-        snapshot: UiaSnapshotFact,
-    },
     /// A UIA element selected within its container
     /// (`SelectionItem_ElementSelected`).
     UiaSelection {
@@ -468,9 +460,6 @@ impl DeliveredFact {
                 id_object,
                 id_child,
             } => FactKey::MenuPopup(*hwnd, *id_object, *id_child),
-            DeliveredFact::UiaMenuOpened { snapshot, .. } => {
-                FactKey::UiaMenuOpened(snapshot.runtime_id.clone())
-            }
             DeliveredFact::UiaSelection { snapshot, .. } => {
                 FactKey::UiaSelection(snapshot.runtime_id.clone())
             }
@@ -497,8 +486,6 @@ pub enum FactKey {
     MsaaFocus(isize, i32, i32),
     /// An MSAA menu opening at this address.
     MenuPopup(isize, i32, i32),
-    /// A UIA menu opening on this runtime id.
-    UiaMenuOpened(Vec<i32>),
     /// A UIA selection of this runtime id.
     UiaSelection(Vec<i32>),
     /// A UIA notification of this runtime id, with this kind, processing,
@@ -1399,10 +1386,6 @@ mod tests {
             notification(verbatim_core::SNAP_RESULTS_ACTIVITY),
             DeliveredFact::Foreground { hwnd: 1 },
             DeliveredFact::UiaFocusMarker { marker: 1 },
-            DeliveredFact::UiaMenuOpened {
-                hwnd: 0,
-                snapshot: snapshot.clone(),
-            },
             DeliveredFact::Alert {
                 hwnd: 1,
                 id_object: -4,

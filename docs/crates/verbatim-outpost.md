@@ -525,7 +525,15 @@ Public API:
   through one `Registration` and so one client, as NVDA's are: the focus
   handler (`Subscription::Focus`) on the client first, then an element
   selected, a menu opened, and notifications, registered together as one
-  event handler group on the desktop's root element; and only then
+  event handler group on the desktop's root element. A UIA menu opening
+  takes the focus's route: its marker, then its application's reading
+  thread, which judges it as NVDA's automation event handler judges a
+  menu opening (the focus handler's checks but the duplicate test) and
+  reads it as a focus on the menu, with its ancestors; one that arrives
+  while a focus event waits for or is in its read is dropped, as NVDA
+  drops a menu opening while a focus is pending. A newer focus event, or
+  menu opening, of an element replaces its waiting one, as NVDA's UIA
+  limiter keeps one. And only then
   announces `Ready`, so focus and menus are seen from the moment it does
   (announcing first lost a menu opened right after start, found
   2026-10-06). The event thread (`EventThread::spawn`) likewise returns

@@ -50,7 +50,7 @@ use verbatim_model::{
     CallCounts, CallKind, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
     WindowHandle,
 };
-use verbatim_outpost::focus_read::{FocusReader, Judged, LastAccepted};
+use verbatim_outpost::focus_read::{FocusEvent, FocusReader, Judged, LastAccepted};
 use verbatim_outpost::protocol::{
     DeliveredFact, EventTiming, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
     SupervisorToOutpost, WinEventStamp, read_message,
@@ -337,10 +337,20 @@ impl OutpostUnderTest {
     /// carries the base cache request, as the listener's registration
     /// delivers it.
     pub fn listener_read(&self, element: &IUIAutomationElement) -> (Judged, CallCounts) {
+        self.listener_read_as(element, FocusEvent::Focus)
+    }
+
+    /// [`Self::listener_read`] for an event of kind `kind`: a UIA menu
+    /// opening is judged and read as a focus on the menu.
+    pub fn listener_read_as(
+        &self,
+        element: &IUIAutomationElement,
+        kind: FocusEvent,
+    ) -> (Judged, CallCounts) {
         let _ = verbatim_uia::calls::take();
         // mockapp never has the system focus here, so the listener would
         // find no keyboard focus window for a windowless element.
-        let judged = self.reader.borrow_mut().read(element, 0);
+        let judged = self.reader.borrow_mut().read(element, 0, kind);
         (judged, verbatim_uia::calls::take())
     }
 

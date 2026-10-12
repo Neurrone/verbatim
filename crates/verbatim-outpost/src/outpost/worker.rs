@@ -2449,7 +2449,7 @@ impl Worker<'_> {
             } => self.tooltip_shown(hwnd, id_object, id_child, trace, observed_at_ms),
             // Menu openings are planned separately; one reaching here is
             // handled the same way.
-            menu @ (DeliveredFact::MenuPopup { .. } | DeliveredFact::UiaMenuOpened { .. }) => {
+            menu @ DeliveredFact::MenuPopup { .. } => {
                 self.menu_opened(&Entry {
                     item: Item::Fact(menu, None),
                     trace,
@@ -2963,10 +2963,6 @@ impl Worker<'_> {
     /// object is not a popup menu; otherwise it becomes a focus on the
     /// popup menu.
     fn menu_opened(&mut self, entry: &Entry) {
-        if let Item::Fact(DeliveredFact::UiaMenuOpened { hwnd, snapshot }, _) = &entry.item {
-            self.uia_menu_opened(*hwnd, snapshot, entry);
-            return;
-        }
         let Item::Fact(
             DeliveredFact::MenuPopup {
                 hwnd,
@@ -3028,46 +3024,6 @@ impl Worker<'_> {
             false,
             Some(Object::Msaa(hwnd, id_object, id_child)),
             (Some(ancestors), None),
-        );
-    }
-
-    /// A UIA menu opening, which NVDA treats as a focus on the menu unless a
-    /// focus is already pending, then subject to its plain keyboard focus
-    /// read. Verbatim handles it after the batch, as an MSAA menu opening,
-    /// and ignores it when a focus was reported in the same batch, or when
-    /// the window does not belong to UIA; NVDA's keyboard focus read is not
-    /// made yet (roadmap, the audits' items).
-    fn uia_menu_opened(&mut self, fact_hwnd: isize, parts: &UiaSnapshotFact, entry: &Entry) {
-        if self.context.tracking().batch == Some(self.batch) {
-            return;
-        }
-        let hwnd = if fact_hwnd != 0 {
-            Some(fact_hwnd)
-        } else {
-            focus_window_of(self.context.target_pid)
-        };
-        if hwnd.is_some_and(window_belongs_to_hidden_frame) {
-            return;
-        }
-        if let Some(hwnd) = hwnd
-            && !read::window_uses_uia(self.context, hwnd)
-        {
-            return;
-        }
-        // NVDA treats a menu opening as a focus on the menu.
-        if !self.accepts(EventName::GainFocus, hwnd.unwrap_or(0)) {
-            return;
-        }
-        let node = Self::uia_node(self.context, parts, None);
-        self.emit_focus(
-            entry.trace,
-            entry.observed_at_ms,
-            Backend::Uia,
-            hwnd,
-            node,
-            false,
-            Some(Object::Uia(parts.runtime_id.clone())),
-            (Some(Vec::new()), None),
         );
     }
 

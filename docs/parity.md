@@ -991,11 +991,18 @@ verified.
   window, the focus's recorded window for the focus's own events, or, for
   a windowless element not found, its application's focus window as the
   listener captured it, where NVDA walks to the nearest window. Tested so:
-  the UIA menu opening (as gain focus), property changes, selections,
+  property changes, selections,
   and, since 2026-10-12, a text control's caret and text changes, which
   NVDA's automation event handler tests as any other event; a
   notification and an active text position are not, as NVDA's handlers
-  for them do not test them.
+  for them do not test them. A UIA menu opening is judged by the focus
+  listener as a focus on the menu since 2026-10-12, in NVDA's order: the
+  checks of NVDA's focus handler but the duplicate test, NVDA's keyboard
+  focus read included, and a drop while a focus is pending. Before, the
+  outpost reported it from its event's cache with no ancestors and no
+  keyboard focus read, so in Windows 11 Notepad's File menu every focus
+  after it lost its ancestry and Escape back to the menu bar said the
+  window's title again, which NVDA does not.
   The UIA focus is tested by the focus listener instead, since stage A
   step 6's revision (Dickson, 2026-10-11; `docs/design/focus-pipeline.md`,
   sections 16.2 and 16.3), in NVDA's order: after the repeat check and

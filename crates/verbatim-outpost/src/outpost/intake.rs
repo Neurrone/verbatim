@@ -180,7 +180,6 @@ pub(super) enum Key {
     MsaaFocus(isize, i32, i32),
     UiaFocus(Vec<i32>),
     MenuPopup(isize, i32, i32),
-    UiaMenuOpened(Vec<i32>),
     UiaNotification(
         Vec<i32>,
         NotificationKind,
@@ -201,7 +200,6 @@ impl Key {
             | Key::MenuPopup(hwnd, object, child) => Some(Object::Msaa(*hwnd, *object, *child)),
             Key::Uia(_, _, runtime_id)
             | Key::UiaFocus(runtime_id)
-            | Key::UiaMenuOpened(runtime_id)
             | Key::UiaNotification(runtime_id, ..) => Some(Object::Uia(runtime_id.clone())),
             Key::Foreground(_) | Key::NodesHeld | Key::CaretOf(_) => None,
         }
@@ -656,11 +654,6 @@ fn classify_fact(fact: &DeliveredFact) -> (Option<Key>, Category, isize) {
             let key = Key::Msaa(kind as u8, *hwnd, *id_object, *id_child);
             (Some(key), Category::Other, *hwnd)
         }
-        DeliveredFact::UiaMenuOpened { hwnd, snapshot } => (
-            Some(Key::UiaMenuOpened(snapshot.runtime_id.clone())),
-            Category::Uncounted,
-            *hwnd,
-        ),
         DeliveredFact::Foreground { hwnd } => {
             (Some(Key::Foreground(*hwnd)), Category::Focus, *hwnd)
         }
@@ -814,7 +807,6 @@ fn plan(
     };
     let foreground = newest(|key| matches!(key, Key::Foreground(_)));
     let msaa_menu = newest(|key| matches!(key, Key::MenuPopup(..)));
-    let uia_menu = newest(|key| matches!(key, Key::UiaMenuOpened(_)));
     // Each consecutive run of MSAA focus events, oldest first, by where its
     // newest is: any entry other than an MSAA focus or a foreground change
     // ends a run.
@@ -861,10 +853,9 @@ fn plan(
         match key {
             Some(Key::Foreground(_)) if Some(index) != foreground => {}
             Some(Key::UiaFocus(_)) => planned.push(Planned::Focus(vec![entry])),
-            Some(Key::MenuPopup(..) | Key::UiaMenuOpened(_)) => {
-                // The newest from each backend: the worker's arbitration
-                // drops the one whose backend does not own the window.
-                if Some(index) == msaa_menu || Some(index) == uia_menu {
+            Some(Key::MenuPopup(..)) => {
+                // The newest only, as NVDA keeps its newest menu event.
+                if Some(index) == msaa_menu {
                     deferred.push(entry);
                 }
             }

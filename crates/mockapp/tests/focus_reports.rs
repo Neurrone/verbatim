@@ -23,7 +23,7 @@ mod harness;
 
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{NodeSnapshot, NormalizedEvent, PropertyChange, Role, State, StateSet};
-use verbatim_outpost::focus_read::Judged;
+use verbatim_outpost::focus_read::{FocusEvent, Judged};
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor};
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{ElementExt as _, Uia};
@@ -727,6 +727,42 @@ fn a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read() {
     app.quit();
 }
 
+/// A UIA menu opening is judged and read as a focus on the menu, as NVDA's
+/// automation event handler maps it to one, by NVDA's checks but the
+/// duplicate test, which is its focus handler's alone: an opening on the
+/// element that is the last focus, and still has the keyboard focus, is
+/// read in full; one whose element has lost the keyboard focus is dropped,
+/// as NVDA's `shouldAllowUIAFocusEvent` drops it.
+fn a_menu_opening_is_judged_as_a_focus_on_the_menu() {
+    let title = common::unique_title("mockapp-menu-opening");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let button = client.focused();
+    let reported = outpost.uia_focus(&button);
+    let (judged, _) = outpost.listener_read_as(&button, FocusEvent::MenuOpened);
+    let Judged::Read(read) = judged else {
+        panic!("the listener did not read the menu opening: {judged:?}");
+    };
+    assert_eq!(
+        (read.snapshot.name.as_deref(), read.ancestors.is_some()),
+        (reported.node.name.as_deref(), true),
+        "read with its ancestors"
+    );
+
+    app.send("set-focus slider1");
+    let (judged, _) = outpost.listener_read_as(&button, FocusEvent::MenuOpened);
+    let Judged::Dropped(reason) = judged else {
+        panic!("the listener read a menu without the keyboard focus: {judged:?}");
+    };
+    assert_eq!(reason, "its element no longer has the keyboard focus");
+
+    drop(outpost);
+    app.quit();
+}
+
 /// The console host's window is the parent of its text area, reports the
 /// keyboard focus whenever the text area has it, and raises focus events
 /// around the text area's; those are never the focus (NVDA refuses them
@@ -883,6 +919,10 @@ fn a_focus_s_help_text_and_suggestions_are_followed() {
 
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_menu_opening_is_judged_as_a_focus_on_the_menu",
+            a_menu_opening_is_judged_as_a_focus_on_the_menu,
+        ),
         (
             "a_repeated_msaa_focus_is_a_duplicate_only_of_a_full_object",
             a_repeated_msaa_focus_is_a_duplicate_only_of_a_full_object,
