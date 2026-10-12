@@ -63,6 +63,36 @@ pub fn type_text(text: &str, first: u64) -> io::Result<u64> {
     Ok(first + characters.len() as u64 - 1)
 }
 
+/// [`type_text`], each character typed on its own, `interval_ms` after the
+/// one before it ([`crate::pace::Pacer`]), for
+/// [`Request::TypeTextPaced`](crate::protocol::Request::TypeTextPaced).
+/// Every character is looked up before any is typed.
+///
+/// # Errors
+///
+/// As [`type_text`], and when the pacing timer cannot be made or waited on.
+pub fn type_text_paced(text: &str, first: u64, interval_ms: u32) -> io::Result<u64> {
+    let layout = foreground_layout();
+    let scan = |unit| {
+        // SAFETY: a plain lookup taking a UTF-16 code unit and a layout
+        // handle; an unknown layout makes it report no key.
+        unsafe { VkKeyScanExW(unit, layout) }
+    };
+    let mut characters = Vec::new();
+    for character in text.chars() {
+        characters.push(
+            strokes_for(&character.to_string(), scan)
+                .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?,
+        );
+    }
+    let mut pacer = crate::pace::Pacer::new(interval_ms)?;
+    for (index, strokes) in characters.iter().enumerate() {
+        pacer.wait_for(index)?;
+        send(std::slice::from_ref(strokes), first + index as u64, layout)?;
+    }
+    Ok(first + characters.len() as u64 - 1)
+}
+
 /// The keyboard layout of the foreground window's thread, which is the
 /// layout the application being typed into translates keys with; this
 /// thread's own when there is no foreground window.

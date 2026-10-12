@@ -44,10 +44,12 @@ use serde::{Deserialize, Serialize};
 /// and [`Request::CloseAbandonedWindows`], so a scenario's cleanup proves
 /// it left no window open, whatever the window's title; version 16 added
 /// [`Request::PressKey`] and [`Request::ReleaseKey`], so a key such as
-/// Control can be held while other keys are sent. A test run against an
+/// Control can be held while other keys are sent; version 17 added
+/// [`Request::SendKeysPaced`] and [`Request::TypeTextPaced`], for the
+/// measurement workloads' rate of key presses. A test run against an
 /// older agent is refused at `Hello` instead of losing its connection
 /// mid-run, or running without the exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 16;
+pub const AGENT_PROTOCOL_VERSION: u32 = 17;
 
 /// The environment variable that names, to the Verbatim under test, the
 /// processes it ignores entirely (`ignore_foreign_terminals` in
@@ -458,6 +460,29 @@ pub enum Request {
         /// The text to type.
         text: String,
     },
+    /// As [`Request::SendKeys`], but each stroke is injected on its own,
+    /// `interval_ms` after the one before it, timed by a high-resolution
+    /// waitable timer: a measurement workload's rate of key presses, such
+    /// as auto-repeat's, not a wait for evidence. Every name is validated
+    /// before any key is sent. Answered by [`ReplyPayload::KeysSent`] once
+    /// the last stroke is sent.
+    SendKeysPaced {
+        /// Key strokes in order, each a plus-joined combination such as
+        /// `shift+tab`.
+        keys: Vec<String>,
+        /// Milliseconds from one stroke to the next.
+        interval_ms: u32,
+    },
+    /// As [`Request::TypeText`], each character typed `interval_ms` after
+    /// the one before it, as [`Request::SendKeysPaced`] paces its strokes.
+    /// Every character is checked before any is typed. Answered by
+    /// [`ReplyPayload::TextTyped`] once the last character is typed.
+    TypeTextPaced {
+        /// The text to type.
+        text: String,
+        /// Milliseconds from one character to the next.
+        interval_ms: u32,
+    },
     /// Asks the agent to stop speaking this protocol on this connection and
     /// instead relay raw bytes to and from Verbatim's control-plane named
     /// pipe. After the reply to this request, the connection is a raw
@@ -641,16 +666,17 @@ pub enum ReplyPayload {
         /// The file names, without the directory.
         names: Vec<String>,
     },
-    /// Answer to [`Request::SendKeys`]: every key was injected; and to
-    /// [`Request::PressKey`] and [`Request::ReleaseKey`]: the key's
-    /// transition was.
+    /// Answer to [`Request::SendKeys`] and [`Request::SendKeysPaced`]:
+    /// every key was injected; and to [`Request::PressKey`] and
+    /// [`Request::ReleaseKey`]: the key's transition was.
     KeysSent {
         /// The number the last key stroke carried
         /// (`verbatim_input::harness`), which Verbatim reports once it has
         /// handled it.
         input: u64,
     },
-    /// Answer to [`Request::TypeText`]: every character was typed.
+    /// Answer to [`Request::TypeText`] and [`Request::TypeTextPaced`]:
+    /// every character was typed.
     TextTyped {
         /// The number the last character's key events carried.
         input: u64,
@@ -953,6 +979,39 @@ mod tests {
             .expect("not end of stream");
         assert_eq!(read_request, request);
         assert_eq!(read_frame, frame);
+    }
+
+    #[test]
+    fn the_paced_input_requests_round_trip() {
+        let requests = [
+            RequestEnvelope {
+                id: 12,
+                request: Request::SendKeysPaced {
+                    keys: vec!["backspace".to_owned(), "shift+tab".to_owned()],
+                    interval_ms: 33,
+                },
+            },
+            RequestEnvelope {
+                id: 13,
+                request: Request::TypeTextPaced {
+                    text: "echo hello".to_owned(),
+                    interval_ms: 150,
+                },
+            },
+        ];
+
+        let mut buffer = Vec::new();
+        for request in &requests {
+            write_message(&mut buffer, request).expect("writes");
+        }
+
+        let mut reader = buffer.as_slice();
+        for expected in &requests {
+            let read: RequestEnvelope = read_message(&mut reader)
+                .expect("reads")
+                .expect("not end of stream");
+            assert_eq!(&read, expected);
+        }
     }
 
     #[test]

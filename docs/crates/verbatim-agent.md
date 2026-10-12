@@ -138,6 +138,14 @@ Public API:
     connection cannot press a key it already holds or release one it does
     not, and every key a connection holds is released when the connection
     ends, so a failed test or capture never leaves a modifier down.
+    `SendKeysPaced` and `TypeTextPaced` (protocol version 17), for the
+    end-to-end measure set, inject one stroke or character every
+    `interval_ms`, timed by a high-resolution waitable timer (the private
+    `pace` module): each is due a whole number of intervals after the
+    first, so a late one does not delay the rest. Every name or character
+    is checked before any is sent, each is numbered as `SendKeys` and
+    `TypeText` number theirs, and `KeysSent` and `TextTyped` answer once
+    the last is sent.
   - `SessionInfo` and `OpenControlTunnel`.
 
   `KillProcessesByName`, `BringToForeground`, and the Control tap and

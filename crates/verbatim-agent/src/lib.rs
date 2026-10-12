@@ -32,6 +32,7 @@ mod files;
 mod focus;
 mod jobs;
 mod keys;
+mod pace;
 mod process;
 pub mod protocol;
 mod scenario_windows;

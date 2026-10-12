@@ -355,6 +355,8 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         Request::PressKey { key } => key_transition(connection, id, &key, false),
         Request::ReleaseKey { key } => key_transition(connection, id, &key, true),
         Request::TypeText { text } => type_text(id, &text),
+        Request::SendKeysPaced { keys, interval_ms } => send_keys_paced(id, &keys, interval_ms),
+        Request::TypeTextPaced { text, interval_ms } => type_text_paced(id, &text, interval_ms),
         Request::OpenControlTunnel => {
             unreachable!("OpenControlTunnel is handled in handle_connection before dispatch")
         }
@@ -574,6 +576,48 @@ fn send_keys(id: u64, keys: &[String]) -> Frame {
 fn type_text(id: u64, text: &str) -> Frame {
     let first = NEXT_INPUT.fetch_add(text.chars().count() as u64, Ordering::Relaxed);
     match typing::type_text(text, first) {
+        Ok(input) => Frame::Reply {
+            to: id,
+            payload: ReplyPayload::TextTyped { input },
+        },
+        Err(error) => error_frame(id, &error),
+    }
+}
+
+/// Answers [`Request::SendKeysPaced`]: every name is parsed first, then
+/// each stroke is injected on its own, numbered as [`send_keys`] numbers
+/// it, paced by [`crate::pace::Pacer`].
+fn send_keys_paced(id: u64, keys: &[String], interval_ms: u32) -> Frame {
+    let sent = verbatim_control::send_keys::parse_all(keys)
+        .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))
+        .and_then(|combos| {
+            let first = NEXT_INPUT.fetch_add(combos.len() as u64, Ordering::Relaxed);
+            let mut pacer = crate::pace::Pacer::new(interval_ms)?;
+            let mut last = first.saturating_sub(1);
+            for (index, combo) in combos.iter().enumerate() {
+                pacer.wait_for(index)?;
+                last = verbatim_control::send_keys::inject_numbered(
+                    std::slice::from_ref(combo),
+                    first + index as u64,
+                )?;
+            }
+            Ok(last)
+        });
+    match sent {
+        Ok(input) => Frame::Reply {
+            to: id,
+            payload: ReplyPayload::KeysSent { input },
+        },
+        Err(error) => error_frame(id, &error),
+    }
+}
+
+/// Answers [`Request::TypeTextPaced`]: every character is checked first,
+/// then each is typed on its own, numbered as [`type_text`] numbers it,
+/// paced by [`crate::pace::Pacer`].
+fn type_text_paced(id: u64, text: &str, interval_ms: u32) -> Frame {
+    let first = NEXT_INPUT.fetch_add(text.chars().count() as u64, Ordering::Relaxed);
+    match typing::type_text_paced(text, first, interval_ms) {
         Ok(input) => Frame::Reply {
             to: id,
             payload: ReplyPayload::TextTyped { input },
