@@ -18,7 +18,13 @@ The counts today are pinned by `crates/mockapp/tests/call_counts.rs`, which
 asserts every one of them exactly, along with the calls mockapp's providers
 answered. An exact count is a ratchet: a change that adds a call fails CI,
 and a change that removes one must lower the number in the test and here,
-in the same commit.
+in the same commit. Each operation's failed cached reads are pinned the
+same way: a cached read of a property or pattern the element's cache
+request did not hold, which costs no call but makes UI Automation raise
+and report an error inside itself (`docs/design/uia-shapes.md`,
+section 3.6). On 2026-10-13 a UIA focus read with remote operations made
+2 or 3 and a remote navigation step 1, reading what the remote program
+leaves out of an element's cache; every other operation made none.
 
 The provider's counts are exact only if the client under test is the only
 one calling: a provider cannot tell its callers apart (UIA's calls reach it

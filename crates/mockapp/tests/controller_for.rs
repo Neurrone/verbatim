@@ -12,6 +12,10 @@
 //! remote operation, and the classic calls behind the same signature
 //! answer the same. The focused element is passed in rather than read from
 //! the keyboard focus, so the test runs headless.
+//!
+//! Through a real outpost, a controlled selection is also reported when the
+//! element the outpost keeps for the focus came from one of its events,
+//! whose cache holds less than a focus read's, with no failed cached read.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -20,15 +24,19 @@ mod harness;
 use std::sync::Arc;
 use std::sync::mpsc;
 
-use verbatim_model::CallCounts;
+use verbatim_model::{CallCounts, NormalizedEvent, PropertyChange, StateSet};
+use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, UiaSnapshotFact};
+use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{CACHED_PROPERTIES, ElementExt, Registration, Scope, Subscription, Uia};
 use verbatim_uia_rops::{ControlledQuery, Path, controlled_selection};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationCacheRequest, IUIAutomationElement, TreeScope_Descendants, UIA_NamePropertyId,
-    UIA_SelectionItem_ElementSelectedEventId,
+    IUIAutomationCacheRequest, IUIAutomationElement, TreeScope_Descendants, UIA_HelpTextPropertyId,
+    UIA_NamePropertyId, UIA_SelectionItem_ElementSelectedEventId,
 };
 use windows::core::BSTR;
+
+use common::outpost::OutpostUnderTest;
 
 /// The element named `name` under `root`, built with `cache`.
 fn find(
@@ -165,11 +173,109 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
     app.quit();
 }
 
+/// The outpost keeps the element of a property change on the focus, whose
+/// cache holds the focus's property events' properties and none of its
+/// details. A selection in the list the focus controls is then checked
+/// from that element: the controller's runtime id is UIA's own, kept with
+/// the element, so nothing absent from its cache is read. Read the classic
+/// way, so every cached read is the outpost's own.
+fn a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached() {
+    let title = common::unique_title("mockapp-controller-kept");
+    let mut app = common::spawn("controller.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::with_options(
+        &app,
+        OutpostOptions {
+            remote_operations: false,
+        },
+    );
+    let uia = Uia::new().expect("Uia::new");
+    let cache = uia.base_cache_request().expect("base cache request");
+    let root = uia
+        .element_from_handle(hwnd.0 as isize, &cache)
+        .expect("element_from_handle");
+
+    app.send("set-focus search");
+    let (judged, _) = outpost.listener_read(&find(&uia, &root, "Search box", &cache));
+    outpost.deliver(judged.into_fact(0));
+    let search = match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::FocusChanged { node, .. },
+            ..
+        } => node.id,
+        other => panic!("the outpost said {other:?}, not the search box's focus"),
+    };
+    // The search box has no text pattern in mockapp.
+    assert!(
+        matches!(
+            outpost.next(),
+            OutpostToSupervisor::Event {
+                event: NormalizedEvent::NoText { .. },
+                ..
+            }
+        ),
+        "the search box has no text"
+    );
+    outpost.settled();
+
+    app.send("set-description search Type to search");
+    outpost.heard(&[Heard::UiaProperty(UIA_HelpTextPropertyId.0)]);
+    assert!(
+        matches!(
+            outpost.next(),
+            OutpostToSupervisor::Event {
+                event: NormalizedEvent::PropertyChanged {
+                    change: PropertyChange::Description(_),
+                    ..
+                },
+                ..
+            }
+        ),
+        "the focus's new description"
+    );
+    let _ = outpost.take_failed_reads();
+
+    app.send("select result2");
+    let result = find(&uia, &root, "Sound settings", &cache);
+    outpost.deliver(DeliveredFact::UiaSelection {
+        hwnd: hwnd.0 as isize,
+        focus_window: hwnd.0 as isize,
+        snapshot: UiaSnapshotFact {
+            runtime_id: runtime_id(&result),
+            role: verbatim_model::Role::ListItem,
+            name: Some("Sound settings".to_owned()),
+            value: None,
+            states: StateSet::new(),
+            details: verbatim_model::NodeDetails::default(),
+        },
+    });
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::ControlledSelection { controller, node },
+            ..
+        } => assert_eq!(
+            (controller, node.name.as_deref()),
+            (search, Some("Sound settings"))
+        ),
+        other => panic!("the outpost said {other:?}, not the controlled selection"),
+    }
+    assert_eq!(outpost.take_failed_reads(), 0, "no failed cached read");
+
+    drop(outpost);
+    app.quit();
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
-    harness::run_isolated(&[(
-        "a_selected_result_is_found_only_inside_the_list_the_search_box_controls",
-        a_selected_result_is_found_only_inside_the_list_the_search_box_controls,
-    )]);
+    harness::run_isolated(&[
+        (
+            "a_selected_result_is_found_only_inside_the_list_the_search_box_controls",
+            a_selected_result_is_found_only_inside_the_list_the_search_box_controls,
+        ),
+        (
+            "a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached",
+            a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached,
+        ),
+    ]);
 }

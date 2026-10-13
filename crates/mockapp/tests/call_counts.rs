@@ -120,6 +120,9 @@ fn calls(uia: u32, msaa: u32, window_messages: u32) -> CallCounts {
 struct Cost {
     calls: CallCounts,
     hits: Vec<(&'static str, u32)>,
+    /// The failed cached reads (`verbatim_uia::calls`): a read of a
+    /// property or pattern the element's cache request did not hold.
+    failed_reads: u32,
 }
 
 /// Compares each operation's cost with the ledger's, collecting every
@@ -135,12 +138,16 @@ impl Ratchet {
         operation: &str,
         cost: &Cost,
         expected_calls: CallCounts,
+        expected_failed_reads: u32,
         expected_hits: &[(&str, u32)],
     ) {
-        if cost.calls != expected_calls || cost.hits != expected_hits {
+        if cost.calls != expected_calls
+            || cost.failed_reads != expected_failed_reads
+            || cost.hits != expected_hits
+        {
             self.mismatches.push(format!(
-                "{operation}: measured {:?} and hits {:?}",
-                cost.calls, cost.hits
+                "{operation}: measured {:?}, failed reads {}, and hits {:?}",
+                cost.calls, cost.failed_reads, cost.hits
             ));
         }
     }
@@ -177,6 +184,7 @@ fn measure_msaa_focus(
     let cost = Cost {
         calls: reported.calls,
         hits: common::read_hits(hwnd),
+        failed_reads: reported.failed_reads,
     };
     (reported, cost)
 }
@@ -206,6 +214,7 @@ fn msaa_focus_changes_cost_exactly() {
         "MSAA focus, cold",
         &cost,
         calls(0, 30, 1),
+        0,
         &[
             ("WM_GETOBJECT", 2),
             ("accParent", 14),
@@ -229,6 +238,7 @@ fn msaa_focus_changes_cost_exactly() {
         "MSAA focus, steady state",
         &cost,
         calls(0, 30, 0),
+        0,
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 14),
@@ -260,6 +270,7 @@ fn msaa_focus_changes_cost_exactly() {
         "MSAA focus into a list",
         &cost,
         calls(0, 30, 0),
+        0,
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 7),
@@ -286,6 +297,7 @@ fn msaa_focus_changes_cost_exactly() {
         "MSAA arrow to the next list item",
         &cost,
         calls(0, 30, 0),
+        0,
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 14),
@@ -315,6 +327,7 @@ fn msaa_focus_changes_cost_exactly() {
         "MSAA arrow to the previous list item, the probe renewed",
         &cost,
         calls(0, 33, 1),
+        0,
         &[
             ("WM_GETOBJECT", 2),
             ("accParent", 14),
@@ -335,6 +348,7 @@ fn msaa_focus_changes_cost_exactly() {
         "MSAA arrow to the next list item, the probe kept",
         &cost,
         calls(0, 33, 0),
+        0,
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 14),
@@ -362,8 +376,10 @@ fn msaa_focus_changes_cost_exactly() {
         &Cost {
             calls: CallCounts::default(),
             hits: common::read_hits(hwnd),
+            failed_reads: outpost.take_failed_reads(),
         },
         CallCounts::default(),
+        0,
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 1),
@@ -385,8 +401,10 @@ fn msaa_focus_changes_cost_exactly() {
         &Cost {
             calls: CallCounts::default(),
             hits: common::read_hits(hwnd),
+            failed_reads: outpost.take_failed_reads(),
         },
         CallCounts::default(),
+        0,
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 6),
@@ -423,8 +441,10 @@ fn msaa_focus_changes_cost_exactly() {
         &Cost {
             calls: calls_made,
             hits: common::read_hits(hwnd),
+            failed_reads: outpost.take_failed_reads(),
         },
         calls(0, 2, 0),
+        0,
         &[
             ("WM_GETOBJECT", 2),
             ("accParent", 2),
@@ -488,6 +508,7 @@ fn msaa_state_change_costs_exactly() {
         let cost = Cost {
             calls: calls_made,
             hits: common::read_hits(hwnd),
+            failed_reads: outpost.take_failed_reads(),
         };
         (change, cost)
     };
@@ -507,6 +528,7 @@ fn msaa_state_change_costs_exactly() {
         "MSAA state change on the focus, the probe renewed",
         &cost,
         calls(0, 2, 1),
+        0,
         &[
             ("WM_GETOBJECT", 2),
             ("accParent", 1),
@@ -523,6 +545,7 @@ fn msaa_state_change_costs_exactly() {
         "MSAA name change on the focus",
         &cost,
         calls(0, 2, 0),
+        0,
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 1),
@@ -539,6 +562,7 @@ fn msaa_state_change_costs_exactly() {
         "MSAA description change on the focus",
         &cost,
         calls(0, 2, 0),
+        0,
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 1),
@@ -564,6 +588,7 @@ fn msaa_state_change_costs_exactly() {
         "MSAA selection of the focus",
         &cost,
         calls(0, 2, 0),
+        0,
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 1),
@@ -621,6 +646,7 @@ fn msaa_dialog_text_costs_exactly() {
     let cost = Cost {
         calls: reported.calls,
         hits: common::read_hits(hwnd),
+        failed_reads: reported.failed_reads,
     };
     assert_eq!(reported.node.name.as_deref(), Some("Yes"));
     assert_eq!(dialog_description(&reported.ancestors), Some(QUESTION));
@@ -628,6 +654,7 @@ fn msaa_dialog_text_costs_exactly() {
         "MSAA focus into a message box",
         &cost,
         calls(0, 44, 1),
+        0,
         &[
             ("WM_GETOBJECT", 2),
             ("accParent", 17),
@@ -785,6 +812,7 @@ fn uia_dialog_text_costs_exactly() {
         "UIA message box text",
         &cost,
         calls(1, 0, 0),
+        0,
         &[
             ("ProviderOptions", 29),
             ("GetPatternProvider", 44),
@@ -816,11 +844,13 @@ fn msaa_navigation_steps_cost_exactly() {
     let cost = Cost {
         calls: calls_made,
         hits: common::read_hits(hwnd),
+        failed_reads: outpost.take_failed_reads(),
     };
     ratchet.check(
         "MSAA next sibling",
         &cost,
         calls(0, 10, 0),
+        0,
         &[
             ("accParent", 1),
             ("get_accName", 1),
@@ -840,11 +870,13 @@ fn msaa_navigation_steps_cost_exactly() {
     let cost = Cost {
         calls: calls_made,
         hits: common::read_hits(hwnd),
+        failed_reads: outpost.take_failed_reads(),
     };
     ratchet.check(
         "MSAA parent",
         &cost,
         calls(0, 10, 0),
+        0,
         &[
             ("accParent", 8),
             ("get_accName", 1),
@@ -874,11 +906,13 @@ fn msaa_navigation_steps_cost_exactly() {
     let cost = Cost {
         calls: calls_made,
         hits: common::read_hits(hwnd),
+        failed_reads: outpost.take_failed_reads(),
     };
     ratchet.check(
         "MSAA next sibling, descriptions and shortcuts off",
         &cost,
         calls(0, 8, 0),
+        0,
         &[
             ("accParent", 1),
             ("get_accName", 1),
@@ -931,11 +965,13 @@ impl UiaUnderTest {
     /// Runs `operation` on this thread and measures it.
     fn measure<T>(&self, hwnd: HWND, operation: impl FnOnce(&Self) -> T) -> (T, Cost) {
         let _ = verbatim_uia::calls::take();
+        let _ = verbatim_uia::calls::take_failed_reads();
         common::reset_hits(hwnd);
         let result = operation(self);
         let cost = Cost {
             calls: verbatim_uia::calls::take(),
             hits: common::read_hits(hwnd),
+            failed_reads: verbatim_uia::calls::take_failed_reads(),
         };
         (result, cost)
     }
@@ -1003,16 +1039,17 @@ fn measure_uia_focus(
     let cost = Cost {
         calls: reported.calls,
         hits: common::read_hits(hwnd),
+        failed_reads: reported.failed_reads,
     };
     (reported, cost)
 }
 
 /// What each UIA focus change in [`uia_focus_changes`] is expected to cost.
 struct FocusCosts<'a> {
-    cold: (CallCounts, &'a [(&'a str, u32)]),
-    steady: (CallCounts, &'a [(&'a str, u32)]),
-    into_list: (CallCounts, &'a [(&'a str, u32)]),
-    next_item: (CallCounts, &'a [(&'a str, u32)]),
+    cold: (CallCounts, u32, &'a [(&'a str, u32)]),
+    steady: (CallCounts, u32, &'a [(&'a str, u32)]),
+    into_list: (CallCounts, u32, &'a [(&'a str, u32)]),
+    next_item: (CallCounts, u32, &'a [(&'a str, u32)]),
 }
 
 /// The same focus changes, through an outpost reading them with remote
@@ -1035,12 +1072,13 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
     let check = |ratchet: &mut Ratchet,
                  label: &str,
                  cost: &Cost,
-                 expected: &(CallCounts, &[(&str, u32)])| {
+                 expected: &(CallCounts, u32, &[(&str, u32)])| {
         ratchet.check(
             &format!("UIA focus ({path}), {label}"),
             cost,
             expected.0,
             expected.1,
+            expected.2,
         );
     };
 
@@ -1150,6 +1188,7 @@ fn uia_focus_changes_cost_exactly_remote() {
         &FocusCosts {
             cold: (
                 calls(3, 0, 1),
+                3,
                 &[
                     ("WM_GETOBJECT", 14),
                     ("ProviderOptions", 88),
@@ -1164,6 +1203,7 @@ fn uia_focus_changes_cost_exactly_remote() {
             ),
             steady: (
                 calls(4, 0, 0),
+                2,
                 &[
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 80),
@@ -1179,6 +1219,7 @@ fn uia_focus_changes_cost_exactly_remote() {
             // The list's first selected item through `SelectionPattern2`.
             into_list: (
                 calls(4, 0, 0),
+                3,
                 &[
                     ("WM_GETOBJECT", 12),
                     ("ProviderOptions", 72),
@@ -1195,6 +1236,7 @@ fn uia_focus_changes_cost_exactly_remote() {
             ),
             next_item: (
                 calls(4, 0, 0),
+                2,
                 &[
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 86),
@@ -1218,6 +1260,7 @@ fn uia_focus_changes_cost_exactly_classic() {
         &FocusCosts {
             cold: (
                 calls(7, 0, 1),
+                0,
                 &[
                     ("WM_GETOBJECT", 13),
                     ("ProviderOptions", 85),
@@ -1232,6 +1275,7 @@ fn uia_focus_changes_cost_exactly_classic() {
             ),
             steady: (
                 calls(7, 0, 0),
+                0,
                 &[
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 94),
@@ -1250,6 +1294,7 @@ fn uia_focus_changes_cost_exactly_classic() {
             // calls through the `Selection` pattern alone, before).
             into_list: (
                 calls(8, 0, 0),
+                0,
                 &[
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 76),
@@ -1266,6 +1311,7 @@ fn uia_focus_changes_cost_exactly_classic() {
             ),
             next_item: (
                 calls(7, 0, 0),
+                0,
                 &[
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 106),
@@ -1328,11 +1374,13 @@ fn uia_repeated_focus_costs_exactly() {
     let cost = Cost {
         calls: listener_calls,
         hits: common::read_hits(hwnd),
+        failed_reads: verbatim_uia::calls::take_failed_reads(),
     };
     ratchet.check(
         "UIA focus repeated on the element followed",
         &cost,
         calls(3, 0, 0),
+        0,
         &[
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 14),
@@ -1376,12 +1424,14 @@ fn uia_navigation_steps(remote: bool) -> [(NodeSnapshot, Cost); 2] {
     let next_sibling = Cost {
         calls: calls_made,
         hits: common::read_hits(hwnd),
+        failed_reads: outpost.take_failed_reads(),
     };
     common::reset_hits(hwnd);
     let (group, calls_made) = outpost.navigate(second.id, QueryKind::Parent);
     let parent = Cost {
         calls: calls_made,
         hits: common::read_hits(hwnd),
+        failed_reads: outpost.take_failed_reads(),
     };
     drop(outpost);
     app.quit();
@@ -1400,6 +1450,7 @@ fn uia_navigation_steps_cost_exactly() {
         "UIA next sibling, remotely",
         &cost,
         calls(1, 0, 0),
+        1,
         &[
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 26),
@@ -1418,6 +1469,7 @@ fn uia_navigation_steps_cost_exactly() {
         "UIA parent, remotely",
         &parent_cost,
         calls(1, 0, 0),
+        1,
         &[
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 27),
@@ -1438,6 +1490,7 @@ fn uia_navigation_steps_cost_exactly() {
         "UIA next sibling, classically",
         &cost,
         calls(3, 0, 0),
+        0,
         &[
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 31),
@@ -1456,6 +1509,7 @@ fn uia_navigation_steps_cost_exactly() {
         "UIA parent, classically",
         &parent_cost,
         calls(3, 0, 0),
+        0,
         &[
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 32),
@@ -1511,6 +1565,7 @@ fn uia_event_registrations_cost_exactly() {
         "UIA desktop-wide registration, one group",
         &cost,
         calls(0, 0, 0),
+        0,
         &[],
     );
 
@@ -1529,6 +1584,7 @@ fn uia_event_registrations_cost_exactly() {
         "UIA focus-following registration",
         &cost,
         calls(0, 0, 0),
+        0,
         &[("HostRawElementProvider", 1), ("FragmentRoot", 2)],
     );
 
@@ -1545,6 +1601,7 @@ fn uia_event_registrations_cost_exactly() {
         "UIA focus-following move to the element already followed",
         &cost,
         calls(0, 0, 0),
+        0,
         &[],
     );
 
@@ -1652,6 +1709,7 @@ fn uia_selected_children_cost_exactly() {
             &format!("UIA selected child of {name}, classically"),
             &cost,
             calls(classic_calls, 0, 0),
+            0,
             &classic_hits,
         );
         let (ancestry, cost) = under_test.measure(hwnd, |under_test| {
@@ -1682,6 +1740,7 @@ fn uia_selected_children_cost_exactly() {
             &format!("UIA focus on {name} with its selected child, remotely"),
             &cost,
             calls(1, 0, 0),
+            0,
             &remote_hits,
         );
     }
@@ -1754,7 +1813,7 @@ fn uia_event_caches_cost_exactly() {
                 .build_updated_cache(&cache)
                 .expect("the element's cache is filled")
         });
-        ratchet.check(operation, &cost, calls(1, 0, 0), expected);
+        ratchet.check(operation, &cost, calls(1, 0, 0), 0, expected);
     }
     ratchet.finish();
     app.quit();
@@ -1799,6 +1858,7 @@ fn uia_active_text_position_costs_exactly() {
         "UIA text focus registration",
         &cost,
         calls(0, 0, 0),
+        0,
         &[("HostRawElementProvider", 1), ("FragmentRoot", 2)],
     );
 
@@ -1818,6 +1878,7 @@ fn uia_active_text_position_costs_exactly() {
         "UIA active text position change",
         &cost,
         calls(0, 0, 0),
+        0,
         &[],
     );
 
@@ -1892,6 +1953,7 @@ fn measure_caret_move<S: TextSource>(
     let (before, _) = caret_report(source, &mut anchors, &mut || 0, false).expect("the caret");
     common::apply(app, hwnd, "caret doc 1");
     let _ = take();
+    let _ = verbatim_uia::calls::take_failed_reads();
     let reply = answered(check_caret(
         source,
         &mut anchors,
@@ -1904,16 +1966,19 @@ fn measure_caret_move<S: TextSource>(
     let answer = Cost {
         calls,
         hits: common::read_hits(hwnd),
+        failed_reads: verbatim_uia::calls::take_failed_reads(),
     };
 
     common::apply(app, hwnd, "caret doc 2");
     let _ = take();
+    let _ = verbatim_uia::calls::take_failed_reads();
     let (report, _) = caret_report(source, &mut anchors, &mut || 0, false).expect("the caret");
     let calls = take();
     assert_eq!(report.line.offset, 2);
     let report = Cost {
         calls,
         hits: common::read_hits(hwnd),
+        failed_reads: verbatim_uia::calls::take_failed_reads(),
     };
     (answer, report)
 }
@@ -1960,11 +2025,13 @@ fn measure_focus_report(
 ) -> Cost {
     let mut store = Anchors::new(Arc::default());
     let _ = verbatim_uia::calls::take();
+    let _ = verbatim_uia::calls::take_failed_reads();
     common::reset_hits(hwnd);
     let (report, _) = caret_report(source, &mut store.node(1), &mut || 0, true).expect("the caret");
     let cost = Cost {
         calls: verbatim_uia::calls::take(),
         hits: common::read_hits(hwnd),
+        failed_reads: verbatim_uia::calls::take_failed_reads(),
     };
     let runs: Vec<(u32, u32, TextAttributes)> = report
         .line
@@ -2113,36 +2180,42 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             "UIA caret move, remotely",
             &answer,
             calls(1, 0, 0),
+            0,
             &remote_hits(1, &plus_copy(&move_hits)),
         );
         ratchet.check(
             "UIA caret report, remotely",
             &report,
             calls(1, 0, 0),
+            0,
             &remote_hits(1, &plus_copy(&report_hits)),
         );
         ratchet.check(
             "UIA caret report after a focus, remotely",
             &focus_report,
             calls(1, 0, 0),
+            0,
             &remote_hits(1, &plus_copy(&focus_hits)),
         );
         ratchet.check(
             "UIA caret report after a focus, links learned, remotely",
             &focus_again,
             calls(1, 0, 0),
+            0,
             &remote_hits(1, &plus_copy(&focus_again_hits)),
         );
         ratchet.check(
             "UIA caret report after a focus with every attribute, remotely",
             &formatted_report,
             calls(1, 0, 0),
+            0,
             &remote_hits(1, &plus_copy(&formatted_hits)),
         );
         ratchet.check(
             "UIA caret report after a focus with every attribute learned, remotely",
             &formatted_again,
             calls(1, 0, 0),
+            0,
             &remote_hits(1, &plus_copy(&formatted_again_hits)),
         );
         // One round trip for each check, the whole read: the check that
@@ -2152,12 +2225,14 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             "UIA caret watch finding nothing, remotely",
             &nothing,
             calls(1, 0, 0),
+            0,
             &remote_hits(1, &plus_copy(&move_hits)),
         );
         ratchet.check(
             "UIA caret watch answered by a later caret event, remotely",
             &later,
             calls(1, 0, 0),
+            0,
             &remote_hits(1, &plus_copy(&move_hits)),
         );
     } else {
@@ -2165,12 +2240,14 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             "UIA caret move, classically",
             &answer,
             calls(12, 0, 0),
+            0,
             &move_hits,
         );
         ratchet.check(
             "UIA caret report, classically",
             &report,
             calls(8, 0, 0),
+            0,
             &report_hits,
         );
         // The caret report's 8, one call asking the line for its
@@ -2185,24 +2262,28 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             "UIA caret report after a focus, classically",
             &focus_report,
             calls(35, 0, 0),
+            0,
             &focus_hits,
         );
         ratchet.check(
             "UIA caret report after a focus, links learned, classically",
             &focus_again,
             calls(35, 0, 0),
+            0,
             &focus_again_hits,
         );
         ratchet.check(
             "UIA caret report after a focus with every attribute, classically",
             &formatted_report,
             calls(35, 0, 0),
+            0,
             &formatted_hits,
         );
         ratchet.check(
             "UIA caret report after a focus with every attribute learned, classically",
             &formatted_again,
             calls(35, 0, 0),
+            0,
             &formatted_again_hits,
         );
         // A caret move's reads for each check. 134 before 2026-10-08, 12
@@ -2212,12 +2293,14 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             "UIA caret watch finding nothing, classically",
             &nothing,
             calls(12, 0, 0),
+            0,
             &move_hits,
         );
         ratchet.check(
             "UIA caret watch answered by a later caret event, classically",
             &later,
             calls(12, 0, 0),
+            0,
             &move_hits,
         );
     }
@@ -2233,6 +2316,7 @@ fn measure_text(
     op: &TextOp,
 ) -> (TextReply, Cost) {
     let _ = verbatim_uia::calls::take();
+    let _ = verbatim_uia::calls::take_failed_reads();
     common::reset_hits(hwnd);
     let reply = perform(source, anchors, op);
     (
@@ -2240,6 +2324,7 @@ fn measure_text(
         Cost {
             calls: verbatim_uia::calls::take(),
             hits: common::read_hits(hwnd),
+            failed_reads: verbatim_uia::calls::take_failed_reads(),
         },
     )
 }
@@ -2315,6 +2400,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         &format!("UIA review next line, {way}"),
         &cost,
         expected.0,
+        0,
         expected.1,
     );
 
@@ -2364,6 +2450,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         &format!("UIA review word inside the line, {way}"),
         &cost,
         expected.0,
+        0,
         expected.1,
     );
 
@@ -2421,6 +2508,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         &format!("UIA say-all read ahead, {way}"),
         &cost,
         expected.0,
+        0,
         expected.1,
     );
 
@@ -2456,6 +2544,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         &format!("UIA say-all caret move, {way}"),
         &cost,
         expected.0,
+        0,
         expected.1,
     );
 
@@ -2503,6 +2592,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         &format!("UIA caret location, {way}"),
         &cost,
         expected.0,
+        0,
         expected.1,
     );
 
@@ -2557,6 +2647,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         &format!("UIA selected text, {way}"),
         &cost,
         expected.0,
+        0,
         expected.1,
     );
 
@@ -2569,6 +2660,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     };
     common::apply(&mut app, hwnd, "caret doc 0 5");
     let _ = verbatim_uia::calls::take();
+    let _ = verbatim_uia::calls::take_failed_reads();
     let reply = answered(check_caret(
         &mut source,
         &mut anchors,
@@ -2585,6 +2677,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     let cost = Cost {
         calls: verbatim_uia::calls::take(),
         hits: common::read_hits(hwnd),
+        failed_reads: verbatim_uia::calls::take_failed_reads(),
     };
     let changes: Vec<(bool, &str, u32)> = reply
         .selection_changes
@@ -2632,6 +2725,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         &format!("UIA caret key selecting, {way}"),
         &cost,
         expected.0,
+        0,
         expected.1,
     );
     app.quit();
@@ -2782,12 +2876,14 @@ fn check_uia_say_all_batch_costs(ratchet: &mut Ratchet, remote: bool) {
         &format!("UIA say-all first batch of twenty lines, {way}"),
         &first,
         expected[0].0,
+        0,
         expected[0].1,
     );
     ratchet.check(
         &format!("UIA say-all later batch of twenty lines, {way}"),
         &second,
         expected[1].0,
+        0,
         expected[1].1,
     );
     app.quit();
@@ -2873,6 +2969,7 @@ fn check_uia_say_all_language_costs(ratchet: &mut Ratchet, remote: bool) {
         &format!("UIA say-all batch in three languages, {way}"),
         &mixed,
         expected.0,
+        0,
         expected.1,
     );
     app.quit();
@@ -2907,12 +3004,14 @@ fn uia_mixed_stretch_costs_exactly() {
         let mut source = uia_notes(hwnd).remote(remote).fetches(Fetches::default());
         let mut store = Anchors::new(Arc::default());
         let _ = verbatim_uia::calls::take();
+        let _ = verbatim_uia::calls::take_failed_reads();
         common::reset_hits(hwnd);
         let (report, _) =
             caret_report(&mut source, &mut store.node(1), &mut || 0, true).expect("the caret");
         let cost = Cost {
             calls: verbatim_uia::calls::take(),
             hits: common::read_hits(hwnd),
+            failed_reads: verbatim_uia::calls::take_failed_reads(),
         };
         let italics: Vec<(u32, u32, Option<bool>)> = report
             .line
@@ -2982,6 +3081,7 @@ fn uia_mixed_stretch_costs_exactly() {
             &format!("UIA caret report after a focus on a mixed stretch, {way}"),
             &cost,
             expected.0,
+            0,
             expected.1,
         );
     }
@@ -3014,8 +3114,8 @@ fn caret_moves_cost_exactly() {
         measure_caret_move(&mut app, hwnd, &mut source, verbatim_ia2::calls::take);
     // The answer reads the selection again (`EM_GETSEL`), so a caret read
     // before the key's effect is never paired with a line read after it.
-    ratchet.check("Edit control caret move", &answer, calls(0, 0, 6), &[]);
-    ratchet.check("Edit control caret report", &report, calls(0, 0, 5), &[]);
+    ratchet.check("Edit control caret move", &answer, calls(0, 0, 6), 0, &[]);
+    ratchet.check("Edit control caret report", &report, calls(0, 0, 5), 0, &[]);
     // A caret move's messages for each check; 55 for the wait that found
     // nothing before 2026-10-08.
     let (nothing, later) = measure_watch(&mut app, hwnd, &mut source, verbatim_ia2::calls::take);
@@ -3023,12 +3123,14 @@ fn caret_moves_cost_exactly() {
         "Edit control caret watch finding nothing",
         &nothing,
         calls(0, 0, 5),
+        0,
         &[],
     );
     ratchet.check(
         "Edit control caret watch answered by a later caret event",
         &later,
         calls(0, 0, 6),
+        0,
         &[],
     );
     app.quit();
@@ -3054,6 +3156,7 @@ fn measure_watch<S: TextSource>(
     let (before, _) = caret_report(source, &mut anchors, &mut || 0, false).expect("the caret");
     let watch = right_arrow(&before);
     let _ = take();
+    let _ = verbatim_uia::calls::take_failed_reads();
     common::reset_hits(hwnd);
     let mut check = Check::default();
     let watched = check_caret(source, &mut anchors, &watch, &mut check);
@@ -3061,10 +3164,12 @@ fn measure_watch<S: TextSource>(
     let nothing = Cost {
         calls: take(),
         hits: common::read_hits(hwnd),
+        failed_reads: verbatim_uia::calls::take_failed_reads(),
     };
 
     common::apply(app, hwnd, "caret doc 2");
     let _ = take();
+    let _ = verbatim_uia::calls::take_failed_reads();
     check.caret_event = true;
     let reply = answered(check_caret(source, &mut anchors, &watch, &mut check));
     assert!(reply.moved);
@@ -3073,6 +3178,7 @@ fn measure_watch<S: TextSource>(
     let later = Cost {
         calls: take(),
         hits: common::read_hits(hwnd),
+        failed_reads: verbatim_uia::calls::take_failed_reads(),
     };
     (nothing, later)
 }

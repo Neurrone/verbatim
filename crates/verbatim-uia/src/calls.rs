@@ -23,6 +23,17 @@
 //! ([`take`]) and sends it with the entry's event or reply. Other threads
 //! that use this crate, the subscriptions and the listener, count too and
 //! never take, which costs nothing.
+//!
+//! Beside the calls, each thread counts its failed cached reads: a
+//! `Cached*` read that UIA answers with a failure, which it does for a
+//! property or pattern the element's cache request did not hold, raising
+//! and reporting an error inside itself (`docs/design/uia-shapes.md`,
+//! section 3.6). A failed read is not a call, so it is counted apart from
+//! [`CallCounts`], and kept in every build profile. Its readers gather it
+//! per thread into counters they own: a [`Registration`] for UIA's
+//! callback threads, the listener's reader, and the outpost's worker.
+//!
+//! [`Registration`]: crate::Registration
 
 use std::cell::Cell;
 
@@ -37,6 +48,38 @@ thread_local! {
             window_messages: 0,
         })
     };
+}
+
+thread_local! {
+    /// This thread's failed cached reads since the last
+    /// [`take_failed_reads`].
+    static FAILED_READS: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Counts one failed cached read on this thread.
+pub(crate) fn count_failed_read() {
+    FAILED_READS.with(|failed| failed.set(failed.get().saturating_add(1)));
+}
+
+/// This thread's failed cached reads since the last take, resetting them
+/// to zero.
+#[must_use]
+pub fn take_failed_reads() -> u32 {
+    FAILED_READS.with(Cell::take)
+}
+
+/// This thread's failed cached reads since the last take, leaving them
+/// counted: for the reads one step made, by the difference between two
+/// looks.
+#[must_use]
+pub fn peek_failed_reads() -> u32 {
+    FAILED_READS.with(Cell::get)
+}
+
+/// Adds `failed`, failed cached reads made for this thread by another, to
+/// this thread's count, as [`add`] adds calls.
+pub fn add_failed_reads(failed: u32) {
+    FAILED_READS.with(|current| current.set(current.get().saturating_add(failed)));
 }
 
 /// Counts one cross-process call of `kind` on this thread.
@@ -95,6 +138,22 @@ mod tests {
         std::thread::spawn(|| count(CallKind::Uia))
             .join()
             .expect("the thread ran");
+        assert!(take().is_empty());
+    }
+
+    #[test]
+    fn take_failed_reads_returns_and_resets_this_threads_count() {
+        let _ = take_failed_reads();
+        count_failed_read();
+        add_failed_reads(2);
+        assert_eq!(peek_failed_reads(), 3);
+        assert_eq!(take_failed_reads(), 3);
+        assert_eq!(take_failed_reads(), 0);
+        // Another thread's failed reads are its own, and are not calls.
+        std::thread::spawn(count_failed_read)
+            .join()
+            .expect("the thread ran");
+        assert_eq!(take_failed_reads(), 0);
         assert!(take().is_empty());
     }
 }

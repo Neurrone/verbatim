@@ -267,7 +267,10 @@ impl Uia {
         match unsafe { fresh.GetCachedChildren() } {
             Ok(array) => Ok(crate::element::elements_of(&array)),
             Err(error) if error.code().is_ok() => Ok(Vec::new()),
-            Err(error) => Err(error),
+            Err(error) => {
+                crate::calls::count_failed_read();
+                Err(error)
+            }
         }
     }
 

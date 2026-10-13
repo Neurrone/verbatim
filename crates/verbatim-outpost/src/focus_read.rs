@@ -59,7 +59,7 @@
 //! after that, for an application still running, starts a new thread.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -1055,6 +1055,9 @@ struct Shared<R: Reading> {
     state: Mutex<ReadersState<R::Job>>,
     /// Wakes the watchdog when a read starts, and for the shutdown.
     changed: Condvar,
+    /// The failed cached reads the reading threads have made
+    /// (`verbatim_uia::calls`).
+    failed_reads: AtomicU32,
 }
 
 impl<R: Reading> Shared<R> {
@@ -1087,6 +1090,7 @@ impl<R: Reading> Readers<R> {
                 stopping: false,
             }),
             changed: Condvar::new(),
+            failed_reads: AtomicU32::new(0),
         });
         let watched = Arc::clone(&shared);
         let watchdog = thread::Builder::new()
@@ -1189,6 +1193,11 @@ impl<R: Reading> Readers<R> {
         app.wake.notify_one();
     }
 
+    /// The failed cached reads the reading threads have made so far.
+    pub(crate) fn failed_reads(&self) -> u32 {
+        self.shared.failed_reads.load(Ordering::Relaxed)
+    }
+
     /// Stops every reading thread for the listener's shutdown: nothing is
     /// queued from now on, what is waiting is not read, and every thread is
     /// waited for, each abandoned one returning once UIA gives up on its
@@ -1256,6 +1265,9 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
     let mut reader = shared.reading.reader();
     while let Some((meta, job)) = next_job(shared, pid, generation) {
         let judged = shared.reading.read(reader.as_mut(), meta, job);
+        shared
+            .failed_reads
+            .fetch_add(verbatim_uia::calls::take_failed_reads(), Ordering::Relaxed);
         let mut guard = shared.lock();
         let state = &mut *guard;
         let Some(app) = state.apps.get_mut(&pid) else {

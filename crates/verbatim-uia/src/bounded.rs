@@ -65,9 +65,9 @@ impl BoundedClient {
     /// Runs `operation` on this client's thread, with its client, and
     /// returns its answer, or [`Unanswered::DeadlinePassed`] once
     /// `deadline` has passed without one: the thread is then abandoned, and
-    /// `operation` finishes on it unheard. The calls `operation` makes are
-    /// added to the calling thread's count ([`crate::calls`]) when it
-    /// answers in time.
+    /// `operation` finishes on it unheard. The calls and failed cached
+    /// reads `operation` makes are added to the calling thread's counts
+    /// ([`crate::calls`]) when it answers in time.
     ///
     /// What `operation` captures and answers crosses threads, so a UIA
     /// object travels as an agile reference. An abandoned operation goes on
@@ -84,14 +84,15 @@ impl BoundedClient {
         deadline: Duration,
         operation: impl FnOnce(&Uia) -> T + Send + 'static,
     ) -> Result<T, Unanswered> {
-        let (answer_tx, answer_rx) = mpsc::sync_channel::<(T, CallCounts)>(1);
+        let (answer_tx, answer_rx) = mpsc::sync_channel::<(T, CallCounts, u32)>(1);
         let job: Job = Box::new(move |uia| {
             // A panic drops the way back, which the caller hears as no
             // client, and leaves the thread serving.
             let answer = catch_unwind(AssertUnwindSafe(|| operation(uia)));
             let calls = crate::calls::take();
+            let failed_reads = crate::calls::take_failed_reads();
             if let Ok(answer) = answer {
-                let _ = answer_tx.send((answer, calls));
+                let _ = answer_tx.send((answer, calls, failed_reads));
             }
         });
         let Some((jobs, generation)) = self.jobs() else {
@@ -101,8 +102,9 @@ impl BoundedClient {
             return Err(Unanswered::NoClient);
         }
         match answer_rx.recv_timeout(deadline) {
-            Ok((answer, calls)) => {
+            Ok((answer, calls, failed_reads)) => {
                 crate::calls::add(calls);
+                crate::calls::add_failed_reads(failed_reads);
                 Ok(answer)
             }
             Err(RecvTimeoutError::Timeout) => {

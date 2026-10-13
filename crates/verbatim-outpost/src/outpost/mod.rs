@@ -40,7 +40,7 @@ mod worker;
 
 use std::collections::HashMap;
 use std::io::{self, BufReader, Write};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle};
 
@@ -196,6 +196,9 @@ pub(crate) struct Context {
     /// outpost last reported, by which it finds its own copies of that
     /// focus's elements ([`focus_path`]).
     focus_path: Mutex<Option<focus_path::FocusPath>>,
+    /// The failed cached reads the worker has made (`verbatim_uia::calls`),
+    /// taken after each entry.
+    failed_reads: AtomicU32,
 }
 
 /// An event the outpost's own UIA handlers or `WinEvent` hooks took in from
@@ -259,6 +262,17 @@ impl Default for OutpostOptions {
 }
 
 impl Context {
+    /// [`Outpost::failed_reads`].
+    fn failed_reads(&self) -> u32 {
+        let callbacks = self
+            .focus_events
+            .get()
+            .map_or(0, Registration::failed_reads);
+        self.failed_reads
+            .load(Ordering::Relaxed)
+            .saturating_add(callbacks)
+    }
+
     fn arbitrator(&self) -> MutexGuard<'_, Arbitrator> {
         self.arbitrator
             .lock()
@@ -662,6 +676,7 @@ impl Outpost {
             // before this reaches it.
             handover: Mutex::new(handover::Handover::new(verbatim_ia2::event_clock())),
             focus_path: Mutex::new(None),
+            failed_reads: AtomicU32::new(0),
         });
         if let Some(registration) = register_focus_events(&context) {
             let _ = context.focus_events.set(registration);
@@ -773,6 +788,7 @@ impl Outpost {
         let bounded = context.bounded.close();
         let calls_finished = started.elapsed();
         let objects = context.release_everything();
+        let failed_reads = context.failed_reads();
         verbatim_uia::release_thread_state();
         context.outbound.close();
         let _ = writer.join();
@@ -788,8 +804,20 @@ impl Outpost {
             workers,
             bounded,
             objects,
+            failed_reads,
             "the outpost shut down"
         );
+    }
+
+    /// The failed cached reads the outpost has made so far: its worker's,
+    /// and its focus-following subscription's callbacks' on UIA's threads
+    /// (`verbatim_uia::calls`). A read of a property or pattern its
+    /// element's cache request did not hold fails inside UIA, which costs
+    /// it an error raised and reported, so a test of a read path expects
+    /// none.
+    #[must_use]
+    pub fn failed_reads(&self) -> u32 {
+        self.context.failed_reads()
     }
 
     /// Reads the time for arbitration's kept verdicts from `clock` from now

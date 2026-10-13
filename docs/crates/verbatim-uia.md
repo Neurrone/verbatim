@@ -25,7 +25,9 @@ Public API:
   finishes its call unheard and ends, and the next `run` starts a new
   thread and client. A UIA call cannot be cancelled, so abandonment is the
   bound, as it is for the outpost's worker. The calls an operation made
-  are added to the waiting thread's count (`calls::add`) when it answers.
+  and failed cached reads an operation made are added to the waiting
+  thread's counts (`calls::add`, `calls::add_failed_reads`) when it
+  answers.
   `close()` waits for every thread, abandoned ones included; `abandoned()`
   counts them.
 - `Uia` — a per-thread client (one COM apartment, one `IUIAutomation`
@@ -455,7 +457,17 @@ Public API:
   creating clients, conditions, walkers, and cache requests are local and
   not counted, nor are event subscriptions (`docs/performance.md`, "What
   counts as a call"). The outpost's worker takes the count around each
-  entry it handles.
+  entry it handles. Beside the calls, each thread counts its failed cached
+  reads, apart from `CallCounts` since a failed read is not a call: a
+  cached read UIA answers with a failure, for a property or pattern the
+  element's cache request did not hold, counted in `ElementExt`'s cached
+  reads and in reading cached children (a pattern the element lacks,
+  answered with no failure code, is not a failed read).
+  `calls::take_failed_reads()` and `calls::peek_failed_reads()` read it as
+  `take` and `peek` read the calls. It is gathered per thread into
+  counters their owners keep: `Registration::failed_reads()` for the
+  callbacks on UIA's threads, the listener's reading threads, and the
+  outpost's worker (`docs/design/uia-shapes.md`, section 3.6).
 - `NodeIdRegistry` — maps UIA runtime IDs to stable `NodeId`s and keeps the
   live element behind each; takes an injected shared counter so the UIA and
   MSAA registries in one outpost never hand out the same id. Nodes stay

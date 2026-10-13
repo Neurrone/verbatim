@@ -634,11 +634,16 @@ fn run_entry(
     // Calls made after the entry's last publish, or by an entry that
     // published nothing: they belong to no trace.
     let unpublished = take_calls();
+    let failed_reads = verbatim_uia::calls::take_failed_reads();
+    context
+        .failed_reads
+        .fetch_add(failed_reads, std::sync::atomic::Ordering::Relaxed);
     tracing::debug!(
         %trace,
         item = %description,
         elapsed_us = started.elapsed().as_micros(),
         ?unpublished,
+        failed_reads,
         "handled"
     );
     match context.watch.finish(generation) {
@@ -2289,8 +2294,10 @@ impl Worker<'_> {
         }
         let selected = selected?;
         let registry = &self.context.uia_registry;
-        // Both elements were built with the base cache request.
-        let controller = snapshot_parts_from_cached_element(&focused).runtime_id;
+        // The controller's runtime id is UIA's own, kept with the element,
+        // whatever its cache holds: the focus may be an element kept from a
+        // text event, whose cache holds three properties.
+        let controller = verbatim_uia::runtime_id(&focused);
         Some(NormalizedEvent::ControlledSelection {
             controller: registry.id_for_element(&controller, &focused),
             node: snapshot_from_cached_element(&selected, registry),

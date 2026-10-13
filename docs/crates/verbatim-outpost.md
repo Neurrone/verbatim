@@ -474,6 +474,11 @@ Public API:
   the outpost said nothing more. `settle` covers only what has reached the
   outpost: an application's event reaches a client after the call that
   raised it has returned, on UI Automation's threads or the hook thread.
+  `Outpost::failed_reads` gives the failed cached reads the outpost has
+  made so far, its worker's and its focus-following subscription's
+  callbacks' (`verbatim_uia::calls`), which a test reads once the outpost
+  has settled; the outpost logs them when it shuts down, and the listener
+  logs its own, its reading threads' and its registration's.
   `Outpost::observe_heard` hands an observer (`HeardObserver`) each event
   the outpost's own UIA handlers and `WinEvent` hooks take in, as a
   `Heard` (a property change by id, a text selection change, a text

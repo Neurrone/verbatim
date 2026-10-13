@@ -46,7 +46,7 @@
 //! newest scope. The abandoned thread's handlers call back no more, and
 //! once its call returns it removes what its client registered and ends.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -296,6 +296,9 @@ pub struct Registration {
     /// What each of its threads registers, for a replacement.
     parts: Vec<Part>,
     state: Mutex<State>,
+    /// The failed cached reads its callbacks have made, on UIA's threads
+    /// ([`crate::calls`]).
+    failed_reads: Arc<AtomicU32>,
 }
 
 /// Where a registration is asked to listen: a scope, and the group its
@@ -332,8 +335,13 @@ struct Incarnation {
 type Started = (Incarnation, mpsc::Receiver<windows::core::Result<()>>);
 
 impl Incarnation {
-    /// Starts a thread that registers `parts` on `target`.
-    fn start(parts: Vec<Part>, target: Target) -> windows::core::Result<Started> {
+    /// Starts a thread that registers `parts` on `target`, its callbacks'
+    /// failed cached reads counted into `failed_reads`.
+    fn start(
+        parts: Vec<Part>,
+        target: Target,
+        failed_reads: &Arc<AtomicU32>,
+    ) -> windows::core::Result<Started> {
         let (commands, received) = mpsc::channel::<Command>();
         let (ready_tx, ready_rx) = mpsc::channel::<windows::core::Result<()>>();
         let live = Arc::new(AtomicBool::new(true));
@@ -341,6 +349,7 @@ impl Incarnation {
         let thread = Thread {
             live: Arc::clone(&live),
             moving: Arc::clone(&moving),
+            failed_reads: Arc::clone(failed_reads),
         };
         let join = thread::Builder::new()
             .name("verbatim-uia-subscription".to_owned())
@@ -430,7 +439,9 @@ impl Registration {
             scope,
             group: Group::Base,
         };
-        let (incarnation, ready) = Incarnation::start(parts.clone(), target.clone())?;
+        let failed_reads = Arc::new(AtomicU32::new(0));
+        let (incarnation, ready) =
+            Incarnation::start(parts.clone(), target.clone(), &failed_reads)?;
         match ready.recv_timeout(MOVE_DEADLINE) {
             Ok(Ok(())) => Ok(Self {
                 parts,
@@ -439,6 +450,7 @@ impl Registration {
                     abandoned: Vec::new(),
                     target,
                 }),
+                failed_reads,
             }),
             Ok(Err(error)) => {
                 let _ = incarnation.join.join();
@@ -512,6 +524,13 @@ impl Registration {
         }
     }
 
+    /// The failed cached reads its callbacks have made so far, on every
+    /// thread UIA called them on ([`crate::calls`]).
+    #[must_use]
+    pub fn failed_reads(&self) -> u32 {
+        self.failed_reads.load(Ordering::Relaxed)
+    }
+
     /// Ends the subscription: every move already asked for is made, then
     /// everything its client registered is removed
     /// (`RemoveAllEventHandlers`, which waits for any callback in progress
@@ -559,7 +578,7 @@ impl Registration {
             abandoned = state.abandoned.len(),
             "a UIA subscription's move passed its deadline; its thread is abandoned and replaced"
         );
-        match Incarnation::start(self.parts.clone(), state.target.clone()) {
+        match Incarnation::start(self.parts.clone(), state.target.clone(), &self.failed_reads) {
             // Its first registration is made on its own thread.
             Ok((incarnation, _ready)) => state.current = Some(incarnation),
             Err(error) => {
@@ -586,6 +605,19 @@ impl Drop for Registration {
     }
 }
 
+/// Runs `callback`, adding the failed cached reads it makes to
+/// `failed_reads`, by the difference between two looks at the thread's
+/// count: UIA's callback threads run nothing else of this crate's that
+/// takes it.
+fn counted(failed_reads: &AtomicU32, callback: impl FnOnce()) {
+    let before = crate::calls::peek_failed_reads();
+    callback();
+    let failed = crate::calls::peek_failed_reads().wrapping_sub(before);
+    if failed != 0 {
+        failed_reads.fetch_add(failed, Ordering::Relaxed);
+    }
+}
+
 /// The handler object for a subscription.
 enum Handler {
     Properties(
@@ -602,10 +634,17 @@ enum Handler {
 impl Handler {
     /// The handler for `subscription`, calling back only while `live` is
     /// set: an abandoned thread's handlers stay registered until its call
-    /// returns, and must not repeat what its replacement's report.
-    fn of(subscription: Subscription, live: &Arc<AtomicBool>) -> Self {
+    /// returns, and must not repeat what its replacement's report. The
+    /// failed cached reads each callback makes on UIA's thread are added to
+    /// `failed_reads`.
+    fn of(
+        subscription: Subscription,
+        live: &Arc<AtomicBool>,
+        failed_reads: &Arc<AtomicU32>,
+    ) -> Self {
         let live = Arc::clone(live);
         let is_live = move || live.load(Ordering::Acquire);
+        let failed_reads = Arc::clone(failed_reads);
         match subscription {
             Subscription::Properties {
                 properties,
@@ -614,7 +653,7 @@ impl Handler {
                 handlers::PropertyHandler {
                     callback: Arc::new(move |element, property| {
                         if is_live() {
-                            callback(element, property);
+                            counted(&failed_reads, || callback(element, property));
                         }
                     }),
                 }
@@ -625,7 +664,7 @@ impl Handler {
                 handlers::EventHandler {
                     callback: Arc::new(move |element, _| {
                         if is_live() {
-                            callback(element);
+                            counted(&failed_reads, || callback(element));
                         }
                     }),
                 }
@@ -636,7 +675,7 @@ impl Handler {
                 handlers::EventHandler {
                     callback: Arc::new(move |element, event| {
                         if is_live() {
-                            callback(element, event);
+                            counted(&failed_reads, || callback(element, event));
                         }
                     }),
                 }
@@ -647,7 +686,9 @@ impl Handler {
                 handlers::NotificationHandler {
                     callback: Arc::new(move |element, kind, processing, display, activity| {
                         if is_live() {
-                            callback(element, kind, processing, display, activity);
+                            counted(&failed_reads, || {
+                                callback(element, kind, processing, display, activity);
+                            });
                         }
                     }),
                 }
@@ -657,7 +698,7 @@ impl Handler {
                 handlers::ActiveTextPositionHandler {
                     callback: Arc::new(move |element, range| {
                         if is_live() {
-                            callback(element, range);
+                            counted(&failed_reads, || callback(element, range));
                         }
                     }),
                 }
@@ -667,7 +708,7 @@ impl Handler {
                 FocusHandler {
                     callback: Arc::new(move |element| {
                         if is_live() {
-                            callback(element);
+                            counted(&failed_reads, || callback(element));
                         }
                     }),
                 }
@@ -760,6 +801,9 @@ struct Thread {
     live: Arc<AtomicBool>,
     /// When its current move began, while it makes one.
     moving: Arc<Mutex<Option<Instant>>>,
+    /// Where its callbacks' failed cached reads are counted: the
+    /// registration's count.
+    failed_reads: Arc<AtomicU32>,
 }
 
 impl Thread {
@@ -801,7 +845,7 @@ fn set_up(parts: Vec<Part>, target: &Target, thread: &Thread) -> windows::core::
             };
             Ok(Built {
                 cache,
-                handler: Handler::of(part.subscription, &thread.live),
+                handler: Handler::of(part.subscription, &thread.live, &thread.failed_reads),
                 extended_only: part.extended_only,
                 text_changes: part.text_changes,
             })

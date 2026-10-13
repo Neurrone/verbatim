@@ -553,14 +553,17 @@ impl Listener {
             _writer: writer,
         } = self;
         drop(event_thread);
+        let registration_failed_reads = registration.as_ref().map_or(0, Registration::failed_reads);
         drop(registration);
         let reading_threads = readers.stop();
+        let failed_reads = registration_failed_reads.saturating_add(readers.failed_reads());
         outgoing.close();
         let _ = writer.join();
         verbatim_uia::release_mta_usage();
         tracing::info!(
             elapsed_ms = started.elapsed().as_millis(),
             reading_threads,
+            failed_reads,
             "the focus listener shut down"
         );
     }

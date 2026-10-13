@@ -39,7 +39,7 @@
 //! [`OutpostUnderTest::deliver_win_event`] hands over a stamped one, the
 //! listener's copy of an event mockapp raised.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::io::Write;
 use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -105,6 +105,9 @@ pub struct Reported {
     /// The top-level window of the event's window.
     pub window: Option<WindowHandle>,
     pub calls: CallCounts,
+    /// The failed cached reads the outpost made for it, and the listener's
+    /// reader on this thread for a UIA focus.
+    pub failed_reads: u32,
 }
 
 impl Reported {
@@ -137,6 +140,9 @@ pub struct OutpostUnderTest {
     /// The focus listener's reader, standing in for the listener's thread
     /// for mockapp's application.
     reader: RefCell<FocusReader>,
+    /// The outpost's failed cached reads when last taken
+    /// ([`Self::take_failed_reads`]).
+    failed_reads_taken: Cell<u32>,
     /// The last focus the listener's reader accepted, which Core's queued
     /// focuses supersede.
     last_accepted: LastAccepted,
@@ -210,6 +216,7 @@ impl OutpostUnderTest {
             foreground,
             reader: RefCell::new(reader),
             last_accepted,
+            failed_reads_taken: Cell::new(0),
         };
         assert_eq!(
             under_test.next(),
@@ -273,6 +280,15 @@ impl OutpostUnderTest {
     }
 
     /// Waits for the outpost to settle and asserts it said nothing more.
+    /// The failed cached reads the outpost has made since the last take,
+    /// once it has handled everything handed to it
+    /// ([`Outpost::failed_reads`]).
+    pub fn take_failed_reads(&self) -> u32 {
+        self.outpost.settle();
+        let now = self.outpost.failed_reads();
+        now - self.failed_reads_taken.replace(now)
+    }
+
     pub fn settled(&self) {
         self.outpost.settle();
         match self.messages.try_recv() {
@@ -361,6 +377,7 @@ impl OutpostUnderTest {
         kind: FocusEvent,
     ) -> (Judged, CallCounts) {
         let _ = verbatim_uia::calls::take();
+        let _ = verbatim_uia::calls::take_failed_reads();
         // mockapp never has the system focus here, so the listener would
         // find no keyboard focus window for a windowless element.
         let arrival = Arrival {
@@ -432,11 +449,15 @@ impl OutpostUnderTest {
                 selected_child,
                 window: window.map(|window| window.top_level),
                 calls: timing.calls,
+                failed_reads: 0,
             },
             other => panic!("the outpost said {other:?}, not a focus with its ancestors"),
         };
         self.settled();
-        reported
+        Reported {
+            failed_reads: self.take_failed_reads(),
+            ..reported
+        }
     }
 
     /// Hands the outpost an MSAA focus on mockapp's node `index`, as the
@@ -458,8 +479,10 @@ impl OutpostUnderTest {
         let Judged::Read(_) = &judged else {
             panic!("the listener dropped the focus: {judged:?}");
         };
+        let listener_failed_reads = verbatim_uia::calls::take_failed_reads();
         let mut reported = self.focus(judged.into_fact(0));
         reported.calls += calls;
+        reported.failed_reads += listener_failed_reads;
         reported
     }
 
