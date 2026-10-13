@@ -667,6 +667,8 @@ Built on 2026-10-13:
 
 ### Step 8. Review keys straight to the reducer
 
+Not adopted (Dickson, 2026-10-14): more commands are still to be implemented, and it is too early to know whether most of them should go straight to the reducer or through the router; the step is reconsidered when the command set is settled.
+
 - Finding 10, as 8.4. The router keeps lock keys, the menu and the time, and speaks the time, the date and the tray list with `speak_for_key`; the gesture log line moves to debug, after the forward.
 - Removes: one wake-up and an info log write per review and navigation key.
 - Tests: a review key's handled mark is reported after its speech is queued, and only once; a lock key's announcement still precedes the marks behind it; the time key followed at once by a review key, with the router held, speaks the review and ends the time cancelled.
@@ -682,6 +684,8 @@ The signalled cancel is done (3ebb7be), ahead of the rest, by the audit: `SynthS
 - Pass: `synth_host_crash_recovery`; the Control flood scenarios (`conhost_control_flood`, `windows_terminal_control_flood`), since the host's cancel changes; in `measure_speech_real`, a key pressed during a long announcement has its echo's "synth request" to first sample no longer than an echo pressed in silence plus one chunk's synthesis time; the OneCore variant's cancel-to-stop has no 10 ms steps.
 
 ### Step 10. The speech manager without its queue thread, and the audio thread unblocked
+
+Deferred (Dickson, 2026-10-14): the generation-based cancel and the queue logic on the speaking thread are much more complex than today's design, which is simpler to reason about. Step 12's measurements decide: only if the speech or audio path (the stages from the reducer's speak to the first sample, and a cancel's) shows a noticeable delay is this step revisited.
 
 - 8.1 to 8.3 and 8.6 to 8.9: queue logic under the speech lock on the speaking thread; the cancel by generation and key fence, lock-free on the hook; the mixer cutting by generation; lanes emptied on `SpeechCancelled` or the synth thread's wake; the speech-record channel and the reporting thread, which also answers the idle barrier; marks posted to the reducer's port by the audio thread; the ended list that maintains `handed_on`; the pause word; the mixer lock released across WASAPI calls; the ledger's line and underrun warning on the reporting thread; the ledger's mutex replaced by carried stamps.
 - Removes: the queue thread's wake on every announcement, the cancel's two serial wake-ups, the shared ledger and registry locks on the path.
