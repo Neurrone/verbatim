@@ -57,8 +57,8 @@ Public API:
   Core, outpost to verbatim.exe, outpost outbound, outpost's pipe to
   verbatim.exe, waiting for the reducer, reducer, to
   speech, synthesis, or for a synthesizer host its parts, synthesizer
-  request, to the synthesizer host, the host's first chunk, and back from
-  the synthesizer host; leading silence, mixer and device, device clock;
+  request, to the synthesizer host, the host's first chunk, back from
+  the synthesizer host, and host reader to synth thread; leading silence, mixer and device, device clock;
   `label` names each
   as the latency log does, and `docs/tooling.md` says what each covers;
   listener to outpost, Core to outpost, and to Core are the whole spans a

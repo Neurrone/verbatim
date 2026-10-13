@@ -36,7 +36,9 @@ Implementation notes, lifecycle. `start` launches the host with
 4096-byte buffer on the pipe the host writes to, and the log stem
 `synth-<id>`. A reader thread, named `verbatim-synth-host-<id>`, reads
 `FromHost` messages from the pipe and sends each into a channel; an end
-of stream or a read error is sent as an error and ends the thread. The
+of stream or a read error is sent as an error and ends the thread. It
+stamps a `FirstAudio` message with the shared clock (`hosting::now_us`)
+as it reads the frame, and nothing else. The
 host lives exactly as long as its `HostedSynth`: switching synthesizer
 drops the driver, which drops the job handle and so ends the process.
 
@@ -45,6 +47,14 @@ to the speech manager's sink: `Pcm` to `push_pcm`, `Mark` to
 `index_reached`, until `Done`, which returns success, or `Failed`, which
 returns `SynthError::Synthesis`. Any other message while speaking is an
 error.
+
+Timing. `speak` stamps the shared clock as it is asked, and again just
+before the `Speak` request's write begins. With the host's `FirstAudio`
+stamps, the reader thread's stamp on reading that frame, and a stamp as
+the synth thread takes it, it reports a `SynthTiming` to the sink: the
+request, the trip to the host, the host's first chunk, the trip back to
+the reader thread, and the reader's hand-off to the synth thread
+(`docs/design/communication.md`, section 10.1).
 
 Cancellation by utterance id. When `push_pcm` returns `Break`, or the
 sink reports the utterance cancelled while the driver waits for the host
@@ -110,7 +120,10 @@ Settings. `set_setting` sends `SetSetting` and waits for
 keeps the host; success also updates the cached value that `setting`
 reads.
 
-Tests: the crate has no tests of its own; it is tested against the real
+Tests: the crate's own unit tests compute each stage of the
+`SynthTiming` split exactly from fixed stamps, with the request written
+through a pipe that advances a fake clock, so a stamp taken after the
+write fails them. It is otherwise tested against the real
 host executable in `crates/verbatim-synth-host/tests/hosting.rs` (see
 [verbatim-synth-host](verbatim-synth-host.md)), and end to end by the
 `synth_host_crash_recovery` scenario ([verbatim-e2e](verbatim-e2e.md)),

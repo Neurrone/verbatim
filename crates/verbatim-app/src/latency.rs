@@ -340,6 +340,11 @@ impl Stages {
                 None,
             ),
             (
+                LatencyStageKind::HostReaderToSynth,
+                self.synth_timing.map(|timing| timing.hand_off_us),
+                None,
+            ),
+            (
                 LatencyStageKind::LeadingSilence,
                 span(self.synthesizer_audio, self.audio_to_mixer),
                 None,
@@ -1172,6 +1177,7 @@ mod tests {
                 to_host_us: 400,
                 first_chunk_us: 4_000,
                 return_us: 500,
+                hand_off_us: 60,
             }),
             ..Stages::default()
         };
@@ -1188,6 +1194,7 @@ mod tests {
                 (LatencyStageKind::ToHost, 400),
                 (LatencyStageKind::HostFirstChunk, 4_000),
                 (LatencyStageKind::HostReturn, 500),
+                (LatencyStageKind::HostReaderToSynth, 60),
             ]
         );
     }

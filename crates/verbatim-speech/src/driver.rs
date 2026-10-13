@@ -240,14 +240,18 @@ impl std::error::Error for SynthError {}
 /// are the span from synthesis started to the synthesizer's first audio.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SynthTiming {
-    /// From the driver asked to speak to its request written.
+    /// From the driver asked to speak to its request's write beginning.
     pub request_us: u64,
-    /// From the request written to the host taking it in.
+    /// From the request's write beginning to the host having read it.
     pub to_host_us: u64,
     /// From the host taking the request to its synthesizer's first chunk.
     pub first_chunk_us: u64,
-    /// From the host writing the first chunk to the driver taking it in.
+    /// From the host beginning to write the first chunk to the driver's
+    /// reader thread having read it.
     pub return_us: u64,
+    /// From the driver's reader thread having read the first chunk to the
+    /// thread the driver speaks on taking it.
+    pub hand_off_us: u64,
 }
 
 /// Receives a driver's output during [`SynthDriver::speak`].

@@ -25,16 +25,16 @@
 #![forbid(unsafe_code)]
 
 use std::fs::File;
-use std::io::{self, BufReader, BufWriter};
+use std::io::{self, BufReader, BufWriter, Write};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, bounded, select};
 use tracing::warn;
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::{ChildSpec, Contained};
 use verbatim_speech::hosting::{
-    FromHost, HostDescription, ToHost, now_us, read_from_host, write_to_host,
+    FromHost, HostDescription, HostTiming, ToHost, now_us, read_from_host, write_to_host,
 };
 use verbatim_speech::{
     SettingDescriptor, SettingId, SettingValue, SpeechSequence, SynthDriver, SynthError,
@@ -68,7 +68,17 @@ struct Host {
     /// Ends the process when dropped.
     contained: Contained,
     commands: BufWriter<File>,
-    replies: Receiver<io::Result<FromHost>>,
+    replies: Receiver<io::Result<Reply>>,
+}
+
+/// A message from the host, as the reader thread hands it to the synth
+/// thread.
+struct Reply {
+    message: FromHost,
+    /// For [`FromHost::FirstAudio`], when the reader thread read the frame,
+    /// on the clock every process shares; `None` for the rest, which the
+    /// latency ledger does not time.
+    read_at_us: Option<u64>,
 }
 
 impl HostedSynth {
@@ -173,7 +183,13 @@ impl Host {
                 prioritize_role("synthesizer host reader", READER_PRIORITY);
                 loop {
                     let reply = match read_from_host(&mut from_host) {
-                        Ok(Some(reply)) => Ok(reply),
+                        Ok(Some(message)) => Ok(Reply {
+                            // The first audio's receipt is stamped here, as
+                            // the frame is read, so the hand-off to the
+                            // synth thread is a stage of its own.
+                            read_at_us: matches!(message, FromHost::FirstAudio(_)).then(now_us),
+                            message,
+                        }),
                         Ok(None) => Err(io::ErrorKind::UnexpectedEof.into()),
                         Err(error) => Err(error),
                     };
@@ -199,8 +215,10 @@ impl Host {
         }
     }
 
-    fn send(&mut self, message: &ToHost) -> Result<(), SynthError> {
-        write_to_host(&mut self.commands, message).map_err(|error| {
+    /// Writes `message` to the host, returning the shared clock's stamp
+    /// taken as the write began.
+    fn send(&mut self, message: &ToHost) -> Result<u64, SynthError> {
+        write_stamped(&mut self.commands, message, now_us).map_err(|error| {
             SynthError::Synthesis(format!("the synthesizer host is gone: {error}"))
         })
     }
@@ -208,7 +226,7 @@ impl Host {
     /// The host's next message, or an error if it ended or hung.
     fn receive(&self) -> Result<FromHost, SynthError> {
         match self.replies.recv_timeout(HANG_TIMEOUT) {
-            Ok(Ok(reply)) => Ok(reply),
+            Ok(Ok(reply)) => Ok(reply.message),
             Ok(Err(error)) => Err(SynthError::Synthesis(format!(
                 "the synthesizer host ended: {error}"
             ))),
@@ -333,10 +351,8 @@ fn speak_with(
     sink: &mut dyn SynthSink,
     attempt: &mut Attempt,
 ) -> Result<Result<(), SynthError>, SynthError> {
-    let asked = Instant::now();
-    host.send(&ToHost::Speak(sequence.clone()))?;
-    let request_us = elapsed_us(asked);
-    let sent_at_us = now_us();
+    let asked_at_us = now_us();
+    let sent_at_us = host.send(&ToHost::Speak(sequence.clone()))?;
     let mut cancelled = false;
     // The cancel wakes this wait itself (one slot, filled without
     // blocking), so the host is told at once, even before it has sent any
@@ -355,7 +371,10 @@ fn speak_with(
             cancelled = true;
             host.send(&ToHost::Cancel(sequence.utterance))?;
         }
-        let reply = select! {
+        let Reply {
+            message: reply,
+            read_at_us,
+        } = select! {
             recv(host.replies) -> reply => match reply {
                 Ok(reply) => reply.map_err(|error| {
                     SynthError::Synthesis(format!("the synthesizer host ended: {error}"))
@@ -377,14 +396,16 @@ fn speak_with(
         };
         match reply {
             FromHost::FirstAudio(timing) => {
-                // The trip back ends as the reply is taken here, on the
-                // synth thread, after the host reader thread's hand-off.
-                sink.synth_timing(SynthTiming {
-                    request_us,
-                    to_host_us: timing.received_at_us.saturating_sub(sent_at_us),
-                    first_chunk_us: timing.first_chunk_us,
-                    return_us: now_us().saturating_sub(timing.sent_at_us),
-                });
+                let taken_at_us = now_us();
+                sink.synth_timing(split_synthesis(
+                    &DriverStamps {
+                        asked: asked_at_us,
+                        sent: sent_at_us,
+                        read: read_at_us.unwrap_or(taken_at_us),
+                        taken: taken_at_us,
+                    },
+                    timing,
+                ));
             }
             FromHost::Pcm(format, samples) => {
                 attempt.relayed |= !cancelled;
@@ -411,9 +432,42 @@ fn speak_with(
     }
 }
 
-/// Microseconds since `from`.
-fn elapsed_us(from: Instant) -> u64 {
-    u64::try_from(from.elapsed().as_micros()).unwrap_or(u64::MAX)
+/// Writes `message` to `writer`, returning `now`'s stamp taken just before
+/// the write begins, so the write's own time falls in the hop to the host
+/// (`docs/design/communication.md`, section 10.1).
+fn write_stamped(
+    writer: &mut impl Write,
+    message: &ToHost,
+    now: impl FnOnce() -> u64,
+) -> io::Result<u64> {
+    let sent_at_us = now();
+    write_to_host(writer, message)?;
+    Ok(sent_at_us)
+}
+
+/// The driver's stamps on an utterance's start, in microseconds on the
+/// clock every process shares.
+struct DriverStamps {
+    /// The synth thread asked to speak.
+    asked: u64,
+    /// The `Speak` request's write began.
+    sent: u64,
+    /// The reader thread read the host's first audio.
+    read: u64,
+    /// The synth thread took the first audio from the reader thread.
+    taken: u64,
+}
+
+/// Splits a hosted synthesizer's start into its stages from the driver's
+/// stamps and the host's (`docs/design/communication.md`, section 10.1).
+fn split_synthesis(driver: &DriverStamps, host: HostTiming) -> SynthTiming {
+    SynthTiming {
+        request_us: driver.sent.saturating_sub(driver.asked),
+        to_host_us: host.received_at_us.saturating_sub(driver.sent),
+        first_chunk_us: host.first_chunk_us,
+        return_us: driver.read.saturating_sub(host.sent_at_us),
+        hand_off_us: driver.taken.saturating_sub(driver.read),
+    }
 }
 
 /// A [`SynthFactory`] that starts a host for `synth` from `exe`.
@@ -421,4 +475,72 @@ pub fn factory(exe: PathBuf, synth: SynthId) -> SynthFactory {
     Box::new(move || {
         Ok(Box::new(HostedSynth::start(exe.clone(), synth.clone())?) as Box<dyn SynthDriver>)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    /// A pipe whose every write takes 300 microseconds on its clock.
+    struct SlowPipe<'a>(&'a Cell<u64>);
+
+    impl Write for SlowPipe<'_> {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.set(self.0.get() + 300);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The split of a start asked for at 900, whose request's write began
+    /// at 1,000 on a slow pipe and was read by the host at 1,450, and whose
+    /// first audio the host wrote at 5,500, the reader thread read at
+    /// 6,000, and the synth thread took at 6,050.
+    fn split() -> SynthTiming {
+        let clock = Cell::new(1_000);
+        let request = ToHost::SetSetting {
+            id: SettingId::new("rate"),
+            value: SettingValue::Number(50),
+        };
+        let sent = write_stamped(&mut SlowPipe(&clock), &request, || clock.get())
+            .expect("the pipe takes every write");
+        split_synthesis(
+            &DriverStamps {
+                asked: 900,
+                sent,
+                read: 6_000,
+                taken: 6_050,
+            },
+            HostTiming {
+                received_at_us: 1_450,
+                first_chunk_us: 4_000,
+                sent_at_us: 5_500,
+            },
+        )
+    }
+
+    #[test]
+    fn the_request_runs_from_the_ask_to_the_write_beginning() {
+        assert_eq!(split().request_us, 100);
+    }
+
+    #[test]
+    fn the_trip_to_the_host_runs_from_the_write_beginning_to_the_hosts_read() {
+        assert_eq!(split().to_host_us, 450);
+    }
+
+    #[test]
+    fn the_trip_back_runs_from_the_hosts_write_to_the_reader_threads_read() {
+        assert_eq!(split().return_us, 500);
+    }
+
+    #[test]
+    fn the_hand_off_runs_from_the_reader_threads_read_to_the_synth_thread() {
+        assert_eq!(split().hand_off_us, 50);
+    }
 }

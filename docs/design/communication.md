@@ -504,11 +504,12 @@ The event side, in path order:
 
 The speech side, in path order:
 - To speech (`ToSpeech`, "to speech"): the reducer's speak to the job taken by the synth thread (in-process). Time waiting behind earlier speech is reported and not counted.
-- Synthesis (`Synthesis`, "synthesis"): for a synthesizer in verbatim.exe's own process, synthesis started to its first audio. A synthesizer host's is split into the next four.
-- Synth request (`SynthRequest`, "synthesizer request"): the job taken to `Speak` written (in-process).
-- To host (`ToHost`, "to the synthesizer host"): `Speak` written to the host's read (cross-process).
+- Synthesis (`Synthesis`, "synthesis"): for a synthesizer in verbatim.exe's own process, synthesis started to its first audio. A synthesizer host's is split into the next five.
+- Synth request (`SynthRequest`, "synthesizer request"): the driver asked to speak to its writer beginning the `Speak` request's write (in-process).
+- To host (`ToHost`, "to the synthesizer host"): that write to the host's command reader having read the request (cross-process): the encoding, the pipe, and the host's reader.
 - Host first chunk (`HostFirstChunk`, "the host's first chunk"): the host taking the request to its synthesizer's first chunk (in the host, a duration). This is the split of synthesis the audit asks for, into request, first chunk and return.
-- Host return (`HostReturn`, "back from the synthesizer host"): the host writing its first audio to the synth thread taking it in (cross-process).
+- Host return (`HostReturn`, "back from the synthesizer host"): the host beginning to write its first audio (`FirstAudio`) to the driver's reader thread having read the frame (cross-process): the encoding, the pipe, and the reader's wake.
+- Host reader to synth thread (`HostReaderToSynth`, "host reader to synth thread"): the reader thread's read to the synth thread taking the first audio from it: the channel between them and the synth thread's wake (in-process).
 - Leading silence (`LeadingSilence`, "leading silence").
 - Mixer and device (`MixerAndDevice`, "mixer and device"): the first frame's append to the engine having taken it, by padding (in-process). The design's split of this at the audio thread's wake has no stamp yet.
 - Device clock (`DeviceClock`, "device clock"): the engine having taken it to `IAudioClock::GetPosition` reaching the first frame's position, converted to time with the position's own performance-counter stamp (in-process). This is the stage finding 2 needs.
@@ -519,8 +520,8 @@ The stamps on each cross-process hop, as checked on 2026-10-13:
 - The listener to verbatim.exe: the receipt was stamped (`core_received_at_us`, at the relay's read completion), but nothing stamped the listener's read or its write, so the listener stage held its cross-process read of the focus. The reading thread now stamps the read's end and the writer its write.
 - An outpost to verbatim.exe, events and replies alike: the receipt was stamped (`core_read_at_us`), the write was not; `published_at_us` is the worker's hand-off to the outbound queue. The outpost's writer now stamps its write.
 - verbatim.exe to an outpost, facts and requests alike: both stamped (`core_sent_at_us` as the relay begins the write, `relayed_at_us` at the outpost's reader).
-- verbatim.exe to the synthesizer host: both stamped, but the driver's stamp is taken after its write returns rather than before it, so the write's own time falls in "synthesizer request".
-- The host's first audio back: both stamped, but the receipt is taken on the synth thread after the host reader thread hands the reply on, so that hand-off falls in "back from the synthesizer host".
+- verbatim.exe to the synthesizer host: both stamped, but the driver's stamp was taken after its write returned rather than before it, so the write's own time fell in "synthesizer request". The driver now stamps as its write begins.
+- The host's first audio back: both stamped, but the receipt was taken on the synth thread after the host reader thread handed the reply on, so that hand-off fell in "back from the synthesizer host". The reader thread now stamps the first audio as it reads the frame, and the hand-off is a stage of its own, "host reader to synth thread".
 - verbatim.exe to the listener (pings, hand-over notices) carries no timing; nothing on an announcement's way crosses it.
 
 ### 10.2 Stamps, in memory, off the path

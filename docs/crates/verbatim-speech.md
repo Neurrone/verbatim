@@ -23,8 +23,9 @@ Public API:
   `is_cancelled()` lets a driver that works a while before it has audio
   (OneCore) stop early; `synth_timing(timing)`, a default no-op, takes a
   `SynthTiming` from a driver that can tell the parts of its start apart
-  (the request, its trip to the host, the host's first chunk, and the
-  trip back, each in microseconds), before its first audio; and
+  (the request, its trip to the host, the host's first chunk, the trip
+  back to the driver's reader, and the reader's hand-off to the thread
+  speaking, each in microseconds), before its first audio; and
   `on_cancel(wake)`, a default no-op, registers a `CancelWake` to be
   called, from whichever thread cancels, when the utterance is cancelled,
   or at once if it is, for a driver that waits for its synthesizer and so
