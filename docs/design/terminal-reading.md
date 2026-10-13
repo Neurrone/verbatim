@@ -367,6 +367,13 @@ Two different things go by this name.
 - Split reads: none; they are only evidence.
 - Failure modes: none known, beyond more reads.
 - Recommendation: keep as evidence (never as text), and find the cause of UIA's events stopping, since it may be on Verbatim's side (for example event coalescing, adopted 2026-10-07, or the subscription's handling; uncertain). Measure 5. Open question 3.
+- Measured 2026-10-13, with the outpost logging each update's raw event id, on Windows 11 24H2's console host (`conhost_flood`, `conhost_typing`, `conhost_full_screen`, `conhost_review_output`, `conhost_footer_flood`, and a probe script for the rest). Since 2026-10-13 they are the console host's only text change evidence (`docs/design/wake-ups.md`, item 15). Which kind comes for what:
+  - Region (`_UPDATE_REGION`): every write of a row's cells: each line of output, a prompt, a line redrawn by the shell (history recall, Escape), the alternate screen opened and drawn, a VT clear (`ESC [2J`, with a scroll and a layout) and a VT scroll (`ESC [S`).
+  - Simple (`_UPDATE_SIMPLE`): one cell written, which is every typed character's echo, and a whole-buffer clear by the console API (PowerShell's `cls` and `[Console]::Clear()` each raise two at the origin with a space, the latter with a scroll and a layout).
+  - Scroll (`_UPDATE_SCROLL`): the text scrolled up by output once the cursor is on the last row (one with each line, beside its region and a layout), and a block of text moved by `ScrollConsoleScreenBuffer` (PowerShell's `ScrollBufferContents`), which raised a scroll alone.
+  - Layout (`EVENT_CONSOLE_LAYOUT`): the view moved, with each line once the screen is full, and a window resized, alone; the alternate screen opened, beside its regions; and the alternate screen closed, alone, the main screen coming back with no region at all.
+  - In a flood each line raises a region, a scroll and a layout (`conhost_flood`: 8,009, 7,977 and 7,872, with 62 simple ones from typing); the intake merges a window's updates into one while they wait, so only the event thread pays for the second and third.
+- Which the reading needs: each kind is the only evidence of some change of the text, so none can be dropped: a region for output and redraws, a simple update for an echo and for the API's clear, a scroll for a block moved by the console API, and a layout for the alternate screen closing. A window resized raised a layout alone and changed no text in the probe; a resize that rewraps the text has not been tried. Recommended: keep all four.
 
 ### Extra 13: reading on demand
 

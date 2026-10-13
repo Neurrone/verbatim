@@ -806,7 +806,11 @@ More environment variables matter for less common cases:
   what it reported; and, in every process, each UIA event's arrival ("UIA
   event received") and each `WinEvent`'s with how long ago it was raised
   ("WinEvent received"), so a delay before an event reached Verbatim
-  shows, whatever became of the event. The focus listener runs from the
+  shows, whatever became of the event. That line also gives the raw
+  event id (`event`, in hexadecimal), which tells apart the events one
+  kind stands for: the console updates are 0x4002 for a region, 0x4003
+  for a single cell, 0x4004 for a scroll, and 0x4005 for a layout, and
+  their ids are logged as the console host raised them. The focus listener runs from the
   outpost binary, so the filter covers it too. The
   debug lines cost nothing measurable: over six runs each of
   `menu_and_settings_dialog` and `settings_dialog_keys` (2026-10-07),

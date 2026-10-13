@@ -526,7 +526,9 @@ unsafe extern "system" fn win_event_proc(
         // event hook treats it, so a window's foreground report and a focus
         // on its client area name one object. A window's destruction keeps
         // the window object, which is how its end is recognized.
-        let id_object = if kind != WinEventKind::Destroy
+        // A console update's ids are coordinates or counts, never an
+        // object, and are kept as they are.
+        let id_object = if !matches!(kind, WinEventKind::Destroy | WinEventKind::ConsoleUpdate)
             && id_object == OBJID_WINDOW.0
             && id_child == CHILDID_SELF
         {
@@ -536,9 +538,11 @@ unsafe extern "system" fn win_event_proc(
         };
         // Every wanted event's arrival with how long ago it was raised, so
         // a delay before it reached this process shows whatever becomes of
-        // it.
+        // it, and its raw event id, which tells apart the events one kind
+        // stands for, such as the four console updates.
         tracing::debug!(
             ?kind,
+            event = format_args!("{event:#06x}"),
             hwnd = hwnd.0 as isize,
             id_object,
             id_child,
