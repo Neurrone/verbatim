@@ -31,6 +31,10 @@ use crate::com::init_mta;
 use crate::element::{ElementExt, WalkerExt, current_selection, invoke, select, toggle};
 use crate::map::snapshot_from_cached_element;
 use crate::registry::NodeIdRegistry;
+use crate::shape::{
+    Ancestor, Cached, Direction, ElementValue, Live, Node, Request, SelectionContainer, Shape,
+    TreeDump,
+};
 
 /// A UIA client bound to the current thread's multithreaded apartment.
 pub struct Uia {
@@ -146,6 +150,16 @@ impl Uia {
         crate::Request::build(&self.client, ())
     }
 
+    /// The cache request of `S` for `gates`, which every element it fills
+    /// carries (`docs/design/uia-shapes.md`). Local.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the cache request cannot be built.
+    pub fn request<S: Shape>(&self, gates: S::Gates) -> windows::core::Result<Request<S>> {
+        Request::build(&self.client, gates)
+    }
+
     /// Builds a cache request for exactly `properties`. Local.
     ///
     /// # Errors
@@ -246,6 +260,42 @@ impl Uia {
         unsafe { self.client.GetFocusedElementBuildCache(cache) }
     }
 
+    /// The element that has the keyboard focus, its cache filled by
+    /// `request`. Cross-process.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if there is no focused element or the call fails.
+    pub fn focused<S: Shape>(&self, request: &Request<S>) -> windows::core::Result<Cached<S>> {
+        let (cache, gates) = request.parts();
+        Ok(Cached::filled(self.focused_element(cache)?, gates))
+    }
+
+    /// `parent`'s children in the raw view, in order, each with its cache
+    /// filled by `request`, in one call: `parent`'s cache is rebuilt with
+    /// its children in scope, through a copy of `request` set to that
+    /// scope, and the children are read from it; nothing of `parent`'s own
+    /// cache is read. Cross-process; the outpost's worker only.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the cache request cannot be copied or the
+    /// element does not answer.
+    pub fn children<S: Shape>(
+        &self,
+        parent: &Live,
+        request: &Request<S>,
+    ) -> windows::core::Result<Vec<Cached<S>>> {
+        let (cache, gates) = request.parts();
+        // SAFETY: `cache` is a live cache request; the copy is this call's.
+        let scoped = unsafe { cache.Clone() }?;
+        Ok(self
+            .children_from(parent.element(), &scoped)?
+            .into_iter()
+            .map(|child| Cached::filled(child, gates))
+            .collect())
+    }
+
     /// `element`'s children in the raw view, in order, each with
     /// `properties` cached, in one call: the element's cache is rebuilt
     /// with its children in scope, and the children are read from it.
@@ -261,6 +311,16 @@ impl Uia {
         properties: &[UIA_PROPERTY_ID],
     ) -> windows::core::Result<Vec<IUIAutomationElement>> {
         let request = crate::cache::cache_request(&self.client, properties)?;
+        self.children_from(element, &request)
+    }
+
+    /// `element`'s raw-view children, read by rebuilding its cache with
+    /// `request` set to the element and its children in the raw view.
+    fn children_from(
+        &self,
+        element: &IUIAutomationElement,
+        request: &IUIAutomationCacheRequest,
+    ) -> windows::core::Result<Vec<IUIAutomationElement>> {
         // SAFETY: `request` is a live cache request; the scope is a plain
         // value.
         unsafe { request.SetTreeScope(TreeScope(TreeScope_Element.0 | TreeScope_Children.0)) }?;
@@ -270,7 +330,7 @@ impl Uia {
         // SAFETY: `request` is a live cache request and `raw_view` a live
         // condition from the same client.
         unsafe { request.SetTreeFilter(&raw_view) }?;
-        let fresh = element.build_updated_cache(&request)?;
+        let fresh = element.build_updated_cache(request)?;
         // SAFETY: `fresh` is a live element whose cache was just built; an
         // element with no children answers a null array, which `windows`
         // reports as an error carrying no failure code.
@@ -320,6 +380,62 @@ impl Uia {
             self.element_from_handle(hwnd, cache)?,
             gates,
         ))
+    }
+
+    /// The element for a top-level window handle, with no cache: for a
+    /// caller that reads nothing of it, and only searches under it or
+    /// calls into it. Cross-process.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the handle has no UIA element or the call fails.
+    pub fn window_live(&self, hwnd: isize) -> windows::core::Result<Live> {
+        count(CallKind::Uia);
+        // SAFETY: HWND wraps a caller-supplied handle; ElementFromHandle
+        // tolerates an invalid handle by returning an error.
+        unsafe { self.client.ElementFromHandle(HWND(hwnd as *mut _)) }.map(Live::new)
+    }
+
+    /// The element `runtime_id` names inside `root`'s subtree, its cache
+    /// filled by `request`, `Ok(None)` when it is not there
+    /// ([`element_by_runtime_id`](Self::element_by_runtime_id)).
+    /// Cross-process; the outpost's worker only.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if building the condition or the search fails for
+    /// a reason other than the element being absent.
+    pub fn find_by_runtime_id<S: Shape>(
+        &self,
+        root: &Live,
+        runtime_id: &[i32],
+        request: &Request<S>,
+    ) -> windows::core::Result<Option<Cached<S>>> {
+        let (cache, gates) = request.parts();
+        Ok(self
+            .element_by_runtime_id(root.element(), runtime_id, cache)?
+            .map(|found| Cached::filled(found, gates)))
+    }
+
+    /// The element `runtime_id` names among the descendants of what
+    /// `focused` controls, its cache filled by `request`
+    /// ([`controlled_descendant`](Self::controlled_descendant)).
+    /// Cross-process; the outpost's worker only.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the relation cannot be read or a search
+    /// fails for a reason other than the element being absent.
+    pub fn controlled<S: Shape>(
+        &self,
+        focused: &Live,
+        runtime_id: &[i32],
+        request: &Request<S>,
+    ) -> windows::core::Result<Option<Cached<S>>> {
+        let (cache, gates) = request.parts();
+        Ok(self
+            .controlled_descendant(focused.element(), runtime_id, cache)?
+            .map(|found| Cached::filled(found, gates)))
     }
 
     /// Re-finds an element by its UIA runtime id inside `root`'s subtree,
@@ -424,6 +540,36 @@ impl Uia {
             truncated: false,
         };
         let root = walk_recursive(&walker, element, &limits, 0, &mut state);
+        Ok((root, state.truncated))
+    }
+
+    /// [`walk_tree`](Self::walk_tree) from `root`, every node read as a
+    /// [`TreeDump`] filled by `request`. Cross-process; the outpost's
+    /// worker only, guarded by the caller's deadline.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the tree walker cannot be created.
+    pub fn tree(
+        &self,
+        root: &Cached<TreeDump>,
+        request: &Request<TreeDump>,
+        registry: &NodeIdRegistry,
+        max_depth: u32,
+        max_nodes: usize,
+    ) -> windows::core::Result<(TreeNode, bool)> {
+        let walker = self.raw_view_walker()?;
+        let limits = ShapedWalk {
+            request,
+            registry,
+            max_depth,
+            max_nodes,
+        };
+        let mut state = WalkState {
+            visited: 1, // the root counts as one node.
+            truncated: false,
+        };
+        let root = walk_shaped(&walker, root, &limits, 0, &mut state);
         Ok((root, state.truncated))
     }
 
@@ -533,6 +679,117 @@ impl Uia {
         Ok((chain, None, AncestorWalk::Complete))
     }
 
+    /// [`ancestor_chain`](Self::ancestor_chain) from `element`, each
+    /// ancestor read as an [`Ancestor`] filled by `request`: its node for
+    /// the report, and its description whatever the theme, for the layout
+    /// judgment. Cross-process; the outpost's worker only.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the tree walker itself cannot be created;
+    /// a hop that finds no parent is not an error, it simply ends the walk.
+    pub fn ancestors(
+        &self,
+        element: &Live,
+        request: &Request<Ancestor>,
+        registry: &NodeIdRegistry,
+        max_hops: u32,
+        stops: &AncestorStops<'_>,
+    ) -> windows::core::Result<(Vec<NodeSnapshot>, Option<isize>, AncestorWalk)> {
+        let AncestorStops {
+            read_by_other_api,
+            known,
+            deadline,
+        } = *stops;
+        let walker = self.raw_view_walker()?;
+        let mut chain = Vec::new();
+        let mut current = element.clone();
+        let started = std::time::Instant::now();
+        let mut hops = 0u32;
+        let log = |hops: u32, ending: &str| {
+            tracing::debug!(
+                hops,
+                ending,
+                elapsed_us = started.elapsed().as_micros(),
+                "UIA ancestor walk"
+            );
+        };
+        let out_of_time = || deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
+        for _ in 0..max_hops {
+            if out_of_time() {
+                chain.reverse();
+                log(hops, "out of time");
+                return Ok((chain, None, AncestorWalk::OutOfTime));
+            }
+            hops += 1;
+            let parent = match current.walk(&walker, Direction::Parent, request) {
+                Ok(parent) => parent,
+                // As in `ancestor_chain`: a hop that timed out, or ran past
+                // the deadline, is an incomplete chain; any other failure
+                // ends the chain as the root, as NVDA's does.
+                Err(error) => {
+                    let ending = if crate::timed_out(&error) || out_of_time() {
+                        AncestorWalk::OutOfTime
+                    } else {
+                        AncestorWalk::Complete
+                    };
+                    chain.reverse();
+                    log(hops, "root");
+                    return Ok((chain, None, ending));
+                }
+            };
+            match take_shaped_ancestor(&parent, registry, read_by_other_api, known, &mut chain) {
+                Taken::Continue => current = parent.live().clone(),
+                Taken::Crossed(hwnd) => {
+                    chain.reverse();
+                    log(hops, "crossed into MSAA");
+                    return Ok((chain, Some(hwnd), AncestorWalk::Complete));
+                }
+                Taken::Known(id) => {
+                    chain.reverse();
+                    log(hops, "met a known ancestor");
+                    return Ok((chain, None, AncestorWalk::MetKnown(id)));
+                }
+            }
+        }
+        chain.reverse();
+        log(hops, "hop limit");
+        Ok((chain, None, AncestorWalk::Complete))
+    }
+
+    /// [`ancestor_chain_from`](Self::ancestor_chain_from) for `parents`
+    /// read as [`Ancestor`]s, nearest first, as one remote operation
+    /// returns them.
+    #[must_use]
+    pub fn ancestors_from(
+        parents: &[Cached<Ancestor>],
+        registry: &NodeIdRegistry,
+        stops: &AncestorStops<'_>,
+    ) -> (Vec<NodeSnapshot>, Option<isize>, AncestorWalk) {
+        let mut chain = Vec::new();
+        for parent in parents {
+            match take_shaped_ancestor(
+                parent,
+                registry,
+                stops.read_by_other_api,
+                stops.known,
+                &mut chain,
+            ) {
+                Taken::Continue => {}
+                Taken::Crossed(hwnd) => {
+                    chain.reverse();
+                    return (chain, Some(hwnd), AncestorWalk::Complete);
+                }
+                Taken::Known(id) => {
+                    chain.reverse();
+                    return (chain, None, AncestorWalk::MetKnown(id));
+                }
+            }
+        }
+        chain.reverse();
+        (chain, None, AncestorWalk::Complete)
+    }
+
     /// The same result as [`Uia::ancestor_chain`], from `parents` already
     /// fetched, nearest first, each with its cache filled (as one remote
     /// operation returns them): the same stops at a window read through
@@ -632,6 +889,59 @@ impl Uia {
     ) -> windows::core::Result<Option<NodeSnapshot>> {
         let selected = self.selected_element(element, cache)?;
         Ok(selected.map(|selected| snapshot_from_cached_element(&selected, registry)))
+    }
+
+    /// [`selected_child`](Self::selected_child) of `container`, the child
+    /// read as a [`Node`] filled by `request`. Cross-process; the outpost's
+    /// worker only.
+    ///
+    /// # Errors
+    ///
+    /// As [`Uia::selected`].
+    pub fn selected_node(
+        &self,
+        container: &Live,
+        request: &Request<Node>,
+        registry: &NodeIdRegistry,
+    ) -> windows::core::Result<Option<NodeSnapshot>> {
+        Ok(self
+            .selected(container, request)?
+            .map(|selected| selected.snapshot(registry)))
+    }
+
+    /// [`selected_element`](Self::selected_element) of `container`: its
+    /// first selected item, its cache filled by `request`, read from the
+    /// container refreshed as a [`SelectionContainer`], in the same calls.
+    /// Cross-process.
+    ///
+    /// # Errors
+    ///
+    /// As [`Uia::selected_element`].
+    pub fn selected<S: Shape>(
+        &self,
+        container: &Live,
+        request: &Request<S>,
+    ) -> windows::core::Result<Option<Cached<S>>> {
+        let selection = self.request_fixed::<SelectionContainer>()?;
+        let Some(container) = unanswered_is_error(container.refresh(&selection))? else {
+            return Ok(None);
+        };
+        let read = container.read();
+        let first = match read.first_selected {
+            None => return Ok(None),
+            Some(ElementValue::Element(first)) => Some(first),
+            Some(ElementValue::NotSupported) => {
+                let Some(pattern) = read.selection else {
+                    return Ok(None);
+                };
+                unanswered_is_error(current_selection(&pattern))?
+                    .and_then(|selection| selection.into_iter().next())
+            }
+        };
+        let Some(first) = first else {
+            return Ok(None);
+        };
+        unanswered_is_error(Live::new(first).refresh(request))
     }
 
     /// The element behind [`Uia::selected_child`]: the first element of the
@@ -747,6 +1057,39 @@ impl Uia {
         }
     }
 
+    /// [`navigate`](Self::navigate) from `element`, the neighbour read as a
+    /// [`Node`] filled by `request`. Cross-process; the outpost's worker
+    /// only, guarded by the caller's deadline.
+    ///
+    /// # Errors
+    ///
+    /// As [`Uia::navigate`].
+    pub fn neighbor(
+        &self,
+        element: &Live,
+        request: &Request<Node>,
+        registry: &NodeIdRegistry,
+        direction: QueryKind,
+    ) -> windows::core::Result<Option<NodeSnapshot>> {
+        let walker = self.raw_view_walker()?;
+        let direction = match direction {
+            QueryKind::Parent => Direction::Parent,
+            QueryKind::NextSibling => Direction::NextSibling,
+            QueryKind::PreviousSibling => Direction::PreviousSibling,
+            QueryKind::FirstChild => Direction::FirstChild,
+            // Not a navigation direction.
+            _ => return Err(windows::core::Error::from(E_INVALIDARG)),
+        };
+        match element.walk(&walker, direction, request) {
+            Ok(neighbor) => Ok(Some(neighbor.snapshot(registry))),
+            // As in `navigate`: a dead element is reported as such; any
+            // other failure, the null element at an edge included, reads as
+            // no neighbor.
+            Err(error) if crate::element_is_gone(&error) => Err(error),
+            Err(_) => Ok(None),
+        }
+    }
+
     /// Activates `element`: tries `Invoke`, then `Toggle`, then selecting it
     /// (`SelectionItem`), in that order, NVDA's default action for a UIA
     /// element. Answers the action's name as NVDA names it: "invoke" for
@@ -836,7 +1179,34 @@ fn take_ancestor(
     }
     let snapshot = snapshot_from_cached_element(parent, registry);
     let content = crate::map::cached_is_control_and_content(parent);
-    take_reported(snapshot, content, known, chain)
+    let description = snapshot.details.description.clone();
+    take_reported(snapshot, content, description.as_deref(), known, chain)
+}
+
+/// [`take_ancestor`] for an ancestor read as an [`Ancestor`]: the layout
+/// judgment reads its description whatever the theme, while the snapshot
+/// reported carries the description only when the theme's gate fetched it.
+fn take_shaped_ancestor(
+    parent: &Cached<Ancestor>,
+    registry: &NodeIdRegistry,
+    read_by_other_api: &dyn Fn(isize) -> bool,
+    known: &dyn Fn(verbatim_model::NodeId) -> bool,
+    chain: &mut Vec<NodeSnapshot>,
+) -> Taken {
+    let read = parent.read();
+    let hwnd = read.node.role.hwnd;
+    if hwnd != 0 && read_by_other_api(hwnd) {
+        return Taken::Crossed(hwnd);
+    }
+    let snapshot = parent.snapshot(registry);
+    let description = read.layout_description();
+    take_reported(
+        snapshot,
+        read.is_control_and_content(),
+        description.as_deref(),
+        known,
+        chain,
+    )
 }
 
 /// [`take_ancestor`] for an ancestor another process read
@@ -862,19 +1232,27 @@ fn take_ancestor_parts(
         states: parts.states,
         details: parts.details.clone(),
     };
-    take_reported(snapshot, parent.content, known, chain)
+    let description = parts.details.description.clone();
+    take_reported(
+        snapshot,
+        parent.content,
+        description.as_deref(),
+        known,
+        chain,
+    )
 }
 
 /// The report of one ancestor, filtered, and the stop at a known one: the
 /// part of [`take_ancestor`] that does not depend on where the ancestor
-/// was read.
+/// was read. `description` is the one the layout judgment reads.
 fn take_reported(
     snapshot: NodeSnapshot,
     content: bool,
+    description: Option<&str>,
     known: &dyn Fn(verbatim_model::NodeId) -> bool,
     chain: &mut Vec<NodeSnapshot>,
 ) -> Taken {
-    let presentable = is_presentable_focus_ancestor(&snapshot);
+    let presentable = is_presentable_focus_ancestor(&snapshot, description);
     if !(presentable && content) {
         tracing::debug!(
             role = ?snapshot.role,
@@ -1124,6 +1502,58 @@ fn walk_recursive(
     TreeNode { snapshot, children }
 }
 
+/// [`WalkLimits`] for [`walk_shaped`]: every node read as a [`TreeDump`].
+struct ShapedWalk<'a> {
+    request: &'a Request<TreeDump>,
+    registry: &'a NodeIdRegistry,
+    max_depth: u32,
+    max_nodes: usize,
+}
+
+/// [`walk_recursive`] for [`Uia::tree`].
+fn walk_shaped(
+    walker: &IUIAutomationTreeWalker,
+    element: &Cached<TreeDump>,
+    limits: &ShapedWalk<'_>,
+    depth: u32,
+    state: &mut WalkState,
+) -> TreeNode {
+    let snapshot = element.snapshot(limits.registry);
+    let live = element.live();
+    if depth >= limits.max_depth {
+        // Peek only: is there a child we are declining to descend into?
+        if live
+            .walk(walker, Direction::FirstChild, limits.request)
+            .is_ok()
+        {
+            state.truncated = true;
+        }
+        return TreeNode {
+            snapshot,
+            children: Vec::new(),
+        };
+    }
+    let mut children = Vec::new();
+    // An `Err` here means "no first child".
+    let mut next_child = live
+        .walk(walker, Direction::FirstChild, limits.request)
+        .ok();
+    while let Some(current) = next_child {
+        if state.visited >= limits.max_nodes {
+            state.truncated = true;
+            break;
+        }
+        state.visited += 1;
+        children.push(walk_shaped(walker, &current, limits, depth + 1, state));
+        // `Err` means "no next sibling".
+        next_child = current
+            .live()
+            .walk(walker, Direction::NextSibling, limits.request)
+            .ok();
+    }
+    TreeNode { snapshot, children }
+}
+
 /// NVDA's layout judgment (`presentationType`), ported from
 /// `nvda/source/NVDAObjects/__init__.py` onto Verbatim's role vocabulary: a
 /// layout element structures the tree without communicating anything on its
@@ -1137,8 +1567,10 @@ fn walk_recursive(
 /// Used only to filter *spoken focus ancestry* (see
 /// [`is_presentable_focus_ancestor`]); object navigation deliberately sees
 /// the full tree, matching NVDA with its simple review mode off (the
-/// recorded decision on [`Uia::navigate`]).
-fn is_layout(snapshot: &NodeSnapshot) -> bool {
+/// recorded decision on [`Uia::navigate`]). `description` is the node's
+/// description whatever the theme, as NVDA's judgment reads it whatever
+/// its setting (decision 4 of `docs/design/uia-shapes.md`).
+fn is_layout(snapshot: &NodeSnapshot, description: Option<&str>) -> bool {
     use verbatim_model::Role;
     fn blank(text: Option<&str>) -> bool {
         text.is_none_or(|text| text.trim().is_empty())
@@ -1147,7 +1579,7 @@ fn is_layout(snapshot: &NodeSnapshot) -> bool {
         Role::Unknown | Role::Pane | Role::TitleBar => true,
         Role::StaticText => blank(snapshot.name.as_deref()),
         Role::Window | Role::PropertyPage | Role::Group => {
-            blank(snapshot.name.as_deref()) && blank(snapshot.details.description.as_deref())
+            blank(snapshot.name.as_deref()) && blank(description)
         }
         _ => false,
     }
@@ -1164,7 +1596,21 @@ fn is_layout(snapshot: &NodeSnapshot) -> bool {
 /// carry a cache holding the snapshot's properties. Local.
 #[must_use]
 pub fn is_focus_context(element: &IUIAutomationElement, snapshot: &NodeSnapshot) -> bool {
-    is_presentable_focus_ancestor(snapshot) && crate::map::cached_is_control_and_content(element)
+    is_presentable_focus_ancestor(snapshot, snapshot.details.description.as_deref())
+        && crate::map::cached_is_control_and_content(element)
+}
+
+impl Ancestor {
+    /// Whether the element read as this ancestor, and reported as
+    /// `snapshot`, is worth speaking as focus context by NVDA's rule for a
+    /// UIA object ([`is_focus_context`]), judged with its description
+    /// whatever the theme. Local.
+    #[must_use]
+    pub fn is_focus_context(&self, snapshot: &NodeSnapshot) -> bool {
+        let description = self.layout_description();
+        is_presentable_focus_ancestor(snapshot, description.as_deref())
+            && self.is_control_and_content()
+    }
 }
 
 /// NVDA's `isPresentableFocusAncestor`: whether an ancestor is worth
@@ -1172,9 +1618,10 @@ pub fn is_focus_context(element: &IUIAutomationElement, snapshot: &NodeSnapshot)
 /// that never meaningfully contain the focus for announcement purposes —
 /// list items, tree items, progress bars, and editable text. NVDA applies
 /// this to focus ancestry regardless of its review-mode setting.
-fn is_presentable_focus_ancestor(snapshot: &NodeSnapshot) -> bool {
+/// `description` is the one [`is_layout`] reads.
+fn is_presentable_focus_ancestor(snapshot: &NodeSnapshot, description: Option<&str>) -> bool {
     use verbatim_model::Role;
-    if is_layout(snapshot) {
+    if is_layout(snapshot, description) {
         return false;
     }
     !matches!(
@@ -1187,7 +1634,16 @@ fn is_presentable_focus_ancestor(snapshot: &NodeSnapshot) -> bool {
 mod presentation_tests {
     use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet};
 
-    use super::{is_layout, is_presentable_focus_ancestor};
+    /// [`super::is_layout`], judged with the snapshot's own description.
+    fn is_layout(snapshot: &NodeSnapshot) -> bool {
+        super::is_layout(snapshot, snapshot.details.description.as_deref())
+    }
+
+    /// [`super::is_presentable_focus_ancestor`], judged with the snapshot's
+    /// own description.
+    fn is_presentable_focus_ancestor(snapshot: &NodeSnapshot) -> bool {
+        super::is_presentable_focus_ancestor(snapshot, snapshot.details.description.as_deref())
+    }
 
     fn snapshot(role: Role, name: Option<&str>, description: Option<&str>) -> NodeSnapshot {
         let details = NodeDetails {

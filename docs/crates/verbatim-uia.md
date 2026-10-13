@@ -37,7 +37,16 @@ Public API:
   element filled by a shape's `Request` and returned as its `Cached`),
   `element_by_runtime_id`, `base_cache_request`,
   `request_fixed::<S>()` (the request of a shape with no gates; local),
-  `controlled_descendant` (the selected element, when it is inside an
+  `request::<S>(gates)` (the request of a shape for the gates given;
+  local), `focused(request)` (the focused element as a shape),
+  `window_live(hwnd)` (a window's element with no cache, for a caller
+  that reads nothing of it, only searches under it: `ElementFromHandle`,
+  one call), `children(parent, request)` (`children_with` for a shape:
+  `parent`'s raw-view children, each filled by `request`, through a copy
+  of the request set to the element and its children, nothing of
+  `parent`'s own cache read), `find_by_runtime_id(root, runtime_id,
+  request)` and `controlled(focused, runtime_id, request)` (the next two
+  for a shape), `controlled_descendant` (the selected element, when it is inside an
   element the focus names in its ControllerFor relation; the classic
   implementation behind `verbatim_uia_rops::controlled_selection`), plus
   the M3
@@ -104,6 +113,14 @@ Public API:
   reading the same raw-view ancestors in one round trip inside the
   provider process. The outpost uses that for a focus-now query and keeps
   the per-hop walk for windows read the classic way.
+  `Uia::ancestors(element, request, registry, max_hops, stops)` and
+  `Uia::ancestors_from(parents, registry, stops)` are the same two for
+  ancestors read as the `Ancestor` shape: each is reported as its node,
+  whose description follows the theme's gate, while the layout judgment
+  reads the ancestor's own description, fetched whatever the theme, as
+  NVDA's `presentationType` reads it whatever its setting (decision 4 of
+  `docs/design/uia-shapes.md`); `Ancestor::is_focus_context(snapshot)` is
+  the shaped `is_focus_context`.
   `Uia::ancestor_chain_from_parts(parents, registry, stops)` does the same
   for ancestors another process read and sent as their parts
   (`AncestorParts`: the cached parts, the own window handle, and whether
@@ -127,7 +144,11 @@ Public API:
   that fails in any other way than two: a call the provider did not
   answer within UIA's transaction timeout (`timed_out`), and one that
   finds the container or its selected item gone (`element_is_gone`), are
-  errors, never "nothing selected". `Uia::selected_child` maps the
+  errors, never "nothing selected". `Uia::selected(container, request)`
+  is the same read for a shape: the container refreshed as the
+  `SelectionContainer` shape, in the same calls, and the item filled by
+  `request`. `Uia::selected_child`, and `Uia::selected_node(container,
+  request, registry)` for the `Node` shape, map the
   element to a snapshot with the same errors; the outpost logs such an
   error and reports the focus without a selected child, and
   `verbatim-uia-rops`'s classic focus ancestry fails with it, as it does
@@ -162,7 +183,10 @@ Public API:
   variant is now built by `InitVariantFromInt32Array`, so no raw array is
   ever handled, and reading a runtime id goes through one helper that owns
   the returned array. A search that finds nothing is `Ok(None)`; a search
-  that fails is an error.
+  that fails is an error. `Uia::neighbor(element, request, registry,
+  kind)` is the same step with the neighbour read as a `Node`, and
+  `Uia::tree(root, request, registry, max_depth, max_nodes)` is
+  `walk_tree` with every node read as a `TreeDump`.
 - `Uia::activate` — NVDA's activation ladder: `Invoke`, then `Toggle`,
   then `SelectionItem`'s select, answering `ActionName::Invoke` for an
   Invoke and no name otherwise, as NVDA names them; each fetched live since
@@ -493,11 +517,24 @@ Public API:
   patterns its request holds. Its public parts:
   - `Shape`, `Ungated` and `Covers<T>`, sealed traits no other crate can
     implement. `Shape` carries the shape's `PROPERTIES` and `PATTERNS`,
-    computed at compile time without repeats, and its gates type, `()` for
-    a shape with no gates, which is what `Ungated` marks. `Covers<T>` says
-    a shape's request holds every property and pattern of `T`'s, checked
-    by a compile-time assertion.
-  - The shapes so far, each a plain struct of public fields. The groups:
+    computed at compile time without repeats, `UNGATED` (the properties
+    every request of it holds), `all_on()` (every gate on), and its gates
+    type, `()` for a shape with no gates, which is what `Ungated` marks.
+    `Covers<T>` says a shape's ungated request holds every property and
+    pattern of `T`'s, checked by a compile-time assertion.
+  - Gates: a shape declared with gates has a gates struct of its own,
+    with a `bool` for each gated property and an `Option` of the group's
+    gates for each gated group (`None`: not fetched), and each gated field
+    reads as an `Option`, `None` without touching the cache when its gate
+    was off. An ungated group's gates nest as they are, so
+    `AncestorGates` holds `NodeGates`. A request's properties are the
+    union of what its gates turn on, so a property both gated and ungated,
+    such as `Ancestor`'s description, is fetched whenever the ungated field
+    asks for it. The macro takes gated fields in sections of their own,
+    `gated_groups` and `gated_properties`, since a `macro_rules!` macro
+    cannot tell a `#[gated]` marker from a field's documentation. The
+    outpost maps the theme to the gates (`docs/crates/verbatim-outpost.md`).
+  - The shapes, each a plain struct of public fields. The groups:
     `RoleCore` (control type, class name, `IsDialog`,
     `IsTogglePatternAvailable`, native window handle; `role()` maps them as
     every read maps a role, refined for toggle buttons, terminals and
@@ -512,22 +549,63 @@ Public API:
     else), `PropertyEvent` (`RoleCore`, name, `ValueSet`, `States` and the
     process id, 24 properties; `parts(runtime_id)` gives everything but
     details), and `TextEvent` (process id, native window handle and class
-    name). All three cover `Kept`.
+    name). All three cover `Kept`, and `ListenerEvent` covers
+    `FocusInput` (control type and native window handle, what the remote
+    focus query reads of its input). The fetch shapes: `Node` (`RoleCore`,
+    `ValueSet`, `States`, name and bounding rectangle, and four gated
+    details, the `Description`, `Shortcut` and `Position` groups and the
+    level: 24 to 31 properties; `parts(runtime_id)`, and on
+    `Cached<Node>` `snapshot(registry)`, which keeps the element), covering
+    `Kept` and `FocusInput`; `TreeDump`, a tree dump's node, which is
+    `Node`; `Ancestor` (a `Node`, its own ungated `Description`, and the
+    content and control flags: 28 to 33; `is_control_and_content()`,
+    `layout_description()`, and `snapshot` on `Cached<Ancestor>`),
+    covering `Kept`; `DialogText` (role, value, states, name and an
+    ungated description: 25; `parts(runtime_id)`), a dialog's child;
+    `SelectionContainer` (`SelectionPattern2`'s first selected item, read
+    as an `ElementValue`, and the `Selection` pattern, read as its
+    interface); `HelpTextRefresh` (`Description`) and `SuggestionsRefresh`
+    (Text pattern availability and automation id;
+    `reports_suggestions()`), what a help text and a `ControllerFor`
+    change read; `WindowLookup` (native window handle), `ProcessCheck`
+    (process id) and `FrameworkCheck` (framework id), each one property;
+    and `ShellButton`, what `verbatim-gui`'s list of the shell's buttons
+    reads. A rectangle that does not fit reads as `None` rather than
+    overflowing.
   - `Request<S>`, a shape's cache request, keeping the gates it was built
-    with.
+    with (`gates()`).
   - `Cached<S>`, an element whose cache `S`'s request filled, made only by
     this crate: by a fill from a `Request<S>`, by a registration's part for
-    `S`, by `Agile::resolve`, and by `narrow`. `read()` reads the shape
-    from the cache, locally; `live()` gives the `Live` element;
-    `runtime_id()`; `agile()` makes the `Agile<S>` that crosses threads;
-    `narrow::<T>()` reads the same element as a shape it covers.
+    `S`, by `Agile::resolve`, by `narrow`, and by `Fill::claim`. `read()`
+    reads the shape from the cache, locally; `live()` gives the `Live`
+    element; `gates()`; `runtime_id()`; `agile()` makes the `Agile<S>`
+    that crosses threads; `narrow::<T>()` reads the same element as a
+    shape it covers.
   - `Agile<S>`, a `Cached<S>` for another thread of this process, `Send`
     and `Sync` with no `unsafe`; `resolve()` gives the `Cached<S>` back,
     the same element and cache.
   - `Live`, an element for calls into its application, with no cached
-    read: `new`, `element()` for the raw element, `refresh(request)`
-    (`BuildUpdatedCache` into a shape) and `find_first(scope, condition,
-    request)`.
+    read: `new`, `element()` for the raw element, `runtime_id()`,
+    `refresh(request)` (`BuildUpdatedCache` into a shape),
+    `find_first(scope, condition, request)`, `walk(walker, direction,
+    request)` (one tree walker step, `Direction` naming the neighbour,
+    into a shape) and `normalize(walker, request)`.
+  - `Fill<S>`, the token `verbatim-uia-rops` fills a remote program's
+    caches with: `properties()` and `patterns()` for the program's cache
+    requests, `request()` for its classic fallback, and `claim(element,
+    absent)`, hidden from the documentation, which wraps an element the
+    program returned as a `Cached<S>`. Neither `Clone` nor `Copy`. That a
+    program fills its caches from the token's list is that crate's
+    reviewed code, not something the compiler proves.
+  - `Absent`, the record a remote program returns for each element of
+    which `LEFT_OUT_WHEN_UNSUPPORTED` properties (`IsDataValidForForm`) it
+    left out of the element's cache because the element does not support
+    them: a remotely filled cache stores a property's default where a
+    local one stores "not supported", and `IsDataValidForForm`'s default,
+    false, would read as an invalid entry. A read of a property the record
+    holds answers "not supported" without asking UIA, so it makes no
+    failed read (decision 3 of `docs/design/uia-shapes.md`). A local
+    fill's record is empty.
 
   Until step 5 of the migration the old lists and raw readers sit beside
   the shapes, and a site not yet moved passes `live().element()` to them.

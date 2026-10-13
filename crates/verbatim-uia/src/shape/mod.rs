@@ -2,38 +2,58 @@
 //! cache request that fills it (`docs/design/uia-shapes.md`).
 //!
 //! A shape is a plain struct whose fields are what one purpose reads of an
-//! element: properties, each read with a named kind, and groups, which are
-//! shapes themselves. One declaration ([`uia_shape!`], private to this
-//! crate) gives both the shape's request, its [`Shape::PROPERTIES`] and
-//! [`Shape::PATTERNS`], and its read, so the two cannot disagree. An
-//! element filled by a shape's request is a [`Cached<S>`], which only this
-//! crate makes, and its only cached read is [`Cached::read`]: so a property
-//! the request did not hold is never read, and UIA is never made to raise
-//! and report an error for one, which cost a quarter of a processor in a
-//! terminal flood (`docs/design/wake-ups.md`, item 12).
+//! element: properties, each read with a named kind, groups, which are
+//! shapes themselves, and cached patterns. One declaration
+//! ([`uia_shape!`], private to this crate) gives both the shape's request,
+//! its [`Shape::PROPERTIES`] and [`Shape::PATTERNS`], and its read, so the
+//! two cannot disagree. An element filled by a shape's request is a
+//! [`Cached<S>`], which only this crate makes, and its only cached read is
+//! [`Cached::read`]: so a property the request did not hold is never read,
+//! and UIA is never made to raise and report an error for one, which cost
+//! a quarter of a processor in a terminal flood
+//! (`docs/design/wake-ups.md`, item 12).
+//!
+//! A shape may have gates: run-time choices, from the active theme, of
+//! which of its fields are fetched. A gated property's gate is a `bool`
+//! and a gated group's an `Option` of the group's own gates; the field
+//! reads as an `Option`, `None` when it was not fetched. A [`Request<S>`]
+//! keeps the gates it was built with and every element it fills carries
+//! them, so request and read cannot disagree.
 //!
 //! A `Cached<S>` is neither `Send` nor `Sync`, as the element is not; an
 //! [`Agile<S>`] carries it to another thread of this process with its shape,
 //! and [`Live`] is an element for calls into the application, with no
-//! cached read at all.
+//! cached read at all. A remote program in `verbatim-uia-rops` fills caches
+//! through a [`Fill<S>`].
 
 use std::marker::PhantomData;
 
+use verbatim_model::Rect;
+use windows::Win32::Foundation::RECT;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationCacheRequest, IUIAutomationCondition, IUIAutomationElement, TreeScope,
-    UIA_PATTERN_ID, UIA_PROPERTY_ID,
+    IUIAutomationCacheRequest, IUIAutomationCondition, IUIAutomationElement,
+    IUIAutomationTreeWalker, TreeScope, UIA_IsDataValidForFormPropertyId, UIA_PATTERN_ID,
+    UIA_PROPERTY_ID,
 };
-use windows::core::AgileReference;
+use windows::core::{AgileReference, IUnknown, Interface};
 
-use crate::com::{variant_bool, variant_f64, variant_i32, variant_optional_bool, variant_string};
-use crate::element::ElementExt;
+use crate::com::{
+    is_not_supported, variant_bool, variant_element, variant_f64, variant_i32,
+    variant_optional_bool, variant_string,
+};
+use crate::element::{ElementExt, WalkerExt};
 
 mod shapes;
 #[cfg(test)]
 mod tests;
 
-pub use shapes::{Kept, ListenerEvent, PropertyEvent, RoleCore, States, TextEvent, ValueSet};
+pub use shapes::{
+    Ancestor, AncestorGates, Description, DialogText, FocusInput, FrameworkCheck, HelpTextRefresh,
+    Kept, ListenerEvent, Node, NodeGates, Position, ProcessCheck, PropertyEvent, RoleCore,
+    SelectionContainer, ShellButton, Shortcut, States, SuggestionsRefresh, TextEvent, TreeDump,
+    ValueSet, WindowLookup,
+};
 
 mod sealed {
     /// Seals [`super::Shape`], [`super::Ungated`] and [`super::Covers`]: only
@@ -44,9 +64,10 @@ mod sealed {
 /// A shape: what one purpose reads of an element, and the cache request
 /// that fills it. Sealed: shapes are declared in this crate alone.
 pub trait Shape: sealed::Sealed + Sized + 'static {
-    /// The run-time choices of what the request holds: `()` for a shape
-    /// with none.
-    type Gates: Copy + Send + Sync + 'static;
+    /// The run-time choices of what the request holds: a `bool` per gated
+    /// property, each group's gates, as an `Option` for a gated group
+    /// (`None`: not fetched); `()` for a shape with none.
+    type Gates: Copy + Send + Sync + std::fmt::Debug + PartialEq + 'static;
     /// Every property of every field and group, without repeats.
     const PROPERTIES: &'static [UIA_PROPERTY_ID];
     /// The properties every request of this shape holds, whatever its
@@ -55,6 +76,14 @@ pub trait Shape: sealed::Sealed + Sized + 'static {
     /// The patterns the request holds: those read, and those only
     /// prefetched.
     const PATTERNS: &'static [UIA_PATTERN_ID];
+    /// The patterns the request holds that no read uses.
+    #[doc(hidden)]
+    const PREFETCHED: &'static [UIA_PATTERN_ID];
+    /// Every gate on: every field fetched.
+    fn all_on() -> Self::Gates;
+    /// Every combination of the shape's gates, for the recording test.
+    #[cfg(test)]
+    fn combinations() -> Vec<Self::Gates>;
     /// Pushes the properties the request for `gates` holds onto `out`,
     /// possibly with repeats.
     #[doc(hidden)]
@@ -73,6 +102,43 @@ pub trait Ungated: Shape<Gates = ()> {}
 /// an element filled by it can be read as `T` ([`Cached::narrow`]).
 pub trait Covers<T: Ungated>: Shape {}
 
+/// The properties a remote program leaves out of an element's cache when
+/// the element does not support them, each recorded in the element's
+/// [`Absent`] record: `IsDataValidForForm`, whose default of false, which
+/// a remotely filled cache stores where a locally built one stores UIA's
+/// "not supported" value, would read as an invalid entry. (`ValueIsReadOnly`
+/// and `RangeValueValue` are read only where their patterns are available
+/// instead.)
+pub const LEFT_OUT_WHEN_UNSUPPORTED: &[UIA_PROPERTY_ID] = &[UIA_IsDataValidForFormPropertyId];
+
+/// Which of the [`LEFT_OUT_WHEN_UNSUPPORTED`] properties a remote program
+/// left out of an element's cache, as the program reports it: bit `i` for
+/// the property at index `i`. A read of a property the record holds
+/// answers "not supported" without asking UIA, as UIA would answer for an
+/// element without it. Empty for an element filled locally.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Absent(u32);
+
+impl Absent {
+    /// No property left out.
+    pub const NONE: Self = Self(0);
+
+    /// The record a remote program returned, bit `i` for the property at
+    /// index `i` of [`LEFT_OUT_WHEN_UNSUPPORTED`].
+    #[must_use]
+    pub fn from_bits(bits: u32) -> Self {
+        Self(bits)
+    }
+
+    /// Whether `property` was left out.
+    fn holds(self, property: UIA_PROPERTY_ID) -> bool {
+        LEFT_OUT_WHEN_UNSUPPORTED
+            .iter()
+            .position(|&left_out| left_out == property)
+            .is_some_and(|bit| self.0 & (1 << bit) != 0)
+    }
+}
+
 /// Where a shape's read takes its cached values from: the element, or in
 /// tests a recorder of what was read.
 pub(crate) trait CachedReads {
@@ -81,6 +147,10 @@ pub(crate) trait CachedReads {
     /// As [`value`](Self::value), with UIA's default for the property read
     /// as not supported.
     fn value_ignoring_default(&self, property: UIA_PROPERTY_ID) -> Option<VARIANT>;
+    /// A cached rectangle property, through UIA's typed accessor.
+    fn rect(&self, property: UIA_PROPERTY_ID) -> Option<RECT>;
+    /// A cached pattern object, `None` when the cache holds none.
+    fn pattern(&self, pattern: UIA_PATTERN_ID) -> Option<IUnknown>;
 }
 
 impl CachedReads for IUIAutomationElement {
@@ -91,6 +161,25 @@ impl CachedReads for IUIAutomationElement {
     fn value_ignoring_default(&self, property: UIA_PROPERTY_ID) -> Option<VARIANT> {
         ElementExt::cached_value_ignoring_default(self, property)
     }
+
+    /// The bounding rectangle is UIA's one rectangle property.
+    fn rect(&self, _property: UIA_PROPERTY_ID) -> Option<RECT> {
+        ElementExt::cached_bounding_rectangle(self)
+    }
+
+    fn pattern(&self, pattern: UIA_PATTERN_ID) -> Option<IUnknown> {
+        ElementExt::cached_pattern::<IUnknown>(self, pattern)
+    }
+}
+
+/// A property whose value is an element, such as `SelectionPattern2`'s
+/// first selected item, read ignoring UIA's default.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ElementValue {
+    /// The element does not support the property.
+    NotSupported,
+    /// The element the property names.
+    Element(IUIAutomationElement),
 }
 
 /// The read kinds a shape's properties are read with, one method each,
@@ -98,34 +187,51 @@ impl CachedReads for IUIAutomationElement {
 /// always had. No other crate can make one.
 pub struct Reader<'a> {
     source: &'a dyn CachedReads,
+    absent: Absent,
 }
 
 impl Reader<'_> {
+    /// A property's raw value, `None` when it was not cached or the absent
+    /// record holds it.
+    fn value(&self, property: UIA_PROPERTY_ID) -> Option<VARIANT> {
+        if self.absent.holds(property) {
+            return None;
+        }
+        self.source.value(property)
+    }
+
+    /// As [`value`](Self::value), ignoring UIA's default.
+    fn value_ignoring_default(&self, property: UIA_PROPERTY_ID) -> Option<VARIANT> {
+        if self.absent.holds(property) {
+            return None;
+        }
+        self.source.value_ignoring_default(property)
+    }
+
     /// `false` when not cached or not a boolean.
     pub(crate) fn bool(&self, property: UIA_PROPERTY_ID) -> bool {
-        self.source
-            .value(property)
+        self.value(property)
             .is_some_and(|value| variant_bool(&value))
     }
 
     /// `None` when not supported, or UIA supplies only its default.
     pub(crate) fn optional_bool(&self, property: UIA_PROPERTY_ID) -> Option<bool> {
-        variant_optional_bool(&self.source.value_ignoring_default(property)?)
+        variant_optional_bool(&self.value_ignoring_default(property)?)
     }
 
     /// `None` when not cached or not an integer.
     pub(crate) fn i32(&self, property: UIA_PROPERTY_ID) -> Option<i32> {
-        variant_i32(&self.source.value(property)?)
+        variant_i32(&self.value(property)?)
     }
 
     /// `None` when not supported, or UIA supplies only its default.
     pub(crate) fn f64(&self, property: UIA_PROPERTY_ID) -> Option<f64> {
-        variant_f64(&self.source.value_ignoring_default(property)?)
+        variant_f64(&self.value_ignoring_default(property)?)
     }
 
     /// `None` when not cached, not text, or empty.
     pub(crate) fn string(&self, property: UIA_PROPERTY_ID) -> Option<String> {
-        variant_string(&self.source.value(property)?)
+        variant_string(&self.value(property)?)
     }
 
     /// 0 for an element that is not itself a window.
@@ -137,24 +243,84 @@ impl Reader<'_> {
     pub(crate) fn process_id(&self, property: UIA_PROPERTY_ID) -> Option<u32> {
         self.i32(property).map(i32::cast_unsigned)
     }
+
+    /// A one-based property (`PositionInSet`, `SizeOfSet`, `Level`), `None`
+    /// when UIA reports its "not supported" default of zero or less: zero
+    /// was observed live on an hwnd-hosted root element, whose host
+    /// provider answers 0 rather than leaving the value empty.
+    pub(crate) fn one_based(&self, property: UIA_PROPERTY_ID) -> Option<u32> {
+        self.i32(property)
+            .and_then(|value| u32::try_from(value).ok())
+            .filter(|&value| value > 0)
+    }
+
+    /// A rectangle, `None` when UIA reports its "not supported" default of
+    /// an all-zero rectangle or the read fails: a genuine zero-area
+    /// rectangle at the origin is not one Verbatim needs to tell from an
+    /// unreported one. The rectangle comes from a provider in another
+    /// process, so one whose size does not fit is `None` too, rather than
+    /// overflowing.
+    pub(crate) fn rect(&self, property: UIA_PROPERTY_ID) -> Option<Rect> {
+        if self.absent.holds(property) {
+            return None;
+        }
+        let rect = self.source.rect(property)?;
+        if rect.left == 0 && rect.top == 0 && rect.right == 0 && rect.bottom == 0 {
+            return None;
+        }
+        Some(Rect {
+            left: rect.left,
+            top: rect.top,
+            width: rect.right.checked_sub(rect.left)?,
+            height: rect.bottom.checked_sub(rect.top)?,
+        })
+    }
+
+    /// An element-valued property read ignoring UIA's default: `None` when
+    /// not cached or not an element.
+    pub(crate) fn element(&self, property: UIA_PROPERTY_ID) -> Option<ElementValue> {
+        let value = self.value_ignoring_default(property)?;
+        if is_not_supported(&value) {
+            Some(ElementValue::NotSupported)
+        } else {
+            variant_element(&value).map(ElementValue::Element)
+        }
+    }
+
+    /// A cached pattern object as the interface `T`, `None` when the cache
+    /// holds none: the element does not support the pattern.
+    pub(crate) fn pattern<T: Interface>(&self, pattern: UIA_PATTERN_ID) -> Option<T> {
+        self.source
+            .pattern(pattern)
+            .and_then(|unknown| unknown.cast().ok())
+    }
 }
 
 /// An element whose cache was filled by `S`'s request. Made only by this
 /// crate: by a fill from a [`Request<S>`], by a registration's part for
-/// `S` ([`crate::Part::shaped`]), by [`Agile::resolve`], and by
-/// [`Cached::narrow`].
+/// `S` ([`crate::Part::shaped`]), by [`Agile::resolve`], by
+/// [`Cached::narrow`], and by [`Fill::claim`] for a remote program's
+/// result.
 pub struct Cached<S: Shape> {
     live: Live,
     gates: S::Gates,
+    absent: Absent,
     shape: PhantomData<fn() -> S>,
 }
 
 impl<S: Shape> Cached<S> {
-    /// `element`, filled by `S`'s request for `gates`.
+    /// `element`, filled locally by `S`'s request for `gates`.
     pub(crate) fn filled(element: IUIAutomationElement, gates: S::Gates) -> Self {
+        Self::claimed(element, gates, Absent::NONE)
+    }
+
+    /// `element`, filled by `S`'s request for `gates`, with the properties
+    /// `absent` records left out.
+    fn claimed(element: IUIAutomationElement, gates: S::Gates, absent: Absent) -> Self {
         Self {
             live: Live { element },
             gates,
+            absent,
             shape: PhantomData,
         }
     }
@@ -165,6 +331,7 @@ impl<S: Shape> Cached<S> {
         S::read_from(
             &Reader {
                 source: &self.live.element,
+                absent: self.absent,
             },
             &self.gates,
         )
@@ -174,6 +341,12 @@ impl<S: Shape> Cached<S> {
     #[must_use]
     pub fn live(&self) -> &Live {
         &self.live
+    }
+
+    /// The gates the element's request was built with.
+    #[must_use]
+    pub fn gates(&self) -> S::Gates {
+        self.gates
     }
 
     /// The element's runtime id, which UIA keeps with every element
@@ -192,6 +365,7 @@ impl<S: Shape> Cached<S> {
         Ok(Agile {
             element: AgileReference::new(&self.live.element)?,
             gates: self.gates,
+            absent: self.absent,
             shape: PhantomData,
         })
     }
@@ -202,7 +376,7 @@ impl<S: Shape> Cached<S> {
     where
         S: Covers<T>,
     {
-        Cached::filled(self.live.element.clone(), ())
+        Cached::claimed(self.live.element.clone(), (), self.absent)
     }
 }
 
@@ -211,6 +385,7 @@ impl<S: Shape> Clone for Cached<S> {
         Self {
             live: self.live.clone(),
             gates: self.gates,
+            absent: self.absent,
             shape: PhantomData,
         }
     }
@@ -225,10 +400,12 @@ impl<S: Shape> std::fmt::Debug for Cached<S> {
 }
 
 /// A [`Cached<S>`] for another thread of this process: an agile reference,
-/// with the shape and gates its element was filled with. `Send` and `Sync`.
+/// with the shape, gates and absent record its element was filled with.
+/// `Send` and `Sync`.
 pub struct Agile<S: Shape> {
     element: AgileReference<IUIAutomationElement>,
     gates: S::Gates,
+    absent: Absent,
     shape: PhantomData<fn() -> S>,
 }
 
@@ -240,7 +417,11 @@ impl<S: Shape> Agile<S> {
     ///
     /// The COM error if the reference cannot be resolved.
     pub fn resolve(&self) -> windows::core::Result<Cached<S>> {
-        Ok(Cached::filled(self.element.resolve()?, self.gates))
+        Ok(Cached::claimed(
+            self.element.resolve()?,
+            self.gates,
+            self.absent,
+        ))
     }
 }
 
@@ -249,6 +430,7 @@ impl<S: Shape> Clone for Agile<S> {
         Self {
             element: self.element.clone(),
             gates: self.gates,
+            absent: self.absent,
             shape: PhantomData,
         }
     }
@@ -260,6 +442,19 @@ impl<S: Shape> std::fmt::Debug for Agile<S> {
             .field("shape", &std::any::type_name::<S>())
             .finish_non_exhaustive()
     }
+}
+
+/// Which neighbour a tree walker step reaches ([`Live::walk`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Direction {
+    /// The parent.
+    Parent,
+    /// The next sibling.
+    NextSibling,
+    /// The previous sibling.
+    PreviousSibling,
+    /// The first child.
+    FirstChild,
 }
 
 /// An element for calls into the application: patterns, text, live reads,
@@ -281,6 +476,12 @@ impl Live {
     #[must_use]
     pub fn element(&self) -> &IUIAutomationElement {
         &self.element
+    }
+
+    /// The element's runtime id, which UIA keeps with every element. Local.
+    #[must_use]
+    pub fn runtime_id(&self) -> Vec<i32> {
+        crate::com::runtime_id(&self.element)
     }
 
     /// The element with its cache filled by `request`. Cross-process.
@@ -311,10 +512,49 @@ impl Live {
             .find_first_build_cache(scope, condition, &request.cache)?
             .map(|found| Cached::filled(found, request.gates)))
     }
+
+    /// The neighbour `direction` names in `walker`'s view, with its cache
+    /// filled by `request`: one cross-process call.
+    ///
+    /// # Errors
+    ///
+    /// The COM error, or, for no such neighbour, the error carrying no
+    /// failure code that `windows` reports for a null element.
+    pub fn walk<S: Shape>(
+        &self,
+        walker: &IUIAutomationTreeWalker,
+        direction: Direction,
+        request: &Request<S>,
+    ) -> windows::core::Result<Cached<S>> {
+        let cache = &request.cache;
+        let found = match direction {
+            Direction::Parent => walker.parent(&self.element, cache),
+            Direction::NextSibling => walker.next_sibling(&self.element, cache),
+            Direction::PreviousSibling => walker.previous_sibling(&self.element, cache),
+            Direction::FirstChild => walker.first_child(&self.element, cache),
+        }?;
+        Ok(Cached::filled(found, request.gates))
+    }
+
+    /// The element itself if `walker`'s condition matches it, else its
+    /// nearest ancestor that matches, with its cache filled by `request`
+    /// (`NormalizeElementBuildCache`): one cross-process call.
+    ///
+    /// # Errors
+    ///
+    /// The COM error, or the null-element error when nothing matches.
+    pub fn normalize<S: Shape>(
+        &self,
+        walker: &IUIAutomationTreeWalker,
+        request: &Request<S>,
+    ) -> windows::core::Result<Cached<S>> {
+        let found = walker.normalize(&self.element, &request.cache)?;
+        Ok(Cached::filled(found, request.gates))
+    }
 }
 
 /// `S`'s cache request, for the gates it was built with
-/// ([`crate::Uia::request_fixed`]).
+/// ([`crate::Uia::request`], [`crate::Uia::request_fixed`]).
 pub struct Request<S: Shape> {
     cache: IUIAutomationCacheRequest,
     gates: S::Gates,
@@ -339,9 +579,13 @@ impl<S: Shape> Request<S> {
             shape: PhantomData,
         })
     }
-}
 
-impl<S: Shape> Request<S> {
+    /// The gates the request was built with.
+    #[must_use]
+    pub fn gates(&self) -> S::Gates {
+        self.gates
+    }
+
     /// The cache request, and the gates the elements it fills carry.
     pub(crate) fn parts(&self) -> (&IUIAutomationCacheRequest, S::Gates) {
         (&self.cache, self.gates)
@@ -355,6 +599,60 @@ impl<S: Shape> Clone for Request<S> {
             gates: self.gates,
             shape: PhantomData,
         }
+    }
+}
+
+/// What a remote program needs to fill caches as `S`'s request does, and
+/// the only way outside this crate to wrap the elements it returns as
+/// [`Cached<S>`]: `verbatim-uia-rops` builds its programs' cache requests
+/// from [`properties`](Self::properties) and
+/// [`patterns`](Self::patterns), takes its classic fallback with
+/// [`request`](Self::request), and wraps what a program returns with
+/// [`claim`](Self::claim). That a program fills its caches from this list
+/// and nothing else is that crate's reviewed code, not something the
+/// compiler proves (`docs/design/uia-shapes.md`, section 3.5, items 8 and
+/// 9). Neither `Clone` nor `Copy`.
+pub struct Fill<S: Shape> {
+    request: Request<S>,
+    properties: Vec<UIA_PROPERTY_ID>,
+}
+
+impl<S: Shape> Fill<S> {
+    /// The token for `request`'s fills. Local.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn new(request: &Request<S>) -> Self {
+        Self {
+            request: request.clone(),
+            properties: request_properties::<S>(&request.gates),
+        }
+    }
+
+    /// The properties the program's cache requests hold.
+    #[must_use]
+    pub fn properties(&self) -> &[UIA_PROPERTY_ID] {
+        &self.properties
+    }
+
+    /// The patterns the program's cache requests hold.
+    #[must_use]
+    pub fn patterns(&self) -> &'static [UIA_PATTERN_ID] {
+        S::PATTERNS
+    }
+
+    /// The request a classic fallback fills with.
+    #[must_use]
+    pub fn request(&self) -> &Request<S> {
+        &self.request
+    }
+
+    /// `element`, which a remote program returned with its cache filled
+    /// from [`properties`](Self::properties) and with the properties
+    /// `absent` records left out, as `S`.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn claim(&self, element: IUIAutomationElement, absent: Absent) -> Cached<S> {
+        Cached::claimed(element, self.request.gates, absent)
     }
 }
 
@@ -376,6 +674,16 @@ pub(crate) fn request_properties<S: Shape>(gates: &S::Gates) -> Vec<UIA_PROPERTY
 /// cache `S`'s request filled.
 pub(crate) fn delivered<S: Ungated>(element: &IUIAutomationElement) -> Cached<S> {
     Cached::filled(element.clone(), ())
+}
+
+/// One of `options`, chosen by `index` taken as a mixed-radix number, whose
+/// lowest digit is consumed: how the macro's `combinations` lists every
+/// combination of a shape's gates.
+#[cfg(test)]
+pub(crate) fn pick<T: Copy>(options: &[T], index: &mut usize) -> T {
+    let chosen = options[*index % options.len()];
+    *index /= options.len();
+    chosen
 }
 
 /// Sets of ids, computed at compile time: the distinct members of several
@@ -510,63 +818,16 @@ macro_rules! kind_type {
     (string) => { Option<String> };
     (window_handle) => { isize };
     (process_id) => { Option<u32> };
+    (one_based) => { Option<u32> };
+    (rect) => { Option<verbatim_model::Rect> };
+    (element) => { Option<$crate::shape::ElementValue> };
 }
 
-/// Declares a shape: its struct, and its [`Shape`] implementation, whose
-/// request and read both come from the one field list. `gates: none`
-/// declares a shape with no gates, which is [`Ungated`]: each group is read
-/// with `&()` as its gates, so a group with gates does not compile here.
-/// `covers` implements [`Covers`] for each shape named, with a
-/// compile-time assertion that this shape's request holds the named
-/// shape's every property and pattern.
-macro_rules! uia_shape {
-    (
-        $(#[$meta:meta])*
-        pub struct $name:ident {
-            gates: none;
-            groups { $( $(#[$gmeta:meta])* $group_field:ident: $group:ident ),* $(,)? }
-            properties {
-                $( $(#[$pmeta:meta])* $field:ident: $property:ident => $kind:ident ),* $(,)?
-            }
-            prefetch { $( $pattern:ident ),* $(,)? }
-            covers { $( $covered:ident ),* $(,)? }
-        }
-    ) => {
-        $(#[$meta])*
-        #[derive(Clone, Debug, PartialEq)]
-        pub struct $name {
-            $( $(#[$gmeta])* pub $group_field: $group, )*
-            $( $(#[$pmeta])* pub $field: $crate::shape::kind_type!($kind), )*
-        }
-
-        impl $crate::shape::sealed::Sealed for $name {}
-
-        impl Shape for $name {
-            type Gates = ();
-            const PROPERTIES: &'static [UIA_PROPERTY_ID] = $crate::shape::property_set!(
-                $( <$group as Shape>::PROPERTIES, )*
-                &[$( $property ),*],
-            );
-            const UNGATED: &'static [UIA_PROPERTY_ID] = Self::PROPERTIES;
-            const PATTERNS: &'static [UIA_PATTERN_ID] = $crate::shape::pattern_set!(
-                $( <$group as Shape>::PATTERNS, )*
-                &[$( $pattern ),*],
-            );
-
-            fn push_request(_gates: &(), out: &mut Vec<UIA_PROPERTY_ID>) {
-                out.extend_from_slice(Self::PROPERTIES);
-            }
-
-            fn read_from(reader: &Reader<'_>, _gates: &()) -> Self {
-                Self {
-                    $( $group_field: <$group as Shape>::read_from(reader, &()), )*
-                    $( $field: reader.$kind($property), )*
-                }
-            }
-        }
-
-        impl Ungated for $name {}
-
+/// The `Covers` implementations of a shape, each with a compile-time
+/// assertion that the shape's ungated request holds the covered shape's
+/// every property and pattern.
+macro_rules! covers {
+    ($name:ident: $( $covered:ident ),*) => {
         $(
             impl Covers<$covered> for $name {}
             const _: () = assert!(
@@ -583,4 +844,227 @@ macro_rules! uia_shape {
     };
 }
 
-pub(crate) use {kind_type, pattern_set, property_set, uia_shape};
+/// Declares a shape: its struct, and its [`Shape`] implementation, whose
+/// request and read both come from the one field list.
+///
+/// `gates: none` declares a shape with no gates, which is [`Ungated`]:
+/// each group is read with `&()` as its gates, so a group with gates does
+/// not compile there. It may read cached `patterns`, each as an `Option`
+/// of its interface, and `prefetch` patterns no read uses.
+///
+/// `gates: Name` declares a shape with gates, generating the struct `Name`
+/// of them: a `bool` for each of its `gated_properties`, an `Option` of
+/// the group's own gates for each of its `gated_groups`, and the gates of
+/// each of its ungated `groups` as they are. Each gated field reads as an
+/// `Option`, `None` when its gate was off, without touching the cache. A
+/// gated field is declared in its own section, since a `macro_rules!`
+/// macro cannot tell a `#[gated]` marker from the field's documentation.
+///
+/// `covers` implements [`Covers`] for each shape named, with a
+/// compile-time assertion that this shape's ungated request holds the
+/// named shape's every property and pattern.
+macro_rules! uia_shape {
+    (
+        $(#[$meta:meta])*
+        pub struct $name:ident {
+            gates: none;
+            groups { $( $(#[$gmeta:meta])* $group_field:ident: $group:ident ),* $(,)? }
+            properties {
+                $( $(#[$pmeta:meta])* $field:ident: $property:ident => $kind:ident ),* $(,)?
+            }
+            $( patterns {
+                $( $(#[$patmeta:meta])* $pattern_field:ident: $pattern_id:ident => $pattern_type:ident ),* $(,)?
+            } )?
+            prefetch { $( $pattern:ident ),* $(,)? }
+            covers { $( $covered:ident ),* $(,)? }
+        }
+    ) => {
+        $(#[$meta])*
+        #[derive(Clone, Debug, PartialEq)]
+        pub struct $name {
+            $( $(#[$gmeta])* pub $group_field: $group, )*
+            $( $(#[$pmeta])* pub $field: $crate::shape::kind_type!($kind), )*
+            $( $( $(#[$patmeta])* pub $pattern_field: Option<$pattern_type>, )* )?
+        }
+
+        impl $crate::shape::sealed::Sealed for $name {}
+
+        impl Shape for $name {
+            type Gates = ();
+            const PROPERTIES: &'static [UIA_PROPERTY_ID] = $crate::shape::property_set!(
+                $( <$group as Shape>::PROPERTIES, )*
+                &[$( $property ),*],
+            );
+            const UNGATED: &'static [UIA_PROPERTY_ID] = Self::PROPERTIES;
+            const PATTERNS: &'static [UIA_PATTERN_ID] = $crate::shape::pattern_set!(
+                $( <$group as Shape>::PATTERNS, )*
+                &[$( $( $pattern_id ),* )?],
+                &[$( $pattern ),*],
+            );
+            const PREFETCHED: &'static [UIA_PATTERN_ID] = $crate::shape::pattern_set!(
+                $( <$group as Shape>::PREFETCHED, )*
+                &[$( $pattern ),*],
+            );
+
+            fn all_on() {}
+
+            #[cfg(test)]
+            fn combinations() -> Vec<()> {
+                vec![()]
+            }
+
+            fn push_request(_gates: &(), out: &mut Vec<UIA_PROPERTY_ID>) {
+                out.extend_from_slice(Self::PROPERTIES);
+            }
+
+            fn read_from(reader: &Reader<'_>, _gates: &()) -> Self {
+                Self {
+                    $( $group_field: <$group as Shape>::read_from(reader, &()), )*
+                    $( $field: reader.$kind($property), )*
+                    $( $( $pattern_field: reader.pattern::<$pattern_type>($pattern_id), )* )?
+                }
+            }
+        }
+
+        impl Ungated for $name {}
+
+        $crate::shape::covers!($name: $( $covered ),*);
+    };
+    (
+        $(#[$meta:meta])*
+        pub struct $name:ident {
+            gates: $gates:ident;
+            groups { $( $(#[$gmeta:meta])* $group_field:ident: $group:ident ),* $(,)? }
+            gated_groups {
+                $( $(#[$ggmeta:meta])* $gated_group_field:ident: $gated_group:ident ),* $(,)?
+            }
+            properties {
+                $( $(#[$pmeta:meta])* $field:ident: $property:ident => $kind:ident ),* $(,)?
+            }
+            gated_properties {
+                $( $(#[$gpmeta:meta])* $gated_field:ident: $gated_property:ident => $gated_kind:ident ),* $(,)?
+            }
+            covers { $( $covered:ident ),* $(,)? }
+        }
+    ) => {
+        $(#[$meta])*
+        #[derive(Clone, Debug, PartialEq)]
+        pub struct $name {
+            $( $(#[$gmeta])* pub $group_field: $group, )*
+            $( $(#[$ggmeta])* pub $gated_group_field: Option<$gated_group>, )*
+            $( $(#[$pmeta])* pub $field: $crate::shape::kind_type!($kind), )*
+            $( $(#[$gpmeta])* pub $gated_field: Option<$crate::shape::kind_type!($gated_kind)>, )*
+        }
+
+        #[doc = concat!("The gates of [`", stringify!($name), "`]: which of its fields a request fetches.")]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub struct $gates {
+            $(
+                #[doc = concat!("The gates of its `", stringify!($group_field), "` group.")]
+                pub $group_field: <$group as Shape>::Gates,
+            )*
+            $(
+                #[doc = concat!("Whether its `", stringify!($gated_group_field), "` group is fetched, with that group's gates; `None` when it is not.")]
+                pub $gated_group_field: Option<<$gated_group as Shape>::Gates>,
+            )*
+            $(
+                #[doc = concat!("Whether its `", stringify!($gated_field), "` property is fetched.")]
+                pub $gated_field: bool,
+            )*
+        }
+
+        impl $crate::shape::sealed::Sealed for $name {}
+
+        impl Shape for $name {
+            type Gates = $gates;
+            const PROPERTIES: &'static [UIA_PROPERTY_ID] = $crate::shape::property_set!(
+                $( <$group as Shape>::PROPERTIES, )*
+                $( <$gated_group as Shape>::PROPERTIES, )*
+                &[$( $property ),*],
+                &[$( $gated_property ),*],
+            );
+            const UNGATED: &'static [UIA_PROPERTY_ID] = $crate::shape::property_set!(
+                $( <$group as Shape>::UNGATED, )*
+                &[$( $property ),*],
+            );
+            const PATTERNS: &'static [UIA_PATTERN_ID] = $crate::shape::pattern_set!(
+                $( <$group as Shape>::PATTERNS, )*
+            );
+            const PREFETCHED: &'static [UIA_PATTERN_ID] = $crate::shape::pattern_set!(
+                $( <$group as Shape>::PREFETCHED, )*
+            );
+
+            fn all_on() -> $gates {
+                $gates {
+                    $( $group_field: <$group as Shape>::all_on(), )*
+                    $( $gated_group_field: Some(<$gated_group as Shape>::all_on()), )*
+                    $( $gated_field: true, )*
+                }
+            }
+
+            #[cfg(test)]
+            fn combinations() -> Vec<$gates> {
+                $( let $group_field = <$group as Shape>::combinations(); )*
+                $(
+                    let $gated_group_field: Vec<_> = std::iter::once(None)
+                        .chain(<$gated_group as Shape>::combinations().into_iter().map(Some))
+                        .collect();
+                )*
+                $( let $gated_field = [false, true]; )*
+                let total = 1usize
+                    $( * $group_field.len() )*
+                    $( * $gated_group_field.len() )*
+                    $( * $gated_field.len() )*;
+                (0..total)
+                    .map(|mut index| $gates {
+                        $( $group_field: $crate::shape::pick(&$group_field, &mut index), )*
+                        $( $gated_group_field: $crate::shape::pick(&$gated_group_field, &mut index), )*
+                        $( $gated_field: $crate::shape::pick(&$gated_field, &mut index), )*
+                    })
+                    .collect()
+            }
+
+            fn push_request(gates: &$gates, out: &mut Vec<UIA_PROPERTY_ID>) {
+                $( <$group as Shape>::push_request(&gates.$group_field, out); )*
+                $(
+                    if let Some(inner) = &gates.$gated_group_field {
+                        <$gated_group as Shape>::push_request(inner, out);
+                    }
+                )*
+                $( out.push($property); )*
+                $(
+                    if gates.$gated_field {
+                        out.push($gated_property);
+                    }
+                )*
+            }
+
+            fn read_from(reader: &Reader<'_>, gates: &$gates) -> Self {
+                Self {
+                    $( $group_field: <$group as Shape>::read_from(reader, &gates.$group_field), )*
+                    $(
+                        $gated_group_field: gates
+                            .$gated_group_field
+                            .as_ref()
+                            .map(|inner| <$gated_group as Shape>::read_from(reader, inner)),
+                    )*
+                    $( $field: reader.$kind($property), )*
+                    $( $gated_field: gates.$gated_field.then(|| reader.$gated_kind($gated_property)), )*
+                }
+            }
+        }
+
+        $(
+            // A gated group's patterns would be gated patterns, which a
+            // request does not have.
+            const _: () = assert!(
+                <$gated_group as Shape>::PATTERNS.is_empty(),
+                concat!(stringify!($gated_group), " has patterns and cannot be gated"),
+            );
+        )*
+
+        $crate::shape::covers!($name: $( $covered ),*);
+    };
+}
+
+pub(crate) use {covers, kind_type, pattern_set, property_set, uia_shape};

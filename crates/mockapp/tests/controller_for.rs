@@ -28,7 +28,8 @@ use verbatim_model::{CallCounts, NormalizedEvent, PropertyChange, StateSet};
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, UiaSnapshotFact};
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{
-    CACHED_PROPERTIES, ElementExt, ListenerEvent, Live, Registration, Scope, Subscription, Uia,
+    Cached, ElementExt, Fill, ListenerEvent, Live, Node, Registration, Scope, Shape, Subscription,
+    Uia,
 };
 use verbatim_uia_rops::{ControlledQuery, Path, controlled_selection};
 use windows::Win32::System::Variant::VARIANT;
@@ -72,10 +73,14 @@ fn controlled(
     focused: &IUIAutomationElement,
     selected: &[i32],
 ) -> Option<(Option<String>, Vec<i32>)> {
+    let fill = Fill::new(
+        &uia.request::<Node>(Node::all_on())
+            .expect("a cache request"),
+    );
     let query = ControlledQuery {
         focused,
         selected,
-        properties: CACHED_PROPERTIES,
+        fill: &fill,
     };
     let _ = verbatim_uia::calls::take();
     let (remote, path) = controlled_selection(uia, &query, true).expect("the remote program");
@@ -90,8 +95,8 @@ fn controlled(
         "one remote operation"
     );
     let (classic, _) = controlled_selection(uia, &query, false).expect("the classic calls");
-    let answer = |found: Option<IUIAutomationElement>| {
-        found.map(|element| (name_of(&element), runtime_id(&element)))
+    let answer = |found: Option<Cached<Node>>| {
+        found.map(|element| (element.read().name, element.runtime_id()))
     };
     let remote = answer(remote);
     assert_eq!(remote, answer(classic), "both ways answer the same");

@@ -22,9 +22,11 @@ mod common;
 mod harness;
 
 use verbatim_ia2::WinEventKind;
-use verbatim_model::{NodeSnapshot, NormalizedEvent, PropertyChange, Role, State, StateSet};
+use verbatim_model::{
+    Fetches, NodeSnapshot, NormalizedEvent, PropertyChange, Role, State, StateSet,
+};
 use verbatim_outpost::focus_read::{FocusEvent, Judged};
-use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor};
+use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, SupervisorToOutpost};
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{Cached, ListenerEvent, Uia};
 use windows::Win32::Foundation::HWND;
@@ -1001,8 +1003,57 @@ fn a_windowless_selection_is_given_its_nearest_window() {
     app.quit();
 }
 
+/// An unnamed grouping with a description is focus context whatever the
+/// theme, as NVDA's layout judgment reads the description whatever its
+/// setting (`docs/design/uia-shapes.md`, decision 4): with a theme that
+/// reports descriptions as off, the outpost's own read of a focus's
+/// ancestors, for Core's ancestors query, reports the grouping, without
+/// the description the theme does not report.
+fn an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off() {
+    let title = common::unique_title("mockapp-described-group");
+    let mut app = common::spawn("described_group.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let mut outpost = OutpostUnderTest::new(&app);
+    outpost
+        .outpost
+        .handle_command(&SupervisorToOutpost::Fetches(Fetches {
+            description: false,
+            ..Fetches::default()
+        }));
+
+    app.send("set-focus louder");
+    let focus = outpost.uia_focus(&client.focused());
+    assert_eq!(focus.node.name.as_deref(), Some("Louder"));
+    let (ancestors, _) = outpost.ancestors(focus.node.id);
+    let reported: Vec<(Role, Option<&str>, Option<&str>)> = ancestors
+        .iter()
+        .map(|ancestor| {
+            (
+                ancestor.role,
+                ancestor.name.as_deref(),
+                ancestor.details.description.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        reported,
+        [
+            (Role::Window, Some("Mockapp Described Group Fixture"), None),
+            (Role::Group, None, None),
+        ]
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
+        (
+            "an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off",
+            an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off,
+        ),
         (
             "a_focus_is_no_repeat_once_another_focus_was_queued",
             a_focus_is_no_repeat_once_another_focus_was_queued,

@@ -16,9 +16,7 @@
 
 use std::time::{Duration, Instant};
 
-use windows::Win32::UI::Accessibility::{IUIAutomationElement, UIA_PROPERTY_ID};
-
-use verbatim_uia::Uia;
+use verbatim_uia::{Cached, Fill, Node, Request, Uia};
 use verbatim_uia_rops::{Path, PathQuery, element_by_path};
 
 use crate::protocol::UiaFocusRead;
@@ -86,7 +84,7 @@ impl FocusPath {
     }
 }
 
-/// The element `route` leads to, with `properties` cached: the route's
+/// The element `route` leads to, filled by `nodes`: the route's
 /// window's element, read with one connection call, then the walk down the
 /// route's runtime ids, one remote operation where `remote` allows it, else
 /// the classic walk within [`PATH_BUDGET`]. `None` when the window's element
@@ -96,13 +94,10 @@ impl FocusPath {
 pub(crate) fn find(
     uia: &Uia,
     route: &Route,
-    properties: &[UIA_PROPERTY_ID],
+    nodes: &Request<Node>,
     remote: bool,
-) -> (Option<IUIAutomationElement>, bool) {
-    let Ok(cache) = uia.cache_request(properties) else {
-        return (None, false);
-    };
-    let root = match uia.element_from_handle(route.window, &cache) {
+) -> (Option<Cached<Node>>, bool) {
+    let root = match uia.window_element(route.window, nodes) {
         Ok(root) => root,
         Err(error) => {
             tracing::debug!(window = route.window, %error, "a path's window could not be read");
@@ -110,13 +105,14 @@ pub(crate) fn find(
         }
     };
     if route.path.is_empty() {
-        let same = verbatim_uia::runtime_id(&root) == route.runtime_id;
+        let same = root.runtime_id() == route.runtime_id;
         return (same.then_some(root), false);
     }
+    let fill = Fill::new(nodes);
     let query = PathQuery {
-        root: &root,
+        root: root.live(),
         path: &route.path,
-        properties,
+        fill: &fill,
         deadline: Some(Instant::now() + PATH_BUDGET),
     };
     match element_by_path(uia, &query, remote) {

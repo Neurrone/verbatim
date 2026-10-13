@@ -24,7 +24,10 @@ request did not hold, which costs no call but makes UI Automation raise
 and report an error inside itself (`docs/design/uia-shapes.md`,
 section 3.6). On 2026-10-13 a UIA focus read with remote operations made
 2 or 3 and a remote navigation step 1, reading what the remote program
-leaves out of an element's cache; every other operation made none.
+leaves out of an element's cache; every other operation made none. Since
+step 3 of that design, when the program began to return a record of what
+it leaves out, every operation pinned makes none, a focus's ancestors read
+with descriptions off among them.
 
 The provider's counts are exact only if the client under test is the only
 one calling: a provider cannot tell its callers apart (UIA's calls reach it
@@ -727,7 +730,10 @@ outpost holds.
 - Minimum: 1 UIA call per container read: the dialog's children, with
   every property the rules look at cached, in one `BuildUpdatedCache` whose
   scope takes in the children.
-- Today: 1 UIA call. mockapp answered 208 provider calls.
+- Today: 1 UIA call. mockapp answered 172 provider calls, 208 before
+  each child was read as the `DialogText` shape, which leaves out the
+  properties the rules never read, the bounding rectangle among them
+  (`docs/design/uia-shapes.md`, step 3).
 - Target: 1, met.
 
 ### An object navigation step, MSAA
@@ -1624,22 +1630,26 @@ counting form executes twice as many, so it can count only programs under
 half the limit. Pinned exactly, worst case against mockapp first, the
 share of the limit in brackets:
 
-- The focus ancestry: 2,180 (22 percent) for a list sixty groups deep,
+- The focus ancestry: 2,366 (24 percent) for a list sixty groups deep,
   every ancestor up to the window returned under the outpost's depth limit
   of 64, against 64 known ancestors none of which it meets, with the
-  list's selected item and a held element's focus read; 1,686 for the same
+  list's selected item and a held element's focus read; 1,779 for the same
   stopped at a depth limit of 30, walking on to the window without
-  returning the rest; 1,038 for the list whose group is known, its window
-  still sixty-one levels up. A deeper tree adds a level of the window walk
+  returning the rest; 1,044 for the list whose group is known, its window
+  still sixty-one levels up. It was 2,180, 1,686 and 1,038 before each
+  ancestor's record of the properties left out of its cache was returned
+  with it, three instructions an ancestor (`docs/design/uia-shapes.md`,
+  step 3). The focus listener's read, which also fills the focus's own
+  cache afresh, executes 2,379 at the worst case. A deeper tree adds a level of the window walk
   for each level beyond the depth limit, a dozen or so instructions (the
   navigation step's walk, much the same, takes 12): about two hundred more
   levels before half the limit. mockapp's fixtures cannot nest
   deeper than about sixty levels (its JSON parser's recursion limit).
-- The navigation step: 875 (9 percent) from an item sixty-two levels
-  below its window, 144 from right under it, about 12 for each level
+- The navigation step: 870 (9 percent) from an item sixty-two levels
+  below its window, 139 from right under it, about 12 for each level
   walked.
-- The controlled selection: 168 for a result inside a group of the
-  controlled list, 200 for the list's second child, and 215 for an item
+- The controlled selection: 163 for a result inside a group of the
+  controlled list, 195 for the list's second child, and 207 for an item
   outside the list, all three of the list's elements walked; about 35 for
   each element passed, so about 140 elements fit under half the limit and
   about 280 under the limit, past which the call is answered classically.

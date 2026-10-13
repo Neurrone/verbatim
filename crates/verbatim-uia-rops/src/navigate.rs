@@ -12,17 +12,15 @@
 //! desktop and other applications' windows; so a caller takes a step from
 //! a top-level window classically.
 
-use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, UIA_NativeWindowHandlePropertyId, UIA_PROPERTY_ID,
-};
+use windows::Win32::UI::Accessibility::{IUIAutomationElement, UIA_NativeWindowHandlePropertyId};
 
 use verbatim_uia::map::cached_native_window_handle;
-use verbatim_uia::{Uia, WalkerExt};
+use verbatim_uia::{Cached, Direction, Fill, Live, Node, Uia};
 
 use crate::builder::{Builder, kind};
 use crate::caret::gone_or_timed_out;
 use crate::error::Error;
-use crate::focus::{Path, RemoteCache};
+use crate::focus::{Path, RemoteCache, absent_record};
 use crate::instruction::TypeTest;
 use crate::opcode::NavigationDirection;
 
@@ -34,17 +32,15 @@ pub struct StepQuery<'a> {
     pub element: &'a IUIAutomationElement,
     /// Which neighbor: parent, next or previous sibling, or first child.
     pub direction: NavigationDirection,
-    /// The properties cached on the neighbor:
-    /// [`verbatim_uia::cached_properties`] for the snapshot code.
-    pub properties: &'a [UIA_PROPERTY_ID],
+    /// How the neighbor's cache is filled: as a [`Node`].
+    pub fill: &'a Fill<Node>,
 }
 
 /// The answer to a [`StepQuery`].
 #[derive(Debug)]
 pub struct Step {
-    /// The neighbor, with the query's properties cached; `None` at a tree
-    /// edge.
-    pub neighbor: Option<IUIAutomationElement>,
+    /// The neighbor, filled by the query's fill; `None` at a tree edge.
+    pub neighbor: Option<Cached<Node>>,
     /// The native window handle of the element, or of its nearest raw-view
     /// ancestor that has one, as `verbatim_uia::nearest_window_handle`
     /// finds it; `None` when none has one.
@@ -115,16 +111,24 @@ pub fn navigation_step_remote(_uia: &Uia, query: &StepQuery<'_>) -> Result<Step,
             },
         );
     }
-    let cache = RemoteCache::new(&mut b, query.properties);
+    let cache = RemoteCache::new(&mut b, query.fill);
     let neighbor = b.navigate(element, query.direction);
     let neighbor = b.add_to_results(neighbor);
+    let neighbor_absent = b.new_int(0);
+    let neighbor_absent = b.add_to_results(neighbor_absent);
     let found = b.is_null(neighbor);
     let found = b.not(found);
-    b.if_(found, |b| cache.populate(b, neighbor));
+    b.if_(found, |b| {
+        let absent = cache.populate(b, neighbor);
+        b.set(neighbor_absent, absent);
+    });
     let outcome = b.finish().execute()?;
     let window = outcome.get(window)?;
+    let absent = absent_record(outcome.get(neighbor_absent)?);
     Ok(Step {
-        neighbor: outcome.get(neighbor)?,
+        neighbor: outcome
+            .get(neighbor)?
+            .map(|neighbor| query.fill.claim(neighbor, absent)),
         window: (window != 0).then_some(window as isize),
     })
 }
@@ -141,19 +145,19 @@ pub fn navigation_step_remote(_uia: &Uia, query: &StepQuery<'_>) -> Result<Step,
 /// element is gone.
 pub fn navigation_step_classic(uia: &Uia, query: &StepQuery<'_>) -> Result<Step, Error> {
     let window = verbatim_uia::nearest_window_handle(query.element);
-    let cache = uia.cache_request(query.properties)?;
     let walker = uia.raw_view_walker()?;
-    let neighbor = match query.direction {
-        NavigationDirection::Parent => walker.parent(query.element, &cache),
-        NavigationDirection::NextSibling => walker.next_sibling(query.element, &cache),
-        NavigationDirection::PreviousSibling => walker.previous_sibling(query.element, &cache),
-        NavigationDirection::FirstChild => walker.first_child(query.element, &cache),
+    let direction = match query.direction {
+        NavigationDirection::Parent => Direction::Parent,
+        NavigationDirection::NextSibling => Direction::NextSibling,
+        NavigationDirection::PreviousSibling => Direction::PreviousSibling,
+        NavigationDirection::FirstChild => Direction::FirstChild,
         NavigationDirection::LastChild => {
             return Err(Error::Uia(windows::core::Error::from(
                 windows::Win32::Foundation::E_INVALIDARG,
             )));
         }
     };
+    let neighbor = Live::new(query.element.clone()).walk(&walker, direction, query.fill.request());
     let neighbor = match neighbor {
         Ok(neighbor) => Some(neighbor),
         Err(error) if verbatim_uia::element_is_gone(&error) => return Err(Error::Uia(error)),

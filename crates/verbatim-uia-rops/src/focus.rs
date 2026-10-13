@@ -7,13 +7,15 @@ use std::time::Instant;
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, UIA_E_ELEMENTNOTAVAILABLE, UIA_E_TIMEOUT, UIA_HasKeyboardFocusPropertyId,
-    UIA_IsDataValidForFormPropertyId, UIA_ListControlTypeId, UIA_NativeWindowHandlePropertyId,
-    UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId, UIA_Selection2FirstSelectedItemPropertyId,
+    UIA_ListControlTypeId, UIA_NativeWindowHandlePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
+    UIA_RuntimeIdPropertyId, UIA_Selection2FirstSelectedItemPropertyId,
     UIA_SelectionSelectionPropertyId, UIA_TabControlTypeId,
 };
 
-use verbatim_uia::map::cached_native_window_handle;
-use verbatim_uia::{ElementExt, Uia, WalkerExt};
+use verbatim_uia::{
+    Absent, Ancestor, Cached, Direction, ElementExt, Fill, FocusInput, LEFT_OUT_WHEN_UNSUPPORTED,
+    Shape, Uia,
+};
 
 use crate::builder::{Builder, Reg, kind};
 use crate::caret::gone_or_timed_out;
@@ -26,8 +28,9 @@ use crate::operation::Value;
 #[derive(Clone, Copy)]
 pub struct FocusQuery<'a> {
     /// The focused element, with its cache filled: the focus event's
-    /// sender, or the focused element read for it.
-    pub element: &'a IUIAutomationElement,
+    /// sender, or the focused element read for it, read as what the query
+    /// reads of it, which every shape it is read as covers.
+    pub element: &'a Cached<FocusInput>,
     /// Runtime ids of elements the caller already knows (the previous
     /// focus's ancestors): the walk stops at the first ancestor that has
     /// one.
@@ -41,9 +44,9 @@ pub struct FocusQuery<'a> {
     pub previous: Option<&'a IUIAutomationElement>,
     /// The most ancestors to return.
     pub depth_limit: u32,
-    /// The properties cached on every returned element:
-    /// [`verbatim_uia::CACHED_PROPERTIES`] for the snapshot code.
-    pub properties: &'a [UIA_PROPERTY_ID],
+    /// How every returned element's cache is filled: as an [`Ancestor`],
+    /// with the gates its request was built with.
+    pub fill: &'a Fill<Ancestor>,
     /// When the classic walk stops between hops, reporting the ancestry as
     /// cut short ([`Ancestry::out_of_time`]). The remote program is one
     /// call and does not check it.
@@ -53,8 +56,8 @@ pub struct FocusQuery<'a> {
     /// `shouldAllowUIAFocusEvent` judges a focus event's sender. False
     /// reads the ancestry whatever the element's focus.
     pub require_focus: bool,
-    /// Whether the element's own cache is filled afresh with
-    /// [`FocusQuery::properties`] in the same round trip
+    /// Whether the element's own cache is filled afresh by
+    /// [`FocusQuery::fill`] in the same round trip
     /// ([`Ancestry::element`]): its value, states, and details as they are
     /// when the focus is read, which the focus listener reports a focus
     /// with, as NVDA reads those afresh when it handles a focus event.
@@ -75,10 +78,10 @@ pub enum FocusAncestry {
 /// A focused element's ancestors, selected child, and window.
 #[derive(Debug)]
 pub struct Ancestry {
-    /// The raw-view ancestors, nearest first, each with the query's
-    /// properties cached. The walk ends at the process's top-level window;
-    /// the desktop root is never included.
-    pub ancestors: Vec<IUIAutomationElement>,
+    /// The raw-view ancestors, nearest first, each filled by the query's
+    /// fill. The walk ends at the process's top-level window; the desktop
+    /// root is never included.
+    pub ancestors: Vec<Cached<Ancestor>>,
     /// Which of the query's known runtime ids the last ancestor has, when
     /// the walk stopped at a known ancestor.
     pub met_known: Option<usize>,
@@ -87,10 +90,9 @@ pub struct Ancestry {
     /// Whether the classic walk stopped at the query's deadline with
     /// ancestors left. Never set by the remote program.
     pub out_of_time: bool,
-    /// For a list or tab control, the first selected child, with the
-    /// query's properties cached: what `verbatim_uia::Uia::selected_child`
-    /// reports.
-    pub selected_child: Option<IUIAutomationElement>,
+    /// For a list or tab control, the first selected child, filled by the
+    /// query's fill: what `verbatim_uia::Uia::selected_node` reports.
+    pub selected_child: Option<Cached<Ancestor>>,
     /// The native window handle of the element, or of its nearest raw-view
     /// ancestor that has one, as `verbatim_uia::nearest_window_handle`
     /// finds it (NVDA's `getNearestWindowHandle`), looking past where the
@@ -103,7 +105,7 @@ pub struct Ancestry {
     pub previous_focused: Option<bool>,
     /// With [`FocusQuery::refresh`], the element itself with its cache
     /// filled afresh; `None` without it.
-    pub element: Option<IUIAutomationElement>,
+    pub element: Option<Cached<Ancestor>>,
 }
 
 /// The signature both implementations share, so a caller can hold either.
@@ -221,21 +223,18 @@ pub fn runtime_id_key(runtime_id: &[i32]) -> String {
 }
 
 /// Whether the focused element's selected child is reported with it, by
-/// its cached control type (read live if it is not cached), as
-/// `wants_selected_child` decides from the mapped role.
-fn wants_selected_child(element: &IUIAutomationElement) -> bool {
-    let control_type = element
-        .cached_control_type()
-        .map_or_else(|| element.current_control_type(), Ok);
-    control_type.is_ok_and(|control_type| {
-        control_type == UIA_ListControlTypeId || control_type == UIA_TabControlTypeId
+/// its cached control type, as `wants_selected_child` decides from the
+/// mapped role. Every shape the query's element is read as holds the
+/// control type, so it is never read live.
+fn wants_selected_child(element: &FocusInput) -> bool {
+    element.control_type.is_some_and(|control_type| {
+        control_type == UIA_ListControlTypeId.0 || control_type == UIA_TabControlTypeId.0
     })
 }
 
-/// The element's own native window handle, from its cache, `None` for an
-/// element that is not a window.
-fn own_window(element: &IUIAutomationElement) -> Option<isize> {
-    Some(cached_native_window_handle(element)).filter(|&hwnd| hwnd != 0)
+/// A native window handle, `None` for 0, an element that is not a window.
+fn own_window(hwnd: isize) -> Option<isize> {
+    Some(hwnd).filter(|&hwnd| hwnd != 0)
 }
 
 /// The focus ancestry in one cross-process round trip: a program that
@@ -261,8 +260,9 @@ fn own_window(element: &IUIAutomationElement) -> Option<isize> {
     reason = "one program, read top to bottom as it runs"
 )]
 pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<FocusAncestry, Error> {
+    let input = query.element.read();
     let mut b = Builder::new();
-    let element = b.import_element(query.element);
+    let element = b.import_element(query.element.live().element());
 
     let focused = b.property(element, UIA_HasKeyboardFocusPropertyId.0);
     let focused = b.add_to_results(focused.assume::<kind::Bool>());
@@ -285,18 +285,23 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         });
     }
 
-    let cache = RemoteCache::new(&mut b, query.properties);
+    let cache = RemoteCache::new(&mut b, query.fill);
 
     // The element's own cache, filled afresh: its register is the element
-    // read back.
+    // read back, with its absent record.
+    let element_absent = b.new_int(0);
+    let element_absent = b.add_to_results(element_absent);
     if query.refresh {
-        cache.populate(&mut b, element);
+        let absent = cache.populate(&mut b, element);
+        b.set(element_absent, absent);
         b.add_to_results(element);
     }
 
     let selected = b.new_null_element();
     let selected = b.add_to_results(selected);
-    if wants_selected_child(query.element) {
+    let selected_absent = b.new_int(0);
+    let selected_absent = b.add_to_results(selected_absent);
+    if wants_selected_child(&input) {
         // `SelectionPattern2`'s first selected item, ignoring its default,
         // so a provider without the pattern answers "not supported".
         let property = b.int(UIA_Selection2FirstSelectedItemPropertyId.0);
@@ -317,7 +322,8 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
                     let any = b.compare(size, zero, Comparison::GreaterThan);
                     b.if_(any, |b| {
                         let first = b.array_get_at(selection, zero).assume::<kind::Element>();
-                        cache.populate(b, first);
+                        let absent = cache.populate(b, first);
+                        b.set(selected_absent, absent);
                         b.set(selected, first);
                     });
                 });
@@ -329,7 +335,8 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
                     let null = b.is_null(first);
                     let some = b.not(null);
                     b.if_(some, |b| {
-                        cache.populate(b, first);
+                        let absent = cache.populate(b, first);
+                        b.set(selected_absent, absent);
                         b.set(selected, first);
                     });
                 });
@@ -347,7 +354,7 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     // The nearest window: the element's own, from its cache, or the first
     // ancestor's that has one.
     let window = b.new_int(
-        own_window(query.element)
+        own_window(input.hwnd)
             .and_then(|hwnd| i32::try_from(hwnd).ok())
             .unwrap_or(0),
     );
@@ -364,6 +371,9 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
 
     let ancestors = b.new_array();
     let ancestors = b.add_to_results(ancestors);
+    // Each ancestor's absent record, in the same order.
+    let absents = b.new_array();
+    let absents = b.add_to_results(absents);
     let met_known = b.new_int(-1);
     let met_known = b.add_to_results(met_known);
     let depth_limited = b.new_bool(false);
@@ -384,8 +394,9 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
                 b.set(depth_limited, yes);
                 b.break_loop();
             });
-            cache.populate(b, current);
+            let absent = cache.populate(b, current);
             b.array_append(ancestors, current);
+            b.array_append(absents, absent);
             b.add_assign(count, one);
             read_window(b, current);
             let runtime_id = b.property(current, UIA_RuntimeIdPropertyId.0);
@@ -420,111 +431,142 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     if query.require_focus && !outcome.get(focused)? {
         return Ok(FocusAncestry::NotFocused);
     }
+    let absents = outcome.get(absents)?;
     let ancestors = outcome
         .get(ancestors)?
         .into_iter()
-        .filter_map(|value| match value {
-            Value::Element(element) => Some(element),
+        .zip(absents)
+        .filter_map(|(value, absent)| match (value, absent) {
+            (Value::Element(element), Value::Int(absent)) => {
+                Some(query.fill.claim(element, absent_record(absent)))
+            }
             _ => None,
         })
         .collect();
     let window = outcome.get(window)?;
+    let claimed = |element: Option<IUIAutomationElement>, absent: i32| {
+        element.map(|element| query.fill.claim(element, absent_record(absent)))
+    };
     Ok(FocusAncestry::Focused(Ancestry {
         ancestors,
         met_known: usize::try_from(outcome.get(met_known)?).ok(),
         depth_limited: outcome.get(depth_limited)?,
         out_of_time: false,
-        selected_child: outcome.get(selected)?,
+        selected_child: claimed(outcome.get(selected)?, outcome.get(selected_absent)?),
         window: (window != 0).then_some(window as isize),
         previous_focused: match query.previous {
             Some(_) => Some(outcome.get(previous_focused)?),
             None => None,
         },
         element: if query.refresh {
-            outcome.get(element)?
+            claimed(outcome.get(element)?, outcome.get(element_absent)?)
         } else {
             None
         },
     }))
 }
 
-/// The properties a snapshot reads ignoring defaults that no pattern's
-/// availability gates: `IsDataValidForForm`, whose default of false would
-/// otherwise read as an invalid entry. A remotely filled cache stores a
-/// property's default where a locally built cache stores UIA's "not
-/// supported" value, so the remote program leaves these out of an
-/// element's cache when the element does not support them, which the
-/// snapshot reads as it reads "not supported". (`ValueIsReadOnly` and
-/// `RangeValueValue` are gated on their patterns instead.)
-pub const LEFT_OUT_WHEN_UNSUPPORTED: &[UIA_PROPERTY_ID] = &[UIA_IsDataValidForFormPropertyId];
+/// The absent record a program returned for an element, as its bits.
+pub(crate) fn absent_record(bits: i32) -> Absent {
+    Absent::from_bits(bits.cast_unsigned())
+}
 
-/// The remote program's cache requests: one per combination of the
+/// The remote program's cache requests, from a [`Fill`]'s properties and
+/// patterns: one per combination of the
 /// [`LEFT_OUT_WHEN_UNSUPPORTED`] properties an element supports, since
 /// `PopulateCache` replaces an element's cache rather than adding to it
-/// (verified).
+/// (verified). A remotely filled cache stores a property's default where a
+/// locally built cache stores UIA's "not supported" value, so the program
+/// leaves such a property out of an element's cache when the element does
+/// not support it, and returns which it left out as the element's
+/// [`Absent`] record, which its read answers as "not supported"
+/// (`docs/design/uia-shapes.md`, section 7, decision 3).
 pub(crate) struct RemoteCache {
-    /// The checked properties, as the program's constants.
-    checked: Vec<Reg<kind::Int>>,
+    /// The checked properties, as the program's constants, each with its
+    /// bit in an [`Absent`] record.
+    checked: Vec<(Reg<kind::Int>, u32)>,
     /// The request for each combination, indexed by a bit mask of the
-    /// checked properties supported.
+    /// checked properties supported, bit `i` for `checked[i]`.
     requests: Vec<Reg<kind::CacheRequest>>,
 }
 
 impl RemoteCache {
-    pub(crate) fn new(b: &mut Builder, properties: &[UIA_PROPERTY_ID]) -> Self {
-        let checked: Vec<UIA_PROPERTY_ID> = LEFT_OUT_WHEN_UNSUPPORTED
+    pub(crate) fn new<S: Shape>(b: &mut Builder, fill: &Fill<S>) -> Self {
+        Self::with(b, fill.properties(), fill.patterns())
+    }
+
+    /// The requests for exactly `properties` and `patterns`.
+    fn with(b: &mut Builder, properties: &[UIA_PROPERTY_ID], patterns: &[UIA_PATTERN_ID]) -> Self {
+        let checked: Vec<(UIA_PROPERTY_ID, u32)> = LEFT_OUT_WHEN_UNSUPPORTED
             .iter()
-            .copied()
-            .filter(|property| properties.contains(property))
+            .zip(0u32..)
+            .filter(|(property, _)| properties.contains(property))
+            .map(|(&property, bit)| (property, bit))
             .collect();
         let requests = (0..1usize << checked.len())
             .map(|supported| {
                 let request = b.new_cache_request();
                 for property in properties {
-                    let position = checked.iter().position(|checked| checked == property);
-                    if position.is_none_or(|bit| supported & (1 << bit) != 0) {
+                    let position = checked.iter().position(|(checked, _)| checked == property);
+                    if position.is_none_or(|index| supported & (1 << index) != 0) {
                         b.cache_request_add_property(request, property.0);
                     }
+                }
+                for pattern in patterns {
+                    b.cache_request_add_pattern(request, pattern.0);
                 }
                 request
             })
             .collect();
-        let checked = checked.iter().map(|property| b.int(property.0)).collect();
+        let checked = checked
+            .iter()
+            .map(|&(property, bit)| (b.int(property.0), bit))
+            .collect();
         Self { checked, requests }
     }
 
-    /// Emits the instructions that fill `element`'s cache.
-    pub(crate) fn populate(&self, b: &mut Builder, element: Reg<kind::Element>) {
+    /// Emits the instructions that fill `element`'s cache, and answers the
+    /// register that then holds its [`Absent`] record's bits.
+    pub(crate) fn populate(&self, b: &mut Builder, element: Reg<kind::Element>) -> Reg<kind::Int> {
+        let absent = b.new_int(0);
         if self.checked.is_empty() {
             b.populate_cache(element, self.requests[0]);
-            return;
+            return absent;
         }
         let supported = b.new_int(0);
         let ignore_default = b.bool(true);
-        for (bit, &property) in self.checked.iter().enumerate() {
+        for (index, &(property, bit)) in self.checked.iter().enumerate() {
             let value = b.get_property_value(element, property, ignore_default);
             let unsupported = b.is(TypeTest::NotSupported, value);
-            let is_supported = b.not(unsupported);
-            b.if_(is_supported, |b| {
-                let flag = b.int(1 << bit);
-                b.add_assign(supported, flag);
-            });
+            b.if_else(
+                unsupported,
+                |b| {
+                    let flag = b.int(1 << bit);
+                    b.add_assign(absent, flag);
+                },
+                |b| {
+                    let flag = b.int(1 << index);
+                    b.add_assign(supported, flag);
+                },
+            );
         }
         for (mask, &request) in self.requests.iter().enumerate() {
             let mask = b.int(i32::try_from(mask).unwrap_or(i32::MAX));
             let chosen = b.equal(supported, mask);
             b.if_(chosen, |b| b.populate_cache(element, request));
         }
+        absent
     }
 }
 
 /// The focus ancestry the classic way, the fallback and the reference:
 /// a live `HasKeyboardFocus` read, the previous element's, the element's
 /// own cache filled afresh with [`FocusQuery::refresh`]
-/// (`BuildUpdatedCache`), the selected child through the `Selection` pattern ([`Uia::selected_element`], as
-/// `Uia::selected_child` reads it), then one
+/// (`BuildUpdatedCache`), the selected child through the `Selection`
+/// pattern ([`Uia::selected`], as `Uia::selected_node` reads it), then one
 /// `GetParentElementBuildCache` round trip per ancestor over the raw view,
-/// the walk `Uia::ancestor_chain` makes. Stops where the remote program
+/// the walk `Uia::ancestors` makes, every element filled by the query's
+/// fill's request. Stops where the remote program
 /// stops: at a known ancestor, at the depth limit, or below the desktop
 /// root; and at the query's deadline. The nearest window comes from the
 /// walked ancestors' caches, or, when the walk stopped before reaching
@@ -536,10 +578,12 @@ impl RemoteCache {
 /// walker fails, when the previous element's focus read or a hop finds
 /// the provider did not answer within UIA's transaction timeout, or when
 /// the selected child's read does or finds an element gone
-/// ([`Uia::selected_element`]); a hop that finds no parent, or fails
+/// ([`Uia::selected`]); a hop that finds no parent, or fails
 /// otherwise, ends the walk.
 pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<FocusAncestry, Error> {
-    if query.require_focus && !query.element.has_keyboard_focus()? {
+    let input = query.element.read();
+    let live = query.element.live();
+    if query.require_focus && !live.element().has_keyboard_focus()? {
         return Ok(FocusAncestry::NotFocused);
     }
     // A failed read is an element that is gone, but a provider that did
@@ -550,16 +594,16 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         Some(Err(error)) if timed_out(&error) => return Err(Error::Uia(error)),
         Some(Err(_)) => Some(false),
     };
-    let cache = uia.cache_request(query.properties)?;
+    let request = query.fill.request();
     let element = if query.refresh {
-        Some(query.element.build_updated_cache(&cache)?)
+        Some(live.refresh(request)?)
     } else {
         None
     };
     // A selection that timed out, or whose container or item is gone, has
     // not said nothing is selected: the walk fails, as a hop's would.
-    let selected_child = if wants_selected_child(query.element) {
-        uia.selected_element(query.element, &cache)?
+    let selected_child = if wants_selected_child(&input) {
+        uia.selected(live, request)?
     } else {
         None
     };
@@ -572,7 +616,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         depth_limited: false,
         out_of_time: false,
         selected_child,
-        window: own_window(query.element),
+        window: own_window(input.hwnd),
         previous_focused,
         element,
     };
@@ -581,14 +625,14 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             .deadline
             .is_some_and(|deadline| Instant::now() >= deadline)
     };
-    let mut current = query.element.clone();
+    let mut current = live.clone();
     let mut complete = false;
     loop {
         if out_of_time() {
             ancestry.out_of_time = true;
             break;
         }
-        let parent = match walker.parent(&current, &cache) {
+        let parent = match current.walk(&walker, Direction::Parent, request) {
             Ok(parent) => parent,
             // A provider that did not answer in time has not said there is
             // no parent: the walk failed, and what it read is not the
@@ -600,7 +644,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
                 break;
             }
         };
-        let runtime_id = verbatim_uia::runtime_id(&parent);
+        let runtime_id = parent.runtime_id();
         if runtime_id == root {
             complete = true;
             break;
@@ -610,17 +654,17 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             break;
         }
         if ancestry.window.is_none() {
-            ancestry.window = own_window(&parent);
+            ancestry.window = own_window(parent.read().node.role.hwnd);
         }
-        ancestry.ancestors.push(parent.clone());
+        current = parent.live().clone();
+        ancestry.ancestors.push(parent);
         if let Some(index) = query.known.iter().position(|known| *known == runtime_id) {
             ancestry.met_known = Some(index);
             break;
         }
-        current = parent;
     }
     if ancestry.window.is_none() && !complete && !ancestry.out_of_time {
-        ancestry.window = verbatim_uia::nearest_window_handle(query.element);
+        ancestry.window = verbatim_uia::nearest_window_handle(live.element());
     }
     Ok(FocusAncestry::Focused(ancestry))
 }

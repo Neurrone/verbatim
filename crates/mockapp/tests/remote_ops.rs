@@ -17,16 +17,18 @@ use std::time::{Duration, Instant};
 
 use common::outpost::OutpostUnderTest;
 use verbatim_model::NormalizedEvent;
+use verbatim_model::State;
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::focus_read::Judged;
 use verbatim_outpost::protocol::OutpostToSupervisor;
 use verbatim_uia::{
-    CACHED_PROPERTIES, Cached, ElementExt, ListenerEvent, Live, NodeIdRegistry, Uia, map,
+    Ancestor, Cached, ElementExt, Fill, FocusInput, LEFT_OUT_WHEN_UNSUPPORTED, ListenerEvent, Live,
+    Node, Shape, Uia,
 };
 use verbatim_uia_rops::{
-    Ancestry, Error, FocusAncestry, FocusAncestryFn, FocusQuery, LEFT_OUT_WHEN_UNSUPPORTED,
-    NavigationDirection, Status, StepQuery, focus_ancestry, focus_ancestry_classic,
-    focus_ancestry_remote, navigation_step_classic, navigation_step_remote,
+    Ancestry, Error, FocusAncestry, FocusAncestryFn, FocusQuery, NavigationDirection, Status,
+    StepQuery, focus_ancestry, focus_ancestry_classic, focus_ancestry_remote,
+    navigation_step_classic, navigation_step_remote,
 };
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
@@ -57,6 +59,9 @@ struct Fixture {
     uia: Uia,
     root: IUIAutomationElement,
     hwnd: isize,
+    /// How a focus query fills the elements it returns, with every detail,
+    /// as the focus listener reads.
+    fill: Fill<Ancestor>,
     _timeout: Timeout,
 }
 
@@ -87,13 +92,36 @@ impl Fixture {
         let root = uia
             .element_from_handle(hwnd, &cache)
             .expect("element_from_handle");
+        let ancestors = Fill::new(
+            &uia.request::<Ancestor>(Ancestor::all_on())
+                .expect("the ancestors' cache request"),
+        );
         Self {
             app,
             uia,
             root,
             hwnd,
+            fill: ancestors,
             _timeout: timeout,
         }
+    }
+
+    /// The element named `name`, read as a node, as the outpost reads the
+    /// focus it hands the focus query.
+    fn find_node(&self, name: &str) -> Cached<Node> {
+        let value = VARIANT::from(BSTR::from(name));
+        let condition = self
+            .uia
+            .property_condition(UIA_NamePropertyId, &value)
+            .expect("condition");
+        let request = self
+            .uia
+            .request::<Node>(Node::all_on())
+            .expect("the node's cache request");
+        Live::new(self.root.clone())
+            .find_first(TreeScope_Descendants, &condition, &request)
+            .unwrap_or_else(|error| panic!("no element named {name:?}: {error}"))
+            .unwrap_or_else(|| panic!("no element named {name:?}"))
     }
 
     /// The element named `name`, built with the base cache request as a
@@ -112,17 +140,17 @@ impl Fixture {
     }
 
     /// Focuses fixture node `id`, named `name`, and returns its element,
-    /// which the provider then reports focused: mockapp acknowledges the
-    /// command once it has taken effect.
-    fn focus(&mut self, id: &str, name: &str) -> IUIAutomationElement {
+    /// which the provider then reports focused, as the focus query reads
+    /// it: mockapp acknowledges the command once it has taken effect.
+    fn focus(&mut self, id: &str, name: &str) -> Cached<FocusInput> {
         self.app.send(&format!("focus {id}"));
-        let element = self.find(name);
+        let element = self.find_node(name);
         assert_eq!(
-            element.has_keyboard_focus().ok(),
+            element.live().element().has_keyboard_focus().ok(),
             Some(true),
             "{name} has the keyboard focus"
         );
-        element
+        element.narrow()
     }
 
     /// [`focus`](Self::focus), the element filled as the focus listener's
@@ -151,13 +179,17 @@ impl Fixture {
     }
 }
 
-fn query<'a>(element: &'a IUIAutomationElement, known: &'a [Vec<i32>]) -> FocusQuery<'a> {
+fn query<'a>(
+    element: &'a Cached<FocusInput>,
+    known: &'a [Vec<i32>],
+    fill: &'a Fill<Ancestor>,
+) -> FocusQuery<'a> {
     FocusQuery {
         element,
         known,
         previous: None,
         depth_limit: 50,
-        properties: CACHED_PROPERTIES,
+        fill,
         deadline: None,
         require_focus: true,
         refresh: false,
@@ -173,22 +205,23 @@ fn focused(answer: Result<FocusAncestry, Error>, label: &str) -> Ancestry {
 }
 
 /// Everything a caller reads from a returned element without another
-/// cross-process call: its runtime id, every cached property, and the
-/// snapshot the outpost maps it to.
+/// cross-process call: its runtime id, every cached property of its shape,
+/// and what the shape's read maps to, `mapped`.
 ///
 /// The cached values are compared as read with defaults: read while
 /// ignoring defaults, a remotely filled cache returns a property's default
 /// where a locally built one returns UIA's "not supported" value, which is
-/// why the snapshot gates such properties on their pattern's availability,
-/// and the remote program leaves the rest out when unsupported
-/// (`LEFT_OUT_WHEN_UNSUPPORTED`); the snapshot covers those.
-fn cached_view(element: &IUIAutomationElement, registry: &NodeIdRegistry) -> String {
-    let mut view = format!("{:?}", verbatim_uia::runtime_id(element));
-    for &property in CACHED_PROPERTIES {
+/// why the shape's mapping gates such properties on their pattern's
+/// availability, and the remote program leaves the rest out when
+/// unsupported (`LEFT_OUT_WHEN_UNSUPPORTED`), recording them as absent;
+/// the mapping covers those.
+fn cached_view<S: Shape>(element: &Cached<S>, mapped: impl FnOnce(&S) -> String) -> String {
+    let mut view = format!("{:?}", element.runtime_id());
+    for &property in S::PROPERTIES {
         if LEFT_OUT_WHEN_UNSUPPORTED.contains(&property) {
             continue;
         }
-        let value = element.cached_value(property);
+        let value = element.live().element().cached_value(property);
         let _ = write!(
             view,
             "\n{}: {:?}",
@@ -196,29 +229,39 @@ fn cached_view(element: &IUIAutomationElement, registry: &NodeIdRegistry) -> Str
             value.map(|value| format!("{value:?}"))
         );
     }
-    let snapshot = map::snapshot_from_cached_element(element, registry);
-    let _ = write!(view, "\n{snapshot:?}");
+    let _ = write!(view, "\n{}", mapped(&element.read()));
     view
 }
 
-fn views(elements: &[IUIAutomationElement], registry: &NodeIdRegistry) -> Vec<String> {
-    elements
-        .iter()
-        .map(|element| cached_view(element, registry))
-        .collect()
+/// [`cached_view`] of an ancestor: its node's parts, whether it is a
+/// control and content, and its description for the layout judgment.
+fn ancestor_view(element: &Cached<Ancestor>) -> String {
+    cached_view(element, |ancestor| {
+        format!(
+            "{:?}\n{}\n{:?}",
+            ancestor.node.parts(Vec::new()),
+            ancestor.is_control_and_content(),
+            ancestor.layout_description()
+        )
+    })
+}
+
+/// [`cached_view`] of a node: its parts.
+fn node_view(element: &Cached<Node>) -> String {
+    cached_view(element, |node| format!("{:?}", node.parts(Vec::new())))
+}
+
+fn views(elements: &[Cached<Ancestor>]) -> Vec<String> {
+    elements.iter().map(ancestor_view).collect()
 }
 
 /// Runs both implementations and asserts they agree, returning the
 /// remote answer.
 fn both_agree(uia: &Uia, query: &FocusQuery<'_>) -> Ancestry {
-    let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
     let remote = focused(focus_ancestry_remote(uia, query), "remote");
     let classic = focus_ancestry_classic(uia, query);
     let classic = focused(classic, "classic");
-    let (remote_views, classic_views) = (
-        views(&remote.ancestors, &registry),
-        views(&classic.ancestors, &registry),
-    );
+    let (remote_views, classic_views) = (views(&remote.ancestors), views(&classic.ancestors));
     assert_eq!(
         remote_views.len(),
         classic_views.len(),
@@ -253,34 +296,24 @@ fn both_agree(uia: &Uia, query: &FocusQuery<'_>) -> Ancestry {
         "every fixture element has a window"
     );
     assert_eq!(
-        remote
-            .selected_child
-            .as_ref()
-            .map(|child| cached_view(child, &registry)),
-        classic
-            .selected_child
-            .as_ref()
-            .map(|child| cached_view(child, &registry)),
+        remote.selected_child.as_ref().map(ancestor_view),
+        classic.selected_child.as_ref().map(ancestor_view),
         "the selected child and its cached properties"
     );
     remote
 }
 
-fn names(elements: &[IUIAutomationElement]) -> Vec<String> {
+fn names(elements: &[Cached<Ancestor>]) -> Vec<String> {
     elements
         .iter()
-        .map(|element| {
-            element
-                .cached_string(UIA_NamePropertyId)
-                .unwrap_or_default()
-        })
+        .map(|element| element.read().node.name.unwrap_or_default())
         .collect()
 }
 
 fn a_deep_chain_reads_the_same_both_ways() {
     let mut fixture = Fixture::start("mockapp-rops-deep");
     let deep = fixture.focus("deep", "Deep button");
-    let ancestry = both_agree(&fixture.uia, &query(&deep, &[]));
+    let ancestry = both_agree(&fixture.uia, &query(&deep, &[], &fixture.fill));
     assert_eq!(
         names(&ancestry.ancestors),
         [
@@ -299,7 +332,46 @@ fn a_deep_chain_reads_the_same_both_ways() {
     // Other properties on the way: a value, a checked box.
     for (id, name) in [("notes", "Notes"), ("check", "Remember")] {
         let element = fixture.focus(id, name);
-        both_agree(&fixture.uia, &query(&element, &[]));
+        both_agree(&fixture.uia, &query(&element, &[], &fixture.fill));
+    }
+    fixture.app.quit();
+}
+
+/// A remotely read element that does not support `IsDataValidForForm`,
+/// which the program leaves out of its cache, reads as a valid entry, as
+/// UI Automation reads "not supported", and its read makes no failed
+/// cached read: the program's absent record answers it
+/// (`docs/design/uia-shapes.md`, section 7, decision 3). The focus and
+/// every ancestor, none of which mockapp gives the property.
+fn a_remotely_read_element_without_validity_reads_valid_with_no_failed_read() {
+    let mut fixture = Fixture::start("mockapp-rops-absent");
+    let deep = fixture.focus("deep", "Deep button");
+    let refreshed = FocusQuery {
+        refresh: true,
+        ..query(&deep, &[], &fixture.fill)
+    };
+    let ancestry = focused(focus_ancestry_remote(&fixture.uia, &refreshed), "remote");
+    let element = ancestry
+        .element
+        .expect("the focus's own cache, filled afresh");
+    let _ = verbatim_uia::calls::take_failed_reads();
+    let reads: Vec<Ancestor> = std::iter::once(&element)
+        .chain(&ancestry.ancestors)
+        .map(Cached::read)
+        .collect();
+    assert_eq!(verbatim_uia::calls::take_failed_reads(), 0);
+    assert_eq!(reads.len(), 6, "the focus and its five ancestors");
+    for read in &reads {
+        let node = &read.node;
+        assert_eq!(node.states.data_valid, None, "{:?}", node.name);
+        assert!(
+            !node
+                .states
+                .states(node.role.role())
+                .contains(State::InvalidEntry),
+            "{:?}",
+            node.name
+        );
     }
     fixture.app.quit();
 }
@@ -311,7 +383,7 @@ fn a_list_and_a_tab_control_report_their_selected_child() {
         ("pages", "Pages", "General"),
     ] {
         let container = fixture.focus(id, name);
-        let ancestry = both_agree(&fixture.uia, &query(&container, &[]));
+        let ancestry = both_agree(&fixture.uia, &query(&container, &[], &fixture.fill));
         let child = ancestry.selected_child.expect("a selected child");
         assert_eq!(names(&[child]), [selected]);
         assert_eq!(names(&ancestry.ancestors), ["Mockapp Ancestry Fixture"]);
@@ -319,7 +391,7 @@ fn a_list_and_a_tab_control_report_their_selected_child() {
     // A selection made after the fixture loaded.
     fixture.app.send("select apple");
     let fruits = fixture.focus("fruits", "Fruits");
-    let ancestry = both_agree(&fixture.uia, &query(&fruits, &[]));
+    let ancestry = both_agree(&fixture.uia, &query(&fruits, &[], &fixture.fill));
     assert_eq!(
         names(&[ancestry.selected_child.expect("selected")]),
         ["Apple"]
@@ -338,13 +410,13 @@ fn the_walk_stops_at_a_known_ancestor_or_the_depth_limit() {
         verbatim_uia::runtime_id(&outer),
         verbatim_uia::runtime_id(&tools),
     ];
-    let ancestry = both_agree(&fixture.uia, &query(&deep, &known));
+    let ancestry = both_agree(&fixture.uia, &query(&deep, &known, &fixture.fill));
     assert_eq!(names(&ancestry.ancestors), ["Inner group", "Tools"]);
     assert_eq!(ancestry.met_known, Some(2));
 
     let limited = FocusQuery {
         depth_limit: 2,
-        ..query(&deep, &[])
+        ..query(&deep, &[], &fixture.fill)
     };
     let ancestry = both_agree(&fixture.uia, &limited);
     assert_eq!(names(&ancestry.ancestors), ["Inner group", "Tools"]);
@@ -359,7 +431,7 @@ fn an_element_that_lost_the_focus_returns_early() {
     for (label, ancestry) in BOTH {
         assert!(
             matches!(
-                ancestry(&fixture.uia, &query(&deep, &[])),
+                ancestry(&fixture.uia, &query(&deep, &[], &fixture.fill)),
                 Ok(FocusAncestry::NotFocused)
             ),
             "{label}: the stale focus is reported as not focused"
@@ -373,7 +445,12 @@ fn an_element_that_lost_the_focus_returns_early() {
 /// siblings, first child, and an edge with no neighbor.
 fn a_navigation_step_reads_the_same_both_ways() {
     let fixture = Fixture::start("mockapp-rops-navigation");
-    let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
+    let nodes = Fill::new(
+        &fixture
+            .uia
+            .request::<Node>(Node::all_on())
+            .expect("the node's cache request"),
+    );
     for (from, direction, expected) in [
         (
             "Deep button",
@@ -401,24 +478,20 @@ fn a_navigation_step_reads_the_same_both_ways() {
         let query = StepQuery {
             element: &element,
             direction,
-            properties: CACHED_PROPERTIES,
+            fill: &nodes,
         };
         let remote = navigation_step_remote(&fixture.uia, &query).expect("the remote program runs");
         let classic = navigation_step_classic(&fixture.uia, &query).expect("the classic step runs");
         let label = format!("{direction:?} from {from}");
         assert_eq!(remote.window, Some(fixture.hwnd), "{label}");
         assert_eq!(classic.window, Some(fixture.hwnd), "{label}");
-        let view = |step: &verbatim_uia_rops::Step| {
-            step.neighbor
-                .as_ref()
-                .map(|neighbor| cached_view(neighbor, &registry))
-        };
+        let view = |step: &verbatim_uia_rops::Step| step.neighbor.as_ref().map(node_view);
         assert_eq!(view(&remote), view(&classic), "{label}");
         assert_eq!(
             remote
                 .neighbor
                 .as_ref()
-                .map(|neighbor| names(std::slice::from_ref(neighbor)).remove(0)),
+                .and_then(|neighbor| neighbor.read().name),
             expected.map(str::to_owned),
             "{label}"
         );
@@ -460,7 +533,7 @@ fn a_stalled_provider_holds_execute_until_the_transaction_timeout() {
     let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
     let connection = ProcessTimeout::set(&client, Kind::Connection, TIMEOUT);
     fixture.app.stall(STALL);
-    let answer = focus_ancestry_remote(&fixture.uia, &query(&deep, &[]));
+    let answer = focus_ancestry_remote(&fixture.uia, &query(&deep, &[], &fixture.fill));
     let returned = common::now_us();
     assert!(
         matches!(answer, Ok(FocusAncestry::Focused(_))),
@@ -476,7 +549,7 @@ fn a_stalled_provider_holds_execute_until_the_transaction_timeout() {
     let _restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
     for (label, ancestry) in BOTH {
         fixture.app.stall(STALL);
-        let answer = ancestry(&fixture.uia, &query(&deep, &[]));
+        let answer = ancestry(&fixture.uia, &query(&deep, &[], &fixture.fill));
         let returned = common::now_us();
         // Waited for, too, so the next run starts against a window thread
         // that is answering again.
@@ -525,13 +598,13 @@ fn a_focus_walk_that_times_out_fails() {
     let _restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
 
     fixture.app.send(&format!("slow {}", SLOW_CALL.as_millis()));
-    let classic = focus_ancestry_classic(&fixture.uia, &query(&deep, &[]));
+    let classic = focus_ancestry_classic(&fixture.uia, &query(&deep, &[], &fixture.fill));
     assert_eq!(
         failure(&classic),
         Some(hresult(UIA_E_TIMEOUT)),
         "classic: {classic:?}"
     );
-    let picked = focus_ancestry(&fixture.uia, &query(&deep, &[]), true);
+    let picked = focus_ancestry(&fixture.uia, &query(&deep, &[], &fixture.fill), true);
     assert_eq!(
         failure(&picked),
         Some(hresult(UIA_E_TIMEOUT)),
@@ -544,7 +617,7 @@ fn a_focus_walk_that_times_out_fails() {
     fixture.app.send("slow 0");
 
     fixture.app.stall(STALL);
-    let picked = focus_ancestry(&fixture.uia, &query(&deep, &[]), true);
+    let picked = focus_ancestry(&fixture.uia, &query(&deep, &[], &fixture.fill), true);
     let returned = common::now_us();
     let ended = fixture.app.stall_ended(STALL);
     assert_eq!(
@@ -676,7 +749,7 @@ fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
 }
 
 /// Reading a list's or a tab control's selected item, the read the classic
-/// focus walk makes for a selection container (`Uia::selected_element`),
+/// focus walk makes for a selection container (`Uia::selected`),
 /// fails when the application does not answer within UIA's transaction
 /// timeout, never answering that nothing is selected: with every provider
 /// call slow (`slow`), and with the window thread stalled (`stall`) for
@@ -688,16 +761,24 @@ fn a_selection_read_that_times_out_or_finds_the_list_gone_fails() {
     const SLOW_CALL: Duration = Duration::from_millis(50);
     const STALL: Duration = Duration::from_millis(1500);
     let mut fixture = Fixture::start_alone("mockapp-rops-selection-timeout", "ancestry.json");
-    let cache = fixture
+    let request = fixture
         .uia
-        .cache_request(CACHED_PROPERTIES)
+        .request::<Node>(Node::all_on())
         .expect("cache request");
-    let read = |element: &IUIAutomationElement| fixture.uia.selected_element(element, &cache);
-    let containers = [fixture.find("Fruits"), fixture.find("Pages")];
-    let button = fixture.find("Deep button");
+    let read = |element: &Live| fixture.uia.selected(element, &request);
+    let containers = [
+        Live::new(fixture.find("Fruits")),
+        Live::new(fixture.find("Pages")),
+    ];
+    let button = Live::new(fixture.find("Deep button"));
     assert_eq!(
-        names(&[read(&containers[0]).expect("read").expect("selected")]),
-        ["Banana"]
+        read(&containers[0])
+            .expect("read")
+            .expect("selected")
+            .read()
+            .name
+            .as_deref(),
+        Some("Banana")
     );
     assert!(
         read(&button).expect("read").is_none(),
@@ -740,7 +821,7 @@ fn a_selection_read_that_times_out_or_finds_the_list_gone_fails() {
     // Returns once the process has exited.
     drop(app);
     for container in &containers {
-        let answer = uia.selected_element(container, &cache);
+        let answer = uia.selected(container, &request);
         assert_eq!(
             answer.as_ref().err().map(windows::core::Error::code),
             Some(hresult(UIA_E_ELEMENTNOTAVAILABLE)),
@@ -809,19 +890,23 @@ fn a_provider_that_has_exited_fails_at_once() {
     let mut fixture = Fixture::start("mockapp-rops-exited");
     let deep = fixture.focus("deep", "Deep button");
     let Fixture {
-        app, uia, _timeout, ..
+        app,
+        uia,
+        fill,
+        _timeout,
+        ..
     } = fixture;
     // Returns once the process has exited.
     drop(app);
     let started = Instant::now();
-    let answer = focus_ancestry_remote(&uia, &query(&deep, &[]));
+    let answer = focus_ancestry_remote(&uia, &query(&deep, &[], &fill));
     assert!(started.elapsed() < Duration::from_secs(1));
     assert_eq!(
         answer.as_ref().err().and_then(execution_failure),
         Some(hresult(UIA_E_ELEMENTNOTAVAILABLE)),
         "{answer:?}"
     );
-    let answer = focus_ancestry_classic(&uia, &query(&deep, &[]));
+    let answer = focus_ancestry_classic(&uia, &query(&deep, &[], &fill));
     assert!(
         matches!(&answer, Err(Error::Uia(error)) if error.code() == hresult(UIA_E_ELEMENTNOTAVAILABLE)),
         "{answer:?}"
@@ -839,6 +924,10 @@ fn main() {
         (
             "a_deep_chain_reads_the_same_both_ways",
             a_deep_chain_reads_the_same_both_ways,
+        ),
+        (
+            "a_remotely_read_element_without_validity_reads_valid_with_no_failed_read",
+            a_remotely_read_element_without_validity_reads_valid_with_no_failed_read,
         ),
         (
             "a_list_and_a_tab_control_report_their_selected_child",

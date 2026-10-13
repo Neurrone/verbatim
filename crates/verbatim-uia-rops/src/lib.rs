@@ -69,8 +69,8 @@ pub use controlled::{
 };
 pub use error::{Error, Failure};
 pub use focus::{
-    Ancestry, FocusAncestry, FocusAncestryFn, FocusQuery, LEFT_OUT_WHEN_UNSUPPORTED, Path,
-    focus_ancestry, focus_ancestry_classic, focus_ancestry_remote, runtime_id_key,
+    Ancestry, FocusAncestry, FocusAncestryFn, FocusQuery, Path, focus_ancestry,
+    focus_ancestry_classic, focus_ancestry_remote, runtime_id_key,
 };
 pub use instruction::{Instruction, OperandId, TypeTest};
 pub use navigate::{

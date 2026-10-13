@@ -3,30 +3,37 @@
 //! dialog's own text"). Public, so mockapp's tests gather it as the worker
 //! does.
 //!
-//! The rules are written once, over [`DialogObject`], which each backend
-//! implements: MSAA through [`verbatim_ia2::dialog::DialogObject`], and UI
-//! Automation through [`UiaObject`], whose properties come from one cache
-//! request per container. The worker gathers the text for a dialog the
-//! focus has newly entered and reports it as the dialog's description, as
-//! NVDA does, so Core speaks it after the dialog's name, role, and states
-//! and before the focused control.
-
-use windows::Win32::UI::Accessibility::{IUIAutomationElement, UIA_PROPERTY_ID};
+//! The rules are written once, over [`DialogParent`] and [`DialogObject`],
+//! which each backend implements: MSAA through
+//! [`verbatim_ia2::dialog::DialogObject`], and UI Automation through
+//! [`UiaDialog`], the dialog, of which nothing is read but its children,
+//! and [`UiaObject`], each child, whose properties come from one cache
+//! request per container ([`verbatim_uia::DialogText`]). The worker
+//! gathers the text for a dialog the focus has newly entered and reports
+//! it as the dialog's description, as NVDA does, so Core speaks it after
+//! the dialog's name, role, and states and before the focused control.
 
 use verbatim_model::{Role, State, StateSet};
-use verbatim_uia::Uia;
-use verbatim_uia::map::{CachedUiaParts, snapshot_parts_from_cached_element};
+use verbatim_uia::map::CachedUiaParts;
+use verbatim_uia::{DialogText, Live, Request, Uia};
 
 /// The most objects one gathering looks at, so a dialog with an enormous
 /// tree costs a bounded number of calls; a dialog that has more says
 /// nothing rather than part of its text.
 pub const MAX_OBJECTS: usize = 512;
 
-/// One object a dialog's text is gathered from: the dialog or a
-/// descendant. Each method may call into the application.
-pub trait DialogObject: Sized {
+/// What a dialog's text is gathered under: the dialog, or a container in
+/// it. Its one method may call into the application.
+pub trait DialogParent {
+    /// What its children are.
+    type Child: DialogObject;
     /// Its children, in order; none when they cannot be read.
-    fn children(&self) -> Vec<Self>;
+    fn children(&self) -> Vec<Self::Child>;
+}
+
+/// One object a dialog's text is gathered from: a descendant of the
+/// dialog. Each method may call into the application.
+pub trait DialogObject: DialogParent<Child = Self> + Sized {
     /// Its role.
     fn role(&self) -> Role;
     /// Its states.
@@ -41,10 +48,14 @@ pub trait DialogObject: Sized {
     fn description(&self) -> Option<String>;
 }
 
-impl DialogObject for verbatim_ia2::dialog::DialogObject {
+impl DialogParent for verbatim_ia2::dialog::DialogObject {
+    type Child = Self;
     fn children(&self) -> Vec<Self> {
         Self::children(self)
     }
+}
+
+impl DialogObject for verbatim_ia2::dialog::DialogObject {
     fn role(&self) -> Role {
         Self::role(self)
     }
@@ -117,7 +128,7 @@ enum Stop {
 /// has none, when a dialog inside it holds the focus, or when it is too big
 /// to gather.
 #[must_use]
-pub fn dialog_text<O: DialogObject>(dialog: &O) -> Option<String> {
+pub fn dialog_text<P: DialogParent>(dialog: &P) -> Option<String> {
     let mut looked_at = 0;
     match gather(dialog, true, &mut looked_at) {
         Ok(pieces) if !pieces.is_empty() => Some(pieces.join("\n")),
@@ -133,8 +144,8 @@ pub fn dialog_text<O: DialogObject>(dialog: &O) -> Option<String> {
 /// The pieces of text inside `parent`. `allow_focused` is false inside a
 /// dialog nested in the one being read, where a focused child ends the
 /// gathering.
-fn gather<O: DialogObject>(
-    parent: &O,
+fn gather<P: DialogParent>(
+    parent: &P,
     allow_focused: bool,
     looked_at: &mut usize,
 ) -> Result<Vec<String>, Stop> {
@@ -201,46 +212,74 @@ fn text_of<O: DialogObject>(child: &O, role: Role, name: Option<String>) -> Opti
     (!parts.is_empty()).then(|| parts.join(" "))
 }
 
-/// A UI Automation element a dialog's text is gathered from, with the
-/// properties read when its parent's children were.
-pub struct UiaObject<'a> {
+/// A UI Automation dialog whose text is gathered: nothing of its own
+/// element is read, only its children, each read as a
+/// [`verbatim_uia::DialogText`] (Dickson, 2026-10-13, decision 5 of
+/// `docs/design/uia-shapes.md`).
+pub struct UiaDialog<'a> {
     uia: &'a Uia,
-    properties: &'a [UIA_PROPERTY_ID],
-    element: IUIAutomationElement,
-    parts: CachedUiaParts,
+    request: &'a Request<DialogText>,
+    element: Live,
 }
 
-impl<'a> UiaObject<'a> {
-    /// The dialog `element`, whose children are read with `properties`
-    /// cached, which must be enough for [`snapshot_parts_from_cached_element`]
-    /// (`verbatim_uia::cached_properties`). `element`'s own cached
-    /// properties give its role and states.
+impl<'a> UiaDialog<'a> {
+    /// The dialog `element`, whose children, and theirs, are read with
+    /// `request`.
     #[must_use]
-    pub fn new(
-        uia: &'a Uia,
-        properties: &'a [UIA_PROPERTY_ID],
-        element: IUIAutomationElement,
-    ) -> Self {
-        let parts = snapshot_parts_from_cached_element(&element);
+    pub fn new(uia: &'a Uia, request: &'a Request<DialogText>, element: Live) -> Self {
         Self {
             uia,
-            properties,
+            request,
             element,
-            parts,
         }
     }
 }
 
-impl DialogObject for UiaObject<'_> {
+impl<'a> DialogParent for UiaDialog<'a> {
+    type Child = UiaObject<'a>;
+    /// One call: the dialog's children with their properties cached.
+    fn children(&self) -> Vec<UiaObject<'a>> {
+        children_of(self.uia, self.request, &self.element)
+    }
+}
+
+/// A UI Automation element a dialog's text is gathered from, with the
+/// properties read when its parent's children were.
+pub struct UiaObject<'a> {
+    uia: &'a Uia,
+    request: &'a Request<DialogText>,
+    element: Live,
+    parts: CachedUiaParts,
+}
+
+/// `parent`'s children, each read with `request`, in one call; none when
+/// they cannot be read.
+fn children_of<'a>(
+    uia: &'a Uia,
+    request: &'a Request<DialogText>,
+    parent: &Live,
+) -> Vec<UiaObject<'a>> {
+    uia.children(parent, request)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|child| UiaObject {
+            uia,
+            request,
+            parts: child.read().parts(child.runtime_id()),
+            element: child.live().clone(),
+        })
+        .collect()
+}
+
+impl DialogParent for UiaObject<'_> {
+    type Child = Self;
     /// One call: the element's children with their properties cached.
     fn children(&self) -> Vec<Self> {
-        self.uia
-            .children_with(&self.element, self.properties)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|element| Self::new(self.uia, self.properties, element))
-            .collect()
+        children_of(self.uia, self.request, &self.element)
     }
+}
+
+impl DialogObject for UiaObject<'_> {
     fn role(&self) -> Role {
         self.parts.role
     }
@@ -287,10 +326,14 @@ mod tests {
         children: Vec<Fake>,
     }
 
-    impl DialogObject for Fake {
+    impl DialogParent for Fake {
+        type Child = Self;
         fn children(&self) -> Vec<Self> {
             self.children.clone()
         }
+    }
+
+    impl DialogObject for Fake {
         fn role(&self) -> Role {
             self.role.unwrap_or(Role::Unknown)
         }

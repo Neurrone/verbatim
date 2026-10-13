@@ -25,6 +25,7 @@ pub mod arbitration;
 pub mod dialog_text;
 mod event_thread;
 pub mod focus_read;
+mod gates;
 pub mod listener;
 pub mod outpost;
 pub mod protocol;

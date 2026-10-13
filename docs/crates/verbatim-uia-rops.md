@@ -142,12 +142,16 @@ as an integer array, and a null register as a null object.
 
 `focus_ancestry_remote` and `focus_ancestry_classic` share one signature
 (`FocusAncestryFn`): a `&Uia` and a `FocusQuery`, which holds the focused
-element (with its cache filled; the focus listener passes the focus
-event's own element, and the outpost the focused element a focus-now query
+element as a `verbatim_uia::Cached<FocusInput>` (its control type and
+window, read from its cache; the focus listener narrows the focus event's
+own element to it, and the outpost the focused element a focus-now query
 read), the runtime ids the caller already knows, a depth limit, the
-properties to cache on every returned element
-(`verbatim_uia::CACHED_PROPERTIES`, so they match what the snapshot code
-reads), and a deadline, which only the classic walk checks, between hops.
+`verbatim_uia::Fill<Ancestor>` every returned element is filled by (the
+shape's properties for the gates its request was built with: every gate
+on for the listener, the theme's for the outpost), and a deadline, which
+only the classic walk checks, between hops. Since the input is typed, its
+control type is always in its cache, and the live read of it the query
+once fell back to is gone (decision 8 of `docs/design/uia-shapes.md`).
 Both answer `FocusAncestry::NotFocused` when a
 live read of the element's `HasKeyboardFocus` is false and the query's
 `require_focus` asks for it (NVDA's check that a focus event is not
@@ -160,8 +164,8 @@ application can give a dead element's runtime id to a new one (File
 Explorer does), and NVDA treats a focus as a duplicate only while the
 element it compares equal to still has the focus. The `Ancestry`:
 
-- `ancestors`: the raw-view parents, nearest first, each with the
-  properties cached. The walk ends at the top-level window of the
+- `ancestors`: the raw-view parents, nearest first, each a
+  `Cached<Ancestor>`. The walk ends at the top-level window of the
   element's process: in a program, the top-level window's parent is null
   (verified), so the classic walk stops below the desktop root as well.
 - `met_known`: which of the known runtime ids the last ancestor has, when
@@ -171,7 +175,8 @@ element it compares equal to still has the focus. The `Ancestry`:
 - `out_of_time`: whether the classic walk stopped at the deadline with
   ancestors left; never set by the program.
 - `selected_child`: for a list or tab control (by the element's cached
-  control type), the first selected child, with the properties cached.
+  control type), the first selected child, a `Cached<Ancestor>` too,
+  which the outpost reports as its node.
 - `window`: the native window handle of the element or of its nearest
   raw-view ancestor that has one, which `verbatim_uia::nearest_window_handle`
   would find (NVDA's `getNearestWindowHandle`). The outpost needs it to
@@ -212,21 +217,22 @@ goes on up, returning nothing more, until it does.
 The classic implementation is the reference and the fallback: the same
 live read, the selected child through `SelectionPattern2` or else the
 Selection pattern
-(`Uia::selected_element`, which `Uia::selected_child` also
+(`Uia::selected`, which `Uia::selected_node` also
 uses), and one `GetParentElementBuildCache` round trip per ancestor over
-the raw view, the walk `Uia::ancestor_chain` makes. `ancestor_chain`
+the raw view, the walk `Uia::ancestors` makes, each filled by the fill's
+request (`Fill::request`). `ancestors`
 itself is not called, because it returns filtered snapshots, not
 elements: the presentable-ancestor filter, the switch to MSAA, and the
 splice with the previous focus's chain stay with the outpost, which
 applies them to either implementation's elements with
-`Uia::ancestor_chain_from`. Its window comes from the walked ancestors'
+`Uia::ancestors_from`. Its window comes from the walked ancestors'
 caches, or, when it stopped before reaching one, from
 `nearest_window_handle`, one more call. Every call it makes goes through
 `verbatim-uia`'s safe wrappers, so it is counted, and the module has no
 `unsafe` code.
 
 With `FocusQuery::refresh`, the program also fills the focused element's
-own cache afresh with the query's properties, in the same round trip, and
+own cache afresh by the query's fill, in the same round trip, and
 answers it as `Ancestry::element` (the classic walk makes it one
 `BuildUpdatedCache`): the focus listener reports a focus's value, states,
 and details from it, as NVDA reads those afresh when it handles a focus
@@ -277,16 +283,28 @@ The snapshot code reads three properties that way, and each is handled:
   remotely was read-only with a value of "0".
 - `IsDataValidForForm` (whose default reads as false) has no pattern, so
   the program leaves it out of the cache of an element that does not
-  support it, which the snapshot reads as it reads "not supported".
-  `PopulateCache` replaces an element's cache rather than adding to it
-  (verified), so the program builds one request per combination of
-  these properties (`LEFT_OUT_WHEN_UNSUPPORTED`, one property, so two
+  support it. `PopulateCache` replaces an element's cache rather than
+  adding to it (verified), so the program builds one request per
+  combination of these properties
+  (`verbatim_uia::LEFT_OUT_WHEN_UNSUPPORTED`, one property, so two
   requests) and picks one per element after a `GetPropertyValue` with
-  `ignoreDefault` and an `IsNotSupported` test.
+  `ignoreDefault` and an `IsNotSupported` test. It returns, with each
+  element it filled, which of them it left out, one integer per element
+  (`verbatim_uia::Absent`), and wraps the element as a `Cached<S>` with
+  that record (`Fill::claim`), so the element's read answers the
+  property as "not supported" without asking UI Automation, which would
+  otherwise fail the read and report an error inside itself (decision 3
+  of `docs/design/uia-shapes.md`). Pinned against mockapp
+  (`crates/mockapp/tests/remote_ops.rs`,
+  `a_remotely_read_element_without_validity_reads_valid_with_no_failed_read`:
+  without the record, six failed reads).
 
-Against mockapp, every other cached property reads the same both ways,
-and the snapshots the outpost makes from the two implementations' elements
-are equal.
+The programs build their cache requests from the `Fill`'s properties and
+patterns (`RemoteCache`, shared by every program here that fills a
+cache), and their classic fallbacks fill with its request, so both come
+from one shape. Against mockapp, every other cached property reads the
+same both ways, and what the two implementations' elements map to is
+equal.
 
 ## Layer 3: a terminal's screen
 
@@ -567,11 +585,16 @@ element and finds the element's nearest window, as the outpost's
 navigation needs to correct the neighbor's backend. The program reads the
 element's own window handle from its cache, else walks raw-view parents
 reading `NativeWindowHandle` until one is set, then navigates and fills
-the neighbor's cache inside the provider, choosing a cache request per
-`LEFT_OUT_WHEN_UNSUPPORTED` combination as the focus ancestry does. The
+the neighbor's cache inside the provider by the query's
+`Fill<Node>` (`StepQuery::fill`), choosing a cache request per
+`LEFT_OUT_WHEN_UNSUPPORTED` combination and returning the absent record
+as the focus ancestry does; the neighbor is a `Cached<Node>`. The
 classic implementation is `nearest_window_handle` and a tree walker step
-built with the cache, one call each; a step that fails because the
-element is gone is an error, any other failure no neighbor.
+filled by the fill's request, one call each; a step that fails because the
+element is gone is an error, any other failure no neighbor. The step's
+own element is still a raw element the outpost keeps, its window handle
+read from its cache, until the registry keeps shaped elements (step 4 of
+`docs/design/uia-shapes.md`).
 
 A program's walk ends at the process's top-level window, whose parent it
 reports as null where a tree walker reports the desktop, so the outpost
@@ -586,7 +609,9 @@ window, for every direction and at an edge.
 `element_by_path_classic` behind it (`ElementByPathFn`), finds an element
 again from one the caller has, such as a window's element from its
 handle, by the runtime ids of the raw-view elements below it, outermost
-first (`PathQuery::path`): at each level, the current element's children
+first (`PathQuery::path`, from `PathQuery::root`, a `verbatim_uia::Live`;
+the element found is a `Cached<Node>`, filled by `PathQuery::fill`): at
+each level, the current element's children
 are looked at in order until one has the path's next runtime id, and the
 walk goes down to it; a level with no such child answers that nothing was
 found. The program does the whole path in one round trip and fills the
@@ -598,8 +623,8 @@ own copy of an element the focus listener read
 (`docs/design/focus-pipeline.md`, section 12.5): the focus, from the
 nearest element of its chain with a window of its own, after the focus is
 reported; and an element of that chain it needs later. Its instruction
-count grows with the children looked at on the way: 1,139 down mockapp's
-deepest path, sixty-two levels, 153 one level down, and 149 for a path
+count grows with the children looked at on the way: 1,134 down mockapp's
+deepest path, sixty-two levels, 148 one level down, and 141 for a path
 that ends at once (`crates/mockapp/tests/instruction_limit.rs`).
 
 ## Layer 3: a selection the focus controls
@@ -609,7 +634,7 @@ that ends at once (`crates/mockapp/tests/instruction_limit.rs`).
 (`ControlledSelectionFn`), answers NVDA's test for a selection inside an
 element the focus controls (its base `event_selection` reads the focus's
 `controllerFor` live for each selection event): the selected element,
-with the query's properties cached, when the element a selection event
+a `Cached<Node>` filled by the query's fill, when the element a selection event
 named by its runtime id (`ControlledQuery::selected`) is a descendant of
 one of the elements the focus names in its `ControllerFor` relation. The
 program reads the relation, then walks each controlled element's

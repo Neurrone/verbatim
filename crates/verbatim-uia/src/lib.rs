@@ -82,8 +82,11 @@ pub use nearest::nearest_window_handle;
 pub use probe::{PROBE_BUDGET, Probe, has_server_side_provider, probe, probe_server_side_provider};
 pub use registry::{NodeIdRegistry, Released};
 pub use shape::{
-    Agile, Cached, Covers, Kept, ListenerEvent, Live, PropertyEvent, Request, RoleCore, Shape,
-    States, TextEvent, Ungated, ValueSet,
+    Absent, Agile, Ancestor, AncestorGates, Cached, Covers, Description, DialogText, Direction,
+    ElementValue, Fill, FocusInput, FrameworkCheck, HelpTextRefresh, Kept,
+    LEFT_OUT_WHEN_UNSUPPORTED, ListenerEvent, Live, Node, NodeGates, Position, ProcessCheck,
+    PropertyEvent, Request, RoleCore, SelectionContainer, Shape, ShellButton, Shortcut, States,
+    SuggestionsRefresh, TextEvent, TreeDump, Ungated, ValueSet, WindowLookup,
 };
 pub use subscribe::{
     ActiveTextPositionCallback, ElementCallback, EventCallback, FOCUS_PROPERTIES, Group,

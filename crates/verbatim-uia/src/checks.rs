@@ -14,12 +14,13 @@ use windows::Win32::Foundation::E_FAIL;
 use windows::Win32::System::Variant::{VARIANT, VT_BSTR};
 use windows::Win32::UI::Accessibility::{
     IUIAutomationTextPattern, TreeScope_Children, UIA_AutomationIdPropertyId,
-    UIA_FontNameAttributeId, UIA_FrameworkIdPropertyId, UIA_TextPatternId,
+    UIA_FontNameAttributeId, UIA_TextPatternId,
 };
 use windows::core::{BSTR, HRESULT};
 
 use crate::client::Uia;
 use crate::element::{ElementExt, attribute_value, visible_ranges};
+use crate::shape::FrameworkCheck;
 
 /// UIA's error for a provider that did not answer within the connection
 /// timeout.
@@ -63,13 +64,17 @@ fn with_client(read: impl FnOnce(&Uia) -> windows::core::Result<bool>) -> Option
 #[must_use]
 pub fn console_reports_formatting(hwnd: isize) -> Option<bool> {
     with_client(|uia| {
-        let cache = uia.base_cache_request()?;
-        let window = uia.element_from_handle(hwnd, &cache)?;
+        // Nothing of the window's element is read: it is only searched
+        // under.
+        let window = uia.window_live(hwnd)?;
         // Find the child whose automation id is "Text Area", ask it for its
         // text pattern, its visible ranges, and the first range's font.
         let id = VARIANT::from(BSTR::from("Text Area"));
         let condition = uia.property_condition(UIA_AutomationIdPropertyId, &id)?;
-        let Some(text_area) = window.find_first(TreeScope_Children, &condition)? else {
+        let Some(text_area) = window
+            .element()
+            .find_first(TreeScope_Children, &condition)?
+        else {
             // No match: `FindFirst` answers a null element.
             return Err(windows::core::Error::from(E_FAIL));
         };
@@ -88,9 +93,8 @@ pub fn console_reports_formatting(hwnd: isize) -> Option<bool> {
 #[must_use]
 pub fn is_windows_forms(hwnd: isize) -> Option<bool> {
     with_client(|uia| {
-        // A cache request for the framework, then the window's element.
-        let cache = uia.cache_request(&[UIA_FrameworkIdPropertyId])?;
-        let window = uia.element_from_handle(hwnd, &cache)?;
-        Ok(window.cached_framework_id().as_deref() == Some("WinForm"))
+        let request = uia.request_fixed::<FrameworkCheck>()?;
+        let window = uia.window_element(hwnd, &request)?;
+        Ok(window.read().framework_id.as_deref() == Some("WinForm"))
     })
 }

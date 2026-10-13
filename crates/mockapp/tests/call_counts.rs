@@ -66,17 +66,17 @@ use verbatim_model::{
 };
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::arbitration::NEGATIVE_VERDICT_LIFETIME;
-use verbatim_outpost::dialog_text::{UiaObject, dialog_text};
+use verbatim_outpost::dialog_text::{UiaDialog, dialog_text};
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, SupervisorToOutpost};
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
 use verbatim_outpost::text::{
     Anchors, CaretSignal, TextSource, Watched, caret_report, check_caret, perform,
 };
-use verbatim_uia::map::snapshot_from_cached_element;
 use verbatim_uia::{
-    CACHED_PROPERTIES, Cached, ElementExt, FOCUS_PROPERTIES, ListenerEvent, Live, NodeIdRegistry,
-    PropertyEvent, Registration, Scope, Subscription, TextEvent, Uia,
+    Ancestor, CACHED_PROPERTIES, Cached, DialogText, ElementExt, FOCUS_PROPERTIES, Fill,
+    ListenerEvent, Live, Node, NodeIdRegistry, PropertyEvent, Registration, Scope, Shape,
+    Subscription, TextEvent, Uia,
 };
 use verbatim_uia_rops::{Attributes, FocusAncestry, FocusQuery, TextAttribute, focus_ancestry};
 use windows::Win32::Foundation::HWND;
@@ -104,8 +104,9 @@ const ITEM_TWO: usize = 6;
 /// The dialog fixture's first button, by its index in mockapp's tree.
 const YES: usize = 3;
 
-/// The question the dialog fixture's message box asks.
-const QUESTION: &str = "Remove the theme Mine? This cannot be undone.";
+/// The text of the dialog fixture's message box: its question, then the
+/// question's description.
+const QUESTION: &str = "Remove the theme Mine? This cannot be undone. Its sounds go with it.";
 
 /// Calls by kind, in the order `CallCounts` lists them.
 fn calls(uia: u32, msaa: u32, window_messages: u32) -> CallCounts {
@@ -796,16 +797,24 @@ fn msaa_list_view_costs_exactly() {
 /// A UIA message box's text, gathered as the outpost's worker gathers it
 /// for a dialog the focus newly entered (`describe_dialogs` in
 /// `verbatim-outpost`'s `read.rs`): one call reads the dialog's children
-/// with their properties cached.
+/// with their properties cached, and nothing of the dialog's own element
+/// is read. Each child is read with its description whatever the theme,
+/// as NVDA's dialog text includes it, so the question's description is in
+/// the text with descriptions off as with them on: no theme gate reaches
+/// the gathering.
 fn uia_dialog_text_costs_exactly() {
     let title = common::unique_title("mockapp-counts-uia-dialog");
     let app = common::spawn("dialog.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let mut ratchet = Ratchet::default();
-    let dialog = under_test.element("Remove Theme").clone();
+    let dialog = Live::new(under_test.element("Remove Theme").clone());
+    let children = under_test
+        .uia
+        .request_fixed::<DialogText>()
+        .expect("a cache request");
     let (text, cost) = under_test.measure(hwnd, |under_test| {
-        dialog_text(&UiaObject::new(&under_test.uia, CACHED_PROPERTIES, dialog))
+        dialog_text(&UiaDialog::new(&under_test.uia, &children, dialog))
     });
     assert_eq!(text.as_deref(), Some(QUESTION));
     ratchet.check(
@@ -816,11 +825,10 @@ fn uia_dialog_text_costs_exactly() {
         &[
             ("ProviderOptions", 29),
             ("GetPatternProvider", 44),
-            ("GetPropertyValue", 92),
+            ("GetPropertyValue", 60),
             ("HostRawElementProvider", 13),
             ("Navigate", 9),
             ("GetRuntimeId", 8),
-            ("BoundingRectangle", 4),
             ("FragmentRoot", 9),
         ],
     );
@@ -933,7 +941,6 @@ fn msaa_navigation_steps_cost_exactly() {
 struct UiaUnderTest {
     uia: Uia,
     cache: IUIAutomationCacheRequest,
-    registry: NodeIdRegistry,
     elements: HashMap<String, IUIAutomationElement>,
 }
 
@@ -953,7 +960,6 @@ impl UiaUnderTest {
         Self {
             uia,
             cache,
-            registry,
             elements,
         }
     }
@@ -1191,12 +1197,12 @@ fn uia_focus_changes_cost_exactly_remote() {
         &FocusCosts {
             cold: (
                 calls(3, 0, 1),
-                3,
+                0,
                 &[
                     ("WM_GETOBJECT", 14),
                     ("ProviderOptions", 88),
                     ("GetPatternProvider", 55),
-                    ("GetPropertyValue", 127),
+                    ("GetPropertyValue", 118),
                     ("HostRawElementProvider", 37),
                     ("Navigate", 28),
                     ("GetRuntimeId", 13),
@@ -1206,12 +1212,12 @@ fn uia_focus_changes_cost_exactly_remote() {
             ),
             steady: (
                 calls(4, 0, 0),
-                2,
+                0,
                 &[
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 80),
                     ("GetPatternProvider", 44),
-                    ("GetPropertyValue", 107),
+                    ("GetPropertyValue", 99),
                     ("HostRawElementProvider", 35),
                     ("Navigate", 26),
                     ("GetRuntimeId", 14),
@@ -1222,12 +1228,12 @@ fn uia_focus_changes_cost_exactly_remote() {
             // The list's first selected item through `SelectionPattern2`.
             into_list: (
                 calls(4, 0, 0),
-                3,
+                0,
                 &[
                     ("WM_GETOBJECT", 12),
                     ("ProviderOptions", 72),
                     ("GetPatternProvider", 56),
-                    ("GetPropertyValue", 124),
+                    ("GetPropertyValue", 115),
                     ("HostRawElementProvider", 32),
                     ("Navigate", 23),
                     ("GetRuntimeId", 11),
@@ -1239,12 +1245,12 @@ fn uia_focus_changes_cost_exactly_remote() {
             ),
             next_item: (
                 calls(4, 0, 0),
-                2,
+                0,
                 &[
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 86),
                     ("GetPatternProvider", 44),
-                    ("GetPropertyValue", 108),
+                    ("GetPropertyValue", 100),
                     ("HostRawElementProvider", 37),
                     ("Navigate", 28),
                     ("GetRuntimeId", 15),
@@ -1268,7 +1274,7 @@ fn uia_focus_changes_cost_exactly_classic() {
                     ("WM_GETOBJECT", 13),
                     ("ProviderOptions", 85),
                     ("GetPatternProvider", 77),
-                    ("GetPropertyValue", 165),
+                    ("GetPropertyValue", 150),
                     ("HostRawElementProvider", 36),
                     ("Navigate", 20),
                     ("GetRuntimeId", 11),
@@ -1283,7 +1289,7 @@ fn uia_focus_changes_cost_exactly_classic() {
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 94),
                     ("GetPatternProvider", 77),
-                    ("GetPropertyValue", 172),
+                    ("GetPropertyValue", 155),
                     ("HostRawElementProvider", 41),
                     ("Navigate", 22),
                     ("GetRuntimeId", 14),
@@ -1302,7 +1308,7 @@ fn uia_focus_changes_cost_exactly_classic() {
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 76),
                     ("GetPatternProvider", 79),
-                    ("GetPropertyValue", 163),
+                    ("GetPropertyValue", 148),
                     ("HostRawElementProvider", 35),
                     ("Navigate", 15),
                     ("GetRuntimeId", 13),
@@ -1319,7 +1325,7 @@ fn uia_focus_changes_cost_exactly_classic() {
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 106),
                     ("GetPatternProvider", 88),
-                    ("GetPropertyValue", 195),
+                    ("GetPropertyValue", 175),
                     ("HostRawElementProvider", 47),
                     ("Navigate", 24),
                     ("GetRuntimeId", 17),
@@ -1453,12 +1459,12 @@ fn uia_navigation_steps_cost_exactly() {
         "UIA next sibling, remotely",
         &cost,
         calls(1, 0, 0),
-        1,
+        0,
         &[
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 26),
             ("GetPatternProvider", 11),
-            ("GetPropertyValue", 28),
+            ("GetPropertyValue", 25),
             ("HostRawElementProvider", 9),
             ("Navigate", 9),
             ("GetRuntimeId", 3),
@@ -1472,12 +1478,12 @@ fn uia_navigation_steps_cost_exactly() {
         "UIA parent, remotely",
         &parent_cost,
         calls(1, 0, 0),
-        1,
+        0,
         &[
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 27),
             ("GetPatternProvider", 11),
-            ("GetPropertyValue", 28),
+            ("GetPropertyValue", 25),
             ("HostRawElementProvider", 9),
             ("Navigate", 9),
             ("GetRuntimeId", 3),
@@ -1498,7 +1504,7 @@ fn uia_navigation_steps_cost_exactly() {
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 31),
             ("GetPatternProvider", 22),
-            ("GetPropertyValue", 51),
+            ("GetPropertyValue", 45),
             ("HostRawElementProvider", 13),
             ("Navigate", 7),
             ("GetRuntimeId", 5),
@@ -1517,7 +1523,7 @@ fn uia_navigation_steps_cost_exactly() {
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 32),
             ("GetPatternProvider", 22),
-            ("GetPropertyValue", 51),
+            ("GetPropertyValue", 45),
             ("HostRawElementProvider", 13),
             ("Navigate", 7),
             ("GetRuntimeId", 5),
@@ -1527,6 +1533,62 @@ fn uia_navigation_steps_cost_exactly() {
     );
 
     ratchet.finish();
+}
+
+/// A focus's ancestors as the outpost reads them itself, for Core's
+/// ancestors query, with a theme that reports descriptions as off: the
+/// focus's element filled as a node and each ancestor as an ancestor, so
+/// the provider is not asked for the focus's description, nor for an
+/// ancestor's beyond the one the layout judgment reads, and no cached read
+/// fails (`docs/design/uia-shapes.md`, section 4.2).
+fn uia_ancestors_with_descriptions_off_cost_exactly() {
+    let title = common::unique_title("mockapp-counts-uia-ancestors");
+    let mut app = common::spawn("counts.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let mut outpost = OutpostUnderTest::new(&app);
+    outpost
+        .outpost
+        .handle_command(&SupervisorToOutpost::Fetches(Fetches {
+            description: false,
+            ..Fetches::default()
+        }));
+    let mut ratchet = Ratchet::default();
+    let (first, _) = measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("first", "First"));
+
+    common::reset_hits(hwnd);
+    let (ancestors, calls_made) = outpost.ancestors(first.node.id);
+    let names: Vec<Option<&str>> = ancestors
+        .iter()
+        .map(|ancestor| ancestor.name.as_deref())
+        .collect();
+    assert_eq!(names, [Some("Mockapp Counts Fixture"), Some("Settings")]);
+    let cost = Cost {
+        calls: calls_made,
+        hits: common::read_hits(hwnd),
+        failed_reads: outpost.take_failed_reads(),
+    };
+    ratchet.check(
+        "UIA ancestors of a focus, descriptions off",
+        &cost,
+        calls(5, 0, 0),
+        0,
+        &[
+            ("WM_GETOBJECT", 1),
+            ("ProviderOptions", 28),
+            ("GetPatternProvider", 33),
+            ("GetPropertyValue", 60),
+            ("HostRawElementProvider", 12),
+            ("Navigate", 5),
+            ("GetRuntimeId", 5),
+            ("BoundingRectangle", 3),
+            ("FragmentRoot", 9),
+        ],
+    );
+
+    ratchet.finish();
+    drop(outpost);
+    app.quit();
 }
 
 /// What registering for events costs mockapp. A registration is made on its
@@ -1627,15 +1689,17 @@ fn uia_selected_children_cost_exactly() {
     let mut app = common::spawn("ancestry.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
-    let cache = under_test
+    let nodes = under_test
         .uia
-        .cache_request(CACHED_PROPERTIES)
+        .request::<Node>(Node::all_on())
         .expect("a cache request");
+    let ancestors = Fill::new(
+        &under_test
+            .uia
+            .request::<Ancestor>(Ancestor::all_on())
+            .expect("a cache request"),
+    );
     let mut ratchet = Ratchet::default();
-    let selected_name = |selected: Option<IUIAutomationElement>| {
-        let selected = selected.expect("a selected child");
-        snapshot_from_cached_element(&selected, &under_test.registry).name
-    };
 
     // The program's hits beyond the selected child's, the same for both.
     let program = |extra_pattern: u32, selection: (&'static str, u32)| {
@@ -1643,7 +1707,7 @@ fn uia_selected_children_cost_exactly() {
             ("WM_GETOBJECT", 2),
             ("ProviderOptions", 24),
             ("GetPatternProvider", 23 + extra_pattern),
-            ("GetPropertyValue", 49),
+            ("GetPropertyValue", 47),
             ("HostRawElementProvider", 10),
             ("Navigate", 8),
             ("GetRuntimeId", 3),
@@ -1664,7 +1728,7 @@ fn uia_selected_children_cost_exactly() {
             vec![
                 ("ProviderOptions", 14),
                 ("GetPatternProvider", 13),
-                ("GetPropertyValue", 23),
+                ("GetPropertyValue", 20),
                 ("HostRawElementProvider", 8),
                 ("Navigate", 1),
                 ("GetRuntimeId", 5),
@@ -1687,7 +1751,7 @@ fn uia_selected_children_cost_exactly() {
             vec![
                 ("ProviderOptions", 14),
                 ("GetPatternProvider", 14),
-                ("GetPropertyValue", 23),
+                ("GetPropertyValue", 20),
                 ("HostRawElementProvider", 9),
                 ("Navigate", 1),
                 ("GetRuntimeId", 5),
@@ -1700,14 +1764,17 @@ fn uia_selected_children_cost_exactly() {
         ),
     ] {
         common::apply(&mut app, hwnd, &format!("set-focus {id}"));
-        let container = under_test.element(name);
+        let container = Live::new(under_test.element(name).clone());
         let (child, cost) = under_test.measure(hwnd, |under_test| {
             under_test
                 .uia
-                .selected_element(container, &cache)
+                .selected(&container, &nodes)
                 .expect("the selection is read")
         });
-        assert_eq!(selected_name(child).as_deref(), Some(selected));
+        assert_eq!(
+            child.expect("a selected child").read().name.as_deref(),
+            Some(selected)
+        );
         ratchet.check(
             &format!("UIA selected child of {name}, classically"),
             &cost,
@@ -1715,15 +1782,21 @@ fn uia_selected_children_cost_exactly() {
             0,
             &classic_hits,
         );
+        // The focus's element as the outpost reads a focus, before the
+        // measurement.
+        let input = container
+            .refresh(&nodes)
+            .expect("the container's cache")
+            .narrow();
         let (ancestry, cost) = under_test.measure(hwnd, |under_test| {
             focus_ancestry(
                 &under_test.uia,
                 &FocusQuery {
-                    element: container,
+                    element: &input,
                     known: &[],
                     previous: None,
                     depth_limit: 64,
-                    properties: CACHED_PROPERTIES,
+                    fill: &ancestors,
                     deadline: None,
                     require_focus: true,
                     refresh: false,
@@ -1736,7 +1809,13 @@ fn uia_selected_children_cost_exactly() {
             panic!("{name} has the focus");
         };
         assert_eq!(
-            selected_name(ancestry.selected_child).as_deref(),
+            ancestry
+                .selected_child
+                .expect("a selected child")
+                .read()
+                .node
+                .name
+                .as_deref(),
             Some(selected)
         );
         ratchet.check(
@@ -3268,6 +3347,10 @@ fn main() {
         (
             "uia_navigation_steps_cost_exactly",
             uia_navigation_steps_cost_exactly,
+        ),
+        (
+            "uia_ancestors_with_descriptions_off_cost_exactly",
+            uia_ancestors_with_descriptions_off_cost_exactly,
         ),
         (
             "uia_event_registrations_cost_exactly",

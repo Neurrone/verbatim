@@ -10,15 +10,15 @@
 //! [`controlled_selection`] is the one function callers use.
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, UIA_ControllerForPropertyId, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId,
+    IUIAutomationElement, UIA_ControllerForPropertyId, UIA_RuntimeIdPropertyId,
 };
 
-use verbatim_uia::Uia;
+use verbatim_uia::{Cached, Fill, Live, Node, Uia};
 
 use crate::builder::{Builder, kind};
 use crate::caret::gone_or_timed_out;
 use crate::error::Error;
-use crate::focus::{Path, RemoteCache, runtime_id_key};
+use crate::focus::{Path, RemoteCache, absent_record, runtime_id_key};
 use crate::instruction::TypeTest;
 use crate::opcode::{Comparison, NavigationDirection};
 
@@ -29,17 +29,17 @@ pub struct ControlledQuery<'a> {
     pub focused: &'a IUIAutomationElement,
     /// The runtime id of the element a selection event named.
     pub selected: &'a [i32],
-    /// The properties cached on the selected element when it is found:
-    /// [`verbatim_uia::cached_properties`] for the snapshot code.
-    pub properties: &'a [UIA_PROPERTY_ID],
+    /// How the selected element's cache is filled when it is found: as a
+    /// [`Node`].
+    pub fill: &'a Fill<Node>,
 }
 
-/// The signature both implementations share: the selected element, with
-/// the query's properties cached, when it is a descendant of an element
-/// the focus controls; `None` when the focus controls nothing or the
-/// element is in none of what it controls.
+/// The signature both implementations share: the selected element, filled
+/// by the query's fill, when it is a descendant of an element the focus
+/// controls; `None` when the focus controls nothing or the element is in
+/// none of what it controls.
 pub type ControlledSelectionFn =
-    fn(&Uia, &ControlledQuery<'_>) -> Result<Option<IUIAutomationElement>, Error>;
+    fn(&Uia, &ControlledQuery<'_>) -> Result<Option<Cached<Node>>, Error>;
 
 /// The controlled selection, the one function call sites use: the remote
 /// program when `remote` is true, falling back to the classic calls for
@@ -55,7 +55,7 @@ pub fn controlled_selection(
     uia: &Uia,
     query: &ControlledQuery<'_>,
     remote: bool,
-) -> Result<(Option<IUIAutomationElement>, Path), Error> {
+) -> Result<(Option<Cached<Node>>, Path), Error> {
     if !remote {
         return controlled_selection_classic(uia, query).map(|found| (found, Path::Classic));
     }
@@ -86,16 +86,18 @@ pub fn controlled_selection(
 pub fn controlled_selection_remote(
     _uia: &Uia,
     query: &ControlledQuery<'_>,
-) -> Result<Option<IUIAutomationElement>, Error> {
+) -> Result<Option<Cached<Node>>, Error> {
     if query.selected.is_empty() {
         return Ok(None);
     }
     let mut b = Builder::new();
     let focused = b.import_element(query.focused);
-    let cache = RemoteCache::new(&mut b, query.properties);
+    let cache = RemoteCache::new(&mut b, query.fill);
     let target = b.string(&runtime_id_key(query.selected));
     let found = b.new_null_element();
     let found = b.add_to_results(found);
+    let found_absent = b.new_int(0);
+    let found_absent = b.add_to_results(found_absent);
     let relation = b.property(focused, UIA_ControllerForPropertyId.0);
     let is_array = b.is(TypeTest::Array, relation);
     b.if_(is_array, |b| {
@@ -128,7 +130,8 @@ pub fn controlled_selection_remote(
                         let key = b.stringify(runtime_id);
                         let matched = b.equal(key, target);
                         b.if_(matched, |b| {
-                            cache.populate(b, current);
+                            let absent = cache.populate(b, current);
+                            b.set(found_absent, absent);
                             b.set(found, current);
                             b.break_loop();
                         });
@@ -169,7 +172,10 @@ pub fn controlled_selection_remote(
         );
     });
     let outcome = b.finish().execute()?;
-    outcome.get(found)
+    let absent = absent_record(outcome.get(found_absent)?);
+    Ok(outcome
+        .get(found)?
+        .map(|found| query.fill.claim(found, absent)))
 }
 
 /// The controlled selection the classic way, the fallback and the
@@ -184,7 +190,10 @@ pub fn controlled_selection_remote(
 pub fn controlled_selection_classic(
     uia: &Uia,
     query: &ControlledQuery<'_>,
-) -> Result<Option<IUIAutomationElement>, Error> {
-    let cache = uia.cache_request(query.properties)?;
-    Ok(uia.controlled_descendant(query.focused, query.selected, &cache)?)
+) -> Result<Option<Cached<Node>>, Error> {
+    Ok(uia.controlled(
+        &Live::new(query.focused.clone()),
+        query.selected,
+        query.fill.request(),
+    )?)
 }

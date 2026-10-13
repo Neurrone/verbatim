@@ -40,8 +40,10 @@ use verbatim_model::{
     Backend, CallCounts, CaretWatch, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role,
     State, StateSet, TerminalOutput, TextOp, TextReply, TraceId,
 };
-use verbatim_uia::map::{snapshot_from_cached_element, snapshot_parts_from_cached_element};
-use verbatim_uia::{ElementExt as _, nearest_window_handle};
+use verbatim_uia::{
+    Cached, ElementExt as _, Fill, HelpTextRefresh, Live, Node, SuggestionsRefresh,
+    nearest_window_handle,
+};
 use windows::Win32::UI::Accessibility::{
     UIA_ControllerForPropertyId, UIA_HelpTextPropertyId, UIA_NamePropertyId,
     UIA_RangeValueValuePropertyId, UIA_ValueValuePropertyId,
@@ -752,13 +754,13 @@ fn uia_event_name(kind: &UiaKind) -> Option<EventName> {
 }
 
 /// The event for a change of property `id` of the node read as `node`,
-/// whose element is `element` (for a help text or `ControllerFor` change,
-/// with what that change needs cached, [`refreshed_for`]), or `None` when
-/// the change reports nothing.
+/// whose element, for a help text or `ControllerFor` change, is
+/// `refreshed` with what that change reads ([`refreshed_for`]), or `None`
+/// when the change reports nothing.
 fn property_event(
     id: i32,
     node: NodeSnapshot,
-    element: Option<&IUIAutomationElement>,
+    refreshed: Option<&Refreshed>,
 ) -> Option<NormalizedEvent> {
     Some(match id {
         id if id == UIA_NamePropertyId.0 => NormalizedEvent::PropertyChanged {
@@ -777,13 +779,17 @@ fn property_event(
         // full description or the help text, read when it is handled.
         id if id == UIA_HelpTextPropertyId.0 => NormalizedEvent::PropertyChanged {
             node_id: node.id,
-            change: PropertyChange::Description(
-                element.and_then(verbatim_uia::map::cached_description),
-            ),
+            change: PropertyChange::Description(match refreshed {
+                Some(Refreshed::HelpText(element)) => element.read().description.description(),
+                _ => None,
+            }),
             child_count: None,
         },
         id if id == UIA_ControllerForPropertyId.0 => {
-            let open = suggestions_open(element)?;
+            let open = match refreshed {
+                Some(Refreshed::Suggestions(element)) => suggestions_open(element)?,
+                _ => return None,
+            };
             NormalizedEvent::PropertyChanged {
                 node_id: node.id,
                 change: PropertyChange::Suggestions(open),
@@ -798,25 +804,36 @@ fn property_event(
     })
 }
 
+/// An element refreshed with what a change of one of its properties reads
+/// when it is handled ([`refreshed_for`]).
+enum Refreshed {
+    /// For a help text change: its description.
+    HelpText(Cached<HelpTextRefresh>),
+    /// For a `ControllerFor` change: whether it reports suggestions.
+    Suggestions(Cached<SuggestionsRefresh>),
+}
+
 /// `element` refreshed with what a change of property `id` reads when it is
 /// handled, in one call: the description for a help text change, and
 /// whether it is editable text or a search field for a `ControllerFor`
-/// change; any other change is reported from the event's cache as it
-/// stands. `None` when the refresh fails.
+/// change. `None` for any other change, which is reported from the event's
+/// cache as it stands, and when the refresh fails.
 fn refreshed_for(
     uia: Option<&verbatim_uia::Uia>,
     id: i32,
-    element: Option<IUIAutomationElement>,
-) -> Option<IUIAutomationElement> {
-    let properties: &[_] = if id == UIA_HelpTextPropertyId.0 {
-        &verbatim_uia::map::DESCRIPTION_PROPERTIES
+    element: Option<&IUIAutomationElement>,
+) -> Option<Refreshed> {
+    let uia = uia?;
+    let live = Live::new(element?.clone());
+    if id == UIA_HelpTextPropertyId.0 {
+        let request = uia.request_fixed::<HelpTextRefresh>().ok()?;
+        live.refresh(&request).ok().map(Refreshed::HelpText)
     } else if id == UIA_ControllerForPropertyId.0 {
-        &verbatim_uia::map::SUGGESTIONS_PROPERTIES
+        let request = uia.request_fixed::<SuggestionsRefresh>().ok()?;
+        live.refresh(&request).ok().map(Refreshed::Suggestions)
     } else {
-        return element;
-    };
-    let cache = uia?.cache_request(properties).ok()?;
-    element?.build_updated_cache(&cache).ok()
+        None
+    }
 }
 
 /// For a `ControllerFor` change of `element`, whether its suggestions are
@@ -826,11 +843,14 @@ fn refreshed_for(
 /// `NVDAObjects/behaviors.py` 231): whether the relation now names any
 /// element, read live, as NVDA reads `controllerFor` (not in its base
 /// cache). A failed read names none.
-fn suggestions_open(element: Option<&IUIAutomationElement>) -> Option<bool> {
-    let element =
-        element.filter(|element| verbatim_uia::map::cached_reports_suggestions(element))?;
+fn suggestions_open(element: &Cached<SuggestionsRefresh>) -> Option<bool> {
+    if !element.read().reports_suggestions() {
+        return None;
+    }
     Some(
         element
+            .live()
+            .element()
             .controller_for()
             .is_ok_and(|controlled| !controlled.is_empty()),
     )
@@ -2184,8 +2204,8 @@ impl Worker<'_> {
         let node = Self::uia_node(self.context, &parts, element.as_ref());
         let normalized = match event.kind {
             UiaKind::Property(id) => {
-                let element = refreshed_for(self.client.uia(), id, element);
-                let Some(normalized) = property_event(id, node, element.as_ref()) else {
+                let refreshed = refreshed_for(self.client.uia(), id, element.as_ref());
+                let Some(normalized) = property_event(id, node, refreshed.as_ref()) else {
                     return;
                 };
                 normalized
@@ -2278,11 +2298,12 @@ impl Worker<'_> {
         // operation where the focus's window allows one.
         let window = self.context.tracking().window;
         let uia = self.client.uia()?;
-        let properties = verbatim_uia::cached_properties(self.context.fetches());
+        let nodes = self.context.node_request(uia).ok()?;
+        let fill = Fill::new(&nodes);
         let query = verbatim_uia_rops::ControlledQuery {
             focused: &focused,
             selected: runtime_id,
-            properties: &properties,
+            fill: &fill,
         };
         let remote = self.context.tries_remote(window);
         let (selected, path) = verbatim_uia_rops::controlled_selection(uia, &query, remote).ok()?;
@@ -2300,7 +2321,7 @@ impl Worker<'_> {
         let controller = verbatim_uia::runtime_id(&focused);
         Some(NormalizedEvent::ControlledSelection {
             controller: registry.id_for_element(&controller, &focused),
-            node: snapshot_from_cached_element(&selected, registry),
+            node: selected.snapshot(registry),
         })
     }
 
@@ -2321,7 +2342,7 @@ impl Worker<'_> {
             .flatten();
         match fresh {
             Some(found) => {
-                let parts = snapshot_parts_from_cached_element(&found);
+                let parts = found.read().parts(found.runtime_id());
                 (
                     UiaSnapshotFact {
                         runtime_id: parts.runtime_id,
@@ -2331,7 +2352,7 @@ impl Worker<'_> {
                         states: parts.states,
                         details: parts.details,
                     },
-                    Some(found),
+                    Some(found.live().element().clone()),
                 )
             }
             None => (event.parts.clone(), element),
@@ -2343,7 +2364,7 @@ impl Worker<'_> {
     /// holds the focus's element, with the cache request the active theme's
     /// details call for: one search, made inside the application. `None`
     /// when the focus's element is not held or the item is not under it.
-    fn selected_element(&mut self, runtime_id: &[i32]) -> Option<IUIAutomationElement> {
+    fn selected_element(&mut self, runtime_id: &[i32]) -> Option<Cached<Node>> {
         let Some(Object::Uia(focus_id)) = self.context.intake.focused() else {
             return None;
         };
@@ -2352,10 +2373,9 @@ impl Worker<'_> {
             .existing_id(&focus_id)
             .and_then(|id| registry.element_of(id))
             .and_then(|agile| agile.resolve().ok())?;
-        let properties = verbatim_uia::cached_properties(self.context.fetches());
         let uia = self.client.uia()?;
-        let cache = uia.cache_request(&properties).ok()?;
-        uia.element_by_runtime_id(&focused, runtime_id, &cache)
+        let nodes = self.context.node_request(uia).ok()?;
+        uia.find_by_runtime_id(&Live::new(focused), runtime_id, &nodes)
             .ok()
             .flatten()
     }
@@ -2905,13 +2925,16 @@ impl Worker<'_> {
         let context = self.context;
         let route = context.focus_route(runtime_id)?;
         let uia = self.client.uia()?;
-        let properties = verbatim_uia::cached_properties(context.fetches());
+        let nodes = context.node_request(uia).ok()?;
         let remote = context.tries_remote(Some(route.window));
-        let (found, import_failed) = focus_path::find(uia, &route, &properties, remote);
+        let (found, import_failed) = focus_path::find(uia, &route, &nodes, remote);
         if import_failed {
             context.read_classically(route.window);
         }
-        found
+        // The caller keeps it in the node registry, which holds raw
+        // elements until it keeps shaped ones (step 4 of
+        // `docs/design/uia-shapes.md`).
+        found.map(|found| found.live().element().clone())
     }
 
     /// The window a UIA focus is reported in, or [`Dropped`] when the focus

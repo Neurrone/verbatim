@@ -69,12 +69,11 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::core::AgileReference;
 
-use verbatim_model::{Fetches, Pid, State, TraceId};
-use verbatim_uia::map::{
-    CachedUiaParts, add_legacy_checked_state, cached_is_control_and_content,
-    cached_native_window_handle, snapshot_parts_from_cached_element, wants_legacy_checked_state,
+use verbatim_model::{Pid, State, TraceId};
+use verbatim_uia::map::{CachedUiaParts, add_legacy_checked_state, wants_legacy_checked_state};
+use verbatim_uia::{
+    Ancestor, Cached, Direction, ElementExt as _, Fill, FocusInput, ListenerEvent, Live, Shape, Uia,
 };
-use verbatim_uia::{Cached, ElementExt as _, ListenerEvent, Uia, WalkerExt as _};
 use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, Path, focus_ancestry};
 
 use crate::ForegroundReader;
@@ -369,22 +368,31 @@ impl FocusReader {
                     .collect()
             })
             .unwrap_or_default();
-        // Every detail: the listener reads for every application, whatever
-        // theme decides which details are spoken.
-        let properties = verbatim_uia::cached_properties(Fetches::default());
-        let query = FocusQuery {
-            element,
-            known: &known,
-            previous: previous.as_ref(),
-            depth_limit: MAX_ANCESTORS,
-            properties: &properties,
-            deadline: Some(Instant::now() + READ_BUDGET),
-            require_focus: true,
-            refresh: true,
-        };
         let classic_key = (window, window_thread(window));
         let remote = self.remote && !self.classic_windows.contains(&classic_key);
-        match focus_ancestry(&self.uia, &query, remote) {
+        // Every detail: the listener reads for every application, whatever
+        // theme decides which details are spoken. A request that cannot be
+        // built is a read that failed.
+        let input = sender.narrow::<FocusInput>();
+        let read = self
+            .uia
+            .request::<Ancestor>(Ancestor::all_on())
+            .map_err(verbatim_uia_rops::Error::Uia)
+            .and_then(|request| {
+                let fill = Fill::new(&request);
+                let query = FocusQuery {
+                    element: &input,
+                    known: &known,
+                    previous: previous.as_ref(),
+                    depth_limit: MAX_ANCESTORS,
+                    fill: &fill,
+                    deadline: Some(Instant::now() + READ_BUDGET),
+                    require_focus: true,
+                    refresh: true,
+                };
+                focus_ancestry(&self.uia, &query, remote)
+            });
+        match read {
             Ok((FocusAncestry::NotFocused, _)) => {
                 Judged::Dropped("its element no longer has the keyboard focus")
             }
@@ -513,7 +521,7 @@ impl FocusReader {
         let live = ancestry
             .element
             .as_ref()
-            .map(snapshot_parts_from_cached_element);
+            .map(|fresh| fresh.read().node.parts(fresh.runtime_id()));
         // The role from the fresh read too: the event's cache holds the
         // control type but not what refines it, such as the Toggle pattern
         // a toggle button has, which NVDA reads when it needs it.
@@ -580,8 +588,11 @@ impl FocusReader {
             && !ancestry.depth_limited
             && let Some(facts) = ancestors.as_mut()
         {
-            let outermost = ancestry.ancestors.last().unwrap_or(element);
-            self.reach_the_top_level(outermost, hwnd, facts);
+            let outermost = ancestry.ancestors.last().map_or_else(
+                || Live::new(element.clone()),
+                |outermost| outermost.live().clone(),
+            );
+            self.reach_the_top_level(&outermost, hwnd, facts);
         }
         if let Some(facts) = &ancestors {
             log_ancestor_facts("sent", facts);
@@ -600,7 +611,7 @@ impl FocusReader {
             selected_child: ancestry
                 .selected_child
                 .as_ref()
-                .map(|child| fact_of(snapshot_parts_from_cached_element(child))),
+                .map(|child| fact_of(child.read().node.parts(child.runtime_id()))),
             window,
             same_as_last: ancestry.previous_focused,
         }))
@@ -788,12 +799,7 @@ impl FocusReader {
     /// own API from the handle each step brings, as NVDA switches API at a
     /// window boundary. An outermost ancestor that is a top-level window
     /// costs no call; a windowless one, one call, which finds the root.
-    fn reach_the_top_level(
-        &self,
-        outermost: &IUIAutomationElement,
-        hwnd: isize,
-        facts: &mut Vec<UiaAncestorFact>,
-    ) {
+    fn reach_the_top_level(&self, outermost: &Live, hwnd: isize, facts: &mut Vec<UiaAncestorFact>) {
         let window = facts.last().map_or(hwnd, |fact| fact.hwnd);
         if window != 0 && top_level_of(window) == window {
             tracing::debug!(
@@ -802,9 +808,8 @@ impl FocusReader {
             );
             return;
         }
-        let properties = verbatim_uia::cached_properties(Fetches::default());
-        let (Ok(cache), Ok(walker), Ok(root)) = (
-            self.uia.cache_request(&properties),
+        let (Ok(request), Ok(walker), Ok(root)) = (
+            self.uia.request::<Ancestor>(Ancestor::all_on()),
             self.uia.raw_view_walker(),
             self.uia.root_element(),
         ) else {
@@ -827,14 +832,14 @@ impl FocusReader {
         while facts.len() < limit {
             // A failed step, a provider that did not answer in time
             // included, ends the walk with what it has.
-            let parent = match walker.parent(&current, &cache) {
+            let parent = match current.walk(&walker, Direction::Parent, &request) {
                 Ok(parent) => parent,
                 Err(error) => {
                     tracing::debug!(%error, "UIA focus ancestors: a classic walk step failed");
                     break;
                 }
             };
-            let runtime_id = verbatim_uia::runtime_id(&parent);
+            let runtime_id = parent.runtime_id();
             if runtime_id == root {
                 tracing::debug!("UIA focus ancestors: the classic walk reached the root");
                 break;
@@ -851,7 +856,7 @@ impl FocusReader {
                 }
                 break;
             }
-            current = parent;
+            current = parent.live().clone();
         }
     }
 
@@ -862,14 +867,14 @@ impl FocusReader {
     /// Nothing changes when the window's element cannot be read or is no
     /// ancestor read.
     fn mark_window(&self, hwnd: isize, ancestors: &mut [UiaAncestorFact]) {
-        let Ok(cache) = self.uia.base_cache_request() else {
+        let Ok(request) = self.uia.request::<Ancestor>(Ancestor::all_on()) else {
             return;
         };
-        let Ok(window) = self.uia.element_from_handle(hwnd, &cache) else {
+        let Ok(window) = self.uia.window_element(hwnd, &request) else {
             tracing::debug!(hwnd, "mark_window: the window's element could not be read");
             return;
         };
-        let runtime_id = verbatim_uia::runtime_id(&window);
+        let runtime_id = window.runtime_id();
         if let Some(ancestor) = ancestors
             .iter_mut()
             .find(|ancestor| ancestor.hwnd == 0 && ancestor.snapshot.runtime_id == runtime_id)
@@ -881,9 +886,10 @@ impl FocusReader {
             // (`NVDAObjects/UIA/__init__.py` 2136 to 2141). So the window's
             // properties and standing as content are taken from this
             // client-side read, already made.
+            let read = window.read();
             ancestor.hwnd = hwnd;
-            ancestor.snapshot = fact_of(snapshot_parts_from_cached_element(&window));
-            ancestor.content = cached_is_control_and_content(&window);
+            ancestor.snapshot = fact_of(read.node.parts(runtime_id));
+            ancestor.content = read.is_control_and_content();
             log_ancestor_fact("mark_window", ancestor);
         } else {
             tracing::debug!(
@@ -939,11 +945,12 @@ fn fact_of(parts: CachedUiaParts) -> UiaSnapshotFact {
 }
 
 /// The fact made of an ancestor the read returned with its cache filled.
-fn ancestor_fact(element: &IUIAutomationElement) -> UiaAncestorFact {
+fn ancestor_fact(element: &Cached<Ancestor>) -> UiaAncestorFact {
+    let read = element.read();
     UiaAncestorFact {
-        snapshot: fact_of(snapshot_parts_from_cached_element(element)),
-        hwnd: cached_native_window_handle(element),
-        content: cached_is_control_and_content(element),
+        hwnd: read.node.role.hwnd,
+        content: read.is_control_and_content(),
+        snapshot: fact_of(read.node.parts(element.runtime_id())),
     }
 }
 

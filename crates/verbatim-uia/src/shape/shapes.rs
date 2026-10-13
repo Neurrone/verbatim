@@ -1,26 +1,32 @@
 //! The shapes, and the mapping each group does from what it reads.
 
-use verbatim_model::{NodeDetails, Role, State, StateSet};
+use verbatim_model::{Backend, NodeDetails, NodeSnapshot, Role, State, StateSet};
 use windows::Win32::UI::Accessibility::{
-    UIA_AutomationIdPropertyId, UIA_ClassNamePropertyId, UIA_ControlTypePropertyId,
-    UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_FrameworkIdPropertyId,
-    UIA_HasKeyboardFocusPropertyId, UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId,
+    IUIAutomationSelectionPattern, UIA_AcceleratorKeyPropertyId, UIA_AccessKeyPropertyId,
+    UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId, UIA_ClassNamePropertyId,
+    UIA_ControlTypePropertyId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
+    UIA_FrameworkIdPropertyId, UIA_FullDescriptionPropertyId, UIA_HasKeyboardFocusPropertyId,
+    UIA_HelpTextPropertyId, UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId,
     UIA_IsDataValidForFormPropertyId, UIA_IsDialogPropertyId, UIA_IsEnabledPropertyId,
     UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
     UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
     UIA_IsRangeValuePatternAvailablePropertyId, UIA_IsRequiredForFormPropertyId,
     UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTextPatternAvailablePropertyId,
     UIA_IsTogglePatternAvailablePropertyId, UIA_IsValuePatternAvailablePropertyId,
-    UIA_LocalizedControlTypePropertyId, UIA_NamePropertyId, UIA_NativeWindowHandlePropertyId,
-    UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_ProcessIdPropertyId, UIA_ProviderDescriptionPropertyId,
-    UIA_RangeValueValuePropertyId, UIA_SelectionItemIsSelectedPropertyId, UIA_TextPatternId,
+    UIA_LevelPropertyId, UIA_LocalizedControlTypePropertyId, UIA_NamePropertyId,
+    UIA_NativeWindowHandlePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_PositionInSetPropertyId,
+    UIA_ProcessIdPropertyId, UIA_ProviderDescriptionPropertyId, UIA_RangeValueValuePropertyId,
+    UIA_Selection2FirstSelectedItemPropertyId, UIA_SelectionItemIsSelectedPropertyId,
+    UIA_SelectionPatternId, UIA_SizeOfSetPropertyId, UIA_TextPatternId,
     UIA_ToggleToggleStatePropertyId, UIA_ValueIsReadOnlyPropertyId, UIA_ValueValuePropertyId,
 };
 
-use super::{Covers, Reader, Shape, Ungated, uia_shape};
+use super::{Cached, Covers, Reader, Shape, Ungated, uia_shape};
 use crate::map::{
-    CachedUiaParts, RawUiaStates, role_of, states_from_uia, strip_bidi_controls, value_from,
+    CachedUiaParts, RawUiaStates, keyboard_shortcut, role_of, states_from_uia, strip_bidi_controls,
+    value_from,
 };
+use crate::registry::NodeIdRegistry;
 
 uia_shape! {
     /// What an element's role is mapped from.
@@ -213,7 +219,7 @@ uia_shape! {
             has_focus: UIA_HasKeyboardFocusPropertyId => bool,
         }
         prefetch { UIA_TextPatternId }
-        covers { Kept }
+        covers { Kept, FocusInput }
     }
 }
 
@@ -306,5 +312,434 @@ uia_shape! {
         }
         prefetch {}
         covers { Kept }
+    }
+}
+
+uia_shape! {
+    /// What the remote focus query reads of its input element
+    /// (`verbatim-uia-rops`): whether it is a list or tab control, whose
+    /// selected child is read with it, and its own window. Never requested:
+    /// every shape the query is given covers it.
+    pub struct FocusInput {
+        gates: none;
+        groups {}
+        properties {
+            /// The control type id.
+            control_type: UIA_ControlTypePropertyId => i32,
+            /// The element's own window, 0 for an element that is not one.
+            hwnd: UIA_NativeWindowHandlePropertyId => window_handle,
+        }
+        prefetch {}
+        covers {}
+    }
+}
+
+uia_shape! {
+    /// What an element's description is read from.
+    pub struct Description {
+        gates: none;
+        groups {}
+        properties {
+            /// The full description.
+            full_description: UIA_FullDescriptionPropertyId => string,
+            /// The help text.
+            help_text: UIA_HelpTextPropertyId => string,
+        }
+        prefetch {}
+        covers {}
+    }
+}
+
+impl Description {
+    /// The description: the full description, else the help text, as
+    /// NVDA's UIA objects describe themselves.
+    #[must_use]
+    pub fn description(&self) -> Option<String> {
+        self.full_description
+            .clone()
+            .or_else(|| self.help_text.clone())
+    }
+}
+
+uia_shape! {
+    /// What an element's keyboard shortcut is read from.
+    pub struct Shortcut {
+        gates: none;
+        groups {}
+        properties {
+            /// The access key.
+            access_key: UIA_AccessKeyPropertyId => string,
+            /// The accelerator key.
+            accelerator_key: UIA_AcceleratorKeyPropertyId => string,
+        }
+        prefetch {}
+        covers {}
+    }
+}
+
+impl Shortcut {
+    /// The shortcut: the access key and the accelerator key, each when
+    /// present, joined by two spaces as NVDA joins them.
+    #[must_use]
+    pub fn shortcut(&self) -> Option<String> {
+        keyboard_shortcut(self.access_key.clone(), self.accelerator_key.clone())
+    }
+}
+
+uia_shape! {
+    /// An element's position in its set.
+    pub struct Position {
+        gates: none;
+        groups {}
+        properties {
+            /// Its one-based position.
+            position_in_set: UIA_PositionInSetPropertyId => one_based,
+            /// How many the set holds.
+            size_of_set: UIA_SizeOfSetPropertyId => one_based,
+        }
+        prefetch {}
+        covers {}
+    }
+}
+
+uia_shape! {
+    /// A node as Core is told of it: a focus, a selection, a neighbour, a
+    /// window, a tree dump's node. Its four details are fetched only when
+    /// the active theme reports them ([`NodeGates`]).
+    pub struct Node {
+        gates: NodeGates;
+        groups {
+            /// What its role is mapped from.
+            role: RoleCore,
+            /// What its value is read from.
+            value: ValueSet,
+            /// What its states are mapped from.
+            states: States,
+        }
+        gated_groups {
+            /// Its description.
+            description: Description,
+            /// Its keyboard shortcut.
+            shortcut: Shortcut,
+            /// Its position in its set.
+            position: Position,
+        }
+        properties {
+            /// The name.
+            name: UIA_NamePropertyId => string,
+            /// Where it is on the screen.
+            rect: UIA_BoundingRectanglePropertyId => rect,
+        }
+        gated_properties {
+            /// Its one-based level, in a tree or among headings.
+            level: UIA_LevelPropertyId => one_based,
+        }
+        covers { Kept, FocusInput }
+    }
+}
+
+impl Node {
+    /// The node's parts, with runtime id `runtime_id`: a detail its gate
+    /// left unfetched is `None`, as one the element does not report.
+    #[must_use]
+    pub fn parts(&self, runtime_id: Vec<i32>) -> CachedUiaParts {
+        let role = self.role.role();
+        let mut name = self.name.clone();
+        let mut value = self.value.value(self.role.class_name.as_deref());
+        let mut details = NodeDetails {
+            description: self.description.as_ref().and_then(Description::description),
+            keyboard_shortcut: self.shortcut.as_ref().and_then(Shortcut::shortcut),
+            position_in_set: self
+                .position
+                .as_ref()
+                .and_then(|position| position.position_in_set),
+            set_size: self
+                .position
+                .as_ref()
+                .and_then(|position| position.size_of_set),
+            level: self.level.flatten(),
+            rect: self.rect,
+            top_level_client: false,
+        };
+        strip_bidi_controls([&mut name, &mut value, &mut details.description]);
+        CachedUiaParts {
+            runtime_id,
+            role,
+            name,
+            value,
+            states: self.states.states(role),
+            details,
+        }
+    }
+}
+
+/// `node`, read from `element`, as a snapshot, its id minted by `registry`,
+/// which keeps the element so later reads resolve it without a search.
+fn snapshot_of(
+    node: &Node,
+    element: &windows::Win32::UI::Accessibility::IUIAutomationElement,
+    registry: &NodeIdRegistry,
+) -> NodeSnapshot {
+    let parts = node.parts(crate::com::runtime_id(element));
+    NodeSnapshot {
+        id: registry.id_for_element(&parts.runtime_id, element),
+        backend: Backend::Uia,
+        role: parts.role,
+        name: parts.name,
+        value: parts.value,
+        states: parts.states,
+        details: parts.details,
+    }
+}
+
+impl Cached<Node> {
+    /// The node as a snapshot, its id minted by `registry`, which keeps the
+    /// element. Local.
+    #[must_use]
+    pub fn snapshot(&self, registry: &NodeIdRegistry) -> NodeSnapshot {
+        snapshot_of(&self.read(), self.live().element(), registry)
+    }
+}
+
+/// A tree dump's node: a [`Node`], as every node reported to Core is.
+pub type TreeDump = Node;
+
+uia_shape! {
+    /// An ancestor of a focus, or a window an MSAA walk crosses into: a
+    /// [`Node`], with its description whatever the theme, which NVDA's
+    /// layout judgment reads whatever its setting (`presentationType`;
+    /// Dickson, 2026-10-13, decision 4 of `docs/design/uia-shapes.md`), and
+    /// whether UIA counts it a control and content.
+    pub struct Ancestor {
+        gates: AncestorGates;
+        groups {
+            /// The node it is reported as.
+            node: Node,
+            /// Its description, for the layout judgment.
+            description: Description,
+        }
+        gated_groups {}
+        properties {
+            /// Whether UIA counts it as content.
+            content: UIA_IsContentElementPropertyId => bool,
+            /// Whether UIA counts it as a control.
+            control: UIA_IsControlElementPropertyId => bool,
+        }
+        gated_properties {}
+        covers { Kept }
+    }
+}
+
+impl Ancestor {
+    /// Whether UIA counts it both a control and content, which NVDA
+    /// requires of a UIA element before it counts as content.
+    #[must_use]
+    pub fn is_control_and_content(&self) -> bool {
+        self.content && self.control
+    }
+
+    /// Its description whatever the theme, as the layout judgment reads it.
+    #[must_use]
+    pub fn layout_description(&self) -> Option<String> {
+        let mut description = self.description.description();
+        strip_bidi_controls([&mut description]);
+        description
+    }
+}
+
+impl Cached<Ancestor> {
+    /// The ancestor as a snapshot, its id minted by `registry`, which keeps
+    /// the element. Local.
+    #[must_use]
+    pub fn snapshot(&self, registry: &NodeIdRegistry) -> NodeSnapshot {
+        snapshot_of(&self.read().node, self.live().element(), registry)
+    }
+}
+
+uia_shape! {
+    /// A child of a dialog, or of a container in it, whose text the dialog's
+    /// own text is gathered from: its role, value, states and name, and its
+    /// description whatever the theme, as NVDA's `basicText` includes it
+    /// (decision 5 of `docs/design/uia-shapes.md`).
+    pub struct DialogText {
+        gates: none;
+        groups {
+            /// What its role is mapped from.
+            role: RoleCore,
+            /// What its value is read from.
+            value: ValueSet,
+            /// What its states are mapped from.
+            states: States,
+            /// Its description.
+            description: Description,
+        }
+        properties {
+            /// The name.
+            name: UIA_NamePropertyId => string,
+        }
+        prefetch {}
+        covers {}
+    }
+}
+
+impl DialogText {
+    /// The child's parts, with runtime id `runtime_id`: its description is
+    /// its one detail.
+    #[must_use]
+    pub fn parts(&self, runtime_id: Vec<i32>) -> CachedUiaParts {
+        let role = self.role.role();
+        let mut name = self.name.clone();
+        let mut value = self.value.value(self.role.class_name.as_deref());
+        let mut description = self.description.description();
+        strip_bidi_controls([&mut name, &mut value, &mut description]);
+        CachedUiaParts {
+            runtime_id,
+            role,
+            name,
+            value,
+            states: self.states.states(role),
+            details: NodeDetails {
+                description,
+                ..NodeDetails::default()
+            },
+        }
+    }
+}
+
+uia_shape! {
+    /// A selection container, refreshed to find its first selected item:
+    /// `SelectionPattern2`'s first selected item, read ignoring its
+    /// default, as NVDA reads the newer pattern where the provider has it,
+    /// and the `Selection` pattern for a provider without it.
+    pub struct SelectionContainer {
+        gates: none;
+        groups {}
+        properties {
+            /// The first selected item.
+            first_selected: UIA_Selection2FirstSelectedItemPropertyId => element,
+        }
+        patterns {
+            /// The `Selection` pattern.
+            selection: UIA_SelectionPatternId => IUIAutomationSelectionPattern,
+        }
+        prefetch {}
+        covers {}
+    }
+}
+
+uia_shape! {
+    /// An element refreshed for a help text change, which NVDA reports as a
+    /// description change.
+    pub struct HelpTextRefresh {
+        gates: none;
+        groups {
+            /// Its description.
+            description: Description,
+        }
+        properties {}
+        prefetch {}
+        covers {}
+    }
+}
+
+uia_shape! {
+    /// An element refreshed for a `ControllerFor` change: whether it is
+    /// editable text or a search field, which report suggestions.
+    pub struct SuggestionsRefresh {
+        gates: none;
+        groups {}
+        properties {
+            /// Whether it has the Text pattern.
+            text_available: UIA_IsTextPatternAvailablePropertyId => bool,
+            /// The automation id.
+            automation_id: UIA_AutomationIdPropertyId => string,
+        }
+        prefetch {}
+        covers {}
+    }
+}
+
+impl SuggestionsRefresh {
+    /// Whether the element reports suggestions opening and closing when its
+    /// `ControllerFor` relation changes: editable text, which NVDA's UIA
+    /// objects with a text pattern become, and the search fields NVDA
+    /// knows by automation id `SearchTextBox` or `TextBox` (`SearchField`,
+    /// `NVDAObjects/UIA/__init__.py` 1418 to 1421). NVDA's own condition
+    /// also asks the text for navigable text or a selection; a text pattern
+    /// is taken here as enough.
+    #[must_use]
+    pub fn reports_suggestions(&self) -> bool {
+        self.text_available
+            || matches!(
+                self.automation_id.as_deref(),
+                Some("SearchTextBox" | "TextBox")
+            )
+    }
+}
+
+uia_shape! {
+    /// An element normalized to itself or its nearest ancestor that is a
+    /// window (NVDA's `getNearestWindowHandle`).
+    pub struct WindowLookup {
+        gates: none;
+        groups {}
+        properties {
+            /// The window, 0 for an element that is not one.
+            hwnd: UIA_NativeWindowHandlePropertyId => window_handle,
+        }
+        prefetch {}
+        covers {}
+    }
+}
+
+uia_shape! {
+    /// A window's element read for the process that serves it: a console
+    /// window's is its console host's.
+    pub struct ProcessCheck {
+        gates: none;
+        groups {}
+        properties {
+            /// The owning process.
+            process_id: UIA_ProcessIdPropertyId => process_id,
+        }
+        prefetch {}
+        covers {}
+    }
+}
+
+uia_shape! {
+    /// A window's element read for its UIA framework.
+    pub struct FrameworkCheck {
+        gates: none;
+        groups {}
+        properties {
+            /// The UIA framework, such as `WinForm` or `XAML`.
+            framework_id: UIA_FrameworkIdPropertyId => string,
+        }
+        prefetch {}
+        covers {}
+    }
+}
+
+uia_shape! {
+    /// An element of the shell's notification area, as `verbatim-gui`'s
+    /// list of its buttons reads it.
+    pub struct ShellButton {
+        gates: none;
+        groups {}
+        properties {
+            /// The element's own window, 0 for an element that is not one.
+            hwnd: UIA_NativeWindowHandlePropertyId => window_handle,
+            /// The control type id.
+            control_type: UIA_ControlTypePropertyId => i32,
+            /// The name.
+            name: UIA_NamePropertyId => string,
+            /// Whether it is off the screen.
+            offscreen: UIA_IsOffscreenPropertyId => bool,
+            /// Where it is on the screen.
+            rect: UIA_BoundingRectanglePropertyId => rect,
+        }
+        prefetch {}
+        covers {}
     }
 }

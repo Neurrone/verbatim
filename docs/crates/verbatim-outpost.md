@@ -465,8 +465,9 @@ Public API:
   with a remote operation (`Outpost::with_options`; `Outpost::new` uses
   the default, on). `Outpost::with_focused_element_reader` takes a
   `FocusedElementReader` too, the function the worker reads a UIA focus's
-  element with, which is otherwise the system's keyboard focus
-  (`Uia::focused_element`): mockapp's tests hand a real outpost a UIA
+  element with, given the request it fills the element by and answering a
+  `verbatim_uia::Cached<Node>`, which is otherwise the system's keyboard
+  focus (`Uia::focused`): mockapp's tests hand a real outpost a UIA
   focus in a window that does not have the keyboard focus, and measure
   everything it does with it. `Outpost::set_foreground_reader` gives the
   outpost a `ForegroundReader`, the function it reads the foreground
@@ -539,9 +540,15 @@ Public API:
   gathered from its children by NVDA's rules (`docs/nvda/object-model.md`,
   "A dialog's own text"), public so mockapp's tests gather it as the
   worker does. `dialog_text(&dialog)` runs the rules over a
-  `DialogObject`, the trait each backend implements: MSAA through
-  `verbatim_ia2::dialog::DialogObject`, UIA through `UiaObject`, whose
-  children come with their properties cached, one call per container.
+  `DialogParent`, what the text is gathered under, whose children are
+  each a `DialogObject`, the traits each backend implements: MSAA through
+  `verbatim_ia2::dialog::DialogObject`, both at once, and UIA through
+  `UiaDialog::new(uia, request, element)`, the dialog, of which nothing
+  is read but its children, and `UiaObject`, each child, whose children
+  come with their properties cached, one call per container, each read as
+  a `verbatim_uia::DialogText`, with its description whatever the theme,
+  as NVDA's dialog text includes it (decision 5 of
+  `docs/design/uia-shapes.md`).
   `is_dialog(role)` says which nodes have such text: a dialog, an alert,
   or a property page. A gathering looks at no more than `MAX_OBJECTS`
   objects; a dialog with more says nothing rather than part of its text.
@@ -1071,10 +1078,17 @@ Implementation notes:
   (`SrState::fetches`); the app sends it to each outpost as it starts and
   again whenever the theme in use changes, and the reader applies it at
   once. Until it arrives, everything is read. A detail whose indication is
-  off is not read: UIA reads in the worker build their cache requests, and
-  the remote focus walk its property list, from
-  `verbatim_uia::cached_properties`, which leaves out the description's,
-  shortcut's, position's, and level's properties when those are off; MSAA
+  off is not read: UIA reads in the worker build their requests, and the
+  remote programs their fills, from the gates of the `Node` and
+  `Ancestor` shapes (`docs/design/uia-shapes.md`), which the outpost maps
+  from `Fetches`, one function per gated shape (`gates.rs`, a unit test
+  per gated field), so a request leaves out the description's,
+  shortcut's, position's, and level's properties when those are off. An
+  ancestor's own description is fetched whatever the theme, since the
+  layout judgment of whether an unnamed grouping is focus context reads
+  it whatever NVDA's setting (decision 4), though the description it is
+  reported with still follows the theme; the theme does not reach a
+  dialog's text either (decision 5). MSAA
   reads skip `accDescription` and `accKeyboardShortcut` and the list and
   tree position reads through the MSAA registry, which holds the same
   setting. The cache requests of the UIA event subscriptions are fixed when

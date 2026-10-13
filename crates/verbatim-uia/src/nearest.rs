@@ -17,12 +17,10 @@ use std::cell::RefCell;
 
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationCacheRequest, IUIAutomationElement, IUIAutomationTreeWalker,
-    UIA_NativeWindowHandlePropertyId,
+    IUIAutomationElement, IUIAutomationTreeWalker, UIA_NativeWindowHandlePropertyId,
 };
 
-use crate::element::WalkerExt;
-use crate::map::cached_native_window_handle;
+use crate::shape::{Live, Request, WindowLookup};
 
 /// The walker and cache request bound to one thread's own `IUIAutomation`
 /// instance, built once per thread and reused for every subsequent call on
@@ -31,16 +29,16 @@ use crate::map::cached_native_window_handle;
 /// boundary.
 struct Context {
     walker: IUIAutomationTreeWalker,
-    cache: IUIAutomationCacheRequest,
+    request: Request<WindowLookup>,
 }
 
 impl Context {
     fn build() -> windows::core::Result<Self> {
         let client = crate::client::create_client()?;
         // Build the "has no native window handle" condition, negate it, hand
-        // the negation to a fresh tree walker, and build a cache request
-        // that prefetches just the one property `NormalizeElementBuildCache`
-        // needs to answer — exactly NVDA's `windowTreeWalker` and
+        // the negation to a fresh tree walker, and build the cache request
+        // of the one property `NormalizeElementBuildCache` needs to answer,
+        // a `WindowLookup` — exactly NVDA's `windowTreeWalker` and
         // `windowCacheRequest`.
         let zero = VARIANT::from(0i32);
         // Local, same-thread COM calls against the client just created,
@@ -52,8 +50,8 @@ impl Context {
         let is_a_window = unsafe { client.CreateNotCondition(&has_no_handle) }?;
         // SAFETY: as above.
         let walker = unsafe { client.CreateTreeWalker(&is_a_window) }?;
-        let cache = crate::cache::cache_request(&client, &[UIA_NativeWindowHandlePropertyId])?;
-        Ok(Self { walker, cache })
+        let request = Request::build(&client, ())?;
+        Ok(Self { walker, request })
     }
 }
 
@@ -98,13 +96,13 @@ pub fn nearest_window_handle(element: &IUIAutomationElement) -> Option<isize> {
             *slot = Context::build().ok();
         }
         let context = slot.as_ref()?;
-        // `context.walker` and `context.cache` are this thread's own, either
-        // just built or reused unchanged from an earlier call on this same
-        // thread.
-        let normalized = context.walker.normalize(element, &context.cache).ok()?;
-        // `normalized` was just built with `context.cache`, which caches
-        // exactly the native window handle property this reads.
-        let hwnd = cached_native_window_handle(&normalized);
+        // `context.walker` and `context.request` are this thread's own,
+        // either just built or reused unchanged from an earlier call on this
+        // same thread.
+        let normalized = Live::new(element.clone())
+            .normalize(&context.walker, &context.request)
+            .ok()?;
+        let hwnd = normalized.read().hwnd;
         (hwnd != 0).then_some(hwnd)
     })
 }

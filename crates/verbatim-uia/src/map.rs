@@ -390,7 +390,7 @@ fn details_from_cached(element: &IUIAutomationElement) -> NodeDetails {
 
 /// An element's keyboard shortcut: its access key and its accelerator key,
 /// each when present, joined by two spaces as NVDA joins them.
-fn keyboard_shortcut(
+pub(crate) fn keyboard_shortcut(
     access_key: Option<String>,
     accelerator_key: Option<String>,
 ) -> Option<String> {

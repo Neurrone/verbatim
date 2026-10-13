@@ -28,16 +28,12 @@ use std::time::Duration;
 use crossbeam_channel::{RecvTimeoutError, bounded};
 
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Accessibility::{
-    IUIAutomationCacheRequest, IUIAutomationElement, IUIAutomationTreeWalker,
-    UIA_ButtonControlTypeId, UIA_IsOffscreenPropertyId, UIA_NamePropertyId,
-};
+use windows::Win32::UI::Accessibility::{IUIAutomationTreeWalker, UIA_ButtonControlTypeId};
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, FindWindowW, IsWindowVisible};
 use windows::core::{HSTRING, PCWSTR};
 
 use verbatim_model::Rect;
-use verbatim_uia::map::cached_native_window_handle;
-use verbatim_uia::{ElementExt, Uia, WalkerExt};
+use verbatim_uia::{Cached, Direction, Request, ShellButton, Uia};
 
 /// Which shell surface to enumerate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,9 +137,9 @@ fn enumerate(kind: ShellItemKind) -> Option<Vec<ShellItem>> {
             return None;
         }
     };
-    // The base cache request carries the bounding rectangle the list needs.
-    let cache = match uia.base_cache_request() {
-        Ok(cache) => cache,
+    // What the list reads of each element, the bounding rectangle among it.
+    let request = match uia.request_fixed::<ShellButton>() {
+        Ok(request) => request,
         Err(error) => {
             tracing::warn!(%error, "shell enumeration could not build its cache request");
             return None;
@@ -164,9 +160,9 @@ fn enumerate(kind: ShellItemKind) -> Option<Vec<ShellItem>> {
                 tracing::warn!("the taskbar's notification area window was not found");
                 return None;
             };
-            collect_from_window(&uia, &walker, &cache, notify, None, &mut items);
+            collect_from_window(&uia, &walker, &request, notify, None, &mut items);
             if let Some(overflow) = visible_overflow_window() {
-                collect_from_window(&uia, &walker, &cache, overflow, None, &mut items);
+                collect_from_window(&uia, &walker, &request, overflow, None, &mut items);
             }
         }
         ShellItemKind::Taskbar => {
@@ -180,7 +176,7 @@ fn enumerate(kind: ShellItemKind) -> Option<Vec<ShellItem>> {
             collect_from_window(
                 &uia,
                 &walker,
-                &cache,
+                &request,
                 shell,
                 notification_area(),
                 &mut items,
@@ -236,12 +232,12 @@ fn find_top_level(class: &str) -> Option<HWND> {
 fn collect_from_window(
     uia: &Uia,
     walker: &IUIAutomationTreeWalker,
-    cache: &IUIAutomationCacheRequest,
+    request: &Request<ShellButton>,
     hwnd: HWND,
     exclude: Option<HWND>,
     items: &mut Vec<ShellItem>,
 ) {
-    let root = match uia.element_from_handle(hwnd.0 as isize, cache) {
+    let root = match uia.window_element(hwnd.0 as isize, request) {
         Ok(element) => element,
         Err(error) => {
             tracing::warn!(%error, "shell window has no UIA element");
@@ -249,7 +245,7 @@ fn collect_from_window(
         }
     };
     let mut visited = 0usize;
-    collect_recursive(walker, cache, &root, exclude, 0, &mut visited, items);
+    collect_recursive(walker, request, &root, exclude, 0, &mut visited, items);
 }
 
 /// Recursive worker for [`collect_from_window`]: control-view children via
@@ -258,37 +254,27 @@ fn collect_from_window(
 /// descended into; the excluded window's subtree is skipped wholesale.
 fn collect_recursive(
     walker: &IUIAutomationTreeWalker,
-    cache: &IUIAutomationCacheRequest,
-    element: &IUIAutomationElement,
+    request: &Request<ShellButton>,
+    element: &Cached<ShellButton>,
     exclude: Option<HWND>,
     depth: u32,
     visited: &mut usize,
     items: &mut Vec<ShellItem>,
 ) {
+    let button = element.read();
     if let Some(exclude) = exclude
-        && cached_native_window_handle(element) == exclude.0 as isize
+        && button.hwnd == exclude.0 as isize
     {
         return;
     }
 
-    // Every property read here was prefetched by the cache request.
-    let control_type = element.cached_control_type().unwrap_or_default();
-    if control_type == UIA_ButtonControlTypeId {
-        let name = element.cached_string(UIA_NamePropertyId);
-        let offscreen = element.cached_bool(UIA_IsOffscreenPropertyId);
+    if button.control_type == Some(UIA_ButtonControlTypeId.0) {
         // The rectangle comes from the shell's provider in another process;
-        // one whose size does not fit is dropped rather than overflowing.
-        let rect = element.cached_bounding_rectangle().and_then(|rect| {
-            Some(Rect {
-                left: rect.left,
-                top: rect.top,
-                width: rect.right.checked_sub(rect.left)?,
-                height: rect.bottom.checked_sub(rect.top)?,
-            })
-        });
-        if let Some(mut item) = item_from_parts(name, offscreen, rect) {
+        // one whose size does not fit is dropped rather than overflowing
+        // (`verbatim_uia`'s rectangle read).
+        if let Some(mut item) = item_from_parts(button.name, button.offscreen, button.rect) {
             // Local: UIA keeps the runtime id with the element.
-            item.runtime_id = verbatim_uia::runtime_id(element);
+            item.runtime_id = element.runtime_id();
             items.push(item);
         }
         // Tray and taskbar buttons carry no nested items worth walking.
@@ -300,15 +286,29 @@ fn collect_recursive(
     }
     // An Err from the walker means "no child / no sibling", the same
     // convention Uia::walk_tree relies on.
-    let mut next = walker.first_child(element, cache).ok();
+    let mut next = element
+        .live()
+        .walk(walker, Direction::FirstChild, request)
+        .ok();
     while let Some(current) = next {
         *visited += 1;
         if *visited >= MAX_NODES {
             tracing::debug!("shell enumeration hit its node cap; results may be partial");
             return;
         }
-        collect_recursive(walker, cache, &current, exclude, depth + 1, visited, items);
-        next = walker.next_sibling(&current, cache).ok();
+        collect_recursive(
+            walker,
+            request,
+            &current,
+            exclude,
+            depth + 1,
+            visited,
+            items,
+        );
+        next = current
+            .live()
+            .walk(walker, Direction::NextSibling, request)
+            .ok();
     }
 }
 

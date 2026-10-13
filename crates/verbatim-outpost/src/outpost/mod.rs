@@ -45,8 +45,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle};
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationCacheRequest, IUIAutomationElement, IUIAutomationTextRange,
-    UIA_Text_TextChangedEventId, UIA_Text_TextSelectionChangedEventId,
+    IUIAutomationTextRange, UIA_Text_TextChangedEventId, UIA_Text_TextSelectionChangedEventId,
 };
 use windows::core::AgileReference;
 
@@ -56,8 +55,8 @@ use verbatim_ia2::{
 use verbatim_model::{Backend, Fetches, NodeId, Pid, TraceId};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_uia::{
-    Cached, FOCUS_PROPERTIES, Group, NodeIdRegistry as UiaRegistry, Part, PropertyEvent,
-    Registration, Scope, Subscription, TextEvent, Uia,
+    Ancestor, Cached, FOCUS_PROPERTIES, Group, Node, NodeIdRegistry as UiaRegistry, Part,
+    PropertyEvent, Registration, Request, Scope, Subscription, TextEvent, Uia,
 };
 
 use crate::arbitration::Arbitrator;
@@ -227,19 +226,16 @@ pub type HeardObserver = Arc<dyn Fn(Heard) + Send + Sync>;
 /// ([`Outpost::set_foreground_reader`]).
 pub type ForegroundReader = Arc<dyn Fn() -> isize + Send + Sync>;
 
-/// Reads the UIA element that has the keyboard focus, built with the given
-/// cache request, with the given client, on the worker's thread, for a
+/// Reads the UIA element that has the keyboard focus, filled by the given
+/// request, with the given client, on the worker's thread, for a
 /// focus-now query, the one read of the focused element the outpost makes
 /// (a UIA focus event's element is the focus listener's read). An outpost
-/// reads the system's keyboard focus ([`Uia::focused_element`]); a test
+/// reads the system's keyboard focus ([`Uia::focused`]); a test
 /// that drives a real outpost against an application without taking the
 /// keyboard focus from the desktop it runs on supplies its own
 /// ([`Outpost::with_focused_element_reader`]).
-pub type FocusedElementReader = Arc<
-    dyn Fn(&Uia, &IUIAutomationCacheRequest) -> windows::core::Result<IUIAutomationElement>
-        + Send
-        + Sync,
->;
+pub type FocusedElementReader =
+    Arc<dyn Fn(&Uia, &Request<Node>) -> windows::core::Result<Cached<Node>> + Send + Sync>;
 
 /// How an outpost reads its application, fixed for its whole life. The
 /// supervisor passes it on each outpost's command line, from
@@ -341,9 +337,16 @@ impl Context {
         self.outbound.terminal_lines()
     }
 
-    /// The UIA cache request for the details the active theme wants.
-    fn uia_cache(&self, uia: &Uia) -> windows::core::Result<IUIAutomationCacheRequest> {
-        uia.cache_request_for(self.fetches())
+    /// The request a node is fetched with, for the details the active
+    /// theme wants.
+    fn node_request(&self, uia: &Uia) -> windows::core::Result<Request<Node>> {
+        uia.request(crate::gates::node_gates(&self.fetches()))
+    }
+
+    /// The request an ancestor is fetched with, for the details the active
+    /// theme wants.
+    fn ancestor_request(&self, uia: &Uia) -> windows::core::Result<Request<Ancestor>> {
+        uia.request(crate::gates::ancestor_gates(&self.fetches()))
     }
 
     /// The caret key's watch the worker keeps open, if any.
@@ -617,7 +620,7 @@ impl Outpost {
         target_pid: u32,
         options: OutpostOptions,
     ) -> Self {
-        Self::with_focused_element_reader(pipe, target_pid, options, Arc::new(Uia::focused_element))
+        Self::with_focused_element_reader(pipe, target_pid, options, Arc::new(Uia::focused))
     }
 
     /// [`Outpost::with_options`], reading the element that has the keyboard

@@ -11,7 +11,8 @@
         {
           "id": "question",
           "role": "static_text",
-          "name": "Remove the theme Mine? This cannot be undone."
+          "name": "Remove the theme Mine? This cannot be undone.",
+          "description": "Its sounds go with it."
         },
         { "id": "yes", "role": "button", "name": "Yes", "states": ["focusable"] },
         { "id": "no", "role": "button", "name": "No", "states": ["focusable"] }

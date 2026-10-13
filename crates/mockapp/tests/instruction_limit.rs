@@ -17,7 +17,9 @@ mod common;
 mod harness;
 
 use verbatim_uia::text::{Endpoint, TextPatternExt};
-use verbatim_uia::{CACHED_PROPERTIES, ElementExt, Uia, runtime_id};
+use verbatim_uia::{
+    Ancestor, Cached, ElementExt, Fill, FocusInput, Live, Node, Shape, Uia, runtime_id,
+};
 use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, ControlledQuery, Error,
     FocusAncestry, FocusQuery, FormatSpan, Movement, NavigationDirection, PathQuery, Position,
@@ -76,6 +78,44 @@ impl Fixture {
             .find_first_build_cache(TreeScope_Descendants, &condition, &cache)
             .unwrap_or_else(|error| panic!("no element named {name:?}: {error}"))
             .unwrap_or_else(|| panic!("no element named {name:?}"))
+    }
+
+    /// The element named `name`, read as what the focus query reads of it.
+    fn find_input(&self, name: &str) -> Cached<FocusInput> {
+        let request = self
+            .uia
+            .request::<Node>(Node::all_on())
+            .expect("a cache request");
+        let value = VARIANT::from(BSTR::from(name));
+        let condition = self
+            .uia
+            .property_condition(UIA_NamePropertyId, &value)
+            .expect("a condition");
+        Live::new(self.root.clone())
+            .find_first(TreeScope_Descendants, &condition, &request)
+            .unwrap_or_else(|error| panic!("no element named {name:?}: {error}"))
+            .unwrap_or_else(|| panic!("no element named {name:?}"))
+            .narrow()
+    }
+
+    /// The fill of every element a focus query returns, with every detail.
+    fn ancestors(&self) -> Fill<Ancestor> {
+        Fill::new(
+            &self
+                .uia
+                .request::<Ancestor>(Ancestor::all_on())
+                .expect("a cache request"),
+        )
+    }
+
+    /// The fill of a node, with every detail.
+    fn nodes(&self) -> Fill<Node> {
+        Fill::new(
+            &self
+                .uia
+                .request::<Node>(Node::all_on())
+                .expect("a cache request"),
+        )
     }
 }
 
@@ -181,15 +221,16 @@ fn focus_and_navigation_execute_exactly() {
     let mut fixture = Fixture::start("deep.json", "mockapp-instructions-focus");
     // mockapp acknowledges the command once it has taken effect.
     fixture.app.send("focus fruits");
-    let list = fixture.find("Fruits");
+    let list = fixture.find_input("Fruits");
     let previous = fixture.find("Banana");
     let known: Vec<Vec<i32>> = (0..64).map(|index| vec![42, 7, index]).collect();
+    let fill = fixture.ancestors();
     let query = FocusQuery {
         element: &list,
         known: &known,
         previous: Some(&previous),
         depth_limit: 64,
-        properties: CACHED_PROPERTIES,
+        fill: &fill,
         deadline: None,
         require_focus: true,
         refresh: false,
@@ -220,11 +261,12 @@ fn focus_and_navigation_execute_exactly() {
         assert_eq!(ancestry(&typical), (1, false));
     });
 
+    let nodes = fixture.nodes();
     let step = |element: &IUIAutomationElement, direction| {
         let query = StepQuery {
             element,
             direction,
-            properties: CACHED_PROPERTIES,
+            fill: &nodes,
         };
         let step = navigation_step_remote(&fixture.uia, &query).expect("the program runs");
         assert_eq!(step.window, Some(fixture.hwnd.0 as isize));
@@ -237,7 +279,7 @@ fn focus_and_navigation_execute_exactly() {
 
     assert_eq!(
         [worst, limited, typical, far, near_step],
-        [2180, 1686, 1038, 875, 144],
+        [2366, 1779, 1044, 870, 139],
         "focus ancestry worst, at depth limit 30, typical; navigation far and near"
     );
     assert!(worst < LIMIT / 2 && far < LIMIT / 2);
@@ -255,15 +297,16 @@ fn reads_and_paths_execute_exactly() {
     common::init_com();
     let mut fixture = Fixture::start("deep.json", "mockapp-instructions-path");
     fixture.app.send("focus fruits");
-    let list = fixture.find("Fruits");
+    let list = fixture.find_input("Fruits");
     let previous = fixture.find("Banana");
     let known: Vec<Vec<i32>> = (0..64).map(|index| vec![42, 7, index]).collect();
+    let fill = fixture.ancestors();
     let query = FocusQuery {
         element: &list,
         known: &known,
         previous: Some(&previous),
         depth_limit: 64,
-        properties: CACHED_PROPERTIES,
+        fill: &fill,
         deadline: None,
         require_focus: true,
         refresh: true,
@@ -282,18 +325,20 @@ fn reads_and_paths_execute_exactly() {
     let mut path: Vec<Vec<i32>> = (1..=60)
         .map(|group| runtime_id(&fixture.find(&format!("Group {group}"))))
         .collect();
-    path.push(runtime_id(&list));
+    path.push(list.runtime_id());
     path.push(runtime_id(&previous));
+    let root = Live::new(fixture.root.clone());
+    let nodes = fixture.nodes();
     let walk = |path: &[Vec<i32>]| {
         let query = PathQuery {
-            root: &fixture.root,
+            root: &root,
             path,
-            properties: CACHED_PROPERTIES,
+            fill: &nodes,
             deadline: None,
         };
         element_by_path_remote(&fixture.uia, &query)
             .expect("the program runs")
-            .map(|found| runtime_id(&found))
+            .map(|found| found.runtime_id())
     };
     let deepest = counted(|| assert_eq!(walk(&path).as_ref(), path.last()));
     let near = counted(|| assert_eq!(walk(&path[..1]).as_ref(), path.first()));
@@ -302,7 +347,7 @@ fn reads_and_paths_execute_exactly() {
 
     assert_eq!(
         [read, deepest, near, missing],
-        [2190, 1139, 153, 149],
+        [2379, 1134, 148, 141],
         "the listener's refreshed read; a path down sixty-two levels, down one, and to nothing"
     );
     assert!(read < LIMIT / 2 && deepest < LIMIT / 2);
@@ -318,11 +363,12 @@ fn controlled_selections_execute_exactly() {
     let fixture = Fixture::start("controller.json", "mockapp-instructions-controlled");
     let search = fixture.find("Search box");
     let selected = |name: &str| runtime_id(&fixture.find(name));
+    let nodes = fixture.nodes();
     let run = |selected: &[i32]| {
         let query = ControlledQuery {
             focused: &search,
             selected,
-            properties: CACHED_PROPERTIES,
+            fill: &nodes,
         };
         controlled_selection_remote(&fixture.uia, &query)
             .expect("the program runs")
@@ -338,7 +384,7 @@ fn controlled_selections_execute_exactly() {
 
     assert_eq!(
         [deep, near, missing],
-        [168, 200, 215],
+        [163, 195, 207],
         "controlled selection inside a group, second child, not found"
     );
 }

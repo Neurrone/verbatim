@@ -11,16 +11,14 @@
 
 use std::time::Instant;
 
-use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId,
-};
+use windows::Win32::UI::Accessibility::UIA_RuntimeIdPropertyId;
 
-use verbatim_uia::{ElementExt as _, Uia, WalkerExt};
+use verbatim_uia::{Cached, Direction, Fill, Live, Node, Uia};
 
 use crate::builder::Builder;
 use crate::caret::gone_or_timed_out;
 use crate::error::Error;
-use crate::focus::{Path, RemoteCache, runtime_id_key};
+use crate::focus::{Path, RemoteCache, absent_record, runtime_id_key};
 use crate::opcode::NavigationDirection;
 
 /// What [`element_by_path`] and its two implementations are asked.
@@ -28,13 +26,12 @@ use crate::opcode::NavigationDirection;
 pub struct PathQuery<'a> {
     /// Where the path starts: an element the caller has, such as a window's
     /// element from its handle.
-    pub root: &'a IUIAutomationElement,
+    pub root: &'a Live,
     /// The runtime ids of the elements below `root`, outermost first, the
     /// last the element wanted. Empty for `root` itself.
     pub path: &'a [Vec<i32>],
-    /// The properties cached on the element found:
-    /// [`verbatim_uia::cached_properties`] for the snapshot code.
-    pub properties: &'a [UIA_PROPERTY_ID],
+    /// How the element found's cache is filled: as a [`Node`].
+    pub fill: &'a Fill<Node>,
     /// When the classic walk gives up between its calls, answering that
     /// nothing was found. The remote program is one call and does not
     /// check it.
@@ -42,9 +39,9 @@ pub struct PathQuery<'a> {
 }
 
 /// The signature both implementations share: the element at the end of the
-/// path, with the query's properties cached, or `None` when a level has no
-/// child with the path's runtime id.
-pub type ElementByPathFn = fn(&Uia, &PathQuery<'_>) -> Result<Option<IUIAutomationElement>, Error>;
+/// path, filled by the query's fill, or `None` when a level has no child
+/// with the path's runtime id.
+pub type ElementByPathFn = fn(&Uia, &PathQuery<'_>) -> Result<Option<Cached<Node>>, Error>;
 
 /// The element at the end of a path, the one function call sites use: the
 /// remote program when `remote` is true, falling back to the classic walk
@@ -60,7 +57,7 @@ pub fn element_by_path(
     uia: &Uia,
     query: &PathQuery<'_>,
     remote: bool,
-) -> Result<(Option<IUIAutomationElement>, Path), Error> {
+) -> Result<(Option<Cached<Node>>, Path), Error> {
     if !remote {
         return element_by_path_classic(uia, query).map(|found| (found, Path::Classic));
     }
@@ -91,12 +88,14 @@ pub fn element_by_path(
 pub fn element_by_path_remote(
     _uia: &Uia,
     query: &PathQuery<'_>,
-) -> Result<Option<IUIAutomationElement>, Error> {
+) -> Result<Option<Cached<Node>>, Error> {
     let mut b = Builder::new();
-    let root = b.import_element(query.root);
-    let cache = RemoteCache::new(&mut b, query.properties);
+    let root = b.import_element(query.root.element());
+    let cache = RemoteCache::new(&mut b, query.fill);
     let found = b.new_null_element();
     let found = b.add_to_results(found);
+    let found_absent = b.new_int(0);
+    let found_absent = b.add_to_results(found_absent);
     let current = b.new_null_element();
     b.set(current, root);
     let lost = b.new_bool(false);
@@ -126,11 +125,15 @@ pub fn element_by_path_remote(
     }
     let on_path = b.not(lost);
     b.if_(on_path, |b| {
-        cache.populate(b, current);
+        let absent = cache.populate(b, current);
+        b.set(found_absent, absent);
         b.set(found, current);
     });
     let outcome = b.finish().execute()?;
-    outcome.get(found)
+    let absent = absent_record(outcome.get(found_absent)?);
+    Ok(outcome
+        .get(found)?
+        .map(|found| query.fill.claim(found, absent)))
 }
 
 /// The element at the end of a path the classic way, the fallback and the
@@ -147,8 +150,8 @@ pub fn element_by_path_remote(
 pub fn element_by_path_classic(
     uia: &Uia,
     query: &PathQuery<'_>,
-) -> Result<Option<IUIAutomationElement>, Error> {
-    let cache = uia.cache_request(query.properties)?;
+) -> Result<Option<Cached<Node>>, Error> {
+    let request = query.fill.request();
     let walker = uia.raw_view_walker()?;
     let out_of_time = || {
         query
@@ -157,14 +160,14 @@ pub fn element_by_path_classic(
     };
     // A step that reaches no element comes back as an error with no
     // failure code (`WalkerExt`).
-    let step = |found: windows::core::Result<IUIAutomationElement>| match found {
+    let step = |found: windows::core::Result<Cached<Node>>| match found {
         Ok(element) => Ok(Some(element)),
         Err(error) if error.code().is_ok() => Ok(None),
         Err(error) => Err(Error::Uia(error)),
     };
-    let mut current = query.root.build_updated_cache(&cache)?;
+    let mut current = query.root.refresh(request)?;
     for runtime_id in query.path {
-        let mut child = step(walker.first_child(&current, &cache))?;
+        let mut child = step(current.live().walk(&walker, Direction::FirstChild, request))?;
         loop {
             if out_of_time() {
                 return Ok(None);
@@ -172,11 +175,15 @@ pub fn element_by_path_classic(
             let Some(element) = child else {
                 return Ok(None);
             };
-            if verbatim_uia::runtime_id(&element) == *runtime_id {
+            if element.runtime_id() == *runtime_id {
                 current = element;
                 break;
             }
-            child = step(walker.next_sibling(&element, &cache))?;
+            child = step(
+                element
+                    .live()
+                    .walk(&walker, Direction::NextSibling, request),
+            )?;
         }
     }
     Ok(Some(current))

@@ -460,14 +460,17 @@ controls nothing. `remote_ops.rs` runs `verbatim-uia-rops`'s remote and
 classic focus ancestry over `ancestry.json` (a five-level chain, a list
 and a tab control with selected children) and asserts they return the
 same ancestors with the same cached properties, that an element that
-lost the focus returns early, and how both behave against a stalled
-mockapp and one that has exited; the crate's guide records the findings.
+lost the focus returns early, that an element the program read without
+`IsDataValidForForm` reads as a valid entry with no failed cached read,
+from the record of what the program left out, and how both behave
+against a stalled mockapp and one that has exited; the crate's guide
+records the findings.
 It also pins that a walk that hits UIA's transaction timeout, made slow
 with `slow` or stalled with `stall`, is a failure both ways and never
 answered by the classic walk after the program's timeout, and that a
 real outpost then reports the focus with its containers unknown; and
 that reading a list's or tab control's selected item
-(`Uia::selected_element`) fails with UIA's timeout when mockapp is slow
+(`Uia::selected`) fails with UIA's timeout when mockapp is slow
 or stalled, and as gone once mockapp has exited, never answering that
 nothing is selected.
 `text.rs` drives `verbatim-outpost`'s text module over `text.json`'s text
@@ -552,12 +555,16 @@ selected, its name and role from the event. A foreground event for
 mockapp's window, which is read through UIA, is dropped, and the focus
 inside the window that follows is reported alone, with no foreground
 report before it; `msaa_events.rs` has the same for an MSAA window's
-foreground event handled before the window is in front.
+foreground event handled before the window is in front. Over
+`tests/fixtures/described_group.json`, with a theme that reports
+descriptions as off, the outpost's own read of a focus's ancestors
+reports an unnamed grouping that has a description as focus context,
+without the description.
 
 `call_counts.rs` is the operation ledger's ratchet (`docs/performance.md`):
 over `tests/fixtures/counts.json`, and `tests/fixtures/dialog.json` (a
-message box: a dialog holding a question and two buttons) for a dialog's
-own text, it measures each ledger operation on each
+message box: a dialog holding a question, with a description, and two
+buttons) for a dialog's own text, it measures each ledger operation on each
 backend and asserts exactly how many cross-process calls the client side
 made, by kind, and how many calls mockapp's providers answered, by method.
 The MSAA operations (a focus change cold and in the steady state, a focus

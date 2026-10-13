@@ -47,8 +47,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use verbatim_model::{
-    CallCounts, CallKind, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
-    WindowHandle,
+    CallCounts, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId, WindowHandle,
 };
 use verbatim_outpost::focus_read::{Arrival, FocusEvent, FocusReader, Judged, LastAccepted};
 use verbatim_outpost::protocol::{
@@ -56,7 +55,7 @@ use verbatim_outpost::protocol::{
     SupervisorToOutpost, WinEventStamp, read_message,
 };
 use verbatim_outpost::{Heard, Outpost, OutpostOptions};
-use verbatim_uia::{Cached, ListenerEvent};
+use verbatim_uia::{Cached, ListenerEvent, Live};
 use windows::Win32::Foundation::{E_FAIL, HWND};
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
 use windows::core::AgileReference;
@@ -170,15 +169,17 @@ impl OutpostUnderTest {
         let focus_reads = Arc::new(AtomicU32::new(0));
         let reads = Arc::clone(&focus_reads);
         // Stands in for `GetFocusedElementBuildCache`: one UIA call, as the
-        // system read counts.
-        let read_focus: verbatim_outpost::FocusedElementReader = Arc::new(move |_, _| {
-            verbatim_uia::calls::count(CallKind::Uia);
+        // system read counts, the element's cache filled by the outpost's
+        // request.
+        let read_focus: verbatim_outpost::FocusedElementReader = Arc::new(move |_, request| {
             reads.fetch_add(1, Ordering::Relaxed);
-            slot.lock()
+            let element = slot
+                .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .as_ref()
                 .ok_or_else(|| windows::core::Error::from(E_FAIL))?
-                .resolve()
+                .resolve()?;
+            Live::new(element).refresh(request)
         });
         let outpost =
             Outpost::with_focused_element_reader(Box::new(sink), pid, options, read_focus);
@@ -499,6 +500,24 @@ impl OutpostUnderTest {
                 ..
             } if answered == request_id => (neighbor, timing.calls),
             other => panic!("the outpost said {other:?}, not the step's neighbor"),
+        };
+        self.settled();
+        answer
+    }
+
+    /// Asks the outpost for a node's ancestors, as Core would, and returns
+    /// them, outermost first, and the calls it made; the reply must be the
+    /// next thing the outpost says, and the only thing.
+    pub fn ancestors(&mut self, node_id: NodeId) -> (Vec<NodeSnapshot>, CallCounts) {
+        let request_id = self.ask(Query::Ancestors { node_id });
+        let answer = match self.next() {
+            OutpostToSupervisor::Reply {
+                request_id: answered,
+                outcome: QueryOutcome::Done(QueryResult::Ancestors(chain)),
+                timing,
+                ..
+            } if answered == request_id => (chain, timing.calls),
+            other => panic!("the outpost said {other:?}, not the node's ancestors"),
         };
         self.settled();
         answer
