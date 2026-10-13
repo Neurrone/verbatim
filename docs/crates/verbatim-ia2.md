@@ -63,7 +63,11 @@ Public API:
   tooltip's show): a hook set that hears windows destroyed, as an
   outpost's does, keeps each window's class until its destroy event, so a
   flood from one window asks its class once; the listener's asks each
-  time.
+  time. None of those filters applies to the console host's events
+  (`ConsoleUpdate` and `ConsoleCaret`), whose object and child ids carry
+  data, such as a scroll's horizontal distance, which is at or below
+  `OBJID_ALERT` for ten or more columns to the left; NVDA hooks them
+  apart (`winConsoleHandler.py`), where its filters do not run.
 - `WindowCache<T>` — what a thread keeps about each window by its handle
   until the window is destroyed (`forget`): `get_or_learn(hwnd, owner,
   learn)` learns an entry anew when none is kept or the handle is now

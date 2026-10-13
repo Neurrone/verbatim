@@ -464,6 +464,14 @@ fn kinds_among(event: u32, kinds: &[WinEventKind]) -> Vec<WinEventKind> {
 /// for its provider, which freezes some builds of Excel 2016 (NVDA's
 /// `winEventCallback`, `internalWinEventHandler.py` 139 to 150, and its
 /// event limiter). `class` gives the window's class.
+///
+/// None of these applies to the console host's events, whose object and
+/// child ids carry data rather than an object: a scroll's horizontal
+/// distance, a cell, or flags. NVDA hooks them apart from its other events
+/// (`winConsoleHandler.py`), where none of these filters runs, so a scroll
+/// of ten or more columns to the left, whose object id is at or below
+/// `OBJID_ALERT`, is kept. They have no console-specific check here: the
+/// worker takes them only from the focused console terminal's window.
 fn is_wanted(
     kind: WinEventKind,
     hwnd: isize,
@@ -471,6 +479,12 @@ fn is_wanted(
     id_child: i32,
     class: &mut impl FnMut() -> Rc<str>,
 ) -> bool {
+    if matches!(
+        kind,
+        WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret
+    ) {
+        return true;
+    }
     if kind == WinEventKind::Caret {
         return id_object == OBJID_CARET.0;
     }
@@ -712,6 +726,23 @@ mod tests {
             OBJID_CLIENT.0,
             CHILDID_SELF
         ));
+    }
+
+    #[test]
+    fn a_console_scroll_of_ten_columns_left_is_kept() {
+        // `EVENT_CONSOLE_UPDATE_SCROLL` carries its horizontal distance in
+        // the object id: ten columns to the left is -10, `OBJID_ALERT`.
+        let mut classes = Some(WindowCache::default());
+        let reads = Cell::new(0);
+        assert_eq!(
+            outpost_kinds(
+                EVENT_CONSOLE_UPDATE_SCROLL,
+                OBJID_ALERT.0,
+                &mut classes,
+                &reads
+            ),
+            [WinEventKind::ConsoleUpdate]
+        );
     }
 
     #[test]
