@@ -69,7 +69,7 @@ use super::window::{
 };
 use crate::arbitration::window_class_name;
 use crate::terminal::keys;
-use crate::terminal::reading::{Action, Event};
+use crate::terminal::reading::{Action, Event, Reading};
 use crate::terminal::{Found, Memory, ReadMode};
 use crate::text::Watched;
 
@@ -694,6 +694,7 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
         | Item::Msaa { .. }
         | Item::Uia(_)
         | Item::CaretOf { .. }
+        | Item::NotedCaret { .. }
         | Item::Settle(_)
         | Item::Wake => (HANDLING_DEADLINE, None),
         // Releasing thousands of objects after a tree dump takes a while.
@@ -722,6 +723,7 @@ fn describe(item: &Item) -> String {
         Item::Query { query, .. } => format!("query {query:?}"),
         Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
         Item::CaretOf { node_id } => format!("caret of {node_id:?}"),
+        Item::NotedCaret { node_id } => format!("noted caret of {node_id:?}"),
         Item::Settle(_) => "settle".to_owned(),
         Item::Wake => "wake".to_owned(),
     }
@@ -894,6 +896,8 @@ impl Worker<'_> {
                 acknowledged,
             } => self.release(&nodes, acknowledged),
             Item::CaretOf { node_id } => self.caret_of(node_id, trace, observed_at_ms, true),
+            // Read now that nothing else waits, unless a read since saw it.
+            Item::NotedCaret { node_id } => self.caret_of(node_id, trace, observed_at_ms, false),
             Item::Settle(done) => self.settle(done, trace),
             Item::Wake => self.wake(),
         }
@@ -1103,6 +1107,18 @@ impl Worker<'_> {
             });
             return;
         }
+        // A noted caret waits for nothing else to be ready, and the settle
+        // is: it goes first, and the settle after it.
+        if let Some(noted) = context.intake.take_idle() {
+            context.intake.push(noted);
+            context.intake.push(Entry {
+                item: Item::Settle(done),
+                trace,
+                observed_at_ms: now_ms(),
+                timing: EventTiming::default(),
+            });
+            return;
+        }
         if let Some(registration) = context.focus_events.get() {
             registration.settle();
         }
@@ -1178,6 +1194,38 @@ impl Worker<'_> {
             // focus arrived is not new output.
             self.terminal_event(node_id, Event::Focused, None, (trace, observed_at_ms));
         }
+    }
+
+    /// Whether `node_id` is the focused terminal and its reading is held
+    /// with its text changed since its last read
+    /// ([`crate::terminal::reading::Reading::Held`]): output is arriving
+    /// that nobody reads until Core asks, and the caret moves with it.
+    fn held_with_changes(&self, node_id: NodeId) -> bool {
+        self.focused_terminal(node_id)
+            && self
+                .context
+                .terminals()
+                .get(&node_id.number())
+                .is_some_and(|terminal| terminal.reading == Reading::Held { changed: true })
+    }
+
+    /// Notes a caret event of the held terminal `node_id` whose text has
+    /// changed, instead of reading its caret: during a flood held for Core
+    /// it comes with nearly every write, and reading each told Core of a
+    /// caret the next write moved again. Its caret is read once nothing else
+    /// is waiting ([`Item::NotedCaret`]), so Core's caret, and a review
+    /// cursor following it, catch up when the burst ends; the read Core
+    /// asks for reads the caret with the text, and covers it if it comes
+    /// first. NVDA's console handler likewise queues a caret event only
+    /// when one is not already pending (`winConsoleHandler.py`, 169).
+    fn note_caret(&self, node_id: NodeId, trace: TraceId, observed_at_ms: u64) {
+        tracing::debug!(%trace, "a held terminal's caret event is noted");
+        self.context.intake.when_idle(Entry {
+            item: Item::NotedCaret { node_id },
+            trace,
+            observed_at_ms,
+            timing: self.timing,
+        });
     }
 
     /// Whether `node_id` is the focus and a terminal read through UIA, whose
@@ -1644,7 +1692,13 @@ impl Worker<'_> {
                 self.end_watch("the focus moved");
             }
             if !foreground {
+                let terminal = role == Role::Terminal && matches!(object, Some(Object::Uia(_)));
                 self.context.intake.set_focused(object);
+                if terminal {
+                    self.context
+                        .intake
+                        .set_focus_is_terminal(window.unwrap_or(0));
+                }
             }
             let mut tracking = self.context.tracking();
             tracking.role = Some(role);
@@ -2188,7 +2242,12 @@ impl Worker<'_> {
                     .existing_id(&event.parts.runtime_id)
                 {
                     text_reads::text_event_from(self.context, node_id, element.as_ref());
-                    if !self.check_open_watch(node_id, true) {
+                    if self.check_open_watch(node_id, true) {
+                        return;
+                    }
+                    if self.held_with_changes(node_id) {
+                        self.note_caret(node_id, trace, observed_at_ms);
+                    } else {
                         self.caret_of(node_id, trace, observed_at_ms, false);
                     }
                 }

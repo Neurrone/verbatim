@@ -97,6 +97,62 @@ impl Write for MessageSink {
 /// focus, set by the test before it hands the outpost a UIA focus.
 pub type FocusSlot = Arc<Mutex<Option<AgileReference<IUIAutomationElement>>>>;
 
+/// Where the outpost's read of the foreground window waits while a test
+/// holds its worker ([`OutpostUnderTest::hold_worker`]),
+/// so that events the test raises meanwhile wait in the outpost's intake and
+/// are planned as one batch once it lets the worker go on.
+#[derive(Default)]
+struct WorkerGate {
+    state: Mutex<GateState>,
+    changed: std::sync::Condvar,
+}
+
+#[derive(Default)]
+struct GateState {
+    /// Whether the next read waits.
+    closed: bool,
+    /// Whether a read is waiting.
+    waiting: bool,
+}
+
+impl WorkerGate {
+    fn lock(&self) -> std::sync::MutexGuard<'_, GateState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// On the worker: waits while the gate is closed, saying so.
+    fn pass(&self) {
+        let mut state = self.lock();
+        if !state.closed {
+            return;
+        }
+        state.waiting = true;
+        self.changed.notify_all();
+        let (mut state, timeout) = self
+            .changed
+            .wait_timeout_while(state, super::WAIT_TIMEOUT, |state| state.closed)
+            .unwrap_or_else(PoisonError::into_inner);
+        state.waiting = false;
+        assert!(!timeout.timed_out(), "the test never let the worker go on");
+    }
+
+    /// On the test: waits for the worker to wait at the gate.
+    fn wait_for_worker(&self) {
+        let state = self.lock();
+        let (state, timeout) = self
+            .changed
+            .wait_timeout_while(state, super::WAIT_TIMEOUT, |state| !state.waiting)
+            .unwrap_or_else(PoisonError::into_inner);
+        drop(state);
+        assert!(!timeout.timed_out(), "the worker never reached the gate");
+    }
+
+    fn set_closed(&self, closed: bool) {
+        self.lock().closed = closed;
+        self.changed.notify_all();
+    }
+}
+
 /// A focus the outpost reported, with the calls it made reading it.
 pub struct Reported {
     pub node: NodeSnapshot,
@@ -133,6 +189,9 @@ pub struct OutpostUnderTest {
     pub focus: FocusSlot,
     /// How many times the outpost has read the focused element.
     focus_reads: Arc<AtomicU32>,
+    /// Where the outpost's read of the foreground window waits while the
+    /// test holds its worker.
+    gate: Arc<WorkerGate>,
     /// The time the outpost's arbitration reads.
     time: Arc<Mutex<Instant>>,
     /// The window the outpost reads as the foreground.
@@ -193,7 +252,12 @@ impl OutpostUnderTest {
         // ([`OutpostUnderTest::set_foreground`]).
         let foreground = Arc::new(AtomicIsize::new(super::find_window(&app.title).0 as isize));
         let reader = Arc::clone(&foreground);
-        outpost.set_foreground_reader(Arc::new(move || reader.load(Ordering::Relaxed)));
+        let gate = Arc::new(WorkerGate::default());
+        let worker_gate = Arc::clone(&gate);
+        outpost.set_foreground_reader(Arc::new(move || {
+            worker_gate.pass();
+            reader.load(Ordering::Relaxed)
+        }));
         let (heard_tx, heard) = mpsc::channel();
         outpost.observe_heard(Arc::new(move |event| {
             // The test may have finished with what the outpost hears.
@@ -214,6 +278,7 @@ impl OutpostUnderTest {
             next_request: 1,
             focus,
             focus_reads,
+            gate,
             time,
             foreground,
             reader: RefCell::new(reader),
@@ -411,6 +476,28 @@ impl OutpostUnderTest {
     /// application's thread checks it (`FocusReader::check_fact`).
     pub fn listener_check(&self, element: &Cached<ListenerEvent>, fact: DeliveredFact) -> Judged {
         self.reader.borrow_mut().check_fact(element, fact)
+    }
+
+    /// Holds the outpost's idle worker: hands it a foreground change of
+    /// mockapp's window, whose acceptance test's read of the foreground
+    /// window waits until [`Self::release_worker`], and returns once the
+    /// worker is waiting there. Events the test then has the application
+    /// raise wait in the outpost's intake, and are planned as one batch
+    /// when the worker goes on. The change itself says nothing: UIA owns
+    /// mockapp's window in its UIA backend, the only one this is for. The
+    /// worker waits under the change's deadline, so a step that holds it
+    /// must be brief.
+    pub fn hold_worker(&self) {
+        self.gate.set_closed(true);
+        self.deliver(DeliveredFact::Foreground {
+            hwnd: self.foreground.load(Ordering::Relaxed),
+        });
+        self.gate.wait_for_worker();
+    }
+
+    /// Lets the worker [`Self::hold_worker`] held go on.
+    pub fn release_worker(&self) {
+        self.gate.set_closed(false);
     }
 
     /// Makes the outpost's read of the focused element for a focus-now

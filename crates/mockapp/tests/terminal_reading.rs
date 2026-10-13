@@ -11,12 +11,18 @@
 //!   reading is live again; asked with nothing changed, it answers empty
 //!   without reading, and asked to hold, the terminal stays held.
 //! - `TerminalCancel` answers with what is new, and reading is live again.
+//! - A caret event waiting ahead of a text change in one batch is planned
+//!   after it, so the caret is read once, with the text.
+//! - Held with its text changed, a caret event is only noted, and the read
+//!   Core asks for reads the caret with the text.
 //!
 //! While the terminal is held, the evidence that the outpost has taken a
 //! text change is the report of a caret event raised after it: UI
 //! Automation delivers one client's events from a provider in the order
-//! they were raised, and the outpost reads the caret on a caret event
-//! whatever the reading state.
+//! they were raised, and the outpost reads the caret of a caret event noted
+//! while held once it has nothing else to do. The two tests of one batch
+//! hold the outpost's worker ([`OutpostUnderTest::hold_worker`]) while
+//! mockapp raises the batch's events.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -25,7 +31,9 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
+use verbatim_ia2::WinEventKind;
 use verbatim_model::{NodeId, NormalizedEvent, Role, TerminalOutput, TextOp, TextReply};
+use verbatim_outpost::Heard;
 use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, QueryResult};
 use verbatim_uia::{Cached, ListenerEvent, Uia};
 use windows::Win32::Foundation::HWND;
@@ -224,6 +232,59 @@ fn a_cancel_answers_what_is_new_and_reading_is_live_again() {
     app.quit();
 }
 
+/// Waits for the outpost to take in the caret event and the text change
+/// mockapp raised, each by both routes: UIA's own event, and the
+/// `WinEvent` UIA raises for MSAA clients alongside it.
+fn heard_caret_and_text(outpost: &OutpostUnderTest) {
+    outpost.heard(&[
+        Heard::UiaTextSelection,
+        Heard::Msaa(WinEventKind::TextSelectionChange),
+        Heard::UiaTextChanged,
+        Heard::Msaa(WinEventKind::ValueChange),
+    ]);
+}
+
+/// A caret event waiting ahead of a text change in one batch is planned
+/// after it: the text change's read reads the caret with the text, and the
+/// caret event, which that read saw, reads nothing more. One caret report,
+/// then the output.
+fn a_caret_event_ahead_of_a_text_change_is_read_with_it() {
+    let (mut app, outpost, term) = start("mockapp-terminal-caret-first");
+    outpost.hold_worker();
+    app.send("caret term 1");
+    app.send("caret-event term");
+    write(&mut app, &["three"]);
+    heard_caret_and_text(&outpost);
+    outpost.release_worker();
+    assert_eq!(reported(&outpost, term), lines(&["three"]));
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// Held, a caret event after a text change is only noted: the read Core
+/// asks for in the same batch reads the caret with the text, and the noted
+/// caret, which that read saw, reads nothing more. One caret report, then
+/// the answer.
+fn a_held_terminals_caret_event_is_read_with_the_text() {
+    let (mut app, mut outpost, term) = start("mockapp-terminal-held-caret");
+    hold(&mut outpost, term);
+    outpost.hold_worker();
+    write(&mut app, &["three"]);
+    app.send("caret term 1");
+    app.send("caret-event term");
+    heard_caret_and_text(&outpost);
+    let read = ask(&mut outpost, term, TextOp::TerminalRead { hold: false });
+    outpost.release_worker();
+    assert_eq!(
+        read_answer(&outpost, term, read),
+        TextReply::Terminal(Box::new(lines(&["three"])))
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -238,6 +299,14 @@ fn main() {
         (
             "a_cancel_answers_what_is_new_and_reading_is_live_again",
             a_cancel_answers_what_is_new_and_reading_is_live_again,
+        ),
+        (
+            "a_caret_event_ahead_of_a_text_change_is_read_with_it",
+            a_caret_event_ahead_of_a_text_change_is_read_with_it,
+        ),
+        (
+            "a_held_terminals_caret_event_is_read_with_the_text",
+            a_held_terminals_caret_event_is_read_with_the_text,
         ),
     ]);
 }

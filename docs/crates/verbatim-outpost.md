@@ -380,7 +380,11 @@ Public API:
     waiting entry per object and kind, a newer one replacing it and moving
     to the back, which is all that limits UIA events; a batch is everything
     that accumulated while the worker handled the previous one, planned in
-    the order it arrived; per batch the newest 4 MSAA focus events and the
+    the order it arrived, but for a focused terminal's caret event waiting
+    ahead of a text change of the terminal (its console update or UIA text
+    change) with only events between them, which is planned just after the
+    newest such change, since that change's read reads the caret too and
+    the caret event then reads nothing (`caret_after_update`); per batch the newest 4 MSAA focus events and the
     newest 10 other MSAA events per thread that raised them are kept (each
     MSAA event carries its own thread, from the outpost's hook or the
     listener's), the focused object's other
@@ -1343,7 +1347,11 @@ Implementation notes:
   `TextChanged` without reading the control's whole text as its MSAA value.
   The intake keeps one waiting caret report per node, and a caret event
   observed before the worker last read that node's caret (a caret key's
-  check reads it after the event) is dropped. A caret event, a text
+  check reads it after the event) is dropped. A caret event of a focused
+  terminal whose reading is held while its text has changed unread is
+  noted instead of read (`Item::NotedCaret`): the intake hands it out
+  only when nothing else is ready (`Intake::when_idle`), and it then reads
+  the caret unless a read since, such as the one Core asks for, saw it. A caret event, a text
   change, and a text selection change of the node a caret key's watch is
   open on check the watch first. A focus-now answer's control has its caret
   and text changes followed too (the subscription moved to it, and an
@@ -1724,7 +1732,11 @@ finds it.
   console (`winConsoleHandler.py` 84 to 87) is for the legacy console. A
   change observed before the last read that settled began is covered by
   it and reads nothing (`Terminal::note_read` and `Terminal::covers`); an
-  unsettled read covers nothing. A terminal gaining
+  unsettled read covers nothing. While reading is held with the text
+  changed, a caret event is noted, not read, and its caret is read once
+  the outpost has nothing else waiting: Core's caret, and a review cursor
+  following it, then catch up when a burst of output ends, rather than
+  with every write of a held flood (`docs/design/wake-ups.md`). A terminal gaining
   the focus is read as a baseline, which speaks nothing, and reading is
   live.
 - Each read logs its cost at debug (`terminal screen timing`: the path,

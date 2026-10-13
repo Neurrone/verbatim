@@ -10,7 +10,12 @@
 //!   counts nothing.
 //! - A batch is everything that accumulated while the worker handled the
 //!   previous batch, planned in the order it arrived: nothing moves ahead
-//!   of what came before it.
+//!   of what came before it. The one exception is the focused terminal's
+//!   caret event, planned after a text change of the terminal that waits
+//!   behind it with only events between, since the change's read reads the
+//!   caret too (`caret_after_update`).
+//! - One entry may be kept apart, handed out only when nothing else is
+//!   ready: a held terminal's noted caret ([`Item::NotedCaret`]).
 //! - Per batch, of the MSAA events, the newest 4 focus events and the
 //!   newest 10 other events per thread that raised them are kept; a
 //!   foreground change counts among both and is kept by either, as NVDA's
@@ -175,6 +180,12 @@ pub(super) enum Item {
     /// whose role says it may, just after it was reported: as `CaretMoved`,
     /// or as `NoText` when there is no caret to report.
     CaretOf { node_id: verbatim_model::NodeId },
+    /// A caret event of the focused terminal `node_id`, noted while its
+    /// reading was held and its text had changed unread: its caret is read
+    /// once nothing else is waiting ([`Intake::when_idle`]), unless a read
+    /// since saw it, so Core's copy of the caret catches up when a burst of
+    /// output ends rather than at the next read Core asks for.
+    NotedCaret { node_id: verbatim_model::NodeId },
     /// [`Outpost::settle`](super::Outpost::settle): answered once nothing
     /// else is waiting, the focus-following subscriptions have made every
     /// move asked of them, and every message published has been written.
@@ -297,6 +308,13 @@ struct State {
     /// reported within the batch a menu opening belongs to.
     batch_number: u64,
     focused: Option<Object>,
+    /// When [`State::focused`] is a terminal read through UIA, its window
+    /// (0 when not known): its caret event is planned after its text
+    /// changes waiting with it ([`caret_after_update`]).
+    terminal: Option<isize>,
+    /// A noted caret ([`Item::NotedCaret`]), handed out only when nothing
+    /// else is ready ([`Intake::when_idle`]).
+    idle: Option<Entry>,
     /// Whether [`State::focused`] was reached by redirecting a control's
     /// own focus event to its focused child, whose own event is still to
     /// come.
@@ -418,8 +436,10 @@ impl Intake {
     }
 
     /// The next entry to handle and the number of its batch, planning a new
-    /// batch from everything waiting when the current one is done. Blocks
-    /// while there is nothing to do, and gives [`Item::Wake`] when the time
+    /// batch from everything waiting when the current one is done. With
+    /// nothing else ready it gives the entry [`when_idle`](Self::when_idle)
+    /// kept, if any. Blocks while there is nothing to do, and gives
+    /// [`Item::Wake`] when the time
     /// [`wake_at`](Self::wake_at) named comes first; `None` once the queue
     /// is closed.
     pub(super) fn next(&self) -> Option<(Planned, u64)> {
@@ -436,9 +456,10 @@ impl Intake {
                 .position(|waiting| waiting.marker.is_some())
                 .unwrap_or(state.waiting.len());
             if ready > 0 {
-                let waiting: Vec<Waiting> = state.waiting.drain(..ready).collect();
+                let mut waiting: Vec<Waiting> = state.waiting.drain(..ready).collect();
                 let taken = waiting.len();
                 let focused = state.focused.clone();
+                caret_after_update(&mut waiting, focused.as_ref(), state.terminal);
                 let batch = plan(waiting, focused.as_ref(), super::window::window_is_hung);
                 state.batch = batch.into();
                 state.batch_number += 1;
@@ -452,6 +473,9 @@ impl Intake {
             }
             if state.closed {
                 return None;
+            }
+            if let Some(entry) = state.idle.take() {
+                return Some((Planned::Run(entry), state.batch_number));
             }
             let now = Instant::now();
             if let Some(entry) = state.wake_due(now) {
@@ -492,6 +516,7 @@ impl Intake {
                 Planned::Focus(entries) => dropped.extend(entries),
             }
         }
+        dropped.extend(state.idle.take());
         drop(state);
         self.ready.notify_all();
         dropped
@@ -531,10 +556,25 @@ impl Intake {
     }
 
     /// Whether anything is waiting to be handled, planned or not, a UIA
-    /// focus's marker waiting for its read included.
+    /// focus's marker waiting for its read included, and the entry kept for
+    /// when nothing else is ready left out ([`take_idle`](Self::take_idle)).
     pub(super) fn busy(&self) -> bool {
         let state = self.lock();
         !state.waiting.is_empty() || !state.batch.is_empty()
+    }
+
+    /// Keeps `entry` to be handed out once nothing else is ready, in place
+    /// of one kept before: the worker reads a held terminal's noted caret
+    /// then ([`Item::NotedCaret`]), when the burst of events that kept it
+    /// busy has ended, and not on every caret event of the burst.
+    pub(super) fn when_idle(&self, entry: Entry) {
+        let replaced = self.lock().idle.replace(entry);
+        drop(replaced);
+    }
+
+    /// Takes the entry [`when_idle`](Self::when_idle) kept, if any.
+    pub(super) fn take_idle(&self) -> Option<Entry> {
+        self.lock().idle.take()
     }
 
     /// Records the object the worker last reported as the focus: its MSAA
@@ -542,7 +582,15 @@ impl Intake {
     pub(super) fn set_focused(&self, object: Option<Object>) {
         let mut state = self.lock();
         state.focused = object;
+        state.terminal = None;
         state.focus_redirected = false;
+    }
+
+    /// Records that the focus last reported ([`set_focused`](Self::set_focused))
+    /// is a terminal read through UIA, in window `window` (0 when not
+    /// known), whose caret event is planned after its text changes.
+    pub(super) fn set_focus_is_terminal(&self, window: isize) {
+        self.lock().terminal = Some(window);
     }
 
     /// Records that the focus last reported was reached by redirecting a
@@ -633,7 +681,53 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         // Only the newest caret report for a node matters, and it is never
         // limited: the focus's caret.
         Item::CaretOf { node_id } => (Some(Key::CaretOf(node_id.number())), Category::Exempt, 0),
-        Item::Query { .. } | Item::Settle(_) | Item::Wake => (None, Category::Exempt, 0),
+        Item::Query { .. } | Item::NotedCaret { .. } | Item::Settle(_) | Item::Wake => {
+            (None, Category::Exempt, 0)
+        }
+    }
+}
+
+/// Moves the focused terminal's caret event, when it waits ahead of a text
+/// change of the same terminal (its console update, or its UIA text change),
+/// to just after the newest such change, as long as only events lie between
+/// them. The text change's read reads the caret too, so the caret event is
+/// then covered by it and reads nothing (`Context::caret_read_since`), where
+/// handled first it read the caret once more for nothing; a batch with a
+/// query, a fact, or anything else between the two keeps its order. Windows
+/// Terminal raises its caret event after its text change, but the intake
+/// moves a newer change that replaces a waiting one to the back, behind the
+/// caret event; the console host raises the two in either order.
+fn caret_after_update(
+    waiting: &mut Vec<Waiting>,
+    focused: Option<&Object>,
+    terminal: Option<isize>,
+) {
+    let (Some(Object::Uia(runtime_id)), Some(window)) = (focused, terminal) else {
+        return;
+    };
+    let caret = Key::Uia(2, 0, runtime_id.clone());
+    let Some(at) = waiting
+        .iter()
+        .position(|waiting| waiting.key.as_ref() == Some(&caret))
+    else {
+        return;
+    };
+    let text_changed = Key::Uia(3, 0, runtime_id.clone());
+    let console_update =
+        (window != 0).then_some(Key::Msaa(WinEventKind::ConsoleUpdate as u8, window, 0, 0));
+    let mut newest_change = None;
+    for (index, later) in waiting.iter().enumerate().skip(at + 1) {
+        if !matches!(later.entry.item, Item::Msaa { .. } | Item::Uia(_)) {
+            break;
+        }
+        let key = later.key.as_ref();
+        if key == Some(&text_changed) || (key.is_some() && key == console_update.as_ref()) {
+            newest_change = Some(index);
+        }
+    }
+    if let Some(change) = newest_change {
+        let caret = waiting.remove(at);
+        waiting.insert(change, caret);
     }
 }
 
@@ -1594,6 +1688,45 @@ mod tests {
         );
         assert_eq!(handed_out(&intake), [2, 4]);
         assert!(!intake.busy());
+    }
+
+    /// A UIA text event of kind `kind` on element `runtime_id`.
+    fn text_event(kind: UiaKind, runtime_id: &[i32]) -> Item {
+        Item::Uia(UiaEvent {
+            kind,
+            parts: snapshot(runtime_id.to_vec()),
+            hwnd: 0,
+            focus_window: 0,
+            element: None,
+        })
+    }
+
+    #[test]
+    fn a_focused_terminals_caret_event_is_planned_after_its_text_change() {
+        let terminal = [42, 7];
+        let intake = Intake::default();
+        intake.set_focused(Some(Object::Uia(terminal.to_vec())));
+        intake.set_focus_is_terminal(7);
+        // The console host's text area, whose output its console updates
+        // tell of.
+        push_item(&intake, text_event(UiaKind::TextSelection, &terminal), 1);
+        push_item(
+            &intake,
+            Item::Msaa {
+                kind: WinEventKind::ConsoleUpdate,
+                hwnd: 7,
+                id_object: 3,
+                id_child: 65,
+                thread: 80,
+            },
+            2,
+        );
+        assert_eq!(handed_out(&intake), [2, 1]);
+        // Windows Terminal's control, whose output its UIA text change
+        // tells of.
+        push_item(&intake, text_event(UiaKind::TextSelection, &terminal), 3);
+        push_item(&intake, text_event(UiaKind::TextChanged, &terminal), 4);
+        assert_eq!(handed_out(&intake), [4, 3]);
     }
 
     #[test]
