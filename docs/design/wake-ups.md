@@ -603,3 +603,447 @@ Verbatim's processor users in every one of these.
   prefix.
 - The listener stage has no stamp at the listener's write, which step 5's
   second criterion needs before it can be judged.
+
+## Measurements after the terminal and typing changes (2026-10-14)
+
+A measurement batch on main at 475fdfce, on this development machine,
+with NVDA not running (it was not running when the batch began and was
+left so). It compares with "Measurements after communication step 5
+(2026-10-13)" above, the baseline, and covers what changed since 12ac774a:
+a terminal's caret read once per burst of output (69378e34), a window's
+class asked once per window on the outpost's event thread (3f0b8002), the
+console host's caret taken from `EVENT_CONSOLE_CARET` instead of UI
+Automation's caret events (2a9de42a), the read that covers a caret event
+answering a caret key's watch (6b0bf0d4), an unchanged caret not sent
+again and rows trimmed before decoding (713a4dcc), kept remote programs
+(475fdfce), and the new ledger stamps (a48099ea, cd0c2308, 19cf75e0).
+Nothing in the product changed for these measurements.
+
+### How it was measured
+
+- Builds: debug and release from 475fdfce, built before anything ran;
+  nothing was built while a scenario or trace ran.
+- Latency: `cargo xtask measure`, debug and release, for the measure set,
+  and with `--scenario` for `conhost_flood` and `windows_terminal_flood`;
+  `conhost_flood` was measured twice in each build, since its first run
+  showed a longer wait for the reducer. Every figure is minimum, P50, P95,
+  P99 and maximum in milliseconds over every announcement's latency line,
+  nearest rank, computed from the runs' `stderr.log` by a scratch script as
+  the baseline's were (the baseline's own `stderr.log` files, kept under
+  `target\perf`, were read again with the same script). The ledger rounds
+  to 0.1 ms.
+- Wake-ups and processor time: one trace per workload and build, with the
+  baseline's windows: idle 12 seconds in for 8; `measure_keys_text_box`,
+  `measure_keys_conhost` and `measure_keys_windows_terminal` 15 in for 8;
+  `measure_focus_windows_terminal` 5 in for 7; the floods a 10-second
+  window over the second burst, 54 seconds in for `conhost_flood` and 56
+  for `windows_terminal_flood`, checked against each run's log (the
+  second burst began 2 to 3 seconds after the trace command, and the
+  recording starts about a second after the command). Each trace was read
+  for Verbatim's processes and the target applications, with wakers and
+  readying stacks for the six most-woken of Verbatim's threads and every
+  unnamed outpost thread (UI Automation's), and samples for the three
+  busiest; the harness's own threads are left out of the totals. Every
+  trace was deleted once read.
+- Whole-scenario work for the floods: `intake pushed` and `worker: handled`
+  lines in the outposts' logs, over every run of the day kept in
+  `target\e2e-artifacts\history`.
+- `measure_keys_conhost` and `windows_terminal_flood` had no trace or flood
+  latency in the baseline, so for them only the after figures are given.
+
+Everything below is measured unless marked inferred.
+
+### Correctness
+
+- Run once on 475fdfce: the first 22 `conhost_` scenarios in alphabetical
+  order (`conhost_commands` to `conhost_scrollback_overflow`); the other
+  20 `windows_terminal_` scenarios (close tab, control flood, footer
+  flood, history flood, history flood during group, leave flood, long
+  lines, pager, progress, raised flood, redraw limit, redrawn list, review
+  grid, same flood, scrollback overflow, scrollback overflow during group,
+  shift flood, short output, tabs, two windows); and `text_box_editing`,
+  `text_box_word_selection` and `text_box_typed_words`. All 45 passed the
+  first time, so nothing was rerun.
+- Not run again, on Dickson's instruction, because they had passed on the
+  final code in the previous session's runs: the other eight `conhost_`
+  scenarios; the `windows_terminal_` typing, editing, up typing, line key
+  flood, review output, flood, commands, spoken password, full screen and
+  marker list scenarios; and `notepad_editing`, `notepad_word_selection`
+  and `notepad_typed_words`.
+- In the measurement runs, `conhost_flood` passed six more times,
+  `windows_terminal_flood` four times (the doubled "terminal" at focus did
+  not recur), and the measure set twice. `measure_focus_explorer` failed
+  once in ten runs, at its start, with "the utterance "Desktop list" was
+  expected to end Completed, but ended Cancelled": the File Explorer focus
+  hazard below, with "Start toggle button not pressed" spoken first (log
+  under `target\e2e-artifacts\history\measure_focus_explorer`, run
+  `2026-10-13T17-00-17.486Z-fail`). It passed after File Explorer was
+  restarted. `notepad_say_all` was not run.
+
+### Caret keys in the console host
+
+`EVENT_CONSOLE_CARET` comes on the cursor's blink timer, so a caret key
+whose speech waited for it would wait up to about half a second. None did.
+
+- In `measure_keys_conhost` the outpost answered 81 caret-key queries per
+  run. In the debug run three of them opened a watch, each answered after
+  1 to 3 ms; in the release run two, each after 1 ms. The rest knew the
+  caret before the key and were answered by the screen read that followed
+  it.
+- The latency lines of the caret keys (those with "hook to Core"), as
+  printed to speech, before then after: debug 1.6, 2.3, 5.1, 8.9, 16.0
+  (77 keys) then 1.5, 2.9, 5.8, 9.8, 17.4 (79); release 1.0, 1.4, 3.4,
+  4.0, 4.2 (79) then 1.0, 1.3, 4.8, 7.7, 15.6 (80). To sound: debug 2.3,
+  4.0, 22.9, 27.9, 30.1 then 2.2, 3.6, 23.3, 29.0, 30.9; release 1.3,
+  2.0, 27.2, 31.4, 31.6 then 1.3, 6.6, 25.8, 26.9, 28.6. The release tail
+  is the reducer and the speech queue, not the caret: the 15.6 ms key
+  spent 11.7 ms in "to speech", and the others over 5 ms waited 1.4 to
+  4.4 ms for the reducer while the script's output was handled. The caret
+  wait stage had two or three samples per run, 1.4 to 3.7 ms.
+- Across the day's terminal runs, the only watches answered after more
+  than 5 ms were in `conhost_pager` (438 ms), `windows_terminal_pager`
+  (504 ms) and `conhost_redrawn_list` (206 ms). They are as long in
+  Windows Terminal, which does not use the console's caret event, and the
+  console host's watch was answered by the pager's layout update, not by
+  a caret event, so they are the scenario's own waits for the pager to
+  redraw, not the blink timer (inferred). The three earlier runs of each
+  in the history (431 to 442 ms and 206 to 208 ms) may already have had
+  the change, so no clean before exists for them.
+
+### The hops to speech and their cost
+
+Over the measure set, before then after. The new stamps split two of the
+baseline's stages, so where a stage is new only the after figure exists.
+
+The cross-process hops:
+
+- The listener's pipe to verbatim.exe (new): debug 0.1, 0.2, 0.2, 0.3, 0.3
+  (22 facts); release 0.0, 0.0, 0.1, 0.1, 0.1 (12).
+- verbatim.exe to an outpost: debug 0.1, 0.2, 0.3, 0.7, 2.5 then 0.1, 0.2,
+  0.3, 0.6, 0.7; release 0.0, 0.0, 0.1, 0.1, 0.7 then 0.0, 0.0, 0.1, 0.2,
+  1.9.
+- An outpost's pipe to verbatim.exe (new; its writer's write to
+  verbatim.exe's reader having read and parsed the message): debug 0.1,
+  0.1, 0.2, 0.2, 6.2; release 0.0, 0.0, 0.1, 0.1, 0.3. The baseline's
+  whole "outpost to verbatim.exe", which also held the outbound queue:
+  debug 0.1, 0.2, 0.3, 0.4, 10.0; release 0.0, 0.1, 0.1, 0.2, 0.7.
+- To the synthesizer host: debug 0.0, 0.0, 0.1, 0.2, 1.1 then 0.0, 0.1,
+  0.1, 0.2, 2.6; release 0.0, 0.0, 0.1, 0.1, 0.2 then 0.0, 0.0, 0.1, 0.2,
+  1.7. The driver now stamps as its write begins, so the write moved into
+  this stage from "synthesizer request", whose P99 fell from 0.5 and 0.2
+  ms to 0.0.
+- Back from the synthesizer host: debug 0.0, 0.1, 0.3, 0.6, 4.8 then 0.0,
+  0.0, 0.1, 0.2, 28.0 (one sample); release 0.0, 0.0, 0.1, 1.7, 2.5 then
+  0.0, 0.0, 0.0, 0.1, 1.6. The reader's hand-off to the synthesizer thread
+  is now a stage of its own (below), which is why P99 fell.
+
+The in-process stages between them:
+
+- Listener handling (new): debug 0.0, 21.5, 84.1, 130.9, 130.9; release
+  0.0, 13.7, 79.3, 80.5, 80.5. It is the reading thread's focus read, as
+  the baseline inferred: the queue and the pipe after it add at most 0.5
+  ms. The baseline's whole listener stage was debug 0.1, 12.7, 47.9, 72.4,
+  72.4 and release 0.1, 11.2, 86.0, 365.3, 365.3, over 14 facts of fewer
+  kinds, so the two are not comparable.
+- Listener queue (new): 0.0 in every sample of both builds.
+- verbatim.exe's own stage: debug 0.0, 0.0, 0.0, 0.2, 0.2 before and
+  after; release 0.0, 0.0, 0.0, 0.1, 0.1 then 0.0, 0.0, 0.0, 0.0, 0.1.
+- Outpost outbound (new): debug 0.0, 0.1, 0.1, 0.2, 0.7; release 0.0, 0.0,
+  0.1, 0.1, 0.7.
+- Waiting for the reducer: debug 0.0, 0.1, 0.5, 2.4, 18.1 then 0.0, 0.1,
+  0.4, 2.2, 8.8; release 0.0, 0.0, 0.3, 2.0, 6.3 then 0.0, 0.0, 0.2, 1.2,
+  16.2 (one focus in `measure_focus_windows_terminal`).
+- Host reader to synthesizer thread (new): debug 0.0, 0.0, 0.2, 0.5, 4.3;
+  release 0.0, 0.0, 0.1, 0.6, 5.9.
+- Summed per announcement, verbatim.exe's stage, its hop to the outpost,
+  the outpost's outbound queue and pipe, and the reducer wait: debug 0.1,
+  0.3, 0.8, 2.8, 18.2 then 0.1, 0.3, 0.7, 2.7, 8.9; release 0.0, 0.1, 0.4,
+  2.0, 6.3 then 0.0, 0.1, 0.3, 1.2, 16.3.
+
+The rest of the way, before then after: hook to Core debug 0.1, 0.2, 2.9,
+5.1, 9.3 then 0.1, 0.2, 2.6, 5.0, 12.6, release 0.0, 0.1, 3.6, 4.1, 5.5
+then 0.0, 0.1, 1.9, 5.1, 12.8; the outpost queue debug P99 2.8 then 2.5
+(maximum 67.2 then 34.8), release P99 1.6 then 1.2; the outpost read
+debug 0.0, 1.9, 3.3, 12.2, 28.9 then 0.0, 1.5, 3.1, 20.8, 47.6, release
+0.0, 1.1, 2.0, 20.8, 79.4 then 0.0, 1.1, 1.8, 19.3, 86.8 (the tails are
+focus reads); to speech P99 3.3 then 4.0 in debug, 2.7 then 2.8 in
+release.
+
+End to end, every announcement of the measure set, as the ledger prints
+it: to speech, debug 0.1, 2.8, 6.1, 27.4, 101.3 then 0.1, 2.3, 6.1, 27.9,
+151.0, release 0.0, 1.5, 5.2, 25.7, 445.3 then 0.0, 1.5, 5.2, 23.7,
+123.7; to sound, debug 0.9, 3.9, 25.1, 74.0, 180.3 then 0.8, 3.3, 25.6,
+62.7, 245.6, release 0.3, 2.1, 27.2, 74.6, 445.8 then 0.3, 2.0, 29.1,
+79.6, 204.1. The maxima are speech waiting behind earlier speech and File
+Explorer focus reads, which vary from run to run.
+
+### Per workload, before and after
+
+Wake-ups and processor time are for one trace window across Verbatim's
+processes, harness threads left out, debug unless said.
+
+- Idle: before 45 wake-ups and 3.8 ms (debug) and 48 and 2.1 ms
+  (release); after 48 and 4 ms, and 44 and 2 ms: unchanged, the pings. The
+  global timer resolution was 15.625 ms before Verbatim started, while it
+  ran and after it stopped, in both builds.
+- `measure_focus_windows_terminal`: before 7,620 wake-ups and 686 ms and,
+  in another run, 2,215 and 367 ms; after 5,490 and 590 ms; release after
+  7,895 and 492 ms. The window's phase decides it, as in the baseline, so
+  no change is shown. Summed hops and reducer wait, debug, 0.3, 0.4, 1.0,
+  1.0, 1.0 then 0.2, 0.5, 0.9, 0.9, 0.9.
+- `measure_keys_text_box` (the MSAA path, which the changes did not
+  touch): before 9,291 and 890 ms and 10,393 and 922 ms; after 9,976 and
+  1,000 ms; release after 10,197 and 532 ms. The worker woke 3,365 times
+  (185 ms) against 3,354 and 3,589: within the variation of runs. Summed
+  hops and reducer wait debug 0.2, 0.4, 0.9, 2.1, 3.2 then 0.2, 0.4, 0.7,
+  2.8, 4.8; release 0.0, 0.1, 0.3, 0.7, 2.0 then 0.0, 0.1, 0.3, 0.4, 0.7.
+  Key to speech queued, release, 0.0, 0.1, 3.5, 4.2, 10.1 then 0.0, 0.1,
+  0.6, 5.7, 17.7.
+- `measure_keys_conhost` (no trace before): after, 5,625 wake-ups and 989
+  ms in debug and 5,230 and 477 ms in release, most of it the speech path
+  (the audio and synthesizer threads, 1,875 wakes and 424 ms in debug);
+  the console outpost's worker 475 wakes and 187 ms, its event thread 406
+  and 40 ms, UI Automation's threads in it 239 and 18 ms; the console host
+  itself 3,521 and 333 ms. Latency, before then after: the outpost read
+  debug 0.0, 1.7, 2.3, 5.8, 15.7 then 0.0, 1.3, 1.6, 3.7, 16.7, release
+  0.0, 1.0, 1.3, 5.0, 19.6 then 0.0, 0.9, 1.2, 6.4, 16.8; summed hops and
+  reducer wait debug 0.1, 0.3, 0.9, 3.2, 10.7 then 0.1, 0.2, 0.8, 3.6,
+  8.9, release 0.0, 0.1, 0.5, 2.4, 6.3 then 0.0, 0.0, 0.4, 2.1, 8.0; to
+  speech debug 0.5, 2.4, 6.3, 13.3, 101.3 then 0.5, 1.9, 5.1, 14.1, 107.7,
+  release 0.1, 1.3, 4.5, 8.8, 90.2 then 0.1, 1.2, 3.0, 10.2, 123.7.
+- `measure_keys_windows_terminal`: before 6,690 and 1,139 ms and 6,776 and
+  1,178 ms; after 6,224 and 1,064 ms; release after 6,073 and 544 ms. The
+  worker woke 655 times and used 216 ms, against 788 to 809 and 267 to
+  269 ms. The outpost read debug 0.0, 2.4, 3.1, 3.9, 15.8 then 0.0, 1.9,
+  2.4, 3.3, 18.5, release 0.0, 1.5, 1.9, 2.2, 20.3 then 0.0, 1.4, 1.7,
+  3.1, 18.0; summed hops and reducer wait debug 0.2, 0.4, 0.5, 1.5, 18.2
+  then 0.1, 0.3, 0.5, 1.0, 5.2, release 0.0, 0.1, 0.2, 0.8, 5.3 then 0.0,
+  0.1, 0.2, 0.5, 5.4.
+- `conhost_flood`, the 10-second window over the second burst: before
+  89,917 wake-ups and 10.08 s in Verbatim, after 56,848 and 6.51 s (37
+  and 35 percent fewer); the console host 96,261 and 7.79 s, then 93,470
+  and 6.66 s. By thread, before then after: the event thread 43,853 and
+  3.05 s, then 38,235 and 2.57 s; the worker 11,998 and 2.88 s, then
+  9,562 and 2.33 s; UI Automation's own threads 12,701 and 737 ms, then
+  1,542 and 161 ms; the UI Automation callback thread 9,776 and 1.57 s,
+  then it did not run in the window; the outbound thread 3,158 and 384 ms,
+  then 1,886 and 273 ms; verbatim.exe's reader 3,091 and 471 ms, then
+  1,751 and 328 ms; the reducer 2,993 and 586 ms, then 1,596 and 436 ms.
+  Release after: 85,449 wake-ups and 4.81 s, the event thread 55,037 and
+  2.27 s and the worker 16,599 and 1.55 s (a faster worker takes smaller
+  batches, so it wakes more), the console host 118,509 and 7.80 s.
+- `conhost_flood` over the whole scenario, from the outposts' logs: items
+  taken in fell from about 40,000 to between 22,900 and 23,800 (five runs
+  after). Items handled rose from between 6,300 and 10,600 to between
+  12,300 and 13,700: the 3,200 to 5,100 UI Automation caret items per run
+  are gone (28 console caret items instead), while the console updates
+  are planned in smaller batches (3,400 to 5,400 batches before, 12,200 to
+  12,700 after) and each is handled. The screen reads are of the same
+  order (815 to 1,369 before, 1,076 to 1,734 after), and the separate
+  caret reads fell from 2,945 to 4,615 per run to 20 or 21. In the
+  worker's samples with Verbatim's code innermost, UTF-16 decoding and
+  reverse searches came to about 66 against about 250 before, in windows
+  of the same phase.
+- `conhost_flood` latency, before then after (two runs after in each
+  build): summed hops and reducer wait debug 0.2, 0.3, 1.0, 1.5, 1.7 then
+  0.1, 0.3, 1.5, 2.8, 4.2 and 0.2, 0.3, 1.0, 1.8, 3.1; release 0.0, 0.1,
+  0.4, 0.8, 2.6 then 0.0, 0.1, 1.4, 4.8, 6.3 and 0.0, 0.1, 2.1, 8.9, 21.3.
+  Nearly all of it is the wait for the reducer: release 0.0, 0.0, 0.4,
+  0.7, 1.6 before, then 0.0, 0.0, 1.4, 4.8, 6.3 and 0.0, 0.0, 1.6, 8.9,
+  21.3, the longest on flood lines 2 and 3 at a burst's start and on typed
+  characters. This is a regression in the tail, over one baseline run and
+  two runs after of about 70 announcements each; it is not attributed. The
+  outpost read in debug is as before: 0.5, 1.7, 2.2, 3.6, 15.8 then 0.4,
+  1.4, 1.9, 2.9, 18.9 and 0.8, 1.4, 2.2, 13.2, 20.6.
+- `windows_terminal_flood` (no baseline): 4,364 wake-ups and 785 ms in
+  debug and 4,331 and 398 ms in release over the second burst, against
+  29,435 wakes and 1.08 s in OpenConsole and 30,852 and 1.30 s in the
+  flooding PowerShell. Over the whole scenario the outpost handled 218 to
+  282 items, Windows Terminal throttling its own events as before. Summed
+  hops and reducer wait debug 0.2, 0.4, 0.7, 0.7, 0.8, release 0.0, 0.1,
+  0.3, 0.7, 2.0. In one debug run of four the window's first focus waited
+  2,993 ms in the outpost queue: the worker had asked the arbitrator
+  whether UI Automation owns a `Windows.UI.Input.InputSite.WindowClass`
+  window, and that probe took 3,008 ms (`arbitration probed`, with
+  `elapsed_ms=3008`, in `outpost-windowsterminal-8740.log` of history run
+  `2026-10-13T16-34-57.069Z-pass`).
+
+The wakers, across all threads: in the console flood the event thread was
+readied by the console host's WinEvents (11,525 readyings through
+`NtUserNotifyWinEvent` setting its wake bit, and 10,949 as the console
+host left the USER lock inside `NtUserNotifyWinEvent`), the worker by UI
+Automation's threads in its own process (1,457 waits of half a
+millisecond or more) and by the event thread, UI Automation's threads by
+the console host's pipe writes (1,517 of 1,539), the outbound thread by
+the worker, verbatim.exe's reader by the outbound thread, and the reducer
+by the reader (about 1,500 each, one per message). In the key workloads
+the worker was readied by UI Automation's threads (122 and 230 waits) and
+by the event thread or the UIA callback thread, UI Automation's threads
+by the terminal (the console host or Windows Terminal, 216 to 439 waits),
+the input hook by the agent's injected keys, and the speech queue,
+synthesizer and audio threads by each other, as in the baseline.
+
+### File Explorer attribution
+
+`measure_focus_explorer` now runs 17 to 26 seconds, and its phases start
+earlier and move from run to run, so the windows the task named
+(`--after 10 --seconds 5` and `--after 16 --seconds 2`) caught the end of
+the windows phase with the arrows, and the end of the scenario. Checked
+against `timeline.txt`, `listener.log` and Verbatim's log, they were
+replaced by traces started from Verbatim's live log: 2 seconds after
+"Desktop list" for 4 seconds (the windows phase, about five new windows
+opened and closed in it), and half a second after the first arrow's
+"Inner 1 of 4" for 2 seconds (the arrows). Both were read with
+`--symbol-server`.
+
+In this scenario every new File Explorer window is its own `explorer.exe`
+process (12 such processes per run, each with an outpost).
+
+The windows phase, the listener's process (measured):
+
+- UI Automation's three unnamed threads in the listener woke 3,846 times
+  and used 143 ms; the listener's event thread 1,128 and 41 ms, its
+  reading thread 105 and 12 ms. File Explorer's processes woke 46,442
+  times and used 7.5 s.
+- One thread (1,992 wakes, 89 ms) is UI Automation's WinEvent thread
+  (`WinEventManager::ThreadProc`, which pumps with `PeekMessage`). For each
+  WinEvent it runs `WinEventManager::StaticWinEventProc`,
+  `PreWinEventProc`, `WinEventSourceMap::EventSourceIsUia`,
+  `ClientProxyManager::GetCompleteProxyNode` and
+  `ProviderEntryPoint::GetNativeUiaNode`. In 8 of its 22 samples with a
+  user-mode stack, `GetNativeUiaNode` had thrown a C++ exception that was
+  caught and reported (`CxxThrowException`, `RaiseException`,
+  `wil::details::ReportFailure_CaughtException`,
+  `wil::GetFailureLogString` with `vswprintf`): the `vswprintf` the
+  baseline saw. That the exceptions come from windows that are closing or
+  have no native provider is inferred.
+- A thread-pool thread (1,776 wakes, 48 ms) runs
+  `ClientEventManager::OpenShowWinEventCallbackThreadProc` and
+  `HideCloseReparentWinEventCallbackThreadProc`, which call
+  `EventManager::AddEventRecordGroup`, `DoCalldownsForGroup` and
+  `DoCalldownsForGroup_ClientSideOptimized`,
+  `LocalUiaNodeProxy::RealCrossProcess_EntireProcessAddEventGroup` with
+  `ProtobufHelper::WriteCacheRequest`, and, as windows go,
+  `EventManager::OnProviderRemoved` and `RemoveFromScopeCheckCache`, with
+  `HwndUtils::HwndToRuntimeId` throughout. So for each window shown, UI
+  Automation registers the listener's desktop-wide event group, with its
+  cache request, inside the new window's process, across processes, and
+  takes it out again when the window is hidden or closed. 202 of its
+  top-stack readyings are the thread pool releasing a worker
+  (`NtReleaseWorkerFactoryWorker`).
+- The third (78 wakes here; 440 wakes and 31 ms in the arrows) is UI
+  Automation's I/O thread (`OverlappedIOManager::IoThreadProc`,
+  `ChannelBasedClientConnection::OnData`, protobuf parsing of responses),
+  readied by File Explorer's pipe writes (422 of 423 in the arrows).
+- Most readyings of the first two threads in their top stacks are not
+  event deliveries but hand-offs of the window manager's lock: the thread
+  was waiting for the USER critical section, and was readied by
+  `ReleaseUserCriticalSection` as another thread left it inside
+  `NtUserGetMessage`, `NtUserPeekMessage`, `NtUserPostThreadMessage`,
+  `xxxClientCallWinEventProc`, `NtUserGetClassName` or `NtUserGetProp2`.
+  The lock holders were File Explorer (157 of the WinEvent thread's 507
+  top-stack readyings), the test agent (252, inferred to be the harness's
+  own and absent for a user), and the listener's process itself (98:
+  `NtUserGetProp2` 62 and `NtUserGetClassName` 36).
+
+The arrows phase (measured): a thread-pool thread woke 3,140 times and used
+88 ms in 2 seconds, in `OpenShowWinEventCallbackThreadProc` calling
+`ClientEventManager::FindControlTypeInWindowNode`, which walks the shown
+window's elements across processes (`InProcClientAPIStub::UiaNode_Find`,
+`ElementFinder::Find`, `UiaNodeTraverser::Traverse`,
+`UiaNodeFactory::CompleteNodeInfo`, `ProviderEntryPoint::GetNativeUiaNode`);
+1,958 of its 2,077 top-stack readyings were File Explorer leaving the
+USER lock. The WinEvent thread woke 1,670 times (50 ms), 153 of them
+readied by a WinEvent being posted to it (`SetWakeBit` from
+`xxxProcessNotifyWinEvent`), most of the rest lock hand-offs, 54 of them
+from the listener's own `NtUserGetAncestor`. Looking for a control type in
+each shown window is, inferred, how UI Automation raises events such as a
+menu opening for windows whose providers do not raise them, which the
+listener's desktop-wide menu-opened subscription asks for. Over the 2
+seconds UI Automation's threads in the listener woke 5,250 times and used
+169 ms, Verbatim 13,305 and 682 ms, File Explorer 40,604 and 4.1 s.
+
+On Verbatim's side, other than the desktop-wide group:
+
+- The per-window outposts cost more than the listener in the windows
+  phase (measured): the outposts of the new windows' processes together
+  woke 5,807 times and used 586 ms in the 4 seconds, against the
+  listener's 5,434 and 222 ms. Each outpost lived until the scenario's
+  end, after its window had closed (its log ends at Verbatim's shutdown);
+  whether the `explorer.exe` processes also lived on was not checked.
+  verbatim.exe's `verbatim-retire` thread woke 236 times and used 54 ms in
+  the same window.
+- The listener's process's own window-manager calls (`GetProp`,
+  `GetClassName`, `GetAncestor`) take the USER lock, and UI Automation's
+  threads in the same process then wait for it (measured). Which of those
+  calls are Verbatim's own and which UI Automation's (its
+  `HwndToRuntimeId` calls `GetProp`) needs user-mode stacks for the
+  readying thread, which these traces did not give (inferred).
+- About three quarters of the UI Automation threads' samples had only
+  kernel frames, in the trace's own stack walking (`RtlpWalkFrameChain`,
+  `RtlpUnwindPrologue`, `RtlpLookupFunctionEntryForStackWalks`), so their
+  processor time is overstated while traced (inferred).
+
+### Remaining opportunities, largest first
+
+1. The per-window outposts in File Explorer (measured: 5,807 wakes and 586
+   ms in 4 seconds of windows opening and closing, more than the
+   listener). Each new `explorer.exe` process gets a full outpost that
+   lives on after its window closes. Starting an outpost only when a
+   process's window is focused or read, or retiring it when its last
+   window goes, would remove most of that (inferred).
+2. Out-of-context WinEvent intake in a console flood (measured): the event
+   thread still woke 38,235 times and used 2.57 s in 10 seconds in debug
+   (55,037 times in release), readied by the console host's
+   `NtUserNotifyWinEvent`; 132 of its 352 samples with Verbatim's code
+   innermost are debug logging, which a user does not pay. Only filtering
+   in the application's process (D2's injection helper) removes the wakes.
+3. The wait for the reducer in `conhost_flood` (measured regression in the
+   tail: release P99 from 0.7 to 4.8 and 8.9 ms, maximum from 1.6 to 6.3
+   and 21.3 ms, at a burst's start and on typed characters). What the
+   reducer is doing then needs a trace with the reducer's samples over
+   those moments (inferred).
+4. The per-message chain from the outpost to the reducer (measured): the
+   outbound thread, verbatim.exe's reader and the reducer still wake about
+   1,600 to 1,900 times each per 10 seconds of flood, one per message;
+   steps 6 and 7 of the communication design remove the outbound thread's
+   hop.
+5. The worker's batches in a flood (measured): console updates are now
+   planned in about 12,500 batches of one or two items per run, three
+   times as many as before, and each costs the worker a wake; the screen
+   reads did not grow with them. Letting a burst's updates gather before
+   planning would trade a little latency for those wakes (inferred).
+6. The arbitration probe on the worker (measured once in four
+   `windows_terminal_flood` runs): a 3,008 ms probe of a Windows Terminal
+   input-site window held the window's first focus for 2,993 ms. Probing
+   off the worker, or with a short time limit, removes the stall
+   (inferred).
+7. The listener's focus read (measured): listener handling P50 14 to 22
+   ms, up to 131 ms, the largest single stage on a focus's way; the queue
+   and pipe after it add at most 0.5 ms.
+8. UI Automation's lock hand-offs in the listener (measured share,
+   inferred cause): most wakes of its WinEvent and thread-pool threads in
+   File Explorer are waits for the USER lock, some caused by the
+   listener's own `GetProp`, `GetClassName` and `GetAncestor` calls;
+   fewer window-manager calls in the listener's process would remove that
+   share.
+9. Unchanged from the baseline: the synthesizer thread's resampling, the
+   hook thread readying the speech queue on every key, and verbatim.exe's
+   GUI thread woken by broadcasts.
+
+### Failures and tooling notes
+
+- The File Explorer focus hazard (the focus on the Start button, "Start
+  toggle button not pressed" spoken at the scenario's start) appeared in
+  four of ten `measure_focus_explorer` runs, about 2.2 seconds in, twice
+  in runs whose trace began 10 seconds in, so it does not come only from a
+  trace over a scenario's start. The measure scenario passes anyway
+  unless the hazard cancels its first utterance, which happened once.
+  File Explorer was restarted three times.
+- One release trace of `measure_focus_windows_terminal` named no
+  verbatim.exe threads and gave an outpost's threads the names `sig` and
+  `iconv`, names of other processes' threads; a second run read normally.
+- The tooling guide's window for `measure_focus_explorer` (`--after 10
+  --seconds 8`) no longer falls in one phase of it.
+- `verbatim-trace-waits --stacks` prints the ten most frequent stacks, so
+  the readying causes above are shares of those, not of every readying.
