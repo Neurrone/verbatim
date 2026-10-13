@@ -645,6 +645,20 @@ Nothing in the product changed for these measurements.
   unnamed outpost thread (UI Automation's), and samples for the three
   busiest; the harness's own threads are left out of the totals. Every
   trace was deleted once read.
+- Corrected later on 2026-10-14: in `conhost_flood` that window falls on
+  the scenario's floods 2 and 3, which run with "Report new output" off,
+  so Core never holds the outpost and it reads on every change (about
+  2,150 reads per run). Most of that window's wake-ups and processor time
+  are that mode's cost, not the default's; a user with the default pays
+  what floods 1 and 4 cost.
+- Corrected later on 2026-10-14: both builds logged at debug level, since
+  the suite's default filter (`DEFAULT_RUST_LOG` in
+  `crates/verbatim-e2e/src/scenario.rs`) sets `verbatim_outpost` and
+  `verbatim_ia2::hook` to debug: about 111,000 lines per `conhost_flood`
+  run, about 20 percent of the event thread's processor time. Users run at
+  info level, at which the flood logs 2 lines. `docs/tooling.md`,
+  "Measuring performance", now says to trace at info level and on the
+  default floods.
 - Whole-scenario work for the floods: `intake pushed` and `worker: handled`
   lines in the outposts' logs, over every run of the day kept in
   `target\e2e-artifacts\history`.
@@ -851,8 +865,17 @@ processes, harness threads left out, debug unless said.
   Nearly all of it is the wait for the reducer: release 0.0, 0.0, 0.4,
   0.7, 1.6 before, then 0.0, 0.0, 1.4, 4.8, 6.3 and 0.0, 0.0, 1.6, 8.9,
   21.3, the longest on flood lines 2 and 3 at a burst's start and on typed
-  characters. This is a regression in the tail, over one baseline run and
-  two runs after of about 70 announcements each; it is not attributed. The
+  characters. This was taken for a regression in the tail, over one
+  baseline run and two runs after of about 70 announcements each. Corrected
+  later on 2026-10-14, it is mostly an artefact: in the baseline the
+  timelines of flood lines 2 to 4, spoken 300 to 700 ms after their events,
+  had been evicted from the ledger by the burst's unspoken events and were
+  never measured (the ledger now keeps a timeline whose speech is owed);
+  the caret keys' maximum is one key varying (key 49 took 16.0 ms in the
+  debug baseline); and over about 870 announcements the release reducer
+  wait is P99 2.1 ms after against 2.5 before. What remains is a few
+  unexplained reducer stalls of 7 to 25 ms coinciding with speech starting
+  or being cancelled, to be traced in the next measurement batch. The
   outpost read in debug is as before: 0.5, 1.7, 2.2, 3.6, 15.8 then 0.4,
   1.4, 1.9, 2.9, 18.9 and 0.8, 1.4, 2.2, 13.2, 20.6.
 - `windows_terminal_flood` (no baseline): 4,364 wake-ups and 785 ms in
@@ -969,8 +992,14 @@ On Verbatim's side, other than the desktop-wide group:
   phase (measured): the outposts of the new windows' processes together
   woke 5,807 times and used 586 ms in the 4 seconds, against the
   listener's 5,434 and 222 ms. Each outpost lived until the scenario's
-  end, after its window had closed (its log ends at Verbatim's shutdown);
-  whether the `explorer.exe` processes also lived on was not checked.
+  end, after its window had closed (its log ends at Verbatim's shutdown).
+  Corrected later on 2026-10-14, this is not a leak: their `explorer.exe`
+  processes are still alive when Verbatim exits, idle outposts woke 4 to 6
+  times per trace, and nearly all of the 5,807 wake-ups come from each
+  outpost while its window is open (starting UI Automation, its
+  subscription, and about 400 `WinEvent`s). Idle retirement already bounds
+  the tail at 2 minutes. That the agent launches each folder in its own
+  process is likely why there are 12 (inferred).
   verbatim.exe's `verbatim-retire` thread woke 236 times and used 54 ms in
   the same window.
 - The listener's process's own window-manager calls (`GetProp`,
@@ -988,19 +1017,24 @@ On Verbatim's side, other than the desktop-wide group:
 
 1. The per-window outposts in File Explorer (measured: 5,807 wakes and 586
    ms in 4 seconds of windows opening and closing, more than the
-   listener). Each new `explorer.exe` process gets a full outpost that
-   lives on after its window closes. Starting an outpost only when a
-   process's window is focused or read, or retiring it when its last
-   window goes, would remove most of that (inferred).
+   listener). Each new `explorer.exe` process gets a full outpost, and
+   nearly all of its cost is while its window is open (starting UI
+   Automation, its subscription, about 400 `WinEvent`s); the outposts left
+   after their windows close are idle, their processes still alive, and
+   idle retirement ends them after 2 minutes (corrected later on
+   2026-10-14). Starting an outpost only when a process's window is
+   focused or read would remove most of that (inferred).
 2. Out-of-context WinEvent intake in a console flood (measured): the event
    thread still woke 38,235 times and used 2.57 s in 10 seconds in debug
    (55,037 times in release), readied by the console host's
    `NtUserNotifyWinEvent`; 132 of its 352 samples with Verbatim's code
    innermost are debug logging, which a user does not pay. Only filtering
    in the application's process (D2's injection helper) removes the wakes.
-3. The wait for the reducer in `conhost_flood` (measured regression in the
-   tail: release P99 from 0.7 to 4.8 and 8.9 ms, maximum from 1.6 to 6.3
-   and 21.3 ms, at a burst's start and on typed characters). What the
+3. The wait for the reducer in `conhost_flood`: the regression first
+   reported here is mostly an artefact of the ledger evicting the
+   baseline's flood lines (corrected later on 2026-10-14; see the
+   per-workload figures). A few reducer stalls of 7 to 25 ms coinciding
+   with speech starting or being cancelled remain unexplained; what the
    reducer is doing then needs a trace with the reducer's samples over
    those moments (inferred).
 4. The per-message chain from the outpost to the reducer (measured): the

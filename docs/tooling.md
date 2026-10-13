@@ -431,6 +431,18 @@ File Explorer clears it. A scenario's length is in its log
 - `measure_speech_real` (43 seconds, `--audible`): `--after 20 --seconds 8`.
 - `measure_focus_text_box` is over in 5 seconds and has no room for one.
 
+A measurement of what a user pays traces at info level, as a user runs
+Verbatim: set `VERBATIM_E2E_RUST_LOG=info` for the run. The suite's
+default filter (`DEFAULT_RUST_LOG` in `crates/verbatim-e2e/src/scenario.rs`)
+logs the outposts and the hook at debug level, about 111,000 lines in a
+`conhost_flood` run and about a fifth of the outpost's event thread's
+processor time, where info level logs 2 lines for the flood. It traces the
+default floods too: `conhost_flood`'s floods 1 and 4 run with "Report new
+output" on, as a user has it, while floods 2 and 3 run with it off, when
+Core never holds the outpost and it reads on every change, so a window
+over them measures that mode, not the default (`docs/design/wake-ups.md`,
+"Measurements after the terminal and typing changes").
+
 Idle Verbatim, started directly with nothing happening, is traced by hand:
 start `target\debug\verbatim.exe`, wait 12 seconds, `cargo xtask trace
 start`, wait 8, `cargo xtask trace stop`, end Verbatim by its process id,
