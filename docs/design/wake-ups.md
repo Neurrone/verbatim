@@ -94,7 +94,15 @@ Counts are for one traced window of 5 to 8 seconds.
    and shutdown. Its wakers are unrelated processes after waits of 20 ms or
    more, which points to a timer or to messages Windows sends the thread.
    Open: needs the trace's stacks.
-10. Threads that exist only for the test harness (the WAV recorder, the
+10. The keyboard hook thread hooked every console's events from every
+    console on the desktop, to learn which console host thread to
+    translate typed keys with: a console flooding in the background woke
+    it 47,061 times in 6 seconds, on the thread Windows waits on for every
+    key. Fixed: those events are hooked only while the console window in
+    front has not yet named its thread, and unhooked at the first; the
+    foreground event, which names it when a console comes to the front, is
+    hooked throughout. The same window then had 43.
+11. Threads that exist only for the test harness (the WAV recorder, the
     control plane's speech writers) wake often in every run and cost a
     user nothing.
 

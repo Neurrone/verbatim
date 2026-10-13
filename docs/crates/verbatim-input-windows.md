@@ -83,9 +83,13 @@ does):
   Windows answers which thread owns it with the first process attached to
   the console (a shell), not the console host's own thread, whose layout
   the console translates keys with. The hook thread's `WinEvent` hooks
-  (the foreground event and the console events, out of context) note the
-  thread each console window's events come from, which is always the real
-  one, and the translation uses it, as NVDA does for its issue 10113; a
+  (out of context) note the thread each console window's events come
+  from, which is always the real one, and the translation uses it, as NVDA
+  does for its issue 10113. The foreground event is hooked throughout;
+  every console's events are hooked only while the console window in
+  front has not yet named its thread, and unhooked at the first, since a
+  busy console raises thousands a second and each would wake the hook
+  thread, which Windows waits on for every key; a
   console window none of whose events were seen yet falls back to the
   answer Windows gives. Control or Alt alone, or the Windows key,
   make a shortcut, which types nothing. The result counts when it is text

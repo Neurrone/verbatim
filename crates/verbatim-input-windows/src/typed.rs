@@ -47,7 +47,7 @@
 //! end-to-end harness) arrive as `VK_PACKET` carrying the UTF-16 unit
 //! itself, a surrogate pair as two keys.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyState, GetKeyboardLayout, HKL, ToUnicodeEx, VK_CAPITAL, VK_CONTROL,
@@ -301,52 +301,50 @@ impl ConsoleThreads {
     }
 }
 
+thread_local! {
+    /// The hook on every console's events, installed only while the console
+    /// window in front has not yet named its thread ([`ConsoleWatch`]).
+    static CONSOLE_HOOK: Cell<Option<HWINEVENTHOOK>> = const { Cell::new(None) };
+}
+
 /// The `WinEvent` hooks that keep [`CONSOLE_THREADS`] on the calling
 /// thread, which must pump messages; unhooked when dropped.
+///
+/// The foreground event is hooked for as long as this lives: a console
+/// window raises it, from the console host's own thread, when it comes to
+/// the front, and it is rare. Every console's events (its caret, its
+/// output) are hooked only while the console window in front has not yet
+/// named its thread through one of them, when Verbatim starts with a
+/// console in front or a console comes to the front, and unhooked at the
+/// first: a console busy with output raises thousands a second, which
+/// would otherwise each wake this thread, the one Windows waits on for
+/// every key (`docs/design/wake-ups.md`).
 pub(crate) struct ConsoleWatch {
-    hooks: Vec<HWINEVENTHOOK>,
+    foreground: Option<HWINEVENTHOOK>,
 }
 
 impl ConsoleWatch {
-    /// Hooks the foreground event, which a console window raises when it
-    /// comes to the front, and the console events, which it raises while
-    /// in use (its caret's among them), out of context, so the callback
-    /// runs on this thread while it reads messages.
+    /// Hooks the foreground event, out of context, so the callback runs on
+    /// this thread while it reads messages, and every console's events too
+    /// if a console window is in front now.
     pub(crate) fn start() -> Self {
-        let ranges = [
-            (EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND),
-            (EVENT_CONSOLE_CARET, EVENT_CONSOLE_END),
-        ];
-        let hooks = ranges
-            .into_iter()
-            .filter_map(|(first, last)| {
-                // SAFETY: `on_console_event` has the WINEVENTPROC signature
-                // and lives for the process; the hook is removed on drop.
-                let hook = unsafe {
-                    SetWinEventHook(
-                        first,
-                        last,
-                        None,
-                        Some(on_console_event),
-                        0,
-                        0,
-                        WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-                    )
-                };
-                if hook.is_invalid() {
-                    tracing::warn!(first, last, "a console event hook could not be set");
-                }
-                (!hook.is_invalid()).then_some(hook)
-            })
-            .collect();
-        Self { hooks }
+        let foreground = hook(
+            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_FOREGROUND,
+            on_foreground_event,
+        );
+        // SAFETY: a local read with no preconditions.
+        let window = unsafe { GetForegroundWindow() };
+        watch_console_events(!window.is_invalid() && is_console_window(window));
+        Self { foreground }
     }
 }
 
 impl Drop for ConsoleWatch {
     fn drop(&mut self) {
-        for hook in self.hooks.drain(..) {
-            // SAFETY: each hook was set by `start` and not yet removed.
+        watch_console_events(false);
+        if let Some(hook) = self.foreground.take() {
+            // SAFETY: set by `start` and not yet removed.
             unsafe {
                 let _ = UnhookWinEvent(hook);
             }
@@ -354,18 +352,58 @@ impl Drop for ConsoleWatch {
     }
 }
 
-/// Notes the thread of a console window's event.
-unsafe extern "system" fn on_console_event(
-    _hook: HWINEVENTHOOK,
-    _event: u32,
-    window: HWND,
-    _object: i32,
-    _child: i32,
-    thread: u32,
-    _time: u32,
-) {
+/// Hooks events `first` to `last` from every other process, out of
+/// context, with `callback`; `None` if Windows refuses.
+fn hook(
+    first: u32,
+    last: u32,
+    callback: unsafe extern "system" fn(HWINEVENTHOOK, u32, HWND, i32, i32, u32, u32),
+) -> Option<HWINEVENTHOOK> {
+    // SAFETY: `callback` has the WINEVENTPROC signature and lives for the
+    // process; the caller removes the hook.
+    let hook = unsafe {
+        SetWinEventHook(
+            first,
+            last,
+            None,
+            Some(callback),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+        )
+    };
+    if hook.is_invalid() {
+        tracing::warn!(first, last, "a console event hook could not be set");
+        return None;
+    }
+    Some(hook)
+}
+
+/// Hooks every console's events when `on`, and removes that hook when not,
+/// each only if it is not already so.
+fn watch_console_events(on: bool) {
+    CONSOLE_HOOK.with(|slot| match (on, slot.get()) {
+        (true, None) => slot.set(hook(
+            EVENT_CONSOLE_CARET,
+            EVENT_CONSOLE_END,
+            on_console_event,
+        )),
+        (false, Some(hook)) => {
+            slot.set(None);
+            // SAFETY: set by this function and not yet removed.
+            unsafe {
+                let _ = UnhookWinEvent(hook);
+            }
+        }
+        _ => {}
+    });
+}
+
+/// Notes that `window`'s event came from `thread`, if it is a console
+/// window.
+fn note_console_thread(window: HWND, thread: u32) -> bool {
     if window.is_invalid() || !is_console_window(window) {
-        return;
+        return false;
     }
     CONSOLE_THREADS.with(|threads| {
         // A translation in progress holds the map only while it reads it,
@@ -377,6 +415,39 @@ unsafe extern "system" fn on_console_event(
             });
         }
     });
+    true
+}
+
+/// Notes the thread of a console window that came to the front, and hooks
+/// every console's events until one of its own confirms it; another
+/// window's coming to the front removes that hook.
+unsafe extern "system" fn on_foreground_event(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    window: HWND,
+    _object: i32,
+    _child: i32,
+    thread: u32,
+    _time: u32,
+) {
+    watch_console_events(note_console_thread(window, thread));
+}
+
+/// Notes the thread of a console window's event, and once the console in
+/// front has named its own, removes the hook on every console's events.
+unsafe extern "system" fn on_console_event(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    window: HWND,
+    _object: i32,
+    _child: i32,
+    thread: u32,
+    _time: u32,
+) {
+    // SAFETY: a local read with no preconditions.
+    if note_console_thread(window, thread) && window == unsafe { GetForegroundWindow() } {
+        watch_console_events(false);
+    }
 }
 
 /// Whether `window` is a console host window.
