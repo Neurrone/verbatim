@@ -24,7 +24,12 @@ Public API:
   (OneCore) stop early; `synth_timing(timing)`, a default no-op, takes a
   `SynthTiming` from a driver that can tell the parts of its start apart
   (the request, its trip to the host, the host's first chunk, and the
-  trip back, each in microseconds), before its first audio.
+  trip back, each in microseconds), before its first audio; and
+  `on_cancel(wake)`, a default no-op, registers a `CancelWake` to be
+  called, from whichever thread cancels, when the utterance is cancelled,
+  or at once if it is, for a driver that waits for its synthesizer and so
+  has no push at which to see a cancel (the speech manager cancels the
+  mixer first, then the job, whose waker it calls).
 - `SpeechSequence` — what a synthesizer is asked to speak: the utterance
   id, the trace id, an optional BCP 47 language, and `items`, a list of
   `SpeechItem::Text`, `SpeechItem::Mark`, `SpeechItem::Pitch` (an

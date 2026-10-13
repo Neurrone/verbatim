@@ -23,8 +23,9 @@ where it starts.
   I/O completing), it names whatever thread the interrupt fell on, so a
   waker in an unrelated process means a timer or a device, not that
   process.
-- The workloads: `measure_idle` (Verbatim at the desktop, nothing
-  happening), `text_box_typed_words` (typing), `measure_focus_explorer`
+- The workloads: Verbatim idle (started directly with its console hidden
+  and the desktop in front, nothing happening; an idle period is time,
+  which the suite's scenarios may not wait on), `text_box_typed_words` (typing), `measure_focus_explorer`
   (focus moving in File Explorer), `conhost_flood` (terminal output) and
   `measure_speech_real` (the real synthesizer host and audio device), all
   at default thread priorities after the scheduling policy was reverted
@@ -73,8 +74,14 @@ Counts are for one traced window of 5 to 8 seconds.
    two hand-offs; this is the part of that design the audit confirms.
 6. The hosted synthesizer's driver waits for its host in 10 ms slices to
    notice a cancel (`synth-hosted` `CANCEL_CHECK`), 100 wake-ups a second
-   while speaking, and the host polls the same way. The communication
-   design's step 9 replaces the polls with the cancel's own signal.
+   while speaking, and `OneCore` in the host polls the same way. Fixed:
+   `SynthSink::on_cancel` lets a driver register a waker the cancel calls;
+   the hosted driver waits on the host's replies and its cancel channel
+   together, `OneCore` on its operation's completion and its cancel in one
+   channel, and the host's sink calls the waker as the cancel arrives.
+   Waking the driver at once exposed an ordering the poll had hidden: the
+   speech manager now cancels the mixer before the job, so an utterance the
+   woken driver returns from is already ended cancelled.
 7. `WinEvent` hooks are out of context, so each wakes its thread for every
    event in its subscription before Verbatim's filter runs. In 8 seconds
    of `measure_focus_explorer`, File Explorer's outpost's event thread woke

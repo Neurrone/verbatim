@@ -25,8 +25,10 @@ against the boosted maximum of 6.0 (1.5 unboosted), so enabling boost at 50
 audibly jumps from 1.0x to 3.25x — the jump is the feature. Appended
 silence is set to its minimum at startup, as NVDA does, and the speech
 manager trims what is left. `speak` waits on the synthesis operation's
-completion (its thread is dedicated), checking every 10 ms whether the
-sink reports the utterance cancelled, and cancels the operation if so:
+completion (its thread is dedicated), or for the cancel, whichever comes
+first: the completion and the waker it registers with the sink
+(`SynthSink::on_cancel`) post to one channel, and on a cancel it cancels
+the operation:
 OneCore produces no audio until it has synthesized the whole utterance,
 so there is no earlier push at which a cancel would be seen. The sequence
 is sent as SSML, its text escaped and each index mark a `<mark>` element

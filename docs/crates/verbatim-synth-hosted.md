@@ -48,8 +48,10 @@ error.
 
 Cancellation by utterance id. When `push_pcm` returns `Break`, or the
 sink reports the utterance cancelled while the driver waits for the host
-(it waits in 10 ms slices, so a cancel reaches a host that has not sent
-audio yet), the driver sends `Cancel(utterance)` naming the utterance being spoken and keeps
+(the driver registers a waker with the sink, `SynthSink::on_cancel`, so
+the cancel itself ends its wait, even before the host has sent any audio,
+and it checks `is_cancelled` at each reply for a sink that keeps no
+waker; nothing wakes at intervals to look), the driver sends `Cancel(utterance)` naming the utterance being spoken and keeps
 reading until that utterance's `Done`, discarding any PCM and marks that
 were already in flight. Waiting for `Done` keeps the pipe in step, so the
 next `Speak` never reads the cancelled utterance's leftovers. The host

@@ -29,7 +29,7 @@ use std::io::{self, BufReader, BufWriter};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{Receiver, RecvTimeoutError, bounded};
+use crossbeam_channel::{Receiver, RecvTimeoutError, bounded, select};
 use tracing::warn;
 use verbatim_process::{ChildSpec, Contained};
 use verbatim_speech::hosting::{
@@ -44,11 +44,6 @@ use verbatim_speech::{
 /// judged hung and ended. A synthesizer produces audio many times faster
 /// than real time, so ten seconds without a message is never normal.
 pub const HANG_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// How often a driver waiting for its host checks whether the utterance
-/// was cancelled, so a cancel reaches a synthesizer that has not produced
-/// audio yet.
-const CANCEL_CHECK: Duration = Duration::from_millis(10);
 
 /// The buffer asked for on the pipe the host writes PCM to: about 90 ms of
 /// 22 kHz mono, so the host cannot run far ahead of playback.
@@ -336,34 +331,41 @@ fn speak_with(
     let request_us = elapsed_us(asked);
     let sent_at_us = now_us();
     let mut cancelled = false;
-    let mut last_heard = Instant::now();
+    // The cancel wakes this wait itself (one slot, filled without
+    // blocking), so the host is told at once, even before it has sent any
+    // audio, and nothing wakes at intervals to look.
+    let (cancel_tx, cancel_rx) = bounded::<()>(1);
+    // Kept for the whole wait, so the channel never reads as closed when a
+    // sink drops the waker it was given.
+    let wake = cancel_tx.clone();
+    sink.on_cancel(Box::new(move || {
+        let _ = wake.try_send(());
+    }));
     loop {
-        // Wait in short slices, so a cancel that arrives before the host
-        // has sent any audio still reaches it promptly.
-        let reply = match host.replies.recv_timeout(CANCEL_CHECK) {
-            Ok(reply) => {
-                last_heard = Instant::now();
-                reply.map_err(|error| {
+        // Checked at each wake, which is the cancel's own or a reply's, so a
+        // sink that keeps no waker is still heard at its next reply.
+        if !cancelled && sink.is_cancelled() {
+            cancelled = true;
+            host.send(&ToHost::Cancel(sequence.utterance))?;
+        }
+        let reply = select! {
+            recv(host.replies) -> reply => match reply {
+                Ok(reply) => reply.map_err(|error| {
                     SynthError::Synthesis(format!("the synthesizer host ended: {error}"))
-                })?
-            }
-            Err(RecvTimeoutError::Timeout) => {
-                if last_heard.elapsed() >= HANG_TIMEOUT {
-                    attempt.misbehaved = true;
-                    return Err(SynthError::Synthesis(format!(
-                        "the synthesizer host sent nothing for {HANG_TIMEOUT:?}"
-                    )));
+                })?,
+                Err(_) => {
+                    return Err(SynthError::Synthesis(
+                        "the synthesizer host ended".to_owned(),
+                    ));
                 }
-                if !cancelled && sink.is_cancelled() {
-                    cancelled = true;
-                    host.send(&ToHost::Cancel(sequence.utterance))?;
-                }
-                continue;
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                return Err(SynthError::Synthesis(
-                    "the synthesizer host ended".to_owned(),
-                ));
+            },
+            // `cancel_tx` stays alive below, so this is only ever a cancel.
+            recv(cancel_rx) -> _ => continue,
+            default(HANG_TIMEOUT) => {
+                attempt.misbehaved = true;
+                return Err(SynthError::Synthesis(format!(
+                    "the synthesizer host sent nothing for {HANG_TIMEOUT:?}"
+                )));
             }
         };
         match reply {

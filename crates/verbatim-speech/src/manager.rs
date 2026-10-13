@@ -53,8 +53,8 @@ use verbatim_model::{
 };
 
 use crate::driver::{
-    IndexMark, SoundCue, SpeechItem, SpeechSequence, SynthDriver, SynthError, SynthSink,
-    SynthTiming,
+    CancelWake, IndexMark, SoundCue, SpeechItem, SpeechSequence, SynthDriver, SynthError,
+    SynthSink, SynthTiming,
 };
 use crate::events::SpeechEvents;
 use crate::registry::SynthRegistry;
@@ -230,7 +230,48 @@ pub(crate) type SwitchReply = Box<dyn FnOnce(Result<DriverState, SynthError>) + 
 /// One sequence handed to the synth thread, with its own cancellation flag.
 struct Job {
     sequence: SpeechSequence,
-    cancel: Arc<AtomicBool>,
+    cancel: Arc<Cancel>,
+}
+
+/// A job's cancellation: a flag the synth thread reads, and the waker its
+/// driver registered ([`SynthSink::on_cancel`]), called once as the flag is
+/// set, so a driver waiting for its synthesizer learns of the cancel at once
+/// instead of by waking at intervals to look.
+#[derive(Default)]
+struct Cancel {
+    cancelled: AtomicBool,
+    wake: Mutex<Option<CancelWake>>,
+}
+
+impl Cancel {
+    /// Cancels the job and calls the driver's waker, if one is registered.
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        let wake = self
+            .wake
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(wake) = wake {
+            wake();
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    /// Registers `wake`, or calls it at once if the job is already
+    /// cancelled.
+    fn on_cancel(&self, wake: CancelWake) {
+        let mut slot = self.wake.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.is_cancelled() {
+            drop(slot);
+            wake();
+        } else {
+            *slot = Some(wake);
+        }
+    }
 }
 
 /// The running speech pipeline.
@@ -785,7 +826,7 @@ struct QueueThread {
     next_lane: VecDeque<Waiting>,
     queued_lane: VecDeque<Waiting>,
     /// The cancellation flag of the job the synth thread is working on.
-    in_flight: Option<Arc<AtomicBool>>,
+    in_flight: Option<Arc<Cancel>>,
     /// Utterances handed to the synth thread and the mixer whose ending
     /// has not been reported yet, oldest first, for dropping expired speech.
     handed_on: VecDeque<(UtteranceId, Option<FocusValidity>)>,
@@ -926,10 +967,13 @@ impl QueueThread {
 
     /// Stops everything handed to the synth thread and the mixer.
     fn stop_handed_on(&mut self) {
-        if let Some(cancel) = &self.in_flight {
-            cancel.store(true, Ordering::Release);
-        }
+        // The mixer first, so an utterance it ends is ended cancelled
+        // before the synthesizer's driver, woken by the cancel, can return
+        // and have it finished.
         self.source.cancel_all();
+        if let Some(cancel) = &self.in_flight {
+            cancel.cancel();
+        }
         // Everything handed on has just been cancelled. The mixer reports
         // each ending a little later, on its own thread; until then these
         // must not be judged again, or a focus change in between would
@@ -1017,7 +1061,7 @@ impl QueueThread {
         };
         self.handed_on.push_back((sequence.utterance, validity));
         self.source.register(sequence.utterance, sequence.trace_id);
-        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel = Arc::new(Cancel::default());
         self.in_flight = Some(Arc::clone(&cancel));
         let _ = self
             .synth_tx
@@ -1193,7 +1237,7 @@ fn run_job(driver: &mut dyn SynthDriver, output: Output<'_>, job: &Job) {
     let (sequence, sounds) = sounds_as_marks(&job.sequence);
     let sequence = &sequence;
     let utterance = sequence.utterance;
-    if job.cancel.load(Ordering::Acquire) {
+    if job.cancel.is_cancelled() {
         // Cancelled before it started; the mixer has already ended it.
         return;
     }
@@ -1239,7 +1283,7 @@ fn run_job(driver: &mut dyn SynthDriver, output: Output<'_>, job: &Job) {
     for (piece, mark) in pieces {
         if piece.has_text() {
             result = driver.speak(&piece, &mut sink);
-            if result.is_err() || sink.stopped || job.cancel.load(Ordering::Acquire) {
+            if result.is_err() || sink.stopped || job.cancel.is_cancelled() {
                 break;
             }
         } else {
@@ -1331,7 +1375,7 @@ struct PipelineSink<'a> {
     /// The driver has given audio, and the trimmer has passed audio on.
     driver_audio: bool,
     mixer_audio: bool,
-    cancel: &'a AtomicBool,
+    cancel: &'a Cancel,
     trimmer: Trimmer,
     /// The mixer refused audio: the utterance has ended.
     stopped: bool,
@@ -1374,7 +1418,7 @@ impl PipelineSink<'_> {
 
 impl SynthSink for PipelineSink<'_> {
     fn push_pcm(&mut self, format: PcmFormat, samples: &[i16]) -> ControlFlow<()> {
-        if self.stopped || self.cancel.load(Ordering::Acquire) {
+        if self.stopped || self.cancel.is_cancelled() {
             return ControlFlow::Break(());
         }
         if !self.driver_audio {
@@ -1401,6 +1445,10 @@ impl SynthSink for PipelineSink<'_> {
     }
 
     fn is_cancelled(&self) -> bool {
-        self.stopped || self.cancel.load(Ordering::Acquire)
+        self.stopped || self.cancel.is_cancelled()
+    }
+
+    fn on_cancel(&mut self, wake: CancelWake) {
+        self.cancel.on_cancel(wake);
     }
 }

@@ -274,7 +274,20 @@ pub trait SynthSink {
     fn synth_timing(&mut self, timing: SynthTiming) {
         let _ = timing;
     }
+
+    /// Has `wake` called, from whichever thread cancels, when the utterance
+    /// is cancelled, and at once if it already is: for a driver that waits
+    /// for its synthesizer, so the cancel itself ends its wait rather than
+    /// the driver waking at intervals to check [`is_cancelled`](Self::is_cancelled).
+    /// `wake` must not block. The default calls nothing.
+    fn on_cancel(&mut self, wake: CancelWake) {
+        let _ = wake;
+    }
 }
+
+/// What a driver has called when its utterance is cancelled
+/// ([`SynthSink::on_cancel`]).
+pub type CancelWake = Box<dyn Fn() + Send + Sync>;
 
 /// A speech synthesizer, whatever its origin: built-in, Wasm component, or
 /// a synthesizer host process (architecture section 6).

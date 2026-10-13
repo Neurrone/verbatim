@@ -47,10 +47,6 @@ fn onecore_display_name() -> String {
     verbatim_i18n::message(ONECORE_DISPLAY_NAME_KEY)
 }
 
-/// How often a synthesis in progress checks whether its utterance was
-/// cancelled.
-const CANCEL_CHECK: std::time::Duration = std::time::Duration::from_millis(10);
-
 // NVDA OneCore mapping constants (oneCore.py). Without rate boost, 50 maps to
 // 1.0x exactly; the rate-boost toggle lifts the maximum to 6.0x, matching
 // NVDA's DEFAULT_MAX_RATE and BOOSTED_MAX_RATE.
@@ -357,29 +353,29 @@ impl SynthDriver for OneCoreSynth {
         // Wait on this dedicated thread for the operation to complete, and
         // cancel it if the utterance is cancelled first: OneCore produces no
         // audio until it has synthesized the whole utterance, so there is no
-        // push at which the driver would otherwise hear of the cancel.
-        let (completed_tx, completed) = mpsc::channel();
+        // push at which the driver would otherwise hear of the cancel. The
+        // cancel's waker posts to the same channel as the completion, so one
+        // wait takes whichever comes first, and nothing wakes to look.
+        let (outcome_tx, outcome) = mpsc::channel();
+        let completed_tx = outcome_tx.clone();
         operation
             .when(move |result| {
-                let _ = completed_tx.send(result);
+                let _ = completed_tx.send(Some(result));
             })
             .map_err(|error| synthesis("wait for synthesis", &error))?;
-        let stream = loop {
-            match completed.recv_timeout(CANCEL_CHECK) {
-                Ok(result) => {
-                    break result.map_err(|error| synthesis("finish synthesis", &error))?;
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if sink.is_cancelled() {
-                        let _ = operation.Cancel();
-                        return Ok(());
-                    }
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(SynthError::Synthesis(
-                        "synthesis ended without a result".to_owned(),
-                    ));
-                }
+        sink.on_cancel(Box::new(move || {
+            let _ = outcome_tx.send(None);
+        }));
+        let stream = match outcome.recv() {
+            Ok(Some(result)) => result.map_err(|error| synthesis("finish synthesis", &error))?,
+            Ok(None) => {
+                let _ = operation.Cancel();
+                return Ok(());
+            }
+            Err(_) => {
+                return Err(SynthError::Synthesis(
+                    "synthesis ended without a result".to_owned(),
+                ));
             }
         };
         let marks = read_marks(&stream)?;

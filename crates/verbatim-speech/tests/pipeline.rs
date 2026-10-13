@@ -152,7 +152,9 @@ impl Recorder {
 
 /// A synth whose `speak` announces its start and then streams quiet tone
 /// until the test signals it to finish or the pipeline cancels it, and
-/// announces its return. Text "fail" fails at once.
+/// announces its return. Text "fail" fails at once. Text "wait" pushes
+/// nothing and waits for the cancel to wake it, as a driver waiting for its
+/// synthesizer does ([`SynthSink::on_cancel`]), failing if nothing wakes it.
 struct ControlSynth {
     started: Sender<String>,
     finish: Receiver<()>,
@@ -177,6 +179,15 @@ impl ControlSynth {
     ) -> Result<(), SynthError> {
         if text == "fail" {
             return Err(SynthError::Synthesis("asked to fail".to_owned()));
+        }
+        if text == "wait" {
+            let (woken_tx, woken) = crossbeam_channel::bounded::<()>(1);
+            sink.on_cancel(Box::new(move || {
+                let _ = woken_tx.try_send(());
+            }));
+            return woken.recv_timeout(STEP_TIMEOUT).map_err(|_| {
+                SynthError::Synthesis("the cancel did not wake the control synth".to_owned())
+            });
         }
         let chunk = [1_000i16; 16];
         let deadline = Instant::now() + STEP_TIMEOUT;
@@ -728,6 +739,30 @@ fn a_cancel_ends_current_and_queued_speech() {
             (current, UtteranceEnding::Cancelled),
             (waiting, UtteranceEnding::Cancelled),
         ]
+    );
+}
+
+/// A cancel wakes a driver waiting for its synthesizer, which has pushed no
+/// audio yet, through the waker it registered, so the utterance ends
+/// cancelled with nothing woken at intervals to look.
+#[test]
+fn a_cancel_wakes_a_driver_waiting_for_its_synthesizer() {
+    let harness = control_manager();
+    let waiting = harness.manager.speak(queued("wait"));
+    assert_eq!(recv_started(&harness.started), "wait");
+
+    harness.manager.control().cancel();
+
+    assert_eq!(
+        harness
+            .returned
+            .recv_timeout(STEP_TIMEOUT)
+            .expect("the driver returned"),
+        "wait"
+    );
+    assert_eq!(
+        harness.endings_before_a_marker(),
+        vec![(waiting, UtteranceEnding::Cancelled)]
     );
 }
 

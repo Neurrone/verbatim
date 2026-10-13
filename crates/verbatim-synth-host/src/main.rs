@@ -16,8 +16,8 @@
 use std::io::{BufReader, BufWriter, Write};
 use std::ops::ControlFlow;
 use std::process::ExitCode;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use crossbeam_channel::unbounded;
@@ -25,7 +25,7 @@ use verbatim_audio::PcmFormat;
 use verbatim_speech::hosting::{
     FromHost, HostDescription, HostTiming, ToHost, now_us, read_to_host, synth_ids, write_from_host,
 };
-use verbatim_speech::{IndexMark, SynthDriver, SynthError, SynthSink};
+use verbatim_speech::{CancelWake, IndexMark, SynthDriver, SynthError, SynthSink};
 
 /// Writes a line to standard error, as `eprintln!` does, but ignores a
 /// failed write instead of panicking: a full disk or a closed pipe under
@@ -75,7 +75,7 @@ fn main() -> ExitCode {
 
     // The reader thread: cancels take effect at once, everything else is
     // served in order on this thread.
-    let cancelled = Arc::new(AtomicU64::new(0));
+    let cancelled = Arc::new(HostCancel::default());
     let (requests_tx, requests) = unbounded();
     {
         let cancelled = Arc::clone(&cancelled);
@@ -94,9 +94,7 @@ fn main() -> ExitCode {
                         }
                     };
                     match request {
-                        (ToHost::Cancel(utterance), _) => {
-                            cancelled.store(utterance.0, Ordering::Release);
-                        }
+                        (ToHost::Cancel(utterance), _) => cancelled.cancel(utterance.0),
                         other => {
                             if requests_tx.send(other).is_err() {
                                 return;
@@ -123,6 +121,7 @@ fn main() -> ExitCode {
                     started: Instant::now(),
                 };
                 let result = driver.speak(&sequence, &mut sink);
+                cancelled.forget_wake();
                 if sink.broken {
                     return ExitCode::FAILURE;
                 }
@@ -177,13 +176,63 @@ fn build(synth: &str) -> Result<Box<dyn SynthDriver>, SynthError> {
     }
 }
 
+/// The utterance Core last cancelled, and the waker the driver speaking
+/// registered ([`SynthSink::on_cancel`]), with its utterance: the command
+/// reader calls it as that utterance's cancel arrives, so a driver waiting
+/// for its synthesizer (`OneCore`) learns of it at once.
+#[derive(Default)]
+struct HostCancel {
+    last: AtomicU64,
+    wake: Mutex<Option<(u64, CancelWake)>>,
+}
+
+impl HostCancel {
+    /// Notes `utterance`'s cancel and wakes its driver, if it waits.
+    fn cancel(&self, utterance: u64) {
+        self.last.store(utterance, Ordering::Release);
+        let mut slot = self.wake.lock().unwrap_or_else(PoisonError::into_inner);
+        if slot
+            .as_ref()
+            .is_some_and(|(waiting, _)| *waiting == utterance)
+            && let Some((_, wake)) = slot.take()
+        {
+            drop(slot);
+            wake();
+        }
+    }
+
+    fn is_cancelled(&self, utterance: u64) -> bool {
+        self.last.load(Ordering::Acquire) == utterance
+    }
+
+    /// Registers `wake` for `utterance`, or calls it at once if that
+    /// utterance is already cancelled.
+    fn on_cancel(&self, utterance: u64, wake: CancelWake) {
+        let mut slot = self.wake.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.is_cancelled(utterance) {
+            drop(slot);
+            wake();
+        } else {
+            *slot = Some((utterance, wake));
+        }
+    }
+
+    /// Drops the waker of an utterance whose speaking has ended.
+    fn forget_wake(&self) {
+        self.wake
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+    }
+}
+
 /// Sends the driver's output to Core.
 struct PipeSink<'a, W: Write> {
     to_core: &'a mut W,
     /// The utterance being spoken.
     utterance: u64,
-    /// The utterance Core last cancelled.
-    cancelled: &'a AtomicU64,
+    /// The utterance Core last cancelled, and the driver's waker.
+    cancelled: &'a HostCancel,
     /// Core is gone: the pipe could not be written.
     broken: bool,
     /// The trace the utterance belongs to, and whether the driver has given
@@ -198,7 +247,7 @@ struct PipeSink<'a, W: Write> {
 
 impl<W: Write> SynthSink for PipeSink<'_, W> {
     fn push_pcm(&mut self, format: PcmFormat, samples: &[i16]) -> ControlFlow<()> {
-        if self.broken || self.cancelled.load(Ordering::Acquire) == self.utterance {
+        if self.broken || self.cancelled.is_cancelled(self.utterance) {
             return ControlFlow::Break(());
         }
         if !self.audio {
@@ -231,7 +280,11 @@ impl<W: Write> SynthSink for PipeSink<'_, W> {
     }
 
     fn is_cancelled(&self) -> bool {
-        self.broken || self.cancelled.load(Ordering::Acquire) == self.utterance
+        self.broken || self.cancelled.is_cancelled(self.utterance)
+    }
+
+    fn on_cancel(&mut self, wake: CancelWake) {
+        self.cancelled.on_cancel(self.utterance, wake);
     }
 }
 
