@@ -10,7 +10,7 @@
 //!
 //! - `--pipe-in <handle> --pipe-out <handle> --target-pid <pid>`: the
 //!   production mode, spawned by the Core supervisor with two inherited
-//!   anonymous-pipe handle values passed as decimal and the application this
+//!   overlapped pipe-handle values passed as decimal and the application this
 //!   outpost watches for its whole life (decision D9: fixed at spawn, never
 //!   retargeted). Commands are read from `--pipe-in`, messages written to
 //!   `--pipe-out`.
@@ -62,11 +62,12 @@ fn main() -> ExitCode {
             target_pid,
             options,
         }) => {
-            // SAFETY: the supervisor passes the values of the pipe ends it
-            // created for this process, which inherited them and uses them
-            // nowhere else; `inherited_pipes` checks that they are distinct
-            // open pipes, so a malformed command line fails here.
-            let pipes = unsafe { verbatim_process::inherited_pipes(pipe_in, pipe_out) };
+            // SAFETY: the supervisor passes the values of the overlapped
+            // pipe ends it created for this process, which inherited them
+            // and uses them nowhere else; `inherited_pipe_handles` checks
+            // that they are distinct open pipes, so a malformed command line
+            // fails here.
+            let pipes = unsafe { verbatim_process::inherited_pipe_handles(pipe_in, pipe_out) };
             let (reader, writer) = match pipes {
                 Ok(pipes) => pipes,
                 Err(error) => {
@@ -74,7 +75,7 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            match run_pipe(Box::new(reader), Box::new(writer), target_pid, options) {
+            match run_pipe(reader, writer, target_pid, options) {
                 Ok(()) => end_without_detach(0),
                 Err(error) => {
                     report_error!("outpost pipe loop ended with error: {error}");
@@ -94,11 +95,12 @@ fn main() -> ExitCode {
             let ignored = verbatim_outpost::supervisor::IgnoredProcesses::hold(
                 verbatim_outpost::supervisor::parse_pids(&ignore_pids),
             );
-            // SAFETY: the supervisor passes the values of the pipe ends it
-            // created for this process, which inherited them and uses them
-            // nowhere else; `inherited_pipes` checks that they are distinct
-            // open pipes, so a malformed command line fails here.
-            let pipes = unsafe { verbatim_process::inherited_pipes(pipe_in, pipe_out) };
+            // SAFETY: the supervisor passes the values of the overlapped
+            // pipe ends it created for this process, which inherited them
+            // and uses them nowhere else; `inherited_pipe_handles` checks
+            // that they are distinct open pipes, so a malformed command line
+            // fails here.
+            let pipes = unsafe { verbatim_process::inherited_pipe_handles(pipe_in, pipe_out) };
             let (reader, writer) = match pipes {
                 Ok(pipes) => pipes,
                 Err(error) => {
@@ -107,13 +109,7 @@ fn main() -> ExitCode {
                 }
             };
             let hooks_in = verbatim_outpost::listener::parse_hooks_in(&hooks_in);
-            match run_listener(
-                Box::new(reader),
-                Box::new(writer),
-                ignored,
-                &hooks_in,
-                options,
-            ) {
+            match run_listener(reader, writer, ignored, &hooks_in, options) {
                 Ok(()) => end_without_detach(0),
                 Err(error) => {
                     report_error!("listener pipe loop ended with error: {error}");

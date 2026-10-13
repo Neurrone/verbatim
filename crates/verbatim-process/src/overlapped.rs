@@ -552,7 +552,8 @@ impl PipeIo {
     /// Starts a write to `file` of the bytes `put` puts in the slot's
     /// emptied buffer, where they stay until the write completes, so
     /// nothing is copied. When `put` fails, nothing is written and its
-    /// error is returned.
+    /// error is returned; when it puts nothing, nothing is written either,
+    /// and the write is done at once, having moved nothing.
     ///
     /// # Errors
     ///
@@ -574,6 +575,9 @@ impl PipeIo {
         operation.filled = 0;
         operation.buffer.clear();
         put(&mut operation.buffer)?;
+        if operation.buffer.is_empty() {
+            return Ok(Started::Done(0));
+        }
         let overlapped = &raw mut operation.overlapped;
         let buffer = operation.buffer.as_slice();
         // SAFETY: as for `read`: the bytes and the OVERLAPPED stay in the

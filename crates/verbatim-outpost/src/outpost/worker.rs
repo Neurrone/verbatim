@@ -332,19 +332,32 @@ impl Tracking {
 /// worker in charge. The check and the end of the entry's deadline happen
 /// under the watch lock, so an abandoned worker can never publish after its
 /// abandonment, and a published entry can no longer be abandoned: a query
-/// never gets a second reply. The message is queued after the lock is
-/// released, and queuing never waits (`outbound`).
+/// never gets a second reply. The message is sent after the lock is
+/// released, written at once unless a write is in flight, and sending
+/// never waits (`outbound`).
 ///
 /// Every node issued or looked up since the last publish is taken under the
 /// same lock, while no other worker can be touching nodes, and recorded as
-/// reported at the position the message takes in the queue. That may
-/// include nodes the message does not carry, which are then only kept a
-/// little longer.
+/// reported at the position the message takes when it is written. That
+/// may include nodes the message does not carry, which are then only kept
+/// a little longer.
 fn publish(context: &Context, generation: u64, message: OutpostToSupervisor) -> bool {
     let Some(touched) = context.watch.publish(generation, || take_touched(context)) else {
         return false;
     };
     context.outbound.publish(message, touched);
+    true
+}
+
+/// Publishes `messages`, an entry's results, together, as [`publish`]
+/// publishes one: in one write when none is in flight
+/// (`docs/design/communication.md`, section 11, the decisions of
+/// 2026-10-14 for step 6).
+fn publish_all(context: &Context, generation: u64, messages: Vec<OutpostToSupervisor>) -> bool {
+    let Some(touched) = context.watch.publish(generation, || take_touched(context)) else {
+        return false;
+    };
+    context.outbound.publish_all(messages, touched);
     true
 }
 
@@ -1465,6 +1478,7 @@ impl Worker<'_> {
         // event for every character typed, so this keeps Core's copy of it
         // following typing. A caret key's watch is checked first, as the
         // caret may have moved since the change that caused the read.
+        let mut caret_moved = None;
         if let Some(caret) = caret {
             self.check_watch_now(node_id, false);
             // A caret Core already has is not sent again, unless the read
@@ -1473,17 +1487,35 @@ impl Worker<'_> {
                 tracing::debug!("the terminal's caret is the one last sent; it is not sent again");
             } else {
                 self.sent_caret(node_id, &caret.report);
-                self.emit(
+                caret_moved = Some(NormalizedEvent::CaretMoved {
+                    node_id,
+                    caret: caret.report,
+                });
+            }
+        }
+        // A read that reports output as well as the caret sends both in one
+        // write, the caret first; anything else the read says follows the
+        // caret, sent alone.
+        let reports_output = matches!(
+            &found,
+            Found::Output(output, _)
+                if owed.is_none() && action == Action::Report && !output.is_empty()
+        );
+        if let Some(caret_moved) = caret_moved {
+            if reports_output && let Found::Output(output, _) = found {
+                self.emit_all(
                     trace,
                     observed_at_ms,
                     Backend::Uia,
                     window,
-                    NormalizedEvent::CaretMoved {
-                        node_id,
-                        caret: caret.report,
-                    },
+                    vec![
+                        caret_moved,
+                        NormalizedEvent::TerminalOutput { node_id, output },
+                    ],
                 );
+                return;
             }
+            self.emit(trace, observed_at_ms, Backend::Uia, window, caret_moved);
         }
         match found {
             Found::Output(output, _) => {
@@ -1701,20 +1733,51 @@ impl Worker<'_> {
         publish(
             self.context,
             self.generation,
-            OutpostToSupervisor::Event {
-                trace_id: trace,
-                observed_at_ms,
-                backend,
-                window: window.map(window_facts),
-                application: window.and_then(|hwnd| console_client(hwnd, self.context.target_pid)),
-                timing: EventTiming {
-                    published_at_us: now_us(),
-                    calls: take_calls(),
-                    ..self.timing
-                },
-                event,
-            },
+            self.event_message(trace, observed_at_ms, backend, window, event),
         )
+    }
+
+    /// Emits `events`, an entry's, together, as [`emit`](Self::emit) emits
+    /// one: written with one write when none is in flight. The calls made
+    /// so far are counted in the first.
+    fn emit_all(
+        &self,
+        trace: TraceId,
+        observed_at_ms: u64,
+        backend: Backend,
+        window: Option<isize>,
+        events: Vec<NormalizedEvent>,
+    ) -> bool {
+        let messages = events
+            .into_iter()
+            .map(|event| self.event_message(trace, observed_at_ms, backend, window, event))
+            .collect();
+        publish_all(self.context, self.generation, messages)
+    }
+
+    /// `event` as the message that reports it, published now with the
+    /// calls made since the last.
+    fn event_message(
+        &self,
+        trace: TraceId,
+        observed_at_ms: u64,
+        backend: Backend,
+        window: Option<isize>,
+        event: NormalizedEvent,
+    ) -> OutpostToSupervisor {
+        OutpostToSupervisor::Event {
+            trace_id: trace,
+            observed_at_ms,
+            backend,
+            window: window.map(window_facts),
+            application: window.and_then(|hwnd| console_client(hwnd, self.context.target_pid)),
+            timing: EventTiming {
+                published_at_us: now_us(),
+                calls: take_calls(),
+                ..self.timing
+            },
+            event,
+        }
     }
 
     /// Reports a focus and remembers it, so the limiter keeps its events and

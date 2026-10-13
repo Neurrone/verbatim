@@ -241,11 +241,12 @@ which is reported separately. The stages, in milliseconds:
   across processes; for a WinEvent's fact (the text box's, for instance)
   it is the callback's own local work until the fact is queued.
 - Listener queue: from the listener's handling ending (or, for a
-  timeline without that stamp, its observing the event) to its writer
-  beginning to write the fact to verbatim.exe's pipe: the listener's
-  outbound queue and its writer's wake.
-- Listener's pipe to verbatim.exe: from the listener's writer beginning
-  the write to verbatim.exe's relay thread taking the fact off the pipe:
+  timeline without that stamp, its observing the event) to the write of
+  the fact to verbatim.exe's pipe beginning: since 2026-10-14 the thread
+  that produced the fact writes it at once unless a write is in flight,
+  so this is the wait behind a write in flight, if any, and the I/O
+  thread's wake to finish it.
+- Listener's pipe to verbatim.exe: from the write beginning to verbatim.exe's relay thread taking the fact off the pipe:
   the encoding, the pipe, and the relay thread's wake.
 - Listener to verbatim.exe: the three above taken whole, for a timeline
   that lacks the listener's write stamp.
@@ -276,10 +277,10 @@ which is reported separately. The stages, in milliseconds:
   messages, after the caret wait for a caret key, with how many it made
   when it made any (`docs/performance.md` says what counts).
 - Outpost outbound: from the outpost's worker publishing the event or
-  reply to the outpost's writer beginning to write it: the outbound queue
-  and the writer's wake.
-- Outpost's pipe to verbatim.exe: from the outpost's writer beginning the
-  write to verbatim.exe's reader having read and parsed the message: the
+  reply to its write beginning: since 2026-10-14 the worker writes it at
+  once unless a write is in flight, so this is the wait behind a write in
+  flight, if any, and the I/O thread's wake to finish it.
+- Outpost's pipe to verbatim.exe: from the write beginning to verbatim.exe's reader having read and parsed the message: the
   encoding, the pipe, and the reader.
 - Outpost to verbatim.exe: the two above taken whole, for a timeline that
   lacks the outpost's write stamp.

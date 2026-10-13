@@ -37,10 +37,11 @@ placed in kill-on-close job objects, so they die with it however it ends
    D13).
 3. **One outpost per application**, `verbatim-outpost.exe --target-pid
    <pid>` (decision D9). Inside: an event thread (`verbatim-event`) for its
-   own MSAA hooks, UIA callback threads, a reader on the main thread, one
-   worker (`verbatim-worker`) that is the only thread calling into the
-   application, a watchdog (`verbatim-watchdog`), and a writer
-   (`verbatim-outbound`).
+   own MSAA hooks, UIA callback threads, an I/O thread on the main thread,
+   which reads Core's commands and finishes writes to Core that pended,
+   one worker (`verbatim-worker`) that is the only thread calling into
+   the application, and a watchdog (`verbatim-watchdog`). Each thread
+   writes its own messages to Core.
 4. **One synthesizer host per synthesizer in use**,
    `verbatim-synth-host.exe` (decision D18).
 
@@ -91,14 +92,16 @@ releases Alt. Notepad has no outpost yet.
      `GetGUIThreadInfo`, a local read). NVDA would walk up to the
      element's nearest window, which is a cross-process call the listener
      may not make.
-   - The switcher's end becomes a note in the outgoing queue, sent 50 ms
-     later as `MenuOrSwitchEnded` with the time it ended (step 12).
-   - Each fact gets a fresh trace id and an observation timestamp, and is
-     coalesced in the listener's outgoing queue (`Outgoing::fact`): a
-     newer fact for the same element and kind replaces a waiting one.
-     Pongs and `Ready` go first. The writer thread writes each as a
-     `FocusFact` frame (a `Content-Length` header and JSON) up the
-     listener's pipe to Core.
+   - The switcher's end is noted and a threadpool timer set; 50 ms later
+     its callback sends `MenuOrSwitchEnded` with the time it ended
+     (step 12), behind any fact still waiting.
+   - Each fact gets a fresh trace id and an observation timestamp, and the
+     thread that captured it writes it at once as a `FocusFact` frame (a
+     `Content-Length` header and JSON) up the listener's pipe to Core
+     (`Outgoing::fact`). Only while an earlier write is still in flight
+     does it wait, coalesced: a newer fact for the same element and kind
+     replaces a waiting one, pongs and `Ready` go first, and the
+     listener's I/O thread writes what waits once that write completes.
 4. **Core routes the facts and starts an outpost.** The lifecycle owner
    thread, the relay, reads the listener's pipe itself on its completion
    port (`Owner::read_listener` in

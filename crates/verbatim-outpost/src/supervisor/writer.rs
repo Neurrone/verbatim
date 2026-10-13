@@ -269,7 +269,7 @@ impl Backlog for Queue {
         self.items.is_empty()
     }
 
-    fn encode(item: Outgoing, buffer: &mut Vec<u8>) -> io::Result<()> {
+    fn encode(&mut self, item: Outgoing, buffer: &mut Vec<u8>) -> io::Result<()> {
         put_message(buffer, &item.relayed())
     }
 }

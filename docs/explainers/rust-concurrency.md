@@ -39,9 +39,7 @@ Two channel families appear:
 - `crossbeam_channel` — the de-facto standard upgrade
   (multi-consumer, `select!` over several channels, better
   performance). Verbatim uses it wherever a channel is load-bearing:
-  the outpost's writer, the listener, and Core's supervisor
-  (`crates/verbatim-outpost/src/outpost/outbound.rs` uses `bounded` and
-  `unbounded` plus `select!` to send pongs ahead of ordinary messages).
+  Core's supervisor and the app's reducer inputs.
 
 Vocabulary that matters when reading call sites:
 

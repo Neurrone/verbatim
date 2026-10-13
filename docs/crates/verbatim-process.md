@@ -30,8 +30,9 @@ Public API:
   ends, overlapped or synchronous as it made them. Returns the
   `Contained`. `spec.from_child_buffer` is not used, since the caller's
   pipes have their buffers already. The containment, the inheritance list
-  and the log are `launch`'s. The supervisor launches outposts and the listener with it, over
-  `overlapped::pipe`s whose child ends are synchronous, and the relay
+  and the log are `launch`'s. The supervisor launches outposts and the
+  listener with it, over `overlapped::pipe`s whose child ends are
+  overlapped too (since communication step 6), and the relay
   floor's benchmark launches its children with it; the synthesizer host
   still uses `launch` until migration step 9 of
   `docs/design/communication.md` moves it.
@@ -59,13 +60,15 @@ Public API:
   that each names an open pipe handle, answering an error otherwise, so a
   malformed command line fails the start. It is still `unsafe` because
   each value must be an inherited pipe handle the process owns and nothing
-  else uses, which no check can prove. `verbatim-synth-host` and the
-  outpost binary use it. Its ends must be synchronous: a `File` must
-  never hold an overlapped handle.
+  else uses, which no check can prove. `verbatim-synth-host` uses it.
+  Its ends must be synchronous: a `File` must never hold an overlapped
+  handle.
 - `inherited_pipe_handles(pipe_in, pipe_out)` — the same checks, giving
   the two handles as `OwnedHandle`s, for a child whose ends are
   overlapped (`launch_with_ends` over `overlapped::pipe` with
-  `End::Overlapped`), which it uses only through `overlapped`'s types.
+  `End::Overlapped`), which it uses only through `overlapped`'s and
+  `transport`'s types. The outpost binary, as an outpost and as the
+  listener, uses it, its ends going to `transport::ChildIo`.
   `inherited_pipes` is this with each handle wrapped in a `File`.
 - `overlapped` (`docs/design/communication.md`, sections 4 and 6) —
   `pipe(flow, buffer, other)` makes a pipe with no name, as the standard
@@ -77,7 +80,9 @@ Public API:
   key)` joins a handle and skips the port for operations that complete at
   once, `post(key)` wakes the waiting thread, and `wait` takes
   completions into `Completions`. `PipeIo` is one operation slot, a read
-  (`read`, of its read size, or `read_up_to` a size given) or a write at a
+  (`read`, of its read size, or `read_up_to` a size given) or a write
+  (`write`, or `write_with`, which puts the bytes in the slot's buffer
+  and, when it puts none, writes nothing and is done at once) at a
   time, whose `OVERLAPPED` and buffer stay put, untouched
   and not freed, while its operation is in flight. The relay floor's
   benchmark (`verbatim-relay-floor`) and `transport` use it.
@@ -93,8 +98,9 @@ Public API:
   a warning, the thread carrying on as it was. The threads that only move
   messages run at `Highest`: the keyboard hook, verbatim.exe's relay
   thread and its reader for each outpost, the listener's and each
-  outpost's pipe-reading main thread and outbound writer, the `WinEvent`
-  threads, and both ends' synthesizer host readers. Each caller names its
+  outpost's I/O thread (and, for an outpost made in a test's process, its
+  sender's finishing thread), the `WinEvent` threads, and both ends'
+  synthesizer host readers. Each caller names its
   level once per role in a constant of its own. Every other thread keeps
   normal priority: raising the threads that compute did not pay when
   measured (`docs/design/communication.md`, section 11, step 3).
@@ -108,7 +114,8 @@ Public API:
   4). A frame is `Content-Length: ` and the body's length in ten digits, a
   blank line, then the body, at most `MAX_FRAME_BYTES` (32 MB); the fixed
   width lets a frame be encoded in place. `put_frame(buffer, put_body)`
-  puts one in a buffer; `read_frame(reader)` reads one whole from a
+  appends one to a buffer, so several can go in one write;
+  `read_frame(reader)` reads one whole from a
   `BufRead`, the header then the body at once, returning `None` at the end
   of the stream between frames and an error for one cut short, a header
   that is not one, or a length over the limit (refused before any body is
@@ -116,6 +123,14 @@ Public API:
   `BlockingReader::new(pipe)` is a `Read` over an overlapped end for a
   thread that blocks on each read, as verbatim.exe's outpost reader
   threads do; a closed writer reads as the end of the stream.
+  `read_within(buffer, timeout)` reads as `read` does but waits at most
+  `timeout`, then cancels the read (a read may be cancelled; a write
+  never is) and answers `None`; `available()` says how many bytes wait
+  unread (`PeekNamedPipe`), which a test that has the writer's word that
+  everything is written checks to know nothing more was said.
+  `BlockingWriter::new(pipe)` is the matching `Write`, for a child that
+  writes one message at a time and has no port, such as the supervisor
+  tests' stand-in children.
   `PortReader::new(file)` reads an end associated with a `Port`, for the
   thread serving the port: `take(completion, port, frame)`, given its
   read's completion or a wake posted with its key, hands `frame` the body
@@ -128,11 +143,21 @@ Public API:
   `frame` refused). A read asks for 64 KiB while the next frame's length
   is unknown and for the whole rest of a frame once it is, so a large
   frame is read in one read into a buffer of its size. `Sender` writes an
-  overlapped end: `send(item)` writes at once when no write is in flight
-  and nothing waits, on the sending thread, so in the common case no
-  other thread wakes; otherwise the item joins the `Backlog`, a caller's
-  policy (`push`, `pop`, `is_empty`, and `encode`, which frames an item
-  just before it is written). A write that pended is finished by the
+  overlapped end: `send(item)` puts the item in the `Backlog`, a caller's
+  policy (`push`, `pop`, `is_empty`, and `encode`, which appends an
+  item's frame just before it is written, whichever thread writes it, so
+  a stamp taken then is the write's and frames are encoded in the order
+  they are written; an item that appends nothing is a marker, reached
+  only once every write before it has completed), and writes what waits
+  at once when no write is in flight, on the sending thread, so in the
+  common case no other thread wakes. Every item passes through the
+  backlog, so its policy sees every item in order. `send_all(items)`
+  sends several together: with no write in flight their frames go in one
+  buffer and one `WriteFile`, each whole with its own header, so the
+  reader wakes once for all of them, and a batch larger than the pipe's
+  buffer pends and is finished whole; with one in flight they wait as
+  `send` would add them. `with_backlog(inspect)` runs `inspect` on the
+  backlog under the sender's lock. A write that pended is finished by the
   thread serving the sender's port, which writes what waited, in order:
   `Sender::on_port(pipe, backlog, port, key)` shares a port, whose thread
   hands each completion carrying `key` to `complete(completion)`, and
@@ -140,11 +165,25 @@ Public API:
   (verbatim.exe's relay serves every child's sender this way);
   `Sender::start(pipe, backlog, name, started)` gives the sender a port
   and a finishing thread of its own, named `name`, which first runs
-  `started` and wakes only when a write that pended completes. `close()` takes nothing
+  `started`, wakes only when a write that pended completes, and ends once
+  the sender has finished; it is returned with the sender, so joining it
+  waits for every write. `close()` takes nothing
   more, writes what waits, then drops the pipe so the reader sees its
   end. A failed write closes the sender (`SendError::Closed`); a backlog's
   refusal is `SendError::Refused`. A started frame is always finished:
   nothing cancels a write.
+  `ChildIo` is a child's side of its two pipes (sections 4.6 and 6.3 to
+  6.4). `ChildIo::new(commands, messages, backlog)` takes the child's two
+  inherited overlapped ends and gives the I/O side and the `Sender` every
+  thread of the child writes its messages through. `serve(sender,
+  command)`, on the child's I/O thread, waits only on the port, hands
+  `command` the body of each command frame in order, and finishes the
+  sender's writes that pend, until `command` answers `Serving::Stop`
+  (`Served::Stopped`) or verbatim.exe closes the command pipe
+  (`Served::CommandsEnded`). `finish(sender)`, once the sender is closed,
+  serves the port until every write in flight has completed and the pipe
+  is closed, so a child never exits with a write in flight, which its
+  exit would cancel, cutting the frame.
 - `session::current()` — the calling process's `Session`: its session
   `id`, whether its window station is interactive
   (`interactive_window_station`), and the input desktop's name when it can

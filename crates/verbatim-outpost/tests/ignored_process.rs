@@ -19,6 +19,7 @@ use std::io::{BufReader, Read as _};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
+use verbatim_process::transport::{BlockingReader, BlockingWriter};
 
 use crossbeam_channel::{Receiver, unbounded};
 use verbatim_model::{Pid, TraceId};
@@ -79,9 +80,16 @@ fn stand_in(args: &[String]) -> ! {
     };
     // SAFETY: the supervisor passes the values of the pipe ends it created
     // for this process, which inherited them and uses them nowhere else.
-    let (commands, mut messages) =
-        unsafe { verbatim_process::inherited_pipes(handle("--pipe-in"), handle("--pipe-out")) }
-            .expect("the inherited pipes");
+    let (commands, messages) = unsafe {
+        verbatim_process::inherited_pipe_handles(handle("--pipe-in"), handle("--pipe-out"))
+    }
+    .expect("the inherited pipes");
+    // The supervisor makes both ends overlapped; this stand-in blocks on
+    // each read and write.
+    let (commands, mut messages) = (
+        BlockingReader::new(commands).expect("a reader"),
+        BlockingWriter::new(messages).expect("a writer"),
+    );
     let listener = args.iter().any(|arg| arg == "--listener");
     let target_pid = if listener {
         Pid(0)

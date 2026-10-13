@@ -94,12 +94,18 @@
 //! target pid, supervised by the same machinery.
 
 use std::collections::{HashMap, VecDeque};
-use std::io::{self, BufReader, Write};
+use std::convert::Infallible;
+use std::io;
+use std::os::windows::io::OwnedHandle;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
-use std::thread::{self, JoinHandle};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use windows::Win32::Foundation::FILETIME;
+use windows::Win32::System::Threading::{
+    CloseThreadpoolTimer, CreateThreadpoolTimer, PTP_CALLBACK_INSTANCE, PTP_TIMER,
+    SetThreadpoolTimer, WaitForThreadpoolTimerCallbacks,
+};
 use windows::Win32::UI::Accessibility::{
     NotificationKind, NotificationProcessing, UIA_MenuOpenedEventId,
     UIA_SelectionItem_ElementSelectedEventId,
@@ -108,6 +114,7 @@ use windows::Win32::UI::Accessibility::{
 use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEvent, WinEventKind};
 use verbatim_model::{Notification, OutpostId, Pid, TraceId};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
+use verbatim_process::transport::{Backlog, ChildIo, SendError, Sender, Served, Serving};
 use verbatim_uia::map::{
     ignores_notifications, notification_kind_from_uia, notification_processing_from_uia,
 };
@@ -123,7 +130,7 @@ use crate::outpost::now_ms;
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::protocol::{
     DeliveredFact, EventTiming, FactKey, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
-    UiaSnapshotFact, WinEventStamp, hop_us, now_us, read_message, write_message,
+    UiaSnapshotFact, WinEventStamp, decode_message, hop_us, now_us, put_message,
 };
 use crate::supervisor::IgnoredProcesses;
 
@@ -132,28 +139,28 @@ use crate::supervisor::IgnoredProcesses;
 /// NVDA's fake-focus delay (`processFakeFocusWinEvent`).
 const MENU_END_GRACE: Duration = Duration::from_millis(50);
 
-/// The priority of the listener's writer, which wakes for each fact and
-/// writes it to Core, for microseconds per wake
-/// (`docs/design/communication.md`, section 6.1).
-const WRITER_PRIORITY: ThreadPriority = ThreadPriority::Highest;
+/// The priority of the listener's main thread, its I/O thread, which reads
+/// Core's pipe, handles each command, and finishes the writes to Core that
+/// pended, for microseconds per wake (`docs/design/communication.md`,
+/// section 6.1).
+const IO_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
-/// The priority of the listener's main thread, which reads Core's pipe and
-/// handles each command, for microseconds per wake
-/// (`docs/design/communication.md`, section 6.1).
-const READER_PRIORITY: ThreadPriority = ThreadPriority::Highest;
-
-/// The listener's outgoing queue: urgent messages first, then facts,
-/// coalesced one per element and kind.
-#[derive(Default)]
+/// The listener's messages to Core: written by the thread that produces
+/// each one, through the transport's [`Sender`], and held in [`Waiting`]
+/// only while a write is in flight, which the I/O thread then finishes
+/// (`docs/design/communication.md`, sections 4.3 and 6.3).
 struct Outgoing {
-    state: Mutex<OutgoingState>,
-    ready: Condvar,
+    sender: Sender<Waiting>,
     /// The processes whose facts are dropped.
     ignored: IgnoredProcesses,
     /// Numbers the UIA focus events' markers.
     markers: AtomicU64,
     /// The clock the facts' stamps are read from.
     clock: Clock,
+    /// The end of a menu or of the Alt+Tab switcher waiting for its grace.
+    menu_end: Arc<MenuEnd>,
+    /// The threadpool timer that ends the grace.
+    grace: GraceTimer,
 }
 
 /// The clock the listener's stamps are read from: the shared clock,
@@ -167,33 +174,273 @@ impl Default for Clock {
     }
 }
 
+/// What waits while a write to Core is in flight: urgent messages first,
+/// then facts, coalesced one per element and kind, then a menu or switcher
+/// end. The backlog of the listener's [`Sender`], which every message
+/// passes through, so the rules for "forwarding ended" are judged under
+/// the lock every fact is sent under.
 #[derive(Default)]
-struct OutgoingState {
+struct Waiting {
     urgent: VecDeque<OutpostToSupervisor>,
     facts: VecDeque<(Option<(Pid, FactKey)>, OutpostToSupervisor)>,
-    /// When a menu or the Alt+Tab switcher last closed, not yet told to
-    /// Core: as an instant for the grace, in milliseconds since the Unix
-    /// epoch for Core, and as the end's observed and handled stamps. NVDA fakes a focus from such an end only when no
-    /// focus event was validly processed with it; a focus fact can still be
-    /// dropped or fail to read, so Core, which knows which focus it applied,
-    /// decides, and every end is told.
-    menu_end_at: Option<(Instant, u64, EventTiming)>,
+    /// The end of a menu or of the Alt+Tab switcher whose grace has passed,
+    /// sent once no fact waits.
+    menu_end: Option<OutpostToSupervisor>,
     /// The applications whose outposts have their own hooks in, each with
     /// the tick on the event clock after which none of its `WinEvent`
     /// facts is forwarded.
     hooked: HashMap<Pid, u32>,
-    /// Whether the listener is shutting down: what is queued is written,
-    /// then the writer ends.
-    closed: bool,
+}
+
+/// One item the listener sends Core.
+enum Sent {
+    /// A message that goes ahead of everything waiting: a pong, `Ready`,
+    /// or a fault.
+    Urgent(OutpostToSupervisor),
+    /// A fact, with the key it is coalesced under, and, for a `WinEvent`'s,
+    /// the application and the event's stamp.
+    Fact(
+        Option<(Pid, FactKey)>,
+        OutpostToSupervisor,
+        Option<(Pid, WinEventStamp)>,
+    ),
+    /// "Forwarding ended" for an application whose outpost's hook is in,
+    /// from the tick `through` on.
+    ForwardingEnded {
+        pid: Pid,
+        outpost: OutpostId,
+        through: u32,
+    },
+    /// A menu's or the switcher's end, its grace passed.
+    MenuEnd(OutpostToSupervisor),
+    /// A message taken from what waits, to be written.
+    Message(OutpostToSupervisor),
+}
+
+impl Backlog for Waiting {
+    type Item = Sent;
+    type Refused = Infallible;
+
+    fn push(&mut self, item: Sent) -> Result<(), Infallible> {
+        match item {
+            Sent::Urgent(message) | Sent::Message(message) => self.urgent.push_back(message),
+            Sent::Fact(key, message, win_event) => {
+                // Judged under the lock that queues "forwarding ended", so
+                // no fact raised after its tick is ever queued behind it.
+                if let Some((pid, stamp)) = win_event
+                    && let Some(&through) = self.hooked.get(&pid)
+                    && stamp.raised_after(through)
+                {
+                    return Ok(());
+                }
+                if let Some(key) = &key {
+                    self.facts
+                        .retain(|(waiting, _)| waiting.as_ref() != Some(key));
+                }
+                self.facts.push_back((key, message));
+            }
+            Sent::ForwardingEnded {
+                pid,
+                outpost,
+                through,
+            } => {
+                self.hooked.insert(pid, through);
+                self.facts.push_back((
+                    None,
+                    OutpostToSupervisor::ForwardingEnded {
+                        pid,
+                        outpost,
+                        through,
+                    },
+                ));
+            }
+            Sent::MenuEnd(message) => self.menu_end = Some(message),
+        }
+        Ok(())
+    }
+
+    fn pop(&mut self) -> Option<Sent> {
+        self.urgent
+            .pop_front()
+            .or_else(|| self.facts.pop_front().map(|(_, message)| message))
+            .or_else(|| self.menu_end.take())
+            .map(Sent::Message)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.urgent.is_empty() && self.facts.is_empty() && self.menu_end.is_none()
+    }
+
+    fn encode(&mut self, item: Sent, buffer: &mut Vec<u8>) -> io::Result<()> {
+        let mut message = match item {
+            Sent::Urgent(message)
+            | Sent::Message(message)
+            | Sent::Fact(_, message, _)
+            | Sent::MenuEnd(message) => message,
+            Sent::ForwardingEnded {
+                pid,
+                outpost,
+                through,
+            } => OutpostToSupervisor::ForwardingEnded {
+                pid,
+                outpost,
+                through,
+            },
+        };
+        // The write's stamp, for the latency ledger's split of the
+        // listener's time from the pipe's, taken as the write begins,
+        // whichever thread writes.
+        message.written(now_us());
+        put_message(buffer, &message)
+    }
+}
+
+/// The end of a menu or of the Alt+Tab switcher, waiting for its grace:
+/// when it ended, in milliseconds since the Unix epoch for Core, and its
+/// observed and handled stamps. NVDA fakes a focus from such an end only
+/// when no focus event was validly processed with it; a focus fact can
+/// still be dropped or fail to read, so Core, which knows which focus it
+/// applied, decides, and every end is told.
+struct MenuEnd {
+    waiting: Mutex<Option<(u64, EventTiming)>>,
+    sender: Sender<Waiting>,
+}
+
+impl MenuEnd {
+    /// The grace has passed: the end waiting is sent, behind every fact
+    /// waiting.
+    fn grace_ended(&self) {
+        let ended = self
+            .waiting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some((ended_at_ms, timing)) = ended {
+            sent(
+                &self
+                    .sender
+                    .send(Sent::MenuEnd(OutpostToSupervisor::MenuOrSwitchEnded {
+                        ended_at_ms,
+                        timing,
+                    })),
+            );
+        }
+    }
+}
+
+/// A send's outcome: once the listener is shutting down, or Core's pipe
+/// has gone, what is sent is dropped.
+fn sent(sent: &Result<(), SendError<Infallible>>) {
+    if sent.is_err() {
+        tracing::debug!("a message to Core is dropped: the pipe is closed");
+    }
+}
+
+/// A threadpool timer that ends a menu end's grace
+/// (`docs/design/communication.md`, section 4.7): no thread of the
+/// listener's waits for it, and its callback sends the end itself.
+struct GraceTimer {
+    timer: PTP_TIMER,
+    /// The end the callback is given, kept alive until the timer is closed.
+    end: *const MenuEnd,
+}
+
+// SAFETY: a threadpool timer may be set and closed from any thread, and
+// the end it points to is shared, `Sync` data kept alive by the timer.
+unsafe impl Send for GraceTimer {}
+// SAFETY: as above; `arm` only sets the timer, which the threadpool allows
+// from any thread at any time.
+unsafe impl Sync for GraceTimer {}
+
+impl GraceTimer {
+    fn new(end: &Arc<MenuEnd>) -> io::Result<Self> {
+        let end = Arc::into_raw(Arc::clone(end));
+        // SAFETY: the callback is given `end`, which stays alive until the
+        // timer is closed in `drop`, after its callbacks have finished.
+        let timer =
+            unsafe { CreateThreadpoolTimer(Some(grace_ended), Some(end.cast_mut().cast()), None) };
+        match timer {
+            Ok(timer) => Ok(Self { timer, end }),
+            Err(error) => {
+                // SAFETY: from `Arc::into_raw` above, never given out.
+                drop(unsafe { Arc::from_raw(end) });
+                Err(io::Error::other(error))
+            }
+        }
+    }
+
+    /// Ends the grace [`MENU_END_GRACE`] from now, in place of any grace
+    /// already running.
+    fn arm(&self) {
+        // Relative, in 100-nanosecond units.
+        let due = -i64::try_from(MENU_END_GRACE.as_nanos() / 100).unwrap_or(i64::MAX);
+        let due = due.cast_unsigned();
+        let due = FILETIME {
+            dwLowDateTime: (due & 0xFFFF_FFFF) as u32,
+            dwHighDateTime: (due >> 32) as u32,
+        };
+        // SAFETY: the timer is open until `drop`; the due time is read
+        // during the call.
+        unsafe { SetThreadpoolTimer(self.timer, Some(&raw const due), 0, Some(0)) };
+    }
+}
+
+impl Drop for GraceTimer {
+    fn drop(&mut self) {
+        // The timer is stopped, its callbacks waited for or cancelled, and
+        // only then closed and its end released.
+        // SAFETY: the timer is open.
+        unsafe { SetThreadpoolTimer(self.timer, None, 0, None) };
+        // SAFETY: as above.
+        unsafe { WaitForThreadpoolTimerCallbacks(self.timer, true) };
+        // SAFETY: as above; no callback runs or will run.
+        unsafe { CloseThreadpoolTimer(self.timer) };
+        // SAFETY: from `Arc::into_raw` in `new`, released once, here, with
+        // no callback left to use it.
+        drop(unsafe { Arc::from_raw(self.end) });
+    }
+}
+
+/// The grace timer's callback, on a threadpool thread.
+unsafe extern "system" fn grace_ended(
+    _instance: PTP_CALLBACK_INSTANCE,
+    end: *mut core::ffi::c_void,
+    _timer: PTP_TIMER,
+) {
+    // SAFETY: the timer was created with its `MenuEnd`, which outlives
+    // every callback (`GraceTimer::drop`).
+    let end = unsafe { &*end.cast_const().cast::<MenuEnd>() };
+    end.grace_ended();
 }
 
 impl Outgoing {
-    fn urgent(&self, message: OutpostToSupervisor) {
-        self.lock().urgent.push_back(message);
-        self.ready.notify_one();
+    /// Sends through `sender`, dropping the facts of the processes
+    /// `ignored` names.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of creating the menu end's grace timer.
+    fn new(sender: Sender<Waiting>, ignored: IgnoredProcesses) -> io::Result<Self> {
+        let menu_end = Arc::new(MenuEnd {
+            waiting: Mutex::new(None),
+            sender: sender.clone(),
+        });
+        let grace = GraceTimer::new(&menu_end)?;
+        Ok(Self {
+            sender,
+            ignored,
+            markers: AtomicU64::new(0),
+            clock: Clock::default(),
+            menu_end,
+            grace,
+        })
     }
 
-    /// Queues a fact, replacing any waiting fact for the same element and
+    fn urgent(&self, message: OutpostToSupervisor) {
+        sent(&self.sender.send(Sent::Urgent(message)));
+    }
+
+    /// Sends a fact, replacing any waiting fact for the same element and
     /// kind. `raised_ms_ago` is how long before now Windows raised the event,
     /// and `win_event` which thread raised it and when, for a `WinEvent`'s
     /// fact, and `observed_at_us` when the listener's callback began on it.
@@ -215,7 +462,7 @@ impl Outgoing {
         self.queue(pid, fact, (TraceId::mint(), now_ms(), timing), win_event);
     }
 
-    /// Queues `fact`, part of the read of the UIA focus event `meta`
+    /// Sends `fact`, part of the read of the UIA focus event `meta`
     /// describes: its marker, its read, or its drop, carrying the trace and
     /// times of the event itself. Never replaced, since an outpost waits on
     /// the marker until its read or drop arrives.
@@ -233,10 +480,10 @@ impl Outgoing {
         self.markers.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    /// Queues `fact` with its trace, the time it was observed, and its
+    /// Sends `fact` with its trace, the time it was observed, and its
     /// timing, under the rules [`fact`](Self::fact) states. A fact no
     /// reading thread finished with is stamped as handled now, as it is
-    /// queued.
+    /// sent.
     fn queue(
         &self,
         pid: Pid,
@@ -258,62 +505,55 @@ impl Outgoing {
             fact: ListenerFact { pid, fact },
             win_event,
         };
-        let mut state = self.lock();
-        // Judged under the lock that queues "forwarding ended", so no fact
-        // raised after its tick is ever queued behind it.
-        if let Some(stamp) = win_event
-            && let Some(&through) = state.hooked.get(&pid)
-            && stamp.raised_after(through)
-        {
-            return;
-        }
-        if let Some(key) = &key {
-            state
-                .facts
-                .retain(|(waiting, _)| waiting.as_ref() != Some(key));
-        }
-        state.facts.push_back((key, message));
-        drop(state);
-        self.ready.notify_one();
+        sent(&self.sender.send(Sent::Fact(
+            key,
+            message,
+            win_event.map(|stamp| (pid, stamp)),
+        )));
     }
 
     /// The outpost `outpost` watching `pid` has its own hook in: none of
     /// `pid`'s `WinEvent` facts raised after `through`, a tick on the event
     /// clock read now or earlier, is forwarded from now on, and "forwarding
-    /// ended" is queued behind every fact already queued. Facts raised at
+    /// ended" is sent behind every fact already waiting. Facts raised at
     /// or before it are still forwarded, since the outpost's hook may not
     /// have taken them in, and the outpost matches any it did by counting.
     fn hook_installed(&self, pid: Pid, outpost: OutpostId, through: u32) {
-        let mut state = self.lock();
-        state.hooked.insert(pid, through);
-        state.facts.push_back((
-            None,
-            OutpostToSupervisor::ForwardingEnded {
-                pid,
-                outpost,
-                through,
-            },
-        ));
-        drop(state);
-        self.ready.notify_one();
+        sent(&self.sender.send(Sent::ForwardingEnded {
+            pid,
+            outpost,
+            through,
+        }));
     }
 
     /// `pid` has no outpost with its hook in any more: its `WinEvent` facts
     /// are forwarded again.
     fn hook_removed(&self, pid: Pid) {
-        self.lock().hooked.remove(&pid);
+        self.sender
+            .with_backlog(|waiting| waiting.hooked.remove(&pid));
     }
 
     /// Notes that a menu or the Alt+Tab switcher closed, which the
-    /// listener's callback observed at `observed_at_us`.
+    /// listener's callback observed at `observed_at_us`, and starts its
+    /// grace, which a later end starts again.
     fn menu_or_switch_ended(&self, observed_at_us: u64) {
+        self.note_menu_end(observed_at_us);
+        self.grace.arm();
+    }
+
+    /// Notes that a menu or the Alt+Tab switcher closed, observed at
+    /// `observed_at_us`, to be sent once its grace has passed.
+    fn note_menu_end(&self, observed_at_us: u64) {
         let timing = EventTiming {
             observed_at_us,
             listener_handled_at_us: self.now(),
             ..EventTiming::default()
         };
-        self.lock().menu_end_at = Some((Instant::now(), now_ms(), timing));
-        self.ready.notify_one();
+        *self
+            .menu_end
+            .waiting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some((now_ms(), timing));
     }
 
     /// Now, on the clock the listener's stamps are read from.
@@ -325,59 +565,16 @@ impl Outgoing {
         self.urgent(OutpostToSupervisor::Fault { detail });
     }
 
-    /// Ends the writer once what is queued is written, for the listener's
-    /// shutdown.
+    /// Takes nothing more, and has what waits written and the pipe closed,
+    /// for the listener's shutdown; a menu end still in its grace is
+    /// dropped.
     fn close(&self) {
-        self.lock().closed = true;
-        self.ready.notify_one();
-    }
-
-    /// The next message to write, urgent ones first, then facts, then a
-    /// menu or switcher end that no focus event followed. Blocks while there
-    /// is none; `None` once the queue is closed and empty.
-    fn next(&self) -> Option<OutpostToSupervisor> {
-        let mut state = self.lock();
-        loop {
-            if let Some(message) = state.urgent.pop_front() {
-                return Some(message);
-            }
-            if let Some((_, message)) = state.facts.pop_front() {
-                return Some(message);
-            }
-            if state.closed {
-                return None;
-            }
-            let Some((ended, ended_at_ms, timing)) = state.menu_end_at else {
-                state = self
-                    .ready
-                    .wait(state)
-                    .unwrap_or_else(PoisonError::into_inner);
-                continue;
-            };
-            let due = ended + MENU_END_GRACE;
-            let now = Instant::now();
-            if now >= due {
-                state.menu_end_at = None;
-                return Some(OutpostToSupervisor::MenuOrSwitchEnded {
-                    ended_at_ms,
-                    timing,
-                });
-            }
-            state = self
-                .ready
-                .wait_timeout(state, due - now)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
-        }
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, OutgoingState> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+        self.sender.close();
     }
 }
 
-/// The focus listener: owns its subscriptions and the writer for the whole
-/// life of the process.
+/// The focus listener: owns its subscriptions for the whole life of the
+/// process.
 struct Listener {
     outgoing: Arc<Outgoing>,
     readers: Arc<Readers<UiaFocusReading>>,
@@ -386,7 +583,6 @@ struct Listener {
     last_accepted: LastAccepted,
     _registration: Option<Registration>,
     _event_thread: EventThread,
-    _writer: JoinHandle<()>,
 }
 
 /// The reading threads' work in the listener: each UIA focus event judged
@@ -477,7 +673,8 @@ impl Reading for UiaFocusReading {
 }
 
 impl Listener {
-    /// Sets up the listener: starts the writer, installs every subscription,
+    /// Sets up the listener, sending through `sender`: installs every
+    /// subscription,
     /// reporting a failure as a fault, and only then announces readiness,
     /// so the supervisor and Core know focus and menus are seen from then
     /// on. Installing the UIA focus registration can take hundreds of
@@ -490,20 +687,16 @@ impl Listener {
     /// may have left unfinished. `options` says whether UIA focus reads
     /// may use remote operations.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the writer thread cannot be spawned, which means the
-    /// process is out of OS thread resources.
+    /// Returns the error of creating the menu end's grace timer.
     fn new(
-        mut pipe: Box<dyn Write + Send>,
+        sender: Sender<Waiting>,
         ignored: IgnoredProcesses,
         hooks_in: &[(Pid, OutpostId)],
         options: OutpostOptions,
-    ) -> Self {
-        let outgoing = Arc::new(Outgoing {
-            ignored,
-            ..Outgoing::default()
-        });
+    ) -> io::Result<Self> {
+        let outgoing = Arc::new(Outgoing::new(sender, ignored)?);
         // Every event this listener's hook takes in is raised after the
         // hook is installed, so after this tick: none is forwarded for
         // these applications.
@@ -511,23 +704,6 @@ impl Listener {
         for &(pid, outpost) in hooks_in {
             outgoing.hook_installed(pid, outpost, before_the_hook);
         }
-        let writer_outgoing = Arc::clone(&outgoing);
-        let writer = thread::Builder::new()
-            .name("verbatim-listener-outbound".to_owned())
-            .spawn(move || {
-                prioritize_role("listener outbound", WRITER_PRIORITY);
-                while let Some(mut message) = writer_outgoing.next() {
-                    // The write's stamp, for the latency ledger's split
-                    // of the listener's time from the pipe's.
-                    message.written(now_us());
-                    if write_message(&mut pipe, &message).is_err() {
-                        return;
-                    }
-                }
-                let _ = pipe.flush();
-            })
-            .expect("spawn the listener writer");
-
         let last_accepted = LastAccepted::default();
         let readers = Arc::new(Readers::new(
             UiaFocusReading {
@@ -561,14 +737,13 @@ impl Listener {
             target_pid: Pid(0),
         });
 
-        Self {
+        Ok(Self {
             outgoing,
             readers,
             last_accepted,
             _registration: registration,
             _event_thread: event_thread,
-            _writer: writer,
-        }
+        })
     }
 
     /// Shuts the listener down cleanly ([`SupervisorToOutpost::Shutdown`]),
@@ -577,10 +752,11 @@ impl Listener {
     /// other desktop-wide handlers are removed (the registration's thread
     /// waits for a callback in progress, releases its client, and leaves
     /// COM), every reading thread finishes the read in hand, each abandoned
-    /// one returning once UIA gives up on its call, the writer writes what
-    /// is queued and closes the pipe, and the process's hold on COM's
-    /// multithreaded apartment is given back.
-    fn shutdown(self) {
+    /// one returning once UIA gives up on its call, what waits to be
+    /// written to Core is written, the I/O thread `io` serves waiting for
+    /// every write in flight to complete, and the pipe is closed, and the
+    /// process's hold on COM's multithreaded apartment is given back.
+    fn shutdown(self, io: &mut ChildIo) {
         let started = Instant::now();
         let Self {
             outgoing,
@@ -588,7 +764,6 @@ impl Listener {
             last_accepted: _,
             _registration: registration,
             _event_thread: event_thread,
-            _writer: writer,
         } = self;
         drop(event_thread);
         let registration_failed_reads = registration.as_ref().map_or(0, Registration::failed_reads);
@@ -596,7 +771,7 @@ impl Listener {
         let reading_threads = readers.stop();
         let failed_reads = registration_failed_reads.saturating_add(readers.failed_reads());
         outgoing.close();
-        let _ = writer.join();
+        io.finish(&outgoing.sender);
         verbatim_uia::release_mta_usage();
         tracing::info!(
             elapsed_ms = started.elapsed().as_millis(),
@@ -1018,45 +1193,54 @@ fn process_of_thread(thread: u32) -> Option<u32> {
     (pid != 0).then_some(pid)
 }
 
-/// Runs the focus listener driven by the Core pipes: reads commands from
-/// `pipe_in` and writes facts and replies to `pipe_out` until Core asks it
-/// to shut down ([`SupervisorToOutpost::Shutdown`]) or the command stream
-/// ends, then shuts it down cleanly and returns. Facts from the processes
-/// `ignored` holds are dropped, and so are the `WinEvent` facts of the
-/// applications in `hooks_in`, whose outposts have their own hooks in.
-/// `options` says whether UIA focus reads may use remote operations.
+/// Runs the focus listener on the transport's child side
+/// (`docs/design/communication.md`, sections 4.6 and 6.3): the calling
+/// thread becomes its I/O thread, which reads Core's commands from
+/// `pipe_in` and finishes the writes to `pipe_out` that pend, while every
+/// thread that produces a fact writes it itself. Returns once Core asks it
+/// to shut down or its command pipe ends, after a clean shutdown that
+/// waits for every write in flight. Both ends must be overlapped.
+/// `ignored` names the processes whose facts are dropped, `hooks_in` the
+/// applications whose outposts have their own hooks in, and `options` says
+/// whether UIA focus reads may use remote operations.
 ///
 /// # Errors
 ///
-/// Returns any I/O error reading the command stream, after the shutdown.
+/// Returns the error of setting up the pipes or the listener, or any I/O
+/// error reading the command stream, after the shutdown.
 pub fn run_listener(
-    pipe_in: Box<dyn io::Read + Send>,
-    pipe_out: Box<dyn Write + Send>,
+    pipe_in: OwnedHandle,
+    pipe_out: OwnedHandle,
     ignored: IgnoredProcesses,
     hooks_in: &[(Pid, OutpostId)],
     options: OutpostOptions,
 ) -> io::Result<()> {
-    let listener = Listener::new(pipe_out, ignored, hooks_in, options);
-    // This thread reads Core's pipe from here on.
-    prioritize_role("listener reader", READER_PRIORITY);
-    let mut reader = BufReader::new(pipe_in);
-    let ended = loop {
-        match read_message::<_, SupervisorToOutpost>(&mut reader) {
-            Ok(Some(SupervisorToOutpost::Shutdown)) => {
-                tracing::info!("shutting down, as Core asked");
-                break Ok(());
-            }
-            // The command's receipt, one clock read, for the hop from
-            // verbatim.exe's write.
-            Ok(Some(command)) => listener.handle_command(&command, now_us()),
-            Ok(None) => {
-                tracing::warn!("Core's command pipe closed; shutting down");
-                break Ok(());
-            }
-            Err(error) => break Err(error),
+    let (mut io, sender) = ChildIo::new(pipe_in, pipe_out, Waiting::default())?;
+    let listener = Listener::new(sender.clone(), ignored, hooks_in, options)?;
+    // This thread is the listener's I/O thread from here on.
+    prioritize_role("listener I/O", IO_PRIORITY);
+    let served = io.serve(&sender, |body| {
+        // The command's receipt, one clock read, for the hop from
+        // verbatim.exe's write.
+        let received_at_us = now_us();
+        match decode_message::<SupervisorToOutpost>(body)? {
+            SupervisorToOutpost::Shutdown => return Ok(Serving::Stop),
+            command => listener.handle_command(&command, received_at_us),
         }
+        Ok(Serving::Continue)
+    });
+    let ended = match served {
+        Ok(Served::Stopped) => {
+            tracing::info!("shutting down, as Core asked");
+            Ok(())
+        }
+        Ok(Served::CommandsEnded) => {
+            tracing::warn!("Core's command pipe closed; shutting down");
+            Ok(())
+        }
+        Err(error) => Err(error),
     };
-    listener.shutdown();
+    listener.shutdown(&mut io);
     ended
 }
 
@@ -1088,14 +1272,38 @@ pub(crate) fn format_hooks_in(hooks_in: &[(Pid, OutpostId)]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::File;
+    use std::io::BufReader;
     use std::sync::mpsc;
 
-    use super::*;
+    use verbatim_process::overlapped::{End, Flow, pipe};
+    use verbatim_process::transport::EVENT_PIPE_BUFFER;
 
-    /// Everything queued in `outgoing`, which is closed first.
-    fn sent(outgoing: &Outgoing) -> Vec<OutpostToSupervisor> {
+    use super::*;
+    use crate::protocol::read_message;
+
+    /// An `Outgoing` writing to a pipe with a buffer of `buffer` bytes, its
+    /// writes that pend finished by a thread of the sender's own, as the
+    /// I/O thread finishes them, dropping the facts of the processes
+    /// `ignored` holds; and the pipe's other end, which the test reads.
+    fn outgoing_with(buffer: u32, ignored: IgnoredProcesses) -> (Outgoing, BufReader<File>) {
+        let (ours, theirs) = pipe(Flow::Outbound, buffer, End::Synchronous).expect("a pipe");
+        let (sender, _finishing) =
+            Sender::start(ours, Waiting::default(), "listener-test", || {}).expect("a sender");
+        (
+            Outgoing::new(sender, ignored).expect("the listener's sending side"),
+            BufReader::new(File::from(theirs)),
+        )
+    }
+
+    fn outgoing() -> (Outgoing, BufReader<File>) {
+        outgoing_with(EVENT_PIPE_BUFFER, IgnoredProcesses::default())
+    }
+
+    /// Everything `outgoing` sent, which is closed first, as Core reads it.
+    fn sent(outgoing: &Outgoing, reader: &mut BufReader<File>) -> Vec<OutpostToSupervisor> {
         outgoing.close();
-        std::iter::from_fn(|| outgoing.next()).collect()
+        std::iter::from_fn(|| read_message(reader).expect("read")).collect()
     }
 
     /// The stamp of an MSAA event raised at `time`.
@@ -1105,7 +1313,7 @@ mod tests {
 
     #[test]
     fn a_win_event_raised_after_the_outposts_hook_is_in_is_not_forwarded() {
-        let outgoing = Outgoing::default();
+        let (outgoing, mut reader) = outgoing();
         outgoing.fact(Pid(5), msaa_focus(), None, Some(raised_at(90)), 1_000);
         outgoing.hook_installed(Pid(5), OutpostId(3), 100);
         // Raised after the tick: the outpost's hook took it in.
@@ -1132,7 +1340,7 @@ mod tests {
             None,
             1_000,
         );
-        let kinds: Vec<String> = sent(&outgoing)
+        let kinds: Vec<String> = sent(&outgoing, &mut reader)
             .into_iter()
             .map(|message| match message {
                 OutpostToSupervisor::FocusFact { fact, .. } => {
@@ -1155,13 +1363,13 @@ mod tests {
                 "6 Some(MsaaFocus(1, -4, 0))",
                 "5 Some(UiaSelection([42]))",
             ],
-            "the fact queued first goes ahead of forwarding ended"
+            "the fact sent first goes ahead of forwarding ended"
         );
     }
 
     #[test]
     fn a_focus_reads_marker_read_and_drop_are_never_replaced() {
-        let outgoing = Outgoing::default();
+        let (outgoing, mut reader) = outgoing();
         let meta = |marker| Meta {
             marker,
             trace: TraceId::mint(),
@@ -1179,7 +1387,7 @@ mod tests {
             DeliveredFact::UiaFocusDropped { marker: 2 },
             meta(2),
         );
-        let facts: Vec<DeliveredFact> = sent(&outgoing)
+        let facts: Vec<DeliveredFact> = sent(&outgoing, &mut reader)
             .into_iter()
             .filter_map(|message| match message {
                 OutpostToSupervisor::FocusFact { fact, .. } => Some(fact.fact),
@@ -1198,12 +1406,53 @@ mod tests {
     }
 
     #[test]
+    fn waiting_facts_are_coalesced_one_per_element_and_kind_behind_a_write_in_flight() {
+        // A pipe with a 4 KiB buffer, so a large fact's write pends until
+        // the test reads, and the facts sent meanwhile wait.
+        let (outgoing, mut reader) = outgoing_with(4096, IgnoredProcesses::default());
+        let mut large = uia_snapshot();
+        large.name = Some("x".repeat(20_000));
+        outgoing.fact(
+            Pid(7),
+            DeliveredFact::UiaSelection {
+                hwnd: 1,
+                focus_window: 0,
+                snapshot: large,
+            },
+            None,
+            None,
+            1_000,
+        );
+        outgoing.fact(Pid(5), msaa_focus(), None, None, 1_000);
+        outgoing.fact(Pid(6), msaa_focus(), None, None, 1_000);
+        // Replaces the waiting one for the same element and kind, and goes
+        // to the back.
+        outgoing.fact(Pid(5), msaa_focus(), None, None, 2_000);
+        outgoing.urgent(OutpostToSupervisor::Pong {
+            seq: 4,
+            parked_count: 0,
+            written_at_us: 0,
+        });
+        let order: Vec<String> = sent(&outgoing, &mut reader)
+            .into_iter()
+            .map(|message| match message {
+                OutpostToSupervisor::FocusFact { fact, timing, .. } => {
+                    format!("{} {}", fact.pid.0, timing.observed_at_us)
+                }
+                OutpostToSupervisor::Pong { seq, .. } => format!("pong {seq}"),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(order, ["7 1000", "pong 4", "6 1000", "5 2000"]);
+    }
+
+    #[test]
     fn a_win_event_is_forwarded_again_once_the_hook_is_removed() {
-        let outgoing = Outgoing::default();
+        let (outgoing, mut reader) = outgoing();
         outgoing.hook_installed(Pid(5), OutpostId(3), 100);
         outgoing.hook_removed(Pid(5));
         outgoing.fact(Pid(5), msaa_focus(), None, Some(raised_at(101)), 1_000);
-        let sent = sent(&outgoing);
+        let sent = sent(&outgoing, &mut reader);
         assert!(
             matches!(
                 sent.as_slice(),
@@ -1235,13 +1484,12 @@ mod tests {
         }
     }
 
-    /// Takes messages from `outgoing` on another thread, since `next`
-    /// blocks while there is nothing to send.
-    fn drain(outgoing: &Arc<Outgoing>) -> mpsc::Receiver<OutpostToSupervisor> {
+    /// Reads the messages `reader` brings on another thread, since a read
+    /// blocks while nothing has been written.
+    fn drain(mut reader: BufReader<File>) -> mpsc::Receiver<OutpostToSupervisor> {
         let (tx, rx) = mpsc::channel();
-        let outgoing = Arc::clone(outgoing);
-        thread::spawn(move || {
-            while let Some(message) = outgoing.next() {
+        std::thread::spawn(move || {
+            while let Ok(Some(message)) = read_message(&mut reader) {
                 if tx.send(message).is_err() {
                     return;
                 }
@@ -1286,13 +1534,11 @@ mod tests {
     }
 
     #[test]
-    fn a_fact_from_an_ignored_process_is_never_queued() {
+    fn a_fact_from_an_ignored_process_is_never_sent() {
         // This process stands for the owner's Windows Terminal.
         let own = Pid(std::process::id());
-        let outgoing = Outgoing {
-            ignored: IgnoredProcesses::hold([own]),
-            ..Outgoing::default()
-        };
+        let (outgoing, mut reader) =
+            outgoing_with(EVENT_PIPE_BUFFER, IgnoredProcesses::hold([own]));
         outgoing.fact(
             own,
             DeliveredFact::Foreground { hwnd: 1 },
@@ -1302,11 +1548,7 @@ mod tests {
         );
         outgoing.fact(own, msaa_focus(), None, None, 1_000);
         outgoing.fact(Pid(5), msaa_focus(), None, None, 1_000);
-        outgoing.close();
-        let mut sent = Vec::new();
-        while let Some(message) = outgoing.next() {
-            sent.push(message);
-        }
+        let sent = sent(&outgoing, &mut reader);
         let [OutpostToSupervisor::FocusFact { fact, .. }] = sent.as_slice() else {
             panic!("one fact is sent, the other process's: {sent:?}");
         };
@@ -1315,8 +1557,8 @@ mod tests {
 
     #[test]
     fn a_menu_end_no_focus_follows_reaches_core_after_the_grace() {
-        let outgoing = Arc::new(Outgoing::default());
-        let messages = drain(&outgoing);
+        let (outgoing, reader) = outgoing();
+        let messages = drain(reader);
         let ended = Instant::now();
         outgoing.menu_or_switch_ended(1_000);
         let message = messages
@@ -1333,10 +1575,10 @@ mod tests {
     fn a_menu_end_a_focus_follows_is_sent_after_the_focus() {
         // Whether the focus was usable is Core's to judge: it may yet be
         // dropped or fail to read.
-        let outgoing = Arc::new(Outgoing::default());
+        let (outgoing, reader) = outgoing();
         outgoing.menu_or_switch_ended(1_000);
         outgoing.fact(Pid(5), msaa_focus(), None, None, 1_000);
-        let messages = drain(&outgoing);
+        let messages = drain(reader);
         let first = messages
             .recv_timeout(Duration::from_secs(5))
             .expect("the focus fact is sent");
@@ -1350,17 +1592,52 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn a_menu_end_whose_grace_ends_behind_a_write_in_flight_goes_after_every_waiting_fact() {
+        // The grace timer's callback sends the end through the sender the
+        // facts go through, so it waits behind the write in flight, and
+        // goes after every fact waiting when it is written, one sent after
+        // it included.
+        let (outgoing, mut reader) = outgoing_with(4096, IgnoredProcesses::default());
+        let mut large = uia_snapshot();
+        large.name = Some("x".repeat(20_000));
+        outgoing.fact(
+            Pid(7),
+            DeliveredFact::UiaSelection {
+                hwnd: 1,
+                focus_window: 0,
+                snapshot: large,
+            },
+            None,
+            None,
+            1_000,
+        );
+        outgoing.fact(Pid(5), msaa_focus(), None, None, 1_000);
+        outgoing.note_menu_end(1_000);
+        // As the timer's callback does when the grace ends.
+        outgoing.menu_end.grace_ended();
+        outgoing.fact(Pid(6), msaa_focus(), None, None, 1_000);
+        let order: Vec<String> = sent(&outgoing, &mut reader)
+            .into_iter()
+            .map(|message| match message {
+                OutpostToSupervisor::FocusFact { fact, .. } => format!("fact {}", fact.pid.0),
+                OutpostToSupervisor::MenuOrSwitchEnded { .. } => "menu end".to_owned(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(order, ["fact 7", "fact 5", "fact 6", "menu end"]);
+    }
+
     /// An `Outgoing` whose clock always reads 7,000.
-    fn at_seven_thousand() -> Outgoing {
-        Outgoing {
-            clock: Clock(|| 7_000),
-            ..Outgoing::default()
-        }
+    fn at_seven_thousand() -> (Outgoing, BufReader<File>) {
+        let (mut outgoing, reader) = outgoing();
+        outgoing.clock = Clock(|| 7_000);
+        (outgoing, reader)
     }
 
     /// The timing of the one fact `outgoing` sends.
-    fn timing_of_the_fact(outgoing: &Outgoing) -> EventTiming {
-        let sent = sent(outgoing);
+    fn timing_of_the_fact(outgoing: &Outgoing, reader: &mut BufReader<File>) -> EventTiming {
+        let sent = sent(outgoing, reader);
         let [OutpostToSupervisor::FocusFact { timing, .. }] = sent.as_slice() else {
             panic!("one fact is sent: {sent:?}");
         };
@@ -1368,10 +1645,10 @@ mod tests {
     }
 
     #[test]
-    fn a_win_events_fact_is_observed_by_its_callback_and_handled_as_it_is_queued() {
-        let outgoing = at_seven_thousand();
+    fn a_win_events_fact_is_observed_by_its_callback_and_handled_as_it_is_sent() {
+        let (outgoing, mut reader) = at_seven_thousand();
         outgoing.fact(Pid(5), msaa_focus(), None, None, 6_000);
-        let timing = timing_of_the_fact(&outgoing);
+        let timing = timing_of_the_fact(&outgoing, &mut reader);
         assert_eq!(
             (timing.observed_at_us, timing.listener_handled_at_us),
             (6_000, 7_000)
@@ -1379,8 +1656,8 @@ mod tests {
     }
 
     #[test]
-    fn a_marker_is_handled_as_it_is_queued() {
-        let outgoing = at_seven_thousand();
+    fn a_marker_is_handled_as_it_is_sent() {
+        let (outgoing, mut reader) = at_seven_thousand();
         let meta = Meta {
             marker: 1,
             trace: TraceId::mint(),
@@ -1391,12 +1668,15 @@ mod tests {
             },
         };
         outgoing.focus_read(Pid(5), DeliveredFact::UiaFocusMarker { marker: 1 }, meta);
-        assert_eq!(timing_of_the_fact(&outgoing).listener_handled_at_us, 7_000);
+        assert_eq!(
+            timing_of_the_fact(&outgoing, &mut reader).listener_handled_at_us,
+            7_000
+        );
     }
 
     #[test]
     fn a_reading_threads_outcome_keeps_the_threads_stamp() {
-        let outgoing = at_seven_thousand();
+        let (outgoing, mut reader) = at_seven_thousand();
         let meta = Meta {
             marker: 1,
             trace: TraceId::mint(),
@@ -1408,13 +1688,16 @@ mod tests {
             },
         };
         outgoing.focus_read(Pid(5), DeliveredFact::UiaFocusDropped { marker: 1 }, meta);
-        assert_eq!(timing_of_the_fact(&outgoing).listener_handled_at_us, 6_500);
+        assert_eq!(
+            timing_of_the_fact(&outgoing, &mut reader).listener_handled_at_us,
+            6_500
+        );
     }
 
     #[test]
     fn a_menu_end_carries_its_observation_and_handling() {
-        let outgoing = Arc::new(at_seven_thousand());
-        let messages = drain(&outgoing);
+        let (outgoing, reader) = at_seven_thousand();
+        let messages = drain(reader);
         outgoing.menu_or_switch_ended(6_000);
         let message = messages
             .recv_timeout(Duration::from_secs(5))

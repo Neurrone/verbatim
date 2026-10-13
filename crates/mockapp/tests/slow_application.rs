@@ -23,6 +23,8 @@ use verbatim_outpost::Outpost;
 use verbatim_outpost::protocol::{
     DeliveredFact, OutpostToSupervisor, SupervisorToOutpost, read_message,
 };
+use verbatim_process::overlapped::{End, Flow, pipe};
+use verbatim_process::transport::{BlockingReader, EVENT_PIPE_BUFFER};
 
 /// Longer than the old focus deadline, well under NVDA's ten seconds.
 const STALL: Duration = Duration::from_millis(2500);
@@ -50,14 +52,15 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
     let (hwnd, id_object, id_child) =
         common::pump_until(|| *focus.lock().unwrap_or_else(PoisonError::into_inner));
 
-    let (pipe_in, pipe_out) = std::io::pipe().expect("an anonymous pipe");
-    let outpost = Outpost::new(Box::new(pipe_out), pid);
+    let (pipe_in, pipe_out) =
+        pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Overlapped).expect("a pipe");
+    let outpost = Outpost::new(pipe_out, pid);
     // No window takes the foreground on the desktop the test runs on:
     // mockapp's is the foreground, so its focus passes the acceptance test.
     outpost.set_foreground_reader(Arc::new(move || window));
     let (messages_tx, messages) = mpsc::channel();
     std::thread::spawn(move || {
-        let mut reader = BufReader::new(pipe_in);
+        let mut reader = BufReader::new(BlockingReader::new(pipe_in).expect("a reader"));
         while let Ok(Some(message)) = read_message::<_, OutpostToSupervisor>(&mut reader) {
             if messages_tx.send(message).is_err() {
                 return;

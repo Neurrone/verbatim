@@ -226,17 +226,20 @@ Public API:
   and `core_read_at_us`, when its reader read an outpost's `Event` or
   `Reply` (`OutpostToSupervisor::core_read`). A `Query` carries
   `core_received_at_us`, `core_relay_us`, and `core_sent_at_us` to the
-  outpost, which copies them into its reply. Each writer stamps when it
-  began writing, just before encoding (`OutpostToSupervisor::written`):
-  the listener's writer `listener_written_at_us` on a `FocusFact`, and
-  the outpost's writer `written_at_us` on an `Event` or `Reply`. The
-  listener stamps `listener_handled_at_us` when it has handled a fact: a
-  reading thread as it finishes with a UIA focus, menu opening, selection
-  or notification, and the outgoing queue, as it queues it, for any other
-  fact (a `WinEvent`'s, a marker, a drop decided without a read). These
+  outpost, which copies them into its reply. Each message is stamped as
+  its write begins, just before it is encoded, by whichever thread writes
+  it, the one that sent it or the I/O thread finishing what waited behind
+  a write in flight (`OutpostToSupervisor::written`, called from the
+  backlog's `encode`): `listener_written_at_us` on a listener's
+  `FocusFact`, and `written_at_us` on an outpost's `Event` or `Reply`.
+  The listener stamps `listener_handled_at_us` when it has handled a fact:
+  a reading thread as it finishes with a UIA focus, menu opening,
+  selection or notification, and the sending side, as it sends it, for
+  any other fact (a `WinEvent`'s, a marker, a drop decided without a
+  read). These
   split the hops to verbatim.exe into the sender's own time and the
   pipe's. `MenuOrSwitchEnded` carries an `EventTiming` with the same
-  listener stamps, and `Pong` a `written_at_us` from its writer. The
+  listener stamps, and `Pong` a `written_at_us` stamped the same way. The
   commands to the listener (`Ping`, `HookInstalled`, `HookRemoved`,
   `FocusQueued`) carry `sent_at_us`, which verbatim.exe's writer stamps
   as the write begins (`SupervisorToOutpost::stamp_sent`); the listener
@@ -287,8 +290,8 @@ Public API:
   as compact JSON, through `write_message` and `read_message`;
   `write_message` hands its writer the whole frame in one write, so a
   message is one `WriteFile` on a bare pipe, `encode_message` gives those
-  bytes without writing them, and `put_message` puts them in a buffer a
-  sender writes from.
+  bytes without writing them, `put_message` appends them to a buffer a
+  sender writes from, and `decode_message` parses a frame's body.
 - `Arbitrator` — NVDA's per-window backend decision (`_isUIAWindowHelper`):
   `verdict(hwnd, &WindowClasses)` answers from the good class list, the
   Windows 11 shell rule (the root ancestor's class is a shell top-level
@@ -470,18 +473,31 @@ Public API:
     aborting at once for a hung window, as list view and edit messages
     were already. An `IAccessible` call has no bound of its own: the
     entry's deadline, enforced by abandonment, is its bound.
-  - The reader (`Outpost::handle_command`, driven by `run_pipe`) answers
-    pings itself, withdraws a cancelled query that has not started with a
-    `NotStarted` reply, and queues everything else.
-  - The writer (`outpost::outbound`), under "Messages to Core" below.
-  `run_pipe` is the production mode over inherited pipe handles, which
-  reads Core's commands until Core asks it to shut down, or the command
-  pipe ends, and then shuts the outpost down cleanly (`Outpost::shutdown`,
-  under "Shutting down" below); it also tells Core when the target
-  application exits, from a thread that waits on the application's
-  process. `run_attach`
-  watches a pid directly, asks for its focus, and prints outbound messages as
-  frames to stdout, the standalone dev mode. Both take an
+  - The I/O thread, the process's main thread in `run_pipe`, on the
+    transport's child side (`verbatim_process::transport::ChildIo`;
+    `docs/design/communication.md`, sections 4.6 and 6.4): it waits only
+    on its completion port, reads Core's commands and hands each to
+    `Outpost::handle_command`, which answers pings itself, the pong
+    written at once unless a write is in flight, withdraws a cancelled
+    query that has not started with a `NotStarted` reply, and queues
+    everything else; and it finishes the writes to Core that pended. It
+    runs at `THREAD_PRIORITY_HIGHEST`. It replaced the pipe-reading main
+    thread and the outbound writer thread on 2026-10-14 (communication
+    step 6).
+  - The outbound queue (`outpost::outbound`), under "Messages to Core"
+    below: every thread that sends a message writes it itself.
+  `run_pipe` is the production mode over inherited overlapped pipe
+  handles, which reads Core's commands until Core asks it to shut down,
+  or the command pipe ends, and then shuts the outpost down cleanly
+  (`Outpost::shutdown`, under "Shutting down" below), waiting for every
+  write in flight; it also tells Core when the target application exits,
+  from a thread that waits on the application's process. An outpost made
+  with `Outpost::new` and its siblings, as tests make one in their own
+  process, takes the overlapped end it writes to, and a thread of its
+  sender's own finishes its writes that pend in place of the I/O thread.
+  `run_attach` watches a pid directly, asks for its focus, and prints each
+  outbound message's JSON as a line on stdout, from a thread that reads
+  the outpost's pipe, the standalone dev mode. Both take an
   `OutpostOptions`, fixed for the outpost's life, whose one field,
   `remote_operations`, says whether a UIA focus's ancestry may be read
   with a remote operation (`Outpost::with_options`; `Outpost::new` uses
@@ -589,10 +605,19 @@ Public API:
   `--ignore-pids`, which holds them open too and drops every fact from
   them before it is queued. `Supervisor::is_ignored` lets the app pass
   them over (`crates/verbatim-outpost/tests/ignored_process.rs`, and the
-  listener's `a_fact_from_an_ignored_process_is_never_queued`).
+  listener's `a_fact_from_an_ignored_process_is_never_sent`).
 - `run_listener` — the focus-listener runtime (decisions D13 and D14;
-  outpost redesign, "The focus listener"): sets up the writer, installs
-  the global
+  outpost redesign, "The focus listener"), on the transport's child side
+  (`docs/design/communication.md`, sections 4.6 and 6.3): its main thread
+  is its I/O thread, which waits only on a completion port, reads Core's
+  commands, and finishes the writes to Core that pended, at
+  `THREAD_PRIORITY_HIGHEST`; every thread that produces a fact (UIA's
+  callback threads, the reading threads, the `WinEvent` thread) writes it
+  itself, at once when no write is in flight, with its write stamp taken
+  as the write begins and its frame encoded into the sender's one write
+  buffer, kept from frame to frame. The listener's outbound writer thread
+  and its separate reading of Core's pipe went on 2026-10-14
+  (communication step 6). It installs the global
   MSAA hooks (`LISTENER_SUBSCRIPTIONS`, pid zero: focus, foreground,
   menu-popup, menu and switcher end, alert, and a tooltip window shown,
   forwarded as `DeliveredFact::Show`, whose help balloon the worker
@@ -626,7 +651,15 @@ Public API:
   coalesced with NVDA's UIA limiter rule, one waiting fact per element and
   kind (`DeliveredFact::key`; notifications and a focus's marker, read, and
   drop are never merged), with pongs
-  and `Ready` first. It answers `Ping` with a `Pong`, takes the hand-over's
+  and `Ready` first, while a write is in flight; this backlog of the
+  sender's (`listener::Waiting`) also judges, under the sender's lock,
+  whether a `WinEvent`'s fact was raised after its outpost's hook went in,
+  so none is ever sent behind "forwarding ended". The end of a menu or of
+  the Alt+Tab switcher is told to Core once its grace, 50 milliseconds, has
+  passed with no later end: a threadpool timer, set again by a later end,
+  whose callback sends it through the same sender, behind every fact
+  waiting, so no thread of the listener's waits for the grace. It answers
+  `Ping` with a `Pong`, takes the hand-over's
   `HookInstalled` and `HookRemoved` (above), `HookRemoved` also ending the
   application's reading thread, and ignores everything else.
   Its per-application state is which applications' outposts have their
@@ -1133,11 +1166,12 @@ Implementation notes:
   every node the outpost reports, with the live UIA element or MSAA object
   behind it where it has one.
   Each message that carries node ids (an event, or a reply with a result:
-  `OutpostToSupervisor::carries_nodes`) takes the next position when the
-  worker queues it to be written, and every node issued or looked up since
-  the last publish is recorded as reported at that position; a message
-  merged away while it waits gives up its position, so the positions stay
-  those Core counts (under "Messages to Core" below). Core's reader counts
+  `OutpostToSupervisor::carries_nodes`) takes the next position as it is
+  written, and every node issued or looked up since the last publish is
+  recorded as reported at that position then; until it is written, a node
+  a waiting message may report has no position and is kept. So the
+  positions are those Core counts, in the order Core reads the messages
+  (under "Messages to Core" below). Core's reader counts
   the same messages and hands the app each message's position. The app
   sends `SupervisorToOutpost::NodesHeld` with the node numbers the reducer
   holds in that outpost, the text anchors it holds there (milestone M4),
@@ -1148,7 +1182,7 @@ Implementation notes:
   reported at or before the acknowledged position; a node reported later,
   or not yet reported, is kept, since Core may not have seen it. Only the
   worker in charge releases, and the released nodes leave both registries
-  under the watch lock and the writer's queue lock, and their objects are
+  under the watch lock and the outbound sender's lock, and their objects are
   dropped after both are released, so a worker that replaces an abandoned
   one can never report a node that is about to vanish. A query
   for a released node answers `Gone`. Core's writer replaces a waiting
@@ -1446,15 +1480,23 @@ Implementation notes:
 
 ## Messages to Core
 
-The outpost writes everything it says to Core from one thread
-(`outpost::outbound`), from one queue, and nothing that queues a message
-ever waits: the worker, the watchdog, the reader, and the thread watching
-the target application only add to the queue and return. A watchdog that
-waited behind a full queue, as it did when queuing waited for room under
-the watch lock, could not abandon a hung worker.
+The thread that sends Core a message writes it itself
+(`outpost::outbound`, through the transport's `Sender`;
+`docs/design/communication.md`, section 4.3): the worker its events and
+replies, the I/O thread its pongs, the thread watching the target
+application `TargetExited`. When no write is in flight the message is
+written at once, with one `WriteFile`, and no other thread wakes. When
+one is in flight, the write pending until Core has read enough of the
+pipe, the message waits in one queue, the sender's backlog, and the I/O
+thread writes what waits once the write in flight completes. Nothing that
+sends a message ever waits: a watchdog that waited behind a full queue,
+as it did when queuing waited for room under the watch lock, could not
+abandon a hung worker. Until 2026-10-14 (communication step 6) a writer
+thread of its own wrote every message, woken for each.
 
-- Pongs, `Ready`, and `TargetExited` go ahead of everything else, so a
-  busy outpost is never mistaken for a dead one.
+- Pongs, `Ready`, and `TargetExited` go ahead of everything else that
+  waits, behind only the write in flight, which is never cut, so a busy
+  outpost is never mistaken for a dead one.
 - While messages wait, they are merged by object and kind, as the intake
   and the supervisor merge what reaches the outpost and as NVDA's limiters
   do. An event replaces a waiting event of the same kind for the same node
@@ -1471,24 +1513,33 @@ the watch lock, could not abandon a hung worker.
   so do notifications, each of which says something of its own, and
   faults. A cancelled query's `NotStarted` answer takes its place among
   them too.
-- Nothing is merged across a flush (`Outpost::settle`'s), so everything
-  published before it has been written when it is answered.
+- Nothing is merged across a flush (`Outpost::settle`'s), and a flush is
+  answered only once every write before it has completed, so everything
+  published before it is in the pipe when it is answered.
 - What waits is bounded by the nodes and kinds there are, by Core's
   requests (the supervisor's queue to the outpost holds at most 64), and
   by the intake's limits, without a bound of its own.
-- The queue numbers the messages that carry node ids as Core counts them,
-  in the order they are written, and records which nodes each may have
-  reported. A message merged away gives up its position, so the messages
-  after it come one place earlier than their recorded positions say,
-  which only keeps their nodes a little longer.
+- The messages that carry node ids are numbered as Core counts them as
+  each is written, and the nodes each may have reported are recorded at
+  its number then (`Pending`, the backlog, sees every message, written at
+  once or after waiting).
+- A terminal's output too large for one message is split as it is
+  written (`terminal::split`), each part a frame of its own, numbered as
+  Core counts it.
+- A terminal read that reports the caret and output both sends them
+  together (`Outbound::publish_all`, the transport's `Sender::send_all`):
+  two frames, each with its own header, in one write when none is in
+  flight, so Core's relay wakes once for both; either alone is sent alone.
+- Every message is stamped as its write begins, by whichever thread
+  writes it (`written_at_us`, under `EventTiming` above).
 
 The supervisor's side already never waits: each child's writer queue
 fails or replaces a command when it is full (the `Supervisor` entry above),
 the relay and the reader threads forward to unbounded channels, and the
 maps of writers are locked only to look one up, never across a push or a
-write. The focus
-listener's own queue merges its facts by element and kind and never
-waits either.
+write. The focus listener writes the same way, each fact by the thread
+that produced it, and its backlog merges its facts by element and kind
+and never waits either.
 
 ## Shutting down
 
@@ -1535,8 +1586,12 @@ The outpost's side (`Outpost::shutdown`), in order:
    not answer is ended by UIA's own timeouts.
 5. Every object held is released: every node leaves both registries, with
    its text patterns, anchors, and terminal memory.
-6. The writer writes what is queued, the answer to the call that was in
-   progress included, and closes the pipe.
+6. What waits is written, the answer to the call that was in progress
+   included, every write in flight completes, and the pipe is closed. The
+   outpost never exits with a write in flight, since its exit would cancel
+   the write and cut the frame (`docs/design/communication.md`, section
+   4.6): its I/O thread serves its port until the sender has finished
+   (`ChildIo::finish`).
 7. The thread leaves COM's multithreaded apartment, and the process's
    hold on it is given back (`verbatim_uia::release_mta_usage`), so COM
    ends the apartment once every thread has left it; each worker and each
@@ -1544,8 +1599,8 @@ The outpost's side (`Outpost::shutdown`), in order:
 
 The outpost logs how long each step took (`the outpost shut down`). The
 listener's shutdown removes its hooks, its desktop-wide focus handler, and
-its other desktop-wide handlers, writes what is queued, and gives back
-the apartment; it makes no call into an application, so nothing else can
+its other desktop-wide handlers, writes what waits, waits for every write
+in flight as the outpost does, and gives back the apartment; it makes no call into an application, so nothing else can
 be in progress. Both then end the process with `TerminateProcess` and
 exit code 0 rather than returning from `main`, so no DLL's process-detach
 code runs (`docs/architecture.md`, "Process lifetime").
@@ -1575,7 +1630,9 @@ for a remote operation and once for classic reads, and checks that the
 read's answer is sent, the outpost's four UIA event registrations on
 mockapp's window are removed (counted by mockapp's fragment root through
 `IRawElementProviderAdviseEvents`), the pipe is closed, and mockapp still
-answers another client. `crates/verbatim-outpost/tests/shutdown_fallback.rs`
+answers another client; and that a ping handed to the outpost while its
+worker is held in a call is answered with a pong at once.
+`crates/verbatim-outpost/tests/shutdown_fallback.rs`
 has a real supervisor launch a stand-in listener that never exits, and
 checks that it is killed once its time limit has passed and that the kill
 is reported in the shutdown's summary.

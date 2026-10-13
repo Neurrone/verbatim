@@ -10,11 +10,14 @@
 //! 3. The worker ([`worker`]): one thread that takes entries in order, the
 //!    only thread that calls into the application.
 //! 4. The watchdog: abandons and replaces a worker whose call hangs.
-//! 5. The reader ([`Outpost::handle_command`], driven by [`run_pipe`]):
-//!    answers pings itself, so a busy or hung worker never makes the outpost
-//!    look dead.
-//! 6. The writer ([`outbound`]): pongs and `Ready` go first; queuing never
-//!    waits, and waiting messages are merged by object and kind.
+//! 5. The I/O thread ([`Outpost::handle_command`], driven by [`run_pipe`]
+//!    on the transport's child side): reads Core's commands, answers pings
+//!    itself, so a busy or hung worker never makes the outpost look dead,
+//!    and finishes the writes to Core that pended.
+//! 6. The outbound queue ([`outbound`]): every thread writes its own
+//!    messages to Core when no write is in flight; pongs and `Ready` go
+//!    first; sending never waits, and messages waiting behind a write in
+//!    flight are merged by object and kind.
 //!
 //! Workers run in COM's multithreaded apartment; the registries keep agile
 //! references, so a replacement worker can use what an abandoned one minted.
@@ -41,7 +44,8 @@ mod worker;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::io::{self, BufReader, Write};
+use std::io;
+use std::os::windows::io::OwnedHandle;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -53,7 +57,11 @@ use windows::core::AgileReference;
 
 use verbatim_ia2::{APP_SUBSCRIPTIONS, NodeIdRegistry as MsaaRegistry, WinEvent, WinEventKind};
 use verbatim_model::{Backend, Fetches, NodeId, Pid, TraceId};
+use verbatim_process::overlapped::{End, Flow, pipe};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
+use verbatim_process::transport::{
+    BlockingReader, ChildIo, EVENT_PIPE_BUFFER, Sender, Served, Serving, read_frame,
+};
 use verbatim_uia::{
     Ancestor, Cached, FOCUS_PROPERTIES, Group, Node, NodeIdRegistry as UiaRegistry, Part,
     PropertyEvent, Registration, Request, Scope, Subscription, TextEvent, Uia,
@@ -63,7 +71,7 @@ use crate::arbitration::{Arbitrator, EventWindows, WindowClasses};
 use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use crate::protocol::{
     DeliveredFact, EventTiming, OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost,
-    UiaSnapshotFact, WinEventStamp, now_us, read_message,
+    UiaSnapshotFact, WinEventStamp, decode_message, now_us,
 };
 use crate::text::uia::UiaPos;
 use crate::text::{Anchors, HeldAnchors};
@@ -635,8 +643,23 @@ impl Context {
 pub struct Outpost {
     context: Arc<Context>,
     _event_thread: EventThread,
-    _writer: JoinHandle<()>,
+    finisher: Finisher,
 }
+
+/// The thread that finishes the outpost's writes to Core that pend.
+enum Finisher {
+    /// A thread of the outbound sender's own, for an outpost made in a
+    /// test's process ([`Outpost::new`]), which ends once the sender has
+    /// written everything.
+    Thread(JoinHandle<()>),
+    /// The I/O thread [`run_pipe`] serves Core's pipes on.
+    Io,
+}
+
+/// The priority of a thread that only finishes the outpost's writes to
+/// Core, or reads Core's pipe and hands each command on, for microseconds
+/// per wake (`docs/design/communication.md`, section 6.1).
+const IO_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 impl Outpost {
     /// Creates an outpost watching `target_pid` for its whole life, with
@@ -647,25 +670,25 @@ impl Outpost {
     /// Panics if a thread cannot be spawned, which means the process is out
     /// of OS thread resources.
     #[must_use]
-    pub fn new(pipe: Box<dyn Write + Send>, target_pid: u32) -> Self {
+    pub fn new(pipe: OwnedHandle, target_pid: u32) -> Self {
         Self::with_options(pipe, target_pid, OutpostOptions::default())
     }
 
-    /// Creates an outpost watching `target_pid` for its whole life: starts
-    /// the writer, the worker, and the watchdog, installs the MSAA hooks and
-    /// the focus-following UIA subscription, and announces
-    /// readiness.
+    /// Creates an outpost watching `target_pid` for its whole life, writing
+    /// its messages to Core to `pipe`, an overlapped pipe end: starts the
+    /// worker and the watchdog, installs the MSAA hooks and the
+    /// focus-following UIA subscription, and announces readiness. The
+    /// thread that sends a message writes it; a thread of the sender's own
+    /// finishes the writes that pend, as the I/O thread does in
+    /// [`run_pipe`].
     ///
     /// # Panics
     ///
     /// Panics if a thread cannot be spawned, which means the process is out
-    /// of OS thread resources.
+    /// of OS thread resources, or `pipe` cannot be used for overlapped
+    /// writes.
     #[must_use]
-    pub fn with_options(
-        pipe: Box<dyn Write + Send>,
-        target_pid: u32,
-        options: OutpostOptions,
-    ) -> Self {
+    pub fn with_options(pipe: OwnedHandle, target_pid: u32, options: OutpostOptions) -> Self {
         Self::with_focused_element_reader(pipe, target_pid, options, Arc::new(Uia::focused))
     }
 
@@ -681,12 +704,34 @@ impl Outpost {
     /// of OS thread resources.
     #[must_use]
     pub fn with_focused_element_reader(
-        pipe: Box<dyn Write + Send>,
+        pipe: OwnedHandle,
         target_pid: u32,
         options: OutpostOptions,
         focused_element: FocusedElementReader,
     ) -> Self {
-        let (outbound, writer) = Outbound::start(pipe);
+        let (sender, finishing) =
+            Sender::start(pipe, Outbound::backlog(), "verbatim-outbound", || {
+                prioritize_role("outpost outbound", IO_PRIORITY);
+            })
+            .expect("the outbound sender starts");
+        Self::build(
+            Outbound::new(sender),
+            Finisher::Thread(finishing),
+            target_pid,
+            options,
+            focused_element,
+        )
+    }
+
+    /// The outpost, sending through `outbound`, whose writes that pend
+    /// `finisher` finishes.
+    fn build(
+        outbound: Outbound,
+        finisher: Finisher,
+        target_pid: u32,
+        options: OutpostOptions,
+        focused_element: FocusedElementReader,
+    ) -> Self {
         let id_counter = Arc::new(AtomicU64::new(1));
         let anchor_counter = Arc::new(AtomicU64::new(0));
         let held_anchors = HeldAnchors::default();
@@ -790,7 +835,7 @@ impl Outpost {
         let outpost = Self {
             context,
             _event_thread: event_thread,
-            _writer: writer,
+            finisher,
         };
         outpost.context.outbound.urgent(OutpostToSupervisor::Ready {
             outpost_pid: Pid(std::process::id()),
@@ -840,7 +885,8 @@ impl Outpost {
     /// 5. Every object held is released: the registries' UIA elements and
     ///    MSAA objects, and the text patterns and ranges kept for text and
     ///    terminals.
-    /// 6. The writer writes what is queued and closes the pipe.
+    /// 6. What waits to be written to Core is written, every write in
+    ///    flight completes, and the pipe is closed.
     /// 7. The calling thread leaves COM, and the process's hold on the
     ///    multithreaded apartment is given back.
     ///
@@ -850,12 +896,18 @@ impl Outpost {
     /// without running DLL detach code (`docs/architecture.md`, "Process
     /// lifetime").
     pub fn shutdown(self) {
+        self.shut_down(None);
+    }
+
+    /// [`shutdown`](Self::shutdown), on the I/O thread `io` serves, which
+    /// finishes the writes in flight.
+    fn shut_down(self, io: Option<&mut ChildIo>) {
         let started = std::time::Instant::now();
         let joined = verbatim_uia::init_mta();
         let Self {
             context,
             _event_thread: event_thread,
-            _writer: writer,
+            finisher,
         } = self;
         drop(context.intake.close());
         drop(event_thread);
@@ -870,7 +922,15 @@ impl Outpost {
         let failed_reads = context.failed_reads();
         verbatim_uia::release_thread_state();
         context.outbound.close();
-        let _ = writer.join();
+        match (finisher, io) {
+            (Finisher::Thread(finishing), _) => {
+                let _ = finishing.join();
+            }
+            (Finisher::Io, Some(io)) => io.finish(context.outbound.sender()),
+            (Finisher::Io, None) => {
+                tracing::error!("no I/O thread finishes the outpost's writes");
+            }
+        }
         if joined.is_ok() {
             verbatim_uia::leave_mta();
         }
@@ -933,9 +993,9 @@ impl Outpost {
         let _ = self.context.heard.set(observer);
     }
 
-    /// Handles one command from Core, on the reader thread. Pings are
-    /// answered here; everything that reads the application is queued for
-    /// the worker.
+    /// Handles one command from Core, on the I/O thread. Pings are
+    /// answered here, the pong written at once unless a write is in flight;
+    /// everything that reads the application is queued for the worker.
     pub fn handle_command(&self, command: &SupervisorToOutpost) {
         let context = &self.context;
         match command {
@@ -1209,48 +1269,59 @@ fn fault(context: &Context, detail: String) {
     context.outbound.send(OutpostToSupervisor::Fault { detail });
 }
 
-/// The priority of the outpost's main thread, which reads Core's pipe and
-/// hands each command to the intake, for microseconds per wake
-/// (`docs/design/communication.md`, section 6.1).
-const READER_PRIORITY: ThreadPriority = ThreadPriority::Highest;
-
 /// Runs an outpost driven by the Core pipes, watching `target_pid` for its
-/// whole life: reads commands from `pipe_in` and writes outbound messages to
-/// `pipe_out` until Core asks it to shut down
-/// ([`SupervisorToOutpost::Shutdown`]) or the command stream ends, then
-/// shuts it down cleanly ([`Outpost::shutdown`]) and returns. When the
-/// target application exits, Core is told
-/// ([`OutpostToSupervisor::TargetExited`]) and asks for the shutdown.
+/// whole life, on the transport's child side
+/// (`docs/design/communication.md`, sections 4.6 and 6.4): the calling
+/// thread becomes the outpost's I/O thread, which reads commands from
+/// `pipe_in` and finishes the writes to `pipe_out` that pend, while every
+/// thread that sends Core a message writes it itself. It runs until Core
+/// asks the outpost to shut down ([`SupervisorToOutpost::Shutdown`]) or
+/// the command stream ends, then shuts it down cleanly
+/// ([`Outpost::shutdown`]), waiting for every write in flight, and
+/// returns. When the target application exits, Core is told
+/// ([`OutpostToSupervisor::TargetExited`]) and asks for the shutdown. Both
+/// ends must be overlapped.
 ///
 /// # Errors
 ///
-/// Returns any I/O error reading the command stream, after the shutdown.
+/// Returns the error of setting up the pipes, or any I/O error reading the
+/// command stream, after the shutdown.
 pub fn run_pipe(
-    pipe_in: Box<dyn io::Read + Send>,
-    pipe_out: Box<dyn Write + Send>,
+    pipe_in: OwnedHandle,
+    pipe_out: OwnedHandle,
     target_pid: u32,
     options: OutpostOptions,
 ) -> io::Result<()> {
-    let outpost = Outpost::with_options(pipe_out, target_pid, options);
+    let (mut io, sender) = ChildIo::new(pipe_in, pipe_out, Outbound::backlog())?;
+    let outpost = Outpost::build(
+        Outbound::new(sender.clone()),
+        Finisher::Io,
+        target_pid,
+        options,
+        Arc::new(Uia::focused),
+    );
     watch_target(&outpost.context);
-    // This thread reads Core's pipe from here on.
-    prioritize_role("outpost reader", READER_PRIORITY);
-    let mut reader = BufReader::new(pipe_in);
-    let ended = loop {
-        match read_message::<_, SupervisorToOutpost>(&mut reader) {
-            Ok(Some(SupervisorToOutpost::Shutdown)) => {
-                tracing::info!("shutting down, as Core asked");
-                break Ok(());
-            }
-            Ok(Some(command)) => outpost.handle_command(&command),
-            Ok(None) => {
-                tracing::warn!("Core's command pipe closed; shutting down");
-                break Ok(());
-            }
-            Err(error) => break Err(error),
+    // This thread is the outpost's I/O thread from here on.
+    prioritize_role("outpost I/O", IO_PRIORITY);
+    let served = io.serve(&sender, |body| {
+        match decode_message::<SupervisorToOutpost>(body)? {
+            SupervisorToOutpost::Shutdown => return Ok(Serving::Stop),
+            command => outpost.handle_command(&command),
         }
+        Ok(Serving::Continue)
+    });
+    let ended = match served {
+        Ok(Served::Stopped) => {
+            tracing::info!("shutting down, as Core asked");
+            Ok(())
+        }
+        Ok(Served::CommandsEnded) => {
+            tracing::warn!("Core's command pipe closed; shutting down");
+            Ok(())
+        }
+        Err(error) => Err(error),
     };
-    outpost.shutdown();
+    outpost.shut_down(Some(&mut io));
     ended
 }
 
@@ -1275,16 +1346,29 @@ fn watch_target(context: &Arc<Context>) {
     }
 }
 
-/// Runs an outpost in dev-attach mode: writes outbound messages as JSON lines
-/// to stdout, watches the given target for its whole life, asks for the
-/// current focus, and streams events until the process is killed.
+/// Runs an outpost in dev-attach mode: prints each outbound message's JSON
+/// as a line on stdout, watches the given target for its whole life, asks
+/// for the current focus, and streams events until the process is killed.
 ///
 /// # Errors
 ///
 /// Returns an I/O error only if dev-mode setup fails before the event loop
 /// begins; once running it blocks until the process is terminated.
 pub fn run_attach(target_pid: u32, options: OutpostOptions) -> io::Result<()> {
-    let outpost = Outpost::with_options(Box::new(io::stdout()), target_pid, options);
+    let (printed, written) = pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Overlapped)?;
+    let mut printed = io::BufReader::new(BlockingReader::new(printed)?);
+    thread::Builder::new()
+        .name("verbatim-attach-printer".to_owned())
+        .spawn(move || {
+            use std::io::Write as _;
+            while let Ok(Some(body)) = read_frame(&mut printed) {
+                let mut stdout = io::stdout().lock();
+                let _ = stdout.write_all(&body);
+                let _ = stdout.write_all(b"\n");
+                let _ = stdout.flush();
+            }
+        })?;
+    let outpost = Outpost::with_options(written, target_pid, options);
     // No listener forwards anything here: the outpost's own hook takes in
     // every `WinEvent`.
     outpost.context.handover().without_listener();

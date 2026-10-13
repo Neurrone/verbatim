@@ -13,6 +13,7 @@
 
 use std::io::Write as _;
 use std::time::{Duration, Instant};
+use verbatim_process::transport::{BlockingReader, BlockingWriter};
 
 use crossbeam_channel::unbounded;
 use verbatim_model::Pid;
@@ -40,9 +41,16 @@ fn stuck_child(args: &[String]) -> ! {
     };
     // SAFETY: the supervisor passes the values of the pipe ends it created
     // for this process, which inherited them and uses them nowhere else.
-    let (_commands, mut messages) =
-        unsafe { verbatim_process::inherited_pipes(value("--pipe-in"), value("--pipe-out")) }
-            .expect("the inherited pipes");
+    let (commands, messages) = unsafe {
+        verbatim_process::inherited_pipe_handles(value("--pipe-in"), value("--pipe-out"))
+    }
+    .expect("the inherited pipes");
+    // The supervisor makes both ends overlapped; this stand-in blocks on
+    // each read and write.
+    let (_commands, mut messages) = (
+        BlockingReader::new(commands).expect("a reader"),
+        BlockingWriter::new(messages).expect("a writer"),
+    );
     write_message(
         &mut messages,
         &OutpostToSupervisor::Ready {

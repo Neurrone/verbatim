@@ -16,7 +16,9 @@ use std::time::Duration;
 use verbatim_outpost::protocol::{
     OutpostToSupervisor, SupervisorToOutpost, read_message, write_message,
 };
-use verbatim_process::ChildSpec;
+use verbatim_process::overlapped::{End, Flow, pipe};
+use verbatim_process::transport::{BlockingReader, BlockingWriter, EVENT_PIPE_BUFFER};
+use verbatim_process::{ChildEnds, ChildSpec};
 
 /// The stand-in application's argument.
 const TARGET: &str = "--stand-in-application";
@@ -37,19 +39,26 @@ fn an_outpost_whose_application_exits_says_so_and_shuts_down_cleanly() {
     let arguments = move |pipe_in: usize, pipe_out: usize| {
         format!("--pipe-in {pipe_in} --pipe-out {pipe_out} --target-pid {target_pid}")
     };
-    let (outpost, pipes) = verbatim_process::launch(&ChildSpec {
-        exe: &exe,
-        arguments: &arguments,
-        log_stem: "target-exit-test",
-        memory_cap: None,
-        from_child_buffer: 0,
-    })
+    // Overlapped ends on both sides, as the supervisor makes them.
+    let (to_child, commands) =
+        pipe(Flow::Outbound, EVENT_PIPE_BUFFER, End::Overlapped).expect("a pipe");
+    let (from_child, messages) =
+        pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Overlapped).expect("a pipe");
+    let outpost = verbatim_process::launch_with_ends(
+        &ChildSpec {
+            exe: &exe,
+            arguments: &arguments,
+            log_stem: "target-exit-test",
+            memory_cap: None,
+            from_child_buffer: 0,
+        },
+        ChildEnds { commands, messages },
+    )
     .expect("the outpost starts in its job");
 
     let (messages_tx, messages) = mpsc::channel();
-    let from_child = pipes.from_child;
     std::thread::spawn(move || {
-        let mut reader = BufReader::new(from_child);
+        let mut reader = BufReader::new(BlockingReader::new(from_child).expect("a reader"));
         while let Ok(Some(message)) = read_message::<_, OutpostToSupervisor>(&mut reader) {
             if messages_tx.send(message).is_err() {
                 return;
@@ -70,7 +79,7 @@ fn an_outpost_whose_application_exits_says_so_and_shuts_down_cleanly() {
         "the outpost says its application exited"
     );
 
-    let mut to_child = pipes.to_child;
+    let mut to_child = BlockingWriter::new(to_child).expect("a writer");
     write_message(&mut to_child, &SupervisorToOutpost::Shutdown).expect("Shutdown is written");
     to_child.flush().expect("Shutdown is sent");
     assert_eq!(

@@ -5,6 +5,9 @@
 //! registered, which mockapp sees through the registrations UIA reports
 //! to its fragment root (`IRawElementProviderAdviseEvents`), and closes
 //! its pipe. mockapp keeps running and answers another client afterwards.
+//! While a read is held, a ping is still answered: the outpost's I/O
+//! thread writes the pong itself (`docs/design/communication.md`, section
+//! 6.8), so a worker stuck in a call never makes the outpost look dead.
 //!
 //! mockapp's `hold` command holds the read: the provider call it makes
 //! first waits, and mockapp says which call it is, until the test releases
@@ -24,7 +27,9 @@ use verbatim_model::{
     CallCounts, NodeId, NormalizedEvent, TextOp, TextPoint, TextRead, TextReply, TextUnit,
 };
 use verbatim_outpost::OutpostOptions;
-use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, QueryResult};
+use verbatim_outpost::protocol::{
+    OutpostToSupervisor, Query, QueryOutcome, QueryResult, SupervisorToOutpost,
+};
 use verbatim_uia::{Node, Shape, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
@@ -230,8 +235,69 @@ fn a_classic_read_in_progress_finishes_before_the_outpost_shuts_down() {
     );
 }
 
+/// A ping handed to the outpost, as its I/O thread hands each command on,
+/// while its worker is held in a call into mockapp is answered at once,
+/// and the held read still answers once it is released.
+fn a_ping_is_answered_while_the_worker_is_held_in_a_call() {
+    common::init_com();
+    let title = common::unique_title("mockapp-ping-held");
+    let mut app = common::spawn_counting_registrations("caret_watch.json", &title);
+    let hwnd = common::find_window(&title);
+    let mut outpost = OutpostUnderTest::with_options(
+        &app,
+        OutpostOptions {
+            remote_operations: false,
+        },
+    );
+    let notes = focus_notes(&mut app, &outpost, hwnd);
+
+    app.hold();
+    let request = outpost.ask(Query::Text {
+        node_id: notes,
+        op: TextOp::Read(TextRead {
+            at: TextPoint::Caret,
+            movement: None,
+            unit: TextUnit::Line,
+        }),
+    });
+    assert_eq!(
+        app.held(),
+        "TextGetSelection",
+        "the worker is in the read's first provider call"
+    );
+    outpost.outpost.handle_command(&SupervisorToOutpost::Ping {
+        seq: 9,
+        sent_at_us: 0,
+    });
+    match outpost.next() {
+        OutpostToSupervisor::Pong {
+            seq: 9,
+            parked_count: 0,
+            ..
+        } => {}
+        other => panic!("the outpost said {other:?}, not the pong"),
+    }
+    app.release();
+    match outpost.next() {
+        OutpostToSupervisor::Reply {
+            request_id,
+            outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Read { moved, chunk })),
+            ..
+        } if request_id == request => {
+            assert_eq!((moved, chunk.text.as_str()), (0, "alpha beta\n"));
+        }
+        other => panic!("the outpost said {other:?}, not the read's answer"),
+    }
+    outpost.settled();
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_ping_is_answered_while_the_worker_is_held_in_a_call",
+            a_ping_is_answered_while_the_worker_is_held_in_a_call,
+        ),
         (
             "a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down",
             a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down,

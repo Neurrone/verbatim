@@ -27,12 +27,15 @@
 use std::io::{self, BufRead, Read};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::thread;
+use std::thread::{self, JoinHandle};
 
-use windows::Win32::Foundation::{ERROR_BROKEN_PIPE, ERROR_IO_PENDING, HANDLE};
-use windows::Win32::Storage::FileSystem::ReadFile;
-use windows::Win32::System::IO::{GetOverlappedResult, OVERLAPPED};
-use windows::Win32::System::Threading::CreateEventW;
+use windows::Win32::Foundation::{
+    ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_OPERATION_ABORTED, HANDLE, WAIT_TIMEOUT,
+};
+use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile};
+use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
+use windows::Win32::System::Pipes::PeekNamedPipe;
+use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 
 use crate::overlapped::{Completion, Completions, PipeIo, Port, PortFile, Started, win32_error};
 
@@ -55,18 +58,30 @@ const LENGTH_DIGITS: usize = 10;
 /// The longest header a reader accepts.
 const MAX_HEADER_BYTES: usize = 64;
 
-/// Puts a frame in `buffer`, which is cleared first: the header, then the
-/// body `put_body` appends.
+/// Appends a frame to `buffer`: the header, then the body `put_body`
+/// appends. What `buffer` held before is kept, so several frames can be put
+/// in one buffer and written with one write ([`Sender::send_all`]).
 ///
 /// # Errors
 ///
 /// Returns `put_body`'s error, or [`io::ErrorKind::InvalidInput`] for a
-/// body larger than [`MAX_FRAME_BYTES`].
+/// body larger than [`MAX_FRAME_BYTES`]; `buffer` is then left as it was.
 pub fn put_frame(
     buffer: &mut Vec<u8>,
     put_body: impl FnOnce(&mut Vec<u8>) -> io::Result<()>,
 ) -> io::Result<()> {
-    buffer.clear();
+    let start = buffer.len();
+    let framed = append_frame(buffer, put_body);
+    if framed.is_err() {
+        buffer.truncate(start);
+    }
+    framed
+}
+
+fn append_frame(
+    buffer: &mut Vec<u8>,
+    put_body: impl FnOnce(&mut Vec<u8>) -> io::Result<()>,
+) -> io::Result<()> {
     buffer.extend_from_slice(HEADER_NAME);
     let digits = buffer.len();
     buffer.extend_from_slice(&[b'0'; LENGTH_DIGITS]);
@@ -186,42 +201,167 @@ impl BlockingReader {
     ///
     /// Returns the error if the event a read waits on cannot be created.
     pub fn new(pipe: OwnedHandle) -> io::Result<Self> {
-        // SAFETY: a manual-reset event, unnamed, with default security; the
-        // handle returned is owned below.
-        let event = unsafe { CreateEventW(None, true, false, None) }.map_err(win32_error)?;
         Ok(Self {
             pipe,
-            // SAFETY: a valid handle just returned, owned by nothing else.
-            event: unsafe { OwnedHandle::from_raw_handle(event.0 as RawHandle) },
+            event: manual_reset_event()?,
         })
+    }
+}
+
+impl BlockingReader {
+    /// Reads into `buffer` as [`Read::read`] does, but waits at most
+    /// `timeout`: `None` when nothing came in that time, the read then
+    /// cancelled (a read may be; a write never is). The end of the pipe
+    /// reads as `Some(0)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the read's error.
+    pub fn read_within(
+        &mut self,
+        buffer: &mut [u8],
+        timeout: std::time::Duration,
+    ) -> io::Result<Option<usize>> {
+        blocking_io(&self.pipe, &self.event, Io::Read(buffer), Some(timeout))
+    }
+
+    /// How many bytes wait in the pipe, read by nobody yet: what a test
+    /// that has had the writer's word that everything is written checks to
+    /// know nothing more was said.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of the peek; a broken pipe, the writer gone with
+    /// nothing left, is [`io::ErrorKind::BrokenPipe`].
+    pub fn available(&self) -> io::Result<usize> {
+        let mut available = 0u32;
+        // SAFETY: an open pipe handle; only the count is written.
+        unsafe {
+            PeekNamedPipe(
+                HANDLE(self.pipe.as_raw_handle()),
+                None,
+                0,
+                None,
+                Some(&raw mut available),
+                None,
+            )
+        }
+        .map_err(win32_error)?;
+        Ok(available as usize)
     }
 }
 
 impl Read for BlockingReader {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let pipe = HANDLE(self.pipe.as_raw_handle());
-        let mut overlapped = OVERLAPPED {
-            hEvent: HANDLE(self.event.as_raw_handle()),
-            ..OVERLAPPED::default()
-        };
-        // SAFETY: the buffer and the OVERLAPPED outlive the read: whether it
-        // completes at once or pends, this function returns only once
-        // GetOverlappedResult, told to wait, has seen it finish.
-        let started = unsafe { ReadFile(pipe, Some(buffer), None, Some(&raw mut overlapped)) };
-        match started {
-            Ok(()) => {}
-            Err(error) if error.code() == ERROR_IO_PENDING.to_hresult() => {}
-            Err(error) if error.code() == ERROR_BROKEN_PIPE.to_hresult() => return Ok(0),
-            Err(error) => return Err(win32_error(error)),
+        blocking_io(&self.pipe, &self.event, Io::Read(buffer), None).map(Option::unwrap_or_default)
+    }
+}
+
+/// An overlapped pipe end written by a thread that blocks until each write
+/// completes, as a [`std::io::Write`]: for a child that writes one message
+/// at a time and has no completion port, such as the stand-in children of
+/// the supervisor's tests.
+pub struct BlockingWriter {
+    pipe: OwnedHandle,
+    /// The event each write's completion signals.
+    event: OwnedHandle,
+}
+
+impl BlockingWriter {
+    /// Writes `pipe`, an end opened for overlapped I/O and not associated
+    /// with a completion port.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error if the event a write waits on cannot be created.
+    pub fn new(pipe: OwnedHandle) -> io::Result<Self> {
+        Ok(Self {
+            pipe,
+            event: manual_reset_event()?,
+        })
+    }
+}
+
+impl std::io::Write for BlockingWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        blocking_io(&self.pipe, &self.event, Io::Write(bytes), None).map(Option::unwrap_or_default)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// An unnamed manual-reset event, owned.
+fn manual_reset_event() -> io::Result<OwnedHandle> {
+    // SAFETY: a manual-reset event, unnamed, with default security; the
+    // handle returned is owned below.
+    let event = unsafe { CreateEventW(None, true, false, None) }.map_err(win32_error)?;
+    // SAFETY: a valid handle just returned, owned by nothing else.
+    Ok(unsafe { OwnedHandle::from_raw_handle(event.0 as RawHandle) })
+}
+
+/// One blocking operation on an overlapped end.
+enum Io<'a> {
+    Read(&'a mut [u8]),
+    Write(&'a [u8]),
+}
+
+/// Runs `io` on `pipe` and waits for it, at most `timeout` for a read:
+/// how many bytes it moved, `None` for a read that timed out and was
+/// cancelled. A broken pipe moves nothing.
+fn blocking_io(
+    pipe: &OwnedHandle,
+    event: &OwnedHandle,
+    io: Io<'_>,
+    timeout: Option<std::time::Duration>,
+) -> io::Result<Option<usize>> {
+    let pipe = HANDLE(pipe.as_raw_handle());
+    let mut overlapped = OVERLAPPED {
+        hEvent: HANDLE(event.as_raw_handle()),
+        ..OVERLAPPED::default()
+    };
+    // The buffer and the OVERLAPPED outlive the operation: whether it
+    // completes at once or pends, this function returns only once
+    // GetOverlappedResult, told to wait, has seen it finish, after
+    // cancelling a read that timed out.
+    let started = match io {
+        // SAFETY: as above.
+        Io::Read(buffer) => unsafe {
+            ReadFile(pipe, Some(buffer), None, Some(&raw mut overlapped))
+        },
+        // SAFETY: as above.
+        Io::Write(bytes) => unsafe {
+            WriteFile(pipe, Some(bytes), None, Some(&raw mut overlapped))
+        },
+    };
+    match started {
+        Ok(()) => {}
+        Err(error) if error.code() == ERROR_IO_PENDING.to_hresult() => {
+            if let Some(timeout) = timeout {
+                let milliseconds = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX - 1);
+                // SAFETY: the event is open; the wait only reads it.
+                let waited =
+                    unsafe { WaitForSingleObject(HANDLE(event.as_raw_handle()), milliseconds) };
+                if waited == WAIT_TIMEOUT {
+                    // SAFETY: the operation started above on this handle
+                    // with this OVERLAPPED; cancelling a read loses no
+                    // data, and the wait below sees it finish.
+                    let _ = unsafe { CancelIoEx(pipe, Some(&raw const overlapped)) };
+                }
+            }
         }
-        let mut moved = 0u32;
-        // SAFETY: the read started above on this handle with this
-        // OVERLAPPED; the call waits for it to finish.
-        match unsafe { GetOverlappedResult(pipe, &raw const overlapped, &raw mut moved, true) } {
-            Ok(()) => Ok(moved as usize),
-            Err(error) if error.code() == ERROR_BROKEN_PIPE.to_hresult() => Ok(0),
-            Err(error) => Err(win32_error(error)),
-        }
+        Err(error) if error.code() == ERROR_BROKEN_PIPE.to_hresult() => return Ok(Some(0)),
+        Err(error) => return Err(win32_error(error)),
+    }
+    let mut moved = 0u32;
+    // SAFETY: the operation started above on this handle with this
+    // OVERLAPPED; the call waits for it to finish.
+    match unsafe { GetOverlappedResult(pipe, &raw const overlapped, &raw mut moved, true) } {
+        Ok(()) => Ok(Some(moved as usize)),
+        Err(error) if error.code() == ERROR_BROKEN_PIPE.to_hresult() => Ok(Some(0)),
+        Err(error) if error.code() == ERROR_OPERATION_ABORTED.to_hresult() => Ok(None),
+        Err(error) => Err(win32_error(error)),
     }
 }
 
@@ -418,8 +558,10 @@ fn frame_bounds(bytes: &[u8]) -> io::Result<Option<(usize, usize)>> {
     }
 }
 
-/// The frames a [`Sender`] holds while a write is in flight, under the
-/// caller's overflow policy, and how each is encoded.
+/// What a [`Sender`] holds while a write is in flight, under the caller's
+/// overflow policy, and how each item is encoded. Every item sent passes
+/// through it, even one written at once, so the policy sees every item in
+/// the order it was sent and every frame in the order it is written.
 pub trait Backlog: Send + 'static {
     /// One frame's content, encoded only when it is written.
     type Item: Send;
@@ -439,13 +581,16 @@ pub trait Backlog: Send + 'static {
     /// Whether nothing waits.
     fn is_empty(&self) -> bool;
 
-    /// Encodes `item` as a frame into `buffer` ([`put_frame`]), just before
-    /// it is written, so a time stamped then is the write's.
+    /// Appends `item`'s frame to `buffer` ([`put_frame`]) just before it is
+    /// written, whichever thread writes it, so a time stamped then is the
+    /// write's, and frames are encoded in the order they are written. An
+    /// item that appends nothing is a marker: it is reached only once every
+    /// write before it has completed.
     ///
     /// # Errors
     ///
     /// Returns the encoding's error; the item is then skipped.
-    fn encode(item: Self::Item, buffer: &mut Vec<u8>) -> io::Result<()>;
+    fn encode(&mut self, item: Self::Item, buffer: &mut Vec<u8>) -> io::Result<()>;
 }
 
 /// Why a [`Sender`] did not take an item.
@@ -499,6 +644,8 @@ struct State<B: Backlog> {
     pipe: Option<PortFile>,
     /// No more items are taken.
     closed: bool,
+    /// A write failed, the reader having gone.
+    failed: bool,
 }
 
 impl<B: Backlog> Sender<B> {
@@ -516,8 +663,8 @@ impl<B: Backlog> Sender<B> {
 
     /// A sender as [`on_port`](Self::on_port) makes one, on a port of its
     /// own served by a finishing thread named `name`, which first calls
-    /// `started` (to set its priority) and exits once the sender has
-    /// finished.
+    /// `started` (to set its priority) and ends once the sender has
+    /// finished, so joining it waits for every write to complete.
     ///
     /// # Errors
     ///
@@ -528,11 +675,11 @@ impl<B: Backlog> Sender<B> {
         backlog: B,
         name: &str,
         started: impl FnOnce() + Send + 'static,
-    ) -> io::Result<Self> {
+    ) -> io::Result<(Self, JoinHandle<()>)> {
         let port = Arc::new(Port::new()?);
         let sender = Self::make(pipe, backlog, Arc::clone(&port), OWN_KEY, true)?;
         let finishing = sender.clone();
-        thread::Builder::new()
+        let thread = thread::Builder::new()
             .name(name.to_owned())
             .spawn(move || {
                 started();
@@ -546,7 +693,7 @@ impl<B: Backlog> Sender<B> {
                     }
                 }
             })?;
-        Ok(sender)
+        Ok((sender, thread))
     }
 
     fn make(
@@ -564,6 +711,7 @@ impl<B: Backlog> Sender<B> {
                     slot: PipeIo::new(0),
                     pipe: Some(pipe),
                     closed: false,
+                    failed: false,
                 }),
                 port,
                 key,
@@ -585,28 +733,71 @@ impl<B: Backlog> Sender<B> {
         self.shared.key
     }
 
-    /// Sends `item`: writes it at once when no write is in flight and
-    /// nothing waits, and otherwise adds it to the backlog. Never waits for
-    /// the pipe.
+    /// Sends `item`: it joins the backlog, and is written at once when no
+    /// write is in flight, on this thread, so in the common case no other
+    /// thread wakes. Never waits for the pipe.
     ///
     /// # Errors
     ///
-    /// Returns [`SendError::Closed`] once the sender is closed, and the
-    /// backlog's refusal when it refuses the item.
+    /// Returns [`SendError::Closed`] once the sender is closed, or when the
+    /// write fails, the reader having gone; and the backlog's refusal when
+    /// it refuses the item.
     pub fn send(&self, item: B::Item) -> Result<(), SendError<B::Refused>> {
         let mut state = self.lock();
         if state.closed {
             return Err(SendError::Closed);
         }
-        if state.slot.in_flight() || !state.backlog.is_empty() {
-            return state.backlog.push(item).map_err(SendError::Refused);
+        state.backlog.push(item).map_err(SendError::Refused)?;
+        state.drain();
+        self.settled(&mut state)
+    }
+
+    /// Sends `items` together. When no write is in flight, their frames are
+    /// put in one buffer and written with one write, each frame whole with
+    /// its own header, so the reader wakes once for all of them; a batch
+    /// larger than the pipe's buffer pends and is finished whole, as one
+    /// large frame is. While a write is in flight they join the backlog, as
+    /// [`send`](Self::send) would add them, and are written after it one by
+    /// one. Never waits for the pipe.
+    ///
+    /// # Errors
+    ///
+    /// As [`send`](Self::send). When the backlog refuses an item, the items
+    /// before it are still sent and the rest are not.
+    ///
+    /// A marker in a batch is reached before the batch is written, so
+    /// markers are sent on their own.
+    pub fn send_all(
+        &self,
+        items: impl IntoIterator<Item = B::Item>,
+    ) -> Result<(), SendError<B::Refused>> {
+        let mut state = self.lock();
+        if state.closed {
+            return Err(SendError::Closed);
         }
-        if state.write(item) {
-            Ok(())
-        } else {
-            self.settle(&mut state);
-            Err(SendError::Closed)
+        let mut refused = None;
+        for item in items {
+            if let Err(refusal) = state.backlog.push(item) {
+                refused = Some(refusal);
+                break;
+            }
         }
+        if !state.slot.in_flight() {
+            // Nothing is in flight, so nothing waited before these: what
+            // waits now is this batch.
+            state.write_all();
+        }
+        let settled = self.settled(&mut state);
+        match refused {
+            Some(refused) => Err(SendError::Refused(refused)),
+            None => settled,
+        }
+    }
+
+    /// Runs `inspect` on the backlog, under the sender's lock, so nothing is
+    /// sent or written meanwhile.
+    pub fn with_backlog<R>(&self, inspect: impl FnOnce(&mut B) -> R) -> R {
+        inspect(&mut self.lock().backlog)
     }
 
     /// Closes the sender: nothing more is taken, what waits is still
@@ -644,6 +835,18 @@ impl<B: Backlog> Sender<B> {
         self.lock().pipe.is_none()
     }
 
+    /// [`settle`](Self::settle)s, then says whether what was sent was
+    /// taken: not when a write failed meanwhile, the sender then closed.
+    fn settled(&self, state: &mut State<B>) -> Result<(), SendError<B::Refused>> {
+        let failed = state.failed;
+        self.settle(state);
+        if failed {
+            Err(SendError::Closed)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Drops the pipe once the sender is closed and nothing is in flight or
     /// waits, and wakes a finishing thread of its own to see it.
     fn settle(&self, state: &mut State<B>) {
@@ -657,15 +860,54 @@ impl<B: Backlog> State<B> {
     /// Writes `item`. Returns false when the pipe has failed, the sender
     /// being closed and its backlog dropped.
     fn write(&mut self, item: B::Item) -> bool {
-        let Some(pipe) = &self.pipe else {
+        let Self {
+            backlog,
+            slot,
+            pipe,
+            ..
+        } = self;
+        let Some(pipe) = pipe else {
             return false;
         };
         let mut length = 0;
-        let started = self.slot.write_with(pipe, |buffer| {
-            B::encode(item, buffer)?;
+        let started = slot.write_with(pipe, |buffer| {
+            backlog.encode(item, buffer)?;
             length = buffer.len();
             Ok::<(), io::Error>(())
         });
+        self.started(started, length)
+    }
+
+    /// Writes every item waiting, each frame after the one before it in one
+    /// buffer, with one write. Returns false when the pipe has failed.
+    fn write_all(&mut self) -> bool {
+        let Self {
+            backlog,
+            slot,
+            pipe,
+            ..
+        } = self;
+        let Some(pipe) = pipe else {
+            return false;
+        };
+        let mut length = 0;
+        let started = slot.write_with(pipe, |buffer| {
+            while let Some(item) = backlog.pop() {
+                let before = buffer.len();
+                if let Err(error) = backlog.encode(item, buffer) {
+                    buffer.truncate(before);
+                    tracing::warn!(%error, "a frame could not be encoded and is skipped");
+                }
+            }
+            length = buffer.len();
+            Ok::<(), io::Error>(())
+        });
+        self.started(started, length)
+    }
+
+    /// What became of a write of `length` bytes, started or not: false when
+    /// the pipe has failed.
+    fn started(&mut self, started: io::Result<Started>, length: usize) -> bool {
         match started {
             Ok(Started::Done(moved)) if moved == length => true,
             Ok(Started::Pending) => true,
@@ -693,6 +935,7 @@ impl<B: Backlog> State<B> {
     /// The pipe failed: nothing more is taken or written.
     fn fail(&mut self) {
         self.closed = true;
+        self.failed = true;
         while self.backlog.pop().is_some() {}
     }
 
@@ -711,6 +954,142 @@ impl<B: Backlog> State<B> {
     /// Whether everything is written and nothing more will be.
     fn finished(&self) -> bool {
         self.closed && !self.slot.in_flight() && self.backlog.is_empty()
+    }
+}
+
+/// The key a child's command pipe carries on its I/O thread's port.
+const COMMANDS_KEY: usize = 1;
+
+/// The key its message pipe's writes carry there.
+const MESSAGES_KEY: usize = 2;
+
+/// What a child's I/O thread does after a command ([`ChildIo::serve`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Serving {
+    /// Goes on reading commands.
+    Continue,
+    /// Stops: the command was the last, the shutdown.
+    Stop,
+}
+
+/// Why [`ChildIo::serve`] returned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Served {
+    /// The command handler said to stop.
+    Stopped,
+    /// verbatim.exe closed the command pipe between frames.
+    CommandsEnded,
+}
+
+/// A child's side of its two pipes (`docs/design/communication.md`,
+/// sections 4.6 and 6.3 to 6.4): one I/O thread, waiting only on a
+/// completion port, reads verbatim.exe's commands and finishes the writes
+/// to verbatim.exe that pended, while every thread that produces a message
+/// writes it itself through the [`Sender`] [`new`](Self::new) returns. A
+/// child calls it once at startup with its two inherited overlapped ends.
+pub struct ChildIo {
+    port: Arc<Port>,
+    commands: PortReader,
+    completions: Completions,
+}
+
+impl ChildIo {
+    /// The I/O side over `commands`, the end the child reads, and the
+    /// sender for `messages`, the end it writes, holding frames in
+    /// `backlog` while a write is in flight. Both ends must be overlapped.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of making the port or associating either end.
+    pub fn new<B: Backlog>(
+        commands: OwnedHandle,
+        messages: OwnedHandle,
+        backlog: B,
+    ) -> io::Result<(Self, Sender<B>)> {
+        let port = Arc::new(Port::new()?);
+        let commands = PortReader::new(port.associate(commands, COMMANDS_KEY)?);
+        let sender = Sender::on_port(messages, backlog, Arc::clone(&port), MESSAGES_KEY)?;
+        Ok((
+            Self {
+                port,
+                commands,
+                completions: Completions::with_capacity(8),
+            },
+            sender,
+        ))
+    }
+
+    /// Serves the port on the calling thread, the child's I/O thread: hands
+    /// `command` the body of each command frame, in order, as it is read,
+    /// and finishes `sender`'s writes that pend. Returns once `command`
+    /// says to stop, when nothing after that command is handed out, or
+    /// once verbatim.exe closes the command pipe.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of a wait on the port, of a command pipe that
+    /// failed or ended inside a frame, or of `command`.
+    pub fn serve<B: Backlog>(
+        &mut self,
+        sender: &Sender<B>,
+        mut command: impl FnMut(&[u8]) -> io::Result<Serving>,
+    ) -> io::Result<Served> {
+        let Self {
+            port,
+            commands,
+            completions,
+        } = self;
+        // The first read starts as a wake-up with the reader's key.
+        port.post(COMMANDS_KEY)?;
+        let mut stopped = false;
+        loop {
+            port.wait(completions, None)?;
+            for completion in completions.iter() {
+                if completion.key == sender.key() {
+                    sender.complete(&completion);
+                    continue;
+                }
+                if completion.key != COMMANDS_KEY || stopped {
+                    continue;
+                }
+                let reading = commands.take(&completion, port, |body| {
+                    if !stopped && command(body)? == Serving::Stop {
+                        stopped = true;
+                    }
+                    Ok(())
+                });
+                if let Reading::Ended(ended) = reading
+                    && !stopped
+                {
+                    ended?;
+                    return Ok(Served::CommandsEnded);
+                }
+            }
+            if stopped {
+                return Ok(Served::Stopped);
+            }
+        }
+    }
+
+    /// Waits, serving the port, until `sender`, which the caller has
+    /// closed, has written everything and closed its pipe: a child never
+    /// exits with a write in flight, since its exit would cancel the write
+    /// and cut the frame (`docs/design/communication.md`, section 4.6).
+    /// Commands read meanwhile are not handed out. The wait is for the
+    /// completions alone; verbatim.exe's time limit for the shutdown bounds
+    /// it.
+    pub fn finish<B: Backlog>(&mut self, sender: &Sender<B>) {
+        while !sender.is_finished() {
+            if let Err(error) = self.port.wait(&mut self.completions, None) {
+                tracing::warn!(%error, "the I/O thread's port failed with writes in flight");
+                return;
+            }
+            for completion in self.completions.iter() {
+                if completion.key == sender.key() {
+                    sender.complete(&completion);
+                }
+            }
+        }
     }
 }
 
@@ -966,7 +1345,7 @@ mod tests {
             self.items.is_empty()
         }
 
-        fn encode(item: Vec<u8>, buffer: &mut Vec<u8>) -> io::Result<()> {
+        fn encode(&mut self, item: Vec<u8>, buffer: &mut Vec<u8>) -> io::Result<()> {
             put_frame(buffer, |buffer| {
                 buffer.extend_from_slice(&item);
                 Ok(())
@@ -985,6 +1364,7 @@ mod tests {
             || {},
         )
         .expect("a sender")
+        .0
     }
 
     #[test]
@@ -1071,5 +1451,86 @@ mod tests {
         drop(theirs);
         assert_eq!(sender.send(b"nobody".to_vec()), Err(SendError::Closed));
         assert_eq!(sender.send(b"again".to_vec()), Err(SendError::Closed));
+    }
+
+    #[test]
+    fn frames_sent_together_are_written_with_one_write_and_taken_by_one_read() {
+        let port = Port::new().expect("a port");
+        let (ours, theirs) = pipe(Flow::Inbound, 4096, End::Overlapped).expect("a pipe");
+        let ours = port.associate(ours, 5).expect("associated");
+        // The read waits before anything is written, so it completes with
+        // what the first write brings, and only that.
+        let mut reading = PipeIo::new(4096);
+        assert!(matches!(reading.read(&ours), Started::Pending));
+        let sender = sender(theirs, 8);
+        sender
+            .send_all([b"one".to_vec(), b"two".to_vec()])
+            .expect("sent");
+        let mut completions = Completions::with_capacity(4);
+        assert_eq!(port.wait(&mut completions, None).expect("waited"), 1);
+        let completion = completions.iter().next().expect("one completion");
+        reading.complete(&ours, &completion).expect("read");
+        let mut both = framed(b"one");
+        both.extend(framed(b"two"));
+        assert_eq!(reading.data(), both.as_slice(), "two frames, from one read");
+    }
+
+    #[test]
+    fn a_batch_larger_than_the_pipe_pends_and_is_finished_whole_before_what_follows() {
+        let (ours, theirs) = pipe(Flow::Outbound, 4096, End::Synchronous).expect("a pipe");
+        let sender = sender(ours, 8);
+        let large = vec![3u8; 100_000];
+        sender
+            .send_all([large.clone(), b"second".to_vec()])
+            .expect("sent, and pending");
+        sender.send(b"after".to_vec()).expect("queued");
+        sender.close();
+        let mut reader = BufReader::new(File::from(theirs));
+        assert_eq!(read_frame(&mut reader).expect("read"), Some(large));
+        assert_eq!(
+            read_frame(&mut reader).expect("read"),
+            Some(b"second".to_vec())
+        );
+        assert_eq!(
+            read_frame(&mut reader).expect("read"),
+            Some(b"after".to_vec())
+        );
+        assert_eq!(read_frame(&mut reader).expect("read"), None);
+    }
+
+    #[test]
+    fn a_childs_io_thread_finishes_the_write_in_flight_before_its_shutdown_returns() {
+        // The child's last frame is larger than the pipe's buffer and
+        // nobody reads it yet, so its write pends; the I/O thread closes
+        // the sender and finishes. Dropping everything after `finish` stands
+        // in for the child's exit, which would cancel a write still in
+        // flight and cut the frame.
+        let (commands, _core_commands) =
+            pipe(Flow::Inbound, 4096, End::Overlapped).expect("a pipe");
+        let (core, messages) = pipe(Flow::Inbound, 4096, End::Overlapped).expect("a pipe");
+        let last = vec![5u8; 200_000];
+        let frame = last.clone();
+        let io_thread = thread::spawn(move || {
+            let (mut io, sender) = ChildIo::new(
+                commands,
+                messages,
+                Strings {
+                    items: VecDeque::new(),
+                    capacity: 8,
+                },
+            )
+            .expect("the child's side");
+            sender.send(frame).expect("sent, and pending");
+            sender.close();
+            io.finish(&sender);
+            sender.is_finished()
+        });
+        let mut reader = BufReader::new(BlockingReader::new(core).expect("a reader"));
+        assert_eq!(read_frame(&mut reader).expect("read whole"), Some(last));
+        assert_eq!(read_frame(&mut reader).expect("read"), None);
+        assert!(
+            io_thread.join().expect("the I/O thread"),
+            "the shutdown returned with everything written"
+        );
     }
 }

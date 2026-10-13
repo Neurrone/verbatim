@@ -34,7 +34,8 @@ pub(super) enum Role {
 
 /// verbatim.exe's ends of a child's two pipes, both overlapped
 /// (`docs/design/communication.md`, section 4.1); the child's ends are
-/// synchronous, as its threads read and write them today.
+/// overlapped too, served by its I/O thread's completion port, with every
+/// thread of the child writing its own messages (section 4.6).
 pub(super) struct ChildPipes {
     /// verbatim.exe writes commands here.
     pub(super) to_child: OwnedHandle,
@@ -104,8 +105,8 @@ pub(super) fn launch(
             }),
         ),
     };
-    let (to_child, commands) = pipe(Flow::Outbound, EVENT_PIPE_BUFFER, End::Synchronous)?;
-    let (from_child, messages) = pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Synchronous)?;
+    let (to_child, commands) = pipe(Flow::Outbound, EVENT_PIPE_BUFFER, End::Overlapped)?;
+    let (from_child, messages) = pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Overlapped)?;
     let contained = launch_with_ends(
         &ChildSpec {
             exe: exe_path,

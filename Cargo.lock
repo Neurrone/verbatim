@@ -931,6 +931,7 @@ dependencies = [
  "verbatim-ia2",
  "verbatim-model",
  "verbatim-outpost",
+ "verbatim-process",
  "verbatim-uia",
  "verbatim-uia-rops",
  "windows",

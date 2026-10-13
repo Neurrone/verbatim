@@ -40,9 +40,8 @@
 //! listener's copy of an event mockapp raised.
 
 use std::cell::{Cell, RefCell};
-use std::io::Write;
 use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -55,41 +54,100 @@ use verbatim_outpost::protocol::{
     SupervisorToOutpost, WinEventStamp, read_message,
 };
 use verbatim_outpost::{Heard, Outpost, OutpostOptions};
+use verbatim_process::overlapped::{End, Flow, pipe};
+use verbatim_process::transport::BlockingReader;
 use verbatim_uia::{Cached, ListenerEvent, Live};
 use windows::Win32::Foundation::{E_FAIL, HWND};
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
 use windows::core::AgileReference;
 
-/// The outpost's pipe to Core, as a test's: every message the outpost
-/// writes is decoded and handed on as soon as it is written, so a message
-/// is in the channel once [`Outpost::settle`] returns.
-struct MessageSink {
-    pending: Vec<u8>,
-    messages: Sender<OutpostToSupervisor>,
+/// How much the outpost's pipe to Core holds unread. A test reads the
+/// outpost's messages only when it asks for them, and the outpost's
+/// [`Outpost::settle`] waits for every write to complete, so the pipe holds
+/// everything a test leaves unread before it settles the outpost.
+const MESSAGES_PIPE_BUFFER: u32 = 4 * 1024 * 1024;
+
+/// The outpost's pipe to Core, read by the test as Core reads it, frame by
+/// frame, on the test's own thread. Once [`Outpost::settle`] returns,
+/// every message the outpost wrote before is in the pipe, so
+/// [`MessagePipe::try_recv`] finds it.
+pub struct MessagePipe {
+    reader: RefCell<BlockingReader>,
+    /// Bytes read and not yet taken: the start of a frame whose rest has
+    /// not been read.
+    pending: RefCell<Vec<u8>>,
 }
 
-impl Write for MessageSink {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.pending.extend_from_slice(bytes);
-        loop {
-            let mut rest = self.pending.as_slice();
-            let message = match read_message::<_, OutpostToSupervisor>(&mut rest) {
-                Ok(Some(message)) => message,
-                // Nothing pending, or a frame not yet whole.
-                Ok(None) => break,
-                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(error) => return Err(error),
-            };
-            let taken = self.pending.len() - rest.len();
-            self.pending.drain(..taken);
-            // The test may have finished with the outpost's messages.
-            let _ = self.messages.send(message);
+impl MessagePipe {
+    fn new(reader: BlockingReader) -> Self {
+        Self {
+            reader: RefCell::new(reader),
+            pending: RefCell::new(Vec::new()),
         }
-        Ok(bytes.len())
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
+    /// The first whole message among the bytes read, taken.
+    fn take(&self) -> Option<OutpostToSupervisor> {
+        let mut pending = self.pending.borrow_mut();
+        let mut rest = pending.as_slice();
+        let message = match read_message::<_, OutpostToSupervisor>(&mut rest) {
+            Ok(message) => message?,
+            // A frame not yet whole.
+            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return None,
+            Err(error) => panic!("the outpost wrote something that is not a message: {error}"),
+        };
+        let taken = pending.len() - rest.len();
+        pending.drain(..taken);
+        Some(message)
+    }
+
+    /// The outpost's next message, waiting at most `timeout` for it.
+    ///
+    /// # Errors
+    ///
+    /// [`RecvTimeoutError::Timeout`] when none came in that time, and
+    /// [`RecvTimeoutError::Disconnected`] once the outpost has closed its
+    /// pipe.
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<OutpostToSupervisor, RecvTimeoutError> {
+        let deadline = Instant::now() + timeout;
+        let mut buffer = vec![0; 64 * 1024];
+        loop {
+            if let Some(message) = self.take() {
+                return Ok(message);
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.reader.borrow_mut().read_within(&mut buffer, left) {
+                Ok(None) => return Err(RecvTimeoutError::Timeout),
+                Ok(Some(0)) => return Err(RecvTimeoutError::Disconnected),
+                Ok(Some(read)) => self.pending.borrow_mut().extend_from_slice(&buffer[..read]),
+                Err(error) => panic!("the outpost's pipe failed: {error}"),
+            }
+        }
+    }
+
+    /// The outpost's next message if it has written one: what is in the
+    /// pipe now, without waiting for more.
+    ///
+    /// # Errors
+    ///
+    /// [`TryRecvError::Empty`] when nothing is there, and
+    /// [`TryRecvError::Disconnected`] once the outpost has closed its pipe.
+    pub fn try_recv(&self) -> Result<OutpostToSupervisor, TryRecvError> {
+        if let Some(message) = self.take() {
+            return Ok(message);
+        }
+        match self.reader.borrow().available() {
+            Ok(0) => return Err(TryRecvError::Empty),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {
+                return Err(TryRecvError::Disconnected);
+            }
+            Err(error) => panic!("the outpost's pipe failed: {error}"),
+        }
+        // Something is there, and a frame is written whole, so the rest of
+        // it is there or on its way.
+        self.recv_timeout(super::WAIT_TIMEOUT)
+            .map_err(|_| TryRecvError::Disconnected)
     }
 }
 
@@ -178,10 +236,10 @@ impl Reported {
     }
 }
 
-/// A real outpost in this process, watching mockapp, with its messages.
+/// A real outpost in this process, watching mockapp, with its pipe to Core.
 pub struct OutpostUnderTest {
     pub outpost: Outpost,
-    pub messages: Receiver<OutpostToSupervisor>,
+    pub messages: MessagePipe,
     /// Every event the outpost's own handlers took in from mockapp, in the
     /// order they were queued ([`Outpost::observe_heard`]).
     heard: Receiver<Heard>,
@@ -218,11 +276,9 @@ impl OutpostUnderTest {
     /// foreground window.
     pub fn with_options(app: &super::MockApp, options: OutpostOptions) -> Self {
         let pid = app.pid();
-        let (messages_tx, messages) = mpsc::channel();
-        let sink = MessageSink {
-            pending: Vec::new(),
-            messages: messages_tx,
-        };
+        let (ours, theirs) = pipe(Flow::Inbound, MESSAGES_PIPE_BUFFER, End::Overlapped)
+            .expect("the outpost's pipe to Core");
+        let messages = MessagePipe::new(BlockingReader::new(ours).expect("a reader"));
         let focus = FocusSlot::default();
         let slot = Arc::clone(&focus);
         let focus_reads = Arc::new(AtomicU32::new(0));
@@ -240,8 +296,7 @@ impl OutpostUnderTest {
                 .resolve()?;
             Live::new(element).refresh(request)
         });
-        let outpost =
-            Outpost::with_focused_element_reader(Box::new(sink), pid, options, read_focus);
+        let outpost = Outpost::with_focused_element_reader(theirs, pid, options, read_focus);
         let time = Arc::new(Mutex::new(Instant::now()));
         let clock = Arc::clone(&time);
         outpost.set_arbitration_clock(Arc::new(move || {
