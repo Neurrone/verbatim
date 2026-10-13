@@ -384,7 +384,8 @@ maximum or the 99.9th percentile that holds across runs.
 
 `cargo xtask trace scenario <name> --after <seconds> --seconds <seconds>
 [--release] [--audible] [--wakers <thread>]... [--stacks <thread>]...
-[--samples <thread>]... [--keep] [--label <label>]` runs one scenario,
+[--samples <thread>]... [--symbol-server] [--keep] [--label <label>]`
+runs one scenario,
 starts a CPU trace `--after` seconds in, stops it `--seconds` later, and
 reads it with `verbatim-trace-waits` (`docs/crates/verbatim-trace-waits.md`):
 
@@ -396,8 +397,15 @@ reads it with `verbatim-trace-waits` (`docs/crates/verbatim-trace-waits.md`):
   of that name after a blocked wait.
 - `stacks-<thread>.txt` for each `--stacks`: where they were readied from.
 - `samples-<thread>.txt` for each `--samples`: where their processor time
-  went, by module and by function, Verbatim's own functions named from the
-  build's PDBs.
+  went, by module and by function.
+
+Stacks and samples name Verbatim's own functions from the build's PDBs
+(`target\debug`, or `target\release` with `--release`), and system and
+kernel code by its exported functions. `--symbol-server` passes
+`--symbol-server` to the reader for those reports, so system and kernel
+code is named by its real functions from PDBs fetched from Microsoft's
+public symbol server and kept in `target\symbols`; it needs network
+access.
 
 A thread is named as the reader takes it: a name (`verbatim-worker`), or
 `<process.exe>:<name>` for that process's threads of that name, an empty

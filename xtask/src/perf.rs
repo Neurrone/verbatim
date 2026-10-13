@@ -383,7 +383,7 @@ pub(crate) fn trace_scenario(args: &[String]) -> ExitCode {
 
 const TRACE_SCENARIO_USAGE: &str = "usage: cargo xtask trace scenario <name> --after <seconds> --seconds <seconds> \
      [--release] [--audible] [--wakers <thread>]... [--stacks <thread>]... \
-     [--samples <thread>]... [--keep] [--label <label>]";
+     [--samples <thread>]... [--symbol-server] [--keep] [--label <label>]";
 
 fn run_trace_scenario(args: &[String]) -> Result<(), String> {
     let name = args
@@ -430,25 +430,7 @@ fn run_trace_scenario(args: &[String]) -> Result<(), String> {
     } else {
         r"target\debug"
     });
-    let mut reports: Vec<(String, Vec<String>)> = vec![
-        ("waits.txt".to_owned(), Vec::new()),
-        ("by-name.txt".to_owned(), vec!["--by-name".to_owned()]),
-    ];
-    for (flag, kind) in [
-        ("--wakers", "wakers"),
-        ("--stacks", "stacks"),
-        ("--samples", "samples"),
-    ] {
-        for thread in values(args, flag) {
-            let file = format!("{kind}-{}.txt", thread.replace(':', "_"));
-            let mut report = vec![flag.to_owned(), thread];
-            if kind == "samples" {
-                report.push("--symbols".to_owned());
-                report.push(symbols.display().to_string());
-            }
-            reports.push((file, report));
-        }
-    }
+    let reports = reader_reports(args, &symbols);
     for (file, report) in &reports {
         let output = Command::new(&reader)
             .arg(&trace)
@@ -478,6 +460,39 @@ fn run_trace_scenario(args: &[String]) -> Result<(), String> {
     }
 }
 
+/// The reports `cargo xtask trace scenario` asks the reader for, each as
+/// the file it is written to and the reader's arguments after the trace:
+/// the waits and their totals by name, then a report for each `--wakers`,
+/// `--stacks` and `--samples` thread, the stacks and samples reports with
+/// `--symbols <symbols>` and, when `--symbol-server` was given,
+/// `--symbol-server`.
+fn reader_reports(args: &[String], symbols: &Path) -> Vec<(String, Vec<String>)> {
+    let symbol_server = args.iter().any(|arg| arg == "--symbol-server");
+    let mut reports: Vec<(String, Vec<String>)> = vec![
+        ("waits.txt".to_owned(), Vec::new()),
+        ("by-name.txt".to_owned(), vec!["--by-name".to_owned()]),
+    ];
+    for (flag, kind) in [
+        ("--wakers", "wakers"),
+        ("--stacks", "stacks"),
+        ("--samples", "samples"),
+    ] {
+        for thread in values(args, flag) {
+            let file = format!("{kind}-{}.txt", thread.replace(':', "_"));
+            let mut report = vec![flag.to_owned(), thread];
+            if kind != "wakers" {
+                report.push("--symbols".to_owned());
+                report.push(symbols.display().to_string());
+                if symbol_server {
+                    report.push("--symbol-server".to_owned());
+                }
+            }
+            reports.push((file, report));
+        }
+    }
+    reports
+}
+
 /// Builds `verbatim-trace-waits` in release, before anything is traced.
 fn build_reader() -> Result<PathBuf, String> {
     let status = Command::new(env!("CARGO"))
@@ -494,6 +509,34 @@ fn build_reader() -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stacks_report_names_frames_from_the_build_and_the_symbol_server() {
+        let args: Vec<String> = [
+            "measure_keys_text_box",
+            "--stacks",
+            "verbatim-worker",
+            "--symbol-server",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        let reports = reader_reports(&args, Path::new(r"C:\build\target\debug"));
+        assert_eq!(
+            reports.last(),
+            Some(&(
+                "stacks-verbatim-worker.txt".to_owned(),
+                [
+                    "--stacks",
+                    "verbatim-worker",
+                    "--symbols",
+                    r"C:\build\target\debug",
+                    "--symbol-server",
+                ]
+                .map(str::to_owned)
+                .to_vec()
+            ))
+        );
+    }
 
     #[test]
     fn a_coloured_latency_line_reads_as_its_stages_with_calls_set_aside() {
