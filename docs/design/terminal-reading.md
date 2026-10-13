@@ -386,6 +386,10 @@ Two different things go by this name.
 - Recorded in `docs/parity.md`; NVDA drops it. Verbatim's typing matching makes NVDA's heuristic unnecessary.
 - Recommendation: keep, and confirm with Dickson (open question 11).
 
+### Extra 15: the caret while output is held (decided 2026-10-14)
+
+Built in 69378e34. Decided by Dickson on 2026-10-14 between three options: not reading the caret at all while a terminal's output is held (rejected: Core's caret could be tens of seconds stale, so a caret key pressed during a hold would start its watch from the wrong place, which the `*_line_key_flood` scenarios catch); reading it on every caret event as before (rejected: about 2,000 caret reads per console flood served nothing while held); and the one adopted: while output is held and the text has changed, a caret event is noted, the intake keeps one noted caret (`Item::NotedCaret`, `Intake::when_idle`), and the worker reads it only when nothing else is waiting, skipping it if a read since has covered it. No timer is involved, and Core's caret is never staler than the outpost is continuously busy. NVDA's legacy console handler queues a caret event only when none is pending (`winConsoleHandler.py:169`); the idle priority is Verbatim's. Measured with the console's own caret event (2a9de42a) on 2026-10-14: separate caret reads in `conhost_flood` fell from about 3,000 per run to about 20 (`docs/design/wake-ups.md`, "Measurements after the terminal and typing changes").
+
 ## 5. Migration
 
 ### Measurements first (no behaviour change)
