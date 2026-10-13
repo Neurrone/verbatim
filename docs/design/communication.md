@@ -520,6 +520,15 @@ Today no recorded latency line has measured the synthesizer host or a real devic
 
 ## 11. Migration
 
+Paused after step 3 (Dickson, 2026-10-13). Step 3's policy is reverted
+(1651ab0): above-normal priority for the computing threads made typed
+echoes slower, and the gain from raising the message-moving threads was
+measured while the mixer's writer and audio thread woke each other
+thousands of times a second (fixed, 6d5836f). Before resuming, every
+thread's wake-ups are audited and each source fixed at its root, and this
+design is revised to judge every step on wake-ups and CPU as well as on
+latency (`docs/roadmap.md`, stage A step 9).
+
 Each step is small, builds and passes `cargo xtask ci`, and is verified before the next. Measurements come first. Live checks follow the targeted-run rule; full suite runs are named where a step changes how every outpost talks to Core.
 
 ### Step 1. Make the paused branch's measurement parts build, and record the baseline

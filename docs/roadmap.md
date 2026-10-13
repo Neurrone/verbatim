@@ -263,7 +263,16 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    section 11, steps 1 to 12, every decision approved, 2026-10-13), which
    includes step 10 below as its step 6a. Order (Dickson, 2026-10-13):
    this migration and then step 8, each merged into main, before the
-   terminal redesign.
+   terminal redesign. Paused after step 3 (Dickson, 2026-10-13): raised
+   thread priorities made typed echoes slower, and a trace found the mixer's
+   writer and audio thread waking each other thousands of times a second
+   (fixed, 6d5836f). The design counted hand-offs per event but never
+   steady-state wake-ups or CPU, and used priority as a latency lever.
+   Step 3's policy is reverted (1651ab0); every thread's wake-ups are
+   audited, idle and under each workload, and each source fixed at its
+   root; then the design is revised so every step is judged on wake-ups
+   and CPU as well as latency, and the revision goes to Dickson before the
+   migration resumes.
 10. The harness's idle barrier covers outposts' and the listener's work in
     flight.
 11. Measure again (debug and release), full suite, push.
