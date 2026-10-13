@@ -8,14 +8,27 @@ are used, with no "is it cached?" checks and no live fallbacks of the kind
 NVDA makes. It can; this document sets out how, with an inventory of every
 cached read in the workspace and the shape each one would take.
 
+Revised the same day after an adversarial review, whose findings and what
+this document now does about each are in section 12. Dickson asked that
+the design use Rust's type system to make invalid states unrepresentable
+and that it be checked for soundness; the review was that check. He also
+decided that the three faults found in passing are to be fixed (decisions
+4 and 5, section 10).
+
 Researched on main at 8511cd1, with the working tree's uncommitted
 event-read fix in place (`verbatim-uia/src/map.rs` and
 `verbatim-outpost/src/outpost/mod.rs`); line numbers are of that working
-tree. Nothing was built or run. Code is cited as `crate/src/file.rs:line`,
-the crate folder under `crates/`; NVDA as `nvda/source/...:line`. A
-statement marked "established" comes from the code or from a recorded
-measurement; one marked "estimated" is reasoning, with the reasoning given,
-for the migration's measurements to confirm.
+tree, which also holds an uncommitted third subscription group in
+`verbatim-uia/src/subscribe.rs` (section 3.4). Nothing was built or run
+in the repository; the claims about what stable Rust accepts were checked
+with `cargo check` in a scratch crate outside it, whose recording test
+(each shape's read against its request, for every combination of gates)
+also passes under `cargo test`. Code is cited as
+`crate/src/file.rs:line`, the crate folder under `crates/`; NVDA as
+`nvda/source/...:line`. A statement marked "established" comes from the
+code, from a recorded measurement, or from the scratch crate; one marked
+"estimated" is reasoning, with the reasoning given, for the migration's
+measurements to confirm.
 
 ## 1. Summary
 
@@ -33,24 +46,44 @@ for the migration's measurements to confirm.
   every desktop-wide focus, selection and notification event, and about
   twenty fetch sites that read up to 7 absent properties per element when
   the theme turns details off (established, section 5).
-- The design: a shape is a struct declared once with a macro, each field a
-  property or a group that is itself a shape. The macro generates the
-  shape's property list, its cache request, and the one function that reads
-  the cache into the struct. An element filled by a shape's request has the
-  type `Cached<S>`; only the functions that built that request can make one.
-  Everything else uses `Live`, which has no cached reads. The compiler then
-  guarantees that a read names only properties its request carried.
-- Theme gating becomes part of the type: a gated group is an `Option` in the
-  struct, the request includes it only when its gate is on, and the gate
-  travels inside `Cached<S>`, so request and read cannot disagree and every
-  user must handle "not fetched".
+- The design: a shape is a struct declared once, in `verbatim-uia`'s shape
+  module, with a macro private to that crate. Each field is a property
+  with a named read kind, a group that is itself a shape, or a cached
+  pattern. The macro generates the shape's property list, its request for
+  given gates, and the one function that reads the cache into the struct.
+  A request is a `Request<S>`, which keeps its gates; an element it filled
+  is a `Cached<S>`, which keeps the same gates; an element handed to
+  another thread is an `Agile<S>`; everything else is a `Live`, which has
+  no cached reads.
+- Theme gating is part of the type: a gated property's gate is a `bool`,
+  a gated group's gate is an `Option` of the group's own gates, and the
+  field reads as an `Option`. Request and read take the gates from the one
+  value the request was built with, so they cannot disagree, and every user
+  handles "not fetched".
+- What enforces what (section 3.5). Inside `verbatim-uia` the compiler
+  does: the shape trait is sealed, the macro and the cache reader are
+  private, `Cached<S>` has no public constructor, `Agile<S>` crosses
+  threads with no `unsafe`, event registrations accept only shapes without
+  gates, and "this shape covers that one" is a compile-time assertion.
+  That a shape's read names exactly its request's properties follows from
+  the macro's single field list and is checked by a unit test for every
+  combination of gates. Outside `verbatim-uia`, a `cargo xtask ci` scan
+  rejects raw cached reads and raw cache refills, and confines the remote
+  operations' token, `Fill<S>`, to `verbatim-uia-rops`. What a remote
+  program puts in its caches, and the record it returns of properties it
+  left out, is an audited trust boundary, checked by tests and by a count
+  of failed cached reads, not by the compiler.
+- Decided by Dickson on 2026-10-13: the layout judgment and dialog text
+  read descriptions whatever the theme, as NVDA does, and the dialog's own
+  element is no longer read (sections 5.4 and 10).
 - Two things a static declaration cannot express need a decision: the
   outpost's node registry keeps elements filled by four different requests
   (section 6), and a remotely filled cache leaves `IsDataValidForForm` out
   for an element that does not support it (section 7).
-- Migration is six steps, each passing `cargo xtask ci`, starting with the
-  listener and a one-line fix in the worker (section 9). Eight decisions for
-  Dickson are in section 10.
+- Migration is five steps, each passing `cargo xtask ci`, with the old and
+  new entry points side by side until the last (section 9). Formatting
+  attributes are left for later (section 11). Six decisions remain for
+  Dickson (section 10).
 
 ## 2. The problem and what was measured
 
@@ -103,6 +136,9 @@ the list passed to the reader is a second copy of the list the registration
 was built from, a run-time check on each property is the "is it cached?"
 test Dickson wants gone, and every other reader still uses the unrestricted
 path. The design below keeps the fix's effect and removes the need for it.
+The private trait itself stays, as the seam between the shape module's
+reader and its sources: the element, and a recording source in tests
+(section 3.6).
 
 ### 2.4 NVDA, for comparison
 
@@ -122,20 +158,23 @@ that rule and makes it checkable.
 ### 3.1 Shapes
 
 A shape is a plain struct whose fields are what one purpose reads of an
-element. A field is either a property, with the Rust type it reads as, or a
-group, which is itself a shape. Groups are where the mapping lives: the
-role group holds the five properties a role is mapped from and has a
-method that maps them, exactly as `parts_of` does today.
+element. A field is a property, read with a named read kind; a group,
+which is itself a shape; or a cached pattern. Groups are where the mapping
+lives: the role group holds the five properties a role is mapped from and
+has a method that maps them, exactly as `parts_of` does today.
 
 ```rust
 uia_shape! {
     /// What a role is mapped from (`map.rs` `parts_of`).
     pub struct RoleCore {
-        control_type: ControlType => Option<i32>,
-        class_name: ClassName => Option<String>,
-        is_dialog: IsDialog => bool,
-        toggle: IsTogglePatternAvailable => bool,
-        hwnd: NativeWindowHandle => isize,
+        gates: none;
+        properties {
+            control_type: ControlType => control_type,
+            class_name: ClassName => string,
+            is_dialog: IsDialog => bool,
+            toggle: IsTogglePatternAvailable => bool,
+            hwnd: NativeWindowHandle => window_handle,
+        }
     }
 }
 
@@ -147,15 +186,20 @@ impl RoleCore {
 uia_shape! {
     /// A node as Core is told of it: a focus, a neighbour, a tree dump.
     pub struct Node {
-        role: RoleCore,
-        name: Name => Option<String>,
-        value: ValueSet,
-        states: States,
-        #[gated(description)] description: Description,
-        #[gated(shortcut)] shortcut: Shortcut,
-        #[gated(position)] position: Position,
-        #[gated(level)] level: Level => Option<u32>,
-        rect: BoundingRectangle => Option<Rect>,
+        gates: NodeGates;
+        groups {
+            role: RoleCore,
+            value: ValueSet,
+            states: States,
+            #[gated] description: Description,
+            #[gated] shortcut: Shortcut,
+            #[gated] position: Position,
+        }
+        properties {
+            name: Name => string,
+            #[gated] level: Level => one_based,
+            rect: BoundingRectangle => rect,
+        }
     }
 }
 ```
@@ -168,75 +212,212 @@ accelerator keys, and `Position` the position in set and set size. A
 property that two groups share, such as `IsTogglePatternAvailable` in the
 role and the states, is requested once.
 
-A pattern can be a field too, for the selection container
-(`selection: pattern Selection`), and reads as the cached pattern object.
+Read kinds. Today's readers differ in ways a Rust type does not show: a
+one-based number reads zero as unsupported (`map.rs`, `cached_one_based`),
+an `Option<bool>` read ignores UI Automation's defaults where a `bool`
+read does not, and a window handle reads 0 for none. So each property
+names its kind, and the field's Rust type is the kind's, not written
+separately, so a kind and a type cannot disagree. There is one kind per
+reader of `map.rs:296` to 448 and `element.rs:47` to 96: `bool`,
+`optional_bool` (ignoring defaults), `i32`, `f64`, `string`, `one_based`,
+`rect`, `control_type`, `framework_id` and `window_handle`, with today's
+handling of defaults unchanged.
 
-### 3.2 The macro and what it generates
+Patterns. A `patterns { selection: Selection }` section declares a cached
+pattern read as the pattern object (`SelectionContainer`). A
+`prefetch { Text }` section declares a pattern the request holds and no
+read uses, which is how `ListenerEvent` keeps NVDA's base request's Text
+pattern (`listener.rs:817`). Patterns are never gated. The shape's
+`PATTERNS` constant lists both.
 
-`uia_shape!` is a declarative macro (`macro_rules!`) in `verbatim-uia`. For
-a shape `S` it generates:
+The macro reads every field eagerly. Today `RangeValueValue` is read only
+when the range value pattern is available and `ValueIsReadOnly` only when
+the Value pattern is; reading them unconditionally is harmless, since both
+are cached, but the conditions that decide whether their values mean
+anything stay in the group's mapping method, for the reason the comments at
+`cache.rs:60` to 65 give, and must not be "simplified" away.
+
+Every shape is declared in the shape module, including those only one
+other crate uses: `ShellButton` (`verbatim-gui`), `HelpTextRefresh`,
+`SuggestionsRefresh` and `FocusInput`. Rust allows inherent methods only
+in the defining crate, so mapping that belongs to another crate becomes
+free functions there over the plain struct a read returns; the struct's
+fields are public and hold plain values.
+
+### 3.2 The macro, the trait, and sealing
+
+`uia_shape!` is a declarative macro (`macro_rules!`) private to
+`verbatim-uia`: it is not `#[macro_export]`ed, so no other crate can
+declare a shape. For a shape `S` it generates the struct, its gates type
+and:
 
 ```rust
-impl Shape for Node {
-    /// One bool per gated field: here description, shortcut, position, level.
-    type Gates = NodeGates;
+mod sealed { pub trait Sealed {} }
+
+pub trait Shape: sealed::Sealed + Sized {
+    /// A bool per gated property; each group's gates, as an `Option` for a
+    /// gated group (`None`: not fetched). `()` for a shape declared with
+    /// `gates: none`.
+    type Gates: Copy + Send + Sync + 'static;
     /// Every property of every field and group, without repeats.
-    const PROPERTIES: &'static [UIA_PROPERTY_ID] = /* computed at compile time */;
-    /// The request for `gates`: PROPERTIES without the groups gated off.
-    fn request(uia: &Uia, gates: &NodeGates) -> windows::core::Result<Request<Self>>;
-    /// The only code that reads the cache.
-    fn read(cached: &Cached<Self>) -> Self;
+    const PROPERTIES: &'static [UIA_PROPERTY_ID];
+    /// The properties of ungated fields at every depth: what every request
+    /// of this shape carries, whatever its gates.
+    const UNGATED: &'static [UIA_PROPERTY_ID];
+    /// The patterns the request holds, read and prefetched.
+    const PATTERNS: &'static [UIA_PATTERN_ID];
+    /// Every gate on, as the listener reads ancestors and tests fetch.
+    fn all_on() -> Self::Gates;
+    #[doc(hidden)]
+    fn push_request(gates: &Self::Gates, out: &mut Vec<UIA_PROPERTY_ID>);
+    /// The only code that reads a cache. `Reader` is private to the crate,
+    /// so no other crate can call it.
+    #[doc(hidden)]
+    fn read_from(reader: &Reader<'_>, gates: &Self::Gates) -> Self;
 }
+
+/// A shape with no gate at any depth: what an event registration and a
+/// covered shape must be.
+pub trait Ungated: Shape<Gates = ()> {}
+/// `Self`'s request holds every property and pattern of `T`'s, ungated.
+pub trait Covers<T: Ungated>: Shape {}
 ```
 
-`PROPERTIES` is a constant: the macro concatenates each field's list and a
-`const fn` removes repeats into a fixed array. A shape with no gated field
-has `Gates = ()`. `read` calls each group's `read` and each property's
-typed accessor, and for a gated field returns `None` without touching the
-cache when the gate carried in `Cached` is off. The typed accessors are
-today's readers moved into the shape module: `read_bool`, `read_i32`,
-`read_string`, the reads that ignore defaults, and the rectangle, with
-today's handling of UI Automation's defaults (`map.rs:296` to 448)
-unchanged.
+`Shape`, `Ungated` and `Covers` are sealed: `Sealed` is in a private
+module, so no other crate can implement them, and a shape with an empty
+`PROPERTIES` and a read that reads anything cannot be written outside the
+shape module.
 
-The macro can also declare that one shape covers another
-(`covers(Kept)`), which generates a conversion and a compile-time
-assertion that every property of the covered shape is in the covering
-shape's `PROPERTIES` with no gate. Section 6 uses it.
+How each part is generated:
 
-Whether a `macro_rules!` macro or hand-written impls is decision 1. A
-procedural macro is not proposed: it would need a new crate and the `syn`
-and `quote` dependencies for nothing the declarative form cannot do here
-(estimated, from the field syntax above, which is a list of
-`name: Property => Type` and `name: Group` entries with an optional
-attribute).
+- `PROPERTIES` and `UNGATED` are constants computed at compile time in two
+  passes, as `const` items in a block expression: one `const fn` counts the
+  distinct properties of the fields' lists, a second fills a fixed array of
+  that length, whose length comes from the inner `const` item, never from
+  `Self`. Nothing generic over `S` can have an array sized from `S` on
+  stable Rust (it needs `generic_const_exprs`), so every list is a
+  `&'static [UIA_PROPERTY_ID]` (established in the scratch crate).
+- The request is computed at run time, not subtracted from a constant:
+  `push_request` pushes every ungated property, each gated property whose
+  bool is on, each ungated group's request for its gates, and each gated
+  group's request when its gate is `Some`, and the caller removes repeats.
+  So a property that is both gated and ungated, such as the description in
+  `Ancestor` (section 4.1), is requested whenever the ungated field asks
+  for it.
+- `read_from` calls each group's `read_from` with that group's gates and
+  each property's kind reader, and for a gated field returns `None`
+  without touching the cache when its gate is off. Because a nested group
+  is read through `read_from` with a `Reader`, not through a
+  `Cached<Group>`, a group can be read inside any shape that holds it.
+- `gates: none` makes `Gates` be `()` and implements `Ungated`. That arm of
+  the macro accepts no `#[gated]` field and passes each group `&()` as its
+  gates, which compiles only when the group's gates are `()`; so a shape
+  that claims to be ungated and holds a gated group does not compile.
+- `covers: Kept, FocusInput;` implements `Covers` for each and adds a
+  compile-time assertion that every property and pattern of the covered
+  shape is in this shape's `UNGATED` and `PATTERNS`. A covered shape must
+  be `Ungated`. The assertion fails the build with error E0080 when it
+  should (established in the scratch crate). Sections 6 and 7 use it.
 
-### 3.3 `Cached` and `Live`
+Tree scope and tree filter are not part of a shape: they belong to the
+fill call (section 3.4).
+
+Whether a macro or hand-written impls is decision 1. A procedural macro is
+not needed for any of the above (established, in that the scratch
+crate's `macro_rules!` prototype of groups, gated groups with nested
+gates, gated properties, read kinds and a recording test compiles; the gate-free arm is
+estimated, being a second arm of the same form whose check is the
+compiler's type check of `&()` against each group's gates).
+
+### 3.3 `Cached`, `Live` and `Agile`
 
 ```rust
 /// An element whose cache was filled by S's request with `gates`.
 pub struct Cached<S: Shape> {
-    element: IUIAutomationElement,
+    live: Live,
     gates: S::Gates,
     absent: Absent, // section 7; empty for a local fill
-    shape: PhantomData<S>,
+    shape: PhantomData<fn() -> S>,
 }
 
 impl<S: Shape> Cached<S> {
-    pub fn read(&self) -> S { S::read(self) }
-    pub fn live(&self) -> &Live { /* the same element, as Live */ }
-    pub fn runtime_id(&self) -> Vec<i32> { /* GetRuntimeId, local */ }
+    pub fn read(&self) -> S { /* S::read_from with a Reader over the element and `absent` */ }
+    pub fn live(&self) -> &Live { &self.live }
+    pub fn runtime_id(&self) -> windows::core::Result<Vec<i32>> { /* GetRuntimeId, local */ }
+    pub fn agile(&self) -> windows::core::Result<Agile<S>> { /* AgileReference::new */ }
+    pub fn narrow<T: Ungated>(&self) -> Cached<T> where S: Covers<T> { /* same element, gates () */ }
+}
+
+impl<S: Shape> Clone for Cached<S> { /* by hand: a derive would require S: Clone */ }
+
+/// A `Cached<S>` for another thread of this process.
+pub struct Agile<S: Shape> {
+    element: AgileReference<IUIAutomationElement>,
+    gates: S::Gates,
+    absent: Absent,
+    shape: PhantomData<fn() -> S>,
+}
+
+impl<S: Shape> Agile<S> {
+    pub fn resolve(&self) -> windows::core::Result<Cached<S>> { /* AgileReference::resolve */ }
 }
 
 /// An element for calls into the application: patterns, text ranges,
-/// live property reads, and refreshing its cache into a shape.
+/// live property reads, imports into remote programs, and refreshing its
+/// cache into a shape.
 pub struct Live { element: IUIAutomationElement }
+
+impl Live {
+    pub fn new(element: IUIAutomationElement) -> Self;
+    pub fn element(&self) -> &IUIAutomationElement;
+    pub fn refresh<S: Shape>(&self, request: &Request<S>) -> windows::core::Result<Cached<S>>;
+}
 ```
 
-`Cached<S>` has no public constructor. `Live` has no cached reads at all.
-The runtime id is on both, since UI Automation keeps it with every element
-and reading it never fails for want of a cache (`calls.rs` module
-documentation).
+`Cached<S>` and `Agile<S>` have no public constructor; `Live` has one,
+since it has no cached reads to misuse. `live()` returns the stored field,
+so no `unsafe` cast is needed. `Absent` is a plain integer (section 7).
+The runtime id is on `Cached`, since UI Automation keeps it with every
+element and reading it never fails for want of a cache (`calls.rs` module
+documentation); `Live` offers it too.
+
+Threads. `IUIAutomationElement` implements neither `Send` nor `Sync` in
+`windows` 0.62.2, so `Cached<S>` and `Live` are neither, which is right.
+`AgileReference<T>` is `Send` and `Sync` by an `unsafe impl` in
+`windows-core` (`agile_reference.rs:32` to 33), the gates are `Send`,
+`Sync` and `Copy` by the trait's bound, and `Absent` is an integer, so
+`Agile<S>` is `Send` and `Sync` with no `unsafe` of Verbatim's. The marker
+is `PhantomData<fn() -> S>`, not `PhantomData<S>`: with the latter, a
+shape holding a cached pattern object, such as `SelectionContainer`, would
+make its `Agile` neither `Send` nor `Sync` (both established in the
+scratch crate). Verbatim never writes `unsafe impl Send` for `Cached`.
+
+Every hand-off between threads carries an `Agile<S>`, so the shape
+survives it:
+
+- the listener's callback to its reading threads (`listener.rs:715`,
+  resolved at 404): the job carries `Agile<ListenerEvent>`;
+- the outpost's callback to its worker (`outpost/mod.rs:994`, the event's
+  element at `intake.rs:125`): `Agile<PropertyEvent>` for property events
+  and `Agile<TextEvent>` for caret, text and active text position events,
+  one per kind of event;
+- the node registry (`registry.rs:75`): `Agile<Kept>` (section 6);
+- dialog text, which resolves the dialog's kept element on the bounded
+  client's thread (`read.rs:696`): `Agile<Kept>`.
+
+A registration's scope (`Scope::Elements`, `subscribe.rs`) keeps untyped
+agile references, since nothing reads their caches.
+
+Does the cache survive the hand-off? Within the process, yes, as far as
+the repository shows: `docs/design/focus-pipeline.md:444` records that the
+element aggregates the free-threaded marshaler, so resolving an agile
+reference in the same process returns the same pointer and its cache, and
+today's code already relies on that (`read.rs:1000`, `text_reads.rs:172`).
+Not verified: a resolve on a single-threaded apartment thread, which
+would go through a proxy (every Verbatim thread that uses UI Automation is
+in the multithreaded apartment, so it does not arise today); if it ever
+did, the reads would fail, and the failed-read count (section 3.6) would
+show it.
 
 Deliberate live reads stay deliberate: the legacy checked state of a menu
 item (`map.rs:205`, NVDA 2027.1's rule), `HasKeyboardFocus` before a focus
@@ -244,129 +425,286 @@ read, and the `ControllerFor` relation (`worker.rs:829`) are methods of
 `Live`, called where a rule says to make the call, never as a fallback for
 a property a cache lacked.
 
-### 3.4 Fetching and registering
+`Live` must expose the raw element: remote programs import it, and
+patterns and text code call it. The `windows` crate's own cached getters
+(`GetCachedPropertyValue`, `GetCachedPatternAs`, `GetCachedChildren`,
+`CachedName`, `CachedClassName`, `CachedControlType`,
+`CachedNativeWindowHandle` and the rest) are then callable on it anywhere.
+The type system cannot stop that; the `cargo xtask ci` scan does
+(section 3.5).
 
-Every function that fills a cache takes a shape and returns `Cached<S>`:
+### 3.4 Requests, fetching and registering
+
+A request is built for a shape and its gates, and keeps both:
 
 ```rust
-let focus: Cached<Node> = uia.focused::<Node>(gates)?;
-let window: Cached<WindowLookup> = uia.element_from_handle::<WindowLookup>(hwnd, ())?;
-let parent: Option<Cached<Ancestor>> = walker.parent::<Ancestor>(focus.live(), gates)?;
-let fresh: Cached<HelpTextRefresh> = element.refresh::<HelpTextRefresh>(uia, ())?;
-let children: Vec<Cached<DialogText>> = uia.children::<DialogText>(dialog, ())?;
+/// S's cache request for the gates it was built with.
+pub struct Request<S: Shape> {
+    request: IUIAutomationCacheRequest,
+    gates: S::Gates,
+    shape: PhantomData<fn() -> S>,
+}
+```
+
+`uia.request::<S>(gates)` builds one; `uia.request_fixed::<S>()`, for
+`S: Ungated`, builds one with `()`. Every function that fills a cache
+takes `&Request<S>` alone and returns `Cached<S>` with the request's
+gates, so a request cached for a query, as the outpost caches its request
+per query today (`outpost/mod.rs:332`), cannot be paired with other gates:
+
+```rust
+let nodes = uia.request::<Node>(node_gates(context.fetches()))?;
+let focus: Cached<Node> = uia.focused(&nodes)?;
+let parent: Option<Cached<Ancestor>> = walker.parent(focus.live(), &ancestors)?;
+let fresh: Cached<HelpTextRefresh> = event.live().refresh(&help_text)?;
+let children: Vec<Cached<DialogText>> = uia.children(dialog.live(), &dialog_text)?;
 ```
 
 The same holds for `FindFirstBuildCache`, `NormalizeElementBuildCache`,
-the search by runtime id and the path search (`focus_path::find`). A call
-that needs no cache at all returns `Live`: `checks.rs:66` asks for a
-window's element only to search under it.
+the search by runtime id and the path search (`focus_path::find`). The
+fill call, not the shape, sets the tree scope and filter: `children` sets
+the element and its children with the raw view as `client.rs:248` to 267
+does today, and returns the children alone. A call that needs no cache
+returns `Live`: `checks.rs:66` asks for a window's element only to search
+under it.
 
-An event registration's parts take a shape, and their callbacks receive
-`Cached<S>` built by `verbatim-uia/src/subscribe.rs` from the element UI
-Automation delivers:
+Event registrations. Today `Part`'s fields are all public
+(`subscription`, `properties`, `extended_only`, `text_changes`,
+`text_pattern`), so any list can be paired with any callback. Under shapes
+the fields are private and a part is made by
+`Part::shaped::<S>(subscription)` for `S: Ungated`, whose handlers receive
+`Cached<S>`; the shape's request is built inside, and the type is erased
+there, so a registration still holds parts of several shapes. Event shapes
+take no gates (section 8.2 says why), which `Ungated` enforces.
+`.extended()` stays a builder method, `with_text_pattern` goes (the
+pattern comes from the shape's `prefetch`), and the callback wrapper in
+`subscribe.rs` makes the `Cached<S>` from the element UI Automation
+delivers and counts failed reads around the callback (section 3.6).
 
-```rust
-Part::shaped::<PropertyEvent>(properties, move |event: Cached<PropertyEvent>, id| { ... });
-Part::shaped::<TextEvent>(caret, move |event: Cached<TextEvent>| { ... });
-```
+The working tree also holds, uncommitted, a third handler group,
+`Group::ExtendedWithoutTextChanges`, with `Part::text_changes` marking the
+parts it leaves out, for the console host's text area, whose output the
+outpost learns of from console updates. Shapes leave it as it is:
+`Group::holds` decides membership from the part's two marks, and
+`.text_changes()` stays a builder method on a shaped part, as
+`.extended()` does. The working tree's private `CachedReads` trait stays
+too, as the seam between the shape module's reader and its sources
+(section 3.6).
 
-Event shapes take no gates (section 8.2 says why). A handler that
-occasionally needs more than its event shape holds refreshes the element
-into a second declared shape, one call when it happens, as the help text
-and `ControllerFor` handlers already do (`refreshed_for`, `worker.rs:801`).
+A handler that occasionally needs more than its event shape holds
+refreshes the element into a second declared shape, one call when it
+happens, as the help text and `ControllerFor` handlers already do
+(`refreshed_for`, `worker.rs:801`).
 
-Remote operations live in another crate, `verbatim-uia-rops`, which cannot
-use a private constructor. `verbatim-uia` hands it a token instead:
-`Fill<S>`, made by `uia.fill::<S>(gates)`, which carries the property list
-for the program's cache requests and is the only way to wrap the
-program's returned elements as `Cached<S>` (section 7).
+Remote operations take a token, `Fill<S>`, in place of a property list,
+and their inputs are typed by shape (section 7).
 
 ### 3.5 The guarantees, and what enforces each
 
-1. A read names only properties its shape declares. Enforced by
-   construction: `S::read` is generated from the same field list as
-   `S::PROPERTIES`, and no other code can read the cache.
-2. An element read as `S` was filled by `S`'s request. Enforced by the
-   compiler: `Cached<S>` is made only by the functions that built that
-   request, by registrations, and through `Fill<S>`.
-3. A gated group is read only when its request carried it. Enforced by the
-   compiler: request and read take the gates from the one value stored in
-   `Cached<S>`, and the field's type is `Option`, so every user handles
-   "not fetched".
-4. No code outside the shape module reads a cache. Enforced in two parts:
-   the `cached_*` methods leave `ElementExt`'s public API, and a
-   `cargo xtask ci` check fails on `GetCachedPropertyValue`,
-   `GetCachedPropertyValueEx`, `GetCachedPattern`, `GetCachedPatternAs`,
-   `GetCachedChildren` used for properties, or a typed `Cached*` getter
-   anywhere but the shape module, the way `xtask/src/waits.rs` scans
-   sources for fixed sleeps.
-5. A read outside the carried request fails a test. Two checks in debug
-   builds, which the unit tests, mockapp tests and end-to-end suite all
-   use: the shape module's one accessor checks each property against the
-   list the `Cached` carries (its shape's request for its gates, minus the
-   absent record) and logs an error and counts a violation when it is not
-   there; and every cached read that UI Automation answers with an error
-   is counted, per thread, in `CallCounts` (`verbatim-uia/src/calls.rs`)
-   as a new `failed_cached_reads` field. The first catches a fault in the
-   macro or a hand-written group; the second catches what no declaration
-   can, such as a remote program leaving a property out. Because
-   `call_counts.rs` compares counts exactly, every test there asserts zero
-   failed reads with no new assertion. Neither check panics: a panic on a
-   UI Automation callback thread would abort the process.
-6. What the compiler cannot check: that a theme maps to the right gates.
-   That is one function per gated shape, from `Fetches`
-   (`verbatim-model/src/theme.rs:864`) to the shape's gates, with a unit
-   test per gated field (section 4.3).
+Enforced by the compiler, inside `verbatim-uia`:
+
+1. Only a shape's generated read reads a cache through Verbatim's
+   readers. The kind readers are private to the shape module, the macro
+   is private to the crate, `Shape` is sealed, and `read_from` takes a
+   crate-private `Reader`, so no other crate can declare a shape or call a
+   read except through `Cached<S>::read`.
+2. An element read as `S` was filled by `S`'s request. A `Cached<S>` is
+   made only by `verbatim-uia`'s fills from a `Request<S>`, by the
+   registration's wrapper for a `Part::shaped::<S>`, by `Agile<S>::resolve`
+   from an `Agile<S>` that `Cached<S>::agile` made, by `narrow` where
+   `S: Covers<T>` and the assertion of section 3.2 holds, and by
+   `Fill<S>::claim`, which is the trust boundary of item 8.
+3. Request and read agree on the gates. `Request<S>` keeps the gates it
+   was built with, every fill copies them into the `Cached<S>`, and a
+   gated field reads as `Option`, so every user handles "not fetched".
+4. Event registrations and covered shapes have no gates: `Ungated`, whose
+   only implementations come from the macro's gate-free arm.
+5. A shaped element crosses threads only as `Agile<S>`: `Cached<S>` is
+   neither `Send` nor `Sync`, and `Agile<S>` is both without `unsafe`.
+
+Checked by a unit test:
+
+6. A shape's read names exactly the properties and patterns its request
+   carries, for every combination of gates. By construction the macro
+   generates both from one field list; the recording test of section 3.6
+   checks it in both directions, so an over-fetch fails as a missing read
+   does.
+
+Enforced by the `cargo xtask ci` scan, outside the shape module:
+
+7. No raw cached read and no raw refill. The scan, written as
+   `xtask/src/waits.rs` scans for fixed sleeps, fails on a match of
+   `GetCached\w*` or `\.Cached[A-Z]\w*\(` anywhere but the shape module
+   and the children read in `client.rs`, on `build_updated_cache` outside
+   `verbatim-uia` (a raw refill can no longer become a `Cached<S>`, but
+   invites a raw read), and on `Fill<S>`'s `fill` and `claim` outside
+   `verbatim-uia-rops`. This is the scan's guarantee, not the compiler's:
+   `Live` exposes the raw element (section 3.3).
+
+An audited trust boundary, checked by tests and by the failed-read count:
+
+8. A remote program fills its caches from `Fill<S>`'s list. `Fill<S>`
+   hands `verbatim-uia-rops` the list and the classic fallback's request,
+   and `claim` wraps the program's returned elements as `Cached<S>`; that
+   the program builds its `RemoteCache` from that list and nothing else is
+   reviewed code in `verbatim-uia-rops`, tested by `remote_ops.rs`, not a
+   property the compiler proves.
+9. The absent record a remote program returns (section 7) is taken as
+   given. A wrong record makes a property read as unsupported or makes a
+   failed read; the second is counted.
+
+Not enforced by any of these: that a theme maps to the right gates. That
+is one function per gated shape, from `Fetches`
+(`verbatim-model/src/theme.rs:864`) to the shape's gates, with a unit test
+per gated field (section 4.3).
 
 What stays outside any guarantee: whether a provider supports a property
 (it reads as unsupported, as today), whether the element is still alive,
 and whether a shape declares properties no user consumes. The last is a
 cost, not a fault, and is kept down by one shape per purpose (section 8).
 
+### 3.6 The checks: a recording test and a failed-read count
+
+The recording test. The shape module's `Reader` reads through the working
+tree's private `CachedReads` trait (`map.rs:296`), implemented for the
+element and, in `verbatim-uia`'s unit tests, for a recording source that
+answers every read and records its property or pattern. For every shape
+and every combination of its gates (the macro generates the list of
+combinations for tests: 16 for `Node`, whose four gates are its only ones,
+and the same for `Ancestor`, which holds it), the test reads the shape
+against the recorder and asserts that the set read, with the prefetched
+patterns, equals the request for those gates exactly. It covers the
+macro, any hand-written group, and both directions, costs nothing at run
+time, and meets `docs/testing.md`'s exact-assertion rule. It replaces the
+first draft's debug-build check of each read against the carried list,
+which was the "is it cached?" check by another name and checked the macro
+against itself.
+
+The failed-read count. Every cached read that UI Automation answers with
+an error whose code is a failure is counted. `GetCachedPatternAs` answers a
+requested pattern the element does not support with a null pointer, which
+`windows` 0.62 reports as an error whose code is `S_OK`; that is not a
+failed read and is not counted, as `element.rs`'s `found` already tells the
+two apart. The count is a thread-local integer in `verbatim-uia`, kept in
+every build profile (one increment on an error path), so exact counts do
+not depend on the profile. It is not a field of `CallCounts`: that is a
+serialized wire type in `verbatim-model` whose `total()` means calls, and a
+failed read is not a call. The thread-local is gathered where the reads
+happen:
+
+- the callback wrapper in `subscribe.rs` takes the thread-local
+  difference around each callback and adds it to an `Arc<AtomicU32>` that
+  the `Registration` owns, so UI Automation's callback threads, where
+  item 12's cost was, are counted;
+- the listener's reader takes its own difference per job, into a counter
+  the listener owns;
+- the outpost's worker takes its difference per entry, into a counter the
+  outpost owns.
+
+Tests read the counter of the registration, listener or outpost they made,
+or the thread-local of their own thread where the focus reader runs on it
+(`mockapp/tests/common/outpost.rs`). One global counter would not do: the
+mockapp tests run the outpost in the test process
+(`mockapp/tests/common/outpost.rs:1`) and run in parallel. Nothing in a
+release reads the counters beyond keeping them; nothing panics on a UI
+Automation callback thread, where a panic would abort the process.
+
+The count catches what no declaration can: a remote program leaving a
+property out, a wrong absent record, or a cache that did not survive a
+thread hand-off.
+
 ## 4. Themes and run-time gating
 
 ### 4.1 Gates
 
-A gated field, `#[gated(description)] description: Description`, adds a
-`bool` named `description` to `S::Gates`, makes the field's type
-`Option<Description>`, and puts the group's properties in the request only
-when the gate is on. A gate may name more than one setting:
-`#[gated(any(spelling_errors, grammar_errors))]`, as the annotation types
-are read for either (`verbatim-outpost/src/text/uia.rs:811`).
+Each gate belongs to one field and is named after it:
+
+- a gated property, `#[gated] level: Level => one_based`, adds
+  `level: bool` to the shape's gates, and the field reads as an `Option`;
+- a gated group, `#[gated] description: Description`, adds
+  `description: Option<DescriptionGates>`, where `None` means not fetched
+  and `Some` carries the group's own gates; the field reads as an `Option`;
+- an ungated group adds its gates as they are, `()` for a gate-free group,
+  so a nested shape's gates nest as its groups do:
+  `AncestorGates { node: NodeGates, description: () }`.
+
+A gated group switched off has no inner gates to set, so "group off, inner
+gate on" cannot be written. The request is the run-time union of section
+3.2. A property both gated and ungated is requested whenever the ungated
+field asks for it: `Ancestor` holds `Node`, whose description is gated,
+and its own ungated `Description` group (decision 4), so its request
+always carries `FullDescription` and `HelpText`, and the node's gated
+description reads them only when its gate is on.
+
+The gates of `Node` are written out once, in the outpost's mapping from
+the theme:
+
+```rust
+fn node_gates(fetches: &Fetches) -> NodeGates {
+    NodeGates {
+        role: (),
+        value: (),
+        states: (),
+        description: fetches.description.then_some(()),
+        shortcut: fetches.shortcut.then_some(()),
+        position: fetches.position.then_some(()),
+        level: fetches.level,
+    }
+}
+```
+
+The review proposed a gates header instead, a list of named gates that
+fields refer to, because a `macro_rules!` macro cannot remove repeated
+identifiers and two fields gated by one name would declare that gate
+twice. With one gate per field, named after the field, the problem does
+not arise: field names are unique, and a repeat would be a duplicate
+struct field, which rustc rejects (error E0124). Two properties that must
+switch together are one group, as `Shortcut` and `Position` are. A gate
+shared by separate fields, or `any(spelling_errors, grammar_errors)`, was
+needed only for text attributes (section 11), not for any element shape.
+If an element shape ever needs one, the header is the way, and it changes
+the macro alone.
 
 The gates of the four detail groups are today's `Fetches` fields
-`description`, `shortcut`, `position` and `level`, and the request is
+`description`, `shortcut`, `position` and `level`, and `Node`'s request is
 today's `cached_properties(fetches)` (`cache.rs:226`) without the
 properties no reader of that shape reads. The bounding rectangle is not
 gated today and is not gated here.
 
+"Not fetched" reads as `None`, and an `Option` can be collapsed by
+`flatten` or `unwrap_or_default` into "absent". The review suggested a
+dedicated `Gated<T>` type without those methods. It is not adopted: the
+two uses where "not fetched" must not mean "absent", the layout judgment
+and dialog text, now read ungated fields (decisions 4 and 5), so every
+remaining gated field feeds speech, for which not fetched means the
+indication is off. A `Gated<T>` would add a `match` at every use for no
+case that needs it.
+
 ### 4.2 A worked example: a focus read with descriptions off
 
 The theme reports descriptions off, so `Theme::fetches`
-(`theme.rs:689`) gives `description: false`, and the outpost's gates for
-`Node` are `NodeGates { description: false, shortcut: true, position: true,
-level: true }`.
+(`theme.rs:689`) gives `description: false`, and `node_gates` gives
+`description: None` with the other three on.
 
 ```rust
-let gates = node_gates(context.fetches());
-let focus: Cached<Node> = uia.focused::<Node>(gates)?;
+let nodes = uia.request::<Node>(node_gates(context.fetches()))?;
+let focus: Cached<Node> = uia.focused(&nodes)?;
 let node = focus.read();
 assert!(node.description.is_none()); // not fetched
 ```
 
-- The request is `Node::PROPERTIES` without `FullDescription` and
-  `HelpText`: 29 properties instead of 31, so the provider is not asked for
-  either.
-- `Node::read` sees the gate off and sets `description` to `None` without
-  reading the cache. Today the same read asks UI Automation for
+- The request is `Node`'s union without `FullDescription` and `HelpText`:
+  29 properties instead of 31, so the provider is not asked for either.
+- `Node`'s read sees the gate is `None` and sets `description` to `None`
+  without reading the cache. Today the same read asks UI Automation for
   `FullDescription`, gets an error, then asks for `HelpText` and gets
   another (`map.rs:460`).
 - The conversion to `NodeDetails` gives `description: None`, which is what
   Core receives today; nothing heard changes.
-- Any code that uses the description must say what "not fetched" means to
-  it. For speech that is simple: the indication is off. For the layout
-  judgment it is not (`client.rs:1110`, section 5.4), and the type makes
-  that a visible choice instead of a silent `None`.
+- The focus's ancestors are read as `Ancestor`, whose ungated description
+  the layout judgment reads (`client.rs:1110`), so an unnamed grouping with
+  a description is focus context whatever the theme (decision 4), while
+  the ancestor's spoken description still follows the gate.
 
 ### 4.3 What the compiler cannot check
 
@@ -377,40 +715,6 @@ Automation. The mapping is one function per gated shape in
 `verbatim-outpost` (from `Fetches`), with one unit test per gated field:
 turning that one setting off in a theme turns off that one gate and no
 other.
-
-### 4.4 Formatting: text attributes
-
-Formatting is not element properties but text range attributes: font name,
-size, weight, italic, underline and its style, strikethrough, foreground
-and background colours, bullet style, link, and the annotation types that
-carry spelling and grammar errors. They are read by the caret's remote
-operation (`verbatim-uia-rops/src/caret.rs`, `TextAttribute` at 74 and the
-attribute set at 142) or classically with `GetAttributeValues`, one
-attribute at a time where a provider lacks it
-(`verbatim-uia/src/text.rs:385` to 410). Which to read is decided by
-`attributes_for(fetches)` (`verbatim-outpost/src/text/uia.rs:807` to 836),
-and what they mean by `attributes_of(run, fetches)` (845), the same gates
-applied in two places.
-
-A read of an attribute a provider does not support returns UI Automation's
-"not supported" object rather than an error (established, `text.rs:262` to 265
-documentation), so the cost of section 2 does not arise here. What the
-same pattern gives is agreement: one declaration, `uia_attributes!`,
-generating the attribute list for gates (which feeds both the remote
-program and `GetAttributeValues`) and the read of the results into a
-struct with `Option` fields for gated attributes. Three attribute shapes
-cover today's reads:
-
-- `AttributeSet`, gated by the document-formatting settings, for the
-  caret's formatting.
-- `Culture`, never gated, for the language of a unit (`text.rs:447`).
-- `ConsoleProbe`, `FontName` alone, for the console's provider check
-  (`verbatim-uia/src/checks.rs:81`).
-
-The set of attributes a provider was found not to support
-(`CaretAnswer::unsupported`, `caret.rs:335`, kept per node by
-`text_reads.rs`) stays a run-time subtraction from the request: it is
-learned from answers, so no declaration can hold it.
 
 ## 5. The inventory
 
@@ -500,7 +804,8 @@ A sixth read is a live fallback rather than a miss:
 `wants_selected_child` (`verbatim-uia-rops/src/focus.rs:226` to 233) reads
 the control type live when it is not cached. Every element it is given
 carries the control type today (NVDA's base, the gated request), so the
-fallback never runs; under shapes it goes (decision 8).
+fallback never runs; under shapes it goes, with the query's input typed
+so that it always carries the control type (section 7, decision 8).
 
 ### 5.3 Over-fetches (correct, but wasteful)
 
@@ -512,7 +817,7 @@ fallback never runs; under shapes it goes (decision 8).
 - `console_reports_formatting` (`checks.rs:66`) fills all 34 for the
   console window and reads none of them: it only searches under it.
 
-### 5.4 Behaviour coupled to a gate
+### 5.4 Behaviour coupled to a gate (decided)
 
 - `is_layout` (`client.rs:1110`, the description at 1119) judges an
   unnamed window, property page or grouping as layout unless it has a
@@ -522,12 +827,19 @@ fallback never runs; under shapes it goes (decision 8).
   setting (`nvda/source/NVDAObjects/__init__.py:947` to 955). The listener
   reads ancestors with every detail (`Fetches::default()`,
   `focus_read.rs:374`), so the same grouping is reported when the listener
-  read the chain and not when the outpost did. Decision 4.
+  read the chain and not when the outpost did.
 - Dialog text includes each child's description (`text_of`,
   `dialog_text.rs:186`), read from the gated request, so with descriptions
   off a dialog's text loses them. NVDA's dialog text uses `basicText`,
   which includes the description whatever the setting
-  (`nvda/source/NVDAObjects/__init__.py:1450` to 1458). Decision 5.
+  (`nvda/source/NVDAObjects/__init__.py:1450` to 1458).
+
+Decided by Dickson on 2026-10-13, with bug 4: the layout judgment always
+has ancestors' descriptions, through an ungated `Description` group in
+`Ancestor`; dialog text always includes each control's description,
+through an ungated `Description` group in `DialogText`; and the dialog's
+own element is no longer read. All three land in migration step 3
+(section 9).
 
 ### 5.5 Every site, by component, with its shape
 
@@ -600,7 +912,8 @@ is `cache_request_for(fetches)` unless said otherwise.
   `is_focus_context` (`client.rs:1135`, which reads the content flags).
   Bug 2. Shape: `Ancestor`.
 - 696, the dialog's kept element, resolved without a refresh, for dialog
-  text. Bug 4.
+  text. Bug 4. Becomes an `Agile<Kept>` resolved on the bounded client's
+  thread, of which nothing is read (decided, section 5.4).
 - 726, `focused_control`: the focused element. Bug 2. Shape: `Node`
   (named `FocusRead` in section 4.2's sense, the same shape).
 - 802, `hosts_console_window`: `ProcessId`. Over-fetch. Shape:
@@ -627,7 +940,11 @@ Dialog text (`verbatim-outpost/src/dialog_text.rs`).
   and each child from `children_with` (`client.rs:248`), whose request is
   the gated list the caller passes (`read.rs:693`), so up to 7 failed
   reads per child with details off (bug 2). Shape: `DialogText` for the
-  children; the root becomes `Live`.
+  children. The root is not read (decided, section 5.4): `dialog_text`
+  asks the root only for its children (`dialog_text.rs:120` to 140), so
+  it becomes a type of its own holding a `Live` and offering `children`
+  alone, while `UiaObject` keeps `role` and `states`, which it serves for
+  the root as well today (`dialog_text.rs:210` to 240), for the children.
 
 `verbatim-uia`.
 
@@ -647,45 +964,58 @@ Dialog text (`verbatim-outpost/src/dialog_text.rs`).
 `verbatim-uia-rops`.
 
 - `focus.rs:228`, the control type of the query's element, with a live
-  fallback. Covered (decision 8).
+  fallback. Covered (decision 8). Becomes a read of the query's
+  `Cached<FocusInput>` (section 7).
 - `focus.rs:238`, `own_window`, `NativeWindowHandle` of the query's
-  element. Covered.
+  element. Covered. Read from `FocusInput`.
 - `focus.rs:459` to 518, `RemoteCache`. Section 7.
 - `navigate.rs:96`, `NativeWindowHandle` of the step's element, the kept
-  element (`read.rs:991` to 997). Covered.
+  element (`read.rs:991` to 997). Covered. Read from the query's
+  `Cached<Kept>` (section 7).
 - `controlled.rs:188`, `path.rs:151`, `focus.rs:553`, `navigate.rs:144`:
   classic fallbacks building the query's list. Covered; they take the
   shape's request.
 
 `verbatim-gui`.
 
-- `shell_items.rs:269` to 281. Over-fetch. Shape: `ShellButton`.
+- `shell_items.rs:269` to 281. Over-fetch. Shape: `ShellButton`, declared
+  in `verbatim-uia`'s shape module.
 
 ### 5.6 The shapes
 
-Event shapes, without gates:
+All are declared in `verbatim-uia`'s shape module (section 3.1).
 
-- `ListenerEvent`: NVDA's 13 and the Text pattern, as now. Its role is
-  read through a reduced group, `EventRole` (`ControlType`, `ClassName`,
-  `NativeWindowHandle`), which gives exactly the role `event_parts` gives
-  today (decision 6).
+Event shapes, declared `gates: none`:
+
+- `ListenerEvent`: NVDA's 13 properties, each a field so that the read
+  covers the request exactly (section 3.6), and the Text pattern as a
+  prefetch, as now. Its role is read through a reduced group, `EventRole`
+  (`ControlType`, `ClassName`, `NativeWindowHandle`), which gives exactly
+  the role `event_parts` gives today (decision 6). It covers `Kept` and
+  `FocusInput`.
 - `PropertyEvent`: today's 24 (`RoleCore`, `Name`, `ValueSet`, `States`,
-  `ProcessId`).
-- `TextEvent`: today's 3.
+  `ProcessId`). It covers `Kept`.
+- `TextEvent`: today's 3. It covers `Kept`.
 
 Fetch shapes:
 
 - `Kept`: `NativeWindowHandle` and `ClassName`, which is all any reader of
   a kept element reads. It is never requested; every shape whose elements
-  are kept declares `covers(Kept)`. `ProcessId` is in every kept cache
+  are kept declares `covers: Kept`. `ProcessId` is in every kept cache
   too, but no reader of a kept element reads it.
+- `FocusInput`: `ControlType` and `NativeWindowHandle`, what the remote
+  focus query reads of its input element (section 7). Never requested;
+  covered by `ListenerEvent` and `Node`.
 - `Node`: `RoleCore`, `Name`, `ValueSet`, `States`, the four gated detail
-  groups, `BoundingRectangle`: 24 to 31 properties.
-- `Ancestor`: `Node` and `IsContentElement`, `IsControlElement`: 26 to 33,
-  or 28 to 33 with decision 4's recommendation.
+  groups, `BoundingRectangle`: 24 to 31 properties. It covers `Kept` and
+  `FocusInput`.
+- `Ancestor`: `Node`, an ungated `Description` group, and
+  `IsContentElement`, `IsControlElement`: 28 to 33 (decision 4). It covers
+  `Kept`.
 - `TreeDump`: `Node`.
-- `DialogText`: `RoleCore`, `Name`, `ValueSet`, `States`, `Description`
-  never gated: 25.
+- `DialogText`: `RoleCore`, `Name`, `ValueSet`, `States`, an ungated
+  `Description` group: 25 (decision 5). The dialog's own element is not a
+  shape: it is a `Live`, in a root type of its own (section 5.5).
 - `WindowLookup`: `NativeWindowHandle`.
 - `ProcessCheck`: `ProcessId`.
 - `FrameworkCheck`: `FrameworkId`.
@@ -700,8 +1030,8 @@ Fetch shapes:
 - `ShellButton`: `NativeWindowHandle`, `ControlType`, `Name`,
   `IsOffscreen`, `BoundingRectangle`.
 
-Attribute shapes: `AttributeSet` (gated), `Culture`, `ConsoleProbe`
-(section 4.4).
+Every shape but `Node`, `Ancestor` and `TreeDump` is declared
+`gates: none`.
 
 ## 6. The kept-element registry
 
@@ -725,39 +1055,85 @@ know which request filled the element they get. Most read only the window
 handle and class name, which every one of the four holds, and are right by
 luck; bugs 3, 4 and 5 are the ones that read more.
 
-Under shapes the registry must record the shape with the element. Two
-ways:
+Under shapes the registry must record the shape with the element, and it
+stores an `Agile`, since the elements it keeps are resolved on other
+threads (section 3.3). Two ways:
 
-- An enum of the kinds kept: `Kept::Node(Cached<Node>)`,
+- An enum of the kinds kept: `Kept::Node(Agile<Node>)`,
   `Kept::PropertyEvent(..)`, `Kept::TextEvent(..)`. A reader matches and
   takes what each kind offers. It keeps everything known, but every reader
   then handles every kind, and a new kept kind changes every reader.
 - One shape, `Kept`, that every kept kind covers. `id_for_element` takes
-  `impl Into<Cached<Kept>>`, which `covers(Kept)` generates and checks at
-  compile time. A reader gets `Cached<Kept>`, with the window handle and
-  class name; one that needs more refreshes the element into a declared
-  shape, which is a call it makes knowingly.
+  `Cached<Kept>`, which a caller makes with `narrow`, checked at compile
+  time by `covers: Kept`, and the registry stores `Agile<Kept>`. A reader
+  resolves it to a `Cached<Kept>`, with the window handle and class name;
+  one that needs more refreshes the element into a declared shape, which
+  is a call it makes knowingly.
 
 With the second, every reader in the list is served without a new call:
 `worker.rs:2293` reads only the runtime id (bug 3's fix); `read.rs:1000`,
-1061, `navigate.rs:96` and `text_reads.rs:172` read what `Kept` holds;
-the dialog's root needs nothing (bug 4); and the log line reads the
-runtime id and class name only (bug 5, decision 7). `resolve_uia_element`
-(`read.rs:836`) already refreshes a kept element with the query's request
-before reading it, which under shapes is `Live::refresh::<S>`. Decision 2
-recommends the second.
+1061 and `text_reads.rs:172` read what `Kept` holds; the remote step query
+takes its input as `Cached<Kept>` and reads the window handle from it
+(`navigate.rs:96`, section 7); the dialog's root needs nothing (bug 4);
+and the log line reads the runtime id and class name only (bug 5,
+decision 7). `resolve_uia_element` (`read.rs:836`) already refreshes a kept
+element with the query's request before reading it, which under shapes is
+`Live::refresh`. The remote focus query, whose input is not a kept element
+but needs the control type, takes `Cached<FocusInput>` (section 7), so
+`Kept` need not grow for it. Decision 2 recommends the second.
 
 ## 7. Remote operations
 
 The remote programs take a property list today: `FocusQuery::properties`,
 `StepQuery::properties`, `ControlledQuery::properties` and the path
 search's (`verbatim-uia-rops`, `focus.rs`, `navigate.rs`, `controlled.rs`,
-`path.rs`). Under shapes they take `Fill<S>`, whose list is
-`S`'s request for its gates, and use it exactly where the slice is used
-now: to build the program's cache requests (`RemoteCache::new`,
-`focus.rs:474`) and the classic fallback's request. The elements the
-program returns are wrapped by `Fill<S>::claim`, giving `Cached<S>` with
-the same gates.
+`path.rs`). `verbatim-uia-rops` is another crate and cannot use
+`verbatim-uia`'s private constructors, so it is handed a token:
+
+```rust
+/// What a remote program needs to fill caches as S's request does, and
+/// the only way to wrap the elements it returns as `Cached<S>`.
+pub struct Fill<S: Shape> { /* the gates, the property and pattern lists; not Clone or Copy */ }
+
+impl<S: Shape> Fill<S> {
+    #[doc(hidden)]
+    pub fn new(request: &Request<S>) -> Self;
+    /// The properties the program's cache requests hold.
+    pub fn properties(&self) -> &[UIA_PROPERTY_ID];
+    /// The classic fallback's request, built from the same list.
+    pub fn request(&self, uia: &Uia) -> windows::core::Result<IUIAutomationCacheRequest>;
+    #[doc(hidden)]
+    pub fn claim(&self, element: IUIAutomationElement, absent: Absent) -> Cached<S>;
+}
+```
+
+A query holds a `Fill<S>` in place of its property slice. The program
+builds its cache requests (`RemoteCache::new`, `focus.rs:474`) from
+`properties()`, and the classic fallback (`controlled.rs:188`,
+`path.rs:151`, `focus.rs:553`, `navigate.rs:144`) uses `request()`, so
+both lists come from the token. The elements the program returns are
+wrapped by `claim`, giving `Cached<S>` with the token's gates and the
+element's absent record. `Fill<S>` is neither `Clone` nor `Copy`; `new`
+and `claim` are hidden from the documentation and allowed by the
+`cargo xtask ci` scan only inside `verbatim-uia-rops` (section 3.5,
+item 7). Nothing in the type ties a token to one program run or proves
+the program used its list: that is the audited trust boundary of section
+3.5, item 8.
+
+The programs' inputs are typed too. Today they read their input elements'
+caches: the focus query reads the control type (`focus.rs:228`,
+`wants_selected_child`) and the window handle (`focus.rs:238`,
+`own_window`), and the step query the window handle (`navigate.rs:96`).
+Under shapes `verbatim-uia-rops` cannot read a cache, so the focus query's
+element is a `Cached<FocusInput>`, which the caller makes with `narrow`
+from a `ListenerEvent` or a `Node`, and the step query's is a
+`Cached<Kept>` from the registry; each reads its input with `read()`. A
+caller holding only a `Cached<Kept>` cannot hand it to the focus query,
+which is what makes removing the control type's live fallback safe
+(decision 8). Whether a program's `PopulateCache` on an imported input
+element leaves the client-side input's cache alone has not been verified;
+the inputs are read before the program runs, so the reads above do not
+depend on it.
 
 One caveat a static shape cannot express. A cache filled by a remote
 program's `PopulateCache` stores a property's default where a locally built
@@ -778,11 +1154,12 @@ Three resolutions:
 - A per-element absent record. The program already computes a bit mask of
   the checked properties each element supports; it adds that mask to its
   results, one integer per element, and `Fill<S>::claim` stores it in the
-  `Cached<S>` it makes (the `absent` field of section 3.3). The read of
-  `IsDataValidForForm` returns "not supported" from the record without
-  asking UI Automation. A local fill's record is empty. This is not an
-  "is it cached?" check: it is Verbatim's own record of what its program
-  did, like the gates.
+  `Cached<S>` it makes (the `absent` field of section 3.3). The reader
+  answers a read of `IsDataValidForForm` as "not supported" from the record
+  without asking UI Automation. A local fill's record is empty. This is
+  not an "is it cached?" check: it is Verbatim's own record of what its
+  program did, like the gates. It is trusted as the program returns it
+  (section 3.5, item 9).
 - The program always fills the property, with its default, and returns the
   mask. Simpler program (one request instead of one per combination), same
   record on the read side; it needs the record all the same, since the
@@ -810,8 +1187,8 @@ property in a provider is not measured):
   34 today, 24 to 31 as `Node`, since `ProcessId`, `IsContentElement` and
   `IsControlElement` leave the paths that never read them; failed reads
   from up to 7 to none.
-- Ancestors: 27 to 34 today, 26 to 33 as `Ancestor`, or 28 to 33 with the
-  description always fetched (decision 4).
+- Ancestors: 27 to 34 today, 28 to 33 as `Ancestor`, whose description is
+  always fetched (decision 4, decided); failed reads from up to 7 to none.
 - Dialog text children: 27 to 34 today, 25 as `DialogText`.
 - Console process check: 27 to 34 today, 1. Shell list: 34, 5. Console
   provider check: 34, none.
@@ -856,132 +1233,358 @@ microseconds each, set against the failed reads they replace).
 
 ## 9. Migration
 
-Each step is small, passes `cargo xtask ci`, runs the mockapp tests it
-touches and the end-to-end scenarios related to the paths it changes, and
-updates the `docs/crates/` file of any crate whose public API it changes
-(`verbatim-uia.md`, `verbatim-uia-rops.md`, `verbatim-outpost.md`). Tests
-follow `docs/testing.md`: one focused test per stated behaviour, exact
-counts, no new test files beyond the neighbouring ones. The working tree's
-event-read fix is not committed on its own (Dickson, 2026-10-13: fix this
-systematically); step 2 replaces it with the event shapes.
+Each step passes `cargo xtask ci`, runs the mockapp tests it touches and
+the end-to-end scenarios related to the paths it changes, and updates the
+`docs/crates/` file of any crate whose public API it changes
+(`verbatim-uia.md`, `verbatim-uia-rops.md`, `verbatim-outpost.md`). From
+step 2 to step 5 the new entry points sit beside the old ones (`Part::new`
+beside `Part::shaped`, the list-taking fetches beside the request-taking
+ones, `id_for_element` on a raw element), so every step compiles on its
+own and each call site moves when its step comes; step 5 removes the old
+ones. Until then a site that has a `Cached<S>` but must call an old entry
+point passes `live().element()`, which is the untyped use step 5 ends.
+Tests follow `docs/testing.md`: one focused test per stated behaviour,
+exact counts, no new test files beyond the neighbouring ones. The working
+tree's event-read fix is not committed on its own (Dickson, 2026-10-13:
+fix this systematically); step 2 replaces it. The working tree's third
+subscription group (section 3.4) is separate work and lands on its own.
+
+The failed-read expectations. Step 1 adds a failed-read count to every
+operation `call_counts.rs` measures, with each number recorded from the
+code at that step, not predicted: nonzero exactly where section 5.2 says a
+path reads outside its cache. Each later step names the expectations it
+takes to zero, and after step 4 every one is zero. About 70 call sites in
+15 mockapp test files use the lists and readers that go (most in
+`remote_ops.rs`, `call_counts.rs`, `events.rs`, `instruction_limit.rs` and
+`controller_for.rs`); each step lists the files it moves, and the public
+shapes are enough for an integration test in another crate, which cannot
+declare a shape of its own.
 
 ### Step 1. Count failed cached reads; the controller's runtime id
 
-- Add `failed_cached_reads` to `CallCounts` (`calls.rs`), counted in
-  `ElementExt`'s cached reads when UI Automation answers with an error,
-  reported with each worker entry as calls are.
+- The thread-local failed-read count of section 3.6, kept in every
+  profile, counted in `ElementExt`'s cached reads when the error's code is
+  a failure, and gathered by the registration's callback wrapper, the
+  listener's reader and the outpost's worker into counters they own.
 - `controlled_selection` takes the controller's id from
   `verbatim_uia::runtime_id(&focused)` (`worker.rs:2293`); the wrong
   comment goes.
-- Tests: `call_counts.rs`'s expected counts gain the new field, which
-  records today's failed reads where a test's path has them; one test in
-  `controller_for.rs` that a controlled selection whose focus element was
-  kept from a text event makes no failed cached read.
+- Tests: `call_counts.rs`'s expectations gain the failed-read count,
+  recorded against main without the working tree's event-read fix, so the
+  outpost's property and text event paths show their failed reads here;
+  one test in `controller_for.rs` that a controlled selection whose focus
+  element was kept from a text event makes no failed cached read.
+- Mockapp files: `call_counts.rs`, `controller_for.rs`.
 
-### Step 2. The shape module, the macro, and the event shapes
+### Step 2. The shape module, typed handles, and the event shapes
 
-- `uia_shape!`, `Shape`, `Cached`, `Live` and the shape module's accessors,
-  in `verbatim-uia`. Registrations take shapes (`subscribe.rs`).
-- The listener: `ListenerEvent` for its registration (`listener.rs:817`)
-  and every reader of its elements (`capture`, `queue_for_reading`, the
-  notification check, `focus_read.rs` `read` and `log_sender`, and the
-  query's `wants_selected_child`). `event_parts` goes.
-- The outpost: `PropertyEvent` and `TextEvent` for its registrations;
+- In `verbatim-uia`: the shape module (`Shape`, `Ungated`, `Covers`, all
+  sealed; `uia_shape!`, private; `Reader` over the private `CachedReads`;
+  the kind readers moved out of `ElementExt`'s public use), `Cached`,
+  `Live`, `Agile`, `Request`, and `Part::shaped`.
+- Shapes: `ListenerEvent`, `PropertyEvent`, `TextEvent`, `Kept` and their
+  groups.
+- The listener: `ListenerEvent` for its registration (`listener.rs:817`),
+  its job carrying `Agile<ListenerEvent>`, and every reader of its
+  elements (`capture`, `queue_for_reading`, the notification check,
+  `focus_read.rs` `read` and `log_sender`). `event_parts` goes.
+- The outpost: `PropertyEvent` and `TextEvent` for its registrations, the
+  worker's event carrying `Agile<PropertyEvent>` or `Agile<TextEvent>`;
   `snapshot_parts_from_event_cache`, `native_window_handle_from_event_cache`
-  and `Restricted` go.
-- Tests: unit tests of the macro in `verbatim-uia` (a shape's
-  `PROPERTIES` is its fields' union without repeats; a gated group is in
-  the request only when its gate is on; a gated group reads `None` when
-  off). In `events.rs`, one test that the listener's selection and
+  and `Restricted` go. The two sites that keep an event's element
+  (`worker.rs:2365`, `text_reads.rs:244`) still call the old
+  `id_for_element` until step 4.
+- Tests: in `verbatim-uia`, the recording test of section 3.6 over every
+  shape so far, and one test that a shape's `PROPERTIES` is its fields'
+  union without repeats. The compile-time assertions (`covers`, the
+  gate-free arm) are checked by compiling; a test that a wrong declaration
+  fails to compile would need a new dependency such as `trybuild`, and is
+  not proposed. In `events.rs`, one test that the listener's selection and
   notification facts are read with no failed cached read. The uncommitted
   comparison test in `uia_tree.rs` is replaced by one that each event
   shape's read of every scripted element gives the fields the full read
-  gives. A trace of `conhost_flood` confirms the callback threads' time
-  matches item 12's 0.83 seconds.
+  gives. In `call_counts.rs`, the event paths' failed reads become zero;
+  provider-side counts are unchanged, since the event requests are today's
+  lists.
+- Measurement, recorded rather than asserted: a `cargo xtask measure`
+  trace of `conhost_flood`, with the callback threads' processor time in
+  the same window as item 12, written into `wake-ups.md` beside item 12's
+  0.83 seconds. It is not a pass condition: `docs/testing.md` forbids loose
+  tolerances, and the number varies by machine.
+- Mockapp files: `events.rs`, `uia_tree.rs`, and `call_counts.rs`'s uses
+  of `FOCUS_EVENT_PROPERTIES` and `TEXT_EVENT_PROPERTIES`.
 
-### Step 3. The kept-element registry
+### Step 3. Fetch shapes, remote operations, and the decided fixes
 
-- `id_for_element` takes `Cached<Kept>` (decision 2); readers take
-  `Cached<Kept>`; the dialog's root becomes `Live` and is not read; the
-  log line reads the runtime id and class name.
-- Tests: in `call_counts.rs`, `uia_dialog_text_costs_exactly` with the
-  dialog's element kept from a property event, no failed cached read; in
-  `uia_tree.rs` or `events.rs`, a node kept from a text event navigated
-  remotely with no failed read.
-
-### Step 4. Fetch shapes
-
-- `verbatim-uia`'s fetch functions take shapes; `Node`, `Ancestor`,
-  `TreeDump`, `DialogText`, `SelectionContainer`, the refresh shapes,
-  `WindowLookup`, `ProcessCheck`, `FrameworkCheck` and the empty shape
-  replace the lists; the outpost converts at every site in section 5.5.
-- `verbatim-uia-rops` takes `Fill<S>`, returns the absent record
-  (decision 3), and loses `wants_selected_child`'s fallback (decision 8).
+- `verbatim-uia`'s fetches take `&Request<S>`, beside the old ones;
+  `Node`, `Ancestor`, `TreeDump`, `DialogText`, `SelectionContainer`, the
+  refresh shapes, `WindowLookup`, `ProcessCheck`, `FrameworkCheck`,
+  `FocusInput`, `ShellButton` and the empty shape replace the lists at
+  every site in section 5.5 but the registry's readers.
+- `verbatim-uia-rops` takes `Fill<S>`, returns the absent record (decision
+  3), takes the focus query's input as `Cached<FocusInput>`, and loses
+  `wants_selected_child`'s fallback (decision 8). The step query's input
+  stays a raw kept element until step 4. Since the queries' signatures
+  change, `verbatim-uia-rops` and its callers move in one commit; the other
+  sites may follow in further commits, each passing CI.
+- Decided by Dickson (section 5.4): `Ancestor`'s ungated description, read
+  by `is_layout`; `DialogText`'s ungated description; and the dialog's
+  root as its own type holding a `Live` and offering only `children`,
+  since `dialog_text` asks the root for nothing else, while `UiaObject`
+  keeps `role` and `states` for the children (`dialog_text.rs:120` to 140
+  and 210 to 240).
 - The gate functions from `Fetches`, with a unit test per gated field.
 - `verbatim-gui`'s shell list takes `ShellButton`.
-- This step may be split by crate if its diff is large; each part passes
-  CI.
+- The sites that keep a fetched element (`map.rs:728`, `read.rs:868`,
+  `worker.rs:2295` and 2949) still call the old `id_for_element` until
+  step 4.
 - Tests: in `call_counts.rs`, a focus read with descriptions off makes no
-  failed cached read, and the provider-side counts drop by the properties
-  removed; in `remote_ops.rs`, a remotely read element without
-  `IsDataValidForForm` reads as a valid entry with no failed read; the
-  gate unit tests. End-to-end: the focus, selection, dialog, navigation
-  and terminal scenarios.
+  failed cached read, the gated fetch paths' failed reads become zero, and
+  the provider-side counts drop by exactly the properties removed (the new
+  numbers recorded in this step); `uia_dialog_text_costs_exactly` with
+  descriptions off includes a child's description. In `remote_ops.rs`, a
+  remotely read element without `IsDataValidForForm` reads as a valid
+  entry with no failed read. In `focus_reports.rs`, with descriptions off,
+  an unnamed grouping with a description is reported as focus context.
+  The gate unit tests. End-to-end: the focus, selection, dialog,
+  navigation and terminal scenarios.
+- Mockapp files: `remote_ops.rs`, `instruction_limit.rs` (the queries'
+  lists become tokens), `call_counts.rs` (the focus query, its uses of
+  `CACHED_PROPERTIES` and `snapshot_from_cached_element`),
+  `controller_for.rs`, `arbitration.rs`, `focus_reports.rs`.
 
-### Step 5. Formatting attributes
+### Step 4. The kept-element registry
 
-- `uia_attributes!` and the three attribute shapes; `attributes_for` and
-  the matching half of `attributes_of` go; the learned unsupported set
-  stays a subtraction.
-- Tests: a unit test per gate (its attributes in the list exactly when
-  on); the caret formatting tests in mockapp unchanged; the Notepad
-  formatting scenarios.
+- `id_for_element` takes `Cached<Kept>` and the registry stores
+  `Agile<Kept>` (decision 2); every keeping site narrows its `Cached<S>`;
+  readers resolve a `Cached<Kept>`; the step query's input becomes
+  `Cached<Kept>`; dialog text resolves the dialog's `Agile<Kept>` on the
+  bounded client's thread and reads nothing of it; the log line reads the
+  runtime id and class name (decision 7).
+- Tests: in `call_counts.rs`, `uia_dialog_text_costs_exactly` with the
+  dialog's element kept from a property event, no failed cached read; in
+  `uia_tree.rs`, a node kept from a text event navigated remotely with no
+  failed read. The kept paths' failed reads in `call_counts.rs` become
+  zero, so every failed-read expectation there is now zero.
+- Mockapp files: `call_counts.rs`, `uia_tree.rs`.
 
-### Step 6. Close the API, and the CI check
+### Step 5. Close the API, and the CI check
 
-- `ElementExt`'s `cached_*` methods become private to the shape module;
-  `cached_properties`, `cache_request_for`, `base_cache_request` and the
-  property lists leave the public API.
-- The `cargo xtask ci` check of section 3.5, item 4, with a unit test in
+- The old entry points go: `ElementExt`'s `cached_*` methods become
+  private to the shape module; `cached_properties`, `cache_request_for`,
+  `base_cache_request`, the property lists and the
+  `snapshot_*_from_cached_element` functions leave the public API;
+  `Part::new`, `Part::with_text_pattern` and `Part`'s public fields go;
+  `id_for_element` on a raw element goes.
+- The `cargo xtask ci` scan of section 3.5, item 7, with a unit test in
   `xtask` that a cached read outside the shape module fails it, as
   `waits.rs` is tested.
+- Mockapp files: every remaining use. `base_cache_request` becomes
+  `uia.request::<Node>(Node::all_on())` in `caret_watch.rs`,
+  `focus_reports.rs`, `native_controls.rs`, `shutdown.rs`, `terminal.rs`,
+  `terminal_reading.rs`, `text.rs`, `time_limits.rs`, and the rest of
+  `events.rs`, `remote_ops.rs` and `instruction_limit.rs`; their
+  `cached_string` and `cached_value` reads become reads of the shape's
+  fields (`remote_ops.rs:164`, which reads a property by id, reads the
+  field that holds it).
+- No expected count changes.
 
 ## 10. Decisions for Dickson
 
-1. Declarative macro or hand-written shapes. A `macro_rules!` macro
-   generates the property list and the read from one field list, which is
-   the guarantee. Hand-written impls, each with a `PROPERTIES` constant and
-   a `read` function, need no macro but let the two drift, caught only at
-   run time by the debug-build check. Recommend: the macro.
-2. The kept-element registry (section 6): an enum of kept kinds, or one
-   `Kept` shape that every kept kind covers, with readers that need more
-   refreshing explicitly. Recommend: the `Kept` shape; every current reader
-   is served by it without a new call.
-3. `IsDataValidForForm` in remotely filled caches (section 7): an absent
-   record from the program's existing support test, the program always
-   filling the property with the same record, or the state dropped for
-   remote reads. Recommend: the absent record, with the program changed by
-   one result per element.
-4. The description of ancestors, and `is_layout` (section 5.4). Fetch the
-   description for `Ancestor` whatever the theme, so the layout judgment
-   is NVDA's under every theme and the outpost judges ancestors as the
-   listener does; it costs two properties per ancestor read by the
-   outpost. Or gate it, and decide that "not fetched" means "no
-   description" for the layout judgment, which keeps today's behaviour and
-   its departure from NVDA. Recommend: always fetched.
-5. Dialog text (section 5.4 and bug 4). Fetch the children's description
-   whatever the theme, as NVDA's dialog text includes it, and read nothing
-   of the dialog's root element, which no rule uses, instead of refreshing
-   a kept root. Recommend both.
-6. The listener's event role. `ListenerEvent` reads the role through
-   `ControlType`, `ClassName` and `NativeWindowHandle` alone, giving the
-   role it gives today; adding `IsDialog` and `IsTogglePatternAvailable`
-   to the listener's request would refine it but departs from NVDA's base
-   request, which is a decision on record, and the outpost reads the role
-   afresh anyway. Recommend: the reduced group.
-7. The log line in `text_event_from` (bug 5): log the runtime id and class
-   name only, or refresh both elements for the name and framework. It is
-   an `info` line for a rare event. Recommend: runtime id and class name.
-8. `wants_selected_child`'s live fallback in `verbatim-uia-rops`
-   (section 5.2): remove it, since every shape given to the focus query
-   carries the control type. Recommend: remove.
+Open:
+
+- Decision 1. Declarative macro or hand-written shapes. Both carry the
+  same typed handles (`Cached`, `Agile`, `Request`, `Fill`, sealed
+  `Shape`, `Ungated`, `Covers`), the same scan, and the same recording
+  test. With the macro, a shape's request and read come from one field
+  list and the recording test checks the macro. Hand-written, each shape
+  is a plain struct with a read over `CachedReads` and a function giving
+  its properties for given gates, and the recording test is what ties the
+  two together, so a drift fails `cargo xtask ci` rather than the build;
+  there is no const evaluation or nested-gate machinery, though the
+  `UNGATED` lists the `covers` assertion needs are written by hand too.
+  The macro costs about a hundred lines of `macro_rules!` and its error
+  messages (estimated from the scratch crate's prototype, which is about
+  sixty). Since Dickson asked for compile-time guarantees, recommend: the
+  macro, with the recording test as its check, which is the review's
+  recommendation too.
+- Decision 2. The kept-element registry (section 6): an enum of kept
+  kinds, or one `Kept` shape that every kept kind covers, stored as
+  `Agile<Kept>`, with readers that need more refreshing explicitly.
+  Recommend: the `Kept` shape. Every current reader is served by it
+  without a new call (`read.rs:1000` and 1061, `navigate.rs:96`,
+  `text_reads.rs:172` and the rest), given that the focus query's input is
+  typed as `FocusInput` (section 7), which keeps the control type out of
+  `Kept`.
+- Decision 3. `IsDataValidForForm` in remotely filled caches (section 7):
+  an absent record from the program's existing support test, the program
+  always filling the property with the same record, or the state dropped
+  for remote reads. The first two make the record part of the audited
+  trust boundary (section 3.5, item 9). Recommend: the absent record, with
+  the program changed by one result per element.
+- Decision 6. The listener's event role. `ListenerEvent` reads the role
+  through `ControlType`, `ClassName` and `NativeWindowHandle` alone,
+  giving the role it gives today; adding `IsDialog` and
+  `IsTogglePatternAvailable` to the listener's request would refine it but
+  departs from NVDA's base request, which is a decision on record, and the
+  outpost reads the role afresh anyway. Recommend: the reduced group.
+- Decision 7. The log line in `text_event_from` (bug 5): log the runtime
+  id and class name only, or refresh both elements for the name and
+  framework. It is an `info` line for a rare event. Recommend: runtime id
+  and class name.
+- Decision 8. `wants_selected_child`'s live fallback in
+  `verbatim-uia-rops` (section 5.2): remove it. This is safe only because
+  the focus query's input is typed: it takes `Cached<FocusInput>`, which
+  carries the control type, so no caller can hand it an element whose
+  cache lacks it. Without that typing, a `Cached<Kept>` handed to the
+  query would silently lose the selected child. Recommend: remove,
+  together with the typed input, in step 3.
+
+Decided by Dickson on 2026-10-13:
+
+- Decision 4. The description of ancestors, and `is_layout` (section 5.4).
+  The layout judgment always has ancestors' descriptions, whatever the
+  theme, as NVDA's `presentationType` does: `Ancestor` holds an ungated
+  `Description` group beside `Node`'s gated one, so the outpost judges
+  ancestors as the listener does. It costs two properties per ancestor
+  read by the outpost with descriptions off. Lands in step 3.
+- Decision 5. Dialog text (section 5.4 and bug 4). Dialog text always
+  includes each control's description, whatever the theme, as NVDA's
+  `basicText` does, through an ungated `Description` group in
+  `DialogText`; and nothing of the dialog's own element is read. Lands in
+  step 3, with the kept dialog's typed hand-off in step 4.
+
+## 11. Later: formatting attributes
+
+Not part of this migration. Formatting is not element properties but text
+range attributes: font name, size, weight, italic, underline and its
+style, strikethrough, foreground and background colours, bullet style,
+link, and the annotation types that carry spelling and grammar errors.
+They are read by the caret's remote operation
+(`verbatim-uia-rops/src/caret.rs`, `TextAttribute` at 74 and the attribute
+set at 142) or classically with `GetAttributeValues`, one attribute at a
+time where a provider lacks it (`verbatim-uia/src/text.rs:385` to 410).
+Which to read is decided by `attributes_for(fetches)`
+(`verbatim-outpost/src/text/uia.rs:807` to 836), and what they mean by
+`attributes_of(run, fetches)` (845), the same gates applied in two places.
+
+A read of an attribute a provider does not support returns UI Automation's
+"not supported" object rather than an error (established, `text.rs:262` to
+265 documentation), so the cost of section 2 does not arise here, which is
+why it is outside this design's goal. What the same pattern would give is
+agreement: one declaration, `uia_attributes!`, generating the attribute
+list for gates (which feeds both the remote program and
+`GetAttributeValues`) and the read of the results into a struct with
+`Option` fields for gated attributes. Its gates would need the gates
+header of section 4.1, since the annotation types are read for either
+spelling or grammar errors (`verbatim-outpost/src/text/uia.rs:811`).
+Three attribute shapes would cover today's reads:
+
+- `AttributeSet`, gated by the document-formatting settings, for the
+  caret's formatting.
+- `Culture`, never gated, for the language of a unit (`text.rs:447`).
+- `ConsoleProbe`, `FontName` alone, for the console's provider check
+  (`verbatim-uia/src/checks.rs:81`).
+
+The set of attributes a provider was found not to support
+(`CaretAnswer::unsupported`, `caret.rs:335`, kept per node by
+`text_reads.rs`) would stay a run-time subtraction from the request: it is
+learned from answers, so no declaration can hold it. The work would be:
+`uia_attributes!` and the three attribute shapes; `attributes_for` and the
+matching half of `attributes_of` go; a unit test per gate (its attributes
+in the list exactly when on); the caret formatting tests in mockapp
+unchanged; the Notepad formatting scenarios. It deserves a design of its
+own when taken up.
+
+## 12. Review of 2026-10-13
+
+An adversarial review checked about 30 of this document's citations
+against the working tree (all accurate, as were the counts) and its
+const-evaluation claims in a scratch crate. Each finding, and what the
+document now does about it:
+
+Blocking:
+
+- B1, elements cross threads with no typed handle. Adopted: `Agile<S>`,
+  `Send` and `Sync` with no `unsafe` through `PhantomData<fn() -> S>`, and
+  each hand-off listed with the shape it carries; the registry stores
+  `Agile<Kept>`. The single-threaded apartment case is stated as not
+  verified. Sections 3.3 and 6.
+- B2, `Fill<S>` lets any crate forge a `Cached<S>`. Adopted: `Fill<S>` is
+  neither `Clone` nor `Copy`, `new` and `claim` are hidden and scanned to
+  `verbatim-uia-rops`, and the program's two lists come from the token's
+  `properties()` and `request()`. What remains is stated as an audited
+  trust boundary. Sections 3.5 (item 8) and 7.
+- B3, the guarantees depend on sealing and on where shapes live. Adopted:
+  `Shape`, `Ungated` and `Covers` sealed, `uia_shape!` private, every shape
+  in the shape module, `read_from` over a crate-private `Reader` (which
+  also lets a group be read inside any shape), and other crates' mapping
+  as free functions. Sections 3.1 and 3.2.
+- B4, `Live` exposes the raw element. Adopted: the guarantee is stated as
+  the scan's, with its patterns, the children read's exception, and
+  `build_updated_cache` rejected outside `verbatim-uia`. Sections 3.3 and
+  3.5 (item 7).
+- B5, the registry step could not compile before the fetch step. Adopted:
+  fetch shapes are step 3 and the registry step 4, old and new entry
+  points coexist until step 5, and `verbatim-uia-rops` moves in one commit
+  with its callers. Section 9.
+
+Should fix:
+
+- S1, gate subtraction wrong for a property both gated and ungated, nested
+  gates unspecified. Adopted: the request is a run-time union, a group's
+  gates nest in its parent's, and decision 4 uses an ungated description
+  field. Sections 3.2 and 4.1.
+- S2, macro claims not achievable as written. Adopted: two-pass constants,
+  `&'static` lists, explicit read kinds with the Rust type following from
+  the kind, a `PATTERNS` constant with read and prefetched patterns, and
+  tree scope and filter on the fill call. The gates header is argued
+  against for element shapes: with one gate per field, named after it, no
+  identifier repeats and none needs removing; it is kept for attributes,
+  should they be taken up. Sections 3.1, 3.2, 3.4, 4.1 and 11.
+- S3, request and gates could disagree. Adopted: `Request<S>` keeps its
+  gates and fills take it alone. Section 3.4.
+- S4, `Part`'s public fields bypass shapes. Adopted: private fields,
+  `Part::shaped::<S>` for `S: Ungated`, `.extended()` and the working
+  tree's `.text_changes()` as builders, `Group::holds` and the new group
+  untouched, and `CachedReads` kept as the reader's seam. Section 3.4.
+- S5, `verbatim-uia-rops` reads its inputs' caches. Adopted: the focus
+  query takes `Cached<FocusInput>` and the step query `Cached<Kept>`;
+  decision 8 is restated as depending on it. Sections 7 and 10.
+- S6, the failed-read count missed the callback and reading threads and
+  could over-count. Adopted: per-thread counting gathered into counters
+  owned by the registration, the listener and the outpost; only errors
+  whose code is a failure count; a counter of its own, not a `CallCounts`
+  field; every profile. Section 3.6.
+- S7, the debug check was the "is it cached?" check by another name.
+  Adopted: replaced by the recording test over every combination of gates.
+  Sections 3.5 (item 6) and 3.6.
+- S8, the migration did not mention the mockapp tests. Adopted: each step
+  lists the test files it moves, and the public shapes serve tests in
+  another crate. Section 9.
+- S9, the summary overstated the compiler's guarantees. Adopted: the
+  summary and section 3.5 attribute each guarantee to the compiler, a
+  unit test, the scan or the audited boundary. Sections 1 and 3.5.
+
+Minor:
+
+- "Not fetched" collapses into "absent" through `Option`'s methods. Argued
+  against: the two uses where that would matter now read ungated fields,
+  so a `Gated<T>` type would add ceremony for no remaining case. Section
+  4.1.
+- `live()` without `unsafe`, and `Clone` by hand. Adopted. Section 3.3.
+- Pattern conditions on `RangeValueValue` and `ValueIsReadOnly` must stay
+  in the group's mapping. Adopted, stated. Section 3.1.
+- The flood trace as a pass condition. Adopted: a recorded measurement.
+  Section 9, step 2.
+- Step 1's counts hard-coding today's failed reads. Adopted: each step
+  says which expectations become zero, and all are zero after step 4.
+  Section 9.
+- Attribute reads have no failure cost, so they are outside the goal.
+  Adopted: moved to a later note. Section 11.
+- The dialog's root needs its own type. Adopted: a root type holding a
+  `Live` and offering only `children`. Sections 5.6 and 9, step 3.
+- Decision 2's claim holds given S5. Adopted, stated. Section 10.
+
+The review's simpler alternative, hand-written shapes with the same typed
+handles, recording test and scan, is weighed in decision 1.
