@@ -1254,7 +1254,14 @@ Implementation notes:
     of the watched node checks the watch again with one read, unless the
     event was observed before the caret was last read, which already saw
     it; the check that finds evidence answers the key, and the caret event's
-    own report is not sent, the answer carrying the same caret. While a
+    own report is not sent, the answer carrying the same caret. A check
+    whose read covers a caret event of the node that is still waiting in
+    the intake, observed at or after the key's press, counts that event as
+    the event's own check would have (`text_reads::Signal`): a watch with
+    no caret known before the key, for which a caret event is the
+    evidence, is then answered by the read that covers it, as a terminal's
+    read does for a caret event the intake planned after its text change,
+    rather than left open when the covered event checks nothing. While a
     check reads, the watchdog treats the watch's request as the one running,
     so an abandonment answers it. A watch ends without evidence, answered
     `TextReply::WatchEnded`, for which Core says nothing, when the next

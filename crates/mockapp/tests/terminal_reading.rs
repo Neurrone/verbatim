@@ -18,6 +18,8 @@
 //! - The console host's text area, in a window of the console's class,
 //!   takes its caret event from its console (`EVENT_CONSOLE_CARET`), and
 //!   UI Automation's caret event is not subscribed for it.
+//! - A caret key's watch that knows no caret before the key is answered by
+//!   a read that covers a caret event waiting behind it.
 //!
 //! While the terminal is held, the evidence that the outpost has taken a
 //! text change is the report of a caret event raised after it: UI
@@ -36,7 +38,8 @@ mod harness;
 
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{
-    NodeId, NormalizedEvent, PropertyChange, Role, TerminalOutput, TextOp, TextReply,
+    CaretWatch, NodeId, NormalizedEvent, PropertyChange, Role, TerminalOutput, TextOp, TextReply,
+    TextUnit,
 };
 use verbatim_outpost::Heard;
 use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, QueryResult};
@@ -296,7 +299,6 @@ fn a_held_terminals_caret_event_is_read_with_the_text() {
     app.quit();
 }
 
-/// Runs each test on a desktop of its own (`common/harness.rs`).
 /// The console host's text area, in a window of the console's class,
 /// takes its caret event from its console: UI Automation's caret event
 /// reaches the outpost only as the `WinEvent` UIA raises for MSAA clients,
@@ -335,6 +337,54 @@ fn the_console_hosts_caret_comes_from_its_console() {
     app.quit();
 }
 
+/// A caret key's watch that knows no caret before the key (no `since`,
+/// and no press time to find the outpost's own report before it by)
+/// takes a caret event as its evidence. One waiting behind a text change in one batch is
+/// planned after it, and the change's read reads the caret, covering the
+/// event, which then checks nothing: the watch, checked after that read,
+/// is answered by it as the event would have answered it. The answer, then
+/// the caret read with the text, then the output.
+fn a_read_covering_a_caret_event_answers_a_watch_with_no_caret() {
+    let (mut app, mut outpost, term) = start("mockapp-terminal-covered-caret");
+    let key = ask(
+        &mut outpost,
+        term,
+        TextOp::AwaitCaret(CaretWatch {
+            landing: false,
+            since: None,
+            pressed_at_ms: 0,
+            unit: TextUnit::Character,
+            compare: None,
+            previous_selection: None,
+        }),
+    );
+    // The watch is open: nothing is said.
+    outpost.settled();
+    outpost.hold_worker();
+    app.send("caret term 1");
+    app.send("caret-event term");
+    write(&mut app, &["three"]);
+    heard_caret_and_text(&outpost);
+    outpost.release_worker();
+    let TextReply::Caret(reply) = answer_to(&outpost, key) else {
+        panic!("the watch was not answered with the caret");
+    };
+    assert!(reply.moved);
+    assert_eq!(
+        (reply.caret.line.text.as_str(), reply.caret.line.offset),
+        (
+            "one
+", 1
+        )
+    );
+    assert_eq!(reply.unit.expect("the character").text, "n");
+    assert_eq!(reported(&outpost, term), lines(&["three"]));
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
         (
@@ -360,6 +410,10 @@ fn main() {
         (
             "the_console_hosts_caret_comes_from_its_console",
             the_console_hosts_caret_comes_from_its_console,
+        ),
+        (
+            "a_read_covering_a_caret_event_answers_a_watch_with_no_caret",
+            a_read_covering_a_caret_event_answers_a_watch_with_no_caret,
         ),
     ]);
 }

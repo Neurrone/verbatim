@@ -568,6 +568,18 @@ impl Intake {
         !state.waiting.is_empty() || !state.batch.is_empty()
     }
 
+    /// Whether an entry for which `wanted` holds waits to be handled,
+    /// planned or not: what has been observed and not yet handled. The
+    /// entry kept for when nothing else is ready is left out.
+    pub(super) fn any_waiting(&self, wanted: impl Fn(&Entry) -> bool) -> bool {
+        let state = self.lock();
+        state.waiting.iter().any(|waiting| wanted(&waiting.entry))
+            || state
+                .batch
+                .iter()
+                .any(|planned| planned.entries().into_iter().any(&wanted))
+    }
+
     /// Keeps `entry` to be handed out once nothing else is ready, in place
     /// of one kept before: the worker reads a held terminal's noted caret
     /// then ([`Item::NotedCaret`]), when the burst of events that kept it

@@ -78,11 +78,19 @@ struct Signal<'a> {
     node_id: NodeId,
     /// Whether a caret event prompted the check.
     caret_event: bool,
+    /// When the key was pressed, as the watch says (0 when unknown).
+    pressed_at_ms: u64,
+    /// Whether a caret event of the node observed since the key was
+    /// pressed waited to be handled when the caret was read: the read
+    /// covers it, so the event, once handled, checks nothing
+    /// (`Context::caret_read_since`), and the read is evidence as the
+    /// event would have been.
+    covered: bool,
 }
 
 impl CaretSignal for Signal<'_> {
     fn caret_event(&mut self) -> bool {
-        self.caret_event
+        self.caret_event || self.covered
     }
 
     fn now_ms(&mut self) -> u64 {
@@ -90,8 +98,58 @@ impl CaretSignal for Signal<'_> {
     }
 
     fn reading(&mut self) {
+        if !self.caret_event {
+            self.covered = caret_event_waiting(self.context, self.node_id, self.pressed_at_ms);
+        }
         self.context.caret_read(self.node_id);
     }
+}
+
+/// Whether a caret event of `node_id` observed at or after `since_ms`
+/// waits in the intake: UIA's caret event from the node's element, the
+/// console's caret event of its window for the console host's text area,
+/// or, for an edit control's client area, the caret's location change or
+/// the text selection change of its window.
+fn caret_event_waiting(context: &Context, node_id: NodeId, since_ms: u64) -> bool {
+    use super::intake::{Item, UiaKind};
+    use verbatim_ia2::WinEventKind;
+    let runtime_id = context.uia_registry.runtime_id_of(node_id);
+    let (console, edit) = match &runtime_id {
+        Some(_) => (
+            console_focus(context, node_id)
+                .then(|| context.tracking().window())
+                .flatten(),
+            None,
+        ),
+        None => (
+            None,
+            context
+                .msaa_registry
+                .key_of(node_id)
+                .filter(|&(_, object, child)| object == OBJID_CLIENT.0 && child == CHILDID_SELF)
+                .map(|(hwnd, ..)| hwnd),
+        ),
+    };
+    context.intake.any_waiting(|entry| {
+        entry.observed_at_ms >= since_ms
+            && match &entry.item {
+                Item::Uia(event) => {
+                    matches!(event.kind, UiaKind::TextSelection)
+                        && runtime_id.as_ref() == Some(&event.parts.runtime_id)
+                }
+                Item::Msaa {
+                    kind: WinEventKind::ConsoleCaret,
+                    hwnd,
+                    ..
+                } => console == Some(*hwnd),
+                Item::Msaa {
+                    kind: WinEventKind::Caret | WinEventKind::TextSelectionChange,
+                    hwnd,
+                    ..
+                } => edit == Some(*hwnd),
+                _ => false,
+            }
+    })
 }
 
 /// A node's text, through its backend.
@@ -344,6 +402,8 @@ pub(super) fn check_watch(
         context,
         node_id,
         caret_event,
+        pressed_at_ms: watch.pressed_at_ms,
+        covered: false,
     };
     match source {
         Source::Uia(mut source) => {
