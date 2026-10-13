@@ -79,8 +79,7 @@ Public API:
   completions into `Completions`. `PipeIo` is one operation slot, a read
   or a write at a time, whose `OVERLAPPED` and buffer stay put, untouched
   and not freed, while its operation is in flight. The relay floor's
-  benchmark (`verbatim-relay-floor`) uses it; the transport of migration
-  step 4 will.
+  benchmark (`verbatim-relay-floor`) and `transport` use it.
 - `scheduling` (Dickson's decision of 2026-10-08;
   `docs/design/communication.md`, section 6.1) —
   `opt_out_of_power_throttling()` opts the process out of execution-speed

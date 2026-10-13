@@ -713,6 +713,35 @@ mod tests {
     }
 
     #[test]
+    fn a_sender_whose_reader_stops_delays_no_other_pipe() {
+        // Two senders sharing a port nobody serves: the first's reader
+        // never reads, so a frame larger than its buffer pends and the next
+        // waits behind it; the second's frames are still written at once.
+        let port = Arc::new(Port::new().expect("a port"));
+        let strings = || Strings {
+            items: VecDeque::new(),
+            capacity: 8,
+        };
+        let (stuck, _never_read) = pipe(Flow::Outbound, 4096, End::Synchronous).expect("a pipe");
+        let (other, theirs) = pipe(Flow::Outbound, 4096, End::Synchronous).expect("a pipe");
+        let stuck = Sender::on_port(stuck, strings(), Arc::clone(&port), 1).expect("a sender");
+        let other = Sender::on_port(other, strings(), port, 2).expect("a sender");
+        stuck.send(vec![1u8; 100_000]).expect("sent, and pending");
+        stuck.send(b"behind".to_vec()).expect("queued");
+        other.send(b"first".to_vec()).expect("written");
+        other.send(b"second".to_vec()).expect("written");
+        let mut reader = BufReader::new(File::from(theirs));
+        assert_eq!(
+            read_frame(&mut reader).expect("read"),
+            Some(b"first".to_vec())
+        );
+        assert_eq!(
+            read_frame(&mut reader).expect("read"),
+            Some(b"second".to_vec())
+        );
+    }
+
+    #[test]
     fn a_send_after_the_reader_has_gone_closes_the_sender() {
         let (ours, theirs) = pipe(Flow::Outbound, 4096, End::Synchronous).expect("a pipe");
         let sender = sender(ours, 8);
