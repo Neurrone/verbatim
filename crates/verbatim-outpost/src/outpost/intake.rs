@@ -16,6 +16,13 @@
 //!   caret too (`caret_after_update`).
 //! - One entry may be kept apart, handed out only when nothing else is
 //!   ready: a held terminal's noted caret ([`Item::NotedCaret`]).
+//! - The console updates of one window may be absorbed: dropped as they are
+//!   pushed, without waking the worker, while the worker has marked that
+//!   window's console terminal as held with its text changed and no caret
+//!   key's watch open ([`Intake::absorb_console_updates`]). The worker does
+//!   nothing for such an update, and the read that ends the hold covers
+//!   every update observed before it, as NVDA's console handler skips an
+//!   update while one is already pending.
 //! - Per batch, of the MSAA events, the newest 4 focus events and the
 //!   newest 10 other events per thread that raised them are kept; a
 //!   foreground change counts among both and is kept by either, as NVDA's
@@ -323,6 +330,9 @@ struct State {
     /// When the worker asked to be given [`Item::Wake`] if nothing else
     /// comes first.
     wake: Option<Instant>,
+    /// The console window whose updates are dropped as they are pushed
+    /// ([`Intake::absorb_console_updates`]).
+    absorbed: Option<isize>,
 }
 
 /// The queue the worker draws from.
@@ -372,6 +382,17 @@ impl Intake {
             // Shutting down: nothing new is taken. The entry is dropped
             // here, outside the lock, with whatever it holds.
             drop(state);
+            return;
+        }
+        if let Item::Msaa {
+            kind: WinEventKind::ConsoleUpdate,
+            hwnd,
+            ..
+        } = &entry.item
+            && state.absorbed == Some(*hwnd)
+        {
+            // The worker would do nothing for it, and the read that ends
+            // the hold covers it: it is not queued, and wakes nobody.
             return;
         }
         let marker = match &entry.item {
@@ -589,6 +610,18 @@ impl Intake {
         drop(replaced);
     }
 
+    /// Drops the console updates of `window` as they are pushed, from now
+    /// until the next call, or takes them in again with `None`. The worker
+    /// marks the window while its focused console terminal's reading is
+    /// held with its text changed and no caret key's watch is open, when it
+    /// would do nothing for an update; it clears the mark before it handles
+    /// anything that changes that, so an update observed after the read
+    /// that ends the hold begins is never dropped. A new focus clears it
+    /// too ([`set_focused`](Self::set_focused)).
+    pub(super) fn absorb_console_updates(&self, window: Option<isize>) {
+        self.lock().absorbed = window;
+    }
+
     /// Takes the entry [`when_idle`](Self::when_idle) kept, if any.
     pub(super) fn take_idle(&self) -> Option<Entry> {
         self.lock().idle.take()
@@ -601,6 +634,7 @@ impl Intake {
         state.focused = object;
         state.terminal = None;
         state.focus_redirected = false;
+        state.absorbed = None;
     }
 
     /// Records that the focus last reported ([`set_focused`](Self::set_focused))
@@ -1759,6 +1793,50 @@ mod tests {
         push_item(&intake, text_event(UiaKind::TextSelection, &terminal), 3);
         push_item(&intake, text_event(UiaKind::TextChanged, &terminal), 4);
         assert_eq!(handed_out(&intake), [4, 3]);
+    }
+
+    /// A console update of window `hwnd`, observed at `observed_at_ms`.
+    fn push_console_update(intake: &Intake, hwnd: isize, observed_at_ms: u64) {
+        push_item(
+            intake,
+            Item::Msaa {
+                kind: WinEventKind::ConsoleUpdate,
+                hwnd,
+                id_object: 3,
+                id_child: 65,
+                thread: 80,
+            },
+            observed_at_ms,
+        );
+    }
+
+    #[test]
+    fn a_held_consoles_updates_wake_nobody_until_the_mark_is_cleared() {
+        let intake = Intake::default();
+        intake.absorb_console_updates(Some(7));
+        push_console_update(&intake, 7, 1);
+        assert!(!intake.busy(), "the held console's update is not queued");
+        // Another window's update, and the held window's caret, still come.
+        push_console_update(&intake, 8, 2);
+        push_item(
+            &intake,
+            Item::Msaa {
+                kind: WinEventKind::ConsoleCaret,
+                hwnd: 7,
+                id_object: 2,
+                id_child: 9,
+                thread: 80,
+            },
+            3,
+        );
+        assert_eq!(handed_out(&intake), [2, 3]);
+        intake.absorb_console_updates(None);
+        push_console_update(&intake, 7, 4);
+        assert_eq!(handed_out(&intake), [4], "the next update comes through");
+        intake.absorb_console_updates(Some(7));
+        intake.set_focused(None);
+        push_console_update(&intake, 7, 5);
+        assert_eq!(handed_out(&intake), [5], "a new focus clears the mark");
     }
 
     #[test]

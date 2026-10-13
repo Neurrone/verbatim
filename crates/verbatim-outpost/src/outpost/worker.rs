@@ -912,6 +912,8 @@ impl Worker<'_> {
     ///
     /// [`check_open_watch`]: Self::check_open_watch
     fn caret_key(&mut self, request_id: u64, trace: TraceId, node_id: NodeId, watch: &CaretWatch) {
+        // Every update from now on is evidence the watch may need.
+        self.context.intake.absorb_console_updates(None);
         self.end_watch("the next caret key replaced it");
         let mut watched = text_reads::check_watch(self.context, node_id, watch, false);
         if let Watched::Answered(reply) = &mut watched
@@ -1224,6 +1226,21 @@ impl Worker<'_> {
                 .is_some_and(|terminal| terminal.reading == Reading::Held { changed: true })
     }
 
+    /// After a console update of the focused console terminal `node_id`
+    /// in window `hwnd`: while its reading is held with its text changed
+    /// and no caret key's watch is open, the worker would do nothing for
+    /// another update, so the intake drops the window's updates without
+    /// waking it ([`Intake::absorb_console_updates`]) until a request, a
+    /// cancel, a focus, or a caret key clears the mark. A held burst's
+    /// updates, about one per line, otherwise woke the worker once each.
+    ///
+    /// [`Intake::absorb_console_updates`]: super::intake::Intake::absorb_console_updates
+    fn absorb_while_held(&self, node_id: NodeId, hwnd: isize) {
+        if self.held_with_changes(node_id) && self.context.caret_watch().is_none() {
+            self.context.intake.absorb_console_updates(Some(hwnd));
+        }
+    }
+
     /// Notes a caret event of the held terminal `node_id` whose text has
     /// changed, instead of reading its caret: during a flood held for Core
     /// it comes with nearly every write, and reading each told Core of a
@@ -1364,6 +1381,11 @@ impl Worker<'_> {
         request: Option<(u64, TraceId)>,
         (trace, observed_at_ms): (TraceId, u64),
     ) {
+        if event != Event::TextChanged {
+            // Anything else may end the hold, and its read must see every
+            // update observed after it begins.
+            self.context.intake.absorb_console_updates(None);
+        }
         let (action, owed, superseded) = {
             let mut terminals = self.context.terminals();
             let terminal = terminals.entry(node_id.number()).or_default();
@@ -1883,6 +1905,7 @@ impl Worker<'_> {
                 // would leave the change nothing new to show.
                 self.check_open_watch(node_id, false);
                 self.terminal_output(node_id, trace, observed_at_ms);
+                self.absorb_while_held(node_id, hwnd);
             }
             return;
         }

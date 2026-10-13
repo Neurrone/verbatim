@@ -1403,7 +1403,14 @@ Implementation notes:
   terminal whose reading is held while its text has changed unread is
   noted instead of read (`Item::NotedCaret`): the intake hands it out
   only when nothing else is ready (`Intake::when_idle`), and it then reads
-  the caret unless a read since, such as the one Core asks for, saw it. A caret event, a text
+  the caret unless a read since, such as the one Core asks for, saw it.
+  While such a terminal is the console host's and no caret key's watch is
+  open, the worker marks its window in the intake
+  (`Intake::absorb_console_updates`), which then drops the window's
+  console updates as they are pushed, without waking the worker, which
+  would do nothing for them; the worker clears the mark before it handles
+  a terminal request or cancel, a caret key, or a new focus, so the read
+  that ends the hold covers every update absorbed. A caret event, a text
   change, and a text selection change of the node a caret key's watch is
   open on check the watch first. A focus-now answer's control has its caret
   and text changes followed too (the subscription moved to it, and an
