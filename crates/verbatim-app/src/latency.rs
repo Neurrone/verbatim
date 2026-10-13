@@ -115,14 +115,14 @@ fn calls_besides(total: CallCounts, part: CallCounts) -> CallCounts {
 type Stage = (LatencyStageKind, Option<u64>, Option<CallCounts>);
 
 /// The listener's stages, from its observing the event to verbatim.exe's
-/// relay taking the fact in. The listener's stamps on its read's end and
-/// its write split the span into its read, its queue, and the pipe; a
-/// timeline without the write stamp has the span whole.
+/// relay taking the fact in. The listener's stamps on its handling's end
+/// and its write split the span into its handling, its queue, and the
+/// pipe; a timeline without the write stamp has the span whole.
 fn listener_to_relay(event: &EventTiming) -> [Stage; 4] {
     let at = |us: u64| (us != 0).then_some(us);
     let span = |from: Option<u64>, to: Option<u64>| Some(to?.saturating_sub(from?));
     let observed = at(event.observed_at_us);
-    let read = at(event.listener_read_at_us);
+    let handled = at(event.listener_handled_at_us);
     let written = at(event.listener_written_at_us);
     let received = at(event.core_received_at_us);
     [
@@ -134,10 +134,14 @@ fn listener_to_relay(event: &EventTiming) -> [Stage; 4] {
                 .flatten(),
             None,
         ),
-        (LatencyStageKind::ListenerRead, span(observed, read), None),
+        (
+            LatencyStageKind::ListenerHandling,
+            span(observed, handled),
+            None,
+        ),
         (
             LatencyStageKind::ListenerQueue,
-            span(read.or(observed), written),
+            span(handled.or(observed), written),
             None,
         ),
         (
@@ -1022,7 +1026,7 @@ mod tests {
         Stages {
             event: Some(EventTiming {
                 observed_at_us: 1_000,
-                listener_read_at_us: 13_000,
+                listener_handled_at_us: 13_000,
                 listener_written_at_us: 13_100,
                 core_received_at_us: 13_250,
                 core_relay_us: 50,
@@ -1040,20 +1044,35 @@ mod tests {
     }
 
     #[test]
-    fn the_listeners_read_runs_from_the_observation_to_the_reads_end() {
+    fn the_listeners_handling_runs_from_the_observation_to_the_handlings_end() {
         assert_eq!(
-            duration_of(&listener_focus(), LatencyStageKind::ListenerRead),
+            duration_of(&listener_focus(), LatencyStageKind::ListenerHandling),
             Some(12_000)
+        );
+        // A `WinEvent`'s fact, handled in its callback with no read.
+        let win_event = Stages {
+            event: Some(EventTiming {
+                observed_at_us: 1_000,
+                listener_handled_at_us: 1_020,
+                listener_written_at_us: 1_060,
+                core_received_at_us: 1_100,
+                ..EventTiming::default()
+            }),
+            ..Stages::default()
+        };
+        assert_eq!(
+            duration_of(&win_event, LatencyStageKind::ListenerHandling),
+            Some(20)
         );
     }
 
     #[test]
-    fn the_listeners_queue_runs_from_the_reads_end_or_the_observation_to_the_write() {
+    fn the_listeners_queue_runs_from_the_handlings_end_or_the_observation_to_the_write() {
         assert_eq!(
             duration_of(&listener_focus(), LatencyStageKind::ListenerQueue),
             Some(100)
         );
-        // A fact the listener sent with no read waits from its observation.
+        // A timeline without the handling stamp waits from the observation.
         let unread = Stages {
             event: Some(EventTiming {
                 observed_at_us: 1_000,
@@ -1067,7 +1086,10 @@ mod tests {
             duration_of(&unread, LatencyStageKind::ListenerQueue),
             Some(40)
         );
-        assert_eq!(duration_of(&unread, LatencyStageKind::ListenerRead), None);
+        assert_eq!(
+            duration_of(&unread, LatencyStageKind::ListenerHandling),
+            None
+        );
     }
 
     #[test]

@@ -423,7 +423,10 @@ mod tests {
             "the stuck write's completion"
         );
         assert_eq!(
-            stuck.push(Outgoing::Ping(SupervisorToOutpost::Ping { seq: 1 })),
+            stuck.push(Outgoing::Ping(SupervisorToOutpost::Ping {
+                seq: 1,
+                sent_at_us: 0,
+            })),
             Err(QueueError::Closed)
         );
         assert!(!relay.is_idle(), "the other child's writer is still open");
@@ -447,6 +450,7 @@ mod tests {
                 &OutpostToSupervisor::Pong {
                     seq,
                     parked_count: 0,
+                    written_at_us: 0,
                 },
             )
             .expect("written");

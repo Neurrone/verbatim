@@ -230,9 +230,20 @@ Public API:
   began writing, just before encoding (`OutpostToSupervisor::written`):
   the listener's writer `listener_written_at_us` on a `FocusFact`, and
   the outpost's writer `written_at_us` on an `Event` or `Reply`. The
-  listener's reading thread stamps `listener_read_at_us` when a UIA
-  focus's read ends. These split the hops to verbatim.exe into the
-  sender's own time and the pipe's.
+  listener stamps `listener_handled_at_us` when it has handled a fact: a
+  reading thread as it finishes with a UIA focus, menu opening, selection
+  or notification, and the outgoing queue, as it queues it, for any other
+  fact (a `WinEvent`'s, a marker, a drop decided without a read). These
+  split the hops to verbatim.exe into the sender's own time and the
+  pipe's. `MenuOrSwitchEnded` carries an `EventTiming` with the same
+  listener stamps, and `Pong` a `written_at_us` from its writer. The
+  commands to the listener (`Ping`, `HookInstalled`, `HookRemoved`,
+  `FocusQueued`) carry `sent_at_us`, which verbatim.exe's writer stamps
+  as the write begins (`SupervisorToOutpost::stamp_sent`); the listener
+  stamps its read of each and logs the hop at trace level under
+  `verbatim::stage`, and verbatim.exe logs each pong's trip back and a
+  menu end's stages the same way. `hop_us` is the time between two such
+  stamps, `None` where either is missing.
   `SupervisorToOutpost`: `SetBackendOverride` (forces one backend for every
   window of the target, or restores normal arbitration), `DeliverFact` (a
   focus fact the listener captured, routed to this outpost — a UIA focus's

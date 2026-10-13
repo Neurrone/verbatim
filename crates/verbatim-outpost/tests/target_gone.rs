@@ -77,9 +77,10 @@ fn stand_in(args: &[String]) -> ! {
     let mut commands = BufReader::new(commands);
     loop {
         match read_message::<_, SupervisorToOutpost>(&mut commands) {
-            Ok(Some(SupervisorToOutpost::Ping { seq })) => send(&OutpostToSupervisor::Pong {
+            Ok(Some(SupervisorToOutpost::Ping { seq, .. })) => send(&OutpostToSupervisor::Pong {
                 seq,
                 parked_count: 0,
+                written_at_us: 0,
             }),
             Ok(Some(SupervisorToOutpost::Shutdown) | None) => std::process::exit(0),
             Ok(Some(_)) if outpost => std::process::exit(3),

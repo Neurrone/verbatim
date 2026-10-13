@@ -123,7 +123,7 @@ use crate::outpost::now_ms;
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::protocol::{
     DeliveredFact, EventTiming, FactKey, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
-    UiaSnapshotFact, WinEventStamp, now_us, read_message, write_message,
+    UiaSnapshotFact, WinEventStamp, hop_us, now_us, read_message, write_message,
 };
 use crate::supervisor::IgnoredProcesses;
 
@@ -152,6 +152,19 @@ struct Outgoing {
     ignored: IgnoredProcesses,
     /// Numbers the UIA focus events' markers.
     markers: AtomicU64,
+    /// The clock the facts' stamps are read from.
+    clock: Clock,
+}
+
+/// The clock the listener's stamps are read from: the shared clock,
+/// [`now_us`], except in tests, which fix it.
+#[derive(Clone, Copy)]
+struct Clock(fn() -> u64);
+
+impl Default for Clock {
+    fn default() -> Self {
+        Self(now_us)
+    }
 }
 
 #[derive(Default)]
@@ -159,12 +172,12 @@ struct OutgoingState {
     urgent: VecDeque<OutpostToSupervisor>,
     facts: VecDeque<(Option<(Pid, FactKey)>, OutpostToSupervisor)>,
     /// When a menu or the Alt+Tab switcher last closed, not yet told to
-    /// Core: as an instant for the grace, and in milliseconds since the Unix
-    /// epoch for Core. NVDA fakes a focus from such an end only when no
+    /// Core: as an instant for the grace, in milliseconds since the Unix
+    /// epoch for Core, and as the end's observed and handled stamps. NVDA fakes a focus from such an end only when no
     /// focus event was validly processed with it; a focus fact can still be
     /// dropped or fail to read, so Core, which knows which focus it applied,
     /// decides, and every end is told.
-    menu_end_at: Option<(Instant, u64)>,
+    menu_end_at: Option<(Instant, u64, EventTiming)>,
     /// The applications whose outposts have their own hooks in, each with
     /// the tick on the event clock after which none of its `WinEvent`
     /// facts is forwarded.
@@ -183,18 +196,20 @@ impl Outgoing {
     /// Queues a fact, replacing any waiting fact for the same element and
     /// kind. `raised_ms_ago` is how long before now Windows raised the event,
     /// and `win_event` which thread raised it and when, for a `WinEvent`'s
-    /// fact. A `WinEvent`'s fact raised after the outpost of `pid` has its
-    /// own hook in is dropped: that hook took it in.
+    /// fact, and `observed_at_us` when the listener's callback began on it.
+    /// A `WinEvent`'s fact raised after the outpost of `pid` has its own
+    /// hook in is dropped: that hook took it in.
     fn fact(
         &self,
         pid: Pid,
         fact: DeliveredFact,
         raised_ms_ago: Option<u32>,
         win_event: Option<WinEventStamp>,
+        observed_at_us: u64,
     ) {
         let timing = EventTiming {
             raised_ms_ago,
-            observed_at_us: now_us(),
+            observed_at_us,
             ..EventTiming::default()
         };
         self.queue(pid, fact, (TraceId::mint(), now_ms(), timing), win_event);
@@ -219,16 +234,21 @@ impl Outgoing {
     }
 
     /// Queues `fact` with its trace, the time it was observed, and its
-    /// timing, under the rules [`fact`](Self::fact) states.
+    /// timing, under the rules [`fact`](Self::fact) states. A fact no
+    /// reading thread finished with is stamped as handled now, as it is
+    /// queued.
     fn queue(
         &self,
         pid: Pid,
         fact: DeliveredFact,
-        (trace_id, observed_at_ms, timing): (TraceId, u64, EventTiming),
+        (trace_id, observed_at_ms, mut timing): (TraceId, u64, EventTiming),
         win_event: Option<WinEventStamp>,
     ) {
         if self.ignored.contains(pid) {
             return;
+        }
+        if timing.listener_handled_at_us == 0 {
+            timing.listener_handled_at_us = self.now();
         }
         let key = fact.key().map(|key| (pid, key));
         let message = OutpostToSupervisor::FocusFact {
@@ -284,10 +304,21 @@ impl Outgoing {
         self.lock().hooked.remove(&pid);
     }
 
-    /// Notes that a menu or the Alt+Tab switcher closed.
-    fn menu_or_switch_ended(&self) {
-        self.lock().menu_end_at = Some((Instant::now(), now_ms()));
+    /// Notes that a menu or the Alt+Tab switcher closed, which the
+    /// listener's callback observed at `observed_at_us`.
+    fn menu_or_switch_ended(&self, observed_at_us: u64) {
+        let timing = EventTiming {
+            observed_at_us,
+            listener_handled_at_us: self.now(),
+            ..EventTiming::default()
+        };
+        self.lock().menu_end_at = Some((Instant::now(), now_ms(), timing));
         self.ready.notify_one();
+    }
+
+    /// Now, on the clock the listener's stamps are read from.
+    fn now(&self) -> u64 {
+        (self.clock.0)()
     }
 
     fn fault(&self, detail: String) {
@@ -316,7 +347,7 @@ impl Outgoing {
             if state.closed {
                 return None;
             }
-            let Some((ended, ended_at_ms)) = state.menu_end_at else {
+            let Some((ended, ended_at_ms, timing)) = state.menu_end_at else {
                 state = self
                     .ready
                     .wait(state)
@@ -327,7 +358,10 @@ impl Outgoing {
             let now = Instant::now();
             if now >= due {
                 state.menu_end_at = None;
-                return Some(OutpostToSupervisor::MenuOrSwitchEnded { ended_at_ms });
+                return Some(OutpostToSupervisor::MenuOrSwitchEnded {
+                    ended_at_ms,
+                    timing,
+                });
             }
             state = self
                 .ready
@@ -573,26 +607,33 @@ impl Listener {
     /// its count is always zero), takes the hand-over's news of outposts'
     /// hooks, and ignores everything else. An application with no outpost
     /// any more has its reading thread ended too
-    /// ([`Readers::outpost_ended`]).
-    fn handle_command(&self, command: &SupervisorToOutpost) {
+    /// ([`Readers::outpost_ended`]). `received_at_us` is when the command
+    /// was read off Core's pipe: the hop from verbatim.exe's write is
+    /// logged at trace level, under `verbatim::stage`.
+    fn handle_command(&self, command: &SupervisorToOutpost, received_at_us: u64) {
+        if let Some(us) = hop_us(command.sent_at_us(), received_at_us) {
+            tracing::trace!(target: "verbatim::stage", stage = "verbatim.exe to the listener", us, ?command);
+        }
         match command {
-            SupervisorToOutpost::Ping { seq } => {
+            SupervisorToOutpost::Ping { seq, .. } => {
                 self.outgoing.urgent(OutpostToSupervisor::Pong {
                     seq: *seq,
                     parked_count: 0,
+                    written_at_us: 0,
                 });
             }
-            SupervisorToOutpost::HookInstalled { pid, outpost } => {
+            SupervisorToOutpost::HookInstalled { pid, outpost, .. } => {
                 self.outgoing
                     .hook_installed(*pid, *outpost, verbatim_ia2::event_clock());
             }
-            SupervisorToOutpost::HookRemoved { pid } => {
+            SupervisorToOutpost::HookRemoved { pid, .. } => {
                 self.outgoing.hook_removed(*pid);
                 self.readers.outpost_ended(*pid);
             }
             SupervisorToOutpost::FocusQueued {
                 trace_id,
                 observed_at_ms,
+                ..
             } => self.last_accepted.queued(*trace_id, *observed_at_ms),
             _ => {}
         }
@@ -859,6 +900,9 @@ fn install_desktop_subscriptions(
 /// object address is forwarded untouched, and the app outpost does the
 /// acquisition.
 fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) {
+    // The observation, before the callback's local reads, which the
+    // listener's handling stage then holds.
+    let observed_at_us = outgoing.now();
     let WinEvent {
         kind,
         hwnd,
@@ -872,7 +916,7 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) {
         // Not routed to an outpost: if no focus event follows, Core reads
         // the focus of whichever application is then in front. NVDA accepts
         // these from any window, even an invalid one.
-        outgoing.menu_or_switch_ended();
+        outgoing.menu_or_switch_ended(observed_at_us);
         return;
     }
     // NVDA takes a null window as the desktop window
@@ -913,6 +957,7 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) {
         fact,
         Some(raised_ms_ago),
         Some(WinEventStamp { thread, time }),
+        observed_at_us,
     );
 }
 
@@ -998,7 +1043,9 @@ pub fn run_listener(
                 tracing::info!("shutting down, as Core asked");
                 break Ok(());
             }
-            Ok(Some(command)) => listener.handle_command(&command),
+            // The command's receipt, one clock read, for the hop from
+            // verbatim.exe's write.
+            Ok(Some(command)) => listener.handle_command(&command, now_us()),
             Ok(None) => {
                 tracing::warn!("Core's command pipe closed; shutting down");
                 break Ok(());
@@ -1056,10 +1103,10 @@ mod tests {
     #[test]
     fn a_win_event_raised_after_the_outposts_hook_is_in_is_not_forwarded() {
         let outgoing = Outgoing::default();
-        outgoing.fact(Pid(5), msaa_focus(), None, Some(raised_at(90)));
+        outgoing.fact(Pid(5), msaa_focus(), None, Some(raised_at(90)), 1_000);
         outgoing.hook_installed(Pid(5), OutpostId(3), 100);
         // Raised after the tick: the outpost's hook took it in.
-        outgoing.fact(Pid(5), msaa_focus(), None, Some(raised_at(101)));
+        outgoing.fact(Pid(5), msaa_focus(), None, Some(raised_at(101)), 1_000);
         // Raised at the tick, and reaching the listener late: forwarded,
         // for the outpost to match by counting.
         outgoing.fact(
@@ -1067,9 +1114,10 @@ mod tests {
             DeliveredFact::Foreground { hwnd: 1 },
             None,
             Some(raised_at(100)),
+            1_000,
         );
         // Another application's, and a UIA fact: forwarded.
-        outgoing.fact(Pid(6), msaa_focus(), None, Some(raised_at(101)));
+        outgoing.fact(Pid(6), msaa_focus(), None, Some(raised_at(101)), 1_000);
         outgoing.fact(
             Pid(5),
             DeliveredFact::UiaSelection {
@@ -1079,6 +1127,7 @@ mod tests {
             },
             None,
             None,
+            1_000,
         );
         let kinds: Vec<String> = sent(&outgoing)
             .into_iter()
@@ -1150,7 +1199,7 @@ mod tests {
         let outgoing = Outgoing::default();
         outgoing.hook_installed(Pid(5), OutpostId(3), 100);
         outgoing.hook_removed(Pid(5));
-        outgoing.fact(Pid(5), msaa_focus(), None, Some(raised_at(101)));
+        outgoing.fact(Pid(5), msaa_focus(), None, Some(raised_at(101)), 1_000);
         let sent = sent(&outgoing);
         assert!(
             matches!(
@@ -1241,9 +1290,15 @@ mod tests {
             ignored: IgnoredProcesses::hold([own]),
             ..Outgoing::default()
         };
-        outgoing.fact(own, DeliveredFact::Foreground { hwnd: 1 }, None, None);
-        outgoing.fact(own, msaa_focus(), None, None);
-        outgoing.fact(Pid(5), msaa_focus(), None, None);
+        outgoing.fact(
+            own,
+            DeliveredFact::Foreground { hwnd: 1 },
+            None,
+            None,
+            1_000,
+        );
+        outgoing.fact(own, msaa_focus(), None, None, 1_000);
+        outgoing.fact(Pid(5), msaa_focus(), None, None, 1_000);
         outgoing.close();
         let mut sent = Vec::new();
         while let Some(message) = outgoing.next() {
@@ -1260,7 +1315,7 @@ mod tests {
         let outgoing = Arc::new(Outgoing::default());
         let messages = drain(&outgoing);
         let ended = Instant::now();
-        outgoing.menu_or_switch_ended();
+        outgoing.menu_or_switch_ended(1_000);
         let message = messages
             .recv_timeout(Duration::from_secs(5))
             .expect("the menu end is sent");
@@ -1276,8 +1331,8 @@ mod tests {
         // Whether the focus was usable is Core's to judge: it may yet be
         // dropped or fail to read.
         let outgoing = Arc::new(Outgoing::default());
-        outgoing.menu_or_switch_ended();
-        outgoing.fact(Pid(5), msaa_focus(), None, None);
+        outgoing.menu_or_switch_ended(1_000);
+        outgoing.fact(Pid(5), msaa_focus(), None, None, 1_000);
         let messages = drain(&outgoing);
         let first = messages
             .recv_timeout(Duration::from_secs(5))
@@ -1290,5 +1345,83 @@ mod tests {
             second,
             OutpostToSupervisor::MenuOrSwitchEnded { .. }
         ));
+    }
+
+    /// An `Outgoing` whose clock always reads 7,000.
+    fn at_seven_thousand() -> Outgoing {
+        Outgoing {
+            clock: Clock(|| 7_000),
+            ..Outgoing::default()
+        }
+    }
+
+    /// The timing of the one fact `outgoing` sends.
+    fn timing_of_the_fact(outgoing: &Outgoing) -> EventTiming {
+        let sent = sent(outgoing);
+        let [OutpostToSupervisor::FocusFact { timing, .. }] = sent.as_slice() else {
+            panic!("one fact is sent: {sent:?}");
+        };
+        *timing
+    }
+
+    #[test]
+    fn a_win_events_fact_is_observed_by_its_callback_and_handled_as_it_is_queued() {
+        let outgoing = at_seven_thousand();
+        outgoing.fact(Pid(5), msaa_focus(), None, None, 6_000);
+        let timing = timing_of_the_fact(&outgoing);
+        assert_eq!(
+            (timing.observed_at_us, timing.listener_handled_at_us),
+            (6_000, 7_000)
+        );
+    }
+
+    #[test]
+    fn a_marker_is_handled_as_it_is_queued() {
+        let outgoing = at_seven_thousand();
+        let meta = Meta {
+            marker: 1,
+            trace: TraceId::mint(),
+            observed_at_ms: 0,
+            timing: EventTiming {
+                observed_at_us: 6_000,
+                ..EventTiming::default()
+            },
+        };
+        outgoing.focus_read(Pid(5), DeliveredFact::UiaFocusMarker { marker: 1 }, meta);
+        assert_eq!(timing_of_the_fact(&outgoing).listener_handled_at_us, 7_000);
+    }
+
+    #[test]
+    fn a_reading_threads_outcome_keeps_the_threads_stamp() {
+        let outgoing = at_seven_thousand();
+        let meta = Meta {
+            marker: 1,
+            trace: TraceId::mint(),
+            observed_at_ms: 0,
+            timing: EventTiming {
+                observed_at_us: 6_000,
+                listener_handled_at_us: 6_500,
+                ..EventTiming::default()
+            },
+        };
+        outgoing.focus_read(Pid(5), DeliveredFact::UiaFocusDropped { marker: 1 }, meta);
+        assert_eq!(timing_of_the_fact(&outgoing).listener_handled_at_us, 6_500);
+    }
+
+    #[test]
+    fn a_menu_end_carries_its_observation_and_handling() {
+        let outgoing = Arc::new(at_seven_thousand());
+        let messages = drain(&outgoing);
+        outgoing.menu_or_switch_ended(6_000);
+        let message = messages
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the menu end is sent");
+        let OutpostToSupervisor::MenuOrSwitchEnded { timing, .. } = message else {
+            panic!("a menu end: {message:?}");
+        };
+        assert_eq!(
+            (timing.observed_at_us, timing.listener_handled_at_us),
+            (6_000, 7_000)
+        );
     }
 }

@@ -919,10 +919,11 @@ impl Outpost {
                     });
                 }
             }
-            SupervisorToOutpost::Ping { seq } => {
+            SupervisorToOutpost::Ping { seq, .. } => {
                 context.outbound.urgent(OutpostToSupervisor::Pong {
                     seq: *seq,
                     parked_count: context.watch.abandoned(),
+                    written_at_us: 0,
                 });
             }
             SupervisorToOutpost::Fetches(fetches) => {

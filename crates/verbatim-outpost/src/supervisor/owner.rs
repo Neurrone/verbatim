@@ -30,7 +30,7 @@ use verbatim_process::transport::{BlockingReader, Reading};
 
 use crate::protocol::{
     DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
-    WinEventStamp, decode_message, now_us, read_message,
+    WinEventStamp, decode_message, hop_us, now_us, read_message,
 };
 
 use super::ignored::IgnoredProcesses;
@@ -384,11 +384,26 @@ impl Owner {
                 outpost,
                 through,
             },
-            OutpostToSupervisor::Pong { .. } => OwnerEvent::Pong {
-                outpost,
-                abandoned: 0,
-            },
-            OutpostToSupervisor::MenuOrSwitchEnded { ended_at_ms } => {
+            OutpostToSupervisor::Pong { written_at_us, .. } => {
+                if let Some(us) = hop_us(written_at_us, received.at_us()) {
+                    tracing::trace!(target: "verbatim::stage", stage = "listener's pipe to verbatim.exe", us, "pong");
+                }
+                OwnerEvent::Pong {
+                    outpost,
+                    abandoned: 0,
+                }
+            }
+            OutpostToSupervisor::MenuOrSwitchEnded {
+                ended_at_ms,
+                timing,
+            } => {
+                tracing::trace!(
+                    target: "verbatim::stage",
+                    handling_us = hop_us(timing.observed_at_us, timing.listener_handled_at_us),
+                    queue_us = hop_us(timing.listener_handled_at_us, timing.listener_written_at_us),
+                    pipe_us = hop_us(timing.listener_written_at_us, received.at_us()),
+                    "a menu or switcher end: listener handling, listener queue, listener's pipe to verbatim.exe"
+                );
                 OwnerEvent::MenuOrSwitchEnded { ended_at_ms }
             }
             OutpostToSupervisor::Ready { .. } => OwnerEvent::Ready(outpost),
@@ -427,6 +442,7 @@ impl Owner {
                             .push(Outgoing::HandOver(SupervisorToOutpost::FocusQueued {
                                 trace_id,
                                 observed_at_ms,
+                                sent_at_us: 0,
                             }))
                 {
                     tracing::warn!(%error, "a queued focus could not be told to the listener");
@@ -853,7 +869,11 @@ impl Owner {
         // An outpost is ready once its own `WinEvent` hook is in: the
         // listener stops forwarding the application's MSAA events raised
         // from now on, and says so behind the last it forwarded.
-        self.tell_listener(SupervisorToOutpost::HookInstalled { pid, outpost });
+        self.tell_listener(SupervisorToOutpost::HookInstalled {
+            pid,
+            outpost,
+            sent_at_us: 0,
+        });
     }
 
     /// Whether crashes have stopped respawning for `pid` until its next
@@ -968,7 +988,7 @@ impl Owner {
         if record.ready {
             // Its hook goes with it: the listener forwards the
             // application's MSAA events again, to start the next outpost.
-            self.tell_listener(SupervisorToOutpost::HookRemoved { pid });
+            self.tell_listener(SupervisorToOutpost::HookRemoved { pid, sent_at_us: 0 });
         }
         self.writers
             .lock()
@@ -1134,7 +1154,10 @@ impl Owner {
         }
         let now = Instant::now();
         self.ping_seq += 1;
-        let ping = SupervisorToOutpost::Ping { seq: self.ping_seq };
+        let ping = SupervisorToOutpost::Ping {
+            seq: self.ping_seq,
+            sent_at_us: 0,
+        };
         let mut wedged = Vec::new();
         let mut exited = Vec::new();
         let mut hang_checks = Vec::new();
@@ -1411,7 +1434,8 @@ fn read_outpost(
                 break;
             }
         };
-        message.core_read(now_us());
+        let read_at_us = now_us();
+        message.core_read(read_at_us);
         // Node ids name the incarnation whose pipe they arrived on, never
         // whatever the message body claims.
         message.assign_outpost(outpost);
@@ -1419,7 +1443,14 @@ fn read_outpost(
             position += 1;
         }
         match message {
-            OutpostToSupervisor::Pong { parked_count, .. } => {
+            OutpostToSupervisor::Pong {
+                parked_count,
+                written_at_us,
+                ..
+            } => {
+                if let Some(us) = hop_us(written_at_us, read_at_us) {
+                    tracing::trace!(target: "verbatim::stage", stage = "outpost's pipe to verbatim.exe", %outpost, us, "pong");
+                }
                 let _ = own_tx.send(OwnerEvent::Pong {
                     outpost,
                     abandoned: parked_count,

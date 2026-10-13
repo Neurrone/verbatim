@@ -1251,9 +1251,9 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
     let mut reader = shared.reading.reader();
     while let Some((mut meta, job)) = next_job(shared, pid, generation) {
         let judged = shared.reading.read(reader.as_mut(), meta, job);
-        // The read's end, for the latency ledger's split of the listener's
-        // read from its queue and its write.
-        meta.timing.listener_read_at_us = now_us();
+        // The reading thread's end, for the latency ledger's split of the
+        // listener's handling from its queue and its write.
+        meta.timing.listener_handled_at_us = now_us();
         shared
             .failed_reads
             .fetch_add(verbatim_uia::calls::take_failed_reads(), Ordering::Relaxed);

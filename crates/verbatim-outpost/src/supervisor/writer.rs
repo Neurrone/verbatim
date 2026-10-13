@@ -108,8 +108,16 @@ impl Outgoing {
     }
 
     /// The command to write now, a fact or a request stamped with
-    /// verbatim.exe's relay time up to this moment ([`Received::stamp`]).
+    /// verbatim.exe's relay time up to this moment ([`Received::stamp`]),
+    /// and a command to the listener with the moment its write begins
+    /// ([`SupervisorToOutpost::stamp_sent`]).
     pub(super) fn relayed(self) -> SupervisorToOutpost {
+        self.relayed_with(now_us)
+    }
+
+    /// [`relayed`](Self::relayed), with `now` the clock a command to the
+    /// listener is stamped from.
+    fn relayed_with(self, now: impl FnOnce() -> u64) -> SupervisorToOutpost {
         match self {
             Outgoing::Shutdown => SupervisorToOutpost::Shutdown,
             Outgoing::Fact(_, mut command, received)
@@ -122,9 +130,11 @@ impl Outgoing {
                 }
                 command
             }
-            Outgoing::Ping(command)
-            | Outgoing::NodesHeld(command)
-            | Outgoing::HandOver(command) => command,
+            Outgoing::Ping(mut command) | Outgoing::HandOver(mut command) => {
+                command.stamp_sent(now);
+                command
+            }
+            Outgoing::NodesHeld(command) => command,
         }
     }
 }
@@ -147,6 +157,11 @@ impl Received {
             at: Instant::now(),
             at_us: now_us(),
         }
+    }
+
+    /// When, on the clock the other processes' stamps share.
+    pub(super) fn at_us(self) -> u64 {
+        self.at_us
     }
 
     /// How long ago, in microseconds.
@@ -312,7 +327,10 @@ mod tests {
     use crate::supervisor::policy::HeldFact;
 
     fn ping() -> Outgoing {
-        Outgoing::Ping(SupervisorToOutpost::Ping { seq: 1 })
+        Outgoing::Ping(SupervisorToOutpost::Ping {
+            seq: 1,
+            sent_at_us: 0,
+        })
     }
 
     fn query() -> Outgoing {
@@ -332,6 +350,7 @@ mod tests {
             Some(FactKey::Foreground(hwnd)),
             SupervisorToOutpost::Ping {
                 seq: hwnd.cast_unsigned() as u64,
+                sent_at_us: 0,
             },
             Received::now(),
         )
@@ -340,7 +359,7 @@ mod tests {
     fn seqs(queue: &mut Queue) -> Vec<u64> {
         std::iter::from_fn(|| queue.pop())
             .map(|item| match item.command() {
-                SupervisorToOutpost::Ping { seq } => *seq,
+                SupervisorToOutpost::Ping { seq, .. } => *seq,
                 _ => 0,
             })
             .collect()
@@ -474,11 +493,30 @@ mod tests {
         queue.push(ended(), 2).expect("gets through the full queue");
         let order: Vec<String> = std::iter::from_fn(|| queue.pop())
             .map(|item| match item.command() {
-                SupervisorToOutpost::Ping { seq } => seq.to_string(),
+                SupervisorToOutpost::Ping { seq, .. } => seq.to_string(),
                 SupervisorToOutpost::ForwardingEnded { .. } => "ended".to_owned(),
                 other => format!("{other:?}"),
             })
             .collect();
         assert_eq!(order, ["1", "2", "ended"]);
+    }
+
+    #[test]
+    fn a_command_to_the_listener_is_stamped_as_its_write_begins() {
+        let commands = [
+            ping(),
+            Outgoing::HandOver(SupervisorToOutpost::HookRemoved {
+                pid: verbatim_model::Pid(5),
+                sent_at_us: 0,
+            }),
+        ];
+        let hops: Vec<Option<u64>> = commands
+            .into_iter()
+            .map(|command| {
+                let written = command.relayed_with(|| 5_000);
+                crate::protocol::hop_us(written.sent_at_us(), 5_400)
+            })
+            .collect();
+        assert_eq!(hops, [Some(400), Some(400)]);
     }
 }

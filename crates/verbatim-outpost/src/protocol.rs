@@ -27,11 +27,13 @@ pub struct EventTiming {
     pub raised_ms_ago: Option<u32>,
     /// When the listener or the outpost observed it.
     pub observed_at_us: u64,
-    /// When the focus listener's reading thread finished reading what this
-    /// fact carries across processes (a UIA focus's read, or its drop after
-    /// one); 0 for a fact the listener sent with no read, and for anything
-    /// the listener did not send.
-    pub listener_read_at_us: u64,
+    /// When the focus listener finished handling this fact and queued it
+    /// for its writer: for a fact a reading thread judged (a UIA focus's or
+    /// menu opening's read or drop, a selection's or notification's check),
+    /// when that thread finished with it; for any other (a `WinEvent`'s
+    /// fact, a marker, a drop decided without a read, a menu's end), when
+    /// the listener queued it. 0 for anything the listener did not send.
+    pub listener_handled_at_us: u64,
     /// When the focus listener began writing the frame that carries this
     /// fact to verbatim.exe's pipe, taken just before the frame is encoded;
     /// 0 for anything the listener did not send.
@@ -82,6 +84,14 @@ pub struct EventTiming {
     /// When verbatim.exe read the outpost's message carrying this timing
     /// off the outpost's pipe, parsed; 0 until then.
     pub core_read_at_us: u64,
+}
+
+/// The time from the stamp `from_us` to the stamp `to_us`, in
+/// microseconds, or `None` when either is 0, a point not stamped (a message
+/// from an older peer).
+#[must_use]
+pub fn hop_us(from_us: u64, to_us: u64) -> Option<u64> {
+    (from_us != 0 && to_us != 0).then(|| to_us.saturating_sub(from_us))
 }
 
 /// Microseconds since the Unix epoch, the clock [`EventTiming`] and the
@@ -599,12 +609,22 @@ pub enum SupervisorToOutpost {
         /// Its outpost incarnation, echoed in the answer so a late answer
         /// never reaches a later incarnation.
         outpost: OutpostId,
+        /// When verbatim.exe began writing this command to the listener's
+        /// pipe, in microseconds since the Unix epoch; 0 from an older peer
+        /// ([`SupervisorToOutpost::stamp_sent`]).
+        #[serde(default)]
+        sent_at_us: u64,
     },
     /// To the focus listener: `pid` has no outpost with its hook in any
     /// more, so the listener forwards its `WinEvent` facts again.
     HookRemoved {
         /// The application.
         pid: Pid,
+        /// When verbatim.exe began writing this command to the listener's
+        /// pipe, in microseconds since the Unix epoch; 0 from an older peer
+        /// ([`SupervisorToOutpost::stamp_sent`]).
+        #[serde(default)]
+        sent_at_us: u64,
     },
     /// To the focus listener: Core has taken as the focus the event traced
     /// `trace_id`, observed at `observed_at_ms` (0 for a focus Core asked
@@ -618,6 +638,11 @@ pub enum SupervisorToOutpost {
         /// When that event was observed, in milliseconds since the Unix
         /// epoch.
         observed_at_ms: u64,
+        /// When verbatim.exe began writing this command to the listener's
+        /// pipe, in microseconds since the Unix epoch; 0 from an older peer
+        /// ([`SupervisorToOutpost::stamp_sent`]).
+        #[serde(default)]
+        sent_at_us: u64,
     },
     /// To an outpost: the listener forwards none of the application's
     /// `WinEvent` facts raised after `through`, and every one it forwarded
@@ -655,6 +680,11 @@ pub enum SupervisorToOutpost {
     Ping {
         /// Echoed in the matching pong.
         seq: u64,
+        /// When verbatim.exe began writing this command to the listener's
+        /// pipe, in microseconds since the Unix epoch; 0 from an older peer
+        /// ([`SupervisorToOutpost::stamp_sent`]).
+        #[serde(default)]
+        sent_at_us: u64,
     },
     /// The details the active theme wants read for each node
     /// (`SrState::fetches` in `verbatim-core`): a detail whose indication
@@ -693,6 +723,34 @@ pub enum SupervisorToOutpost {
     /// has not exited within its time limit. Nothing is answered: the pipe
     /// closing and the process exiting are the answer.
     Shutdown,
+}
+
+impl SupervisorToOutpost {
+    /// Stamps a command to the focus listener (a ping, a hand-over notice,
+    /// or a focus queued) with `now`, read just before the command's write
+    /// begins. Reads no clock for any other command.
+    pub fn stamp_sent(&mut self, now: impl FnOnce() -> u64) {
+        match self {
+            SupervisorToOutpost::Ping { sent_at_us, .. }
+            | SupervisorToOutpost::HookInstalled { sent_at_us, .. }
+            | SupervisorToOutpost::HookRemoved { sent_at_us, .. }
+            | SupervisorToOutpost::FocusQueued { sent_at_us, .. } => *sent_at_us = now(),
+            _ => {}
+        }
+    }
+
+    /// When verbatim.exe began writing this command, for one
+    /// [`stamp_sent`](Self::stamp_sent) stamps; 0 for any other.
+    #[must_use]
+    pub fn sent_at_us(&self) -> u64 {
+        match self {
+            SupervisorToOutpost::Ping { sent_at_us, .. }
+            | SupervisorToOutpost::HookInstalled { sent_at_us, .. }
+            | SupervisorToOutpost::HookRemoved { sent_at_us, .. }
+            | SupervisorToOutpost::FocusQueued { sent_at_us, .. } => *sent_at_us,
+            _ => 0,
+        }
+    }
 }
 
 /// What a [`SupervisorToOutpost::Query`] asks for.
@@ -884,6 +942,10 @@ pub enum OutpostToSupervisor {
         /// that passed their deadline and have not yet returned; the
         /// supervisor ends an outpost that piles them up.
         parked_count: usize,
+        /// When the writer began writing this pong to verbatim.exe's pipe,
+        /// in microseconds since the Unix epoch; 0 from an older peer.
+        #[serde(default)]
+        written_at_us: u64,
     },
     /// A backend error worth reporting without dying — a failed event
     /// registration, an arbitration probe that keeps timing out.
@@ -934,6 +996,11 @@ pub enum OutpostToSupervisor {
         /// When the menu or switcher ended, in milliseconds since the Unix
         /// epoch.
         ended_at_ms: u64,
+        /// When the listener observed the end and queued it, and when its
+        /// writer began writing this message, as a fact's are stamped;
+        /// verbatim.exe logs the listener's stages from them.
+        #[serde(default)]
+        timing: EventTiming,
     },
     /// The outpost's target application has exited. Sent once, ahead of
     /// ordinary messages; the supervisor then shuts the outpost down
@@ -960,17 +1027,21 @@ impl OutpostToSupervisor {
     }
 
     /// Records, in the timing the message carries, when its writer began
-    /// writing it to verbatim.exe's pipe: the focus listener's fact's
-    /// (`EventTiming::listener_written_at_us`), or an outpost's event's or
-    /// reply's (`EventTiming::written_at_us`). Nothing for any other
-    /// message.
+    /// writing it to verbatim.exe's pipe: the focus listener's fact's or
+    /// menu end's (`EventTiming::listener_written_at_us`), an outpost's
+    /// event's or reply's (`EventTiming::written_at_us`), or a pong's.
+    /// Nothing for any other message.
     pub fn written(&mut self, at_us: u64) {
         match self {
-            OutpostToSupervisor::FocusFact { timing, .. } => timing.listener_written_at_us = at_us,
+            OutpostToSupervisor::FocusFact { timing, .. }
+            | OutpostToSupervisor::MenuOrSwitchEnded { timing, .. } => {
+                timing.listener_written_at_us = at_us;
+            }
             OutpostToSupervisor::Event { timing, .. }
             | OutpostToSupervisor::Reply { timing, .. } => {
                 timing.written_at_us = at_us;
             }
+            OutpostToSupervisor::Pong { written_at_us, .. } => *written_at_us = at_us,
             _ => {}
         }
     }
@@ -1280,7 +1351,10 @@ mod tests {
 
     #[test]
     fn ping_and_pong_round_trip() {
-        let ping = SupervisorToOutpost::Ping { seq: 5 };
+        let ping = SupervisorToOutpost::Ping {
+            seq: 5,
+            sent_at_us: 4_000,
+        };
         let mut buffer = Vec::new();
         write_message(&mut buffer, &ping).expect("writes");
         let mut reader = buffer.as_slice();
@@ -1292,6 +1366,7 @@ mod tests {
         let expected_pong = OutpostToSupervisor::Pong {
             seq: 5,
             parked_count: 3,
+            written_at_us: 4_500,
         };
         let mut buffer = Vec::new();
         write_message(&mut buffer, &expected_pong).expect("writes");
@@ -1424,8 +1499,15 @@ mod tests {
         let pid = Pid(1234);
         let outpost = OutpostId(5);
         for command in [
-            SupervisorToOutpost::HookInstalled { pid, outpost },
-            SupervisorToOutpost::HookRemoved { pid },
+            SupervisorToOutpost::HookInstalled {
+                pid,
+                outpost,
+                sent_at_us: 4_000,
+            },
+            SupervisorToOutpost::HookRemoved {
+                pid,
+                sent_at_us: 4_000,
+            },
             SupervisorToOutpost::ForwardingEnded { through: 99 },
         ] {
             let mut buffer = Vec::new();
@@ -1621,5 +1703,32 @@ mod tests {
                 .expect("not end of stream");
             assert_eq!(&read, reply);
         }
+    }
+
+    #[test]
+    fn a_pongs_trip_back_runs_from_its_write_to_verbatim_exes_read() {
+        let mut pong = OutpostToSupervisor::Pong {
+            seq: 1,
+            parked_count: 0,
+            written_at_us: 0,
+        };
+        pong.written(7_000);
+        let OutpostToSupervisor::Pong { written_at_us, .. } = pong else {
+            unreachable!("a pong stays a pong");
+        };
+        assert_eq!(hop_us(written_at_us, 7_250), Some(250));
+    }
+
+    #[test]
+    fn a_menu_ends_trip_runs_from_the_listeners_write_to_verbatim_exes_read() {
+        let mut ended = OutpostToSupervisor::MenuOrSwitchEnded {
+            ended_at_ms: 1,
+            timing: EventTiming::default(),
+        };
+        ended.written(7_000);
+        let OutpostToSupervisor::MenuOrSwitchEnded { timing, .. } = ended else {
+            unreachable!("a menu end stays a menu end");
+        };
+        assert_eq!(hop_us(timing.listener_written_at_us, 7_250), Some(250));
     }
 }

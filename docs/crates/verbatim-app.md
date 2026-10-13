@@ -312,9 +312,9 @@ knowing for review:
   outpost, and caret wait stages as well. verbatim.exe's relay stamps
   (`EventTiming::core_received_at_us` and those after it, and
   `core_read_at_us` on the way back; `docs/design/relay.md`, section 4.5),
-  and the senders' own stamps (the listener's read's end and write, the
+  and the senders' own stamps (the listener's handling's end and write, the
   outpost's write; `docs/design/communication.md`, section 10.1)
-  split the spans across verbatim.exe: the listener's read, its queue and
+  split the spans across verbatim.exe: the listener's handling, its queue and
   its pipe to verbatim.exe (or the reducer's span to verbatim.exe), the
   time a fact was held for its starting outpost, verbatim.exe's own relay
   time, and verbatim.exe to the outpost; and, back from the outpost, its

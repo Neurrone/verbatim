@@ -235,14 +235,15 @@ which is reported separately. The stages, in milliseconds:
   (whole milliseconds, and only for WinEvents).
 - Hook to Core: for a caret key, from the keyboard hook seeing the key to
   the reducer having handled it and asked the outpost for the caret.
-- Listener read: for a UIA focus the listener sees, from the listener
-  observing the event to its reading thread having read the focus across
-  processes, the reading thread's queue included. A fact the listener
-  sends with no read (a WinEvent's, the text box's) has no listener read.
-- Listener queue: from the listener's read ending, or from its observing
-  the event for a fact with no read, to its writer beginning to write the
-  fact to verbatim.exe's pipe: the listener's outbound queue and its
-  writer's wake.
+- Listener handling: from the listener observing the event to its having
+  handled the fact. For a UIA focus, menu opening, selection or
+  notification, that is its reading thread's queue and its read or check
+  across processes; for a WinEvent's fact (the text box's, for instance)
+  it is the callback's own local work until the fact is queued.
+- Listener queue: from the listener's handling ending (or, for a
+  timeline without that stamp, its observing the event) to its writer
+  beginning to write the fact to verbatim.exe's pipe: the listener's
+  outbound queue and its writer's wake.
 - Listener's pipe to verbatim.exe: from the listener's writer beginning
   the write to verbatim.exe's relay thread taking the fact off the pipe:
   the encoding, the pipe, and the relay thread's wake.
@@ -313,7 +314,12 @@ behind it (typing, a paste, a mouse click) is not spoken, as in NVDA,
 so it has no line; the report of the caret when a text field gains the
 focus is part of the focus's own trace. For the synthesizer host's own split between the pipe and
 synthesis, set `RUST_LOG=info,verbatim::stage=trace`: the host then logs
-`host request` and `host audio` with each trace id.
+`host request` and `host audio` with each trace id. The same setting logs
+the hops outside the ledger: "verbatim.exe to the listener" for each
+ping and hand-over command the listener reads, "listener's pipe to
+verbatim.exe" (or "outpost's pipe to verbatim.exe") for each pong, and a
+menu's or switcher's end with its listener handling, listener queue and
+pipe, each in microseconds.
 - `dump-tree` asks the outpost for the foreground application's
   accessibility tree, walked from its top-level window, and prints one node
   per line indented two spaces per depth level, reusing the same
@@ -363,7 +369,7 @@ and a key's way to its speech queued. The stages are those the latency
 line names, listed with it under "Driving a running Verbatim with
 verbatim-inspect" (`docs/design/communication.md`, section 10.1, gives
 each one's stamps): the listener's way to verbatim.exe, for instance,
-shows as listener read, listener queue, and listener's pipe to
+shows as listener handling, listener queue, and listener's pipe to
 verbatim.exe, followed by verbatim.exe's own stage. A total is what the
 user waits on; a stage that shrinks while another grows by as much has
 moved the wait, not removed it.

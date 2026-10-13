@@ -370,17 +370,20 @@ pub enum LatencyStageKind {
     /// taking it off the listener's pipe: the listener's read, queue and
     /// writer, the pipe, and the relay thread's wake. For a timeline
     /// without the listener's write stamp; one with it has
-    /// [`ListenerRead`](Self::ListenerRead),
+    /// [`ListenerHandling`](Self::ListenerHandling),
     /// [`ListenerQueue`](Self::ListenerQueue) and
     /// [`ListenerPipe`](Self::ListenerPipe) instead.
     ListenerToRelay,
-    /// From the listener observing a UIA focus event to its reading thread
-    /// having read the focus across processes: the reading thread's queue
-    /// and the read.
-    ListenerRead,
-    /// From the listener's read ending, or, for a fact it sent with no
-    /// read, from its observing the event, to its writer beginning the
-    /// frame's write: the listener's outbound queue and its writer's wake.
+    /// From the listener observing the event to its having handled the
+    /// fact: for a fact a reading thread judges (a UIA focus or menu
+    /// opening, a selection, a notification), the reading thread's queue
+    /// and its cross-process read or check; for any other (a `WinEvent`'s
+    /// fact, a marker), the callback's own work until the fact is queued.
+    ListenerHandling,
+    /// From the listener having handled the fact (or, for a timeline
+    /// without that stamp, from its observing the event) to its writer
+    /// beginning the frame's write: the listener's outbound queue and its
+    /// writer's wake.
     ListenerQueue,
     /// From the listener's writer beginning the frame's write to
     /// verbatim.exe's relay thread taking it off the listener's pipe: the
@@ -479,7 +482,7 @@ impl LatencyStageKind {
             Self::ListenerToOutpost => "listener to outpost",
             Self::CoreToOutpost => "Core to outpost",
             Self::ListenerToRelay => "listener to verbatim.exe",
-            Self::ListenerRead => "listener read",
+            Self::ListenerHandling => "listener handling",
             Self::ListenerQueue => "listener queue",
             Self::ListenerPipe => "listener's pipe to verbatim.exe",
             Self::RequestToRelay => "reducer to verbatim.exe's relay",
