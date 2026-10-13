@@ -147,12 +147,19 @@ Counts are for one traced window of 5 to 8 seconds.
     control plane's speech writers) wake often in every run and cost a
     user nothing.
 
-Tracing has one hazard, seen twice on 2026-10-13 and not understood:
-after a trace started while a scenario was starting, File Explorer kept
-putting keyboard focus on the taskbar's Start button whenever the desktop
-was brought forward, and every scenario then failed at its start until
-Explorer was restarted. Traces are therefore started well after a
-scenario's startup.
+Tracing has one hazard, seen three times on 2026-10-13 and not
+understood: after a trace started while a scenario was starting, twice,
+and once after a trace that covered the end of `measure_focus_explorer`,
+File Explorer kept putting keyboard focus on the taskbar's Start button
+whenever the desktop was brought forward, and every scenario then failed
+at its start until Explorer was restarted. The same scenario run without
+a trace left Explorer as it was. Traces are therefore kept inside a
+scenario, away from its start and end, and Explorer is restarted when it
+happens.
+
+The baseline these fixes leave, and what the communication design's
+remaining steps are worth against it, is `docs/design/communication.md`
+section 18.
 
 ## What follows
 

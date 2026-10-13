@@ -272,7 +272,9 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    audited, idle and under each workload, and each source fixed at its
    root; then the design is revised so every step is judged on wake-ups
    and CPU as well as latency, and the revision goes to Dickson before the
-   migration resumes.
+   migration resumes. The audit's fixes are in (`docs/design/wake-ups.md`)
+   and the revision is the design's section 18, with decisions 14 to 17
+   awaiting Dickson.
 10. The harness's idle barrier covers outposts' and the listener's work in
     flight.
 11. Measure again (debug and release), full suite, push.

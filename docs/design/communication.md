@@ -1,6 +1,6 @@
 # Communication and threading: one design from an event or a key to sound
 
-Proposed 2026-10-11; decisions 2 to 12 approved by Dickson as recommended on 2026-10-13 (decision 1 as revised with him, decision 13 and the survey's points on 2026-10-11). Revised the same day after a review of what the user would hear and what the end-to-end suite would see, compared with today and with NVDA. Section 17, "Regressions considered", lists every finding of that review, how this design resolves it, and the test or scenario that guards it. It replaces piecemeal fixes with one model for every pipe between Verbatim's processes and for every thread an event or a key press passes through on its way to the first audio sample. It subsumes `docs/design/relay.md` (approved 2026-10-11, paused for this design) and findings 3, 4, 5, 7, 8, 9, 10, 11 and 12 of `docs/design/latency-audit.md`; findings 1, 2 and 6 are audio work, placed in the thread model here but kept as a step of their own.
+Proposed 2026-10-11; decisions 2 to 12 approved by Dickson as recommended on 2026-10-13 (decision 1 as revised with him, decision 13 and the survey's points on 2026-10-11). Revised the same day after a review of what the user would hear and what the end-to-end suite would see, compared with today and with NVDA. Revised again on 2026-10-13 after the wake-up audit: section 18 makes wake-ups and processor time criteria of every step alongside latency, with the baseline they are judged against, and decisions 14 to 17 await Dickson. Section 17, "Regressions considered", lists every finding of that review, how this design resolves it, and the test or scenario that guards it. It replaces piecemeal fixes with one model for every pipe between Verbatim's processes and for every thread an event or a key press passes through on its way to the first audio sample. It subsumes `docs/design/relay.md` (approved 2026-10-11, paused for this design) and findings 3, 4, 5, 7, 8, 9, 10, 11 and 12 of `docs/design/latency-audit.md`; findings 1, 2 and 6 are audio work, placed in the thread model here but kept as a step of their own.
 
 Researched on main at 4960991 and on the paused relay branch `worktree-agent-a867236cb53da6eae` (seven commits, f94e761 to cfbd323, not yet compiled). Nothing was built or run. Verbatim code is cited as `path:line` from the repository root; NVDA as `nvda/source/...:line`. A statement marked "established" comes from the code, from a recorded measurement, or from the relay branch's findings; one marked "estimated" is reasoning, with the reasoning given, and is a thing the measurement steps in section 11 must confirm.
 
@@ -26,6 +26,7 @@ Researched on main at 4960991 and on the paused relay branch `worktree-agent-a86
 - Process isolation of D9, D13 and D18 stays. No process is merged or removed; the listener, one outpost per application and one host per synthesizer remain.
 - No fixed waits, retries or polling in place of evidence. The design removes the two 10 ms cancel polls (`crates/verbatim-synth-hosted/src/lib.rs:49`, `crates/verbatim-synth-onecore/src/lib.rs:52`). Every wait it adds is on an I/O completion, an event or a channel. The deliberate waits listed in `latency-audit.md` section 4 (the listener's 50 ms menu-end grace, the 30 ms lock-key delay, the mixer's 10 ms start threshold) stay, as do deadline timers that detect a hang (the outposts' watchdog, the host's 10 s `HANG_TIMEOUT`), which are not polls.
 - Platform-neutral crates stay free of Windows code, and Core stays independent of the operating system. Every platform-specific piece of this design lives in Windows crates: the transport and its named pipes, the completion ports, the I/O threads, the relay, the scheduling and priority calls, MMCSS and the WASAPI calls. `verbatim-core` and the other platform-neutral crates gain no Windows dependency and no dependency on the transport; `cargo xtask ci`'s dependency check keeps enforcing it. `verbatim-speech` and `verbatim-audio` gain only plain types and atomics: the speech generation and key fence, the pause word, the ended list, the speech-record channel, a cancellation token that can call a waker, and the `thread_started` callback the relay branch already added (cfbd323). Decision 13 proposes moving the outpost and listener message types into a platform-neutral crate.
+- Efficiency as well as latency (Dickson, 2026-10-13): "We don't just want lowest latency at any cost, we also want efficiency as well, ideally as few wakeups as possible." Every step is judged on each thread's wake-ups and processor time as well as on the latency stages (section 18).
 - Screen-reader-friendly documentation: this document uses prose and lists only.
 
 ## 3. Today, in one place
@@ -527,7 +528,9 @@ measured while the mixer's writer and audio thread woke each other
 thousands of times a second (fixed, 6d5836f). Before resuming, every
 thread's wake-ups are audited and each source fixed at its root, and this
 design is revised to judge every step on wake-ups and CPU as well as on
-latency (`docs/roadmap.md`, stage A step 9).
+latency (`docs/roadmap.md`, stage A step 9). The audit's fixes are in
+(`docs/design/wake-ups.md`) and the revision is section 18; the migration
+resumes once Dickson has decided 14 to 17.
 
 Each step is small, builds and passes `cargo xtask ci`, and is verified before the next. Measurements come first. Live checks follow the targeted-run rule; full suite runs are named where a step changes how every outpost talks to Core.
 
@@ -569,6 +572,8 @@ The figures come from the ledger's latency lines, which round to 0.1 ms, through
 - Pass: the floors and their attribution are recorded; the priority levels of 6.1 are chosen from them; the baseline of the speech path through the real host and device exists.
 
 ### Step 3. The scheduling policy
+
+Built and reverted (1651ab0); replaced by decision 14's measurement on the quiet baseline (section 18.3). As first written:
 
 - 7e6e562 and cfbd323 completed: every process opts out of power throttling; every thread in section 6 gets its level, including the keyboard hook (adding `verbatim-process` to `verbatim-input-windows`), the host reader threads while they still exist, and the host's threads.
 - Removes: the non-silent part of the per-hop tail, if the inference holds.
@@ -620,6 +625,8 @@ The figures come from the ledger's latency lines, which round to 0.1 ms, through
 
 ### Step 9. The host protocol: tags, Speak behind Cancel, signalled cancel, one host thread
 
+The signalled cancel is done (3ebb7be), ahead of the rest, by the audit: `SynthSink::on_cancel` registers a waker the cancel calls; the hosted driver waits on its reader's channel and a one-slot cancel channel together, the host's command reader calls the waker of the driver speaking, and OneCore waits on one channel carrying its completion or its cancel. The waits move onto the pipe's read event and the command event when the reader threads go in this step.
+
 - Section 7: frames tagged with their utterance; the hosted driver returns on cancel and discards the old utterance's frames; the cancellation token with a waker in `verbatim-speech`; the synth thread reads the host pipe itself; the host is one thread on its command event; OneCore waits on its completion and the command event.
 - Removes: finding 4's round trip (about ten wake-ups), both 10 ms polls, Core's host reader thread and the host's reader thread.
 - Tests: a scripted host driver that blocks per chunk on a gate: a cancel during an utterance followed by a new one sends `Speak` for the new one before `Done` for the old one is read, and no audio of the old one reaches the sink after the cancel; a cancel before any audio stops a OneCore-shaped driver whose operation never completes, with no timer involved (the test waits for the `Done`, with only an overall failure bound); a host killed mid-utterance fails it and the next utterance starts a new host, as today; a host cancelled while a PCM frame larger than its pipe's buffer is pended delivers the next utterance whole with no restart; a setting applied right after a cancel is answered without the cancelled utterance's frames being taken for its reply.
@@ -633,6 +640,8 @@ The figures come from the ledger's latency lines, which round to 0.1 ms, through
 - Pass: the Control and Shift flood scenarios (`conhost_control_flood`, `windows_terminal_control_flood`, `conhost_shift_flood`, `windows_terminal_shift_flood`), ten runs each; the say-all scenarios (`notepad_say_all`, `text_box_say_all`); the typing and editing scenarios that type over speech (`text_box_typed_words`, `notepad_typed_words`, `conhost_typing`, `windows_terminal_typing`, `text_box_editing`, `notepad_editing`); `settings_dialog_keys` for setting changes spoken at once; `synth_host_crash_recovery`; `measure_speech_real`'s "to speech" and "to the audio thread" stages; the full suite.
 
 ### Step 11. The outpost's per-event costs
+
+Done in part (fac2f04): the watchdog waits on an alarm, a waitable timer and an event, woken only for deadlines; held nodes are sent every 32 messages rather than with the next request or when the reducer goes idle. The description formatting and the logging inside the intake lock remain.
 
 - Finding 12: the watchdog's deadline on a waitable timer (no wake per entry); the entry's description formatted only when debug logging is on; logging moved out of the intake lock; `NodesHeld` coalesced with the next request or sent when the reducer goes idle (evidence, not a timer).
 - Removes: a watchdog wake per entry; a string format per entry; a file write under a lock in test runs; three wake-ups after most focus changes.
@@ -677,7 +686,7 @@ Changed:
 
 ## 13. Decisions for Dickson
 
-All approved: decisions 2 to 12 as recommended (Dickson, 2026-10-13), decision 1 as revised with him and decision 13 (2026-10-11).
+Approved: decisions 2 to 12 as recommended (Dickson, 2026-10-13), decision 1 as revised with him and decision 13 (2026-10-11). Awaiting Dickson: decisions 14 to 17, from section 18.
 
 1. Measured on 2026-10-13 (section 4.2): about 15 microseconds to parse and re-serialize a relayed focus read, so plain JSON with a text length header is kept. As first proposed: keep JSON bodies, and route on a binary frame header so verbatim.exe never parses or re-serializes a fact. NVDA: no IPC, so no equivalent. Revised with Dickson (2026-10-11): measure first, in step 1, the release-build cost of parsing and re-serializing a focus fact with its ancestors, a typical reply, and a 1 MB terminal frame; if the typical messages cost a few tens of microseconds at most, keep plain JSON with a readable text length header (as the Language Server Protocol's `Content-Length: N`, a blank line, then the JSON), so the pipes stay readable by eye and a reader still asks for a whole message in one read; stamps are then JSON fields set just before encoding. The binary header comes back only if the measurement shows the cost matters.
 2. Children's pipe ends become overlapped too, and every producer writes its own message when nothing is ahead of it, which removes the listener's and the outposts' writer threads. Recommend: adopt.
@@ -698,6 +707,10 @@ All approved: decisions 2 to 12 as recommended (Dickson, 2026-10-13), decision 1
 11. Amend `architecture.md` sections 1 and 10: internal channels are named pipes, single-instance, connected before the child starts, admitting only the current user at Verbatim's integrity level, instead of anonymous pipes with "no named endpoint". Recommend: adopt; it is what overlapped I/O requires, and the relay's approval already accepted it for the listener and outposts.
 12. The harness's idle barrier becomes an in-band round through the listener and every outpost (section 6.7), which is stage A step 10, pulled forward from after the terminal redesign into this migration as step 6a, because step 7 removes what today's barrier counts. NVDA: no equivalent. Recommend: adopt; it also closes the gap step 10 was written for.
 13. The messages exchanged with the outposts and the listener (`SupervisorToOutpost`, `OutpostToSupervisor` and the listener's facts, today in `verbatim-outpost`'s protocol module, a Windows crate) move into a platform-neutral crate as plain serde types, with the frame's kinds and header fields; each platform supplies its own transport, threads and supervisor, so a future Linux or macOS port shares the messages and the code that turns them into Core's inputs. The module has no Windows dependency today (it uses only serde, `std::io` and `verbatim-model`), so the move is mechanical. Not a migration step yet: it is best done once the protocol settles after step 7. NVDA: no equivalent. Recommend: adopt in principle, scheduled after this migration. Approved by Dickson on 2026-10-11.
+14. The scheduling policy, after the audit (section 18.3). Withdraw `ABOVE_NORMAL` for the computing threads, which made typed echoes slower. Measure again, on the quiet baseline, `HIGHEST` for the threads that only move messages and the process-wide opt-out from power throttling, and adopt each only where it shortens a measured tail without raising processor time; keep MMCSS for audio. NVDA sets none of these. Recommend: adopt.
+15. Decision 3 again, with wake-ups counted. The relay reading the outposts' pipes costs one wake-up per outpost message over the reducer reading them itself: 216 in 8 seconds of keys, 3,536 in 6 seconds of a console flood, each a few microseconds at `HIGHEST`. The alternative's costs are unchanged (section 6.9): keys overtaking UIA events under load, which NVDA does not do, routine merging, and pongs through the reducer. Recommend: keep the relay reading, since the saving is a small share of the flood's 22,064 wake-ups and the departure from NVDA is audible; the terminal redesign, which owns the flood's real cost, comes back to it if a flood still sends thousands of messages a second.
+16. The liveness pings (section 6.8). Every child is pinged every 3 seconds, which is all idle Verbatim wakes for (7 wake-ups a second across all processes with three children). A wedge only matters when an outpost is asked something, and asking already starts its worker's deadline. Proposal: ping only a child with work outstanding (a request, an intake not empty, or a starting outpost), and the listener, whose silence would otherwise go unnoticed, at a longer interval. NVDA has no child processes; its watchdog checks the main thread's progress only while it is busy. Recommend: adopt, as a step after step 7, when the relay owns the pings.
+17. verbatim.exe's hidden top-level frame (`wake-ups.md` item 9) receives every broadcast message from every application, about 67 a second while typing elsewhere. Whether the tray icon and its menus can be owned by a message-only window, which receives no broadcasts, is a question for the GUI's design, outside this migration. Recommend: look into it as its own item.
 
 ## 14. Risks
 
@@ -720,7 +733,7 @@ Estimated, to be measured by steps 1, 2 and 12: every "after" count's value in m
 
 ## 16. Follow-ups found, not part of this design
 
-- The audio thread's idle wait also bounds how long a request to reopen a failed device goes unnoticed (`mixer.rs:59-62`), and a failed open is retried after a fixed second (`mixer.rs:64-65`). That is a timed retry, not a wait for evidence; a device-change notification (`IMMNotificationClient`) would replace it. Not on the event path.
+- The audio thread's idle wait also bounded how long a request to reopen a failed device went unnoticed. Done (451523d): the default-device callback already signalled the wait, and the device's own wait now ends at its retry time, so the idle mixer waits without a limit. The retry after a failed open stays a fixed second: an open that failed while a device exists has no event to wait for.
 - PCM is copied about ten times between eSpeak NG and the device (`latency-audit.md` finding 12); this design removes two copies. The rest cost microseconds each.
 - The control plane keeps its own overlapped pipe code (`crates/verbatim-control/src/server.rs:13-34`); it could later move onto the transport.
 - The keyboard hook drops a gesture when the router's 64-slot channel is full (`crates/verbatim-input-windows/src/lib.rs:469-470`). Posting review keys to the reducer's port removes that for them; lock keys and GUI gestures keep the bounded channel.
@@ -768,6 +781,59 @@ Every finding of the 2026-10-11 review of this design against today's behaviour 
 - The hook at `HIGHEST` (no change audible).
 - Logging and the flight recorder (none). The flight recorder stays on the reducer; the gesture log's move to debug affects only `verbatim.log`; the latency line is still written when its audio starts.
 - Security of named pipes (low). Resolved: any failure of verbatim.exe's own open of a child's end aborts the launch with no retry (section 4.1). Guarded by: step 4's test.
+
+## 18. Wake-ups and CPU (revision of 2026-10-13)
+
+Dickson, pausing the migration after step 3: "We don't just want lowest latency at any cost, we also want efficiency as well, ideally as few wakeups as possible." This section makes wake-ups and processor time criteria of every remaining step, alongside latency, records the baseline after the wake-up audit (`docs/design/wake-ups.md`), and says what each step is worth by these measures. Decisions 14 to 17 in section 13 come from it.
+
+### 18.1 How every step is judged
+
+- Each step reports, besides the latency stages of section 10, each thread's wake-ups (times readied from a wait) and its time on a processor, for the workloads of 18.2, from `cargo xtask trace` read by `verbatim-trace-waits`, which now prints both per thread. `--wakers`, `--stacks` and `--samples` say who woke a thread, from where, and where its processor time went.
+- Counts are compared per unit of work where the unit is countable (per announcement, per key, per outpost message), since a fixed trace window catches more or less of a scenario: the synth thread's count in the same 8 seconds of `measure_speech_real` was 931, 1,357 and 1,637 in three runs.
+- A step passes only if no workload's wake-ups or processor time rise beyond that variation, unless the rise is the step's stated purpose and Dickson has agreed to it; a step that removes a thread shows its wake-ups gone and no other thread's grown by more than it saved.
+- Threads that exist only for the test harness (the WAV recorder, the control plane's speech writers and readers) are reported and left out of the comparison: they are about 9 percent of the key workload's wake-ups and cost a user nothing.
+- Traces are short and deleted once read, as `docs/tooling.md` requires. A trace that overlaps a scenario's start or end can leave File Explorer putting the focus on the Start button (`wake-ups.md`, seen three times), after which Explorer is restarted before the next run.
+
+### 18.2 The baseline after the audit's fixes
+
+Main at f4d097e, debug build, this development machine, one trace each; wake-ups and processor time summed over all of Verbatim's processes in the window.
+
+- Idle (Verbatim started directly, 8 seconds from 12 seconds in): 56 wake-ups and 3 ms in all, 7 a second across every process. The audit removed the mixer's one-second idle poll (451523d) and the outpost watchdog's per-entry wake (fac2f04); what is left is the 3-second pings and their pongs (decision 16).
+- Keys in the Windows Forms text box (`measure_keys_text_box`, 8 seconds from 15 seconds in): 10,672 wake-ups and 1.03 s of processor time. The text box's outpost worker 3,325 (167 ms); UIA's unnamed threads and the outpost's event thread about 2,430; the audio thread 1,016; the harness's threads about 980; the synth thread 516 (261 ms); the speech queue 412; the hook 399; the reducer 331; the host reader and the host's two threads 577 together; the outpost's outbound thread and verbatim.exe's reader for it 417 together.
+- Focus moves in File Explorer (`measure_focus_explorer`, 8 seconds from 10 seconds in): 33,243 wake-ups and 2.1 s. The outposts' event threads 10,364 (395 ms), UIA's unnamed threads 9,287 (435 ms), UIA's callback threads running Verbatim's handlers 4,920 (166 ms) and the workers 4,188 (279 ms): 86 percent of the wake-ups are the outposts taking in File Explorer's events (`wake-ups.md` items 7 and 8). The listener's reader and writer, the per-outpost writers and the children's outbound threads, which steps 5 and 6 remove, 471 together.
+- A console flood (`conhost_flood`, 6 seconds from 8 seconds in): 22,064 wake-ups and 7.3 s, more than one processor. The console's outpost's UIA callback threads used 4.3 s in 382 wakes; their CPU samples have Verbatim's handler on the stack in 41 percent, the rest being UI Automation's own client-side work (`uiautomationcore.dll`, the heap, `memcpy`, COM). The worker 5,491 wakes and 1.6 s, a fifth of its samples in the file system, which is debug logging in test runs. The outpost's outbound thread, verbatim.exe's reader for it and the reducer woke 3,536 times each, once per message.
+- Real speech (`measure_speech_real`, 8 seconds from 20 seconds in): 10,218 wake-ups and 0.93 s. The audio thread 1,709, the synth thread 507 (220 ms), the speech queue 359, the host reader and the host's two threads 431, with 43 ms in the host.
+
+Two sources that the communication design does not touch dominate the counts:
+
+- The worker wakes once for each reply to a cross-process call it makes. Its readying stacks while typing come from the application through `win32k` (about 1,140 in the ten most frequent stacks), from `ctfmon.exe`, the Text Services Framework's server (634), and from File Explorer (111). Fewer calls per caret read and per event, through remote operations as the standing rule requires, is what lowers it. Why `ctfmon.exe` answers a windowless multithreaded worker is not yet known and needs symbols.
+- The outposts' event intake: every `WinEvent` hook and UIA subscription wakes its thread for every event the application raises before Verbatim's filter runs. Narrowing that is the in-process filtering of D2's injection helper (`wake-ups.md` item 7).
+
+### 18.3 What each remaining step is worth by these measures
+
+Counts are from 18.2's key workload unless named; "removes" is the measured count of the threads a step takes away, before anything it adds.
+
+- Step 3, the scheduling policy: priorities change who runs when, not how often anything wakes. Above-normal priority for the computing threads made typed echoes slower and is withdrawn. Opting a process out of power throttling keeps its threads on fast cores at full clocks, which costs energy for every unit of work. Decision 14 proposes measuring again, on this quiet baseline, `HIGHEST` for the threads that only move messages and the power-throttling opt-out, each adopted only where it shortens a measured tail without raising processor time.
+- Step 4, the transport: no thread goes, so no wake-up count should change; its framing must not raise processor time.
+- Step 5, the relay on its port: removes the listener's reader and writer threads and the per-outpost writers: 67 here, 280 in File Explorer, 121 in the flood.
+- Step 6, the children's inline writes: removes the outposts' and the listener's outbound threads: 204 here, 191 in File Explorer, 3,538 in the flood (16 percent of it), 181 in real speech.
+- Step 7, the relay reading the outposts' pipes: replaces the per-outpost reader threads with the relay thread, one wake per frame either way, so it saves threads, not wake-ups. Decision 3's alternative, the reducer reading the pipes, would save the reader's wake on every outpost message: 216 here, 3,536 in the flood. Decision 15 puts the question again with these figures.
+- Step 8, review keys straight to the reducer: up to the router's 120 here, of which lock keys, the menu and the time stay.
+- Step 9, the host protocol: the signalled cancel is done (3ebb7be), so its share is the host reader in verbatim.exe and the host's command thread, 455 here and 325 in real speech, and finding 4's round trip on every interrupting key.
+- Step 10, the speech manager without its queue thread: 412 here, 359 in real speech, one wake on every announcement.
+- Step 11, the outpost's per-event costs: done in part (fac2f04).
+
+Together steps 5 to 10 remove about 1,250 of the key workload's 10,672 wake-ups (12 percent) and about 110 ms of its 1.03 s, every one of them on the path; in the flood, 3,897 of 22,064 (18 percent), and with decision 3's alternative 7,433. They are worth doing for latency and for these savings, and the larger sources of 18.2 are not theirs.
+
+### 18.4 Efficiency work outside the migration
+
+Ranked by the measured counts; each is its own item, measured the same way.
+
+- The outposts' event intake (`wake-ups.md` items 7 and 8): 86 percent of the File Explorer workload. Needs D2's injection helper to filter inside the application; until then, each hooked kind is kept only if a reading needs it.
+- The workers' cross-process calls: the largest single thread in the key and speech workloads. Remote operations for every call sequence, audited (the standing rule), and the `ctfmon.exe` question.
+- Terminal floods: the console outpost uses more than a processor, most of it UI Automation's client-side work for text-changed events. The terminal redesign (`docs/roadmap.md`) is judged on this as well as on latency.
+- The liveness pings (decision 16): the only wake-ups idle Verbatim makes itself.
+- verbatim.exe's hidden top-level frame takes every broadcast message (`wake-ups.md` item 9), about 67 a second while typing elsewhere; whether the tray icon and menus can live on a message-only window is decision 17.
 
 ## Findings from other Rust projects (2026-10-11)
 
