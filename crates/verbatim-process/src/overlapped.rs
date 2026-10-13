@@ -444,9 +444,11 @@ struct Operation {
 /// operation is in flight.
 pub struct PipeIo {
     operation: NonNull<Operation>,
-    /// How many bytes a read asks for.
+    /// How many bytes a read asks for unless told otherwise.
     read_size: usize,
     in_flight: bool,
+    /// Whether the operation last started was a read.
+    reading: bool,
 }
 
 // SAFETY: the slot owns its operation's memory outright; the raw pointer is
@@ -477,6 +479,7 @@ impl PipeIo {
             operation: NonNull::from(Box::leak(operation)),
             read_size,
             in_flight: false,
+            reading: false,
         }
     }
 
@@ -498,14 +501,28 @@ impl PipeIo {
     ///
     /// Panics if an operation is already in flight.
     pub fn read(&mut self, file: &PortFile) -> Started {
+        self.read_up_to(file, self.read_size)
+    }
+
+    /// Starts a read from `file` of up to `size` bytes into the buffer,
+    /// which takes that size; memory it holds far beyond it, after a
+    /// larger read, is given back.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an operation is already in flight.
+    pub fn read_up_to(&mut self, file: &PortFile, size: usize) -> Started {
         assert!(!self.in_flight, "one operation at a time");
         // SAFETY: nothing is in flight, so nothing but this slot uses the
         // operation's memory now.
         let operation = unsafe { self.operation.as_mut() };
         operation.overlapped = OVERLAPPED::default();
         operation.filled = 0;
-        // Zeroed once, then kept: a read slot's buffer stays this size.
-        operation.buffer.resize(self.read_size, 0);
+        // Only bytes the buffer has never held are zeroed.
+        operation.buffer.resize(size, 0);
+        if operation.buffer.capacity() > size.saturating_mul(4) {
+            operation.buffer.shrink_to_fit();
+        }
         let overlapped = &raw mut operation.overlapped;
         let buffer = operation.buffer.as_mut_slice();
         // SAFETY: the buffer and the OVERLAPPED are in the slot's own
@@ -572,6 +589,7 @@ impl PipeIo {
         result: windows::core::Result<()>,
         read: bool,
     ) -> Started {
+        self.reading = read;
         match result {
             // Completed at once, so no completion will come: the slot's
             // memory is free again, and the count is in the OVERLAPPED.
@@ -607,8 +625,7 @@ impl PipeIo {
         // Its completion came through the port: the kernel is done with
         // the slot's memory.
         self.in_flight = false;
-        // Only a read's slot is ever given a read size.
-        self.result(file, self.read_size > 0)
+        self.result(file, self.reading)
     }
 
     /// The finished operation's outcome, from its OVERLAPPED.

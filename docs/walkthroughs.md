@@ -24,9 +24,10 @@ placed in kill-on-close job objects, so they die with it however it ends
    - `verbatim-reducer`, which owns the reducer state, the request table,
      and the set of live outposts (`ReducerThread` in
      `crates/verbatim-app/src/main.rs`);
-   - the supervisor's lifecycle owner thread, plus two threads per child
-     process (a writer and a reader) and short-lived launch helpers
-     (`crates/verbatim-outpost/src/supervisor/`);
+   - `verbatim-relay`, the supervisor's lifecycle owner, which also reads
+     the focus listener's pipe and finishes every child's writes on one
+     completion port, plus a reader thread per outpost and short-lived
+     launch helpers (`crates/verbatim-outpost/src/supervisor/`);
    - `verbatim-speech-queue` and `verbatim-synth`, the speech manager;
    - `verbatim-audio`, the mixer's one audio thread;
    - one control-plane reader and writer per connected client;
@@ -96,11 +97,13 @@ releases Alt. Notepad has no outpost yet.
      coalesced in the listener's outgoing queue (`Outgoing::fact`): a
      newer fact for the same element and kind replaces a waiting one.
      Pongs and `Ready` go first. The writer thread writes each as a
-     `FocusFact` (newline-delimited JSON) up the listener's pipe to Core.
-4. **Core routes the facts and starts an outpost.** Core's listener
-   reader thread (`read_listener` in
-   `crates/verbatim-outpost/src/supervisor/owner.rs`) hands each fact to
-   the lifecycle owner thread, which alone decides lifecycles.
+     `FocusFact` frame (a `Content-Length` header and JSON) up the
+     listener's pipe to Core.
+4. **Core routes the facts and starts an outpost.** The lifecycle owner
+   thread, the relay, reads the listener's pipe itself on its completion
+   port (`Owner::read_listener` in
+   `crates/verbatim-outpost/src/supervisor/owner.rs`) and handles each
+   fact in the pass that read it; it alone decides lifecycles.
    `Owner::route_fact` finds no record for Notepad's pid. Focus,
    foreground, menu, notification, and alert facts may start an outpost
    (`DeliveredFact::may_start_outpost`), so it records Notepad as
@@ -108,14 +111,15 @@ releases Alt. Notepad has no outpost yet.
    holds the fact, and hands the launch to a helper thread. The helper
    launches the process already inside a kill-on-close job (the job is
    attached at creation, `PROC_THREAD_ATTRIBUTE_JOB_LIST`, so the child is
-   contained from its first instruction), starts its writer thread, sends the app `OutpostMessage::Started`, and
+   contained from its first instruction), makes its writer on the relay's port, sends the app `OutpostMessage::Started`, and
    only then starts its reader, so the reducer thread hears of an
    incarnation before any of its messages. Facts arriving meanwhile are
    held in arrival order, one per object and kind (`HeldFacts`). On the
    outpost's `Ready`, `Owner::on_ready` releases them in that order onto
-   the outpost's writer queue as `SupervisorToOutpost::DeliverFact`. Had
-   Notepad already had a ready outpost, the fact would have gone straight
-   to its writer.
+   the outpost's writer as `SupervisorToOutpost::DeliverFact`, each
+   written to the pipe at once unless a write is still in flight. Had
+   Notepad already had a ready outpost, the fact would have been written
+   to it in the same pass that read it.
 5. **The outpost's intake queues the facts.** In Notepad's outpost, the
    reader (`Outpost::handle_command` in
    `crates/verbatim-outpost/src/outpost/mod.rs`) only pushes each fact onto

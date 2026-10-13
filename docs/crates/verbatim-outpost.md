@@ -616,8 +616,8 @@ Public API:
   also registers globally, are not subscribed yet: the reducer speaks values
   only for the focus, and live regions are milestone M6's.
 - `Supervisor` (the `supervisor` module; outpost redesign, "The
-  supervisor") — `new(events)` starts the lifecycle owner thread, which
-  starts the focus listener at once (`with_executable` launches every
+  supervisor") — `new(events)` starts the lifecycle owner thread, the
+  relay, which starts the focus listener at once (`with_executable` launches every
   child from a given executable with a given shutdown time limit, for the
   test that launches a stand-in); `shutdown()` shuts every outpost and the
   listener down for Verbatim's exit, returning once every one has ended
@@ -641,32 +641,53 @@ Public API:
   `EventSink::new` takes a function, which the app uses to put the
   messages on the reducer thread's one input channel, in line with its
   keys and commands.
-  - The lifecycle owner (`owner`) is one thread that makes every lifecycle
-    decision and owns the per-application records and the listener record.
-    Readers, the heartbeat and sweep timers (`crossbeam_channel::tick`
-    inside the owner's `select!`), launch helpers, and the app report to it
-    over one channel; there is no shared map lock. Launching blocks, so the
-    owner records the application as starting and hands the launch to a
-    helper thread, which starts the child's writer, sends `Started`, starts
-    its reader, and reports back; a second fact meanwhile is held, never a
-    second launch.
+  - The lifecycle owner (`owner`) is one thread, `verbatim-relay`, that
+    makes every lifecycle decision and owns the per-application records
+    and the listener record. It is also the relay
+    (`docs/design/communication.md`, section 6.2; the `relay` module): it
+    waits only in `GetQueuedCompletionStatusEx` on one completion port,
+    with a timeout that is the next heartbeat (3 seconds) or sweep (30
+    seconds), and is woken by a read of the listener's pipe completing, a
+    write to a child that pended completing, or its mailbox. It reads the
+    listener's pipe through a `transport::PortReader`, one read in flight,
+    and handles each frame in the pass that read it: a fact is parsed,
+    routed, and written to its outpost there and then, so a fact crosses
+    verbatim.exe with this one thread's wake-up. The outposts' reader
+    threads, launch helpers, retirements, hang checks and the app report
+    to it through the mailbox (`relay::Mailbox`, a channel whose sends
+    post one wake to the port unless one is already waiting); there is no
+    shared map lock. It never blocks: launching blocks, so the owner
+    records the application as starting and hands the launch to a helper
+    thread, which makes the child's writer, sends `Started`, starts an
+    outpost's reader, and reports back, a second fact meanwhile being
+    held, never a second launch; a retirement runs on a thread of its own
+    and reports how the child ended; and whether an application with
+    eight abandoned workers is hung, which walks its windows, is checked
+    on a thread of its own, the outpost being judged on its answer. At
+    Verbatim's exit the relay keeps serving its pipes until every
+    retirement has reported and every pipe has finished, since a child's
+    shutdown message must be written.
   - Each child's commands go through a `transport::Sender` on verbatim.exe's
-    overlapped end of its command pipe (`writer`): the thread that sends a
-    command, the owner or the reducer, writes it itself when no write is
-    in flight and nothing waits, and otherwise it waits in a bounded queue
-    (capacity 64), written in order by the sender's finishing thread,
-    which wakes only when a write that pended completes. So the owner
-    never waits on a pipe while deciding and the reducer thread never
-    waits on one. When the queue is full a ping still gets
-    through, and so does a message of the MSAA hand-over, which keeps its
-    place behind everything queued before it, a routed fact replaces any
-    waiting fact for the same object and kind (or the oldest waiting fact
-    makes room), and anything else, a query above all, fails at once. Each child has a reader thread that reads
-    verbatim.exe's overlapped end of its message pipe, blocking on each read
-    (`transport::BlockingReader`), stamps every node id with the child's
-    outpost id, forwards messages to the app, and reports `Ready`, pongs,
-    and the end of its pipe to the owner. Core's thread count is two per
-    child plus the owner.
+    overlapped end of its command pipe (`writer`), on the relay's port:
+    the thread that sends a command, the relay or the reducer, writes it
+    itself when no write is in flight and nothing waits, and otherwise it
+    waits in a bounded queue (capacity 64), written in order by the relay
+    once the write that pended completes; the relay finds the writer by
+    the completion's key (`relay::CommandPipes`, to which a writer is
+    added as it is made). So the relay never waits on a pipe while
+    deciding and the reducer thread never waits on one, and a child that
+    stops reading holds up only its own queue. When the queue is full a
+    ping still gets through, and so does a message of the MSAA hand-over,
+    or any part of a UIA focus's read, which keeps its place behind
+    everything queued before it and is never merged or dropped
+    (`Outgoing::delivered`); a routed fact replaces any waiting fact for
+    the same object and kind (or the oldest waiting fact makes room), and
+    anything else, a query above all, fails at once. Each outpost has a
+    reader thread that reads verbatim.exe's overlapped end of its message
+    pipe, blocking on each read (`transport::BlockingReader`), stamps
+    every node id with the outpost's id, forwards messages to the app, and
+    reports `Ready`, pongs, and the end of its pipe to the relay. Core's
+    thread count is one per outpost plus the relay.
   - Facts that arrive while an outpost is starting are held in arrival
     order, a newer fact for the same object and kind replacing the older one
     and moving to the back (NVDA's limiter rule), and released in that order
@@ -1379,8 +1400,9 @@ the watch lock, could not abandon a hung worker.
 
 The supervisor's side already never waits: each child's writer queue
 fails or replaces a command when it is full (the `Supervisor` entry above),
-the reader threads forward to unbounded channels, and the map of writers
-is locked only to look one up, never across a push or a write. The focus
+the relay and the reader threads forward to unbounded channels, and the
+maps of writers are locked only to look one up, never across a push or a
+write. The focus
 listener's own queue merges its facts by element and kind and never
 waits either.
 

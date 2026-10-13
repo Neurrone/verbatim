@@ -1,7 +1,8 @@
 //! The transport for the pipes between verbatim.exe and its outposts and
 //! listener (`docs/design/communication.md`, section 4): how a message is
-//! framed, how a thread that blocks reads an overlapped end, and the
-//! [`Sender`] through which verbatim.exe writes a child's commands.
+//! framed, how a thread reads an overlapped end, blocking
+//! ([`BlockingReader`]) or through a completion port ([`PortReader`]), and
+//! the [`Sender`] through which verbatim.exe writes a child's commands.
 //!
 //! A frame is a text header giving the body's length, as the Language
 //! Server Protocol's, then the body: `Content-Length: ` and the length in
@@ -17,9 +18,11 @@
 //! write is in flight and nothing waits ahead of it, so in the common case
 //! no other thread wakes. A write the pipe cannot take at once pends; the
 //! frames sent meanwhile wait in the sender's [`Backlog`], under the
-//! caller's overflow policy, and the sender's finishing thread, woken only
-//! by that write's completion, writes them in order. A frame once started
-//! is always finished: nothing cancels a write.
+//! caller's overflow policy, and the thread finishing its writes, woken
+//! only by that write's completion, writes them in order: a thread of the
+//! sender's own, or one serving a port the sender shares, as verbatim.exe's
+//! relay does. A frame once started is always finished: nothing cancels a
+//! write.
 
 use std::io::{self, BufRead, Read};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
@@ -219,6 +222,199 @@ impl Read for BlockingReader {
             Err(error) if error.code() == ERROR_BROKEN_PIPE.to_hresult() => Ok(0),
             Err(error) => Err(win32_error(error)),
         }
+    }
+}
+
+/// How many bytes a [`PortReader`] asks for when it does not know how long
+/// the frame it is reading is: the event pipes' buffer.
+const READ_SIZE: usize = EVENT_PIPE_BUFFER as usize;
+
+/// How many reads that complete at once a [`PortReader`] makes in one turn
+/// before it lets the rest of its port have one.
+const READS_PER_TURN: usize = 16;
+
+/// An overlapped end read through a completion port by the thread serving
+/// the port, one read in flight, each frame's body handed out whole and in
+/// order (`docs/design/communication.md`, sections 4.1 and 4.8). A read
+/// asks for the pipe's buffer while the next frame's length is unknown, and
+/// for the whole rest of a frame once it is known, so a large frame is read
+/// in one read into a buffer of its size, however the pipe driver splits
+/// it. The end of the pipe between frames ends the reading; inside a frame
+/// it is an error, never a message.
+pub struct PortReader {
+    file: PortFile,
+    slot: PipeIo,
+    /// Bytes read and not yet handed out: the start of a frame whose rest
+    /// has not arrived.
+    pending: Vec<u8>,
+}
+
+/// What became of a [`PortReader`] in a turn.
+#[derive(Debug)]
+pub enum Reading {
+    /// A read is in flight; its completion will come through the port.
+    Waiting,
+    /// Reads kept completing at once, so the reader posted its key to its
+    /// port, to go on after whatever else waits there.
+    Yielded,
+    /// The reading ended, with nothing in flight: `Ok` when the writer
+    /// closed its end between frames; the error when the pipe failed, ended
+    /// inside a frame, or brought something that is not a frame, or when
+    /// the caller refused a frame.
+    Ended(io::Result<()>),
+}
+
+impl PortReader {
+    /// Reads `file`, a pipe end associated with a port. Nothing is read
+    /// until the first [`take`](Self::take).
+    #[must_use]
+    pub fn new(file: PortFile) -> Self {
+        Self {
+            file,
+            slot: PipeIo::new(READ_SIZE),
+            pending: Vec::new(),
+        }
+    }
+
+    /// The key its completions carry.
+    #[must_use]
+    pub fn key(&self) -> usize {
+        self.file.key()
+    }
+
+    /// Takes a turn on `completion`, carrying this reader's key: its read's
+    /// completion, or a wake posted with its key, which starts the reading
+    /// (or goes on with it after [`Reading::Yielded`]) unless a read is
+    /// already in flight. Hands `frame` the body of each whole frame read,
+    /// in order, and reads on while reads complete at once, until one
+    /// waits, `READS_PER_TURN` have been made, or the reading ends. A
+    /// frame `frame` refuses ends the reading with its error.
+    pub fn take(
+        &mut self,
+        completion: &Completion,
+        port: &Port,
+        mut frame: impl FnMut(&[u8]) -> io::Result<()>,
+    ) -> Reading {
+        let mut done = if completion.is_posted() {
+            if self.slot.in_flight() {
+                return Reading::Waiting;
+            }
+            None
+        } else if self.slot.in_flight() && self.slot.owns(completion) {
+            Some(self.slot.complete(&self.file, completion))
+        } else {
+            tracing::error!(
+                key = completion.key,
+                "a completion that is not this reader's"
+            );
+            return Reading::Waiting;
+        };
+        let mut reads = 0;
+        loop {
+            if let Some(done) = done.take() {
+                let handed = match done {
+                    Ok(0) => return Reading::Ended(self.end()),
+                    Ok(_) => self.hand_out(&mut frame),
+                    Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {
+                        return Reading::Ended(self.end());
+                    }
+                    Err(error) => Err(error),
+                };
+                if let Err(error) = handed {
+                    return Reading::Ended(Err(error));
+                }
+            }
+            if reads == READS_PER_TURN {
+                return match port.post(self.file.key()) {
+                    Ok(()) => Reading::Yielded,
+                    Err(error) => Reading::Ended(Err(error)),
+                };
+            }
+            reads += 1;
+            match self.slot.read_up_to(&self.file, self.wanted()) {
+                Started::Pending => return Reading::Waiting,
+                Started::Done(moved) => done = Some(Ok(moved)),
+                Started::Failed(error) => done = Some(Err(error)),
+            }
+        }
+    }
+
+    /// How much the next read asks for: the rest of the frame begun, when
+    /// its length is known and more than the pipe's buffer.
+    fn wanted(&self) -> usize {
+        match frame_bounds(&self.pending) {
+            Ok(Some((header, length))) => (header + length)
+                .saturating_sub(self.pending.len())
+                .max(READ_SIZE),
+            _ => READ_SIZE,
+        }
+    }
+
+    /// Hands out every frame the last read completed, keeping the start of
+    /// the next.
+    fn hand_out(&mut self, frame: &mut impl FnMut(&[u8]) -> io::Result<()>) -> io::Result<()> {
+        let data = self.slot.data();
+        if self.pending.is_empty() {
+            let used = whole_frames(data, frame)?;
+            self.pending.extend_from_slice(&data[used..]);
+        } else {
+            self.pending.extend_from_slice(data);
+            let used = whole_frames(&self.pending, frame)?;
+            self.pending.drain(..used);
+        }
+        if self.pending.is_empty() && self.pending.capacity() > READ_SIZE {
+            // A large frame's memory, given back.
+            self.pending = Vec::new();
+        }
+        Ok(())
+    }
+
+    /// The writer closed its end: a clean end between frames, an error
+    /// inside one.
+    fn end(&self) -> io::Result<()> {
+        if self.pending.is_empty() {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "the pipe ended inside a frame",
+            ))
+        }
+    }
+}
+
+/// Hands `frame` the body of every whole frame at the start of `bytes`, in
+/// order, and returns how many bytes they took.
+fn whole_frames(
+    bytes: &[u8],
+    frame: &mut impl FnMut(&[u8]) -> io::Result<()>,
+) -> io::Result<usize> {
+    let mut at = 0;
+    while let Some((header, length)) = frame_bounds(&bytes[at..])? {
+        let end = at + header + length;
+        if end > bytes.len() {
+            break;
+        }
+        frame(&bytes[at + header..end])?;
+        at = end;
+    }
+    Ok(at)
+}
+
+/// The lengths of the header and the body of the frame `bytes` starts
+/// with, once its header is whole; `None` before.
+fn frame_bounds(bytes: &[u8]) -> io::Result<Option<(usize, usize)>> {
+    let window = &bytes[..bytes.len().min(MAX_HEADER_BYTES)];
+    match window
+        .windows(HEADER_END.len())
+        .position(|candidate| candidate == HEADER_END)
+    {
+        Some(at) => {
+            let header = at + HEADER_END.len();
+            parse_header(&bytes[..header]).map(|length| Some((header, length)))
+        }
+        None if bytes.len() >= MAX_HEADER_BYTES => Err(invalid("a frame's header is too long")),
+        None => Ok(None),
     }
 }
 
@@ -523,6 +719,7 @@ mod tests {
     use std::collections::VecDeque;
     use std::fs::File;
     use std::io::{BufReader, Write};
+    use std::time::Duration;
 
     use super::*;
     use crate::overlapped::{End, Flow, pipe};
@@ -615,6 +812,132 @@ mod tests {
         );
         writer.join().expect("the writer");
         assert_eq!(read_frame(&mut reader).expect("read"), None);
+    }
+
+    /// A port reader on a pipe whose other end the test writes itself.
+    struct Fixture {
+        port: Port,
+        reader: PortReader,
+        writer: Option<File>,
+        completions: Completions,
+    }
+
+    impl Fixture {
+        /// A reader on a new pipe with a buffer of `buffer` bytes, its
+        /// first read started.
+        fn new(buffer: u32) -> Self {
+            let port = Port::new().expect("a port");
+            let (ours, theirs) = pipe(Flow::Inbound, buffer, End::Synchronous).expect("a pipe");
+            let reader = PortReader::new(port.associate(ours, 3).expect("associated"));
+            port.post(3).expect("posted");
+            let mut reading = Self {
+                port,
+                reader,
+                writer: Some(File::from(theirs)),
+                completions: Completions::with_capacity(4),
+            };
+            assert_eq!(reading.turn().0, Vec::<Vec<u8>>::new());
+            reading
+        }
+
+        /// One completion's turn: the frames handed out, and whether the
+        /// reading ended, and how.
+        fn turn(&mut self) -> (Vec<Vec<u8>>, Option<io::Result<()>>) {
+            assert_eq!(
+                self.port
+                    .wait(&mut self.completions, Some(Duration::from_secs(10)))
+                    .expect("waited"),
+                1,
+                "one completion within the bound"
+            );
+            let completion = self.completions.iter().next().expect("one");
+            let mut frames = Vec::new();
+            let reading = self.reader.take(&completion, &self.port, |body| {
+                frames.push(body.to_vec());
+                Ok(())
+            });
+            match reading {
+                Reading::Ended(result) => (frames, Some(result)),
+                Reading::Waiting | Reading::Yielded => (frames, None),
+            }
+        }
+
+        /// Writes `bytes`, then takes the turn the read waiting for them
+        /// completes.
+        fn write(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
+            self.writer
+                .as_mut()
+                .expect("open")
+                .write_all(bytes)
+                .expect("written");
+            let (frames, ended) = self.turn();
+            assert!(ended.is_none(), "still reading: {ended:?}");
+            frames
+        }
+
+        /// Closes the writing end, and says how the reading ended.
+        fn close(&mut self) -> io::Result<()> {
+            self.writer = None;
+            let (frames, ended) = self.turn();
+            assert_eq!(frames, Vec::<Vec<u8>>::new());
+            ended.expect("the reading ended")
+        }
+    }
+
+    #[test]
+    fn a_port_reader_hands_out_frames_whole_however_reads_split_them() {
+        let mut stream = framed(b"first");
+        stream.extend(framed(b""));
+        stream.extend(framed(b"second"));
+        stream.extend(framed(b"third"));
+        let mut reading = Fixture::new(4096);
+        // Inside the first header; then on into the second frame's body;
+        // then the rest, the end of one frame and another whole.
+        assert_eq!(reading.write(&stream[..5]), Vec::<Vec<u8>>::new());
+        assert_eq!(
+            reading.write(&stream[5..70]),
+            [b"first".to_vec(), Vec::new()]
+        );
+        assert_eq!(
+            reading.write(&stream[70..]),
+            [b"second".to_vec(), b"third".to_vec()]
+        );
+        assert!(reading.close().is_ok(), "a clean end between frames");
+    }
+
+    #[test]
+    fn a_port_reader_reads_a_frame_larger_than_the_pipe_whole() {
+        let large = vec![9u8; 300_000];
+        let mut stream = framed(&large);
+        stream.extend(framed(b"after"));
+        let mut reading = Fixture::new(4096);
+        let mut writer = reading.writer.take().expect("open");
+        let writing = thread::spawn(move || writer.write_all(&stream).expect("written"));
+        // The writer closes its end once it has written, so the reading
+        // ends after the last frame.
+        let mut frames = Vec::new();
+        let ended = loop {
+            let (more, ended) = reading.turn();
+            frames.extend(more);
+            if let Some(ended) = ended {
+                break ended;
+            }
+        };
+        writing.join().expect("the writer");
+        assert_eq!(frames, [large, b"after".to_vec()]);
+        assert!(ended.is_ok(), "{ended:?}");
+    }
+
+    #[test]
+    fn a_port_reader_reports_the_end_inside_a_frame_as_an_error() {
+        let whole = framed(b"cut short");
+        let mut reading = Fixture::new(4096);
+        assert_eq!(
+            reading.write(&whole[..whole.len() - 3]),
+            Vec::<Vec<u8>>::new()
+        );
+        let error = reading.close().expect_err("cut");
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
     }
 
     /// A backlog of byte strings, at most `capacity` of them.

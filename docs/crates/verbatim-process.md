@@ -77,7 +77,8 @@ Public API:
   key)` joins a handle and skips the port for operations that complete at
   once, `post(key)` wakes the waiting thread, and `wait` takes
   completions into `Completions`. `PipeIo` is one operation slot, a read
-  or a write at a time, whose `OVERLAPPED` and buffer stay put, untouched
+  (`read`, of its read size, or `read_up_to` a size given) or a write at a
+  time, whose `OVERLAPPED` and buffer stay put, untouched
   and not freed, while its operation is in flight. The relay floor's
   benchmark (`verbatim-relay-floor`) and `transport` use it.
 - `scheduling` (Dickson's decision of 2026-10-08;
@@ -90,8 +91,8 @@ Public API:
   `ThreadPriority` (`Normal`, `AboveNormal`, `Highest`, `TimeCritical`);
   `prioritize_role(role, priority)` does the same and logs a refusal as
   a warning, the thread carrying on as it was. The threads that only move
-  messages run at `Highest`: the keyboard hook, verbatim.exe's supervisor
-  owner, its reader and writer for each child, the listener's and each
+  messages run at `Highest`: the keyboard hook, verbatim.exe's relay
+  thread and its reader for each outpost, the listener's and each
   outpost's pipe-reading main thread and outbound writer, the `WinEvent`
   threads, and both ends' synthesizer host readers. Each caller names its
   level once per role in a constant of its own. Every other thread keeps
@@ -113,16 +114,33 @@ Public API:
   that is not one, or a length over the limit (refused before any body is
   read). `EVENT_PIPE_BUFFER` is the event pipes' 64 KiB.
   `BlockingReader::new(pipe)` is a `Read` over an overlapped end for a
-  thread that blocks on each read, as verbatim.exe's reader threads do; a
-  closed writer reads as the end of the stream. `Sender::start(pipe,
-  backlog, name, started)` writes an overlapped end: `send(item)` writes
-  at once when no write is in flight and nothing waits, on the sending
-  thread, so in the common case no other thread wakes; otherwise the item
-  joins the `Backlog`, a caller's policy (`push`, `pop`, `is_empty`, and
-  `encode`, which frames an item just before it is written). The
-  finishing thread, named `name`, which first runs `started`, waits on a
-  completion port of its own and wakes only when a write that pended
-  completes, then writes what waited, in order. `close()` takes nothing
+  thread that blocks on each read, as verbatim.exe's outpost reader
+  threads do; a closed writer reads as the end of the stream.
+  `PortReader::new(file)` reads an end associated with a `Port`, for the
+  thread serving the port: `take(completion, port, frame)`, given its
+  read's completion or a wake posted with its key, hands `frame` the body
+  of each whole frame in order, and reads on while reads complete at
+  once, until one waits (`Reading::Waiting`), sixteen have been made
+  (`Reading::Yielded`, its key posted so it goes on after whatever else
+  waits on the port), or the reading ends (`Reading::Ended`, `Ok` for the
+  writer closing between frames, an error for a pipe that failed, ended
+  inside a frame or brought something that is not one, or a frame
+  `frame` refused). A read asks for 64 KiB while the next frame's length
+  is unknown and for the whole rest of a frame once it is, so a large
+  frame is read in one read into a buffer of its size. `Sender` writes an
+  overlapped end: `send(item)` writes at once when no write is in flight
+  and nothing waits, on the sending thread, so in the common case no
+  other thread wakes; otherwise the item joins the `Backlog`, a caller's
+  policy (`push`, `pop`, `is_empty`, and `encode`, which frames an item
+  just before it is written). A write that pended is finished by the
+  thread serving the sender's port, which writes what waited, in order:
+  `Sender::on_port(pipe, backlog, port, key)` shares a port, whose thread
+  hands each completion carrying `key` to `complete(completion)`, and
+  `is_finished()` says when no completion of the sender's will come again
+  (verbatim.exe's relay serves every child's sender this way);
+  `Sender::start(pipe, backlog, name, started)` gives the sender a port
+  and a finishing thread of its own, named `name`, which first runs
+  `started` and wakes only when a write that pended completes. `close()` takes nothing
   more, writes what waits, then drops the pipe so the reader sees its
   end. A failed write closes the sender (`SendError::Closed`); a backlog's
   refusal is `SendError::Refused`. A started frame is always finished:

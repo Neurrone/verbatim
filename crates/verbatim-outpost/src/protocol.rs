@@ -1069,9 +1069,16 @@ pub fn read_message<R: BufRead, T: DeserializeOwned>(reader: &mut R) -> io::Resu
     let Some(body) = verbatim_process::transport::read_frame(reader)? else {
         return Ok(None);
     };
-    serde_json::from_slice(&body)
-        .map(Some)
-        .map_err(io::Error::other)
+    decode_message(&body).map(Some)
+}
+
+/// Parses one frame's body as a message.
+///
+/// # Errors
+///
+/// Returns an error for a body that is not a valid message.
+pub fn decode_message<T: DeserializeOwned>(body: &[u8]) -> io::Result<T> {
+    serde_json::from_slice(body).map_err(io::Error::other)
 }
 
 #[cfg(test)]

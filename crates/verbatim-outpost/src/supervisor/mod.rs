@@ -6,20 +6,30 @@
 //! or are no longer needed. Its parts:
 //!
 //! - One lifecycle owner thread ([`owner`]) makes every lifecycle decision and
-//!   owns the per-application records and the listener record. Reader threads,
-//!   the heartbeat and sweep timers, launch helpers, and the app only report
-//!   facts to it over one channel; nothing else changes a record, and there is
-//!   no shared map lock.
-//! - Launching a process blocks, so a helper thread does it and reports back.
-//!   The owner records the application as starting before the launch, so a
-//!   second fact meanwhile is held, not a second launch.
-//! - Each child has a writer thread with a bounded queue ([`writer`]), so the
-//!   owner never writes to a pipe while deciding, and the reducer thread can
-//!   queue a query without waiting.
-//! - Each child has a reader thread that stamps every node id with the
-//!   child's outpost id, forwards the child's messages to the app, and
-//!   reports `Ready`, pongs, and the pipe's end to the owner.
-//! - Core's thread count is therefore two per child, plus the owner.
+//!   owns the per-application records and the listener record. The
+//!   outposts' reader threads, launch helpers, retirements, and the app only
+//!   report facts to it through one mailbox; nothing else changes a record,
+//!   and there is no shared map lock. Its heartbeat and sweep run when its
+//!   wait's deadline passes.
+//! - The owner thread is also the relay ([`relay`];
+//!   `docs/design/communication.md`, section 6.2): it waits only on an I/O
+//!   completion port, reads the listener's pipe and routes each fact in the
+//!   pass that read it, writing it to its outpost there and then, so a fact
+//!   crosses verbatim.exe with one thread's wake-up; and it finishes every
+//!   child's writes that pended. It never blocks: launching a process,
+//!   ending one, and checking whether an application is hung run on threads
+//!   of their own and report back. The owner records the application as
+//!   starting before the launch, so a second fact meanwhile is held, not a
+//!   second launch.
+//! - Each child has a writer with a bounded queue ([`writer`]): whichever
+//!   thread sends a command writes it at once when no write is in flight,
+//!   so the reducer thread sends a query without waiting and without a
+//!   hand-off, and a write the pipe cannot take at once is finished by the
+//!   relay.
+//! - Each outpost has a reader thread that stamps every node id with the
+//!   outpost's id, forwards its messages to the app, and reports `Ready`,
+//!   pongs, and the pipe's end to the owner.
+//! - Core's thread count is therefore one per outpost, plus the relay.
 //!
 //! The app hears of each outpost incarnation through [`OutpostMessage`]:
 //! `Started` before any of its messages, then its messages, then `Ended`.
@@ -31,6 +41,7 @@ mod ignored;
 mod owner;
 mod policy;
 mod process;
+mod relay;
 mod retire;
 mod writer;
 
@@ -39,7 +50,7 @@ use std::io;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use crossbeam_channel::{Sender, unbounded};
+use crossbeam_channel::Sender;
 use verbatim_model::{OutpostId, Pid, TraceId};
 
 use crate::protocol::{OutpostToSupervisor, SupervisorToOutpost};
@@ -208,7 +219,7 @@ type Writers = Arc<Mutex<std::collections::HashMap<OutpostId, writer::WriterHand
 
 /// Starts, routes to, and ends outposts and the focus listener.
 pub struct Supervisor {
-    owner: Sender<owner::OwnerEvent>,
+    owner: relay::Mailbox<owner::OwnerEvent>,
     writers: Writers,
     ignored: Arc<IgnoredProcesses>,
 }
@@ -224,7 +235,7 @@ impl Supervisor {
     /// # Errors
     ///
     /// Returns an error if the current executable path cannot be determined
-    /// or the owner thread cannot be started.
+    /// or the relay's completion port or the owner thread cannot be made.
     pub fn new(
         events: impl Into<EventSink>,
         options: crate::OutpostOptions,
@@ -245,7 +256,8 @@ impl Supervisor {
     ///
     /// # Errors
     ///
-    /// Returns an error if the owner thread cannot be started.
+    /// Returns an error if the relay's completion port or the owner thread
+    /// cannot be made.
     pub fn with_executable(
         events: impl Into<EventSink>,
         options: crate::OutpostOptions,
@@ -256,7 +268,8 @@ impl Supervisor {
         // The launch's log directory was prepared by the app at startup,
         // before any child (the synthesizer host first) began writing to it.
         let writers: Writers = Arc::default();
-        let (owner_tx, owner_rx) = unbounded();
+        let relay = relay::Relay::new()?;
+        let (owner_tx, owner_rx) = relay::mailbox(std::sync::Arc::clone(relay.port()));
         owner::start(owner::Setup {
             exe_path,
             options,
@@ -265,6 +278,7 @@ impl Supervisor {
             writers: Arc::clone(&writers),
             own_tx: owner_tx.clone(),
             events: owner_rx,
+            relay,
             ignored: Arc::clone(&ignored),
         })?;
         Ok(Self {

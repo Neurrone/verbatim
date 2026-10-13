@@ -3,8 +3,8 @@
 //! supervisor"; `docs/design/communication.md`, section 4.3). The thread
 //! that queues a command writes it itself when the pipe is free and
 //! nothing waits; while a write is in flight, commands wait in a bounded
-//! queue, written in order by the sender's finishing thread once that
-//! write completes.
+//! queue, written in order by the relay once that write's completion
+//! reaches its port ([`super::relay`]).
 //!
 //! When the queue is full, each kind of command has its own policy:
 //!
@@ -33,9 +33,10 @@
 use std::collections::VecDeque;
 use std::io;
 use std::os::windows::io::OwnedHandle;
+use std::sync::Arc;
 use std::time::Instant;
 
-use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
+use verbatim_process::overlapped::{Completion, Port};
 use verbatim_process::transport::{Backlog, SendError, Sender};
 
 use crate::protocol::{EventTiming, FactKey, SupervisorToOutpost, now_us, put_message};
@@ -43,11 +44,6 @@ use crate::protocol::{EventTiming, FactKey, SupervisorToOutpost, now_us, put_mes
 /// How many commands may wait for one child before the overload policy
 /// applies.
 pub(super) const WRITER_CAPACITY: usize = 64;
-
-/// The priority of each child's finishing thread: it only writes each
-/// waiting command to the child's pipe, for microseconds per wake
-/// (`docs/design/communication.md`, section 6.1).
-const WRITER_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// One command waiting to be written, with what the overload policy needs
 /// to know about it.
@@ -77,6 +73,27 @@ pub(super) enum Outgoing {
 }
 
 impl Outgoing {
+    /// A routed fact for an outpost: a part of a UIA focus's read, which an
+    /// outpost waits on in order, gets through as a hand-over message does
+    /// and is never merged; any other fact is keyed by the object and kind
+    /// it concerns.
+    pub(super) fn delivered(held: super::policy::HeldFact) -> Self {
+        let key = held.fact.key();
+        let focus_read = held.fact.is_focus_read();
+        let command = SupervisorToOutpost::DeliverFact {
+            trace_id: held.trace_id,
+            observed_at_ms: held.observed_at_ms,
+            timing: held.timing,
+            fact: held.fact,
+            win_event: held.win_event,
+        };
+        if focus_read {
+            Outgoing::FocusRead(command, held.received)
+        } else {
+            Outgoing::Fact(key, command, held.received)
+        }
+    }
+
     #[cfg(test)]
     fn command(&self) -> &SupervisorToOutpost {
         match self {
@@ -242,7 +259,7 @@ impl Backlog for Queue {
     }
 }
 
-/// The shared end of one child's writer: the owner and the reducer thread
+/// The shared end of one child's writer: the relay and the reducer thread
 /// send through it.
 #[derive(Clone)]
 pub(crate) struct WriterHandle {
@@ -250,6 +267,26 @@ pub(crate) struct WriterHandle {
 }
 
 impl WriterHandle {
+    /// The writer for a child's command pipe, an overlapped end, whose
+    /// writes that pend complete on `port`, the relay's, under `key`.
+    pub(super) fn on_port(to_child: OwnedHandle, port: Arc<Port>, key: usize) -> io::Result<Self> {
+        Ok(Self {
+            sender: Sender::on_port(to_child, Queue::default(), port, key)?,
+        })
+    }
+
+    /// Takes `completion`, of a write of this writer's that pended, from
+    /// the relay: writes what waited behind it.
+    pub(super) fn complete(&self, completion: &Completion) {
+        self.sender.complete(completion);
+    }
+
+    /// Whether the writer has closed and written everything, or failed:
+    /// no completion of its will come again.
+    pub(super) fn is_finished(&self) -> bool {
+        self.sender.is_finished()
+    }
+
     /// Writes `item` now if the pipe is free, or queues it, without
     /// waiting.
     pub(super) fn push(&self, item: Outgoing) -> Result<(), QueueError> {
@@ -266,23 +303,13 @@ impl WriterHandle {
     }
 }
 
-/// Starts the writer for a child's command pipe, an overlapped end,
-/// returning the handle commands are sent through. Its finishing thread,
-/// named `name`, exits when the writer is closed and drained, or when a
-/// write fails because the child has gone.
-pub(super) fn start(to_child: OwnedHandle, name: &str) -> io::Result<WriterHandle> {
-    let role = name.to_owned();
-    let sender = Sender::start(to_child, Queue::default(), name, move || {
-        prioritize_role(&role, WRITER_PRIORITY);
-    })?;
-    Ok(WriterHandle { sender })
-}
-
 #[cfg(test)]
 mod tests {
     use verbatim_model::TraceId;
 
     use super::*;
+    use crate::protocol::{DeliveredFact, UiaSnapshotFact};
+    use crate::supervisor::policy::HeldFact;
 
     fn ping() -> Outgoing {
         Outgoing::Ping(SupervisorToOutpost::Ping { seq: 1 })
@@ -369,6 +396,73 @@ mod tests {
             })
             .collect();
         assert_eq!(acknowledged, vec![3]);
+    }
+
+    /// A selection of `runtime_id` named `name`, as routed.
+    fn selection(runtime_id: i32, name: &str) -> Outgoing {
+        Outgoing::delivered(held(DeliveredFact::UiaSelection {
+            hwnd: 0,
+            focus_window: 0,
+            snapshot: UiaSnapshotFact {
+                runtime_id: vec![runtime_id],
+                role: verbatim_model::Role::ListItem,
+                name: Some(name.to_owned()),
+                value: None,
+                states: verbatim_model::StateSet::new(),
+                details: verbatim_model::NodeDetails::default(),
+            },
+        }))
+    }
+
+    fn held(fact: DeliveredFact) -> HeldFact {
+        HeldFact {
+            trace_id: TraceId::mint(),
+            observed_at_ms: 0,
+            timing: EventTiming::default(),
+            fact,
+            win_event: None,
+            received: Received::now(),
+        }
+    }
+
+    /// What a routed fact in the queue is, for the order asserted.
+    fn routed(queue: &mut Queue) -> Vec<String> {
+        std::iter::from_fn(|| queue.pop())
+            .map(|item| match item.command() {
+                SupervisorToOutpost::DeliverFact {
+                    fact: DeliveredFact::UiaFocusMarker { marker },
+                    ..
+                } => format!("marker {marker}"),
+                SupervisorToOutpost::DeliverFact {
+                    fact: DeliveredFact::UiaSelection { snapshot, .. },
+                    ..
+                } => format!(
+                    "selection {:?} {}",
+                    snapshot.runtime_id,
+                    snapshot.name.as_deref().unwrap_or_default()
+                ),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
+    /// A UIA focus's marker is keyed apart from every fact, so a fact for
+    /// the same element never merges with it, a full queue never drops it
+    /// as its oldest fact, and a newer fact replacing an older one moves to
+    /// the back without moving the marker behind it.
+    #[test]
+    fn a_focus_marker_is_never_merged_dropped_or_moved_behind_later_facts() {
+        let mut queue = Queue::default();
+        let marker = Outgoing::delivered(held(DeliveredFact::UiaFocusMarker { marker: 7 }));
+        queue.push(marker, 2).expect("queued");
+        queue.push(selection(1, "first"), 2).expect("queued");
+        queue
+            .push(selection(2, "other"), 2)
+            .expect("the oldest fact makes room");
+        queue
+            .push(selection(2, "newer"), 2)
+            .expect("replaces the waiting one");
+        assert_eq!(routed(&mut queue), ["marker 7", "selection [2] newer"]);
     }
 
     #[test]
