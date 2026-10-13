@@ -38,8 +38,10 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         Some("start") => start(),
         Some("stop") => stop(),
         Some("waits") => return waits(&args[1..]),
+        Some("scenario") => return crate::perf::trace_scenario(&args[1..]),
         _ => Err(
-            "usage: cargo xtask trace <start|stop|waits <trace.etl> [process.exe ...]>".to_owned(),
+            "usage: cargo xtask trace <start|stop|waits <trace.etl> [process.exe ...]|scenario <name> ...>"
+                .to_owned(),
         ),
     };
     match result {
@@ -75,7 +77,7 @@ fn waits(args: &[String]) -> ExitCode {
     }
 }
 
-fn start() -> Result<String, String> {
+pub(crate) fn start() -> Result<String, String> {
     run_task(START_TASK)?;
     match wait_for_task(START_TASK)? {
         0 => Ok("WPR is recording the CPU profile".to_owned()),
@@ -83,7 +85,7 @@ fn start() -> Result<String, String> {
     }
 }
 
-fn stop() -> Result<String, String> {
+pub(crate) fn stop() -> Result<String, String> {
     let last = Path::new(TRACE_DIR).join("last-trace.txt");
     let before = std::fs::read_to_string(&last).ok();
     run_task(STOP_TASK)?;
@@ -112,6 +114,34 @@ fn stop() -> Result<String, String> {
         }
         thread::sleep(POLL);
     }
+}
+
+/// The trace the last `stop` wrote, from `last-trace.txt`.
+pub(crate) fn last_trace() -> Result<std::path::PathBuf, String> {
+    let last = Path::new(TRACE_DIR).join("last-trace.txt");
+    let text = std::fs::read_to_string(&last)
+        .map_err(|error| format!("could not read {}: {error}", last.display()))?;
+    let file = text
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_start_matches('\u{feff}');
+    if file.is_empty() {
+        return Err(format!("{} names no trace", last.display()));
+    }
+    Ok(std::path::PathBuf::from(file))
+}
+
+/// Deletes `trace` and the `.NGENPDB` folder WPR writes beside it: a trace
+/// grows by about 20 MB a second, so none is kept once read.
+pub(crate) fn delete(trace: &Path) {
+    if let Err(error) = std::fs::remove_file(trace) {
+        eprintln!("xtask trace: could not delete {}: {error}", trace.display());
+    }
+    let mut symbols = trace.as_os_str().to_owned();
+    symbols.push(".NGENPDB");
+    let _ = std::fs::remove_dir_all(std::path::PathBuf::from(symbols));
 }
 
 /// Starts the registered task `name`, explaining how to register it when

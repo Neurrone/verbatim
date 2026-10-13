@@ -295,26 +295,115 @@ line with no matching `event` line above it is Core-originated speech (for
 instance the startup announcement), which has no triggering accessibility
 event.
 
-## Tracing the CPU's scheduling
+## Measuring performance
+
+Verbatim is judged on latency, wake-ups and processor time together
+(`docs/design/communication.md`, section 18; `docs/design/wake-ups.md`).
+Two commands measure them on this machine against a locally running
+agent, which each starts and ends itself. Both take over the desktop as
+every end-to-end run does, so run them on the console (`cargo xtask
+park`) or when the desktop is free, never during a build, and never with
+another run going. Neither builds Verbatim: build what the run stages
+first (the debug binaries, or the release ones for `--release`, as "The
+measure set" below says). Both write under `target\perf\<label>`, which
+each run replaces when the label is the same.
+
+### Latency: cargo xtask measure
+
+`cargo xtask measure [--release] [--audible] [--scenario <name>]...
+[--label <label>]` runs the measure set (the eight `measure_` scenarios a
+silent run takes; `measure_speech_real` is named with `--scenario` in an
+audible run), keeps each run's `stderr.log`, and writes `stages.txt`: for
+every stage of the latency line, over every announcement, the count, the
+median, the 99th and 99.9th percentiles, the maximum, and the share over
+1 and 2 ms, in milliseconds. It ends with two totals summed per
+announcement: verbatim.exe's own stage with its hops to and from the
+outpost and the wait for the reducer, and a key's way to its speech
+queued. A total is what the user waits on; a stage that shrinks while
+another grows by as much has moved the wait, not removed it.
+
+Two runs of the same build differ: a stage's share over 2 ms moved from
+3.0 to 0.9 percent between two debug runs on 2026-10-13, with about 400
+samples for the key stages. Compare runs of one build against each other
+before believing a difference, and give more weight to a change in the
+maximum or the 99.9th percentile that holds across runs.
+
+### Wake-ups and processor time: cargo xtask trace scenario
+
+`cargo xtask trace scenario <name> --after <seconds> --seconds <seconds>
+[--release] [--audible] [--wakers <thread>]... [--stacks <thread>]...
+[--samples <thread>]... [--keep] [--label <label>]` runs one scenario,
+starts a CPU trace `--after` seconds in, stops it `--seconds` later, and
+reads it with `verbatim-trace-waits` (`docs/crates/verbatim-trace-waits.md`):
+
+- `waits.txt`: every thread of Verbatim's processes, with how many times
+  it was woken, its time on a processor, and its ready waits.
+- `by-name.txt`: the same totalled by process and thread name, the most
+  woken first, after the totals for each process and for all.
+- `wakers-<thread>.txt` for each `--wakers`: which threads woke the threads
+  of that name after a blocked wait.
+- `stacks-<thread>.txt` for each `--stacks`: where they were readied from.
+- `samples-<thread>.txt` for each `--samples`: where their processor time
+  went, by module and by function, Verbatim's own functions named from the
+  build's PDBs.
+
+A thread is named as the reader takes it: a name (`verbatim-worker`), or
+`<process.exe>:<name>` for that process's threads of that name, an empty
+name meaning threads without one (`verbatim-outpost.exe:` for UI
+Automation's own threads in the outposts). The trace is deleted once read
+unless `--keep` is given; a kept trace is about 20 MB a second, so delete
+it from `C:\ProgramData\Verbatim\Traces`, with its `.NGENPDB` folder, as
+soon as it has been read again (`cargo xtask trace waits <trace.etl>
+...`).
+
+The window must lie inside the scenario, away from its start and its end:
+after a trace that covered a scenario's start or end, File Explorer has
+three times kept putting the focus on the taskbar's Start button whenever
+the desktop was brought forward, and every scenario then failed at its
+start with "Start toggle button not pressed" spoken first. Restarting
+File Explorer clears it. A scenario's length is in its log
+(`finished in`); the windows the 2026-10-13 baseline used, debug build:
+
+- `measure_keys_text_box` (39 seconds): `--after 15 --seconds 8`.
+- `measure_focus_explorer` (17 seconds): `--after 10 --seconds 8`.
+- `conhost_flood` (115 seconds): `--after 8 --seconds 6`.
+- `measure_speech_real` (43 seconds, `--audible`): `--after 20 --seconds 8`.
+- `measure_focus_text_box` is over in 5 seconds and has no room for one.
+
+Idle Verbatim, started directly with nothing happening, is traced by hand:
+start `target\debug\verbatim.exe`, wait 12 seconds, `cargo xtask trace
+start`, wait 8, `cargo xtask trace stop`, end Verbatim by its process id,
+then `cargo xtask trace waits <trace.etl> --by-name` and delete the trace.
+An idle period is time, which the suite's scenarios may not wait on.
+
+Counts in one window depend on what part of the scenario it caught, so
+compare per unit of work (per key event, per announcement, per message)
+or, for a scenario with a fixed workload, totals over the whole scenario
+from the outposts' debug logs (`intake pushed` and `worker: handled` lines
+in `target\e2e-artifacts\<scenario>\outpost-*.log`). Threads that exist
+only for the harness (the WAV recorder, the control plane's readers and
+writers) are reported with the rest and left out of comparisons. In test
+runs the outposts log at debug, so a fifth or more of a busy outpost
+thread's processor time can be writing its log; a user's outposts do not.
+
+### The trace commands themselves
 
 `cargo xtask trace start` and `cargo xtask trace stop` record a Windows
 Performance Recorder trace with WPR's built-in CPU profile (context
-switches and ready threads), which `docs/design/communication.md` uses to
-attribute a slow hand-off to its cause and to check that raised thread
-priorities never keep Verbatim's GUI thread waiting. WPR needs
-administrator rights, so Dickson runs
+switches, ready threads, and a CPU sample of every processor each
+millisecond, with stacks). WPR needs administrator rights, so Dickson runs
 `vm\scripts\Register-VerbatimTraceTask.ps1` once from an elevated
 PowerShell; it registers two tasks that run WPR as SYSTEM and that his
 account may start without elevation, as the park task does. `stop` writes
 the trace to `C:\ProgramData\Verbatim\Traces\verbatim-<time>.etl` and
-prints its path; that folder is readable by his account, and he may
-delete what is in it. `cargo xtask trace waits <trace.etl>
-[process.exe ...]` then reports how long each thread of Verbatim's
-processes, or of those named, waited ready to run
-(`docs/crates/verbatim-trace-waits.md`). Windows' own `tracerpt` does not
+names it in `last-trace.txt` there; that folder is readable by his account,
+and he may delete what is in it. `cargo xtask trace waits <trace.etl>
+[report] [process.exe ...]` reads a trace with `verbatim-trace-waits`, any
+of its reports (`--by-name`, `--wakers`, `--stacks`, `--samples`, with
+`--symbols <folder>` for the PDBs of binaries run from a copy, such as the
+end-to-end harness's `target\e2e-stage`). Windows' own `tracerpt` does not
 decode context switches, and the Windows Performance Analyzer is not
-installed. A trace grows by about 20 MB a second: trace only the run being
-measured, and delete the trace and its `.NGENPDB` folder once read.
+installed.
 
 ## Measuring the platform floor
 

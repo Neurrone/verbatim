@@ -42,6 +42,8 @@
 //! which Rust's named threads set); a process is named by the `.exe` image
 //! the trace saw loaded in it.
 
+mod symbols;
+
 use std::collections::{HashMap, HashSet};
 use std::process::ExitCode;
 
@@ -133,6 +135,12 @@ struct Waits {
     sampled_in: HashMap<String, usize>,
     /// How many samples had each module anywhere on their stack.
     sampled_under: HashMap<String, usize>,
+    /// Each collected sample's stack: its process and return addresses,
+    /// innermost first.
+    sample_stacks: Vec<(u32, Vec<u64>)>,
+    /// Each image's path on its device, by its process (0 for the
+    /// kernel's) and base.
+    paths: HashMap<(u32, u64), String>,
 }
 
 /// The shortest blocked wait recorded, in 100-nanosecond units.
@@ -246,6 +254,7 @@ impl Waits {
         };
         let file = path.rsplit('\\').next().unwrap_or(&path).to_lowercase();
         if let (Some(base), Some(size)) = (u64_at(data, 0), u64_at(data, 8)) {
+            self.paths.insert((process, base), path.clone());
             self.modules
                 .entry(process)
                 .or_default()
@@ -324,11 +333,15 @@ impl Waits {
     /// A collected sample's stack: each module on it counted once.
     fn sample_stack(&mut self, data: &[u8]) {
         let process = u32_at(data, 8).unwrap_or(0);
-        let modules: HashSet<String> = (16..data.len())
+        let addresses: Vec<u64> = (16..data.len())
             .step_by(8)
             .filter_map(|offset| u64_at(data, offset))
-            .map(|address| self.module(process, address))
             .collect();
+        let modules: HashSet<String> = addresses
+            .iter()
+            .map(|&address| self.module(process, address))
+            .collect();
+        self.sample_stacks.push((process, addresses));
         for module in modules {
             *self.sampled_under.entry(module).or_default() += 1;
         }
@@ -336,11 +349,42 @@ impl Waits {
 
     /// The image holding `address`, in `process` or the kernel.
     fn image_at(&self, process: u32, address: u64) -> Option<&(u64, u64, String)> {
-        [process, 0]
-            .iter()
-            .filter_map(|process| self.modules.get(process))
+        self.owned_image_at(process, address)
+            .map(|(_, image)| image)
+    }
+
+    /// The image holding `address`, with the process it was loaded in:
+    /// `process`, or 0 for the kernel's.
+    fn owned_image_at(&self, process: u32, address: u64) -> Option<(u32, &(u64, u64, String))> {
+        [process, 0].into_iter().find_map(|owner| {
+            self.modules.get(&owner)?.iter().find_map(|image| {
+                let (base, size, _) = image;
+                (address >= *base && address < base + size).then_some((owner, image))
+            })
+        })
+    }
+
+    /// `address` named as the function holding it, `module!function`,
+    /// when its image has symbols or exports; otherwise module and offset.
+    fn function(&self, symbols: &mut symbols::Symbols, process: u32, address: u64) -> String {
+        let Some((owner, (base, size, name))) = self.owned_image_at(process, address) else {
+            return format!("{address:#x}");
+        };
+        let named = (owner != 0)
+            .then(|| self.paths.get(&(owner, *base)))
             .flatten()
-            .find(|(base, size, _)| address >= *base && address < base + size)
+            .and_then(|path| {
+                let image = symbols::Image {
+                    base: *base,
+                    size: *size,
+                    path,
+                };
+                symbols.name(process, address, &image)
+            });
+        named.map_or_else(
+            || format!("{name}+{:#x}", address - base),
+            |function| format!("{name}!{function}"),
+        )
     }
 
     /// The name of the module holding `address`, or "?" when none does.
@@ -525,7 +569,7 @@ fn report_wakers(waits: &Waits, target: &str) {
 
 /// The CPU samples collected: how many, then each module by how many were
 /// running in it, and by how many had it anywhere on their stack.
-fn report_samples(waits: &Waits, target: &str) {
+fn report_samples(waits: &Waits, target: &str, symbol_folders: Vec<String>) {
     println!("{target:?}: {} samples", waits.samples);
     for (title, counts) in [
         ("running in", &waits.sampled_in),
@@ -536,6 +580,109 @@ fn report_samples(waits: &Waits, target: &str) {
         for (module, count) in rows.into_iter().take(15) {
             println!("{title} {module}: {count}");
         }
+    }
+    // Where the time went by function: the function each sample was in,
+    // then each function anywhere on its stack, counted once a sample,
+    // Verbatim's own first.
+    let mut symbols = symbols::Symbols::new(symbol_folders);
+    let mut running_in: HashMap<String, usize> = HashMap::new();
+    let mut under: HashMap<String, usize> = HashMap::new();
+    let mut calling_out: HashMap<String, usize> = HashMap::new();
+    for (process, addresses) in &waits.sample_stacks {
+        let functions: Vec<String> = addresses
+            .iter()
+            .map(|&address| waits.function(&mut symbols, *process, address))
+            .collect();
+        if let Some(innermost) = functions.first() {
+            *running_in.entry(innermost.clone()).or_default() += 1;
+        }
+        if let Some(ours) = functions.iter().find(|name| name.starts_with("verbatim")) {
+            *calling_out.entry(ours.clone()).or_default() += 1;
+        }
+        let distinct: HashSet<&String> = functions.iter().collect();
+        for function in distinct {
+            *under.entry(function.clone()).or_default() += 1;
+        }
+    }
+    let ranked = |counts: &HashMap<String, usize>, keep: &dyn Fn(&str) -> bool, title: &str| {
+        let mut rows: Vec<_> = counts.iter().filter(|(name, _)| keep(name)).collect();
+        rows.sort_by_key(|(_, count)| std::cmp::Reverse(**count));
+        for (function, count) in rows.into_iter().take(30) {
+            println!("{title} {function}: {count}");
+        }
+    };
+    ranked(&running_in, &|_| true, "running in function");
+    ranked(&calling_out, &|_| true, "Verbatim's innermost");
+    ranked(
+        &under,
+        &|name| name.starts_with("verbatim"),
+        "Verbatim's on the stack",
+    );
+    ranked(
+        &under,
+        &|name| {
+            !name.starts_with("verbatim") && !name.contains(".sys") && !name.starts_with("ntoskrnl")
+        },
+        "others' on the stack",
+    );
+}
+
+/// The threads of the processes named, totalled by process image and
+/// thread name (threads of one name, such as each outpost's worker, summed
+/// across processes): how many times they were woken and their time on a
+/// processor, the most woken first, after the totals for each image and
+/// for all of them.
+fn report_by_name(waits: &Waits, processes: &[String]) {
+    let mut by_name: HashMap<(String, String), (usize, i64)> = HashMap::new();
+    let threads: HashSet<u32> = waits
+        .woken
+        .keys()
+        .chain(waits.cpu.keys())
+        .copied()
+        .collect();
+    for thread in threads {
+        let Some(image) = waits
+            .process_of
+            .get(&thread)
+            .and_then(|process| waits.images.get(process))
+        else {
+            continue;
+        };
+        if !processes.contains(image) {
+            continue;
+        }
+        let name = waits
+            .names
+            .get(&thread)
+            .cloned()
+            .unwrap_or_else(|| "(unnamed)".to_owned());
+        let entry = by_name.entry((image.clone(), name)).or_default();
+        entry.0 += waits.woken.get(&thread).copied().unwrap_or(0);
+        entry.1 += waits.cpu.get(&thread).copied().unwrap_or(0);
+    }
+    let ms = |units: i64| format!("{}.{}", units / 10_000, units % 10_000 / 1_000);
+    let mut by_image: HashMap<&str, (usize, i64)> = HashMap::new();
+    for ((image, _), (woken, cpu)) in &by_name {
+        let entry = by_image.entry(image).or_default();
+        entry.0 += woken;
+        entry.1 += cpu;
+    }
+    let all = by_image.values().fold((0, 0), |(woken, cpu), entry| {
+        (woken + entry.0, cpu + entry.1)
+    });
+    println!("all: woken {}, on a processor {} ms", all.0, ms(all.1));
+    let mut images: Vec<_> = by_image.into_iter().collect();
+    images.sort_unstable();
+    for (image, (woken, cpu)) in images {
+        println!("{image}: woken {woken}, on a processor {} ms", ms(cpu));
+    }
+    let mut rows: Vec<_> = by_name.into_iter().collect();
+    rows.sort_by_key(|(_, (woken, _))| std::cmp::Reverse(*woken));
+    for ((image, name), (woken, cpu)) in rows {
+        println!(
+            "{image} {name:?}: woken {woken}, on a processor {} ms",
+            ms(cpu)
+        );
     }
 }
 
@@ -552,10 +699,19 @@ fn report_stacks(waits: &Waits) {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // `--symbols <folder>`, anywhere and any number of times: folders
+    // searched for every image's PDB.
+    let mut symbol_folders = Vec::new();
+    while let Some(at) = args.iter().position(|arg| arg == "--symbols") {
+        args.remove(at);
+        if at < args.len() {
+            symbol_folders.push(args.remove(at));
+        }
+    }
     let Some(path) = args.first() else {
         eprintln!(
-            "usage: verbatim-trace-waits <trace.etl> [--wakers <thread name> | --stacks <thread name> | --samples <thread name>] [process.exe ...]"
+            "usage: verbatim-trace-waits <trace.etl> [--by-name | --wakers <thread name> | --stacks <thread name> | --samples <thread name>] [--symbols <folder>] [process.exe ...]"
         );
         return ExitCode::from(2);
     };
@@ -563,6 +719,7 @@ fn main() -> ExitCode {
     let mut wakers = None;
     let mut stacks = None;
     let mut samples = None;
+    let mut by_name = false;
     match rest.first().map(String::as_str) {
         Some("--wakers") => {
             wakers = rest.get(1).cloned();
@@ -575,6 +732,10 @@ fn main() -> ExitCode {
         Some("--samples") => {
             samples = rest.get(1).cloned();
             rest = rest.get(2..).unwrap_or(&[]);
+        }
+        Some("--by-name") => {
+            by_name = true;
+            rest = rest.get(1..).unwrap_or(&[]);
         }
         _ => {}
     }
@@ -593,7 +754,8 @@ fn main() -> ExitCode {
             match (&wakers, &stacks, &samples) {
                 (Some(target), _, _) => report_wakers(&waits, target),
                 (None, Some(_), _) => report_stacks(&waits),
-                (None, None, Some(target)) => report_samples(&waits, target),
+                (None, None, Some(target)) => report_samples(&waits, target, symbol_folders),
+                (None, None, None) if by_name => report_by_name(&waits, &processes),
                 (None, None, None) => report(&waits, &processes),
             }
             ExitCode::SUCCESS

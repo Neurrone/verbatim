@@ -2,8 +2,7 @@
 
 How long threads waited to run, read from a Windows Performance Recorder
 trace of the CPU's scheduling, a binary run by `cargo xtask trace waits
-<trace.etl> [process.exe ...]` (`docs/tooling.md`, "Tracing the CPU's
-scheduling"). `docs/design/communication.md` uses it to attribute a slow
+<trace.etl> [process.exe ...]` (`docs/tooling.md`, "Measuring performance", where `cargo xtask trace scenario` runs it for a window inside one scenario). `docs/design/communication.md` uses it to attribute a slow
 hand-off to a thread that was ready and not run, and to check that raised
 thread priorities never keep Verbatim's GUI thread, or the foreground
 application's, waiting (section 6.1, and section 11 step 3's starvation
@@ -33,6 +32,10 @@ many ready waits it had, their median, 99.9th percentile and maximum, and how ma
 10 and 100 ms. A Rust program's main thread is named `main`, which in
 verbatim.exe is the GUI thread.
 
+`--by-name` totals the same by process image and thread name (threads of
+one name summed across processes), the most woken first, after the
+totals for each image and for all of them.
+
 Three other reports each take a thread name, or `<process.exe>:<name>`
 for the threads of that name in processes of that image (an empty name
 meaning threads without one):
@@ -47,8 +50,17 @@ meaning threads without one):
   is an interrupt's.
 - `--samples <thread>`: the profile's CPU samples of those threads (one
   per processor each millisecond): how many, and for each module how many
-  were running in it and how many had it anywhere on their stack, which
-  says where their processor time went.
+  were running in it and how many had it anywhere on their stack, then
+  the same by function: the function each sample ran in, the innermost of
+  Verbatim's own functions on its stack (the call that went into a
+  library), and every function anywhere on the stacks, Verbatim's and the
+  others'. Functions are named through Windows' own `DbgHelp`, which needs
+  nothing installed: an image's PDB is looked for in its own folder and in
+  each folder given with `--symbols <folder>` (the end-to-end harness runs
+  copies from `target\e2e-stage`, whose PDBs are the build's in
+  `target\debug`); a system library has no PDB at hand and is named by its
+  nearest exported function, a hint at best; the kernel's frames stay
+  module and offset.
 
 The event layouts it reads are the kernel's documented ones on 64-bit
 Windows: a context switch's new and old thread ids at offsets 0 and 4 and

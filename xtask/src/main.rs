@@ -34,6 +34,7 @@ use std::str;
 mod demo;
 mod nvda;
 mod park;
+mod perf;
 mod trace;
 mod vm;
 mod waits;
@@ -68,6 +69,7 @@ fn main() -> ExitCode {
         Some("vm") => vm::run(&args[1..]),
         Some("park") => park::run(),
         Some("trace") => trace::run(&args[1..]),
+        Some("measure") => perf::measure(&args[1..]),
         Some("demo") => demo::run(&args[1..]),
         Some("nvda") => nvda::run(&args[1..]),
         Some("windows-terminal") => windows_terminal(),
@@ -89,7 +91,10 @@ fn main() -> ExitCode {
                 "  park  move this Remote Desktop session to the console, unlocked, for unattended local runs"
             );
             eprintln!(
-                "  trace  start or stop a WPR trace of the CPU's scheduling (cargo xtask trace <start|stop>)"
+                "  trace  WPR traces of the CPU's scheduling: start, stop, waits <trace.etl>, or scenario <name> to trace a window inside one scenario and read it (docs/tooling.md)"
+            );
+            eprintln!(
+                "  measure  run the measure set on this machine and report each latency stage's distribution (cargo xtask measure [--release]; docs/tooling.md)"
             );
             eprintln!(
                 "  windows-terminal  download and unpack the terminal scenarios' pinned portable Windows Terminal into target/e2e-stage"
