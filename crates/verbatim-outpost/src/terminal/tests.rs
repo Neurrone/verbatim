@@ -189,7 +189,7 @@ impl ScreenSource for Sim {
         let end = (start + self.height).min(self.rows.len());
         let text: String = self.rows[start..end].concat();
         let mut screen = ScreenText {
-            text,
+            text: text.as_str().into(),
             top_row: self.row(start),
             next_row: if start + 1 < self.rows.len() {
                 self.row(start + 1)
@@ -219,7 +219,10 @@ impl ScreenSource for Sim {
                     }
                     let unread = shift.saturating_sub(seen).min(head_wanted as usize);
                     if unread > 0 {
-                        screen.head = self.rows[found + seen..found + seen + unread].concat();
+                        screen.head = self.rows[found + seen..found + seen + unread]
+                            .concat()
+                            .as_str()
+                            .into();
                         screen.head_rows = u32::try_from(unread).unwrap();
                     }
                 }

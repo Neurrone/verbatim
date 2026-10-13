@@ -41,7 +41,9 @@ use verbatim_uia_rops::{
 
 use crate::text::TextError;
 use reading::Reading;
-use screen::{Shift, Unwritten, diff, diff_after, screen_lines, unwritten_rows};
+use screen::{Shift, Unwritten, diff, diff_after};
+
+pub use screen::ScreenRows;
 
 /// What the outpost remembers of a terminal's screen between reads.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -152,8 +154,8 @@ impl Memory {
 /// so the diff can be tested on simulated text.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ScreenText {
-    /// The screen's text.
-    pub text: String,
+    /// The screen's text, as its rows.
+    pub text: ScreenRows,
     /// Its top row.
     pub top_row: String,
     /// The row after it.
@@ -163,7 +165,7 @@ pub struct ScreenText {
     /// How far up the anchor's top row now lies, when it was found.
     pub shift: Option<u32>,
     /// The first rows that went by unread.
-    pub head: String,
+    pub head: ScreenRows,
     /// How many rows `head` holds.
     pub head_rows: u32,
     /// The row the old screen's last line was on, as it is now.
@@ -185,12 +187,12 @@ pub struct ScreenText {
 impl From<&Screen> for ScreenText {
     fn from(screen: &Screen) -> Self {
         Self {
-            text: screen.text.clone(),
+            text: ScreenRows::from_utf16(&screen.text),
             top_row: screen.top_row.clone(),
             next_row: screen.next_row.clone(),
             alternate: screen.alternate,
             shift: screen.shift,
-            head: screen.head.clone(),
+            head: ScreenRows::from_utf16(&screen.head),
             head_rows: screen.head_rows,
             old_last_row: screen.old_last_row.clone(),
             document_rows: screen.document_rows,
@@ -241,16 +243,17 @@ pub enum Found {
     Unsettled,
 }
 
-/// The lines of a block of rows read in one call, each without its line
-/// break and padding.
-fn block_lines(text: &str, rows: u32) -> Vec<String> {
+/// The lines of a block of `rows` rows read in one call, each without its
+/// line break and padding; one blank line for an empty block of rows.
+fn block_lines(text: &ScreenRows, rows: u32) -> Vec<String> {
     if rows == 0 {
         return Vec::new();
     }
-    let body = text.strip_suffix('\n').unwrap_or(text);
-    body.split('\n')
-        .map(|line| verbatim_text::trim_padding(line.strip_suffix('\r').unwrap_or(line)).to_owned())
-        .collect()
+    let lines = text.all_lines();
+    if lines.is_empty() {
+        return vec![String::new()];
+    }
+    lines
 }
 
 /// Why a terminal is read.
@@ -289,12 +292,11 @@ pub fn read_new<S: ScreenSource>(
     if unsettled && mode != ReadMode::Cancel {
         return Ok(Found::Unsettled);
     }
-    let new = screen_lines(&screen.text);
+    let new = screen.text.lines();
     let below = earlier.and_then(|old| footer_below(old, &screen, &new));
-    let new_rows = screen::line_rows(
-        &screen.text,
-        screen::row_width(&screen.top_row, &screen.text),
-    );
+    let new_rows = screen
+        .text
+        .line_rows(screen::row_width(&screen.top_row, &screen.text));
     let shift = scroll(&screen, earlier, &new);
     let mut remembered = Memory {
         screen: new.clone(),
@@ -306,7 +308,7 @@ pub fn read_new<S: ScreenSource>(
         main: None,
         caret: None,
         scrolled: shift,
-        unwritten: unwritten_rows(&screen.text),
+        unwritten: screen.text.unwritten(),
         rows: new_rows.clone(),
     };
     let Some(old) = earlier.filter(|_| !unsettled) else {
@@ -537,6 +539,12 @@ pub struct Terminal {
     /// changed, with its own `memory_since_ms`: the screen before a key
     /// whose change was read before the key's request reached the outpost.
     previous: Option<(Memory, u64)>,
+    /// The caret last sent to Core for the terminal, as a caret report or
+    /// in the answer to a caret key: a caret read that finds it unchanged,
+    /// at the same place with the same line, is not sent again. Forgotten
+    /// when the terminal gains the focus, and with the terminal when Core
+    /// releases its node.
+    pub sent_caret: Option<verbatim_model::CaretReport>,
 }
 
 impl Terminal {

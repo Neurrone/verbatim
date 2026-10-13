@@ -541,7 +541,9 @@ Verbatim's processor users in every one of these.
    times by UI Automation's own thread (waits of half a millisecond or
    more), its samples led by `CoreAutomationRemoteOperation::Execute`
    (135) and string handling (`char::decode` and reverse searches, about
-   250 together); the callbacks woke 9,776 times and used 1.57 s, in the
+   250 together; since 2026-10-13 a screen's rows lose their padding on
+   the UTF-16 text before the rest is decoded, and a terminal's caret
+   that has not changed is not sent to Core again); the callbacks woke 9,776 times and used 1.57 s, in the
    text event handler (`register_focus_events` 414, `Context::take_in`
    267) and in `GetRuntimeId` and `GetCachedPropertyValue`. Reading once
    per burst of console updates rather than per event is the lever

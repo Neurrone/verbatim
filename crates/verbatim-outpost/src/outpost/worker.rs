@@ -920,11 +920,14 @@ impl Worker<'_> {
             watched = Watched::Watching;
         }
         match watched {
-            Watched::Answered(reply) => self.reply(
-                request_id,
-                trace,
-                QueryOutcome::Done(QueryResult::Text(reply)),
-            ),
+            Watched::Answered(reply) => {
+                self.sent_reply_caret(node_id, &reply);
+                self.reply(
+                    request_id,
+                    trace,
+                    QueryOutcome::Done(QueryResult::Text(reply)),
+                );
+            }
             Watched::Watching => {
                 let calls = take_calls();
                 // Under the watch lock: an abandonment has either answered
@@ -1004,6 +1007,7 @@ impl Worker<'_> {
             }
             Watched::Answered(reply) => {
                 context.intake.wake_at(None);
+                self.sent_reply_caret(node_id, &reply);
                 let calls = take_calls();
                 tracing::debug!(
                     trace = %open.trace,
@@ -1163,7 +1167,9 @@ impl Worker<'_> {
             return;
         }
         let started = std::time::Instant::now();
-        let report = text_reads::report_caret(self.context, node_id, after_focus);
+        let terminal = self.focused_terminal(node_id);
+        let report =
+            text_reads::report_caret(self.context, node_id, after_focus, terminal && !after_focus);
         // A caret event's read, which a terminal's output causes too, as
         // its cursor moves.
         tracing::debug!(
@@ -1172,7 +1178,16 @@ impl Worker<'_> {
             "caret read timing"
         );
         let event = match report {
-            Ok(caret) => NormalizedEvent::CaretMoved { node_id, caret },
+            Ok((_, true)) => {
+                tracing::debug!("the terminal's caret is the one last sent; it is not sent again");
+                return;
+            }
+            Ok((caret, false)) => {
+                if terminal {
+                    self.sent_caret(node_id, &caret);
+                }
+                NormalizedEvent::CaretMoved { node_id, caret }
+            }
             Err(text_reads::NoCaret::NoText) if after_focus => NormalizedEvent::NoText { node_id },
             Err(text_reads::NoCaret::NotRead) if after_focus => {
                 tracing::debug!(
@@ -1240,6 +1255,26 @@ impl Worker<'_> {
             self.note_caret(node_id, trace, observed_at_ms);
         } else {
             self.caret_of(node_id, trace, observed_at_ms, false);
+        }
+    }
+
+    /// Notes `caret` as the caret last sent to Core for the focused
+    /// terminal `node_id` ([`crate::terminal::Terminal::sent_caret`]).
+    fn sent_caret(&self, node_id: NodeId, caret: &verbatim_model::CaretReport) {
+        if self.focused_terminal(node_id) {
+            self.context
+                .terminals()
+                .entry(node_id.number())
+                .or_default()
+                .sent_caret = Some(caret.clone());
+        }
+    }
+
+    /// Notes the caret a caret key's answer, `reply`, carries as the caret
+    /// last sent to Core for the focused terminal `node_id`.
+    fn sent_reply_caret(&self, node_id: NodeId, reply: &TextReply) {
+        if let TextReply::Caret(reply) = reply {
+            self.sent_caret(node_id, &reply.caret);
         }
     }
 
@@ -1408,13 +1443,23 @@ impl Worker<'_> {
         // caret may have moved since the change that caused the read.
         if let Some(caret) = caret {
             self.check_watch_now(node_id, false);
-            self.emit(
-                trace,
-                observed_at_ms,
-                Backend::Uia,
-                window,
-                NormalizedEvent::CaretMoved { node_id, caret },
-            );
+            // A caret Core already has is not sent again, unless the read
+            // answers Core's request.
+            if caret.unchanged && owed.is_none() {
+                tracing::debug!("the terminal's caret is the one last sent; it is not sent again");
+            } else {
+                self.sent_caret(node_id, &caret.report);
+                self.emit(
+                    trace,
+                    observed_at_ms,
+                    Backend::Uia,
+                    window,
+                    NormalizedEvent::CaretMoved {
+                        node_id,
+                        caret: caret.report,
+                    },
+                );
+            }
         }
         match found {
             Found::Output(output, _) => {
@@ -1491,6 +1536,10 @@ impl Worker<'_> {
     /// to it ([`follow_focus`](Self::follow_focus)).
     fn follow_text(&self, (node_id, role): (NodeId, Role), trace: TraceId) {
         text_reads::forget_no_text(self.context, node_id);
+        // A terminal gaining the focus has its caret reported afresh.
+        if let Some(terminal) = self.context.terminals().get_mut(&node_id.number()) {
+            terminal.sent_caret = None;
+        }
         let has_text = self.follow_focus((node_id, role));
         let role_has_text = matches!(role, Role::EditableText | Role::Document | Role::Terminal);
         if has_text || role_has_text {

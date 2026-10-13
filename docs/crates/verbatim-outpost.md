@@ -1571,7 +1571,18 @@ finds it.
   reads the caret and its line, as the worker reports it after the
   output (`text_reads::terminal_output`, `CaretMoved`), since a terminal
   raises no caret event for every character typed (the console host's
-  come on a schedule of their own). The caret is stamped as read when the
+  come on a schedule of their own). The worker keeps the caret it last
+  sent Core for the terminal (`Terminal::sent_caret`: a `CaretMoved`, or
+  the caret a caret key's answer carried), and the read compares the
+  caret with where that one was, in the same round trip
+  (`CaretLineQuery::since`); a caret at the same place, with the same
+  line read the same way (`text::same_caret`, the line's formatting left
+  out), is not sent again, unless the read answers Core's request. A
+  caret event's own read (`text_reads::report_caret`) compares the same
+  way. The kept caret is forgotten when the terminal gains the focus, so
+  the focus's caret is always sent, and with the terminal when Core
+  releases its node; a new outpost starts with none. The caret is
+  stamped as read when the
   round trip began (`Context::caret_read_from`), so a caret event observed
   while it was in flight is not taken as already seen. The program reads
   the text pattern's first visible range in one call (the screen), its
@@ -1642,7 +1653,10 @@ finds it.
   cleared, a full-screen program's alternate screen opened or closed),
   the screens are lined up by their common lines. Lines lose their
   trailing padding, every trailing character with Unicode's `White_Space`
-  property (`verbatim_text::trim_padding`), and blank rows at the end of
+  property, as `verbatim_text::trim_padding` trims it, but on the UTF-16
+  text the read gave, before the rest of each row is decoded
+  (`terminal::ScreenRows`), each row keeping how many cells it took with
+  its padding for counting rows; and blank rows at the end of
   the screen are rows not yet written to (`Memory::unwritten`). A blank
   line on one of those rows, the first below the old screen's last line,
   is not inserted: it was blank before and is blank now, a row a program

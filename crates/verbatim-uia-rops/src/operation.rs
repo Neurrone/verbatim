@@ -363,6 +363,34 @@ impl Outcome {
         };
         K::read(raw).map_err(|error| Error::ResultType { operand, error })
     }
+
+    /// A string register's value as the provider gave it, UTF-16, never
+    /// decoded: empty for a null one, as an empty string may come back as
+    /// null.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::MissingResult`] when the run produced no value for it, and
+    /// [`Error::ResultType`] when the value is neither null nor a string.
+    pub fn get_utf16(&self, reg: Reg<kind::Str>) -> Result<Vec<u16>, Error> {
+        let operand = reg.id();
+        if !self.has(reg) {
+            return Err(Error::MissingResult(operand));
+        }
+        let raw = match self.result.GetOperand(operand_id(operand)) {
+            Ok(raw) => raw,
+            Err(error) if error.code().is_ok() => return Ok(Vec::new()),
+            Err(error) => return Err(Error::ResultType { operand, error }),
+        };
+        let read = || -> windows::core::Result<Vec<u16>> {
+            let value = raw.cast::<IPropertyValue>()?;
+            if value.Type()? != PropertyType::String {
+                return Ok(Vec::new());
+            }
+            Ok(value.GetString()?.to_vec())
+        };
+        read().map_err(|error| Error::ResultType { operand, error })
+    }
 }
 
 /// A result's value when its type is known only at run time.

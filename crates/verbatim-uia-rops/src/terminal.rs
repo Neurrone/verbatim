@@ -165,8 +165,9 @@ pub struct ScreenQuery<'a> {
 /// The answer to a [`ScreenQuery`]. Text is as the provider gave it.
 #[derive(Debug, Default)]
 pub struct Screen {
-    /// The text of the screen, read in one call.
-    pub text: String,
+    /// The text of the screen, read in one call, UTF-16 as the provider
+    /// gave it: its rows' padding is trimmed before any of it is decoded.
+    pub text: Vec<u16>,
     /// The screen's top row, read as a row: the next read's anchor.
     pub top_row: String,
     /// The row after it, empty when there is none.
@@ -180,8 +181,9 @@ pub struct Screen {
     /// or when it was not found.
     pub shift: Option<u32>,
     /// The first of the rows that went by unread (`shift` less the
-    /// query's `seen_rows`), up to the query's `head_wanted`, in one read.
-    pub head: String,
+    /// query's `seen_rows`), up to the query's `head_wanted`, in one read,
+    /// UTF-16 as the provider gave it.
+    pub head: Vec<u16>,
     /// How many rows `head` holds.
     pub head_rows: u32,
     /// With the anchor found, the rows the old screen's last line was on
@@ -238,8 +240,12 @@ pub fn terminal_screen(
 /// Whether a read settled, as far as its rows' text tells: the screen's text
 /// starts with its top row as read on its own, and that row read the same
 /// at the end. (The walks that count rows are checked on their own.)
-fn is_settled(text: &str, top_row: &str, top_after: &str) -> bool {
-    let first = text.split('\n').next().unwrap_or_default();
+fn is_settled(text: &[u16], top_row: &str, top_after: &str) -> bool {
+    let first = text
+        .split(|&unit| unit == u16::from(b'\n'))
+        .next()
+        .unwrap_or_default();
+    let first = String::from_utf16_lossy(first);
     let first = first.trim_end();
     top_row == top_after && first.starts_with(top_row.trim_end())
 }
@@ -670,7 +676,7 @@ pub fn terminal_screen_remote(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Scr
     let caret = query.caret.map(|caret| emit_caret_line(&mut b, &caret));
     let outcome = b.finish().execute()?;
 
-    let text = string_of(&outcome, text)?;
+    let text = outcome.get_utf16(text)?;
     let top_row = string_of(&outcome, top_text)?;
     let top_after = string_of(&outcome, top_after)?;
     let shift = outcome.get(shift)?;
@@ -683,7 +689,7 @@ pub fn terminal_screen_remote(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Scr
         next_row: string_of(&outcome, next_text)?,
         alternate: outcome.get(alternate)?,
         shift: (shift >= 0).then(|| count_of(shift)),
-        head: string_of(&outcome, head)?,
+        head: outcome.get_utf16(head)?,
         old_last_row: string_of(&outcome, old_last_row)?,
         head_rows: count_of(outcome.get(head_rows)?),
         document_rows: (document_rows >= 0).then(|| count_of(document_rows)),
@@ -813,7 +819,7 @@ pub fn terminal_screen_classic(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Sc
         .into_iter()
         .next()
         .unwrap_or_else(|| document.clone());
-    let text = text_of(&screen)?;
+    let text = screen.text(-1)?;
     let top = collapsed(&screen)?;
     let top_row_range = row(&top)?;
     let top_row = text_of(&top_row_range)?;
@@ -885,7 +891,7 @@ pub fn terminal_screen_classic(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Sc
                     let after = first.clone_range()?;
                     let went = after.move_by(TextUnit_Line, unread)?;
                     first.move_endpoint_to(Endpoint::End, &after, Endpoint::Start)?;
-                    answer.head = text_of(&first)?;
+                    answer.head = first.text(-1)?;
                     answer.head_rows = count_of(went);
                 }
             }
@@ -908,6 +914,11 @@ pub fn terminal_screen_classic(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Sc
 #[cfg(test)]
 mod tests {
     use super::{ScreenAnchor, Side, Sought, exact_shift, is_settled};
+
+    /// `text` as UTF-16.
+    fn utf16(text: &str) -> Vec<u16> {
+        text.encode_utf16().collect()
+    }
 
     /// Where `exact_shift` finds the screen's top `shift` rows below the
     /// anchor, and how many probes it took.
@@ -995,13 +1006,21 @@ mod tests {
 
     #[test]
     fn a_read_settles_only_when_its_top_row_held_still() {
-        assert!(is_settled("one  \r\ntwo\r\n", "one  \r\n", "one  \r\n"));
-        assert!(is_settled("", "", ""));
+        assert!(is_settled(
+            &utf16("one  \r\ntwo\r\n"),
+            "one  \r\n",
+            "one  \r\n"
+        ));
+        assert!(is_settled(&utf16(""), "", ""));
         // Scrolled between the screen's read and the row's.
-        assert!(!is_settled("two\r\nthree\r\n", "three\r\n", "three\r\n"));
+        assert!(!is_settled(
+            &utf16("two\r\nthree\r\n"),
+            "three\r\n",
+            "three\r\n"
+        ));
         // Scrolled by the end of the read.
-        assert!(!is_settled("one\r\ntwo\r\n", "one\r\n", "two\r\n"));
+        assert!(!is_settled(&utf16("one\r\ntwo\r\n"), "one\r\n", "two\r\n"));
         // A wrapped top row is the start of the screen's first line.
-        assert!(is_settled("abcdefgh\r\n", "abcd", "abcd"));
+        assert!(is_settled(&utf16("abcdefgh\r\n"), "abcd", "abcd"));
     }
 }

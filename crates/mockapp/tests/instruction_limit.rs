@@ -580,6 +580,7 @@ fn terminal_screens_execute_exactly() {
             pattern: &pattern,
             pattern2: pattern2.as_ref(),
             max_text: 4096,
+            since: None,
         }),
     };
     let worst = counted(|| {

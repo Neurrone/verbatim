@@ -443,28 +443,42 @@ pub(super) enum NoCaret {
 
 /// The caret of `node_id`, for a `CaretMoved` event, with the line's
 /// formatting when `formats` (the report after a focus, whose line is
-/// spoken); otherwise why there is none.
+/// spoken); otherwise why there is none. With `compare` (a terminal's
+/// report), whether the caret is the one last sent to Core for the
+/// terminal: at the same place, the read says, with the same line.
 pub(super) fn report_caret(
     context: &Context,
     node_id: NodeId,
     formats: bool,
-) -> Result<CaretReport, NoCaret> {
+    compare: bool,
+) -> Result<(CaretReport, bool), NoCaret> {
     let source = match source(context, node_id) {
         Ok(source) => source,
         Err(TextReply::NoText) => return Err(NoCaret::NoText),
         Err(_) => return Err(NoCaret::NotRead),
     };
+    let sent = if compare {
+        sent_caret_point(context, node_id)
+    } else {
+        None
+    };
     context.caret_read(node_id);
     let report = match source {
         Source::Uia(mut source) => {
             let mut anchors = context.uia_anchors();
-            let report = text::caret_report(
+            let report = text::caret_report_since(
                 &mut source,
                 &mut anchors.node(node_id.number()),
                 &mut super::now_ms,
-                formats,
+                (formats, sent.as_ref().map(|(_, point)| point)),
             )
-            .map(|(report, _)| report);
+            .map(|(report, _, moved)| {
+                let unchanged = !moved
+                    && sent
+                        .as_ref()
+                        .is_some_and(|(sent, _)| text::same_caret(sent, &report));
+                (report, unchanged)
+            });
             drop(anchors);
             note_fallback(context, &mut source);
             keep_support(context, node_id, &source);
@@ -478,7 +492,7 @@ pub(super) fn report_caret(
                 &mut super::now_ms,
                 formats,
             )
-            .map(|(report, _)| report)
+            .map(|(report, _)| (report, false))
         }
     };
     match report {
@@ -491,6 +505,37 @@ pub(super) fn report_caret(
     }
 }
 
+/// A terminal's caret as a read found it ([`terminal_output`]).
+pub(super) struct TerminalCaret {
+    /// The caret.
+    pub(super) report: CaretReport,
+    /// Whether it is the caret last sent to Core for the terminal
+    /// ([`crate::terminal::Terminal::sent_caret`]): at the same place, the
+    /// read says, with the same line.
+    pub(super) unchanged: bool,
+}
+
+/// The caret last sent to Core for terminal `node_id`, with where it was,
+/// when the outpost still knows that without a call: what a caret read
+/// compares with.
+fn sent_caret_point(
+    context: &Context,
+    node_id: NodeId,
+) -> Option<(CaretReport, crate::text::uia::UiaPos)> {
+    let sent = context
+        .terminals()
+        .get(&node_id.number())
+        .and_then(|terminal| terminal.sent_caret.clone())?;
+    let point = context
+        .uia_anchors()
+        .node(node_id.number())
+        .reported_point(verbatim_model::TextPosition {
+            anchor: sent.line.start,
+            offset: sent.line.offset,
+        })?;
+    Some((sent, point))
+}
+
 /// Reads what is new in the focused terminal `node_id`'s text
 /// (`crate::terminal`), as `mode` says. `None` when it has no text pattern,
 /// is gone, or could not be read.
@@ -498,25 +543,38 @@ pub(super) fn report_caret(
 /// Except for a baseline, the caret is read with the text, in the same
 /// round trip, and returned as a caret report: a terminal raises no caret
 /// event for every character typed (the console host's come on a schedule
-/// of their own), so Core's copy of the caret would lag behind typing.
+/// of their own), so Core's copy of the caret would lag behind typing. The
+/// same round trip says whether the caret is still where the caret last
+/// sent to Core was.
 pub(super) fn terminal_output(
     context: &Context,
     uia: &verbatim_uia::Uia,
     node_id: NodeId,
     mode: crate::terminal::ReadMode,
-) -> Option<(crate::terminal::Found, Option<CaretReport>)> {
+) -> Option<(crate::terminal::Found, Option<TerminalCaret>)> {
     let Ok(mut source) = uia_source(context, node_id) else {
         return None;
     };
     let window = context.tracking().window();
     let remote = context.tries_remote(window);
     let head_wanted = u32::from(context.terminal_lines());
+    let sent = sent_caret_point(context, node_id);
+    let since = match &sent {
+        Some((_, point)) => point.range_end().ok(),
+        None => None,
+    };
     let caret =
         (mode != crate::terminal::ReadMode::Baseline).then(|| verbatim_uia_rops::CaretLineQuery {
             element: source.element(),
             pattern: source.pattern(),
             pattern2: source.pattern2(),
             max_text: i32::try_from(crate::text::MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
+            since: since
+                .as_ref()
+                .map(|(range, endpoint)| verbatim_uia_rops::RangeEnd {
+                    range,
+                    endpoint: *endpoint,
+                }),
         });
     let mut terminals = context.terminals();
     let terminal = terminals.entry(node_id.number()).or_default();
@@ -545,18 +603,26 @@ pub(super) fn terminal_output(
                     context.read_classically(window);
                 }
             }
+            let compared = since.is_some();
             let caret = answer.caret.and_then(|answer| {
                 context.caret_read_from(node_id, started_us);
                 let read_at_ms = super::now_ms();
                 let read = source.caret_read_from(answer).ok()?;
+                let moved = read.moved;
                 let mut anchors = context.uia_anchors();
-                crate::text::caret_report_from(
+                let report = crate::text::caret_report_from(
                     &mut source,
                     &mut anchors.node(node_id.number()),
                     read,
                     read_at_ms,
                 )
-                .ok()
+                .ok()?;
+                let unchanged = compared
+                    && !moved
+                    && sent
+                        .as_ref()
+                        .is_some_and(|(sent, _)| crate::text::same_caret(sent, &report));
+                Some(TerminalCaret { report, unchanged })
             });
             Some((answer.found, caret))
         }

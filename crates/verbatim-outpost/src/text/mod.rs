@@ -604,6 +604,17 @@ impl<P: Clone> NodeText<'_, P> {
             .insert((position.anchor.0, position.offset), pos);
     }
 
+    /// The source position of `position` when the outpost reported it, as
+    /// a caret report's line start and caret, with no call; `None` when it
+    /// was not reported or its anchor was forgotten.
+    #[must_use]
+    pub fn reported_point(&self, position: TextPosition) -> Option<P> {
+        self.anchors
+            .reported
+            .get(&(position.anchor.0, position.offset))
+            .cloned()
+    }
+
     /// A position minted for `pos` alone, a new anchor there at offset 0,
     /// remembered as one the outpost reported. No call.
     pub fn position_at(&mut self, pos: P) -> TextPosition {
@@ -915,8 +926,25 @@ pub fn caret_report<S: TextSource>(
     now_ms: &mut dyn FnMut() -> u64,
     formats: bool,
 ) -> TextResult<(CaretReport, CaretState<S::Pos>)> {
+    caret_report_since(source, anchors, now_ms, (formats, None))
+        .map(|(report, state, _)| (report, state))
+}
+
+/// [`caret_report`], and, given `since`, whether the caret is no longer
+/// there: in the same round trip where the source reads the caret in one
+/// go, and with one comparison otherwise.
+///
+/// # Errors
+///
+/// When the application does not answer or the node is gone.
+pub fn caret_report_since<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    now_ms: &mut dyn FnMut() -> u64,
+    (formats, since): (bool, Option<&S::Pos>),
+) -> TextResult<(CaretReport, CaretState<S::Pos>, bool)> {
     let request = CaretRequest {
-        since: None,
+        since,
         previous: None,
         unit: None,
         formats: formats.then_some(FormatSpan::Line),
@@ -929,12 +957,35 @@ pub fn caret_report<S: TextSource>(
             (&read.state, read_at_ms),
             Some((read.line.0, read.line.1, read.formats)),
         )?;
-        return Ok((report, read.state));
+        return Ok((report, read.state, read.moved));
     }
     let state = source.caret()?;
     let read_at_ms = now_ms();
+    let moved = match since {
+        Some(since) => source.compare(&state.caret, since)? != Ordering::Equal,
+        None => false,
+    };
     let report = report_for(source, anchors, (&state, read_at_ms), None)?;
-    Ok((report, state))
+    Ok((report, state, moved))
+}
+
+/// Whether two caret reports say the same, whatever anchors they were
+/// given: the same line, read the same way, with the caret at the same
+/// place in it, and no selection in either. The line's formatting is left
+/// out, since only the report after a focus reads it. Whether the caret is
+/// where it was is the source's to say ([`caret_report_since`]'s `since`).
+#[must_use]
+pub fn same_caret(a: &CaretReport, b: &CaretReport) -> bool {
+    let (x, y) = (&a.line, &b.line);
+    a.selection.is_none()
+        && b.selection.is_none()
+        && x.unit == y.unit
+        && x.text == y.text
+        && x.offset == y.offset
+        && x.languages == y.languages
+        && x.first == y.first
+        && x.last == y.last
+        && x.truncated == y.truncated
 }
 
 /// The report for a caret read another program already made, finished at

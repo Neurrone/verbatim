@@ -5,7 +5,9 @@
 //! as the worker drives it, by text change events and Core's requests.
 //!
 //! - Live, a text change is read at once and reported as terminal output,
-//!   after the caret read with it.
+//!   after the caret read with it when that moved: a caret read finding the
+//!   caret Core last had, at the same place with the same line, is not
+//!   reported again.
 //! - Held (`TerminalHold`), a change is only noted: nothing is said.
 //! - `TerminalRead` answers with what is new since the last read, and
 //!   reading is live again; asked with nothing changed, it answers empty
@@ -128,9 +130,16 @@ fn write_held(
     outpost.settled();
 }
 
-/// The output the outpost reports live, after the caret read with it.
-fn reported(outpost: &OutpostUnderTest, node: NodeId) -> TerminalOutput {
+/// The output the outpost reports live, after the caret read with it,
+/// which is reported too when it moved.
+fn reported_after_caret(outpost: &OutpostUnderTest, node: NodeId) -> TerminalOutput {
     caret_read(outpost, node);
+    reported(outpost, node)
+}
+
+/// The output the outpost reports live, with the caret where Core last
+/// had it, so not reported again.
+fn reported(outpost: &OutpostUnderTest, node: NodeId) -> TerminalOutput {
     match outpost.next() {
         OutpostToSupervisor::Event {
             event: NormalizedEvent::TerminalOutput { node_id, output },
@@ -270,7 +279,7 @@ fn a_caret_event_ahead_of_a_text_change_is_read_with_it() {
     write(&mut app, &["three"]);
     heard_caret_and_text(&outpost);
     outpost.release_worker();
-    assert_eq!(reported(&outpost, term), lines(&["three"]));
+    assert_eq!(reported_after_caret(&outpost, term), lines(&["three"]));
     outpost.settled();
     drop(outpost);
     app.quit();
@@ -342,8 +351,8 @@ fn the_console_hosts_caret_comes_from_its_console() {
 /// takes a caret event as its evidence. One waiting behind a text change in one batch is
 /// planned after it, and the change's read reads the caret, covering the
 /// event, which then checks nothing: the watch, checked after that read,
-/// is answered by it as the event would have answered it. The answer, then
-/// the caret read with the text, then the output.
+/// is answered by it as the event would have answered it. The answer,
+/// then the output, the caret read with the text being the answer's.
 fn a_read_covering_a_caret_event_answers_a_watch_with_no_caret() {
     let (mut app, mut outpost, term) = start("mockapp-terminal-covered-caret");
     let key = ask(
@@ -384,6 +393,34 @@ fn a_read_covering_a_caret_event_answers_a_watch_with_no_caret() {
     app.quit();
 }
 
+/// A caret read that finds the caret Core last had, at the same place with
+/// the same line, is not reported again: not with a text change's read,
+/// nor for a caret event; a read finding it moved reports it.
+fn an_unchanged_caret_is_not_reported_again() {
+    let (mut app, outpost, term) = start("mockapp-terminal-unchanged-caret");
+    // The focus's caret, at the text's start, is where it was.
+    write(&mut app, &["three"]);
+    outpost.heard(&[
+        Heard::UiaTextChanged,
+        Heard::Msaa(WinEventKind::ValueChange),
+    ]);
+    assert_eq!(reported(&outpost, term), lines(&["three"]));
+    outpost.settled();
+    app.send("caret-event term");
+    outpost.heard(&[
+        Heard::UiaTextSelection,
+        Heard::Msaa(WinEventKind::TextSelectionChange),
+    ]);
+    outpost.settled();
+    // Moved, it is reported, with the output read with it.
+    app.send("caret term 1");
+    write(&mut app, &["three", "four"]);
+    assert_eq!(reported_after_caret(&outpost, term), lines(&["four"]));
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -414,6 +451,10 @@ fn main() {
         (
             "a_read_covering_a_caret_event_answers_a_watch_with_no_caret",
             a_read_covering_a_caret_event_answers_a_watch_with_no_caret,
+        ),
+        (
+            "an_unchanged_caret_is_not_reported_again",
+            an_unchanged_caret_is_not_reported_again,
         ),
     ]);
 }

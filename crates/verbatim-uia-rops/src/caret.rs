@@ -340,7 +340,8 @@ pub type CaretReadFn = fn(&CaretQuery<'_>) -> Result<CaretAnswer, Error>;
 
 /// The caret and its line alone, read as part of another program (a
 /// terminal's screen, [`crate::ScreenQuery::caret`]) or, classically, after it:
-/// a [`CaretQuery`] with nothing to compare and no unit or formatting.
+/// a [`CaretQuery`] with no selection to compare and no unit or
+/// formatting.
 #[derive(Clone, Copy)]
 pub struct CaretLineQuery<'a> {
     /// The element with the text.
@@ -351,17 +352,22 @@ pub struct CaretLineQuery<'a> {
     pub pattern2: Option<&'a IUIAutomationTextPattern2>,
     /// The most UTF-16 code units of text read for the line.
     pub max_text: i32,
+    /// Where the caret was known to be, to say whether it moved
+    /// ([`CaretAnswer::moved`]), compared in the same round trip.
+    pub since: Option<RangeEnd<'a>>,
 }
 
 /// The registers of a caret and its line emitted into another program.
 pub(crate) struct CaretLineRegisters {
     caret: CaretRegisters,
     line: UnitRegisters,
+    /// Whether the caret moved, with a `since` to compare with.
+    moved: Option<Reg<kind::Bool>>,
 }
 
 impl CaretLineRegisters {
-    /// The answer, as [`caret_read_remote`] gives it for a query with
-    /// nothing to compare and no unit or formatting.
+    /// The answer, as [`caret_read_remote`] gives it for a query with no
+    /// selection to compare and no unit or formatting.
     pub(crate) fn read(&self, outcome: &Outcome) -> Result<CaretAnswer, Error> {
         let caret = outcome
             .get(self.caret.caret)?
@@ -375,7 +381,10 @@ impl CaretLineRegisters {
             caret,
             collapsed: outcome.get(self.caret.collapsed)?,
             selection,
-            moved: false,
+            moved: match self.moved {
+                Some(moved) => outcome.get(moved)?,
+                None => false,
+            },
             selection_moved: false,
             line: self.line.read(outcome)?,
             unit: None,
@@ -399,9 +408,16 @@ pub(crate) fn emit_caret_line(b: &mut Builder, query: &CaretLineQuery<'_>) -> Ca
     let element = b.import_element(query.element);
     let caret = emit_caret(b, &c, element, query.pattern2.is_some());
     let point = c.collapsed(b, caret.caret);
+    let moved = query.since.map(|since| {
+        let known = b.import_text_range(since.range);
+        let endpoint = b.int(endpoint_number(since.endpoint));
+        let order = b.text_range_compare_endpoints(point, c.start, known, endpoint);
+        let differs = b.not_equal(order, c.zero);
+        b.add_to_results(differs)
+    });
     let line_unit = b.int(TextUnit_Line.0);
     let line = c.unit_at(b, point, line_unit);
-    CaretLineRegisters { caret, line }
+    CaretLineRegisters { caret, line, moved }
 }
 
 /// The caret and its line the classic way, as [`caret_read_classic`] reads
@@ -415,7 +431,7 @@ pub(crate) fn caret_line_classic(query: &CaretLineQuery<'_>) -> Result<CaretAnsw
         element: query.element,
         pattern: query.pattern,
         pattern2: query.pattern2,
-        since: None,
+        since: query.since,
         previous_selection: None,
         unit: None,
         formats: None,

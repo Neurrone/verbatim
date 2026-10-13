@@ -96,6 +96,16 @@ impl UiaPos {
         self.range.resolve().map_err(failed)
     }
 
+    /// The range and which of its ends the position is, for a remote
+    /// operation that compares with it. Local.
+    ///
+    /// # Errors
+    ///
+    /// [`TextError::Failed`] when the range cannot be had on this thread.
+    pub fn range_end(&self) -> TextResult<(IUIAutomationTextRange, Endpoint)> {
+        Ok((self.range()?, self.endpoint))
+    }
+
     /// A point a remote operation found.
     fn found(found: &FoundPoint) -> TextResult<Self> {
         Self::new(&found.range, found.endpoint, found.collapsed)

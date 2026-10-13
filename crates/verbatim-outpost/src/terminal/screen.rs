@@ -58,64 +58,134 @@ impl ScreenDiff {
     }
 }
 
-/// The lines of a screen's text as the provider gave it: each without its
-/// line break and padding, and without the blank lines at the end of the
-/// screen, which are rows not yet written to.
-#[must_use]
-pub fn screen_lines(text: &str) -> Vec<String> {
-    let body = text.strip_suffix('\n').unwrap_or(text);
-    let mut lines: Vec<String> = if body.is_empty() {
-        Vec::new()
-    } else {
-        body.split('\n')
-            .map(|line| {
-                verbatim_text::trim_padding(line.strip_suffix('\r').unwrap_or(line)).to_owned()
-            })
-            .collect()
-    };
-    while lines.last().is_some_and(String::is_empty) {
-        lines.pop();
-    }
-    lines
+/// One row of a block of text a terminal gave: its text without its line
+/// break and padding, and how many cells it took with its padding.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Row {
+    text: String,
+    cells: usize,
 }
 
-/// How many rows at the end of a screen's text are blank, which
-/// [`screen_lines`] leaves out: rows the terminal has not written to yet.
-#[must_use]
-pub fn unwritten_rows(text: &str) -> usize {
-    let body = text.strip_suffix('\n').unwrap_or(text);
-    if body.is_empty() {
-        return 0;
+/// A block of a terminal's text as the provider gave it, a screen's or
+/// the rows that went by unread, split into its rows: each row's padding is
+/// trimmed on the UTF-16 text before the rest is decoded, so the padding,
+/// most of a terminal's screen, is never decoded or searched again. A last
+/// line break ends the last row rather than starting another.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScreenRows {
+    rows: Vec<Row>,
+}
+
+impl ScreenRows {
+    /// The rows of `text`, UTF-16 as the provider gave it.
+    #[must_use]
+    pub fn from_utf16(text: &[u16]) -> Self {
+        let body = text.strip_suffix(&[u16::from(b'\n')]).unwrap_or(text);
+        if body.is_empty() {
+            return Self::default();
+        }
+        let rows = body
+            .split(|&unit| unit == u16::from(b'\n'))
+            .map(|row| {
+                let row = row.strip_suffix(&[u16::from(b'\r')]).unwrap_or(row);
+                let kept = row.len() - padding(row);
+                let text = String::from_utf16_lossy(&row[..kept]);
+                let padding = &row[kept..];
+                let padding_cells = if padding.iter().all(|&unit| unit == u16::from(b' ')) {
+                    padding.len()
+                } else {
+                    verbatim_text::cell_width(&String::from_utf16_lossy(padding))
+                };
+                Row {
+                    cells: verbatim_text::cell_width(&text) + padding_cells,
+                    text,
+                }
+            })
+            .collect();
+        Self { rows }
     }
-    body.split('\n')
+
+    /// The lines of a screen: each row without its line break and padding,
+    /// and without the blank rows at the end of the screen, which are rows
+    /// not yet written to.
+    #[must_use]
+    pub fn lines(&self) -> Vec<String> {
+        let written = self.rows.len() - self.unwritten();
+        self.rows[..written]
+            .iter()
+            .map(|row| row.text.clone())
+            .collect()
+    }
+
+    /// Every row, each without its line break and padding, blank ones at
+    /// the end included.
+    #[must_use]
+    pub fn all_lines(&self) -> Vec<String> {
+        self.rows.iter().map(|row| row.text.clone()).collect()
+    }
+
+    /// How many rows at the end are blank, which [`lines`](Self::lines)
+    /// leaves out: rows the terminal has not written to yet.
+    #[must_use]
+    pub fn unwritten(&self) -> usize {
+        self.rows
+            .iter()
+            .rev()
+            .take_while(|row| row.text.is_empty())
+            .count()
+    }
+
+    /// How many rows each of [`lines`](Self::lines) takes: a line that
+    /// wrapped onto more rows is one row of the text, and a terminal's rows
+    /// are `width` cells wide, so a line takes as many rows as its cells
+    /// fill, padding included, and at least one. A width of nothing counts
+    /// every line as one row.
+    #[must_use]
+    pub fn line_rows(&self, width: usize) -> Vec<usize> {
+        let written = self.rows.len() - self.unwritten();
+        self.rows[..written]
+            .iter()
+            .map(|row| {
+                if width == 0 {
+                    1
+                } else {
+                    row.cells.div_ceil(width).max(1)
+                }
+            })
+            .collect()
+    }
+
+    /// Whether every row takes whole rows of `width` cells, padding
+    /// included.
+    fn whole_rows(&self, width: usize) -> bool {
+        self.rows.iter().all(|row| row.cells.is_multiple_of(width))
+    }
+}
+
+impl From<&str> for ScreenRows {
+    fn from(text: &str) -> Self {
+        let units: Vec<u16> = text.encode_utf16().collect();
+        Self::from_utf16(&units)
+    }
+}
+
+/// How many code units at the end of `row` are padding: characters with
+/// Unicode's `White_Space` property, as [`verbatim_text::trim_padding`]
+/// trims them. Every such character is one UTF-16 code unit, so the units
+/// are judged one by one, and a surrogate is never padding.
+fn padding(row: &[u16]) -> usize {
+    row.iter()
         .rev()
-        .take_while(|line| {
-            verbatim_text::trim_padding(line.strip_suffix('\r').unwrap_or(line)).is_empty()
-        })
+        .take_while(|&&unit| char::from_u32(u32::from(unit)).is_some_and(char::is_whitespace))
         .count()
 }
 
-/// How many rows each line of a screen's text takes, in the order
-/// [`screen_lines`] gives them: the text gives a line that wrapped onto more
-/// rows whole, and a terminal's rows are `width` cells wide (its top row's
-/// cells, padding included, as the provider gave it), so a line takes as
-/// many rows as its cells fill, padding included, and at least one. A width
-/// of nothing counts every line as one row.
+/// The lines of a screen's text as the provider gave it: each without its
+/// line break and padding, and without the blank lines at the end of the
+/// screen, which are rows not yet written to ([`ScreenRows::lines`]).
 #[must_use]
-pub fn line_rows(text: &str, width: usize) -> Vec<usize> {
-    let lines = screen_lines(text).len();
-    let body = text.strip_suffix('\n').unwrap_or(text);
-    body.split('\n')
-        .take(lines)
-        .map(|line| {
-            let cells = verbatim_text::cell_width(line.strip_suffix('\r').unwrap_or(line));
-            if width == 0 {
-                1
-            } else {
-                cells.div_ceil(width).max(1)
-            }
-        })
-        .collect()
+pub fn screen_lines(text: &str) -> Vec<String> {
+    ScreenRows::from(text).lines()
 }
 
 /// A terminal's width in cells, from its screen's `text` and its top `row`
@@ -125,7 +195,7 @@ pub fn line_rows(text: &str, width: usize) -> Vec<usize> {
 /// not, or the row is narrower than any terminal (20 cells), as a scripted
 /// provider's rows are: a line's rows cannot then be told.
 #[must_use]
-pub fn row_width(row: &str, text: &str) -> usize {
+pub fn row_width(row: &str, text: &ScreenRows) -> usize {
     /// Narrower than any terminal's screen.
     const NARROWEST: usize = 20;
     let row = row.trim_end_matches(['\r', '\n']);
@@ -134,14 +204,11 @@ pub fn row_width(row: &str, text: &str) -> usize {
         return 0;
     }
     let padded = row.ends_with(char::is_whitespace);
-    let whole_rows = text
-        .strip_suffix('\n')
-        .unwrap_or(text)
-        .split('\n')
-        .all(|line| {
-            verbatim_text::cell_width(line.strip_suffix('\r').unwrap_or(line)).is_multiple_of(width)
-        });
-    if padded || whole_rows { width } else { 0 }
+    if padded || text.whole_rows(width) {
+        width
+    } else {
+        0
+    }
 }
 
 /// How many rows the text of a screen with no history above it scrolled up
@@ -187,7 +254,7 @@ pub fn diff(old: &[String], new: &[String], shift: Shift, cursor: Option<usize>)
 }
 
 /// The rows the old screen had not written to yet, just below its last
-/// line ([`unwritten_rows`]), for [`diff_after`]: a blank line inserted on
+/// line ([`ScreenRows::unwritten`]), for [`diff_after`]: a blank line inserted on
 /// one of them was blank before as it is now, a row a program passed over,
 /// and is left out.
 #[derive(Clone, Copy, Debug, Default)]
@@ -195,7 +262,8 @@ pub struct Unwritten<'a> {
     /// How many rows, from the row below the old screen's last line (from
     /// the screen's top, when none of its lines is left).
     pub rows: usize,
-    /// How many rows each line of the new screen takes ([`line_rows`]);
+    /// How many rows each line of the new screen takes
+    /// ([`ScreenRows::line_rows`]);
     /// a line missing here takes one.
     pub line_rows: &'a [usize],
 }
@@ -574,6 +642,16 @@ mod tests {
             },
             since_read: None,
         })
+    }
+
+    #[test]
+    fn a_rows_cells_count_its_padding_and_blank_rows_end_unwritten() {
+        // Two cells of text and two of padding; two wide characters and a
+        // wide space as padding; a row not written to.
+        let rows = ScreenRows::from("ab  \r\n\u{6f22}\u{5b57}\u{3000}\r\n   \r\n");
+        assert_eq!(rows.lines(), ["ab", "\u{6f22}\u{5b57}"]);
+        assert_eq!(rows.line_rows(2), [2, 3]);
+        assert_eq!(rows.unwritten(), 1);
     }
 
     #[test]

@@ -137,6 +137,9 @@ getters with no further call), `TextRange` to
 `Value`. Scalars come back as `IPropertyValue`s, arrays as
 `IVector<IInspectable>` (the `windows-collections` crate), a runtime id
 as an integer array, and a null register as a null object.
+`Outcome::get_utf16` gives a `Str` register as the provider's UTF-16,
+never decoded, empty for a null one, for text the caller trims before it
+decodes it.
 
 ## Layer 3: the focus ancestry
 
@@ -324,12 +327,16 @@ many of the rows that went by
 unread to read (`head_wanted`). With `caret` (a `CaretLineQuery`), the
 caret and its line are read too, in the same program or, classically,
 after the text, and come back as `Screen::caret`: a terminal raises no
-caret event for every character typed. The answer, a `Screen`, gives text
-as the provider gave it, padding and line breaks included, so comparisons
-are exact and the caller trims:
+caret event for every character typed. A `CaretLineQuery` with `since`
+also says, in the same round trip, whether the caret is no longer there
+(`CaretAnswer::moved`); without one the program compares nothing. The
+answer, a `Screen`, gives text as the provider gave it, padding and line
+breaks included, so comparisons are exact and the caller trims:
 
 - `text`: the text pattern's first visible range (the screen), read in
   one call; the whole text when the provider reports no visible range.
+  It and `head` stay UTF-16, so the caller trims each row's padding,
+  most of a terminal's screen, before it decodes the rest.
 - `top_row`, `next_row`, `top`, `first_row`: the screen's top two rows, a
   range at the top row's start, and the text's first row, for the next
   read's anchor.

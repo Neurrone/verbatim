@@ -140,7 +140,7 @@ fn remote_and_classic_screen_reads_agree() {
 
     // A first read: the last four lines, with history above them.
     let first = both(&uia, &query(text, None, 0));
-    assert_eq!(first.text, "three\nfour\nfive\nready>");
+    assert_eq!(first.text.all_lines(), ["three", "four", "five", "ready>"]);
     assert_eq!(
         (first.top_row.as_str(), first.next_row.as_str()),
         ("three\n", "four\n")
@@ -162,8 +162,11 @@ fn remote_and_classic_screen_reads_agree() {
     let later = both(&uia, &query(text, Some(("three\n", "four\n")), 4));
     assert_eq!(later.shift, Some(10));
     assert_eq!(later.head_rows, 3);
-    assert_eq!(later.head, "line 000\nline 001\nline 002\n");
-    assert_eq!(later.text, "line 006\nline 007\nline 008\nready>");
+    assert_eq!(later.head.all_lines(), ["line 000", "line 001", "line 002"]);
+    assert_eq!(
+        later.text.all_lines(),
+        ["line 006", "line 007", "line 008", "ready>"]
+    );
     assert_eq!(later.document_rows, None);
 
     // The anchor gone from the text: the rows of the whole text are
@@ -486,6 +489,7 @@ fn read_output_and_caret(
         pattern: source.pattern(),
         pattern2: source.pattern2(),
         max_text: 4096,
+        since: None,
     };
     let answer = read(
         uia,
@@ -885,6 +889,7 @@ fn a_read_with_the_caret_costs_exactly(remote: bool) {
         pattern: source.pattern(),
         pattern2: source.pattern2(),
         max_text: 4096,
+        since: None,
     };
     let answer = read(
         &uia,
