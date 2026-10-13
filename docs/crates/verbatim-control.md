@@ -50,10 +50,12 @@ Public API:
   A `LatencyRecord` carries a timeline's three times and, since protocol
   version 1, its `stages`: one `LatencyStage` per stage it has passed, in
   pipeline order, each with its `LatencyStageKind` (Windows, hook to Core,
-  listener to outpost, Core to outpost, listener to verbatim.exe, reducer
+  listener to outpost, Core to outpost, listener to verbatim.exe, listener
+  read, listener queue, listener's pipe to verbatim.exe, reducer
   to verbatim.exe's relay, waiting for the outpost to start, verbatim.exe,
   verbatim.exe to outpost, outpost queue, caret wait, outpost read, to
-  Core, outpost to verbatim.exe, waiting for the reducer, reducer, to
+  Core, outpost to verbatim.exe, outpost outbound, outpost's pipe to
+  verbatim.exe, waiting for the reducer, reducer, to
   speech, synthesis, or for a synthesizer host its parts, synthesizer
   request, to the synthesizer host, the host's first chunk, and back from
   the synthesizer host; leading silence, mixer and device, device clock;
@@ -61,7 +63,11 @@ Public API:
   as the latency log does, and `docs/tooling.md` says what each covers;
   listener to outpost, Core to outpost, and to Core are the whole spans a
   timeline without verbatim.exe's relay stamps has instead of the split
-  ones, added 2026-10-11 by `docs/design/relay.md`), its time in
+  ones, added 2026-10-11 by `docs/design/relay.md`; listener to
+  verbatim.exe and outpost to verbatim.exe are likewise the whole spans a
+  timeline without the senders' write stamps has, split on 2026-10-13
+  into the listener's read, queue and pipe and the outpost's outbound
+  queue and pipe), its time in
   microseconds, and, for the caret wait and the outpost read, the
   cross-process calls made in it. Version 1 only adds fields, which a
   version 0 peer ignores and reads as empty, so the server answers every

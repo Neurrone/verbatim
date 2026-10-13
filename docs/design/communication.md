@@ -481,32 +481,47 @@ Estimated, not measured: at the relay's measured median of 0.06 ms per hand-off 
 
 ### 10.1 Stages
 
-Every hop has a stage. A stage inside one process is a duration measured with the performance counter (`Instant`) on one thread, or between two threads of one process; a stage that crosses processes is a difference of the shared clock (`now_us`, which on Windows reads `GetSystemTimePreciseAsFileTime`, derived from the performance counter and the same in every process). The stage names from 43adba8 are kept where they exist.
+Every hop has a stage. A stage inside one process is a duration measured with the performance counter (`Instant`) on one thread, or between two threads of one process; a stage that crosses processes is a difference of the shared clock (`now_us`, which on Windows reads `GetSystemTimePreciseAsFileTime`, derived from the performance counter and the same in every process). Every cross-process hop on an announcement's way has two stamps: the sender's, taken as its writer begins the write, just before the frame is encoded, since the stamp travels inside it; and the receiver's, taken as the frame is read. The sender's own time before its write is a stage of its own, so a hop's stage is the pipe and the receiver's wake. Each stage below gives its `LatencyStageKind` and, in quotes, the label the latency line, `verbatim-inspect latency` and `stages.txt` print. The stage names from 43adba8 are kept where they exist.
 
 The event side, in path order:
-- Windows: the WinEvent's raised time to its observation, as today (tick-count resolution, so partly quantization).
-- Listener: observation to the frame written (in-process).
-- Listener to relay (`ListenerToRelay`): written to the relay thread's read completion (cross-process).
-- Outpost start (`OutpostStart`): time held for a starting outpost (in-process; reported separately and never pooled with delivered facts, as `relay.md` 7 requires).
-- Relay (`Relay`): read completion to `WriteFile` (in-process, the duration patched into the header at the write).
-- Relay to outpost (`RelayToOutpost`): write to the outpost's read completion (cross-process).
-- For a request: the reducer's send to its `WriteFile` (`RequestToRelay`, in-process; after this design it is the encode and the write on the reducer, or the wait in the backlog when one is in flight).
-- Outpost queue, caret wait, outpost read: as today.
-- Outpost to relay (`OutpostToRelay`): the worker's `WriteFile` to the relay thread's read completion (cross-process).
-- Reducer wait (`ReducerWait`): the relay's post of the frame to the reducer starting on it (in-process), which is mostly the reducer being busy, labelled so it is never mistaken for transport.
-- Reducer: as today.
-- Hook to reducer, for keys: the hook's callback to the reducer starting on it.
+- Windows (`Windows`, "Windows"): the WinEvent's raised time to its observation (tick-count resolution, so partly quantization).
+- Hook to Core (`HookToCore`, "hook to Core"), for a caret key: the hook's callback to the reducer having handled the key and asked the outpost.
+- Listener read (`ListenerRead`, "listener read"): the listener's observation of a UIA focus event (`observed_at_us`) to its reading thread having read the focus across processes (`listener_read_at_us`), the reading thread's queue included (in-process). A fact the listener sends with no read has no such stage.
+- Listener queue (`ListenerQueue`, "listener queue"): the read's end, or the observation for a fact with no read, to the listener's writer beginning the frame's write (`listener_written_at_us`): the outbound queue and the writer's wake (in-process).
+- Listener's pipe (`ListenerPipe`, "listener's pipe to verbatim.exe"): the listener's write to the relay thread's read completion (`core_received_at_us`): the encoding, the pipe, and the relay's wake (cross-process).
+- Listener to relay (`ListenerToRelay`, "listener to verbatim.exe"): the three above taken whole, only for a timeline without the listener's write stamp.
+- Outpost start (`OutpostStart`, "waiting for the outpost to start"): time held for a starting outpost (in-process; reported separately and never pooled with delivered facts, as `relay.md` 7 requires).
+- Relay (`Relay`, "verbatim.exe"): the relay's own handling, from the read completion to its beginning the write to the outpost (in-process, the duration carried in `core_relay_us`).
+- Relay to outpost (`RelayToOutpost`, "verbatim.exe to outpost"): that write (`core_sent_at_us`) to the outpost's reader having read it (`relayed_at_us`) (cross-process).
+- For a request (`RequestToRelay`, "reducer to verbatim.exe's relay"): the reducer having handled the input to the request queued for the outpost (in-process; after this design it is the encode and the write on the reducer, or the wait in the backlog when one is in flight).
+- Listener to outpost (`ListenerToOutpost`, "listener to outpost") and Core to outpost (`CoreToOutpost`, "Core to outpost"): the spans to the outpost taken whole, only for a timeline without verbatim.exe's relay stamps.
+- Outpost queue (`OutpostQueue`, "outpost queue"), caret wait (`CaretWait`, "caret wait"), outpost read (`OutpostRead`, "outpost read"): in the outpost, up to the worker's publish (`published_at_us`).
+- Outpost outbound (`OutpostOutbound`, "outpost outbound"): the worker's publish to the outpost's writer beginning the write (`written_at_us`): the outbound queue and the writer's wake (in-process).
+- Outpost's pipe (`OutpostPipe`, "outpost's pipe to verbatim.exe"): that write to verbatim.exe's reader having read and parsed the message (`core_read_at_us`) (cross-process).
+- Outpost to relay (`OutpostToRelay`, "outpost to verbatim.exe"): the two above taken whole, only for a timeline without the outpost's write stamp. To Core (`ToCore`, "to Core") is the span to the reducer taken whole, for one without verbatim.exe's read stamp either.
+- Reducer wait (`ReducerWait`, "waiting for the reducer"): verbatim.exe's read of the message to the reducer starting on it (in-process), which is mostly the reducer being busy, labelled so it is never mistaken for transport.
+- Reducer (`Reducer`, "reducer").
 
 The speech side, in path order:
-- To speech: the reducer's speak to the job taken by the synth thread (in-process). Time waiting behind earlier speech is reported and not counted, as today.
-- Synth request: the job taken to `Speak` written (in-process).
-- To host: `Speak` written to the host's read (cross-process).
-- Host first chunk: the driver started to its first chunk ready (in the host, a duration). This is the split of synthesis the audit asks for, into request, first chunk and return.
-- Host return: the first `Pcm` written to the synth thread's read completion (cross-process).
-- Leading silence: as today.
-- To the audio thread: the append to the audio thread's wake (in-process).
-- Device queue: the first frame's write to the engine having taken it, by padding (in-process; today's "audio started").
-- Device clock: the engine having taken it to `IAudioClock::GetPosition` reaching the first frame's position, converted to time with the position's own performance-counter stamp (in-process). This is the stage finding 2 needs.
+- To speech (`ToSpeech`, "to speech"): the reducer's speak to the job taken by the synth thread (in-process). Time waiting behind earlier speech is reported and not counted.
+- Synthesis (`Synthesis`, "synthesis"): for a synthesizer in verbatim.exe's own process, synthesis started to its first audio. A synthesizer host's is split into the next four.
+- Synth request (`SynthRequest`, "synthesizer request"): the job taken to `Speak` written (in-process).
+- To host (`ToHost`, "to the synthesizer host"): `Speak` written to the host's read (cross-process).
+- Host first chunk (`HostFirstChunk`, "the host's first chunk"): the host taking the request to its synthesizer's first chunk (in the host, a duration). This is the split of synthesis the audit asks for, into request, first chunk and return.
+- Host return (`HostReturn`, "back from the synthesizer host"): the host writing its first audio to the synth thread taking it in (cross-process).
+- Leading silence (`LeadingSilence`, "leading silence").
+- Mixer and device (`MixerAndDevice`, "mixer and device"): the first frame's append to the engine having taken it, by padding (in-process). The design's split of this at the audio thread's wake has no stamp yet.
+- Device clock (`DeviceClock`, "device clock"): the engine having taken it to `IAudioClock::GetPosition` reaching the first frame's position, converted to time with the position's own performance-counter stamp (in-process). This is the stage finding 2 needs.
+
+`cargo xtask measure`'s first total sums verbatim.exe's stage, its hop to the outpost, the outpost's outbound queue and pipe (or their whole span, for a timeline without the outpost's write stamp), and the reducer wait.
+
+The stamps on each cross-process hop, as checked on 2026-10-13:
+- The listener to verbatim.exe: the receipt was stamped (`core_received_at_us`, at the relay's read completion), but nothing stamped the listener's read or its write, so the listener stage held its cross-process read of the focus. The reading thread now stamps the read's end and the writer its write.
+- An outpost to verbatim.exe, events and replies alike: the receipt was stamped (`core_read_at_us`), the write was not; `published_at_us` is the worker's hand-off to the outbound queue. The outpost's writer now stamps its write.
+- verbatim.exe to an outpost, facts and requests alike: both stamped (`core_sent_at_us` as the relay begins the write, `relayed_at_us` at the outpost's reader).
+- verbatim.exe to the synthesizer host: both stamped, but the driver's stamp is taken after its write returns rather than before it, so the write's own time falls in "synthesizer request".
+- The host's first audio back: both stamped, but the receipt is taken on the synth thread after the host reader thread hands the reply on, so that hand-off falls in "back from the synthesizer host".
+- verbatim.exe to the listener (pings, hand-over notices) carries no timing; nothing on an announcement's way crosses it.
 
 ### 10.2 Stamps, in memory, off the path
 

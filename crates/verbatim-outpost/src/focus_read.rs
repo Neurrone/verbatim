@@ -83,7 +83,9 @@ use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::outpost::window::{
     is_shell_transition_window, top_level_of, window_is_hung, window_thread,
 };
-use crate::protocol::{DeliveredFact, EventTiming, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact};
+use crate::protocol::{
+    DeliveredFact, EventTiming, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact, now_us,
+};
 
 /// The most ancestors read for a focus, as many as the outpost walks.
 const MAX_ANCESTORS: u32 = 64;
@@ -1247,8 +1249,11 @@ fn start<R: Reading>(shared: &Arc<Shared<R>>, state: &mut ReadersState<R::Job>, 
 fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
     let mut generation = generation;
     let mut reader = shared.reading.reader();
-    while let Some((meta, job)) = next_job(shared, pid, generation) {
+    while let Some((mut meta, job)) = next_job(shared, pid, generation) {
         let judged = shared.reading.read(reader.as_mut(), meta, job);
+        // The read's end, for the latency ledger's split of the listener's
+        // read from its queue and its write.
+        meta.timing.listener_read_at_us = now_us();
         shared
             .failed_reads
             .fetch_add(verbatim_uia::calls::take_failed_reads(), Ordering::Relaxed);

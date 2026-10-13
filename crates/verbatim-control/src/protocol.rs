@@ -367,9 +367,25 @@ pub enum LatencyStageKind {
     /// instead.
     CoreToOutpost,
     /// From the listener observing a focus to verbatim.exe's relay thread
-    /// taking it off the listener's pipe: the listener's queue and writer,
-    /// the pipe, and the relay thread's wake.
+    /// taking it off the listener's pipe: the listener's read, queue and
+    /// writer, the pipe, and the relay thread's wake. For a timeline
+    /// without the listener's write stamp; one with it has
+    /// [`ListenerRead`](Self::ListenerRead),
+    /// [`ListenerQueue`](Self::ListenerQueue) and
+    /// [`ListenerPipe`](Self::ListenerPipe) instead.
     ListenerToRelay,
+    /// From the listener observing a UIA focus event to its reading thread
+    /// having read the focus across processes: the reading thread's queue
+    /// and the read.
+    ListenerRead,
+    /// From the listener's read ending, or, for a fact it sent with no
+    /// read, from its observing the event, to its writer beginning the
+    /// frame's write: the listener's outbound queue and its writer's wake.
+    ListenerQueue,
+    /// From the listener's writer beginning the frame's write to
+    /// verbatim.exe's relay thread taking it off the listener's pipe: the
+    /// encoding, the pipe, and the relay thread's wake.
+    ListenerPipe,
     /// From the reducer having handled the input to the request being
     /// queued for the outpost: the reducer's other effects before it.
     RequestToRelay,
@@ -400,7 +416,17 @@ pub enum LatencyStageKind {
     ToCore,
     /// From the outpost publishing to verbatim.exe's reader having read and
     /// parsed the message: the outpost's writer, the pipe, and the reader.
+    /// For a timeline without the outpost's write stamp; one with it has
+    /// [`OutpostOutbound`](Self::OutpostOutbound) and
+    /// [`OutpostPipe`](Self::OutpostPipe) instead.
     OutpostToRelay,
+    /// From the outpost's worker publishing to its writer beginning the
+    /// message's write: the outpost's outbound queue and its writer's wake.
+    OutpostOutbound,
+    /// From the outpost's writer beginning the message's write to
+    /// verbatim.exe's reader having read and parsed it: the encoding, the
+    /// pipe, and the reader.
+    OutpostPipe,
     /// From verbatim.exe's reader having the message to the reducer taking
     /// it: the reducer busy with what came before, not the relay.
     ReducerWait,
@@ -446,6 +472,9 @@ impl LatencyStageKind {
             Self::ListenerToOutpost => "listener to outpost",
             Self::CoreToOutpost => "Core to outpost",
             Self::ListenerToRelay => "listener to verbatim.exe",
+            Self::ListenerRead => "listener read",
+            Self::ListenerQueue => "listener queue",
+            Self::ListenerPipe => "listener's pipe to verbatim.exe",
             Self::RequestToRelay => "reducer to verbatim.exe's relay",
             Self::OutpostStart => "waiting for the outpost to start",
             Self::Relay => "verbatim.exe",
@@ -455,6 +484,8 @@ impl LatencyStageKind {
             Self::OutpostRead => "outpost read",
             Self::ToCore => "to Core",
             Self::OutpostToRelay => "outpost to verbatim.exe",
+            Self::OutpostOutbound => "outpost outbound",
+            Self::OutpostPipe => "outpost's pipe to verbatim.exe",
             Self::ReducerWait => "waiting for the reducer",
             Self::Reducer => "reducer",
             Self::ToSpeech => "to speech",

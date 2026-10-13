@@ -394,7 +394,10 @@ fn write_loop(mut pipe: Box<dyn Write + Send>, shared: &Shared) {
         // Written with no lock held.
         match next {
             Next::Message(message) => {
-                for message in within_limit(*message) {
+                for mut message in within_limit(*message) {
+                    // The write's stamp, for the latency ledger's split
+                    // of the outbound queue's time from the pipe's.
+                    message.written(crate::protocol::now_us());
                     if let Err(error) = write_message(&mut pipe, &message) {
                         tracing::warn!(%error, "a message to Core could not be written");
                         return;

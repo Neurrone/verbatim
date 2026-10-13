@@ -482,7 +482,10 @@ impl Listener {
             .name("verbatim-listener-outbound".to_owned())
             .spawn(move || {
                 prioritize_role("listener outbound", WRITER_PRIORITY);
-                while let Some(message) = writer_outgoing.next() {
+                while let Some(mut message) = writer_outgoing.next() {
+                    // The write's stamp, for the latency ledger's split
+                    // of the listener's time from the pipe's.
+                    message.written(now_us());
                     if write_message(&mut pipe, &message).is_err() {
                         return;
                     }

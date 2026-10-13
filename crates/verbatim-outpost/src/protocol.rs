@@ -27,6 +27,15 @@ pub struct EventTiming {
     pub raised_ms_ago: Option<u32>,
     /// When the listener or the outpost observed it.
     pub observed_at_us: u64,
+    /// When the focus listener's reading thread finished reading what this
+    /// fact carries across processes (a UIA focus's read, or its drop after
+    /// one); 0 for a fact the listener sent with no read, and for anything
+    /// the listener did not send.
+    pub listener_read_at_us: u64,
+    /// When the focus listener began writing the frame that carries this
+    /// fact to verbatim.exe's pipe, taken just before the frame is encoded;
+    /// 0 for anything the listener did not send.
+    pub listener_written_at_us: u64,
     /// When the outpost received it from Core, for an event the listener
     /// observed.
     pub relayed_at_us: u64,
@@ -36,8 +45,13 @@ pub struct EventTiming {
     /// check found none, was taken from the outpost's queue
     /// (`TextOp::AwaitCaret`); 0 for anything else.
     pub awaited_at_us: u64,
-    /// When the outpost sent the resulting event to Core.
+    /// When the outpost's worker published the resulting event or reply,
+    /// queuing it for the outpost's writer.
     pub published_at_us: u64,
+    /// When the outpost's writer began writing the message carrying this
+    /// timing to verbatim.exe's pipe, taken just before the message is
+    /// encoded; 0 until then.
+    pub written_at_us: u64,
     /// The cross-process calls the outpost's worker made between taking the
     /// entry from its queue and publishing this message, by kind
     /// (`docs/performance.md`). Zero from the listener, which makes none, and
@@ -943,6 +957,22 @@ impl OutpostToSupervisor {
                     ..
                 }
         )
+    }
+
+    /// Records, in the timing the message carries, when its writer began
+    /// writing it to verbatim.exe's pipe: the focus listener's fact's
+    /// (`EventTiming::listener_written_at_us`), or an outpost's event's or
+    /// reply's (`EventTiming::written_at_us`). Nothing for any other
+    /// message.
+    pub fn written(&mut self, at_us: u64) {
+        match self {
+            OutpostToSupervisor::FocusFact { timing, .. } => timing.listener_written_at_us = at_us,
+            OutpostToSupervisor::Event { timing, .. }
+            | OutpostToSupervisor::Reply { timing, .. } => {
+                timing.written_at_us = at_us;
+            }
+            _ => {}
+        }
     }
 
     /// Records, in an event's or a reply's timing, when verbatim.exe read

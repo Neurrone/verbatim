@@ -311,12 +311,15 @@ knowing for review:
   answer, so the line names the hook to Core, the request's way to the
   outpost, and caret wait stages as well. verbatim.exe's relay stamps
   (`EventTiming::core_received_at_us` and those after it, and
-  `core_read_at_us` on the way back; `docs/design/relay.md`, section 4.5)
-  split the spans across verbatim.exe: the listener's or the reducer's
-  span to verbatim.exe, the time a fact was held for its starting outpost,
-  verbatim.exe's own relay time, and verbatim.exe to the outpost; and, back
-  from the outpost, the outpost to verbatim.exe's reader and the wait for
-  the reducer. The event's stages are one message's own: the
+  `core_read_at_us` on the way back; `docs/design/relay.md`, section 4.5),
+  and the senders' own stamps (the listener's read's end and write, the
+  outpost's write; `docs/design/communication.md`, section 10.1)
+  split the spans across verbatim.exe: the listener's read, its queue and
+  its pipe to verbatim.exe (or the reducer's span to verbatim.exe), the
+  time a fact was held for its starting outpost, verbatim.exe's own relay
+  time, and verbatim.exe to the outpost; and, back from the outpost, its
+  outbound queue, its pipe to verbatim.exe's reader, and the wait for the
+  reducer. The event's stages are one message's own: the
   message whose reduction first asked for speech on the trace, which Core
   tells the ledger as it hands the utterance to the pipeline
   (`speech_requested`, on the reducer thread, so a message received before

@@ -48,6 +48,8 @@ const TOTALS: &[(&str, &[&str])] = &[
             "verbatim.exe",
             "verbatim.exe to outpost",
             "outpost to verbatim.exe",
+            "outpost outbound",
+            "outpost's pipe to verbatim.exe",
             "waiting for the reducer",
         ],
     ),

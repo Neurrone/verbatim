@@ -114,6 +114,40 @@ fn calls_besides(total: CallCounts, part: CallCounts) -> CallCounts {
 /// announcement passed it, and its cross-process calls where they count.
 type Stage = (LatencyStageKind, Option<u64>, Option<CallCounts>);
 
+/// The listener's stages, from its observing the event to verbatim.exe's
+/// relay taking the fact in. The listener's stamps on its read's end and
+/// its write split the span into its read, its queue, and the pipe; a
+/// timeline without the write stamp has the span whole.
+fn listener_to_relay(event: &EventTiming) -> [Stage; 4] {
+    let at = |us: u64| (us != 0).then_some(us);
+    let span = |from: Option<u64>, to: Option<u64>| Some(to?.saturating_sub(from?));
+    let observed = at(event.observed_at_us);
+    let read = at(event.listener_read_at_us);
+    let written = at(event.listener_written_at_us);
+    let received = at(event.core_received_at_us);
+    [
+        (
+            LatencyStageKind::ListenerToRelay,
+            written
+                .is_none()
+                .then(|| span(observed, received))
+                .flatten(),
+            None,
+        ),
+        (LatencyStageKind::ListenerRead, span(observed, read), None),
+        (
+            LatencyStageKind::ListenerQueue,
+            span(read.or(observed), written),
+            None,
+        ),
+        (
+            LatencyStageKind::ListenerPipe,
+            span(written, received),
+            None,
+        ),
+    ]
+}
+
 impl Stages {
     /// How long each stage the announcement has passed took, in pipeline
     /// order, with the cross-process calls of the caret wait and the
@@ -155,7 +189,7 @@ impl Stages {
             .and_then(|_| at(event.core_held_us))
             .map(|held| held.min(event.core_relay_us));
         let published = at(event.published_at_us);
-        [
+        let mut stages: Vec<Stage> = vec![
             (
                 LatencyStageKind::Windows,
                 event.raised_ms_ago.map(|ms| u64::from(ms) * 1_000),
@@ -183,11 +217,9 @@ impl Stages {
                     .flatten(),
                 None,
             ),
-            (
-                LatencyStageKind::ListenerToRelay,
-                span(observed, relayed_by_core),
-                None,
-            ),
+        ];
+        stages.extend(listener_to_relay(&event));
+        stages.extend([
             (
                 LatencyStageKind::RequestToRelay,
                 observed
@@ -222,8 +254,8 @@ impl Stages {
                 span(awaited.or(dequeued), published),
                 Some(read_calls),
             ),
-        ]
-        .into()
+        ]);
+        stages
     }
 
     /// The stages from the outpost's read to the first sound, each with its
@@ -234,6 +266,9 @@ impl Stages {
         let span = |from: Option<u64>, to: Option<u64>| Some(to?.saturating_sub(from?));
         let read_by_core = at(event.core_read_at_us);
         let published = at(event.published_at_us);
+        // The outpost writer's stamp splits the span to verbatim.exe into
+        // the outpost's outbound queue and the pipe.
+        let written = at(event.written_at_us);
         [
             (
                 LatencyStageKind::ToCore,
@@ -245,7 +280,20 @@ impl Stages {
             ),
             (
                 LatencyStageKind::OutpostToRelay,
-                span(published, read_by_core),
+                written
+                    .is_none()
+                    .then(|| span(published, read_by_core))
+                    .flatten(),
+                None,
+            ),
+            (
+                LatencyStageKind::OutpostOutbound,
+                span(published, written),
+                None,
+            ),
+            (
+                LatencyStageKind::OutpostPipe,
+                span(written, read_by_core),
                 None,
             ),
             (
@@ -951,6 +999,105 @@ mod tests {
                 (LatencyStageKind::Relay, 0),
                 (LatencyStageKind::RelayToOutpost, 200),
             ]
+        );
+    }
+
+    /// The duration `stages` gives `kind`, if the announcement passed it.
+    fn duration_of(stages: &Stages, kind: LatencyStageKind) -> Option<u64> {
+        stages
+            .breakdown()
+            .iter()
+            .find(|stage| stage.kind == kind)
+            .map(|stage| stage.duration_us)
+    }
+
+    /// A listener's UIA focus fact with its read, written to the pipe, and
+    /// taken in by verbatim.exe's relay, then answered by its outpost.
+    fn listener_focus() -> Stages {
+        Stages {
+            event: Some(EventTiming {
+                observed_at_us: 1_000,
+                listener_read_at_us: 13_000,
+                listener_written_at_us: 13_100,
+                core_received_at_us: 13_250,
+                core_relay_us: 50,
+                core_sent_at_us: 13_300,
+                relayed_at_us: 13_400,
+                dequeued_at_us: 13_500,
+                published_at_us: 20_000,
+                written_at_us: 20_030,
+                core_read_at_us: 20_150,
+                ..EventTiming::default()
+            }),
+            core_received: Some(20_400),
+            ..Stages::default()
+        }
+    }
+
+    #[test]
+    fn the_listeners_read_runs_from_the_observation_to_the_reads_end() {
+        assert_eq!(
+            duration_of(&listener_focus(), LatencyStageKind::ListenerRead),
+            Some(12_000)
+        );
+    }
+
+    #[test]
+    fn the_listeners_queue_runs_from_the_reads_end_or_the_observation_to_the_write() {
+        assert_eq!(
+            duration_of(&listener_focus(), LatencyStageKind::ListenerQueue),
+            Some(100)
+        );
+        // A fact the listener sent with no read waits from its observation.
+        let unread = Stages {
+            event: Some(EventTiming {
+                observed_at_us: 1_000,
+                listener_written_at_us: 1_040,
+                core_received_at_us: 1_100,
+                ..EventTiming::default()
+            }),
+            ..Stages::default()
+        };
+        assert_eq!(
+            duration_of(&unread, LatencyStageKind::ListenerQueue),
+            Some(40)
+        );
+        assert_eq!(duration_of(&unread, LatencyStageKind::ListenerRead), None);
+    }
+
+    #[test]
+    fn the_listeners_pipe_runs_from_the_write_to_the_relays_receipt() {
+        let stages = listener_focus();
+        assert_eq!(
+            duration_of(&stages, LatencyStageKind::ListenerPipe),
+            Some(150)
+        );
+        assert_eq!(
+            duration_of(&stages, LatencyStageKind::ListenerToRelay),
+            None,
+            "the whole span is left out where the write splits it"
+        );
+    }
+
+    #[test]
+    fn the_outposts_outbound_runs_from_the_publish_to_the_write() {
+        assert_eq!(
+            duration_of(&listener_focus(), LatencyStageKind::OutpostOutbound),
+            Some(30)
+        );
+    }
+
+    #[test]
+    fn the_outposts_pipe_runs_from_the_write_to_verbatim_exes_read() {
+        let stages = listener_focus();
+        assert_eq!(
+            duration_of(&stages, LatencyStageKind::OutpostPipe),
+            Some(120)
+        );
+        assert_eq!(
+            duration_of(&stages, LatencyStageKind::OutpostToRelay),
+            None,
+            "the whole span is left out where the write splits it"
         );
     }
 

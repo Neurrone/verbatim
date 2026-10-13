@@ -226,7 +226,13 @@ Public API:
   and `core_read_at_us`, when its reader read an outpost's `Event` or
   `Reply` (`OutpostToSupervisor::core_read`). A `Query` carries
   `core_received_at_us`, `core_relay_us`, and `core_sent_at_us` to the
-  outpost, which copies them into its reply.
+  outpost, which copies them into its reply. Each writer stamps when it
+  began writing, just before encoding (`OutpostToSupervisor::written`):
+  the listener's writer `listener_written_at_us` on a `FocusFact`, and
+  the outpost's writer `written_at_us` on an `Event` or `Reply`. The
+  listener's reading thread stamps `listener_read_at_us` when a UIA
+  focus's read ends. These split the hops to verbatim.exe into the
+  sender's own time and the pipe's.
   `SupervisorToOutpost`: `SetBackendOverride` (forces one backend for every
   window of the target, or restores normal arbitration), `DeliverFact` (a
   focus fact the listener captured, routed to this outpost — a UIA focus's

@@ -225,7 +225,7 @@ clock has passed its first frame, or, with no such clock (the silent test
 device) or when playback stopped first, when the utterance ends.
 For example:
 
-`12.3 ms for "Voice combo box English (Great Britain) collapsed Alt+v": 9.5 ms to speech and 2.8 ms to sound, not counting 0.0 ms waiting behind earlier speech. Event: Windows 0.0, listener to verbatim.exe 0.1, verbatim.exe 0.0, verbatim.exe to outpost 0.1, outpost queue 3.5, outpost read 5.5 (4 calls), outpost to verbatim.exe 0.1, waiting for the reducer 0.1, reducer 0.0, to speech 0.1. Speech: synthesis 0.6, leading silence 0.1, mixer and device 2.0.`
+`12.3 ms for "Voice combo box English (Great Britain) collapsed Alt+v": 9.5 ms to speech and 2.8 ms to sound, not counting 0.0 ms waiting behind earlier speech. Event: Windows 0.0, listener queue 0.0, listener's pipe to verbatim.exe 0.1, verbatim.exe 0.0, verbatim.exe to outpost 0.1, outpost queue 3.5, outpost read 5.5 (4 calls), outpost outbound 0.0, outpost's pipe to verbatim.exe 0.1, waiting for the reducer 0.1, reducer 0.0, to speech 0.1. Speech: synthesis 0.6, leading silence 0.1, mixer and device 2.0.`
 
 The total is everything from Windows raising the event to the audio engine
 taking the first sample, except time spent waiting behind earlier speech,
@@ -235,10 +235,19 @@ which is reported separately. The stages, in milliseconds:
   (whole milliseconds, and only for WinEvents).
 - Hook to Core: for a caret key, from the keyboard hook seeing the key to
   the reducer having handled it and asked the outpost for the caret.
-- Listener to verbatim.exe: for focus the listener sees, from the
-  listener observing the event to verbatim.exe's relay thread taking it
-  off the listener's pipe: the listener's queue and writer, the pipe, and
-  the relay thread's wake.
+- Listener read: for a UIA focus the listener sees, from the listener
+  observing the event to its reading thread having read the focus across
+  processes, the reading thread's queue included. A fact the listener
+  sends with no read (a WinEvent's, the text box's) has no listener read.
+- Listener queue: from the listener's read ending, or from its observing
+  the event for a fact with no read, to its writer beginning to write the
+  fact to verbatim.exe's pipe: the listener's outbound queue and its
+  writer's wake.
+- Listener's pipe to verbatim.exe: from the listener's writer beginning
+  the write to verbatim.exe's relay thread taking the fact off the pipe:
+  the encoding, the pipe, and the relay thread's wake.
+- Listener to verbatim.exe: the three above taken whole, for a timeline
+  that lacks the listener's write stamp.
 - Reducer to verbatim.exe's relay: for a request Core makes (a caret key's
   watch, a command's query), from the reducer having handled the input to
   the request being queued for the outpost.
@@ -265,8 +274,14 @@ which is reported separately. The stages, in milliseconds:
 - Outpost read: the worker's cross-process UIA and MSAA calls and window
   messages, after the caret wait for a caret key, with how many it made
   when it made any (`docs/performance.md` says what counts).
-- Outpost to verbatim.exe: from the outpost publishing to verbatim.exe's
-  reader having read and parsed the message.
+- Outpost outbound: from the outpost's worker publishing the event or
+  reply to the outpost's writer beginning to write it: the outbound queue
+  and the writer's wake.
+- Outpost's pipe to verbatim.exe: from the outpost's writer beginning the
+  write to verbatim.exe's reader having read and parsed the message: the
+  encoding, the pipe, and the reader.
+- Outpost to verbatim.exe: the two above taken whole, for a timeline that
+  lacks the outpost's write stamp.
 - Waiting for the reducer: from verbatim.exe's reader having the message
   to the reducer taking it. This is the reducer busy with what came
   before, not the relay. A timeline without the reader's stamp has one
@@ -340,10 +355,16 @@ audible run), keeps each run's `stderr.log`, and writes `stages.txt`: for
 every stage of the latency line, over every announcement, the count, the
 median, the 99th and 99.9th percentiles, the maximum, and the share over
 1 and 2 ms, in milliseconds. It ends with two totals summed per
-announcement: verbatim.exe's own stage with its hops to and from the
-outpost and the wait for the reducer, and a key's way to its speech
-queued. A total is what the user waits on; a stage that shrinks while
-another grows by as much has moved the wait, not removed it.
+announcement: verbatim.exe's own stage with its hop to the outpost, the
+outpost's outbound queue and its pipe back, and the wait for the reducer;
+and a key's way to its speech queued. The stages are those the latency
+line names, listed with it under "Driving a running Verbatim with
+verbatim-inspect" (`docs/design/communication.md`, section 10.1, gives
+each one's stamps): the listener's way to verbatim.exe, for instance,
+shows as listener read, listener queue, and listener's pipe to
+verbatim.exe, followed by verbatim.exe's own stage. A total is what the
+user waits on; a stage that shrinks while another grows by as much has
+moved the wait, not removed it.
 
 Two runs of the same build differ: a stage's share over 2 ms moved from
 3.0 to 0.9 percent between two debug runs on 2026-10-13, with about 400
