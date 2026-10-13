@@ -944,6 +944,13 @@ struct ReducerThread<'a> {
 /// the nodes it reported meanwhile.
 const HELD_RESEND_INTERVAL: u64 = 256;
 
+/// How many messages from an outpost must be handled before changed held
+/// nodes are sent: they only let the outpost release what Core no longer
+/// holds, which may wait, and a terminal's output changes them with every
+/// message (its caret's anchor), so sending each change would cost a round
+/// trip to the outpost per message (`docs/design/wake-ups.md`, item 4).
+const HELD_BATCH: u64 = 32;
+
 impl ReducerThread<'_> {
     /// Handles one message from the supervisor.
     fn on_outpost_message(&mut self, message: OutpostMessage) {
@@ -1420,6 +1427,9 @@ impl ReducerThread<'_> {
     /// [`HELD_RESEND_INTERVAL`] messages, so an outpost whose held nodes do
     /// not change still releases what it reported meanwhile. The text anchors
     /// the state holds in each outpost go with its nodes.
+    ///
+    /// Changed held nodes are sent once [`HELD_BATCH`] messages have been
+    /// handled since the last, not as each change happens.
     fn send_views(&mut self) {
         let held = self.state.held_nodes();
         let anchors = self.state.held_anchors();
@@ -1446,8 +1456,8 @@ impl ReducerThread<'_> {
                 .map(|anchors| anchors.iter().map(|anchor| anchor.0).collect())
                 .unwrap_or_default();
             let (sent, sent_anchors, acknowledged) = &live.held_sent;
-            if nodes != *sent
-                || outpost_anchors != *sent_anchors
+            let changed = nodes != *sent || outpost_anchors != *sent_anchors;
+            if (changed && live.position >= acknowledged + HELD_BATCH)
                 || live.position >= acknowledged + HELD_RESEND_INTERVAL
             {
                 self.context.supervisor.send_nodes_held(

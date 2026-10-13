@@ -28,6 +28,7 @@
 //! not yet reported, is kept: Core may not have seen it yet.
 
 pub(crate) mod acceptance;
+mod alarm;
 mod focus_path;
 mod handover;
 mod intake;

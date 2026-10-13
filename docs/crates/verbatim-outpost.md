@@ -393,6 +393,11 @@ Public API:
     `EventTiming`. Calls an entry makes without publishing, for an event it
     drops, are taken when the entry ends, logged, and belong to no trace
     (`docs/performance.md`, "Cancelled traces").
+  - The watchdog waits on an alarm (`outpost/alarm.rs`), a high-resolution
+    waitable timer the worker sets as it starts an entry and cancels as it
+    publishes, and an event set for a foreground fact and the shutdown;
+    setting and cancelling wake no thread, so the watchdog wakes only when
+    a deadline or grace passes (`docs/design/wake-ups.md`, item 3).
   - The watchdog abandons a worker whose call passes its deadline (an
     event, a focus, or a focus-now query 10 s, NVDA's normal watchdog
     timeout, since an application that is starting up can take seconds to

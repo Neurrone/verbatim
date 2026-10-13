@@ -51,17 +51,21 @@ Counts are for one traced window of 5 to 8 seconds.
    ends, to arm or disarm the deadline (`worker.rs`, the watch's
    condition variable): 7,972 wake-ups in 8 seconds of `conhost_flood`,
    about 1,000 a second, more than the worker's own 6,431. The
-   communication design's finding 12 named it; the fix is a deadline the
-   watchdog does not wake to arm, such as a waitable timer set by the
-   worker, so it wakes only when a deadline passes.
+   communication design's finding 12 named it. Fixed: the worker sets and
+   cancels a waitable timer, which wakes no thread, so the watchdog wakes
+   only when a deadline or grace passes; the same window then had too few
+   to list.
 4. Core answers the outpost's messages with its held nodes
    (`NodesHeld`) as each message is handled, so a flood of terminal output
    becomes a round trip per message: in 8 seconds of `conhost_flood`,
    verbatim.exe's writer for the outpost woke 3,092 times, the outpost's
    pipe-reading thread 3,397, and its worker handled a "nodes held" item
-   for each. Finding 12 again; the fix is to send held nodes only when they
-   change in a way the outpost needs to act on, or when Core goes idle,
-   never once per message.
+   for each. Finding 12 again. Sending them only when the reducer was
+   drained did not help, since in a flood it drains between every message;
+   they are now sent once 32 messages have passed since the last, the
+   unconditional resend every 256 kept. "Nodes held" items fell from 8,729
+   to 294 in a run, and the outbound, reader and reducer threads' wake-ups
+   by about two thirds.
 5. Every message from an outpost wakes three threads before the reducer
    handles it: the outpost's outbound thread, verbatim.exe's reader for
    that outpost, and the reducer (3,296, 3,061 and 3,622 in the flood). The

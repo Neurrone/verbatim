@@ -30,7 +30,7 @@
 use std::collections::HashSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -55,6 +55,7 @@ use crate::protocol::{
 
 use super::Context;
 use super::acceptance::{self, EventName, SystemWindows};
+use super::alarm::Alarm;
 use super::focus_path::{self, FocusPath};
 use super::intake::{Entry, Item, Object, Planned, UiaEvent, UiaKind, window_of};
 use super::read::{self, Client, ReadError};
@@ -138,7 +139,10 @@ impl WatchState {
 #[derive(Default)]
 pub(super) struct Watch {
     state: Mutex<WatchState>,
-    changed: Condvar,
+    /// The watchdog's wake: set for each entry's next check, cancelled when
+    /// the entry is published, and woken for a foreground fact or the
+    /// shutdown, so the watchdog wakes only when there is something to judge.
+    alarm: Alarm,
     /// Abandoned workers that have not yet returned. An atomic, so the reader
     /// answers a ping without waiting on the watch lock.
     abandoned: AtomicUsize,
@@ -162,25 +166,22 @@ impl Watch {
     /// Wakes the watchdog to judge again whether the user has moved on from
     /// the worker's window: a foreground fact reached the outpost, which
     /// Windows raises once the change is made (`phase6-design.md`,
-    /// "Foreground events against the foreground window"). The watch lock
-    /// is taken first, so the watchdog is waiting when it is told and the
-    /// wake is never lost.
+    /// "Foreground events against the foreground window"). The alarm's event
+    /// stays set until the watchdog takes it, so the wake is never lost.
     pub(super) fn foreground_changed(&self) {
-        let state = self.lock();
-        self.changed.notify_one();
-        drop(state);
+        self.alarm.wake();
     }
 
     /// Starts the worker's deadline for one entry concerning `window` (0 for
-    /// none).
+    /// none), and sets the alarm for its first check, which wakes no
+    /// thread: the watchdog wakes only if the entry is still running then.
     fn start(&self, deadline: Duration, running: Option<(u64, TraceId)>, window: isize) {
         let mut state = self.lock();
         let now = Instant::now();
         state.deadline = Some(now + deadline);
         state.started = Some((now, window));
         state.running = running;
-        drop(state);
-        self.changed.notify_one();
+        self.alarm.set(next_check(now, now + deadline, now, window));
     }
 
     /// Claims the right to publish an entry's result for `generation`, if
@@ -197,6 +198,7 @@ impl Watch {
         state.deadline = None;
         state.started = None;
         state.running = None;
+        self.alarm.cancel();
         Some(claim())
     }
 
@@ -423,7 +425,7 @@ fn spawn_worker(context: Arc<Context>, generation: u64) {
 /// threads were waited for.
 pub(super) fn stop(context: &Context) -> usize {
     context.watch.lock().stopping = true;
-    context.watch.changed.notify_all();
+    context.watch.alarm.wake();
     let watchdog = context
         .watch
         .watchdog
@@ -497,17 +499,14 @@ fn next_check(now: Instant, deadline: Instant, started: Instant, window: isize) 
 /// left for one of the same application on another UI thread, judged when
 /// the grace ends and whenever a foreground fact reaches the outpost.
 fn watchdog(context: &Arc<Context>) {
-    let mut state = context.watch.lock();
     loop {
+        context.watch.alarm.wait();
+        let mut state = context.watch.lock();
         if state.stopping {
             return;
         }
+        // An entry published since its alarm went off leaves no deadline.
         let Some(deadline) = state.deadline else {
-            state = context
-                .watch
-                .changed
-                .wait(state)
-                .unwrap_or_else(PoisonError::into_inner);
             continue;
         };
         let now = Instant::now();
@@ -520,13 +519,10 @@ fn watchdog(context: &Arc<Context>) {
             front_is_another_thread_of_its_application,
         );
         let Some(reason) = reason else {
-            let wait = next_check(now, deadline, started, window).saturating_duration_since(now);
-            state = context
+            context
                 .watch
-                .changed
-                .wait_timeout(state, wait)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
+                .alarm
+                .set(next_check(now, deadline, started, window));
             continue;
         };
         let running = state.abandon();
@@ -546,7 +542,6 @@ fn watchdog(context: &Arc<Context>) {
             });
         }
         spawn_worker(Arc::clone(context), generation);
-        state = context.watch.lock();
     }
 }
 

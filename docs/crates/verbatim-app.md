@@ -115,7 +115,11 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
 - `Effect::CopyToClipboard`, which select-then-copy emits, goes to the
   clipboard thread like every copy.
 - The held anchors (`SrState::held_anchors`) go to each outpost with its
-  held nodes, and a change of either sends the list again.
+  held nodes. A change of either sends the list again once `HELD_BATCH`
+  (32) of that outpost's messages have been handled since the last, not
+  at each change: the list only lets the outpost release what Core no
+  longer holds, and a terminal's output changes it with every message
+  (`docs/design/wake-ups.md`, item 4).
 
 Milestone M4's themes and earcons are wired here too (`phase6-design.md`,
 "Earcons"):
