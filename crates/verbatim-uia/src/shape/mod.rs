@@ -423,6 +423,14 @@ impl<S: Shape> Agile<S> {
             self.absent,
         ))
     }
+
+    /// The untyped agile reference, for a registration's scope
+    /// ([`crate::Scope::Elements`]), which reads nothing of the element's
+    /// cache. Local.
+    #[must_use]
+    pub fn reference(&self) -> AgileReference<IUIAutomationElement> {
+        self.element.clone()
+    }
 }
 
 impl<S: Shape> Clone for Agile<S> {

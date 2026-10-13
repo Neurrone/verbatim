@@ -194,7 +194,7 @@ fn uia_only_the_focus_is_followed() {
                 let _ = sender.send((element.cached_string(UIA_NamePropertyId), property));
             }),
         }],
-        Scope::Elements(vec![first]),
+        Scope::Elements(vec![first.reference()]),
     )
     .expect("Registration::new");
 

@@ -11,7 +11,7 @@ use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::{
     ActionName, Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, StateSet,
 };
-use verbatim_uia::map::{cached_native_window_handle, with_legacy_checked_state};
+use verbatim_uia::map::with_legacy_checked_state;
 use verbatim_uia::{
     Ancestor, AncestorWalk, Cached, DialogText, Fill, FocusInput, Live, Node, ProcessCheck,
     Request, Shape, Uia,
@@ -706,9 +706,10 @@ fn dialog_text_of(context: &Context, node: &NodeSnapshot) -> Option<String> {
             let gates = crate::gates::node_gates(&context.fetches());
             let gathered = context.bounded.run(DIALOG_TEXT_WAIT, move |uia| {
                 // Nothing of the dialog's own element is read: its text is
-                // gathered from its children.
+                // gathered from its children. A kept element is resolved
+                // here, on the bounded client's thread, as `Kept`.
                 let dialog = match (element, route) {
-                    (Some(element), _) => Live::new(element.resolve().ok()?),
+                    (Some(element), _) => element.resolve().ok()?.live().clone(),
                     (None, Some(route)) => {
                         let nodes = uia.request::<Node>(gates).ok()?;
                         let found = super::focus_path::find(uia, &route, &nodes, remote).0?;
@@ -873,7 +874,7 @@ fn resolve_uia_element(
 ) -> Result<Cached<Node>, ReadError> {
     if let Some(agile) = context.uia_registry.element_of(node_id) {
         if let Ok(element) = agile.resolve() {
-            match Live::new(element).refresh(nodes) {
+            match element.live().refresh(nodes) {
                 Ok(fresh) => return Ok(fresh),
                 Err(error) if !verbatim_uia::element_is_gone(&error) => {
                     return Err(ReadError::Failed(format!("reading the element: {error}")));
@@ -898,7 +899,7 @@ fn resolve_uia_element(
         if let Some(element) = found {
             let _ = context
                 .uia_registry
-                .id_for_element(&runtime_id, element.live().element());
+                .id_for_element(&runtime_id, &element.narrow());
             return Ok(element);
         }
     }
@@ -988,7 +989,7 @@ pub(super) fn navigate(
                 .element_of(neighbor.id)
                 .and_then(|agile| agile.resolve().ok())
             {
-                Some(element) => with_legacy_checked_state(&element, neighbor),
+                Some(element) => with_legacy_checked_state(element.live().element(), neighbor),
                 None => neighbor,
             }
         });
@@ -1035,9 +1036,7 @@ fn uia_remote_step(
     else {
         return Ok(None);
     };
-    // The registry's element was built with the base cache request, which
-    // caches the native window handle.
-    let own = cached_native_window_handle(&element);
+    let own = element.read().hwnd;
     let window = (own != 0).then_some(own);
     if !context.tries_remote(window) || (own != 0 && top_level_of(own) == own) {
         return Ok(None);
@@ -1092,13 +1091,11 @@ fn corrected_backend(
         return neighbor;
     };
     if context.uia_registry.runtime_id_of(neighbor.id).is_some() {
-        // The registry's element was built with the base cache request,
-        // which caches the native window handle.
         let window = context
             .uia_registry
             .element_of(neighbor.id)
             .and_then(|agile| agile.resolve().ok())
-            .map_or(0, |element| cached_native_window_handle(&element));
+            .map_or(0, |element| element.read().hwnd);
         if window == 0 || window == from_window || window_uses_uia(context, window) {
             return neighbor;
         }

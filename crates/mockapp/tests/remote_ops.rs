@@ -22,8 +22,8 @@ use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::focus_read::Judged;
 use verbatim_outpost::protocol::OutpostToSupervisor;
 use verbatim_uia::{
-    Ancestor, Cached, ElementExt, Fill, FocusInput, LEFT_OUT_WHEN_UNSUPPORTED, ListenerEvent, Live,
-    Node, Shape, Uia,
+    Ancestor, Cached, ElementExt, Fill, FocusInput, Kept, LEFT_OUT_WHEN_UNSUPPORTED, ListenerEvent,
+    Live, Node, Shape, Uia,
 };
 use verbatim_uia_rops::{
     Ancestry, Error, FocusAncestry, FocusAncestryFn, FocusQuery, NavigationDirection, Status,
@@ -474,7 +474,7 @@ fn a_navigation_step_reads_the_same_both_ways() {
         ),
         ("Remember", NavigationDirection::NextSibling, None),
     ] {
-        let element = fixture.find(from);
+        let element = fixture.find_node(from).narrow::<Kept>();
         let query = StepQuery {
             element: &element,
             direction,

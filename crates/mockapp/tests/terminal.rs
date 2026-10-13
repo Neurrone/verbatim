@@ -71,6 +71,7 @@ fn terminal_text(uia: &Uia, hwnd: HWND) -> (IUIAutomationElement, IUIAutomationT
     let element = registry
         .element_of(terminal)
         .and_then(|agile| agile.resolve().ok())
+        .map(|kept| kept.live().element().clone())
         .expect("its element");
     let pattern = verbatim_uia::text::text_pattern(&element)
         .expect("a text pattern")

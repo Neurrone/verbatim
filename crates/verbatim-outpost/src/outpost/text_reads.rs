@@ -28,8 +28,8 @@ use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::{
     CallCounts, CaretReport, CaretWatch, NodeId, Role, TextOp, TextReply, TraceId,
 };
-use verbatim_uia::ElementExt;
 use verbatim_uia::map::is_terminal_class;
+use verbatim_uia::{Cached, Kept};
 use verbatim_uia_rops::Path;
 
 use crate::arbitration::{normalize_class_name, window_class_name};
@@ -137,7 +137,7 @@ fn uia_source(context: &Context, node_id: NodeId) -> Result<UiaText, TextReply> 
         found
     } else {
         {
-            let fetched = match verbatim_uia::text::text_pattern(&element) {
+            let fetched = match verbatim_uia::text::text_pattern(element.live().element()) {
                 Ok((text_pattern, caret_pattern)) => {
                     AgileReference::new(&text_pattern).ok().map(|text_pattern| {
                         (
@@ -168,8 +168,7 @@ fn uia_source(context: &Context, node_id: NodeId) -> Result<UiaText, TextReply> 
     };
     let text_pattern = text_pattern.resolve().map_err(|_| TextReply::Gone)?;
     let caret_pattern = caret_pattern.and_then(|caret| caret.resolve().ok());
-    // Built with the base cache request, which caches the class name.
-    let class = element.cached_string(windows::Win32::UI::Accessibility::UIA_ClassNamePropertyId);
+    let class = element.read().class_name;
     let terminal = is_terminal_class(class.as_deref()) || console_focus(context, node_id);
     let remote = context.tries_remote(context.tracking().window());
     let support = context
@@ -177,10 +176,15 @@ fn uia_source(context: &Context, node_id: NodeId) -> Result<UiaText, TextReply> 
         .get(&node_id.number())
         .copied()
         .unwrap_or_default();
-    Ok(UiaText::new(element, text_pattern, caret_pattern, terminal)
-        .remote(remote)
-        .fetches(context.fetches())
-        .support(support))
+    Ok(UiaText::new(
+        element.live().element().clone(),
+        text_pattern,
+        caret_pattern,
+        terminal,
+    )
+    .remote(remote)
+    .fetches(context.fetches())
+    .support(support))
 }
 
 /// Forgets that `node_id`'s element answered it has no text pattern, as it
@@ -206,28 +210,18 @@ pub(super) fn forget_no_text(context: &Context, node_id: NodeId) -> bool {
 /// stand-in for a window whose provider did not answer in time, which has
 /// the window's runtime id and no text pattern: a short read of a starting
 /// Windows 11 Notepad's focused element has answered with it.
-pub(super) fn text_event_from(
-    context: &Context,
-    node_id: NodeId,
-    element: Option<&windows::Win32::UI::Accessibility::IUIAutomationElement>,
-) {
+pub(super) fn text_event_from(context: &Context, node_id: NodeId, element: Option<&Cached<Kept>>) {
     if !forget_no_text(context, node_id) {
         return;
     }
     if let (Some(element), Some(runtime_id)) =
         (element, context.uia_registry.runtime_id_of(node_id))
     {
-        // Cached reads only: which element is replaced, by which.
-        let describe = |element: &windows::Win32::UI::Accessibility::IUIAutomationElement| {
-            use windows::Win32::UI::Accessibility::{
-                UIA_ClassNamePropertyId, UIA_FrameworkIdPropertyId, UIA_NamePropertyId,
-            };
-            (
-                element.cached_string(UIA_NamePropertyId),
-                element.cached_string(UIA_ClassNamePropertyId),
-                element.cached_string(UIA_FrameworkIdPropertyId),
-            )
-        };
+        // Which element is replaced, by which: each one's runtime id, which
+        // UIA keeps with the element, and its class name, which `Kept`
+        // holds, so nothing is read beyond the cache (decision 7 of
+        // `docs/design/uia-shapes.md`).
+        let describe = |element: &Cached<Kept>| (element.runtime_id(), element.read().class_name);
         let replaced = context
             .uia_registry
             .element_of(node_id)

@@ -70,10 +70,10 @@ use std::time::Instant;
 
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{Notification, NotificationKind, NotificationProcessing, TraceId};
-use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange};
+use windows::Win32::UI::Accessibility::IUIAutomationTextRange;
 use windows::core::AgileReference;
 
-use verbatim_uia::{Agile, PropertyEvent, TextEvent};
+use verbatim_uia::{Agile, Cached, Kept, PropertyEvent, TextEvent};
 
 use crate::protocol::{DeliveredFact, Query, UiaSnapshotFact, WinEventStamp};
 
@@ -137,17 +137,13 @@ pub(super) enum EventElement {
 }
 
 impl EventElement {
-    /// The element on this thread; `None` when it cannot be resolved.
-    pub(super) fn resolve(&self) -> Option<IUIAutomationElement> {
+    /// The element on this thread, read as the `Kept` shape both event
+    /// shapes cover, which is all any reader of it reads and what the node
+    /// registry keeps; `None` when it cannot be resolved.
+    pub(super) fn resolve(&self) -> Option<Cached<Kept>> {
         match self {
-            Self::Property(agile) => agile
-                .resolve()
-                .ok()
-                .map(|event| event.live().element().clone()),
-            Self::Text(agile) => agile
-                .resolve()
-                .ok()
-                .map(|event| event.live().element().clone()),
+            Self::Property(agile) => agile.resolve().ok().map(|event| event.narrow()),
+            Self::Text(agile) => agile.resolve().ok().map(|event| event.narrow()),
         }
     }
 }

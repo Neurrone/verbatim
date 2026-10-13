@@ -725,7 +725,9 @@ own text"). mockapp's `tests/fixtures/dialog.json` is that message box.
 ### A dialog's text, UIA
 
 The same message box through UIA, gathered from the dialog's element the
-outpost holds.
+outpost holds, here one kept from a property event and resolved on the
+bounded client's thread as the `Kept` shape, of which nothing is read, so
+no cached read fails (`docs/design/uia-shapes.md`, step 4).
 
 - Minimum: 1 UIA call per container read: the dialog's children, with
   every property the rules look at cached, in one `BuildUpdatedCache` whose

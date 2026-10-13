@@ -592,9 +592,10 @@ as the focus ancestry does; the neighbor is a `Cached<Node>`. The
 classic implementation is `nearest_window_handle` and a tree walker step
 filled by the fill's request, one call each; a step that fails because the
 element is gone is an error, any other failure no neighbor. The step's
-own element is still a raw element the outpost keeps, its window handle
-read from its cache, until the registry keeps shaped elements (step 4 of
-`docs/design/uia-shapes.md`).
+own element (`StepQuery::element`) is a `Cached<Kept>`, the element the
+outpost's node registry keeps, whose window handle is read from it as the
+`Kept` shape, which every kept element's cache holds whichever request
+filled it (decision 2 of `docs/design/uia-shapes.md`).
 
 A program's walk ends at the process's top-level window, whose parent it
 reports as null where a tree walker reports the desktop, so the outpost

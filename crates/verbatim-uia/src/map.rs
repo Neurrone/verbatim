@@ -612,8 +612,13 @@ pub fn snapshot_from_cached_element(
     NodeSnapshot {
         // Caches `element` as the node's live element while minting its
         // id, so navigation and re-reads resolve it directly instead of
-        // re-finding it by runtime id (see the registry's module doc).
-        id: registry.id_for_element(&parts.runtime_id, element),
+        // re-finding it by runtime id (see the registry's module doc). The
+        // base cache request holds what `Kept` reads; this old entry point
+        // goes in step 5 of `docs/design/uia-shapes.md`.
+        id: registry.id_for_element(
+            &parts.runtime_id,
+            &crate::shape::Cached::<crate::shape::Kept>::filled(element.clone(), ()),
+        ),
         backend: Backend::Uia,
         role: parts.role,
         name: parts.name,

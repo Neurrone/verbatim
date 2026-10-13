@@ -41,7 +41,7 @@ use verbatim_model::{
     State, StateSet, TerminalOutput, TextOp, TextReply, TraceId,
 };
 use verbatim_uia::{
-    Cached, ElementExt as _, Fill, HelpTextRefresh, Live, Node, SuggestionsRefresh,
+    Cached, ElementExt as _, Fill, HelpTextRefresh, Kept, Node, SuggestionsRefresh,
     nearest_window_handle,
 };
 use windows::Win32::UI::Accessibility::{
@@ -72,7 +72,6 @@ use crate::terminal::keys;
 use crate::terminal::reading::{Action, Event};
 use crate::terminal::{Found, Memory, ReadMode};
 use crate::text::Watched;
-use windows::Win32::UI::Accessibility::IUIAutomationElement;
 
 /// The deadline for handling an event, a focus, or a focus-now query: NVDA's
 /// `NORMAL_CORE_ALIVE_TIMEOUT` (`watchdog.py`), the time NVDA waits for an
@@ -821,10 +820,10 @@ enum Refreshed {
 fn refreshed_for(
     uia: Option<&verbatim_uia::Uia>,
     id: i32,
-    element: Option<&IUIAutomationElement>,
+    element: Option<&Cached<Kept>>,
 ) -> Option<Refreshed> {
     let uia = uia?;
-    let live = Live::new(element?.clone());
+    let live = element?.live();
     if id == UIA_HelpTextPropertyId.0 {
         let request = uia.request_fixed::<HelpTextRefresh>().ok()?;
         live.refresh(&request).ok().map(Refreshed::HelpText)
@@ -1487,7 +1486,10 @@ impl Worker<'_> {
         if let Some(subscription) = self.context.focus_events.get() {
             match element {
                 Some(element) => {
-                    subscription.retarget_to(verbatim_uia::Scope::Elements(vec![element]), group);
+                    subscription.retarget_to(
+                        verbatim_uia::Scope::Elements(vec![element.reference()]),
+                        group,
+                    );
                 }
                 None => subscription.retarget(verbatim_uia::Scope::Nothing),
             }
@@ -2146,7 +2148,9 @@ impl Worker<'_> {
             // reading thread walked up to (`FocusReader::check_fact`).
             Some(event.focus_window)
         } else {
-            element.as_ref().and_then(nearest_window_handle)
+            element
+                .as_ref()
+                .and_then(|element| nearest_window_handle(element.live().element()))
         };
         // NVDA neither arbitrates nor tests a notification against the
         // foreground: it is spoken only from the focus's application, which
@@ -2227,7 +2231,7 @@ impl Worker<'_> {
     /// for a terminal, has its new output read.
     fn text_changed(
         &mut self,
-        (runtime_id, element): (&[i32], Option<&IUIAutomationElement>),
+        (runtime_id, element): (&[i32], Option<&Cached<Kept>>),
         hwnd: Option<isize>,
         (trace, observed_at_ms): (TraceId, u64),
     ) {
@@ -2289,7 +2293,7 @@ impl Worker<'_> {
             .existing_id(&focus_id)
             .and_then(|id| registry.element_of(id))
             .and_then(|agile| agile.resolve().ok());
-        let focused = match known {
+        let focused: Cached<Kept> = match known {
             Some(element) => element,
             None => self.element_by_focus_path(&focus_id)?,
         };
@@ -2301,7 +2305,7 @@ impl Worker<'_> {
         let nodes = self.context.node_request(uia).ok()?;
         let fill = Fill::new(&nodes);
         let query = verbatim_uia_rops::ControlledQuery {
-            focused: &focused,
+            focused: focused.live().element(),
             selected: runtime_id,
             fill: &fill,
         };
@@ -2316,9 +2320,8 @@ impl Worker<'_> {
         let selected = selected?;
         let registry = &self.context.uia_registry;
         // The controller's runtime id is UIA's own, kept with the element,
-        // whatever its cache holds: the focus may be an element kept from a
-        // text event, whose cache holds three properties.
-        let controller = verbatim_uia::runtime_id(&focused);
+        // whatever its cache holds.
+        let controller = focused.runtime_id();
         Some(NormalizedEvent::ControlledSelection {
             controller: registry.id_for_element(&controller, &focused),
             node: selected.snapshot(registry),
@@ -2335,8 +2338,8 @@ impl Worker<'_> {
     fn fresh_selection(
         &mut self,
         event: &UiaEvent,
-        element: Option<IUIAutomationElement>,
-    ) -> (UiaSnapshotFact, Option<IUIAutomationElement>) {
+        element: Option<Cached<Kept>>,
+    ) -> (UiaSnapshotFact, Option<Cached<Kept>>) {
         let fresh = (matches!(event.kind, UiaKind::Selection) && element.is_none())
             .then(|| self.selected_element(&event.parts.runtime_id))
             .flatten();
@@ -2352,7 +2355,7 @@ impl Worker<'_> {
                         states: parts.states,
                         details: parts.details,
                     },
-                    Some(found.live().element().clone()),
+                    Some(found.narrow()),
                 )
             }
             None => (event.parts.clone(), element),
@@ -2375,7 +2378,7 @@ impl Worker<'_> {
             .and_then(|agile| agile.resolve().ok())?;
         let uia = self.client.uia()?;
         let nodes = self.context.node_request(uia).ok()?;
-        uia.find_by_runtime_id(&Live::new(focused), runtime_id, &nodes)
+        uia.find_by_runtime_id(focused.live(), runtime_id, &nodes)
             .ok()
             .flatten()
     }
@@ -2385,7 +2388,7 @@ impl Worker<'_> {
     fn uia_node(
         context: &Context,
         parts: &UiaSnapshotFact,
-        element: Option<&windows::Win32::UI::Accessibility::IUIAutomationElement>,
+        element: Option<&Cached<Kept>>,
     ) -> NodeSnapshot {
         let registry = &context.uia_registry;
         let id = match element {
@@ -2921,7 +2924,7 @@ impl Worker<'_> {
     /// listener read for the focus this outpost last reported, found by its
     /// path ([`focus_path::find`]); `None` when it is not in that chain, or
     /// its path does not lead to it.
-    fn element_by_focus_path(&mut self, runtime_id: &[i32]) -> Option<IUIAutomationElement> {
+    fn element_by_focus_path(&mut self, runtime_id: &[i32]) -> Option<Cached<Kept>> {
         let context = self.context;
         let route = context.focus_route(runtime_id)?;
         let uia = self.client.uia()?;
@@ -2931,10 +2934,8 @@ impl Worker<'_> {
         if import_failed {
             context.read_classically(route.window);
         }
-        // The caller keeps it in the node registry, which holds raw
-        // elements until it keeps shaped ones (step 4 of
-        // `docs/design/uia-shapes.md`).
-        found.map(|found| found.live().element().clone())
+        // Read as `Kept`: the callers keep it, or read only its runtime id.
+        found.map(|found| found.narrow())
     }
 
     /// The window a UIA focus is reported in, or [`Dropped`] when the focus
@@ -2969,12 +2970,7 @@ impl Worker<'_> {
     /// Keeps `element`, found for the focus `runtime_id` names, which was
     /// reported from its event alone, under the focus's node, and follows
     /// its changes.
-    fn follow_focus_element(
-        &mut self,
-        runtime_id: &[i32],
-        element: &IUIAutomationElement,
-        trace: TraceId,
-    ) {
+    fn follow_focus_element(&mut self, runtime_id: &[i32], element: &Cached<Kept>, trace: TraceId) {
         let context = self.context;
         let id = context.uia_registry.id_for_element(runtime_id, element);
         // The focus was reported without its element, so its text could not

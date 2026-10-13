@@ -336,8 +336,9 @@ Public API:
     value, or state set is read from and no detail; a caret, text, or
     active text position change's as a `Cached<TextEvent>`. The worker's
     event carries it as `Agile<PropertyEvent>` or `Agile<TextEvent>`
-    (`intake::EventElement`), resolved to the raw element where the worker
-    keeps it, until the node registry keeps shaped elements.
+    (`intake::EventElement`), resolved on the worker as the `Kept` shape
+    both cover, which is what the node registry keeps and all any reader
+    of the event's element reads.
     The worker moves it each time it reports a focus, without waiting
     (`follow_focus`): the matching group is added to the new focus, then
     removed from the previous one alone (`RemoveEventHandlerGroup`);
@@ -544,7 +545,9 @@ Public API:
   each a `DialogObject`, the traits each backend implements: MSAA through
   `verbatim_ia2::dialog::DialogObject`, both at once, and UIA through
   `UiaDialog::new(uia, request, element)`, the dialog, of which nothing
-  is read but its children, and `UiaObject`, each child, whose children
+  is read but its children (the worker resolves the dialog's kept
+  `Agile<Kept>` on the bounded client's thread and hands over its `Live`
+  element), and `UiaObject`, each child, whose children
   come with their properties cached, one call per container, each read as
   a `verbatim_uia::DialogText`, with its description whatever the theme,
   as NVDA's dialog text includes it (decision 5 of
@@ -1020,7 +1023,8 @@ Implementation notes:
   neighbor.
 - A UIA object-navigation step (`read::uia_remote_step`) is one remote
   operation (`verbatim_uia_rops::navigation_step`): from the element the
-  registry keeps, without refreshing its cache first, the program finds
+  registry keeps, read as `Kept` for its own window handle, without
+  refreshing its cache first, the program finds
   the element's nearest window and takes the step, filling the neighbor's
   cache inside the provider. A step from a top-level window is taken the
   classic way, since a program's walk ends there while a tree walker goes

@@ -74,8 +74,8 @@ use verbatim_outpost::text::{
     Anchors, CaretSignal, TextSource, Watched, caret_report, check_caret, perform,
 };
 use verbatim_uia::{
-    Ancestor, CACHED_PROPERTIES, Cached, DialogText, ElementExt, FOCUS_PROPERTIES, Fill,
-    ListenerEvent, Live, Node, NodeIdRegistry, PropertyEvent, Registration, Scope, Shape,
+    Ancestor, BoundedClient, CACHED_PROPERTIES, Cached, DialogText, ElementExt, FOCUS_PROPERTIES,
+    Fill, ListenerEvent, Live, Node, NodeIdRegistry, PropertyEvent, Registration, Scope, Shape,
     Subscription, TextEvent, Uia,
 };
 use verbatim_uia_rops::{Attributes, FocusAncestry, FocusQuery, TextAttribute, focus_ancestry};
@@ -796,26 +796,44 @@ fn msaa_list_view_costs_exactly() {
 
 /// A UIA message box's text, gathered as the outpost's worker gathers it
 /// for a dialog the focus newly entered (`describe_dialogs` in
-/// `verbatim-outpost`'s `read.rs`): one call reads the dialog's children
-/// with their properties cached, and nothing of the dialog's own element
-/// is read. Each child is read with its description whatever the theme,
-/// as NVDA's dialog text includes it, so the question's description is in
-/// the text with descriptions off as with them on: no theme gate reaches
-/// the gathering.
+/// `verbatim-outpost`'s `read.rs`): the dialog's element is the one the
+/// node registry keeps, here kept from a property event, whose cache holds
+/// no detail, and is resolved on the bounded client's thread as `Kept`;
+/// one call reads the dialog's children with their properties cached, and
+/// nothing of the dialog's own element is read, so no cached read fails.
+/// Each child is read with its description whatever the theme, as NVDA's
+/// dialog text includes it, so the question's description is in the text
+/// with descriptions off as with them on: no theme gate reaches the
+/// gathering.
 fn uia_dialog_text_costs_exactly() {
     let title = common::unique_title("mockapp-counts-uia-dialog");
     let app = common::spawn("dialog.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let mut ratchet = Ratchet::default();
-    let dialog = Live::new(under_test.element("Remove Theme").clone());
-    let children = under_test
+    let property_event = under_test
         .uia
-        .request_fixed::<DialogText>()
-        .expect("a cache request");
-    let (text, cost) = under_test.measure(hwnd, |under_test| {
-        dialog_text(&UiaDialog::new(&under_test.uia, &children, dialog))
+        .request_fixed::<PropertyEvent>()
+        .expect("the property event's cache request");
+    let dialog = Live::new(under_test.element("Remove Theme").clone())
+        .refresh(&property_event)
+        .expect("the dialog's element as a property event delivers it");
+    let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
+    let node = registry.id_for_element(&dialog.runtime_id(), &dialog.narrow());
+    let kept = registry
+        .element_of(node)
+        .expect("the dialog's kept element");
+    let bounded = BoundedClient::default();
+    let (text, cost) = under_test.measure(hwnd, |_| {
+        bounded
+            .run(common::WAIT_TIMEOUT, move |uia| {
+                let dialog = kept.resolve().ok()?.live().clone();
+                let children = uia.request_fixed::<DialogText>().ok()?;
+                dialog_text(&UiaDialog::new(uia, &children, dialog))
+            })
+            .expect("the bounded client answers")
     });
+    bounded.close();
     assert_eq!(text.as_deref(), Some(QUESTION));
     ratchet.check(
         "UIA message box text",
@@ -1016,6 +1034,7 @@ fn collect(
         && let Some(element) = registry
             .element_of(node.snapshot.id)
             .and_then(|agile| agile.resolve().ok())
+            .map(|kept| kept.live().element().clone())
     {
         elements.insert(name.clone(), element);
     }

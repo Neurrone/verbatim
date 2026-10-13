@@ -8,7 +8,11 @@
 //! hand out the same [`NodeId`] for different nodes within one outpost.
 //!
 //! The registry also caches the live `IUIAutomationElement` behind each
-//! node, as an apartment-agile reference. Re-acquiring an element by
+//! node, as an [`Agile<Kept>`]: an apartment-agile reference whose cache is
+//! read only as the [`Kept`] shape, which every shape whose elements are
+//! kept covers, so a reader knows what it may read whichever request filled
+//! the element (`docs/design/uia-shapes.md`, section 6). A reader that
+//! needs more refreshes the element into a declared shape. Re-acquiring an element by
 //! runtime id means a `FindFirst` search, which has no index behind it —
 //! measured live, it walks enough of the tree to cost hundreds of
 //! milliseconds against a busy desktop, and it can miss virtualized
@@ -44,17 +48,16 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use windows::Win32::UI::Accessibility::IUIAutomationElement;
-use windows::core::AgileReference;
-
 use verbatim_model::NodeId;
+
+use crate::shape::{Agile, Cached, Kept};
 
 /// Elements a [`NodeIdRegistry`] has released. Releasing an element can call
 /// into its process, so the caller drops this after any lock it holds is
 /// released.
 #[must_use = "drop the released elements once no lock is held"]
 pub struct Released {
-    _elements: Vec<AgileReference<IUIAutomationElement>>,
+    _elements: Vec<Agile<Kept>>,
 }
 
 /// Maps UIA runtime IDs to stable [`NodeId`]s, and back for re-fetching,
@@ -72,7 +75,7 @@ pub struct NodeIdRegistry {
 struct Inner {
     forward: HashMap<Vec<i32>, NodeId>,
     reverse: HashMap<NodeId, Vec<i32>>,
-    elements: HashMap<NodeId, AgileReference<IUIAutomationElement>>,
+    elements: HashMap<NodeId, Agile<Kept>>,
     /// Nodes issued or looked up since the outpost last took them.
     touched: Vec<NodeId>,
 }
@@ -101,15 +104,16 @@ impl NodeIdRegistry {
     /// [`id_for`](Self::id_for), and additionally caches `element` as the
     /// live element behind the returned node (module doc), refreshing any
     /// previously cached one — the newest sighting is the most likely to
-    /// still be alive. The element it replaces is released after the lock,
-    /// since releasing an element can call into its process.
+    /// still be alive. A caller keeping an element of another shape narrows
+    /// it first ([`Cached::narrow`]). The element it replaces is released
+    /// after the lock, since releasing an element can call into its process.
     #[must_use]
-    pub fn id_for_element(&self, runtime_id: &[i32], element: &IUIAutomationElement) -> NodeId {
+    pub fn id_for_element(&self, runtime_id: &[i32], element: &Cached<Kept>) -> NodeId {
         let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let id = Self::id_for_locked(&self.counter, &mut inner, runtime_id);
         let mut replaced = None;
         if !runtime_id.is_empty()
-            && let Ok(agile) = AgileReference::new(element)
+            && let Ok(agile) = element.agile()
         {
             replaced = inner.elements.insert(id, agile);
         }
@@ -213,7 +217,7 @@ impl NodeIdRegistry {
     /// element died" and fall back to a search — the cache is a fast path,
     /// never a liveness guarantee.
     #[must_use]
-    pub fn element_of(&self, node: NodeId) -> Option<AgileReference<IUIAutomationElement>> {
+    pub fn element_of(&self, node: NodeId) -> Option<Agile<Kept>> {
         self.inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

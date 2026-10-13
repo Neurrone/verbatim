@@ -14,10 +14,14 @@ mod common;
 mod harness;
 
 use verbatim_model::{NodeDetails, Role, State, StateSet};
-use verbatim_uia::{Live, NodeIdRegistry, PropertyEvent, TextEvent, Uia, map};
+use verbatim_uia::{Fill, Live, NodeIdRegistry, PropertyEvent, Shape, TextEvent, Uia, map};
+use verbatim_uia_rops::{NavigationDirection, Path, StepQuery, navigation_step};
+use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, TreeScope_Children, TreeScope_Subtree,
+    IUIAutomationElement, TreeScope_Children, TreeScope_Descendants, TreeScope_Subtree,
+    UIA_NamePropertyId,
 };
+use windows::core::BSTR;
 
 /// One node of the tree as UIA reads it, with its children in order.
 #[derive(Debug, PartialEq)]
@@ -273,6 +277,57 @@ fn event_shapes_read_what_the_full_read_gives() {
     app.quit();
 }
 
+/// A node whose kept element came from a text event, whose cache holds its
+/// process, window and class name alone, is navigated remotely as the
+/// outpost navigates it: the step query reads the kept element as `Kept`,
+/// the shape every kept element covers, so neither the step nor the read of
+/// the neighbour it reaches makes a failed cached read.
+fn a_node_kept_from_a_text_event_navigates_remotely_with_no_failed_read() {
+    let title = common::unique_title("mockapp-uia-kept-text-event");
+    let app = common::spawn("tree.json", "uia", &title);
+    let hwnd = common::find_window(&title).0 as isize;
+
+    let uia = Uia::new().expect("Uia::new");
+    let root = uia.window_live(hwnd).expect("mockapp's window element");
+    let condition = uia
+        .property_condition(UIA_NamePropertyId, &VARIANT::from(BSTR::from("Notes")))
+        .expect("a condition");
+    let text_event = uia
+        .request_fixed::<TextEvent>()
+        .expect("the text event's request");
+    let notes = root
+        .find_first(TreeScope_Descendants, &condition, &text_event)
+        .expect("the search")
+        .expect("the Notes document, as a text event delivers it");
+    let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
+    let node = registry.id_for_element(&notes.runtime_id(), &notes.narrow());
+    let kept = registry
+        .element_of(node)
+        .expect("the node's kept element")
+        .resolve()
+        .expect("the kept element resolves");
+    let fill = Fill::new(
+        &uia.request::<verbatim_uia::Node>(verbatim_uia::Node::all_on())
+            .expect("the node's request"),
+    );
+
+    let _ = verbatim_uia::calls::take_failed_reads();
+    let query = StepQuery {
+        element: &kept,
+        direction: NavigationDirection::NextSibling,
+        fill: &fill,
+    };
+    let (step, path) = navigation_step(&uia, &query, true).expect("the step");
+    let neighbor = step.neighbor.map(|neighbor| neighbor.read().name);
+    let failed_reads = verbatim_uia::calls::take_failed_reads();
+
+    assert!(matches!(path, Path::Remote), "{path:?}");
+    assert_eq!(neighbor, Some(Some("Volume".to_owned())));
+    assert_eq!(step.window, Some(hwnd));
+    assert_eq!(failed_reads, 0);
+    app.quit();
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
@@ -284,6 +339,10 @@ fn main() {
         (
             "event_shapes_read_what_the_full_read_gives",
             event_shapes_read_what_the_full_read_gives,
+        ),
+        (
+            "a_node_kept_from_a_text_event_navigates_remotely_with_no_failed_read",
+            a_node_kept_from_a_text_event_navigates_remotely_with_no_failed_read,
         ),
     ]);
 }

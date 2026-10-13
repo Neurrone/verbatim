@@ -431,6 +431,9 @@ every node's details must read back exactly what was scripted, and
 all-`None` for every node the fixture left plain, so both presence and
 absence are pinned (rectangles excluded: mockapp scripts no geometry, but
 UIA merges the real window's rectangle into the hwnd-hosted root).
+`uia_tree.rs` also navigates remotely from a node whose kept element came
+from a text event, read as the `Kept` shape, and asserts the neighbour and
+that no cached read failed.
 `msaa_tree.rs` also reads a list's selected child through
 `verbatim_ia2::acquire::selected_child`, from the list object kept when the
 tree was walked, after a scripted `select`: the MSAA provider's

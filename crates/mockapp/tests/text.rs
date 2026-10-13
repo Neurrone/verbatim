@@ -91,6 +91,7 @@ fn notes_element(hwnd: HWND) -> IUIAutomationElement {
     registry
         .element_of(notes_id)
         .and_then(|agile| agile.resolve().ok())
+        .map(|kept| kept.live().element().clone())
         .expect("its element")
 }
 

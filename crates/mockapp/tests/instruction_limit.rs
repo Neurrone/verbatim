@@ -18,7 +18,7 @@ mod harness;
 
 use verbatim_uia::text::{Endpoint, TextPatternExt};
 use verbatim_uia::{
-    Ancestor, Cached, ElementExt, Fill, FocusInput, Live, Node, Shape, Uia, runtime_id,
+    Ancestor, Cached, ElementExt, Fill, FocusInput, Kept, Live, Node, Shape, Uia, runtime_id,
 };
 use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, ControlledQuery, Error,
@@ -82,6 +82,17 @@ impl Fixture {
 
     /// The element named `name`, read as what the focus query reads of it.
     fn find_input(&self, name: &str) -> Cached<FocusInput> {
+        self.find_node(name).narrow()
+    }
+
+    /// The element named `name`, read as the node registry keeps it, as the
+    /// navigation step query reads it.
+    fn find_kept(&self, name: &str) -> Cached<Kept> {
+        self.find_node(name).narrow()
+    }
+
+    /// The element named `name`, filled as a node.
+    fn find_node(&self, name: &str) -> Cached<Node> {
         let request = self
             .uia
             .request::<Node>(Node::all_on())
@@ -95,7 +106,6 @@ impl Fixture {
             .find_first(TreeScope_Descendants, &condition, &request)
             .unwrap_or_else(|error| panic!("no element named {name:?}: {error}"))
             .unwrap_or_else(|| panic!("no element named {name:?}"))
-            .narrow()
     }
 
     /// The fill of every element a focus query returns, with every detail.
@@ -262,7 +272,7 @@ fn focus_and_navigation_execute_exactly() {
     });
 
     let nodes = fixture.nodes();
-    let step = |element: &IUIAutomationElement, direction| {
+    let step = |element: &Cached<Kept>, direction| {
         let query = StepQuery {
             element,
             direction,
@@ -271,9 +281,9 @@ fn focus_and_navigation_execute_exactly() {
         let step = navigation_step_remote(&fixture.uia, &query).expect("the program runs");
         assert_eq!(step.window, Some(fixture.hwnd.0 as isize));
     };
-    let item = fixture.find("Apple");
+    let item = fixture.find_kept("Apple");
     let far = counted(|| step(&item, NavigationDirection::Parent));
-    let outer = fixture.find("Group 1");
+    let outer = fixture.find_kept("Group 1");
     let near_step = counted(|| step(&outer, NavigationDirection::FirstChild));
     fixture.app.quit();
 

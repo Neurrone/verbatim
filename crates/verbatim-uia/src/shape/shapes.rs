@@ -475,12 +475,8 @@ impl Node {
 
 /// `node`, read from `element`, as a snapshot, its id minted by `registry`,
 /// which keeps the element so later reads resolve it without a search.
-fn snapshot_of(
-    node: &Node,
-    element: &windows::Win32::UI::Accessibility::IUIAutomationElement,
-    registry: &NodeIdRegistry,
-) -> NodeSnapshot {
-    let parts = node.parts(crate::com::runtime_id(element));
+fn snapshot_of(node: &Node, element: &Cached<Kept>, registry: &NodeIdRegistry) -> NodeSnapshot {
+    let parts = node.parts(element.runtime_id());
     NodeSnapshot {
         id: registry.id_for_element(&parts.runtime_id, element),
         backend: Backend::Uia,
@@ -497,7 +493,7 @@ impl Cached<Node> {
     /// element. Local.
     #[must_use]
     pub fn snapshot(&self, registry: &NodeIdRegistry) -> NodeSnapshot {
-        snapshot_of(&self.read(), self.live().element(), registry)
+        snapshot_of(&self.read(), &self.narrow(), registry)
     }
 }
 
@@ -552,7 +548,7 @@ impl Cached<Ancestor> {
     /// the element. Local.
     #[must_use]
     pub fn snapshot(&self, registry: &NodeIdRegistry) -> NodeSnapshot {
-        snapshot_of(&self.read().node, self.live().element(), registry)
+        snapshot_of(&self.read().node, &self.narrow(), registry)
     }
 }
 

@@ -12,10 +12,9 @@
 //! desktop and other applications' windows; so a caller takes a step from
 //! a top-level window classically.
 
-use windows::Win32::UI::Accessibility::{IUIAutomationElement, UIA_NativeWindowHandlePropertyId};
+use windows::Win32::UI::Accessibility::UIA_NativeWindowHandlePropertyId;
 
-use verbatim_uia::map::cached_native_window_handle;
-use verbatim_uia::{Cached, Direction, Fill, Live, Node, Uia};
+use verbatim_uia::{Cached, Direction, Fill, Kept, Node, Uia};
 
 use crate::builder::{Builder, kind};
 use crate::caret::gone_or_timed_out;
@@ -27,9 +26,9 @@ use crate::opcode::NavigationDirection;
 /// What [`navigation_step`] and its two implementations are asked.
 #[derive(Clone, Copy)]
 pub struct StepQuery<'a> {
-    /// The element to step from, with the base cache filled (its native
-    /// window handle is read from it).
-    pub element: &'a IUIAutomationElement,
+    /// The element to step from, the node registry's kept element, read
+    /// as the `Kept` shape for its native window handle.
+    pub element: &'a Cached<Kept>,
     /// Which neighbor: parent, next or previous sibling, or first child.
     pub direction: NavigationDirection,
     /// How the neighbor's cache is filled: as a [`Node`].
@@ -88,8 +87,8 @@ pub fn navigation_step(
 /// Any [`Error`] from running the program.
 pub fn navigation_step_remote(_uia: &Uia, query: &StepQuery<'_>) -> Result<Step, Error> {
     let mut b = Builder::new();
-    let element = b.import_element(query.element);
-    let own = cached_native_window_handle(query.element);
+    let element = b.import_element(query.element.live().element());
+    let own = query.element.read().hwnd;
     let window = b.new_int(i32::try_from(own).unwrap_or(0));
     let window = b.add_to_results(window);
     if own == 0 {
@@ -144,7 +143,7 @@ pub fn navigation_step_remote(_uia: &Uia, query: &StepQuery<'_>) -> Result<Step,
 /// [`Error::Uia`] when the cache request or walker cannot be made, or the
 /// element is gone.
 pub fn navigation_step_classic(uia: &Uia, query: &StepQuery<'_>) -> Result<Step, Error> {
-    let window = verbatim_uia::nearest_window_handle(query.element);
+    let window = verbatim_uia::nearest_window_handle(query.element.live().element());
     let walker = uia.raw_view_walker()?;
     let direction = match query.direction {
         NavigationDirection::Parent => Direction::Parent,
@@ -157,7 +156,10 @@ pub fn navigation_step_classic(uia: &Uia, query: &StepQuery<'_>) -> Result<Step,
             )));
         }
     };
-    let neighbor = Live::new(query.element.clone()).walk(&walker, direction, query.fill.request());
+    let neighbor = query
+        .element
+        .live()
+        .walk(&walker, direction, query.fill.request());
     let neighbor = match neighbor {
         Ok(neighbor) => Some(neighbor),
         Err(error) if verbatim_uia::element_is_gone(&error) => return Err(Error::Uia(error)),

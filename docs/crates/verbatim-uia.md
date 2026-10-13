@@ -583,7 +583,9 @@ Public API:
     shape it covers.
   - `Agile<S>`, a `Cached<S>` for another thread of this process, `Send`
     and `Sync` with no `unsafe`; `resolve()` gives the `Cached<S>` back,
-    the same element and cache.
+    the same element and cache, and `reference()` the untyped agile
+    reference a registration's `Scope::Elements` takes, which reads nothing
+    of the element's cache.
   - `Live`, an element for calls into its application, with no cached
     read: `new`, `element()` for the raw element, `runtime_id()`,
     `refresh(request)` (`BuildUpdatedCache` into a shape),
@@ -610,7 +612,13 @@ Public API:
   Until step 5 of the migration the old lists and raw readers sit beside
   the shapes, and a site not yet moved passes `live().element()` to them.
 - `NodeIdRegistry` — maps UIA runtime IDs to stable `NodeId`s and keeps the
-  live element behind each; takes an injected shared counter so the UIA and
+  live element behind each, as an `Agile<Kept>`: `id_for_element(runtime_id,
+  element)` takes a `Cached<Kept>`, which a keeper of any shape that covers
+  `Kept` makes with `narrow`, and `element_of(node)` gives the
+  `Agile<Kept>` back, so a reader reads the window handle and class name
+  whichever request filled the element, and refreshes it into a declared
+  shape (`Live::refresh`) when it needs more (decision 2 of
+  `docs/design/uia-shapes.md`); takes an injected shared counter so the UIA and
   MSAA registries in one outpost never hand out the same id. Nodes stay
   until the outpost releases them with `retain` (the clear-at-2048 element
   cache is gone). They are not dropped when their window is destroyed: a
