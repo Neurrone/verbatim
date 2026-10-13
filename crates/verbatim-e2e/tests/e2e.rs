@@ -153,6 +153,7 @@ scenario_tests! {
     measure_keys_conhost
     measure_keys_windows_terminal
     measure_speech_real
+    measure_idle
 }
 
 /// The agent reports an interactive session on the default desktop: the

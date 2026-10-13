@@ -479,7 +479,7 @@ The groups:
   `measure_focus_windows_terminal`, `measure_focus_windows_terminal_tabs`,
   `measure_focus_explorer`, `measure_focus_text_box`,
   `measure_focus_new_application`, `measure_keys_text_box`,
-  `measure_keys_conhost`, `measure_keys_windows_terminal` and
+  `measure_keys_conhost`, `measure_keys_windows_terminal`, `measure_idle` and
   `measure_speech_real`, the last only in an audible run: workloads
   for Verbatim's latency ledger, which assert no speech after the
   desktop's and write each step's ground truth to `measure-truth.jsonl`
