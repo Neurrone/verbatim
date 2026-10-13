@@ -749,8 +749,9 @@ fn queue_for_reading(
 /// notifications as
 /// one event handler group on the desktop's root, all on one client as
 /// NVDA's global handlers are (`verbatim_uia::Subscription::Focus` says why
-/// they must share it), with NVDA's base cache request
-/// (`verbatim_uia::nvda_base_cache_request`). The facts carry the
+/// they must share it), each part shaped as `verbatim_uia::ListenerEvent`:
+/// NVDA's base cache request, with the two properties that refine a role
+/// for dialogs and toggle buttons. The facts carry the
 /// element's process, window, runtime id, role, and name from that cache;
 /// anything else in their snapshots is not read here and is left empty. A
 /// failure is reported as a fault and leaves the MSAA path running on its

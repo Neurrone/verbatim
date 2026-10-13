@@ -122,7 +122,7 @@ fn is_test_file(relative: &Path) -> bool {
 }
 
 /// Every `.rs` file under `folder`, skipping build output.
-fn collect_rust_files(folder: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+pub(crate) fn collect_rust_files(folder: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries = fs::read_dir(folder).map_err(|error| format!("{}: {error}", folder.display()))?;
     for entry in entries {
         let entry = entry.map_err(|error| format!("{}: {error}", folder.display()))?;
@@ -179,7 +179,7 @@ fn cfg_test_lines(source: &str) -> Vec<bool> {
 }
 
 /// `line` without a `//` comment, ignoring `//` inside a string.
-fn strip_comments(line: &str) -> String {
+pub(crate) fn strip_comments(line: &str) -> String {
     let mut in_string = false;
     let mut escaped = false;
     let characters: Vec<char> = line.chars().collect();
@@ -204,7 +204,7 @@ fn strip_comments(line: &str) -> String {
 }
 
 /// `code` with the contents of its string literals removed.
-fn strip_strings(code: &str) -> String {
+pub(crate) fn strip_strings(code: &str) -> String {
     let mut out = String::new();
     let mut in_string = false;
     let mut escaped = false;

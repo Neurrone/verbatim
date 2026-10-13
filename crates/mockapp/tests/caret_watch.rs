@@ -28,11 +28,7 @@ use common::outpost::OutpostUnderTest;
 /// listener's cache request, as a focus event's element arrives.
 fn focused(hwnd: HWND) -> Cached<ListenerEvent> {
     let uia = Uia::new().expect("a UIA client");
-    let cache = uia.base_cache_request().expect("a cache request");
-    let root = uia
-        .element_from_handle(hwnd.0 as isize, &cache)
-        .expect("mockapp's root element");
-    common::listener_focus(&uia, &root)
+    common::listener_focus(&uia, hwnd.0 as isize)
 }
 
 /// Moves mockapp's focus to `id` and returns the fact the focus listener

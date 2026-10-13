@@ -356,8 +356,8 @@ Implementation notes:
   empirically `IUIAutomationCacheRequest`'s cache-building still calls
   `GetPatternProvider` for `TogglePattern`, `ExpandCollapsePattern`,
   `ValuePattern`, and `SelectionItemPattern` before trusting a cached
-  value — which is exactly the path `verbatim-uia`'s base cache request
-  always uses. mockapp therefore implements small `IToggleProvider`,
+  value — which is exactly the path `verbatim-uia`'s shapes' requests
+  always use. mockapp therefore implements small `IToggleProvider`,
   `IExpandCollapseProvider`, `IValueProvider`, and
   `ISelectionItemProvider` objects (returned from `GetPatternProvider`,
   gated on role for toggle, on the fixture's `expanded`/`collapsed` states

@@ -84,10 +84,12 @@ fn a_busy_uia_window_is_read_once_it_answers() {
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title).0 as isize;
     let uia = verbatim_uia::Uia::new().expect("Uia::new");
-    let cache = uia.base_cache_request().expect("base cache request");
+    let nodes = uia
+        .request::<verbatim_uia::Node>(<verbatim_uia::Node as verbatim_uia::Shape>::all_on())
+        .expect("the node's cache request");
     let name = |uia: &verbatim_uia::Uia| {
-        uia.element_from_handle(hwnd, &cache)
-            .map(|root| verbatim_uia::map::snapshot_parts_from_cached_element(&root).name)
+        uia.window_element(hwnd, &nodes)
+            .map(|root| root.read().name)
             .expect("the root element is read")
     };
     assert_eq!(name(&uia).as_deref(), Some("Mockapp Events Fixture"));

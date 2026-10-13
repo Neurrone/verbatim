@@ -28,14 +28,13 @@ use std::time::Instant;
 use verbatim_ia2::{APP_SUBSCRIPTIONS, WinEvent, WinEventHook, WinEventKind};
 use verbatim_model::{NotificationKind, NotificationProcessing, State, StateSet};
 use verbatim_uia::{
-    Cached, ElementExt, FOCUS_PROPERTIES, ListenerEvent, Part, Registration, Scope, Subscription,
-    Uia,
+    Cached, FOCUS_PROPERTIES, ListenerEvent, Node, Part, PropertyEvent, Registration, Scope, Shape,
+    Subscription, Uia,
     map::{ignores_notifications, notification_kind_from_uia, notification_processing_from_uia},
 };
 use windows::Win32::Foundation::{HWND, WAIT_TIMEOUT};
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, UIA_NamePropertyId, UIA_SelectionItem_ElementSelectedEventId,
-    UIA_ValueValuePropertyId,
+    UIA_NamePropertyId, UIA_SelectionItem_ElementSelectedEventId, UIA_ValueValuePropertyId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, MSG, MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, PM_REMOVE,
@@ -61,8 +60,9 @@ fn expect_events<T: Debug + PartialEq>(events: &Receiver<T>, expected: &[T]) {
     }
 }
 
-/// A property change as a registration hears it: the sender's cached name
-/// and value, and the property.
+/// A property change as a registration hears it: the sender's name and
+/// value, read as the `PropertyEvent` shape the outpost's registration
+/// delivers, and the property.
 #[derive(Debug, PartialEq)]
 struct PropertyChange {
     name: Option<String>,
@@ -74,48 +74,40 @@ struct PropertyChange {
 /// sending each change it hears.
 fn property_changes(hwnd: HWND) -> (Registration, Receiver<PropertyChange>) {
     let (sender, changes) = mpsc::channel();
-    let registration = Registration::new(
-        vec![Subscription::Properties {
+    let registration = Registration::with_parts(
+        vec![Part::shaped::<PropertyEvent>(Subscription::Properties {
             properties: FOCUS_PROPERTIES.to_vec(),
-            callback: Arc::new(move |element, property| {
+            callback: Arc::new(move |element: &Cached<PropertyEvent>, property| {
+                let read = element.read();
                 // The test may have finished.
                 let _ = sender.send(PropertyChange {
-                    name: element.cached_string(UIA_NamePropertyId),
-                    value: element.cached_string(UIA_ValueValuePropertyId),
+                    name: read.name,
+                    value: read.value.value,
                     property,
                 });
             }),
-        }],
+        })],
         Scope::Windows(vec![hwnd.0 as isize]),
     )
-    .expect("Registration::new");
+    .expect("Registration::with_parts");
     (registration, changes)
 }
 
 /// The names of the root's children, read afresh through a new client.
 fn children_names(hwnd: HWND) -> Vec<(verbatim_model::Role, Option<String>)> {
     let uia = Uia::new().expect("Uia::new");
-    let cache = uia.base_cache_request().expect("base cache request");
+    let nodes = uia
+        .request::<Node>(Node::all_on())
+        .expect("the node's cache request");
     let root = uia
-        .element_from_handle(hwnd.0 as isize, &cache)
-        .expect("element_from_handle");
-    // SAFETY: a live client; the condition takes no arguments.
-    let condition = unsafe { uia.client().CreateTrueCondition() }.expect("CreateTrueCondition");
-    // SAFETY: `root` was built with the base cache request; `TreeScope_Children`
-    // and the true condition are standard client-side arguments.
-    let children = unsafe {
-        root.FindAllBuildCache(
-            windows::Win32::UI::Accessibility::TreeScope_Children,
-            &condition,
-            &cache,
-        )
-    }
-    .expect("FindAllBuildCache");
+        .window_live(hwnd.0 as isize)
+        .expect("mockapp's window element");
     let registry = verbatim_uia::NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
-    verbatim_uia::elements_of(&children)
+    uia.children(&root, &nodes)
+        .expect("the window's children")
         .iter()
         .map(|child| {
-            let snapshot = verbatim_uia::map::snapshot_from_cached_element(child, &registry);
+            let snapshot = child.snapshot(&registry);
             (snapshot.role, snapshot.name)
         })
         .collect()
@@ -169,13 +161,15 @@ fn uia_only_the_focus_is_followed() {
     let hwnd = common::find_window(&title);
 
     let uia = Uia::new().expect("Uia::new");
-    let cache = uia.base_cache_request().expect("base cache request");
+    let nodes = uia
+        .request::<Node>(Node::all_on())
+        .expect("the node's cache request");
     let registry = verbatim_uia::NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
     let root = uia
-        .element_from_handle(hwnd.0 as isize, &cache)
-        .expect("element_from_handle");
+        .window_element(hwnd.0 as isize, &nodes)
+        .expect("mockapp's window element");
     let (tree, _) = uia
-        .walk_tree(&root, &cache, &registry, 8, 64)
+        .tree(&root, &nodes, &registry, 8, 64)
         .expect("mockapp's tree");
     let first = tree
         .children
@@ -186,17 +180,16 @@ fn uia_only_the_focus_is_followed() {
         .expect("the button First");
 
     let (sender, names) = mpsc::channel();
-    let _registration = Registration::new(
-        vec![Subscription::Properties {
+    let _registration = Registration::with_parts(
+        vec![Part::shaped::<PropertyEvent>(Subscription::Properties {
             properties: FOCUS_PROPERTIES.to_vec(),
-            callback: Arc::new(move |element, property| {
-                // The sender arrives with the base cache request's name.
-                let _ = sender.send((element.cached_string(UIA_NamePropertyId), property));
+            callback: Arc::new(move |element: &Cached<PropertyEvent>, property| {
+                let _ = sender.send((element.read().name, property));
             }),
-        }],
+        })],
         Scope::Elements(vec![first.reference()]),
     )
-    .expect("Registration::new");
+    .expect("Registration::with_parts");
 
     app.send("set-name second Sibling");
     app.send("set-name group Ancestor");
@@ -240,12 +233,12 @@ fn uia_set_value_raises_a_property_changed_event() {
     app.quit();
 }
 
-/// A selected element as a registration hears it, mapped exactly as an
-/// outpost maps it: its name and its whole state set.
-fn selected(element: &IUIAutomationElement) -> (Option<String>, StateSet) {
-    let registry = verbatim_uia::NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
-    let snapshot = verbatim_uia::map::snapshot_from_cached_element(element, &registry);
-    (snapshot.name, snapshot.states)
+/// A selected element as a registration hears it, read as a
+/// `PropertyEvent` and mapped exactly as an outpost maps one: its name and
+/// its whole state set.
+fn selected(element: &Cached<PropertyEvent>) -> (Option<String>, StateSet) {
+    let parts = element.read().parts(element.runtime_id());
+    (parts.name, parts.states)
 }
 
 fn uia_select_raises_a_selection_event() {
@@ -258,23 +251,23 @@ fn uia_select_raises_a_selection_event() {
     // the first event's cached properties, which it does as it delivers it.
     let (sender, selections) = mpsc::channel();
     let marker = sender.clone();
-    let _registration = Registration::new(
+    let _registration = Registration::with_parts(
         vec![
-            Subscription::Event {
+            Part::shaped::<PropertyEvent>(Subscription::Event {
                 event: UIA_SelectionItem_ElementSelectedEventId,
                 callback: Arc::new(move |element| {
                     let _ = sender.send(Some(selected(element)));
                 }),
-            },
-            Subscription::Notifications {
+            }),
+            Part::shaped::<ListenerEvent>(Subscription::Notifications {
                 callback: Arc::new(move |_, _, _, _, _| {
                     let _ = marker.send(None);
                 }),
-            },
+            }),
         ],
         Scope::Windows(vec![hwnd.0 as isize]),
     )
-    .expect("Registration::new");
+    .expect("Registration::with_parts");
 
     app.send("select item1");
     app.send("notify Marker");
@@ -303,8 +296,8 @@ fn uia_notify_raises_a_notification_event() {
     let hwnd = common::find_window(&title);
 
     let (sender, notifications) = mpsc::channel::<SeenNotification>();
-    let _registration = Registration::new(
-        vec![Subscription::Notifications {
+    let _registration = Registration::with_parts(
+        vec![Part::shaped::<ListenerEvent>(Subscription::Notifications {
             callback: Arc::new(move |_element, kind, processing, display, activity| {
                 let _ = sender.send((
                     notification_kind_from_uia(kind),
@@ -313,10 +306,10 @@ fn uia_notify_raises_a_notification_event() {
                     activity,
                 ));
             }),
-        }],
+        })],
         Scope::Windows(vec![hwnd.0 as isize]),
     )
-    .expect("Registration::new");
+    .expect("Registration::with_parts");
 
     app.send("notify Window snapped to the left");
     app.send("notify Marker");
@@ -431,17 +424,20 @@ fn uia_active_text_position_arrives_with_its_range() {
     let hwnd = common::find_window(&title);
 
     let (sender, positions) = mpsc::channel();
-    let _registration = Registration::new(
-        vec![Subscription::ActiveTextPosition {
-            callback: Arc::new(move |element, range| {
-                let name = element.cached_string(UIA_NamePropertyId);
-                let range = range.and_then(|range| AgileReference::new(range).ok());
-                let _ = sender.send((name, range));
-            }),
-        }],
+    // Read as a `PropertyEvent`, whose request holds the sender's name.
+    let _registration = Registration::with_parts(
+        vec![Part::shaped::<PropertyEvent>(
+            Subscription::ActiveTextPosition {
+                callback: Arc::new(move |element: &Cached<PropertyEvent>, range| {
+                    let name = element.read().name;
+                    let range = range.and_then(|range| AgileReference::new(range).ok());
+                    let _ = sender.send((name, range));
+                }),
+            },
+        )],
         Scope::Windows(vec![hwnd.0 as isize]),
     )
-    .expect("Registration::new");
+    .expect("Registration::with_parts");
 
     app.send("active-text-position doc 6 10");
     app.send("active-text-position doc 0 5");
@@ -489,23 +485,23 @@ fn uia_one_group_delivers_each_of_its_subscriptions() {
     };
     let (property, selection, notification) =
         (note("property"), note("selection"), note("notification"));
-    let _registration = Registration::new(
+    let _registration = Registration::with_parts(
         vec![
-            Subscription::Properties {
+            Part::shaped::<PropertyEvent>(Subscription::Properties {
                 properties: FOCUS_PROPERTIES.to_vec(),
                 callback: Arc::new(move |_, _| property()),
-            },
-            Subscription::Event {
+            }),
+            Part::shaped::<ListenerEvent>(Subscription::Event {
                 event: UIA_SelectionItem_ElementSelectedEventId,
                 callback: Arc::new(move |_| selection()),
-            },
-            Subscription::Notifications {
+            }),
+            Part::shaped::<ListenerEvent>(Subscription::Notifications {
                 callback: Arc::new(move |_, _, _, _, _| notification()),
-            },
+            }),
         ],
         Scope::Windows(vec![hwnd.0 as isize]),
     )
-    .expect("Registration::new");
+    .expect("Registration::with_parts");
 
     app.send("set-name btn1 Renamed");
     app.send("select item1");

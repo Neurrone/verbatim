@@ -136,7 +136,7 @@ pub fn navigation_step_remote(_uia: &Uia, query: &StepQuery<'_>) -> Result<Step,
 /// window (`verbatim_uia::nearest_window_handle`, one call), then one raw
 /// view tree walker step built with the cache (one call). A step that
 /// fails because the element is gone is an error; any other failure reads
-/// as no neighbor, as `Uia::navigate` reads it.
+/// as no neighbor, as `Uia::neighbor` reads it.
 ///
 /// # Errors
 ///

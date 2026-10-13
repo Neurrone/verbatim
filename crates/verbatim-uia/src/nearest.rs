@@ -3,7 +3,7 @@
 //!
 //! Most elements that raise UIA events are not windows in their own right — a
 //! menu item or a list item is a descendant of one — so
-//! [`crate::map::cached_native_window_handle`] reads 0 for them and cannot
+//! their cached native window handle (`crate::Kept::hwnd`) reads 0 and cannot
 //! answer "which window does the outpost's per-window arbitration verdict
 //! apply to?" This module is NVDA's answer, adopted unchanged:
 //! `getNearestWindowHandle` in `nvda/source/UIAHandler/__init__.py`

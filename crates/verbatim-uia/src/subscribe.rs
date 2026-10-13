@@ -10,7 +10,7 @@
 //! registration has two such groups, as NVDA has two local groups
 //! (`UIAHandler/__init__.py`, `_createLocalEventHandlerGroup`): the base
 //! group, and the extended group, which also holds the parts marked
-//! [`Part::extended_only`]; and a third, the extended group without the
+//! [`Part::extended`]; and a third, the extended group without the
 //! parts marked [`Part::text_changes`], for an element whose text changes
 //! reach the caller another way. Each group is built once per thread and client,
 //! on first need, and every handler in it is added with its own part's
@@ -38,7 +38,7 @@
 //! Dropping a registration unregisters and ends its thread.
 //!
 //! A registration's thread calls into applications as it moves, and a
-//! caller can wait on it ([`Registration::new`] for its first registration,
+//! caller can wait on it ([`Registration::with_parts`] for its first registration,
 //! [`Registration::settle`]), so it has a watchdog, the outpost worker's
 //! rule: a move that has not finished within [`MOVE_DEADLINE`] when the
 //! registration is next moved or settled has its thread abandoned and
@@ -66,7 +66,6 @@ use windows::Win32::UI::Accessibility::{
 use windows::core::AgileReference;
 use windows_core::Interface;
 
-use crate::cache::CACHED_PROPERTIES;
 use crate::client::Uia;
 use crate::focus::{FocusCallback, FocusHandler};
 use crate::shape::{Cached, Ungated, delivered};
@@ -143,7 +142,7 @@ pub enum Scope {
 /// (`UIAHandler/__init__.py`, `addLocalEventHandlerGroupToElement`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Group {
-    /// Every part not marked [`Part::extended_only`].
+    /// Every part not marked [`Part::extended`].
     #[default]
     Base,
     /// Every part.
@@ -274,36 +273,24 @@ impl<S: Ungated> Subscription<Cached<S>> {
 #[derive(Clone)]
 pub struct Part {
     /// What the part listens for.
-    pub subscription: Subscription,
+    subscription: Subscription,
     /// The properties each event's element arrives with: the part's handler
     /// is added to its group with a cache request of exactly these.
-    pub properties: &'static [UIA_PROPERTY_ID],
+    properties: &'static [UIA_PROPERTY_ID],
     /// Whether only the extended groups ([`Group::Extended`] and
     /// [`Group::ExtendedWithoutTextChanges`]) hold the part; otherwise every
     /// group does.
-    pub extended_only: bool,
+    extended_only: bool,
     /// Whether the part delivers text changes, which
     /// [`Group::ExtendedWithoutTextChanges`] leaves out.
-    pub text_changes: bool,
+    text_changes: bool,
     /// The patterns the cache request also holds, such as the Text
     /// pattern [`crate::ListenerEvent`] prefetches, as NVDA's base cache
     /// request holds it.
-    pub patterns: &'static [UIA_PATTERN_ID],
+    patterns: &'static [UIA_PATTERN_ID],
 }
 
 impl Part {
-    /// A part both groups hold.
-    #[must_use]
-    pub fn new(subscription: Subscription, properties: &'static [UIA_PROPERTY_ID]) -> Self {
-        Self {
-            subscription,
-            properties,
-            extended_only: false,
-            text_changes: false,
-            patterns: &[],
-        }
-    }
-
     /// A part every group holds for shape `S`: each event's element arrives
     /// with `S`'s request filled, and the subscription's callbacks receive
     /// it as a [`Cached<S>`] (`docs/design/uia-shapes.md`).
@@ -437,41 +424,6 @@ impl Incarnation {
 }
 
 impl Registration {
-    /// Subscribes to every one of `subscriptions` over `scope`, as one event
-    /// handler group, returning once registered.
-    ///
-    /// # Errors
-    ///
-    /// Returns the COM error if the client, cache request, or a handler
-    /// cannot be created, or `UIA_E_TIMEOUT` if the first registration is
-    /// not made within [`MOVE_DEADLINE`], when its thread is abandoned. An
-    /// element of the scope that cannot be resolved, or on which the group
-    /// cannot be registered, is skipped rather than failing the
-    /// registration.
-    pub fn new(subscriptions: Vec<Subscription>, scope: Scope) -> windows::core::Result<Self> {
-        Self::with_cache(subscriptions, scope, CACHED_PROPERTIES)
-    }
-
-    /// [`new`](Self::new), each event's element arriving with exactly
-    /// `properties` prefetched rather than the base cache request's
-    /// ([`CACHED_PROPERTIES`]): for events whose callers read fewer, so the
-    /// provider is asked for no more with each event.
-    ///
-    /// # Errors
-    ///
-    /// As for [`new`](Self::new).
-    pub fn with_cache(
-        subscriptions: Vec<Subscription>,
-        scope: Scope,
-        properties: &'static [UIA_PROPERTY_ID],
-    ) -> windows::core::Result<Self> {
-        let parts = subscriptions
-            .into_iter()
-            .map(|subscription| Part::new(subscription, properties))
-            .collect();
-        Self::with_parts(parts, scope)
-    }
-
     /// Subscribes to every one of `parts` over `scope`, each with its own
     /// cache request, its elements given the base group ([`Group::Base`]),
     /// returning once registered. A later move can give a scope's elements
@@ -481,7 +433,12 @@ impl Registration {
     ///
     /// # Errors
     ///
-    /// As for [`new`](Self::new).
+    /// Returns the COM error if the client, cache request, or a handler
+    /// cannot be created, or `UIA_E_TIMEOUT` if the first registration is
+    /// not made within [`MOVE_DEADLINE`], when its thread is abandoned. An
+    /// element of the scope that cannot be resolved, or on which the group
+    /// cannot be registered, is skipped rather than failing the
+    /// registration.
     pub fn with_parts(parts: Vec<Part>, scope: Scope) -> windows::core::Result<Self> {
         let target = Target {
             scope,
@@ -888,7 +845,7 @@ fn set_up(parts: Vec<Part>, target: &Target, thread: &Thread) -> windows::core::
             let cache = if let Some((_, _, cache)) = shared {
                 cache.clone()
             } else {
-                let cache = uia.cache_request(part.properties)?;
+                let cache = crate::cache::cache_request(uia.client(), part.properties)?;
                 for &pattern in part.patterns {
                     // SAFETY: `cache` is a live cache request; a pattern id
                     // is a plain value.

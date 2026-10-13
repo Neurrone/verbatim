@@ -11,7 +11,6 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use std::fmt::Write as _;
 use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
@@ -22,8 +21,7 @@ use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::focus_read::Judged;
 use verbatim_outpost::protocol::OutpostToSupervisor;
 use verbatim_uia::{
-    Ancestor, Cached, ElementExt, Fill, FocusInput, Kept, LEFT_OUT_WHEN_UNSUPPORTED, ListenerEvent,
-    Live, Node, Shape, Uia,
+    Ancestor, Cached, ElementExt, Fill, FocusInput, Kept, ListenerEvent, Live, Node, Shape, Uia,
 };
 use verbatim_uia_rops::{
     Ancestry, Error, FocusAncestry, FocusAncestryFn, FocusQuery, NavigationDirection, Status,
@@ -88,10 +86,11 @@ impl Fixture {
         let app = common::spawn(file, "uia", &title);
         let hwnd = common::find_window(&title).0 as isize;
         let uia = Uia::new().expect("Uia::new");
-        let cache = uia.base_cache_request().expect("base cache request");
         let root = uia
-            .element_from_handle(hwnd, &cache)
-            .expect("element_from_handle");
+            .window_live(hwnd)
+            .expect("mockapp's window element")
+            .element()
+            .clone();
         let ancestors = Fill::new(
             &uia.request::<Ancestor>(Ancestor::all_on())
                 .expect("the ancestors' cache request"),
@@ -124,19 +123,10 @@ impl Fixture {
             .unwrap_or_else(|| panic!("no element named {name:?}"))
     }
 
-    /// The element named `name`, built with the base cache request as a
-    /// focus event's sender is.
+    /// The element named `name`, for its runtime id or a call into its
+    /// application: nothing of its cache is read.
     fn find(&self, name: &str) -> IUIAutomationElement {
-        let cache = self.uia.base_cache_request().expect("base cache request");
-        let value = VARIANT::from(BSTR::from(name));
-        let condition = self
-            .uia
-            .property_condition(UIA_NamePropertyId, &value)
-            .expect("condition");
-        self.root
-            .find_first_build_cache(TreeScope_Descendants, &condition, &cache)
-            .unwrap_or_else(|error| panic!("no element named {name:?}: {error}"))
-            .unwrap_or_else(|| panic!("no element named {name:?}"))
+        self.find_node(name).live().element().clone()
     }
 
     /// Focuses fixture node `id`, named `name`, and returns its element,
@@ -205,50 +195,62 @@ fn focused(answer: Result<FocusAncestry, Error>, label: &str) -> Ancestry {
 }
 
 /// Everything a caller reads from a returned element without another
-/// cross-process call: its runtime id, every cached property of its shape,
-/// and what the shape's read maps to, `mapped`.
+/// cross-process call: its runtime id, every field of its shape, each the
+/// read of a cached property, and what the shape's read maps to, `mapped`.
 ///
-/// The cached values are compared as read with defaults: read while
-/// ignoring defaults, a remotely filled cache returns a property's default
-/// where a locally built one returns UIA's "not supported" value, which is
-/// why the shape's mapping gates such properties on their pattern's
-/// availability, and the remote program leaves the rest out when
-/// unsupported (`LEFT_OUT_WHEN_UNSUPPORTED`), recording them as absent;
-/// the mapping covers those.
-fn cached_view<S: Shape>(element: &Cached<S>, mapped: impl FnOnce(&S) -> String) -> String {
-    let mut view = format!("{:?}", element.runtime_id());
-    for &property in S::PROPERTIES {
-        if LEFT_OUT_WHEN_UNSUPPORTED.contains(&property) {
-            continue;
-        }
-        let value = element.live().element().cached_value(property);
-        let _ = write!(
-            view,
-            "\n{}: {:?}",
-            property.0,
-            value.map(|value| format!("{value:?}"))
-        );
+/// Two fields are compared only where their pattern is available, as the
+/// shape's mapping reads them (`unset_where_meaningless`): read ignoring
+/// defaults, a remotely filled cache gives a property's default where a
+/// locally built one gives UIA's "not supported" value, so `ValueIsReadOnly`
+/// and `RangeValueValue` read as read-only and zero remotely, and as absent
+/// locally, for an element without the `Value` or `RangeValue` pattern. The
+/// remote program leaves `IsDataValidForForm` out when unsupported
+/// (`LEFT_OUT_WHEN_UNSUPPORTED`), recording it as absent, so it reads as
+/// absent either way.
+fn cached_view<S: Shape + std::fmt::Debug>(
+    element: &Cached<S>,
+    unset_where_meaningless: impl FnOnce(&mut S),
+    mapped: impl FnOnce(&S) -> String,
+) -> String {
+    let read = element.read();
+    let mut fields = element.read();
+    unset_where_meaningless(&mut fields);
+    format!("{:?}\n{fields:?}\n{}", element.runtime_id(), mapped(&read))
+}
+
+/// A node's value and state fields with the two read ignoring defaults
+/// unset where their pattern is not available ([`cached_view`]).
+fn unset_node_fields(node: &mut Node) {
+    if !node.value.range_available {
+        node.value.range = None;
     }
-    let _ = write!(view, "\n{}", mapped(&element.read()));
-    view
+    if !node.states.value_available {
+        node.states.value_read_only = None;
+    }
 }
 
 /// [`cached_view`] of an ancestor: its node's parts, whether it is a
 /// control and content, and its description for the layout judgment.
 fn ancestor_view(element: &Cached<Ancestor>) -> String {
-    cached_view(element, |ancestor| {
-        format!(
-            "{:?}\n{}\n{:?}",
-            ancestor.node.parts(Vec::new()),
-            ancestor.is_control_and_content(),
-            ancestor.layout_description()
-        )
-    })
+    cached_view(
+        element,
+        |ancestor| unset_node_fields(&mut ancestor.node),
+        |ancestor| {
+            format!(
+                "{:?}\n{}\n{:?}",
+                ancestor.node.parts(Vec::new()),
+                ancestor.is_control_and_content(),
+                ancestor.layout_description()
+            )
+        },
+    )
 }
 
 /// [`cached_view`] of a node: its parts.
 fn node_view(element: &Cached<Node>) -> String {
-    cached_view(element, |node| format!("{:?}", node.parts(Vec::new())))
+    cached_view(element, unset_node_fields, |node| {
+        format!("{:?}", node.parts(Vec::new()))
+    })
 }
 
 fn views(elements: &[Cached<Ancestor>]) -> Vec<String> {

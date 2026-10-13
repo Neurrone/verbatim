@@ -35,9 +35,9 @@ Public API:
   rectangle, and a UIA runtime id, `center_of` is the click target, and
   `refind` finds a chosen item in a fresh enumeration by its runtime id,
   or else by a name no other item has. Enumeration goes through
-  the existing `verbatim-uia` client — `element_from_handle` on shell
-  windows resolved by class, a control-view walk with the base cache
-  request extended by the bounding rectangle — and collects named,
+  the existing `verbatim-uia` client — `window_element` on shell
+  windows resolved by class, a control-view walk with each element read
+  as the `ShellButton` shape — and collects named,
   on-screen buttons. A hung shell cannot hang Verbatim: a guard thread
   abandons the worker after a three second deadline (the outpost
   watchdog's discipline, kept local and simple for a one-shot query) and

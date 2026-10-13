@@ -14,22 +14,18 @@ use windows::Win32::UI::Accessibility::{
     CUIAutomation8, CoalesceEventsOptions_Enabled, ConnectionRecoveryBehaviorOptions_Enabled,
     IUIAutomation, IUIAutomation2, IUIAutomation6, IUIAutomationCacheRequest,
     IUIAutomationCondition, IUIAutomationElement, IUIAutomationInvokePattern,
-    IUIAutomationSelectionItemPattern, IUIAutomationSelectionPattern, IUIAutomationTogglePattern,
-    IUIAutomationTreeWalker, TreeScope, TreeScope_Children, TreeScope_Element, TreeScope_Subtree,
-    UIA_InvokePatternId, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId,
-    UIA_Selection2FirstSelectedItemPropertyId, UIA_SelectionItemPatternId, UIA_SelectionPatternId,
-    UIA_TogglePatternId,
+    IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, IUIAutomationTreeWalker,
+    TreeScope, TreeScope_Children, TreeScope_Element, TreeScope_Subtree, UIA_InvokePatternId,
+    UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId, UIA_TogglePatternId,
 };
 
 use windows::core::Interface;
 
 use verbatim_model::{CallKind, NodeSnapshot, QueryKind, TreeNode};
 
-use crate::cache::base_cache_request;
 use crate::calls::count;
 use crate::com::init_mta;
-use crate::element::{ElementExt, WalkerExt, current_selection, invoke, select, toggle};
-use crate::map::snapshot_from_cached_element;
+use crate::element::{ElementExt, current_selection, invoke, select, toggle};
 use crate::registry::NodeIdRegistry;
 use crate::shape::{
     Ancestor, Cached, Direction, ElementValue, Live, Node, Request, SelectionContainer, Shape,
@@ -41,7 +37,7 @@ pub struct Uia {
     client: IUIAutomation,
 }
 
-/// Where an ancestor walk ([`Uia::ancestor_chain`]) stops short of the root.
+/// Where an ancestor walk ([`Uia::ancestors`]) stops short of the root.
 #[derive(Clone, Copy)]
 pub struct AncestorStops<'a> {
     /// Whether a window is read through the other API: the walk stops at
@@ -53,7 +49,7 @@ pub struct AncestorStops<'a> {
     pub deadline: Option<std::time::Instant>,
 }
 
-/// How an ancestor walk ended ([`Uia::ancestor_chain`]).
+/// How an ancestor walk ended ([`Uia::ancestors`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AncestorWalk {
     /// It reached the root, a window read through the other API, or a hop
@@ -68,7 +64,7 @@ pub enum AncestorWalk {
 /// One ancestor as another process read it from its cached element
 /// ([`Uia::ancestor_chain_from_parts`]): its parts, its own native window
 /// handle (0 for none), and whether UIA counts it both a control and
-/// content ([`crate::map::cached_is_control_and_content`]).
+/// content ([`Ancestor::is_control_and_content`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct AncestorParts {
     /// The ancestor's cached parts.
@@ -118,28 +114,6 @@ impl Uia {
         &self.client
     }
 
-    /// Builds a base cache request bound to this client.
-    ///
-    /// # Errors
-    ///
-    /// Returns the COM error if the cache request cannot be built.
-    pub fn base_cache_request(&self) -> windows::core::Result<IUIAutomationCacheRequest> {
-        base_cache_request(&self.client)
-    }
-
-    /// Builds the cache request for the details `fetches` names, bound to
-    /// this client ([`crate::cache_request_for`]).
-    ///
-    /// # Errors
-    ///
-    /// Returns the COM error if the cache request cannot be built.
-    pub fn cache_request_for(
-        &self,
-        fetches: verbatim_model::Fetches,
-    ) -> windows::core::Result<IUIAutomationCacheRequest> {
-        crate::cache::cache_request_for(&self.client, fetches)
-    }
-
     /// The cache request of `S`, a shape with no gates
     /// (`docs/design/uia-shapes.md`). Local.
     ///
@@ -158,18 +132,6 @@ impl Uia {
     /// Returns the COM error if the cache request cannot be built.
     pub fn request<S: Shape>(&self, gates: S::Gates) -> windows::core::Result<Request<S>> {
         Request::build(&self.client, gates)
-    }
-
-    /// Builds a cache request for exactly `properties`. Local.
-    ///
-    /// # Errors
-    ///
-    /// Returns the COM error if the cache request cannot be built.
-    pub fn cache_request(
-        &self,
-        properties: &[UIA_PROPERTY_ID],
-    ) -> windows::core::Result<IUIAutomationCacheRequest> {
-        crate::cache::cache_request(&self.client, properties)
     }
 
     /// The raw-view tree walker, the full tree NVDA's own walker uses.
@@ -250,7 +212,7 @@ impl Uia {
     /// # Errors
     ///
     /// Returns the COM error if there is no focused element or the call fails.
-    pub fn focused_element(
+    fn focused_element(
         &self,
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
@@ -296,24 +258,6 @@ impl Uia {
             .collect())
     }
 
-    /// `element`'s children in the raw view, in order, each with
-    /// `properties` cached, in one call: the element's cache is rebuilt
-    /// with its children in scope, and the children are read from it.
-    /// Cross-process; the outpost's worker only.
-    ///
-    /// # Errors
-    ///
-    /// Returns the COM error if the cache request cannot be built or the
-    /// element does not answer.
-    pub fn children_with(
-        &self,
-        element: &IUIAutomationElement,
-        properties: &[UIA_PROPERTY_ID],
-    ) -> windows::core::Result<Vec<IUIAutomationElement>> {
-        let request = crate::cache::cache_request(&self.client, properties)?;
-        self.children_from(element, &request)
-    }
-
     /// `element`'s raw-view children, read by rebuilding its cache with
     /// `request` set to the element and its children in the raw view.
     fn children_from(
@@ -350,7 +294,7 @@ impl Uia {
     /// # Errors
     ///
     /// Returns the COM error if the handle has no UIA element or the call fails.
-    pub fn element_from_handle(
+    pub(crate) fn element_from_handle(
         &self,
         hwnd: isize,
         cache: &IUIAutomationCacheRequest,
@@ -396,10 +340,15 @@ impl Uia {
         unsafe { self.client.ElementFromHandle(HWND(hwnd as *mut _)) }.map(Live::new)
     }
 
-    /// The element `runtime_id` names inside `root`'s subtree, its cache
-    /// filled by `request`, `Ok(None)` when it is not there
-    /// ([`element_by_runtime_id`](Self::element_by_runtime_id)).
-    /// Cross-process; the outpost's worker only.
+    /// Re-finds the element `runtime_id` names inside `root`'s subtree, its
+    /// cache filled by `request`, for answering a node re-read when no live
+    /// element is kept (the registry's kept element is the fast path; see
+    /// its module doc); `Ok(None)` when it is not there. `root` scopes the
+    /// search: `FindFirst` has no index behind it, so an unscoped search
+    /// from the desktop root walks every application's tree, the cost that
+    /// made object navigation feel stuck on a busy desktop before elements
+    /// were kept. Callers pass the target application's own top-level
+    /// window elements. Cross-process; the outpost's worker only.
     ///
     /// # Errors
     ///
@@ -417,10 +366,14 @@ impl Uia {
             .map(|found| Cached::filled(found, gates)))
     }
 
-    /// The element `runtime_id` names among the descendants of what
-    /// `focused` controls, its cache filled by `request`
-    /// ([`controlled_descendant`](Self::controlled_descendant)).
-    /// Cross-process; the outpost's worker only.
+    /// The element `runtime_id` names, its cache filled by `request`, when
+    /// it is a descendant of one of the elements `focused` names in its UIA
+    /// `ControllerFor` relation: NVDA's test for a selection in a list the
+    /// focus controls, such as a search result while the focus stays in
+    /// the search box. `Ok(None)` when `focused` controls nothing or the
+    /// element is in none of what it controls. The classic implementation
+    /// behind `verbatim_uia_rops::controlled_selection`. Cross-process; the
+    /// outpost's worker only, guarded by the caller's deadline.
     ///
     /// # Errors
     ///
@@ -454,7 +407,7 @@ impl Uia {
     ///
     /// Returns the COM error if building the condition or the search fails for
     /// a reason other than the element being absent.
-    pub fn element_by_runtime_id(
+    fn element_by_runtime_id(
         &self,
         root: &IUIAutomationElement,
         runtime_id: &[i32],
@@ -487,7 +440,7 @@ impl Uia {
     ///
     /// Returns the COM error if the relation cannot be read or a search
     /// fails for a reason other than the element being absent.
-    pub fn controlled_descendant(
+    fn controlled_descendant(
         &self,
         focused: &IUIAutomationElement,
         runtime_id: &[i32],
@@ -509,43 +462,13 @@ impl Uia {
         Ok(None)
     }
 
-    /// Walks the raw-view subtree rooted at `element` (already built with
-    /// `cache`), bounded by `max_depth` (the root is depth 0) and
-    /// `max_nodes` (the total number of nodes across the whole walk,
-    /// including the root). Cross-process; the outpost's worker only, guarded
-    /// by the caller's deadline since a hung provider can stall any step.
-    /// Returns the walked tree and whether either cap was hit before the
-    /// walk reached every node.
-    ///
-    /// # Errors
-    ///
-    /// Returns the COM error if the tree walker cannot be created.
-    pub fn walk_tree(
-        &self,
-        element: &IUIAutomationElement,
-        cache: &IUIAutomationCacheRequest,
-        registry: &NodeIdRegistry,
-        max_depth: u32,
-        max_nodes: usize,
-    ) -> windows::core::Result<(TreeNode, bool)> {
-        let walker = self.raw_view_walker()?;
-        let limits = WalkLimits {
-            cache,
-            registry,
-            max_depth,
-            max_nodes,
-        };
-        let mut state = WalkState {
-            visited: 1, // the root counts as one node.
-            truncated: false,
-        };
-        let root = walk_recursive(&walker, element, &limits, 0, &mut state);
-        Ok((root, state.truncated))
-    }
-
-    /// [`walk_tree`](Self::walk_tree) from `root`, every node read as a
-    /// [`TreeDump`] filled by `request`. Cross-process; the outpost's
-    /// worker only, guarded by the caller's deadline.
+    /// Walks the raw-view subtree rooted at `root`, every node read as a
+    /// [`TreeDump`] filled by `request`, bounded by `max_depth` (the root is
+    /// depth 0) and `max_nodes` (the total number of nodes across the whole
+    /// walk, the root included). Returns the walked tree and whether either
+    /// cap was hit before the walk reached every node. Cross-process; the
+    /// outpost's worker only, guarded by the caller's deadline, since a hung
+    /// provider can stall any step.
     ///
     /// # Errors
     ///
@@ -573,116 +496,31 @@ impl Uia {
         Ok((root, state.truncated))
     }
 
-    /// Walks the chain of ancestors of `element`, nearest first, via
-    /// [`IUIAutomationTreeWalker::GetParentElementBuildCache`]: one hop at a
-    /// time, each hop its own cross-process round trip using `cache` — the
-    /// same per-hop walk NVDA shipped for years. Capped at `max_hops`
-    /// ancestors; stops early (without error) when a hop finds no further
-    /// parent. Cross-process; the outpost's worker only, guarded by the
-    /// caller's deadline since a hung provider can stall any hop.
-    ///
-    /// This is deliberately the simplest correct implementation, behind this
-    /// method as a seam: milestone M4's remote-operations work
-    /// (architecture section 4) replaces the per-hop walk with a single
-    /// batched round trip executed inside the provider process. Callers
-    /// should depend only on the result — the ordered ancestor list — never
-    /// on how many round trips producing it took.
+    /// Walks the chain of ancestors of `element`, each read as an
+    /// [`Ancestor`] filled by `request`: its node for the report, and its
+    /// description whatever the theme, for the layout judgment. One hop at
+    /// a time over the raw view, each hop its own cross-process round trip
+    /// (`GetParentElementBuildCache`), the per-hop walk NVDA shipped for
+    /// years; the outpost reads a focus's ancestors in one remote operation
+    /// instead (`verbatim_uia_rops::focus_ancestry`, then
+    /// [`ancestors_from`](Self::ancestors_from)) and keeps this walk for
+    /// windows read the classic way. Capped at `max_hops` ancestors;
+    /// returned outermost first. Cross-process; the outpost's worker only,
+    /// guarded by the caller's deadline, since a hung provider can stall
+    /// any hop.
     ///
     /// The walk stops at an ancestor that is the root element of a window
-    /// `read_by_other_api` claims, and returns that window's handle with the
-    /// chain below it, so the caller can continue through the other API, as
-    /// NVDA switches API when a walk crosses into a window read through it
-    /// (`correctAPIForRelation`). It also stops at the first reported
-    /// ancestor `known` recognizes, from the previous focus's chain, with that
-    /// ancestor outermost, as NVDA's focus ancestry stops where it meets the
-    /// previous focus's ancestors; and when `deadline` passes, or a hop
-    /// finds the provider did not answer within UIA's transaction timeout,
-    /// reporting the chain as incomplete.
-    ///
-    /// # Errors
-    ///
-    /// Returns the COM error if the tree walker itself cannot be created;
-    /// a hop that finds no parent is not an error, it simply ends the walk.
-    pub fn ancestor_chain(
-        &self,
-        element: &IUIAutomationElement,
-        cache: &IUIAutomationCacheRequest,
-        registry: &NodeIdRegistry,
-        max_hops: u32,
-        stops: &AncestorStops<'_>,
-    ) -> windows::core::Result<(Vec<NodeSnapshot>, Option<isize>, AncestorWalk)> {
-        let AncestorStops {
-            read_by_other_api,
-            known,
-            deadline,
-        } = *stops;
-        // The raw view, the same parent chain NVDA's own object hierarchy
-        // walks; what gets *reported* out of it is filtered below.
-        let walker = self.raw_view_walker()?;
-        let mut chain = Vec::new();
-        let mut current = element.clone();
-        let started = std::time::Instant::now();
-        let mut hops = 0u32;
-        let log = |hops: u32, ending: &str| {
-            tracing::debug!(
-                hops,
-                ending,
-                elapsed_us = started.elapsed().as_micros(),
-                "UIA ancestor walk"
-            );
-        };
-        let out_of_time = || deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
-        for _ in 0..max_hops {
-            if out_of_time() {
-                chain.reverse();
-                log(hops, "out of time");
-                return Ok((chain, None, AncestorWalk::OutOfTime));
-            }
-            hops += 1;
-            let parent = walker.parent(&current, cache);
-            let Ok(parent) = parent else {
-                // A hop that fails because the deadline passed while it
-                // waited, or because the provider did not answer within
-                // UIA's transaction timeout, is an incomplete chain, not the
-                // root. Any other failure ends the chain as the root, as
-                // NVDA's does: its parent read answers no parent when the
-                // call fails.
-                let timed_out = parent.as_ref().is_err_and(|error| {
-                    error.code().0.cast_unsigned()
-                        == windows::Win32::UI::Accessibility::UIA_E_TIMEOUT
-                });
-                let ending = if timed_out || out_of_time() {
-                    AncestorWalk::OutOfTime
-                } else {
-                    AncestorWalk::Complete
-                };
-                chain.reverse();
-                log(hops, "root");
-                return Ok((chain, None, ending));
-            };
-            match take_ancestor(&parent, registry, read_by_other_api, known, &mut chain) {
-                Taken::Continue => current = parent,
-                Taken::Crossed(hwnd) => {
-                    chain.reverse();
-                    log(hops, "crossed into MSAA");
-                    return Ok((chain, Some(hwnd), AncestorWalk::Complete));
-                }
-                Taken::Known(id) => {
-                    chain.reverse();
-                    log(hops, "met a known ancestor");
-                    return Ok((chain, None, AncestorWalk::MetKnown(id)));
-                }
-            }
-        }
-        chain.reverse();
-        log(hops, "hop limit");
-        Ok((chain, None, AncestorWalk::Complete))
-    }
-
-    /// [`ancestor_chain`](Self::ancestor_chain) from `element`, each
-    /// ancestor read as an [`Ancestor`] filled by `request`: its node for
-    /// the report, and its description whatever the theme, for the layout
-    /// judgment. Cross-process; the outpost's worker only.
+    /// `stops.read_by_other_api` claims, and returns that window's handle
+    /// with the chain below it, so the caller can continue through the
+    /// other API, as NVDA switches API when a walk crosses into a window
+    /// read through it (`correctAPIForRelation`). It also stops at the
+    /// first reported ancestor `stops.known` recognizes, from the previous
+    /// focus's chain, with that ancestor outermost, as NVDA's focus
+    /// ancestry stops where it meets the previous focus's ancestors; and
+    /// when `stops.deadline` passes, or a hop finds the provider did not
+    /// answer within UIA's transaction timeout, reporting the chain as
+    /// incomplete. Ancestors that are not presentable focus context are
+    /// crossed but never reported (NVDA's `isPresentableFocusAncestor`).
     ///
     /// # Errors
     ///
@@ -724,9 +562,10 @@ impl Uia {
             hops += 1;
             let parent = match current.walk(&walker, Direction::Parent, request) {
                 Ok(parent) => parent,
-                // As in `ancestor_chain`: a hop that timed out, or ran past
-                // the deadline, is an incomplete chain; any other failure
-                // ends the chain as the root, as NVDA's does.
+                // A hop that timed out, or ran past the deadline, is an
+                // incomplete chain, not the root. Any other failure ends the
+                // chain as the root, as NVDA's does: its parent read answers
+                // no parent when the call fails.
                 Err(error) => {
                     let ending = if crate::timed_out(&error) || out_of_time() {
                         AncestorWalk::OutOfTime
@@ -757,9 +596,12 @@ impl Uia {
         Ok((chain, None, AncestorWalk::Complete))
     }
 
-    /// [`ancestor_chain_from`](Self::ancestor_chain_from) for `parents`
-    /// read as [`Ancestor`]s, nearest first, as one remote operation
-    /// returns them.
+    /// The same result as [`ancestors`](Self::ancestors), from `parents`
+    /// already fetched as [`Ancestor`]s, nearest first, as one remote
+    /// operation returns them: the same stops at a window read through the
+    /// other API and at a known ancestor, and the same filtering of what is
+    /// reported. A fetch cut short by a depth limit is reported as complete
+    /// up to there, like the walk's hop limit.
     #[must_use]
     pub fn ancestors_from(
         parents: &[Cached<Ancestor>],
@@ -790,46 +632,7 @@ impl Uia {
         (chain, None, AncestorWalk::Complete)
     }
 
-    /// The same result as [`Uia::ancestor_chain`], from `parents` already
-    /// fetched, nearest first, each with its cache filled (as one remote
-    /// operation returns them): the same stops at a window read through
-    /// the other API and at a known ancestor, and the same filtering of
-    /// what is reported. `complete` says whether `parents` ends at the
-    /// root; a fetch cut short by a depth limit is reported as complete
-    /// up to there, like the classic walk's hop limit. Each element of
-    /// `parents` should carry a cache with the properties
-    /// [`snapshot_from_cached_element`] reads.
-    #[must_use]
-    pub fn ancestor_chain_from(
-        parents: &[IUIAutomationElement],
-        registry: &NodeIdRegistry,
-        stops: &AncestorStops<'_>,
-    ) -> (Vec<NodeSnapshot>, Option<isize>, AncestorWalk) {
-        let mut chain = Vec::new();
-        for parent in parents {
-            match take_ancestor(
-                parent,
-                registry,
-                stops.read_by_other_api,
-                stops.known,
-                &mut chain,
-            ) {
-                Taken::Continue => {}
-                Taken::Crossed(hwnd) => {
-                    chain.reverse();
-                    return (chain, Some(hwnd), AncestorWalk::Complete);
-                }
-                Taken::Known(id) => {
-                    chain.reverse();
-                    return (chain, None, AncestorWalk::MetKnown(id));
-                }
-            }
-        }
-        chain.reverse();
-        (chain, None, AncestorWalk::Complete)
-    }
-
-    /// The same result as [`Uia::ancestor_chain_from`], from ancestors
+    /// The same result as [`Uia::ancestors_from`], from ancestors
     /// another process read and sent as their parts ([`AncestorParts`]),
     /// nearest first: the focus listener reads a focus's ancestors from the
     /// event's own element, and the outpost, which cannot receive that
@@ -866,34 +669,13 @@ impl Uia {
         (chain, None, AncestorWalk::Complete)
     }
 
-    /// The first selected child of a selection container, via the
-    /// container's `Selection` pattern: `GetCurrentSelection`, then the
-    /// first element of the result rebuilt with `cache` so its snapshot
-    /// reads entirely from cached properties. `Ok(None)` is every benign
-    /// outcome — the element does not expose the pattern, or nothing is
-    /// selected. Multi-selections report their first element; the reducer
-    /// speaks one item, and richer multi-selection reporting is deliberately
-    /// out of M3's scope. Cross-process; the outpost's worker only, guarded
-    /// by the caller's deadline.
-    ///
-    /// # Errors
-    ///
-    /// As [`Uia::selected_element`]: a provider that did not answer within
-    /// UIA's transaction timeout, or an element that is gone, is an error,
-    /// never a container with nothing selected.
-    pub fn selected_child(
-        &self,
-        element: &IUIAutomationElement,
-        cache: &IUIAutomationCacheRequest,
-        registry: &NodeIdRegistry,
-    ) -> windows::core::Result<Option<NodeSnapshot>> {
-        let selected = self.selected_element(element, cache)?;
-        Ok(selected.map(|selected| snapshot_from_cached_element(&selected, registry)))
-    }
-
-    /// [`selected_child`](Self::selected_child) of `container`, the child
-    /// read as a [`Node`] filled by `request`. Cross-process; the outpost's
-    /// worker only.
+    /// The first selected child of a selection container, read as a
+    /// [`Node`] filled by `request` ([`selected`](Self::selected)), as a
+    /// snapshot. `Ok(None)` is every benign outcome: the element exposes
+    /// no selection pattern, or nothing is selected. A multiple selection
+    /// reports its first element; the reducer speaks one item.
+    /// Cross-process; the outpost's worker only, guarded by the caller's
+    /// deadline.
     ///
     /// # Errors
     ///
@@ -909,14 +691,31 @@ impl Uia {
             .map(|selected| selected.snapshot(registry)))
     }
 
-    /// [`selected_element`](Self::selected_element) of `container`: its
-    /// first selected item, its cache filled by `request`, read from the
-    /// container refreshed as a [`SelectionContainer`], in the same calls.
-    /// Cross-process.
+    /// The first element of `container`'s current selection, its cache
+    /// filled by `request`, or `None` for every benign outcome: no
+    /// `Selection` pattern, nothing selected, or a call that failed in any
+    /// other way than the errors below. `verbatim-uia-rops` calls it for
+    /// the classic focus ancestry.
+    ///
+    /// One `BuildUpdatedCache` refreshes the container as a
+    /// [`SelectionContainer`], asking for both of its selection patterns at
+    /// once: `SelectionPattern2`'s `FirstSelectedItem` property, ignoring
+    /// its default, as NVDA reads the newer pattern where the provider has
+    /// it, and the `Selection` pattern object. With `SelectionPattern2`,
+    /// the first item comes from that call, and its refresh is the second
+    /// and last. Without it, the property reads "not supported" and the
+    /// cached `Selection` pattern reads the selection, a second call, with
+    /// the refresh a third, the count the `Selection` pattern alone always
+    /// took.
     ///
     /// # Errors
     ///
-    /// As [`Uia::selected_element`].
+    /// Returns the COM error when the cache request cannot be made, and a
+    /// call's error when the provider did not answer within UIA's
+    /// transaction timeout ([`timed_out`](crate::timed_out)) or the
+    /// container or its selected item is gone
+    /// ([`element_is_gone`](crate::element_is_gone)): neither says nothing
+    /// is selected.
     pub fn selected<S: Shape>(
         &self,
         container: &Live,
@@ -944,74 +743,13 @@ impl Uia {
         unanswered_is_error(Live::new(first).refresh(request))
     }
 
-    /// The element behind [`Uia::selected_child`]: the first element of the
-    /// container's current selection, rebuilt with `cache`, or `None` for
-    /// every benign outcome: no `Selection` pattern, nothing selected, or a
-    /// call that failed in any other way than the errors below.
-    /// `verbatim-uia-rops` calls it for the classic focus ancestry.
-    ///
-    /// One `BuildUpdatedCache` on the container asks for both of its
-    /// selection patterns at once: `SelectionPattern2`'s `FirstSelectedItem`
-    /// property, ignoring its default, as NVDA reads the newer pattern
-    /// where the provider has it, and the `Selection` pattern object. With
-    /// `SelectionPattern2`, the first item comes from that call, and its
-    /// cache rebuild is the second and last. Without it, the property reads
-    /// "not supported" and the cached `Selection` pattern reads the
-    /// selection, a second call, with the rebuild a third, the count the
-    /// `Selection` pattern alone always took.
-    ///
-    /// # Errors
-    ///
-    /// Returns the COM error when the cache request cannot be made, and a
-    /// call's error when the provider did not answer within UIA's
-    /// transaction timeout ([`timed_out`](crate::timed_out)) or the
-    /// container or its selected item is gone
-    /// ([`element_is_gone`](crate::element_is_gone)): neither says nothing
-    /// is selected.
-    pub fn selected_element(
-        &self,
-        element: &IUIAutomationElement,
-        cache: &IUIAutomationCacheRequest,
-    ) -> windows::core::Result<Option<IUIAutomationElement>> {
-        let request = crate::cache::cache_request(
-            &self.client,
-            &[UIA_Selection2FirstSelectedItemPropertyId],
-        )?;
-        // SAFETY: `request` was just created; a pattern id is a plain value.
-        unsafe { request.AddPattern(UIA_SelectionPatternId) }?;
-        let Some(container) = unanswered_is_error(element.build_updated_cache(&request))? else {
-            return Ok(None);
-        };
-        let Some(value) =
-            container.cached_value_ignoring_default(UIA_Selection2FirstSelectedItemPropertyId)
-        else {
-            return Ok(None);
-        };
-        let first = if crate::is_not_supported(&value) {
-            let Some(pattern) =
-                container.cached_pattern::<IUIAutomationSelectionPattern>(UIA_SelectionPatternId)
-            else {
-                return Ok(None);
-            };
-            unanswered_is_error(current_selection(&pattern))?
-                .and_then(|selection| selection.into_iter().next())
-        } else {
-            crate::variant_element(&value)
-        };
-        let Some(first) = first else {
-            return Ok(None);
-        };
-        // Rebuilding with `cache` prefetches the full snapshot property set in
-        // one round trip.
-        unanswered_is_error(first.build_updated_cache(cache))
-    }
-
-    /// Navigates one step from `element` in `direction`, via the raw-view
-    /// tree walker's per-hop `*BuildCache` methods — a single cross-process
-    /// round trip, and deliberately the full, unfiltered tree.
+    /// Navigates one step from `element` in `direction`, the neighbour read
+    /// as a [`Node`] filled by `request`, through the raw-view tree
+    /// walker's `*BuildCache` methods: a single cross-process round trip,
+    /// and deliberately the full, unfiltered tree.
     ///
     /// A recorded decision, made twice: object navigation matches NVDA
-    /// with its simple review mode off — every element the raw view
+    /// with its simple review mode off, so every element the raw view
     /// exposes is navigable, exactly the tree NVDA's own `baseTreeWalker`
     /// (also the raw view walker) exposes. An intermediate revision
     /// projected NVDA's simple-review filtering here instead; the user
@@ -1019,7 +757,7 @@ impl Uia {
     /// navigation is the correct behavior, so the projection was removed.
     /// Spoken focus ancestry is a different matter: NVDA filters it by
     /// `isPresentableFocusAncestor` regardless of the review-mode setting,
-    /// and [`Uia::ancestor_chain`] mirrors that.
+    /// and [`Uia::ancestors`] mirrors that.
     ///
     /// Returns `Ok(None)` for a genuine "no such neighbor" (a root's
     /// parent, a last child's next sibling), a first-class outcome distinct
@@ -1031,39 +769,6 @@ impl Uia {
     /// Returns the COM error if the tree walker cannot be created, or the
     /// step's error when it says the element is gone
     /// ([`element_is_gone`](crate::element_is_gone)).
-    pub fn navigate(
-        &self,
-        element: &IUIAutomationElement,
-        cache: &IUIAutomationCacheRequest,
-        registry: &NodeIdRegistry,
-        direction: QueryKind,
-    ) -> windows::core::Result<Option<NodeSnapshot>> {
-        let walker = self.raw_view_walker()?;
-        let neighbor = match direction {
-            QueryKind::Parent => walker.parent(element, cache),
-            QueryKind::NextSibling => walker.next_sibling(element, cache),
-            QueryKind::PreviousSibling => walker.previous_sibling(element, cache),
-            QueryKind::FirstChild => walker.first_child(element, cache),
-            // Not a navigation direction.
-            _ => return Err(windows::core::Error::from(E_INVALIDARG)),
-        };
-        match neighbor {
-            Ok(neighbor) => Ok(Some(snapshot_from_cached_element(&neighbor, registry))),
-            // A dead element is reported as such; any other failure reads as
-            // no neighbor, as NVDA's tree-walker failures do, and so does the
-            // null element `windows` reports for a genuine edge.
-            Err(error) if crate::element_is_gone(&error) => Err(error),
-            Err(_) => Ok(None),
-        }
-    }
-
-    /// [`navigate`](Self::navigate) from `element`, the neighbour read as a
-    /// [`Node`] filled by `request`. Cross-process; the outpost's worker
-    /// only, guarded by the caller's deadline.
-    ///
-    /// # Errors
-    ///
-    /// As [`Uia::navigate`].
     pub fn neighbor(
         &self,
         element: &Live,
@@ -1082,9 +787,9 @@ impl Uia {
         };
         match element.walk(&walker, direction, request) {
             Ok(neighbor) => Ok(Some(neighbor.snapshot(registry))),
-            // As in `navigate`: a dead element is reported as such; any
-            // other failure, the null element at an edge included, reads as
-            // no neighbor.
+            // A dead element is reported as such; any other failure reads as
+            // no neighbor, as NVDA's tree-walker failures do, and so does the
+            // null element `windows` reports for a genuine edge.
             Err(error) if crate::element_is_gone(&error) => Err(error),
             Err(_) => Ok(None),
         }
@@ -1095,7 +800,7 @@ impl Uia {
     /// element. Answers the action's name as NVDA names it: "invoke" for
     /// `Invoke`, none for the others. Each pattern is fetched live (`GetCurrentPatternAs`, not a
     /// cached read), since activation is an infrequent, user-triggered
-    /// action rather than something the base cache request prefetches.
+    /// action rather than something a shape's request prefetches.
     /// Cross-process; the outpost's worker only, guarded by the caller's
     /// deadline.
     ///
@@ -1147,7 +852,7 @@ fn unanswered_is_error<T>(result: windows::core::Result<T>) -> windows::core::Re
     }
 }
 
-/// What one ancestor did to a walk ([`take_ancestor`]).
+/// What one ancestor did to a walk ([`take_shaped_ancestor`]).
 enum Taken {
     /// The walk goes on to the next parent.
     Continue,
@@ -1157,35 +862,16 @@ enum Taken {
     Known(verbatim_model::NodeId),
 }
 
-/// One ancestor of a walk, nearest first: the stop at a window read
-/// through the other API, then the report, filtered, and the stop at a
-/// known ancestor. Non-presentable ancestors are crossed but never
-/// reported, NVDA's `isPresentableFocusAncestor`, which filters spoken
-/// focus context regardless of its review-mode setting (object navigation,
-/// by contrast, sees the full tree; see [`Uia::navigate`]); a UIA element
-/// is content only when UIA counts it both a control and content, as NVDA
-/// requires. `parent` should carry a cache holding the snapshot's
-/// properties.
-fn take_ancestor(
-    parent: &IUIAutomationElement,
-    registry: &NodeIdRegistry,
-    read_by_other_api: &dyn Fn(isize) -> bool,
-    known: &dyn Fn(verbatim_model::NodeId) -> bool,
-    chain: &mut Vec<NodeSnapshot>,
-) -> Taken {
-    let hwnd = crate::map::cached_native_window_handle(parent);
-    if hwnd != 0 && read_by_other_api(hwnd) {
-        return Taken::Crossed(hwnd);
-    }
-    let snapshot = snapshot_from_cached_element(parent, registry);
-    let content = crate::map::cached_is_control_and_content(parent);
-    let description = snapshot.details.description.clone();
-    take_reported(snapshot, content, description.as_deref(), known, chain)
-}
-
-/// [`take_ancestor`] for an ancestor read as an [`Ancestor`]: the layout
-/// judgment reads its description whatever the theme, while the snapshot
-/// reported carries the description only when the theme's gate fetched it.
+/// One ancestor of a walk, nearest first, read as an [`Ancestor`]: the
+/// stop at a window read through the other API, then the report, filtered,
+/// and the stop at a known ancestor. Non-presentable ancestors are crossed
+/// but never reported, NVDA's `isPresentableFocusAncestor`, which filters
+/// spoken focus context regardless of its review-mode setting (object
+/// navigation, by contrast, sees the full tree; see [`Uia::neighbor`]); a
+/// UIA element is content only when UIA counts it both a control and
+/// content, as NVDA requires. The layout judgment reads the ancestor's
+/// description whatever the theme, while the snapshot reported carries the
+/// description only when the theme's gate fetched it.
 fn take_shaped_ancestor(
     parent: &Cached<Ancestor>,
     registry: &NodeIdRegistry,
@@ -1209,7 +895,7 @@ fn take_shaped_ancestor(
     )
 }
 
-/// [`take_ancestor`] for an ancestor another process read
+/// [`take_shaped_ancestor`] for an ancestor another process read
 /// ([`AncestorParts`]): its node is minted from its runtime id, with no
 /// element kept.
 fn take_ancestor_parts(
@@ -1243,7 +929,7 @@ fn take_ancestor_parts(
 }
 
 /// The report of one ancestor, filtered, and the stop at a known one: the
-/// part of [`take_ancestor`] that does not depend on where the ancestor
+/// part of [`take_shaped_ancestor`] that does not depend on where the ancestor
 /// was read. `description` is the one the layout judgment reads.
 fn take_reported(
     snapshot: NodeSnapshot,
@@ -1441,16 +1127,6 @@ fn set_process_timeouts(client: &IUIAutomation2) -> windows::core::Result<()> {
     unsafe { client.SetTransactionTimeout(timeout) }
 }
 
-/// The per-walk parameters threaded through every level of
-/// [`walk_recursive`]: the caching and identity plumbing plus the walk's
-/// caps.
-struct WalkLimits<'a> {
-    cache: &'a IUIAutomationCacheRequest,
-    registry: &'a NodeIdRegistry,
-    max_depth: u32,
-    max_nodes: usize,
-}
-
 /// Mutable state accumulated across the whole walk, shared by every level
 /// of recursion.
 struct WalkState {
@@ -1458,51 +1134,9 @@ struct WalkState {
     truncated: bool,
 }
 
-/// Recursive worker for [`Uia::walk_tree`]. `state.visited` already counts
-/// `element` itself; children are counted as they are accepted into the
-/// walk, before recursing into them.
-fn walk_recursive(
-    walker: &IUIAutomationTreeWalker,
-    element: &IUIAutomationElement,
-    limits: &WalkLimits<'_>,
-    depth: u32,
-    state: &mut WalkState,
-) -> TreeNode {
-    // `element` carries every base-cache-request property, either as the
-    // walk's root or because every child reached below is fetched with a
-    // `*BuildCache` call using the same cache request.
-    let snapshot = snapshot_from_cached_element(element, limits.registry);
-
-    if depth >= limits.max_depth {
-        // Peek only: is there a child we are declining to descend into?
-        if walker.first_child(element, limits.cache).is_ok() {
-            state.truncated = true;
-        }
-        return TreeNode {
-            snapshot,
-            children: Vec::new(),
-        };
-    }
-
-    let mut children = Vec::new();
-    // An `Err` here means "no first child".
-    let mut next_child = walker.first_child(element, limits.cache).ok();
-    while let Some(current) = next_child {
-        if state.visited >= limits.max_nodes {
-            state.truncated = true;
-            break;
-        }
-        state.visited += 1;
-        let child_node = walk_recursive(walker, &current, limits, depth + 1, state);
-        children.push(child_node);
-        // `Err` means "no next sibling".
-        next_child = walker.next_sibling(&current, limits.cache).ok();
-    }
-
-    TreeNode { snapshot, children }
-}
-
-/// [`WalkLimits`] for [`walk_shaped`]: every node read as a [`TreeDump`].
+/// The per-walk parameters threaded through every level of
+/// [`walk_shaped`]: every node read as a [`TreeDump`] filled by the
+/// request, the registry that keeps each, and the walk's caps.
 struct ShapedWalk<'a> {
     request: &'a Request<TreeDump>,
     registry: &'a NodeIdRegistry,
@@ -1510,7 +1144,9 @@ struct ShapedWalk<'a> {
     max_nodes: usize,
 }
 
-/// [`walk_recursive`] for [`Uia::tree`].
+/// The recursive worker for [`Uia::tree`]. `state.visited` already counts
+/// `element` itself; children are counted as they are accepted into the
+/// walk, before recursing into them.
 fn walk_shaped(
     walker: &IUIAutomationTreeWalker,
     element: &Cached<TreeDump>,
@@ -1567,7 +1203,7 @@ fn walk_shaped(
 /// Used only to filter *spoken focus ancestry* (see
 /// [`is_presentable_focus_ancestor`]); object navigation deliberately sees
 /// the full tree, matching NVDA with its simple review mode off (the
-/// recorded decision on [`Uia::navigate`]). `description` is the node's
+/// recorded decision on [`Uia::neighbor`]). `description` is the node's
 /// description whatever the theme, as NVDA's judgment reads it whatever
 /// its setting (decision 4 of `docs/design/uia-shapes.md`).
 fn is_layout(snapshot: &NodeSnapshot, description: Option<&str>) -> bool {
@@ -1585,26 +1221,17 @@ fn is_layout(snapshot: &NodeSnapshot, description: Option<&str>) -> bool {
     }
 }
 
-/// Whether `element`, read into `snapshot`, is worth speaking as focus
-/// context by NVDA's rule for a UIA object: presentable by its role, name,
-/// and description (`is_presentable_focus_ancestor`), and counted by UI
-/// Automation both a control and content, without which NVDA takes a UIA
-/// object for layout (`_get_presentationType`,
-/// `NVDAObjects/UIA/__init__.py` 2121 to 2130). Every UIA ancestor a walk
-/// reports passes it; the outpost applies it as well to the element of a
-/// window read through UIA that an MSAA walk crosses into. `element` should
-/// carry a cache holding the snapshot's properties. Local.
-#[must_use]
-pub fn is_focus_context(element: &IUIAutomationElement, snapshot: &NodeSnapshot) -> bool {
-    is_presentable_focus_ancestor(snapshot, snapshot.details.description.as_deref())
-        && crate::map::cached_is_control_and_content(element)
-}
-
 impl Ancestor {
     /// Whether the element read as this ancestor, and reported as
     /// `snapshot`, is worth speaking as focus context by NVDA's rule for a
-    /// UIA object ([`is_focus_context`]), judged with its description
-    /// whatever the theme. Local.
+    /// UIA object: presentable by its role, name, and description
+    /// (`is_presentable_focus_ancestor`), and counted by UI Automation both
+    /// a control and content, without which NVDA takes a UIA object for
+    /// layout (`_get_presentationType`, `NVDAObjects/UIA/__init__.py` 2121
+    /// to 2130). Every UIA ancestor a walk reports passes it; the outpost
+    /// applies it as well to the element of a window read through UIA that
+    /// an MSAA walk crosses into. Judged with its description whatever the
+    /// theme. Local.
     #[must_use]
     pub fn is_focus_context(&self, snapshot: &NodeSnapshot) -> bool {
         let description = self.layout_description();

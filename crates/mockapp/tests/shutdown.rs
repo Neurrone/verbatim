@@ -25,10 +25,10 @@ use verbatim_model::{
 };
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, QueryResult};
-use verbatim_uia::{ElementExt, Uia};
+use verbatim_uia::{Node, Shape, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
-    UIA_ActiveTextPositionChangedEventId, UIA_AutomationPropertyChangedEventId, UIA_NamePropertyId,
+    UIA_ActiveTextPositionChangedEventId, UIA_AutomationPropertyChangedEventId,
     UIA_Text_TextChangedEventId, UIA_Text_TextSelectionChangedEventId,
 };
 
@@ -56,11 +56,7 @@ fn registrations(hwnd: HWND) -> Vec<i64> {
 /// listener's cache request, as a focus event's element arrives.
 fn focused(hwnd: HWND) -> verbatim_uia::Cached<verbatim_uia::ListenerEvent> {
     let uia = Uia::new().expect("a UIA client");
-    let cache = uia.base_cache_request().expect("a cache request");
-    let root = uia
-        .element_from_handle(hwnd.0 as isize, &cache)
-        .expect("mockapp's root element");
-    common::listener_focus(&uia, &root)
+    common::listener_focus(&uia, hwnd.0 as isize)
 }
 
 /// Focuses mockapp's "Notes" document and returns its node, once the
@@ -187,12 +183,14 @@ fn shut_down_during(name: &str, read: &Read) {
 
     // mockapp keeps running, and answers another client.
     let uia = Uia::new().expect("a UIA client");
-    let cache = uia.base_cache_request().expect("a cache request");
+    let request = uia
+        .request::<Node>(Node::all_on())
+        .expect("a cache request");
     let root = uia
-        .element_from_handle(hwnd.0 as isize, &cache)
+        .window_element(hwnd.0 as isize, &request)
         .expect("mockapp's root element, read by another client");
     assert_eq!(
-        root.cached_string(UIA_NamePropertyId).as_deref(),
+        root.read().name.as_deref(),
         Some("Mockapp Caret Watch Fixture")
     );
     app.quit();

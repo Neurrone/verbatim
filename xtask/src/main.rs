@@ -1,7 +1,9 @@
 //! Workspace automation, invoked as `cargo xtask <command>`.
 //!
 //! `ci` is the standard check for both local runs and GitHub Actions, so
-//! the two cannot drift: the platform-neutral dependency check, rustfmt,
+//! the two cannot drift: the platform-neutral dependency check, the scans
+//! that test code waits for evidence (`xtask/src/waits.rs`) and that UIA
+//! caches are read through shapes alone (`xtask/src/shapes.rs`), rustfmt,
 //! clippy (warnings denied), and unit tests, all for the host's own
 //! architecture.
 //!
@@ -35,6 +37,7 @@ mod demo;
 mod nvda;
 mod park;
 mod perf;
+mod shapes;
 mod trace;
 mod vm;
 mod waits;
@@ -173,6 +176,12 @@ fn ci() -> ExitCode {
         .expect("xtask lives in the workspace root");
     if let Err(error) = waits::check(root) {
         eprintln!("xtask ci: step failed: waits in test code\n{error}");
+        return ExitCode::FAILURE;
+    }
+
+    println!("xtask ci: UIA cached reads through shapes");
+    if let Err(error) = shapes::check(root) {
+        eprintln!("xtask ci: step failed: UIA cached reads through shapes\n{error}");
         return ExitCode::FAILURE;
     }
 

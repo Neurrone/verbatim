@@ -28,40 +28,33 @@ use verbatim_model::{CallCounts, NormalizedEvent, PropertyChange, StateSet};
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, UiaSnapshotFact};
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{
-    Cached, ElementExt, Fill, ListenerEvent, Live, Node, Registration, Scope, Shape, Subscription,
-    Uia,
+    Cached, Fill, ListenerEvent, Live, Node, Part, Registration, Scope, Shape, Subscription, Uia,
 };
 use verbatim_uia_rops::{ControlledQuery, Path, controlled_selection};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationCacheRequest, IUIAutomationElement, TreeScope_Descendants, UIA_HelpTextPropertyId,
-    UIA_NamePropertyId, UIA_SelectionItem_ElementSelectedEventId,
+    IUIAutomationElement, TreeScope_Descendants, UIA_HelpTextPropertyId, UIA_NamePropertyId,
+    UIA_SelectionItem_ElementSelectedEventId,
 };
 use windows::core::BSTR;
 
 use common::outpost::OutpostUnderTest;
 
-/// The element named `name` under `root`, built with `cache`.
-fn find(
-    uia: &Uia,
-    root: &IUIAutomationElement,
-    name: &str,
-    cache: &IUIAutomationCacheRequest,
-) -> IUIAutomationElement {
+/// The element named `name` under `root`, for the remote program to import
+/// and its runtime id: nothing of its cache is read.
+fn find(uia: &Uia, root: &Live, name: &str) -> IUIAutomationElement {
     let condition = uia
         .property_condition(UIA_NamePropertyId, &VARIANT::from(BSTR::from(name)))
         .expect("name condition");
-    root.find_first_build_cache(TreeScope_Descendants, &condition, cache)
+    let nodes = uia
+        .request::<Node>(Node::all_on())
+        .expect("a cache request");
+    root.find_first(TreeScope_Descendants, &condition, &nodes)
         .unwrap_or_else(|error| panic!("no element named {name:?}: {error}"))
         .unwrap_or_else(|| panic!("no element named {name:?}"))
-}
-
-fn runtime_id(element: &IUIAutomationElement) -> Vec<i32> {
-    verbatim_uia::map::snapshot_parts_from_cached_element(element).runtime_id
-}
-
-fn name_of(element: &IUIAutomationElement) -> Option<String> {
-    verbatim_uia::map::snapshot_parts_from_cached_element(element).name
+        .live()
+        .element()
+        .clone()
 }
 
 /// The element `selected` names when it is inside what `focused` controls,
@@ -109,26 +102,25 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
     let hwnd = common::find_window(&title);
 
     let (selected_tx, selected) = mpsc::channel();
-    let _registration = Registration::new(
-        vec![Subscription::Event {
+    let _registration = Registration::with_parts(
+        vec![Part::shaped::<ListenerEvent>(Subscription::Event {
             event: UIA_SelectionItem_ElementSelectedEventId,
-            callback: Arc::new(move |element| {
+            callback: Arc::new(move |element: &Cached<ListenerEvent>| {
                 // The test may have finished.
-                let _ = selected_tx.send((name_of(element), runtime_id(element)));
+                let _ = selected_tx.send((element.read().name, element.runtime_id()));
             }),
-        }],
+        })],
         Scope::Windows(vec![hwnd.0 as isize]),
     )
-    .expect("Registration::new");
+    .expect("Registration::with_parts");
 
     let uia = Uia::new().expect("Uia::new");
-    let cache = uia.base_cache_request().expect("base cache request");
     let root = uia
-        .element_from_handle(hwnd.0 as isize, &cache)
-        .expect("element_from_handle");
-    let search = find(&uia, &root, "Search box", &cache);
-    let other = find(&uia, &root, "Other box", &cache);
-    let results = find(&uia, &root, "Suggestions", &cache);
+        .window_live(hwnd.0 as isize)
+        .expect("mockapp's window element");
+    let search = find(&uia, &root, "Search box");
+    let other = find(&uia, &root, "Other box");
+    let results = find(&uia, &root, "Suggestions");
 
     // The next selection event, which must be the one for `name`.
     let selected_id = |name: &str| -> Vec<i32> {
@@ -160,7 +152,7 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
         "a box that controls nothing finds nothing"
     );
     assert_eq!(
-        controlled(&uia, &search, &runtime_id(&results)),
+        controlled(&uia, &search, &verbatim_uia::runtime_id(&results)),
         None,
         "the controlled list is not its own descendant"
     );
@@ -197,10 +189,9 @@ fn a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached() {
         },
     );
     let uia = Uia::new().expect("Uia::new");
-    let cache = uia.base_cache_request().expect("base cache request");
     let root = uia
-        .element_from_handle(hwnd.0 as isize, &cache)
-        .expect("element_from_handle");
+        .window_live(hwnd.0 as isize)
+        .expect("mockapp's window element");
 
     app.send("set-focus search");
     let listener = uia
@@ -209,7 +200,7 @@ fn a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached() {
     let condition = uia
         .property_condition(UIA_NamePropertyId, &VARIANT::from(BSTR::from("Search box")))
         .expect("name condition");
-    let search_box = Live::new(root.clone())
+    let search_box = root
         .find_first(TreeScope_Descendants, &condition, &listener)
         .expect("the search")
         .expect("the search box");
@@ -253,12 +244,12 @@ fn a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached() {
     let _ = outpost.take_failed_reads();
 
     app.send("select result2");
-    let result = find(&uia, &root, "Sound settings", &cache);
+    let result = find(&uia, &root, "Sound settings");
     outpost.deliver(DeliveredFact::UiaSelection {
         hwnd: hwnd.0 as isize,
         focus_window: hwnd.0 as isize,
         snapshot: UiaSnapshotFact {
-            runtime_id: runtime_id(&result),
+            runtime_id: verbatim_uia::runtime_id(&result),
             role: verbatim_model::Role::ListItem,
             name: Some("Sound settings".to_owned()),
             value: None,

@@ -53,12 +53,7 @@ impl Client {
     /// The element mockapp reports as having the keyboard focus, built with
     /// the listener's cache request, as a focus event's element arrives.
     fn focused(&self) -> Cached<ListenerEvent> {
-        let cache = self.uia.base_cache_request().expect("a cache request");
-        let root = self
-            .uia
-            .element_from_handle(self.hwnd.0 as isize, &cache)
-            .expect("mockapp's root element");
-        common::listener_focus(&self.uia, &root)
+        common::listener_focus(&self.uia, self.hwnd.0 as isize)
     }
 }
 

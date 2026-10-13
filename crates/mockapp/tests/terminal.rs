@@ -40,7 +40,7 @@ use verbatim_outpost::text::uia::UiaText;
 use verbatim_outpost::text::{
     Anchors, CaretSignal, NodeText, Watched, caret_report_from, check_caret, perform,
 };
-use verbatim_uia::{NodeIdRegistry, Uia};
+use verbatim_uia::{Node, NodeIdRegistry, Shape, Uia};
 use verbatim_uia_rops::{
     CaretLineQuery, ScreenAnchor, ScreenQuery, terminal_screen_classic, terminal_screen_remote,
 };
@@ -53,13 +53,15 @@ const WANTED: u32 = 3;
 
 /// mockapp's terminal's text pattern.
 fn terminal_text(uia: &Uia, hwnd: HWND) -> (IUIAutomationElement, IUIAutomationTextPattern) {
-    let cache = uia.base_cache_request().expect("a cache request");
+    let nodes = uia
+        .request::<Node>(Node::all_on())
+        .expect("a cache request");
     let root = uia
-        .element_from_handle(hwnd.0 as isize, &cache)
+        .window_element(hwnd.0 as isize, &nodes)
         .expect("mockapp's root element");
     let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
     let (tree, _) = uia
-        .walk_tree(&root, &cache, &registry, 8, 64)
+        .tree(&root, &nodes, &registry, 8, 64)
         .expect("mockapp's tree");
     let terminal = tree
         .children

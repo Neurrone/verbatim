@@ -23,11 +23,10 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use verbatim_uia::{
-    BoundedClient, CALL_TIMEOUT, ElementExt as _, MOVE_DEADLINE, Registration, Scope, Subscription,
-    Uia, Unanswered,
+    BoundedClient, CALL_TIMEOUT, ElementExt as _, MOVE_DEADLINE, Node, Part, PropertyEvent,
+    Registration, Scope, Shape, Subscription, Uia, Unanswered,
 };
 use windows::Win32::UI::Accessibility::UIA_NamePropertyId;
-use windows::core::AgileReference;
 
 /// How long a search may take in the test: well under UIA's call timeout,
 /// so the search's end is its deadline's, not UIA's.
@@ -46,15 +45,17 @@ fn a_held_property_read_ends_at_the_call_timeout() {
     let reader = std::thread::spawn(move || {
         common::init_com();
         let uia = Uia::new().expect("a UIA client");
-        let cache = uia.base_cache_request().expect("a cache request");
+        let nodes = uia
+            .request::<Node>(Node::all_on())
+            .expect("a cache request");
         // Fetched before the hold, so the held call is a transaction.
         let window = uia
-            .element_from_handle(hwnd, &cache)
+            .window_element(hwnd, &nodes)
             .expect("mockapp's window element");
         ready_tx.send(()).expect("the test waits");
         go_rx.recv().expect("the test says when");
         let started = Instant::now();
-        let answer = window.has_keyboard_focus();
+        let answer = window.live().element().has_keyboard_focus();
         (answer, started.elapsed())
     });
     ready.recv().expect("the reader is ready");
@@ -85,18 +86,21 @@ fn a_held_search_ends_at_its_deadline() {
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title).0 as isize;
     let uia = Uia::new().expect("a UIA client");
-    let cache = uia.base_cache_request().expect("a cache request");
+    let nodes = uia
+        .request::<Node>(Node::all_on())
+        .expect("a cache request");
     let window = uia
-        .element_from_handle(hwnd, &cache)
-        .expect("mockapp's window element");
-    let window = AgileReference::new(&window).expect("an agile reference");
+        .window_element(hwnd, &nodes)
+        .expect("mockapp's window element")
+        .agile()
+        .expect("an agile reference");
     let bounded = BoundedClient::default();
     // The thread and its client are made before the hold, by a search that
     // answers.
     let warm = window.clone();
     let found = bounded.run(common::WAIT_TIMEOUT, move |uia| {
-        let cache = uia.base_cache_request()?;
-        uia.element_by_runtime_id(&warm.resolve()?, &[42, 42], &cache)
+        let nodes = uia.request::<Node>(Node::all_on())?;
+        uia.find_by_runtime_id(warm.resolve()?.live(), &[42, 42], &nodes)
             .map(|found| found.is_some())
     });
     assert!(matches!(found, Ok(Ok(false))), "{found:?}");
@@ -104,8 +108,8 @@ fn a_held_search_ends_at_its_deadline() {
     app.hold();
     let started = Instant::now();
     let found = bounded.run(SEARCH_DEADLINE, move |uia| {
-        let cache = uia.base_cache_request()?;
-        uia.element_by_runtime_id(&window.resolve()?, &[42, 42], &cache)
+        let nodes = uia.request::<Node>(Node::all_on())?;
+        uia.find_by_runtime_id(window.resolve()?.live(), &[42, 42], &nodes)
             .map(|found| found.is_some())
     });
     let elapsed = started.elapsed();
@@ -136,11 +140,11 @@ fn a_held_subscription_move_is_abandoned_at_its_deadline() {
     let title = common::unique_title("mockapp-held-move");
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title).0 as isize;
-    let registration = Registration::new(
-        vec![Subscription::Properties {
+    let registration = Registration::with_parts(
+        vec![Part::shaped::<PropertyEvent>(Subscription::Properties {
             properties: vec![UIA_NamePropertyId],
             callback: Arc::new(|_, _| {}),
-        }],
+        })],
         Scope::Nothing,
     )
     .expect("a registration");

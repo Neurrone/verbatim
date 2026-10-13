@@ -1371,7 +1371,8 @@ cannot hold the focus.
 Since 2026-10-12 the focus listener's desktop-wide focus registration and
 its event handler group (an element selected, a menu opened, a
 notification) carry NVDA's base cache request, thirteen properties and
-the Text pattern (`verbatim_uia::nvda_base_cache_request`), where they
+the Text pattern (now the `verbatim_uia::ListenerEvent` shape's request,
+with two properties more), where they
 carried the base cache request's 34: UIA fills the request inside each
 application for every focus, selection, menu, and notification event on
 the desktop. The reading thread reads what it needs beyond it from the
@@ -1387,13 +1388,14 @@ The outpost's two focus-following registrations asked the provider for
 the base cache request's 34 properties with every event, a text focus's
 caret moves and text changes included, from which nothing is spoken: the
 worker reads the text itself. The text registration now asks for 3
-(`TEXT_EVENT_PROPERTIES`) and the property registration for 24
-(`FOCUS_EVENT_PROPERTIES`), leaving out only what feeds a node's details
+(the `TextEvent` shape) and the property registration for 24
+(`PropertyEvent`), leaving out only what feeds a node's details
 or its standing as focus context, since a change of states carries the
 whole state set. This saves work in the application on every keystroke
 and caret move, not round trips in Verbatim. Measured on demand, as UIA
-fills each request (`uia_event_caches_cost_exactly`): the base request
-costs mockapp 22 `GetPropertyValue`, 11 `GetPatternProvider`, and 1
+fills each request (`uia_event_caches_cost_exactly`, which measured the
+base request too until the request was removed in step 5 of
+`docs/design/uia-shapes.md`): the base request cost mockapp 22 `GetPropertyValue`, 11 `GetPatternProvider`, and 1
 `BoundingRectangle`; the text events' 3 `GetPropertyValue`, and the
 property changes' 13 `GetPropertyValue` and the 11 `GetPatternProvider`;
 each also costs the same 5 `ProviderOptions`, 3

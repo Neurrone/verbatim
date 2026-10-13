@@ -1,47 +1,33 @@
-//! Mapping from UIA control types and cached properties into the normalized
-//! model (architecture section 3). The role table is pure and unit-tested;
-//! [`snapshot_from_cached_element`] reads only cached values, so it never makes
-//! a cross-process call and is safe to run on a UIA event-callback thread.
+//! Mapping from UIA control types and properties into the normalized model
+//! (architecture section 3). The role table and the state mapping are pure
+//! and unit-tested; the shapes (`crate::Shape`) read an element's cached
+//! properties and map them through these, so a read never makes a
+//! cross-process call and is safe on a UIA event-callback thread.
 
-use verbatim_model::{Backend, NodeDetails, NodeSnapshot, Rect, Role, State, StateSet};
+use verbatim_model::{NodeDetails, NodeSnapshot, Role, State, StateSet};
 use windows::Win32::UI::Accessibility::{
     ExpandCollapseState_Collapsed, ExpandCollapseState_Expanded, IUIAutomationElement,
     NotificationKind_ActionAborted, NotificationKind_ActionCompleted, NotificationKind_ItemAdded,
     NotificationKind_ItemRemoved, NotificationProcessing_All,
     NotificationProcessing_CurrentThenMostRecent, NotificationProcessing_ImportantMostRecent,
     NotificationProcessing_MostRecent, ToggleState_Indeterminate, ToggleState_On,
-    UIA_AcceleratorKeyPropertyId, UIA_AccessKeyPropertyId, UIA_AppBarControlTypeId,
-    UIA_AutomationIdPropertyId, UIA_ButtonControlTypeId, UIA_CONTROLTYPE_ID,
-    UIA_CalendarControlTypeId, UIA_CheckBoxControlTypeId, UIA_ClassNamePropertyId,
-    UIA_ComboBoxControlTypeId, UIA_ControlTypePropertyId, UIA_CustomControlTypeId,
-    UIA_DataGridControlTypeId, UIA_DataItemControlTypeId, UIA_DocumentControlTypeId,
-    UIA_EditControlTypeId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
-    UIA_FullDescriptionPropertyId, UIA_GroupControlTypeId, UIA_HasKeyboardFocusPropertyId,
-    UIA_HeaderControlTypeId, UIA_HeaderItemControlTypeId, UIA_HelpTextPropertyId,
-    UIA_HyperlinkControlTypeId, UIA_ImageControlTypeId, UIA_IsContentElementPropertyId,
-    UIA_IsControlElementPropertyId, UIA_IsDataValidForFormPropertyId, UIA_IsDialogPropertyId,
-    UIA_IsEnabledPropertyId, UIA_IsExpandCollapsePatternAvailablePropertyId,
-    UIA_IsKeyboardFocusablePropertyId, UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
-    UIA_IsRangeValuePatternAvailablePropertyId, UIA_IsRequiredForFormPropertyId,
-    UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTextPatternAvailablePropertyId,
-    UIA_IsTogglePatternAvailablePropertyId, UIA_IsValuePatternAvailablePropertyId,
-    UIA_LegacyIAccessibleStatePropertyId, UIA_LevelPropertyId, UIA_ListControlTypeId,
+    UIA_AppBarControlTypeId, UIA_ButtonControlTypeId, UIA_CONTROLTYPE_ID,
+    UIA_CalendarControlTypeId, UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId,
+    UIA_CustomControlTypeId, UIA_DataGridControlTypeId, UIA_DataItemControlTypeId,
+    UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_GroupControlTypeId,
+    UIA_HeaderControlTypeId, UIA_HeaderItemControlTypeId, UIA_HyperlinkControlTypeId,
+    UIA_ImageControlTypeId, UIA_LegacyIAccessibleStatePropertyId, UIA_ListControlTypeId,
     UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId, UIA_MenuControlTypeId,
-    UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_NativeWindowHandlePropertyId,
-    UIA_PROPERTY_ID, UIA_PaneControlTypeId, UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId,
-    UIA_ProgressBarControlTypeId, UIA_RadioButtonControlTypeId, UIA_RangeValueValuePropertyId,
-    UIA_ScrollBarControlTypeId, UIA_SelectionItemIsSelectedPropertyId, UIA_SeparatorControlTypeId,
-    UIA_SizeOfSetPropertyId, UIA_SliderControlTypeId, UIA_SpinnerControlTypeId,
-    UIA_SplitButtonControlTypeId, UIA_StatusBarControlTypeId, UIA_TabControlTypeId,
-    UIA_TabItemControlTypeId, UIA_TableControlTypeId, UIA_TextControlTypeId,
-    UIA_ThumbControlTypeId, UIA_TitleBarControlTypeId, UIA_ToggleToggleStatePropertyId,
-    UIA_ToolBarControlTypeId, UIA_ToolTipControlTypeId, UIA_TreeControlTypeId,
-    UIA_TreeItemControlTypeId, UIA_ValueIsReadOnlyPropertyId, UIA_ValueValuePropertyId,
-    UIA_WindowControlTypeId,
+    UIA_MenuItemControlTypeId, UIA_PaneControlTypeId, UIA_ProgressBarControlTypeId,
+    UIA_RadioButtonControlTypeId, UIA_ScrollBarControlTypeId, UIA_SeparatorControlTypeId,
+    UIA_SliderControlTypeId, UIA_SpinnerControlTypeId, UIA_SplitButtonControlTypeId,
+    UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
+    UIA_TableControlTypeId, UIA_TextControlTypeId, UIA_ThumbControlTypeId,
+    UIA_TitleBarControlTypeId, UIA_ToolBarControlTypeId, UIA_ToolTipControlTypeId,
+    UIA_TreeControlTypeId, UIA_TreeItemControlTypeId, UIA_WindowControlTypeId,
 };
 
 use crate::element::ElementExt;
-use crate::registry::NodeIdRegistry;
 
 /// Maps a UIA control-type id to a normalized [`Role`], as NVDA's UIA
 /// control type table does. Unmapped types become [`Role::Unknown`] so new
@@ -128,15 +114,6 @@ pub fn refine_button_role(role: Role, toggle_available: bool) -> Role {
     } else {
         role
     }
-}
-
-/// Whether UIA considers an element both a control and content, which NVDA
-/// requires of a UIA element before it counts as content, and so as focus
-/// context. Reads the base cache request's properties.
-#[must_use]
-pub fn cached_is_control_and_content(element: &IUIAutomationElement) -> bool {
-    element.cached_bool(UIA_IsContentElementPropertyId)
-        && element.cached_bool(UIA_IsControlElementPropertyId)
 }
 
 /// The raw cached inputs to the UIA state mapping, separated from the element
@@ -287,107 +264,6 @@ pub(crate) fn states_from_uia(raw: &RawUiaStates, role: Role) -> StateSet {
     states
 }
 
-/// Derives the normalized [`StateSet`] from an element's cached properties,
-/// those of the base cache request. `role` is the element's
-/// already-resolved role (see [`refine_button_role`]), which the
-/// toggle-state mapping needs to pick between [`State::Pressed`] and
-/// [`State::Checked`].
-fn states_from_cached(element: &IUIAutomationElement, role: Role) -> StateSet {
-    let raw = RawUiaStates {
-        has_focus: element.cached_bool(UIA_HasKeyboardFocusPropertyId),
-        focusable: element.cached_bool(UIA_IsKeyboardFocusablePropertyId),
-        enabled: element.cached_bool(UIA_IsEnabledPropertyId),
-        offscreen: element.cached_bool(UIA_IsOffscreenPropertyId),
-        toggle_available: element.cached_bool(UIA_IsTogglePatternAvailablePropertyId),
-        toggle_state: element.cached_i32(UIA_ToggleToggleStatePropertyId),
-        expand_available: element.cached_bool(UIA_IsExpandCollapsePatternAvailablePropertyId),
-        expand_state: element.cached_i32(UIA_ExpandCollapseExpandCollapseStatePropertyId),
-        selection_available: element.cached_bool(UIA_IsSelectionItemPatternAvailablePropertyId),
-        selected: element.cached_bool(UIA_SelectionItemIsSelectedPropertyId),
-        password: element.cached_bool(UIA_IsPasswordPropertyId),
-        required: element.cached_bool(UIA_IsRequiredForFormPropertyId),
-        data_valid: element.cached_optional_bool(UIA_IsDataValidForFormPropertyId),
-        // Gated on the pattern, as a remotely filled cache stores the
-        // property's default of true where the pattern is missing.
-        value_read_only: element.cached_bool(UIA_IsValuePatternAvailablePropertyId)
-            && element.cached_optional_bool(UIA_ValueIsReadOnlyPropertyId) == Some(true),
-    };
-    states_from_uia(&raw, role)
-}
-
-/// Reads a cached one-based property (`PositionInSet`, `SizeOfSet`, `Level`)
-/// as `None` when UIA reports its "not supported" default of zero or
-/// negative — the same trap the pattern-availability flags guard against
-/// (see [`crate::CACHED_PROPERTIES`]), applied here to plain integer
-/// properties instead of pattern-gated ones: UIA returns a default value for
-/// a property an element does not support rather than an error, and every
-/// one of these properties is documented as one-based when it is genuinely
-/// reported.
-fn cached_one_based(element: &IUIAutomationElement, property: UIA_PROPERTY_ID) -> Option<u32> {
-    element
-        .cached_i32(property)
-        .and_then(|value| u32::try_from(value).ok())
-        // Zero is UIA's "not supported" default for these one-based
-        // properties, observed live on an hwnd-hosted root element, where
-        // the host provider answers 0 rather than leaving the variant empty.
-        .filter(|&value| value > 0)
-}
-
-/// Reads the cached `BoundingRectangle` as a [`Rect`], `None` when UIA
-/// reports its "not supported" default of an all-zero rectangle (the same
-/// trap as every other cached property here) or the read fails outright —
-/// an element with a genuine zero-area rectangle is not a case Verbatim's
-/// positional-audio consumer (milestone M11) needs to distinguish from
-/// "unreported".
-fn cached_rect(element: &IUIAutomationElement) -> Option<Rect> {
-    let rect = element.cached_bounding_rectangle()?;
-    if rect.left == 0 && rect.top == 0 && rect.right == 0 && rect.bottom == 0 {
-        return None;
-    }
-    Some(Rect {
-        left: rect.left,
-        top: rect.top,
-        width: rect.right - rect.left,
-        height: rect.bottom - rect.top,
-    })
-}
-
-/// The properties an element's description is read from
-/// ([`cached_description`]).
-pub const DESCRIPTION_PROPERTIES: [UIA_PROPERTY_ID; 2] =
-    [UIA_FullDescriptionPropertyId, UIA_HelpTextPropertyId];
-
-/// An element's description from its cache: its full description, else
-/// its help text, as NVDA's UIA objects describe themselves.
-#[must_use]
-pub fn cached_description(element: &IUIAutomationElement) -> Option<String> {
-    element
-        .cached_string(UIA_FullDescriptionPropertyId)
-        .or_else(|| element.cached_string(UIA_HelpTextPropertyId))
-}
-
-/// Builds a [`NodeDetails`] from an element's cached properties: description
-/// (`FullDescription`, falling back to `HelpText`), keyboard shortcut
-/// (`AccessKey` and `AcceleratorKey`, joined as NVDA joins them), `PositionInSet`,
-/// `SizeOfSet`, `Level`, and `BoundingRectangle`. Every field maps UIA's
-/// "not supported" default (an empty string or zero) to `None`.
-fn details_from_cached(element: &IUIAutomationElement) -> NodeDetails {
-    let description = cached_description(element);
-    let keyboard_shortcut = keyboard_shortcut(
-        element.cached_string(UIA_AccessKeyPropertyId),
-        element.cached_string(UIA_AcceleratorKeyPropertyId),
-    );
-    NodeDetails {
-        description,
-        keyboard_shortcut,
-        position_in_set: cached_one_based(element, UIA_PositionInSetPropertyId),
-        set_size: cached_one_based(element, UIA_SizeOfSetPropertyId),
-        level: cached_one_based(element, UIA_LevelPropertyId),
-        rect: cached_rect(element),
-        top_level_client: false,
-    }
-}
-
 /// An element's keyboard shortcut: its access key and its accelerator key,
 /// each when present, joined by two spaces as NVDA joins them.
 pub(crate) fn keyboard_shortcut(
@@ -453,25 +329,6 @@ fn value_of(value: Option<String>, range_value: Option<f64>) -> Option<String> {
     value.or_else(|| range_value.map(|range| format!("{}", range.round())))
 }
 
-/// Reads the cached process id, so callers can filter events by target pid
-/// without a cross-process call.
-#[must_use]
-pub fn cached_process_id(element: &IUIAutomationElement) -> Option<u32> {
-    element
-        .cached_i32(UIA_ProcessIdPropertyId)
-        .map(i32::cast_unsigned)
-}
-
-/// Reads the cached native window handle (0 when the element is not itself a
-/// window), used by the outpost arbitration cross-filter. The handle is
-/// stored as an integer property.
-#[must_use]
-pub fn cached_native_window_handle(element: &IUIAutomationElement) -> isize {
-    element
-        .cached_i32(UIA_NativeWindowHandlePropertyId)
-        .unwrap_or(0) as isize
-}
-
 /// The identity-free contents of a cached UIA element: its runtime id plus
 /// the role, name, value, states, and details a [`NodeSnapshot`] carries —
 /// everything except the outpost-minted [`NodeId`](verbatim_model::NodeId).
@@ -499,50 +356,6 @@ pub struct CachedUiaParts {
     pub details: NodeDetails,
 }
 
-/// Reads a cached UIA element into its identity-free [`CachedUiaParts`],
-/// without minting a [`NodeId`](verbatim_model::NodeId) or touching any
-/// registry. Reads only cached values (plus `GetRuntimeId`, itself a local
-/// read on a cached element), so it is safe on an event-callback thread and
-/// makes no cross-process call — the listener's hard rule (decision D13).
-///
-/// [`snapshot_from_cached_element`] is this plus the registry step that mints
-/// the id and caches the live element; the two share this one reading path so
-/// the role and state mapping is never duplicated. `element` should be
-/// built with [`crate::cache::base_cache_request`]; a property missing from
-/// its cache reads as unsupported.
-#[must_use]
-pub fn snapshot_parts_from_cached_element(element: &IUIAutomationElement) -> CachedUiaParts {
-    let runtime_id = crate::com::runtime_id(element);
-    let class_name = element.cached_string(UIA_ClassNamePropertyId);
-    let role = role_of(
-        element.cached_i32(UIA_ControlTypePropertyId),
-        element.cached_bool(UIA_IsTogglePatternAvailablePropertyId),
-        class_name.as_deref(),
-        element.cached_bool(UIA_IsDialogPropertyId),
-        cached_native_window_handle(element),
-    );
-    let mut name = element.cached_string(UIA_NamePropertyId);
-    let range_available = element.cached_bool(UIA_IsRangeValuePatternAvailablePropertyId);
-    let mut value = value_from(
-        element.cached_string(UIA_ValueValuePropertyId),
-        range_available,
-        range_available
-            .then(|| element.cached_f64(UIA_RangeValueValuePropertyId))
-            .flatten(),
-        class_name.as_deref(),
-    );
-    let mut details = details_from_cached(element);
-    strip_bidi_controls([&mut name, &mut value, &mut details.description]);
-    CachedUiaParts {
-        runtime_id,
-        role,
-        name,
-        value,
-        states: states_from_cached(element, role),
-        details,
-    }
-}
-
 /// Whether an element of UIA class `class_name` is a terminal's text: Windows
 /// Terminal's control (`TermControl`) and the one embedded in .NET
 /// applications such as Visual Studio (`WPFTermControl`), as NVDA's UIA
@@ -567,65 +380,12 @@ pub fn ignores_notifications(class_name: Option<&str>, automation_id: Option<&st
     is_terminal_class(class_name) || automation_id == Some("Text Area")
 }
 
-/// The properties [`cached_reports_suggestions`] reads.
-pub const SUGGESTIONS_PROPERTIES: [UIA_PROPERTY_ID; 2] = [
-    UIA_IsTextPatternAvailablePropertyId,
-    UIA_AutomationIdPropertyId,
-];
-
-/// Whether an element reports suggestions opening and closing when its
-/// `ControllerFor` relation changes: editable text, which NVDA's UIA
-/// objects with a text pattern become (`EditableText`, through
-/// `EditableTextWithAutoSelectDetection`), and the search fields NVDA
-/// knows by automation id `SearchTextBox` or `TextBox` (`SearchField`,
-/// `NVDAObjects/UIA/__init__.py` 1418 to 1421), from its cached text
-/// pattern availability and automation id ([`SUGGESTIONS_PROPERTIES`]).
-/// NVDA's own condition also asks the text for navigable text or a
-/// selection; a text pattern is taken here as enough.
-#[must_use]
-pub fn cached_reports_suggestions(element: &IUIAutomationElement) -> bool {
-    element.cached_bool(UIA_IsTextPatternAvailablePropertyId)
-        || matches!(
-            element.cached_string(UIA_AutomationIdPropertyId).as_deref(),
-            Some("SearchTextBox" | "TextBox")
-        )
-}
-
 /// Whether an element of UIA class `class_name` reports no value. The
 /// Windows shell's file and folder items (UIA class `UIItem`, in File
 /// Explorer and the file dialogs) expose their name again as their value;
 /// NVDA's `UIItem` class reports none, so the name is spoken once.
 fn reports_no_value(class_name: Option<&str>) -> bool {
     class_name == Some("UIItem")
-}
-
-/// Builds a [`NodeSnapshot`] from a cached UIA element, minting or reusing its
-/// [`NodeId`](verbatim_model::NodeId) via `registry`. Reads only cached values,
-/// so it is safe on an event-callback thread. `element` should be built with
-/// [`crate::cache::base_cache_request`].
-#[must_use]
-pub fn snapshot_from_cached_element(
-    element: &IUIAutomationElement,
-    registry: &NodeIdRegistry,
-) -> NodeSnapshot {
-    let parts = snapshot_parts_from_cached_element(element);
-    NodeSnapshot {
-        // Caches `element` as the node's live element while minting its
-        // id, so navigation and re-reads resolve it directly instead of
-        // re-finding it by runtime id (see the registry's module doc). The
-        // base cache request holds what `Kept` reads; this old entry point
-        // goes in step 5 of `docs/design/uia-shapes.md`.
-        id: registry.id_for_element(
-            &parts.runtime_id,
-            &crate::shape::Cached::<crate::shape::Kept>::filled(element.clone(), ()),
-        ),
-        backend: Backend::Uia,
-        role: parts.role,
-        name: parts.name,
-        value: parts.value,
-        states: parts.states,
-        details: parts.details,
-    }
 }
 
 /// Maps a UIA `NotificationKind` to the normalized

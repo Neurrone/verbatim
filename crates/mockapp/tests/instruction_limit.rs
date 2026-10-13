@@ -17,9 +17,7 @@ mod common;
 mod harness;
 
 use verbatim_uia::text::{Endpoint, TextPatternExt};
-use verbatim_uia::{
-    Ancestor, Cached, ElementExt, Fill, FocusInput, Kept, Live, Node, Shape, Uia, runtime_id,
-};
+use verbatim_uia::{Ancestor, Cached, Fill, FocusInput, Kept, Live, Node, Shape, Uia, runtime_id};
 use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, ControlledQuery, Error,
     FocusAncestry, FocusQuery, FormatSpan, Movement, NavigationDirection, PathQuery, Position,
@@ -53,10 +51,11 @@ impl Fixture {
         let app = common::spawn(fixture, "uia", &title);
         let hwnd = common::find_window(&title);
         let uia = Uia::new().expect("a UIA client");
-        let cache = uia.base_cache_request().expect("a cache request");
         let root = uia
-            .element_from_handle(hwnd.0 as isize, &cache)
-            .expect("mockapp's root element");
+            .window_live(hwnd.0 as isize)
+            .expect("mockapp's root element")
+            .element()
+            .clone();
         Self {
             app,
             uia,
@@ -65,19 +64,10 @@ impl Fixture {
         }
     }
 
-    /// The element named `name`, built with the base cache request as a
-    /// focus event's sender is.
+    /// The element named `name`, for a program to import or a call into its
+    /// application: nothing of its cache is read.
     fn find(&self, name: &str) -> IUIAutomationElement {
-        let cache = self.uia.base_cache_request().expect("a cache request");
-        let value = VARIANT::from(BSTR::from(name));
-        let condition = self
-            .uia
-            .property_condition(UIA_NamePropertyId, &value)
-            .expect("a condition");
-        self.root
-            .find_first_build_cache(TreeScope_Descendants, &condition, &cache)
-            .unwrap_or_else(|error| panic!("no element named {name:?}: {error}"))
-            .unwrap_or_else(|| panic!("no element named {name:?}"))
+        self.find_node(name).live().element().clone()
     }
 
     /// The element named `name`, read as what the focus query reads of it.

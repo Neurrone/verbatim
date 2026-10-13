@@ -1,8 +1,9 @@
 //! Cross-process UIA tree construction (architecture section 13, layer 2).
 //!
 //! Spawns `mockapp --backend uia` over `tests/fixtures/tree.json`, then
-//! walks the tree through `verbatim-uia`'s real client (`Uia::element_from_handle`
-//! plus the base cache request) exactly as an outpost would, and asserts the
+//! walks the tree through `verbatim-uia`'s real client (`Uia::window_element`
+//! and `Uia::children`, every node read as the `Node` shape with every
+//! detail) exactly as an outpost would, and asserts the
 //! whole tree read back, every node's role, name, value, whole state set,
 //! and details, and every node's children in order, equals the fixture's. This is
 //! the "provider-level fake" promised by architecture section 13: COM
@@ -14,12 +15,13 @@ mod common;
 mod harness;
 
 use verbatim_model::{NodeDetails, Role, State, StateSet};
-use verbatim_uia::{Fill, Live, NodeIdRegistry, PropertyEvent, Shape, TextEvent, Uia, map};
+use verbatim_uia::{
+    Cached, Fill, Live, NodeIdRegistry, PropertyEvent, Request, Shape, TextEvent, Uia, map,
+};
 use verbatim_uia_rops::{NavigationDirection, Path, StepQuery, navigation_step};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, TreeScope_Children, TreeScope_Descendants, TreeScope_Subtree,
-    UIA_NamePropertyId,
+    TreeScope_Descendants, TreeScope_Subtree, UIA_NamePropertyId,
 };
 use windows::core::BSTR;
 
@@ -169,25 +171,25 @@ fn expected_tree(title: &str) -> Node {
     )
 }
 
-/// Reads `element` and everything below it, but for the frame's title bar,
+/// Reads `element`, filled as a node with every detail, and everything
+/// below it, each child read with `nodes`, but for the frame's title bar,
 /// read alone (see [`expected_tree`]).
-fn walk(uia: &Uia, element: &IUIAutomationElement, registry: &NodeIdRegistry) -> Node {
-    let snapshot = map::snapshot_from_cached_element(element, registry);
+fn walk(
+    uia: &Uia,
+    element: &Cached<verbatim_uia::Node>,
+    nodes: &Request<verbatim_uia::Node>,
+    registry: &NodeIdRegistry,
+) -> Node {
+    let snapshot = element.snapshot(registry);
     let mut details = snapshot.details;
     details.rect = None;
     let children = if snapshot.role == Role::TitleBar {
         Vec::new()
     } else {
-        let cache = uia.base_cache_request().expect("base cache request");
-        // SAFETY: a live client; the condition takes no arguments.
-        let condition = unsafe { uia.client().CreateTrueCondition() }.expect("CreateTrueCondition");
-        // SAFETY: `element` is a live, cached element on this client's own
-        // apartment thread.
-        let children = unsafe { element.FindAllBuildCache(TreeScope_Children, &condition, &cache) }
-            .expect("FindAllBuildCache");
-        verbatim_uia::elements_of(&children)
+        uia.children(element.live(), nodes)
+            .expect("the element's children")
             .iter()
-            .map(|child| walk(uia, child, registry))
+            .map(|child| walk(uia, child, nodes, registry))
             .collect()
     };
     Node {
@@ -206,40 +208,42 @@ fn uia_client_reads_the_scripted_tree() {
     let hwnd = common::find_window(&title);
 
     let uia = Uia::new().expect("Uia::new");
-    let cache = uia.base_cache_request().expect("base cache request");
+    let nodes = uia
+        .request::<verbatim_uia::Node>(verbatim_uia::Node::all_on())
+        .expect("the node's request");
     let root = uia
-        .element_from_handle(hwnd.0 as isize, &cache)
-        .expect("element_from_handle");
+        .window_element(hwnd.0 as isize, &nodes)
+        .expect("mockapp's window element");
     let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
-    assert_eq!(walk(&uia, &root, &registry), expected_tree(&title));
+    assert_eq!(walk(&uia, &root, &nodes, &registry), expected_tree(&title));
 
     app.quit();
 }
 
 /// Every element of the scripted tree, filled with each event shape's own
 /// request, reads as the shape the same role, name, value, states, and
-/// window handle that the full read of the element gives
-/// (`map::snapshot_parts_from_cached_element` over [`verbatim_uia::CACHED_PROPERTIES`]),
-/// for the fields the shape carries: a property event's parts, which have
-/// no details, and its window handle; a text event's window handle.
+/// window handle that the full read of the element gives, as a
+/// `verbatim_uia::Node` with every detail, for the fields the shape
+/// carries: a property event's parts, which have no details, and its window
+/// handle; a text event's window handle.
 fn event_shapes_read_what_the_full_read_gives() {
     let title = common::unique_title("mockapp-uia-event-shapes");
     let app = common::spawn("tree.json", "uia", &title);
     let hwnd = common::find_window(&title);
 
     let uia = Uia::new().expect("Uia::new");
-    let cache = uia
-        .cache_request(verbatim_uia::CACHED_PROPERTIES)
-        .expect("the full cache request");
+    let nodes = uia
+        .request::<verbatim_uia::Node>(verbatim_uia::Node::all_on())
+        .expect("the node's request");
     let root = uia
-        .element_from_handle(hwnd.0 as isize, &cache)
-        .expect("element_from_handle");
+        .window_live(hwnd.0 as isize)
+        .expect("mockapp's window element");
     // SAFETY: a live client; the condition takes no arguments.
     let condition = unsafe { uia.client().CreateTrueCondition() }.expect("CreateTrueCondition");
-    // SAFETY: `root` is a live, cached element on this client's own
-    // apartment thread.
-    let elements = unsafe { root.FindAllBuildCache(TreeScope_Subtree, &condition, &cache) }
-        .expect("FindAllBuildCache");
+    // SAFETY: `root` is a live element on this client's own apartment
+    // thread; the search reads no cache.
+    let elements =
+        unsafe { root.element().FindAll(TreeScope_Subtree, &condition) }.expect("FindAll");
     let elements = verbatim_uia::elements_of(&elements);
     assert_eq!(
         elements.len(),
@@ -253,9 +257,11 @@ fn event_shapes_read_what_the_full_read_gives() {
         .request_fixed::<TextEvent>()
         .expect("the text event's request");
     for element in &elements {
-        let full = map::snapshot_parts_from_cached_element(element);
-        let full_hwnd = map::cached_native_window_handle(element);
         let live = Live::new(element.clone());
+        let node = live.refresh(&nodes).expect("the element filled as a node");
+        let full_node = node.read();
+        let full = full_node.parts(node.runtime_id());
+        let full_hwnd = full_node.role.hwnd;
 
         let property = live
             .refresh(&property_request)

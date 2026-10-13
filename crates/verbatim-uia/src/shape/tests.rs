@@ -4,9 +4,8 @@ use std::collections::BTreeSet;
 use windows::Win32::Foundation::RECT;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId, UIA_IsDialogPropertyId,
-    UIA_IsTogglePatternAvailablePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
-    UIA_ProcessIdPropertyId, UIA_SelectionPatternId, UIA_TextPatternId,
+    UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId, UIA_PATTERN_ID,
+    UIA_PROPERTY_ID, UIA_SelectionPatternId, UIA_TextPatternId,
 };
 use windows::core::IUnknown;
 
@@ -15,9 +14,6 @@ use super::{
     HelpTextRefresh, Kept, ListenerEvent, Node, Position, ProcessCheck, PropertyEvent, Reader,
     RoleCore, SelectionContainer, Shape, ShellButton, Shortcut, States, SuggestionsRefresh,
     TextEvent, ValueSet, WindowLookup, request_properties,
-};
-use crate::cache::{
-    CACHED_PROPERTIES, FOCUS_EVENT_PROPERTIES, NVDA_BASE_PROPERTIES, TEXT_EVENT_PROPERTIES,
 };
 
 /// A cache that answers every read, and records what was read.
@@ -151,27 +147,18 @@ fn a_shapes_properties_are_its_fields_union_without_repeats() {
         assert_eq!(properties.len(), expected, "{shape}");
         assert_eq!(ids(properties).len(), expected, "{shape} has no repeats");
     }
-    // The event shapes' requests are today's lists, the listener's with the
-    // two properties decision 6 adds.
-    assert_eq!(ids(TextEvent::PROPERTIES), ids(TEXT_EVENT_PROPERTIES));
-    assert_eq!(ids(PropertyEvent::PROPERTIES), ids(FOCUS_EVENT_PROPERTIES));
-    let mut listener = ids(NVDA_BASE_PROPERTIES);
-    listener.extend(ids(&[
-        UIA_IsDialogPropertyId,
-        UIA_IsTogglePatternAvailablePropertyId,
-    ]));
-    assert_eq!(ids(ListenerEvent::PROPERTIES), listener);
     assert_eq!(ListenerEvent::PATTERNS, [UIA_TextPatternId]);
     assert_eq!(PropertyEvent::PATTERNS, []);
     assert_eq!(SelectionContainer::PATTERNS, [UIA_SelectionPatternId]);
-    // A node's request with every gate on is the old full request without
-    // what no reader of a node reads; an ancestor's adds the content flags.
-    let mut node = ids(CACHED_PROPERTIES);
-    node.remove(&UIA_ProcessIdPropertyId.0);
-    let ancestor = node.clone();
-    node.remove(&UIA_IsContentElementPropertyId.0);
-    node.remove(&UIA_IsControlElementPropertyId.0);
-    assert_eq!(ids(&request_properties::<Node>(&Node::all_on())), node);
+    // With every gate on, a node's request is all of its properties, and
+    // an ancestor's is a node's with the content flags.
+    let node = ids(&request_properties::<Node>(&Node::all_on()));
+    assert_eq!(node, ids(Node::PROPERTIES));
+    let mut ancestor = node;
+    ancestor.extend(ids(&[
+        UIA_IsContentElementPropertyId,
+        UIA_IsControlElementPropertyId,
+    ]));
     assert_eq!(
         ids(&request_properties::<Ancestor>(&Ancestor::all_on())),
         ancestor

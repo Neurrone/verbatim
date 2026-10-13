@@ -153,22 +153,50 @@ pub(crate) trait CachedReads {
     fn pattern(&self, pattern: UIA_PATTERN_ID) -> Option<IUnknown>;
 }
 
+/// A cached read's result, counting it as a failed read when UIA answered
+/// with a failure ([`crate::calls`]). A pattern the element does not
+/// support answers a null pointer, which `windows` reports as an error
+/// carrying no failure code: that read succeeded, and is not counted.
+fn cached<T>(result: windows::core::Result<T>) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            if error.code().is_err() {
+                crate::calls::count_failed_read();
+            }
+            None
+        }
+    }
+}
+
+/// The only cached reads of an element in the workspace: every one goes
+/// through a shape's generated read (`cargo xtask ci` rejects a cached read
+/// anywhere else). Each is local: the cache was filled when the element was
+/// fetched or refreshed.
 impl CachedReads for IUIAutomationElement {
     fn value(&self, property: UIA_PROPERTY_ID) -> Option<VARIANT> {
-        ElementExt::cached_value(self, property)
+        // SAFETY: `self` is a live element (`crate::element`'s module
+        // comment); a cached read takes a plain property id and stays in
+        // this process.
+        cached(unsafe { self.GetCachedPropertyValue(property) })
     }
 
     fn value_ignoring_default(&self, property: UIA_PROPERTY_ID) -> Option<VARIANT> {
-        ElementExt::cached_value_ignoring_default(self, property)
+        // SAFETY: as in `value`; UIA's default reads as "not supported".
+        cached(unsafe { self.GetCachedPropertyValueEx(property, true) })
     }
 
     /// The bounding rectangle is UIA's one rectangle property.
     fn rect(&self, _property: UIA_PROPERTY_ID) -> Option<RECT> {
-        ElementExt::cached_bounding_rectangle(self)
+        // SAFETY: as in `value`; the typed accessor reads the cached
+        // `BoundingRectangle` property.
+        cached(unsafe { self.CachedBoundingRectangle() })
     }
 
     fn pattern(&self, pattern: UIA_PATTERN_ID) -> Option<IUnknown> {
-        ElementExt::cached_pattern::<IUnknown>(self, pattern)
+        // SAFETY: `self` is a live element; a cached read stays in this
+        // process, and the pattern object is queried for `IUnknown`.
+        cached(unsafe { self.GetCachedPatternAs::<IUnknown>(pattern) })
     }
 }
 

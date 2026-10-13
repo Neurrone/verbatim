@@ -32,29 +32,27 @@ Public API:
   counts them.
 - `Uia` — a per-thread client (one COM apartment, one `IUIAutomation`
   instance; nothing COM crosses threads), each of whose calls waits up to
-  `CALL_TIMEOUT` for the application: `focused_element`,
-  `element_from_handle`, `window_element(hwnd, request)` (the same, the
-  element filled by a shape's `Request` and returned as its `Cached`),
-  `element_by_runtime_id`, `base_cache_request`,
+  `CALL_TIMEOUT` for the application. Every fetch takes a shape's
+  `Request` and returns its `Cached` (the shape module, below), or a
+  `Live` when nothing of the element is read: `window_element(hwnd,
+  request)` (a window's element, `ElementFromHandleBuildCache`),
   `request_fixed::<S>()` (the request of a shape with no gates; local),
   `request::<S>(gates)` (the request of a shape for the gates given;
   local), `focused(request)` (the focused element as a shape),
   `window_live(hwnd)` (a window's element with no cache, for a caller
   that reads nothing of it, only searches under it: `ElementFromHandle`,
-  one call), `children(parent, request)` (`children_with` for a shape:
-  `parent`'s raw-view children, each filled by `request`, through a copy
-  of the request set to the element and its children, nothing of
-  `parent`'s own cache read), `find_by_runtime_id(root, runtime_id,
-  request)` and `controlled(focused, runtime_id, request)` (the next two
-  for a shape), `controlled_descendant` (the selected element, when it is inside an
+  one call), `children(parent, request)` (`parent`'s raw-view children,
+  each filled by `request`, in one `BuildUpdatedCache` on a copy of the
+  request set to the element and its children, nothing of `parent`'s
+  own cache read; a dialog's own text is gathered this way),
+  `find_by_runtime_id(root, runtime_id, request)` (a search under `root`,
+  the fallback when no element is kept) and `controlled(focused,
+  runtime_id, request)` (the selected element, when it is inside an
   element the focus names in its ControllerFor relation; the classic
   implementation behind `verbatim_uia_rops::controlled_selection`), plus
-  the M3
-  node-relative operations `ancestor_chain`, `navigate`, and `activate`
-  described below, `children_with(element, properties)` (an element's
-  raw-view children with `properties` cached, in one `BuildUpdatedCache`
-  whose scope takes in the children, for a dialog's own text), and the
-  local helpers `cache_request(properties)`,
+  the M3 node-relative operations `ancestors`, `neighbor`, and `activate`
+  described below, `tree(root, request, registry, max_depth, max_nodes)`
+  (a tree dump), and the local helpers
   `raw_view_walker`, `control_view_walker`, `root_element`, and
   `property_condition`, and `compare_elements` (UI Automation's
   `CompareElements`, counted as one call, for the focus listener's log of
@@ -89,8 +87,9 @@ Public API:
   request built on another fails with `E_FAIL`, which made a mockapp test
   fail about one run in five (`tests/first_use.rs` races six threads in a
   fresh process).
-- `Uia::ancestor_chain` — the chain of ancestors of an element, outermost
-  first, as `NodeSnapshot`s: a per-hop `GetParentElementBuildCache` walk
+- `Uia::ancestors(element, request, registry, max_hops, stops)` — the
+  chain of ancestors of an element, each read as the `Ancestor` shape,
+  outermost first, as `NodeSnapshot`s: a per-hop `GetParentElementBuildCache` walk
   over the raw view (one cross-process round trip per ancestor, the walk
   NVDA shipped for years), capped by the caller, and stopped by
   `AncestorStops`: at a window read through the other API, at an ancestor
@@ -105,22 +104,18 @@ Public API:
   items, and editable text — are crossed but never reported, matching
   what NVDA speaks as entered containers regardless of its review-mode
   setting; a UIA element must also be both a control and content.
-  `is_focus_context(element, snapshot)` is that whole test, public so the
+  `Ancestor::is_focus_context(snapshot)` is that whole test, public so the
   outpost applies it to the element of a UIA window that an MSAA walk
-  crosses into. `Uia::ancestor_chain_from(parents, registry, stops)` gives the
-  same result from ancestors already fetched, nearest first, with their
-  caches filled: what `verbatim-uia-rops`'s `focus_ancestry` returns after
+  crosses into. `Uia::ancestors_from(parents, registry, stops)` gives the
+  same result from ancestors already fetched as `Ancestor`s, nearest
+  first: what `verbatim-uia-rops`'s `focus_ancestry` returns after
   reading the same raw-view ancestors in one round trip inside the
   provider process. The outpost uses that for a focus-now query and keeps
-  the per-hop walk for windows read the classic way.
-  `Uia::ancestors(element, request, registry, max_hops, stops)` and
-  `Uia::ancestors_from(parents, registry, stops)` are the same two for
-  ancestors read as the `Ancestor` shape: each is reported as its node,
-  whose description follows the theme's gate, while the layout judgment
-  reads the ancestor's own description, fetched whatever the theme, as
-  NVDA's `presentationType` reads it whatever its setting (decision 4 of
-  `docs/design/uia-shapes.md`); `Ancestor::is_focus_context(snapshot)` is
-  the shaped `is_focus_context`.
+  the per-hop walk for windows read the classic way. Each ancestor is
+  reported as its node, whose description follows the theme's gate,
+  while the layout judgment reads the ancestor's own description, fetched
+  whatever the theme, as NVDA's `presentationType` reads it whatever its
+  setting (decision 4 of `docs/design/uia-shapes.md`).
   `Uia::ancestor_chain_from_parts(parents, registry, stops)` does the same
   for ancestors another process read and sent as their parts
   (`AncestorParts`: the cached parts, the own window handle, and whether
@@ -131,9 +126,10 @@ Public API:
   `element_by_name_and_position`, which found a focus whose sender no
   element of the tree is by its name and position, is gone with that
   step: the listener reads such a focus from its own element.
-- `Uia::selected_element(element, cache)` — the first element of a
-  selection container's current selection, rebuilt with `cache`, or
-  `None`. One `BuildUpdatedCache` on the container caches both
+- `Uia::selected(container, request)` — the first element of a
+  selection container's current selection, filled by `request`, or
+  `None`. One `BuildUpdatedCache` refreshes the container as the
+  `SelectionContainer` shape, which holds both
   `SelectionPattern2`'s `FirstSelectedItem` property (ignoring its
   default) and the `Selection` pattern object, as NVDA uses the newer
   pattern where the provider has it: two calls with the item's rebuild,
@@ -144,12 +140,9 @@ Public API:
   that fails in any other way than two: a call the provider did not
   answer within UIA's transaction timeout (`timed_out`), and one that
   finds the container or its selected item gone (`element_is_gone`), are
-  errors, never "nothing selected". `Uia::selected(container, request)`
-  is the same read for a shape: the container refreshed as the
-  `SelectionContainer` shape, in the same calls, and the item filled by
-  `request`. `Uia::selected_child`, and `Uia::selected_node(container,
-  request, registry)` for the `Node` shape, map the
-  element to a snapshot with the same errors; the outpost logs such an
+  errors, never "nothing selected". `Uia::selected_node(container,
+  request, registry)` reads the item as the `Node` shape and maps it to
+  a snapshot, with the same errors; the outpost logs such an
   error and reports the focus without a selected child, and
   `verbatim-uia-rops`'s classic focus ancestry fails with it, as it does
   for a hop that timed out. Pinned against mockapp with `slow` and
@@ -158,10 +151,11 @@ Public API:
 - `timed_out(error)` — whether a failed call ended at UIA's transaction
   timeout (`UIA_E_TIMEOUT`): a busy or stalled application, which has
   said nothing about what was asked.
-- `Uia::navigate` — one raw-view tree-walker step (parent, next or
-  previous sibling, first child, named by a navigation `QueryKind` from
-  `verbatim-model`) returning
-  the neighbor's snapshot, with `Ok(None)` for "no such neighbor". A step
+- `Uia::neighbor(element, request, registry, kind)` — one raw-view
+  tree-walker step (parent, next or previous sibling, first child, named
+  by a navigation `QueryKind` from `verbatim-model`) returning the
+  neighbor, read as the `Node` shape, as a snapshot, with `Ok(None)` for
+  "no such neighbor". A step
   that fails because the element is gone (`element_is_gone`: UIA's element
   not available, or a disconnected provider) is an error, which the outpost
   answers as "gone"; any other failure reads as no neighbor, as NVDA's
@@ -172,7 +166,7 @@ Public API:
   registry caches the live element behind every node as an agile
   reference, so navigation resolves nodes directly instead of re-finding
   them by runtime id (an unscoped desktop-wide `FindFirst` per step,
-  before this) — `element_by_runtime_id` remains as the fallback, now
+  before this) — `find_by_runtime_id` remains as the fallback, now
   scoped to a caller-supplied root. Its runtime-id `VARIANT` carries a
   hard-won ownership lesson (commit c1d2d45): `windows`'s `VARIANT` has
   a `Drop` that calls `VariantClear`, which for a `VT_ARRAY` variant
@@ -183,41 +177,33 @@ Public API:
   variant is now built by `InitVariantFromInt32Array`, so no raw array is
   ever handled, and reading a runtime id goes through one helper that owns
   the returned array. A search that finds nothing is `Ok(None)`; a search
-  that fails is an error. `Uia::neighbor(element, request, registry,
-  kind)` is the same step with the neighbour read as a `Node`, and
-  `Uia::tree(root, request, registry, max_depth, max_nodes)` is
-  `walk_tree` with every node read as a `TreeDump`.
+  that fails is an error. `Uia::tree(root, request, registry, max_depth,
+  max_nodes)` walks a subtree the same way, every node read as a
+  `TreeDump`, for the control plane's tree dump.
 - `Uia::activate` — NVDA's activation ladder: `Invoke`, then `Toggle`,
   then `SelectionItem`'s select, answering `ActionName::Invoke` for an
   Invoke and no name otherwise, as NVDA names them; each fetched live since
   activation is an infrequent user action, not something the cache
   prefetches.
-- `cached_properties(fetches)` and `cache_request_for(client, fetches)`
-  (also `Uia::cache_request_for`) — the base set without the properties of
-  the details the active theme reports as off (`FullDescription` and
-  `HelpText`, `AccessKey` and `AcceleratorKey`, `PositionInSet` and
-  `SizeOfSet`, and `Level`), in the same order; with every detail wanted
-  it is exactly `CACHED_PROPERTIES`.
-- `base_cache_request(client)` — the property set prefetched with every
-  event and fetch: name, control type, value, process id, native window
-  handle, enabled, focus states, toggle, expand-collapse, and
-  selection-item state with their three pattern-availability flags (see
-  the implementation note below), and the `NodeDetails` properties —
-  `FullDescription` and `HelpText`, `AccessKey` and `AcceleratorKey`
-  (both spoken, joined by two spaces, as NVDA joins them),
-  `PositionInSet`, `SizeOfSet`, `Level`, and `BoundingRectangle`; plus
-  `ClassName` and `IsDialog` (a dialog by NVDA's rule), `IsPassword`,
-  `IsRequiredForForm`, `IsDataValidForForm`, and `ValueIsReadOnly` (the
-  protected, required, invalid entry, and read-only states; the last two
-  read with `GetCachedPropertyValueEx` ignoring their defaults),
+- What a node is read from (the `Node` shape and its groups, below):
+  name, control type, value, native window handle, enabled, focus states,
+  toggle, expand-collapse, and selection-item state with their three
+  pattern-availability flags (see the implementation note below), and
+  the `NodeDetails` properties, each fetched only when the active theme
+  reports it: `FullDescription` and `HelpText`, `AccessKey` and
+  `AcceleratorKey` (both spoken, joined by two spaces, as NVDA joins
+  them), `PositionInSet`, `SizeOfSet`, and `Level`; and always
+  `BoundingRectangle`, `ClassName` and `IsDialog` (a dialog by NVDA's
+  rule), `IsPassword`, `IsRequiredForForm`, `IsDataValidForForm`, and
+  `ValueIsReadOnly` (the protected, required, invalid entry, and
+  read-only states; the last two read ignoring their defaults),
   `RangeValueValue` (the rounded value of a control with no `Value`
   pattern, likewise ignoring its default), `IsValuePatternAvailable` and
   `IsRangeValuePatternAvailable` (which gate `ValueIsReadOnly` and
   `RangeValueValue`, because a cache filled by a remote operation stores
   their defaults, read-only and zero, where a local cache stores "not
-  supported"), and `IsContentElement` and `IsControlElement` (an ancestor
-  is focus context only when both hold). The list is public as
-  `CACHED_PROPERTIES`, so `verbatim-uia-rops` caches the same set, and
+  supported"). An ancestor adds `IsContentElement` and
+  `IsControlElement` (it is focus context only when both hold).
   `runtime_id(element)` reads an element's runtime id.
 - `map::with_legacy_checked_state(element, node)` — a menu item that no
   pattern makes checkable (`map::wants_legacy_checked_state`) is checkable
@@ -238,16 +224,13 @@ Public API:
   bindings are generated; an interface value is a counted reference to a
   live object, and a gone provider or unsupported property comes back as
   an error. So each wrapper method holds one documented `unsafe` call and
-  is safe to call. `ElementExt`, on `IUIAutomationElement`, has the cached
-  reads (`cached_value`, `cached_value_ignoring_default`, `cached_i32`,
-  `cached_bool`, `cached_optional_bool`,
-  `cached_f64`, `cached_string`, `cached_bounding_rectangle`,
-  `cached_control_type`, `cached_framework_id`), which are local, and the
+  is safe to call. `ElementExt`, on `IUIAutomationElement`, has the
   live calls (`current_control_type`, `current_i32_ignoring_default`,
   `has_keyboard_focus`,
   `build_updated_cache`, `current_pattern`, `controller_for`,
   `find_first`, `find_first_build_cache`), each of which counts one UIA
-  call. `WalkerExt`, on `IUIAutomationTreeWalker`, has `parent`,
+  call; it has no cached read, since the shape module makes every one.
+  `WalkerExt`, on `IUIAutomationTreeWalker`, has `parent`,
   `next_sibling`, `previous_sibling`, `first_child`, and `normalize`, each
   built with a cache and counted. `elements_of` reads an element array,
   locally. The pattern methods the crate calls (a selection's current
@@ -296,10 +279,9 @@ Public API:
   sentence, which UIA does not have. Every method is a cross-process call,
   counted once: a text range is a provider object in the application, so
   even copying one is a round trip.
-- `map::cached_description(element)` with `map::DESCRIPTION_PROPERTIES`
-  (the full description, else the help text), and
-  `map::cached_reports_suggestions(element)` with
-  `map::SUGGESTIONS_PROPERTIES` (a text pattern, or the automation id
+- `HelpTextRefresh` (its `Description` group's `description()`: the full
+  description, else the help text) and `SuggestionsRefresh`
+  (`reports_suggestions()`: a text pattern, or the automation id
   `SearchTextBox` or `TextBox`): what a help text or `ControllerFor`
   change of the focus reads when the outpost handles it, in one cache
   refresh.
@@ -312,14 +294,11 @@ Public API:
   them, never by a window's title; the snapshot mapping gives them
   `Role::Terminal`. The console host's text area is recognized by its
   window, in the outpost.
-- NVDA's base cache request (`nvda_base_cache_request`:
-  `NVDA_BASE_PROPERTIES`, thirteen properties, and the Text pattern, with
-  UIA's default scope and filter). The listener no longer registers with
-  it: its parts are shaped as `ListenerEvent`, whose request is this one
-  with `IsDialog` and `IsTogglePatternAvailable` added.
-- `Registration::new(subscriptions, scope)`,
-  `Registration::with_cache(subscriptions, scope, properties)`,
-  `Registration::with_parts(parts, scope)`, `retarget(scope)`, and
+- NVDA's base cache request (thirteen properties and the Text pattern,
+  with UIA's default scope and filter) is the `ListenerEvent` shape's
+  request with `IsDialog` and `IsTogglePatternAvailable` added, which the
+  focus listener's parts carry.
+- `Registration::with_parts(parts, scope)`, `retarget(scope)`, and
   `retarget_to(scope, group)` — one
   subscription type for every event: `Subscription::Properties`
   (a list of property ids, such as `FOCUS_PROPERTIES`: name, value,
@@ -358,12 +337,13 @@ Public API:
   (`IUIAutomationEventHandlerGroup`, from `IUIAutomation6`), as NVDA
   registers its handlers: each handler is added to the group, which is
   local, and the group is registered on each element of the scope with one
-  `AddEventHandlerGroup` call. Each subscription is a `Part`, with the
-  properties its events' elements arrive with (`Part.properties`) and the
-  patterns its cache request also holds (`Part.patterns`), so one group
-  can carry a different cache request for each handler.
-  `Part::shaped::<S>(subscription)`, for a shape with no gates, makes a
-  part whose request is `S`'s, properties and patterns both, and whose
+  `AddEventHandlerGroup` call. Each subscription is a `Part`, whose
+  events' elements arrive with its shape's properties and patterns
+  prefetched, so one group can carry a different cache request for each
+  handler. A part's fields are private:
+  `Part::shaped::<S>(subscription)`, for a shape with no gates, is the
+  only way to make one, a part whose request is `S`'s, properties and
+  patterns both, and whose
   callbacks receive each event's element as a `Cached<S>`: `Subscription`
   and its callback types (`PropertyCallback`, `ElementCallback`,
   `EventCallback`, `NotificationCallback`, `ActiveTextPositionCallback`,
@@ -374,18 +354,16 @@ Public API:
   wrapper runs inside the failed-read counting, so a shaped callback's
   reads are counted in `Registration::failed_reads()`. `.extended()` marks
   a part as held only by the extended groups, and `.text_changes()` as
-  one that delivers text changes. `Part::new` remains for parts not yet
-  shaped. A registration has NVDA's two
+  one that delivers text changes. A registration has NVDA's two
   local groups (`UIAHandler/__init__.py`, `_createLocalEventHandlerGroup`):
-  `Group::Base`, which holds every part not marked `extended_only`, and
+  `Group::Base`, which holds every part not marked `.extended()`, and
   `Group::Extended`, which holds every part; and a third,
   `Group::ExtendedWithoutTextChanges`, every part but those marked
-  `text_changes` (`Part::text_changes`), for an element whose text changes
+  `.text_changes()`, for an element whose text changes
   reach the caller another way, so UIA is not asked to deliver them. Each
-  is built once per thread and client, on first need. `new`
-  gives every part the base cache request, `with_cache` exactly the given
-  properties, for events whose callers read fewer, so the provider is asked
-  for no more with each event, and `with_parts` each part its own. The
+  is built once per thread and client, on first need, every part with its
+  own shape's request, so the provider is asked for no more with each
+  event than the part's callbacks read. The
   elements of a scope of windows or the desktop are fetched with the first
   part's cache request.
 - The outpost's one focus-following registration has four parts: the
@@ -427,7 +405,7 @@ Public API:
   handlers call back no more, so nothing is heard twice, and once its call
   returns it removes what its client registered and ends; `abandoned()`
   counts those not yet waited for, and `close()` waits for them too.
-  `new` waits for the first registration up to `MOVE_DEADLINE` and fails
+  `with_parts` waits for the first registration up to `MOVE_DEADLINE` and fails
   with `UIA_E_TIMEOUT` past it. Dropping a registration unregisters
   and ends its thread. The focus listener holds one registration, the
   desktop-wide selection, menu-opened, and notification subscriptions as
@@ -609,8 +587,14 @@ Public API:
     failed read (decision 3 of `docs/design/uia-shapes.md`). A local
     fill's record is empty.
 
-  Until step 5 of the migration the old lists and raw readers sit beside
-  the shapes, and a site not yet moved passes `live().element()` to them.
+  The shape module's reader is the only cached read in the workspace:
+  `ElementExt` has none, and no property list or list-taking fetch is
+  public. `cargo xtask ci` rejects a raw cached read (`GetCached` or a
+  `.Cached` getter) anywhere but the shape module and `Uia::children`'s
+  read of cached children, a raw cache refill (`build_updated_cache`)
+  outside this crate, and `Fill::claim` outside `verbatim-uia-rops`
+  (`xtask/src/shapes.rs`; `docs/design/uia-shapes.md`, section 3.5,
+  item 7).
 - `NodeIdRegistry` — maps UIA runtime IDs to stable `NodeId`s and keeps the
   live element behind each, as an `Agile<Kept>`: `id_for_element(runtime_id,
   element)` takes a `Cached<Kept>`, which a keeper of any shape that covers
@@ -648,8 +632,7 @@ Public API:
   `notification_processing_from_uia` tables for the notification payload.
   Every snapshot's name, value, and description lose their bidirectional
   formatting characters as they are read
-  (`snapshot_parts_from_cached_element`, through
-  `verbatim_text::strip_bidi_controls`), as NVDA strips the direction marks
+  (the shapes' `parts`, through `verbatim_text::strip_bidi_controls`), as NVDA strips the direction marks
   from File Explorer's dates and the clock.
 
 Implementation note on default values: UIA returns default values for

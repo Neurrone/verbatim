@@ -34,13 +34,17 @@
 //! - [`nearest_window_handle`] — NVDA's `getNearestWindowHandle`: resolves the
 //!   window an arbitrary element belongs to, for elements (menu items, list
 //!   items) that are not windows themselves. Also blocking; see its docs.
-//! - [`map`] — control-type and cached-property mapping into the model.
+//! - [`map`] — control-type, role, and state mapping into the model.
+//! - The shape module ([`Shape`], [`Cached`], [`Request`], [`Live`]) — every
+//!   cached read of an element, declared together with the cache request
+//!   that fills it (`docs/design/uia-shapes.md`): the only cached reads in
+//!   the workspace.
 //! - [`calls`] — the per-thread count of the cross-process calls this crate
 //!   makes, which the outpost's worker takes around each entry it handles.
 //! - [`ElementExt`] and [`WalkerExt`] — safe wrappers over an element's
-//!   cached and live reads and the tree walker's steps, each holding one
-//!   documented `unsafe` call and counting its cross-process call, so the
-//!   code that reads UIA, here and in the outpost, is safe Rust.
+//!   live reads and the tree walker's steps, each holding one documented
+//!   `unsafe` call and counting its cross-process call, so the code that
+//!   reads UIA, here and in the outpost, is safe Rust.
 //! - [`text`] — the same kind of wrappers over the text pattern and its
 //!   ranges (milestone M4), which the outpost's text protocol reads with.
 
@@ -62,14 +66,9 @@ mod subscribe;
 pub mod text;
 
 pub use bounded::{BoundedClient, Unanswered};
-pub use cache::{
-    CACHED_PROPERTIES, FOCUS_EVENT_PROPERTIES, NVDA_BASE_PROPERTIES, TEXT_EVENT_PROPERTIES,
-    base_cache_request, cache_request_for, cached_properties, nvda_base_cache_request,
-};
 pub use checks::{console_reports_formatting, is_windows_forms};
 pub use client::{
-    AncestorParts, AncestorStops, AncestorWalk, CALL_TIMEOUT, Uia, is_focus_context,
-    release_mta_usage,
+    AncestorParts, AncestorStops, AncestorWalk, CALL_TIMEOUT, Uia, release_mta_usage,
 };
 pub use com::{
     element_is_gone, init_mta, is_mixed, is_not_supported, leave_mta, runtime_id, timed_out,

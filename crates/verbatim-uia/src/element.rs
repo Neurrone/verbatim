@@ -1,6 +1,7 @@
-//! Safe wrappers over the UIA client interfaces: an element's cached and
-//! live reads, the tree walker's steps, and the pattern methods the crate
-//! calls, each method holding one documented `unsafe` call.
+//! Safe wrappers over the UIA client interfaces: an element's live reads,
+//! the tree walker's steps, and the pattern methods the crate calls, each
+//! method holding one documented `unsafe` call. An element's cached reads
+//! are not here: the shape module makes every one (`crate::Shape`).
 //!
 //! The `windows` crate marks every COM method `unsafe` because its bindings
 //! are generated, not because these calls have preconditions the caller
@@ -16,10 +17,8 @@
 //! setup.
 //!
 //! Every method that reaches the application's process counts one call
-//! on this thread ([`crate::calls`]); the cached reads are local and count
-//! nothing, but a cached read that fails is counted as a failed read.
+//! on this thread ([`crate::calls`]).
 
-use windows::Win32::Foundation::RECT;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     IUIAutomationCacheRequest, IUIAutomationCondition, IUIAutomationElement,
@@ -32,69 +31,13 @@ use windows::core::Interface;
 
 use verbatim_model::CallKind;
 
-use crate::calls::{count, count_failed_read};
-use crate::com::{variant_bool, variant_f64, variant_i32, variant_optional_bool, variant_string};
+use crate::calls::count;
+use crate::com::variant_i32;
 
-/// Safe reads and calls on a UIA element ([`IUIAutomationElement`]).
-///
-/// The `cached_*` methods read the element's cache, filled when the element
-/// was fetched or rebuilt with a cache request, and never leave this
-/// process; a property that was not cached, or that the element does not
-/// support, reads as `None` (or `false`). The other methods are
-/// cross-process calls to the application's provider, each counted once.
+/// Safe live reads and calls on a UIA element ([`IUIAutomationElement`]),
+/// each a cross-process call to the application's provider, counted once.
+/// The element's cache is read through a shape alone ([`crate::Cached`]).
 pub trait ElementExt {
-    /// A cached property's raw value, `None` when it was not cached.
-    fn cached_value(&self, property: UIA_PROPERTY_ID) -> Option<VARIANT>;
-
-    /// A cached property's raw value, with UIA's default for the property
-    /// read as "not supported" (`GetCachedPropertyValueEx` ignoring
-    /// defaults), `None` when it was not cached.
-    fn cached_value_ignoring_default(&self, property: UIA_PROPERTY_ID) -> Option<VARIANT>;
-
-    /// A cached integer property, `None` when it was not cached or is not
-    /// an integer (UIA's "not supported" value is not).
-    fn cached_i32(&self, property: UIA_PROPERTY_ID) -> Option<i32> {
-        let value = self.cached_value(property)?;
-        variant_i32(&value)
-    }
-
-    /// A cached boolean property, `false` when it was not cached or is not a
-    /// boolean.
-    fn cached_bool(&self, property: UIA_PROPERTY_ID) -> bool {
-        self.cached_value(property)
-            .is_some_and(|value| variant_bool(&value))
-    }
-
-    /// A cached boolean property, `None` when the element does not support
-    /// it or UIA only supplies the property's default.
-    fn cached_optional_bool(&self, property: UIA_PROPERTY_ID) -> Option<bool> {
-        let value = self.cached_value_ignoring_default(property)?;
-        variant_optional_bool(&value)
-    }
-
-    /// A cached floating-point property, `None` when the element does not
-    /// support it or UIA only supplies the property's default.
-    fn cached_f64(&self, property: UIA_PROPERTY_ID) -> Option<f64> {
-        let value = self.cached_value_ignoring_default(property)?;
-        variant_f64(&value)
-    }
-
-    /// A cached property as text, `None` when it was not cached, does not
-    /// convert to text, or is empty. A number or boolean reads as its text.
-    fn cached_string(&self, property: UIA_PROPERTY_ID) -> Option<String> {
-        let value = self.cached_value(property)?;
-        variant_string(&value)
-    }
-
-    /// The cached bounding rectangle, through UIA's typed accessor.
-    fn cached_bounding_rectangle(&self) -> Option<RECT>;
-
-    /// The cached control type.
-    fn cached_control_type(&self) -> Option<UIA_CONTROLTYPE_ID>;
-
-    /// The cached UIA framework, such as `WinForm` or `XAML`.
-    fn cached_framework_id(&self) -> Option<String>;
-
     /// The control type, read live. Cross-process.
     ///
     /// # Errors
@@ -113,11 +56,6 @@ pub trait ElementExt {
         &self,
         property: UIA_PROPERTY_ID,
     ) -> windows::core::Result<Option<i32>>;
-
-    /// A pattern object from the element's cache, `None` when the cache
-    /// holds none: the element does not support the pattern, or the cache
-    /// request did not ask for it. Local.
-    fn cached_pattern<T: Interface>(&self, pattern: UIA_PATTERN_ID) -> Option<T>;
 
     /// Whether the element has the keyboard focus, read live rather than
     /// from the cache. Cross-process.
@@ -195,50 +133,7 @@ fn found(
     }
 }
 
-/// A cached read's result, counting it as a failed read when UIA answered
-/// with a failure. A pattern the element does not support answers a null
-/// pointer, which `windows` reports as an error carrying no failure code:
-/// that read succeeded, and is not counted.
-pub(crate) fn cached<T>(result: windows::core::Result<T>) -> Option<T> {
-    match result {
-        Ok(value) => Some(value),
-        Err(error) => {
-            if error.code().is_err() {
-                count_failed_read();
-            }
-            None
-        }
-    }
-}
-
 impl ElementExt for IUIAutomationElement {
-    fn cached_value(&self, property: UIA_PROPERTY_ID) -> Option<VARIANT> {
-        // SAFETY: `self` is a live element (see the module comment); a
-        // cached read takes a plain property id and stays in this process.
-        cached(unsafe { self.GetCachedPropertyValue(property) })
-    }
-
-    fn cached_value_ignoring_default(&self, property: UIA_PROPERTY_ID) -> Option<VARIANT> {
-        // SAFETY: as in `cached_value`.
-        cached(unsafe { self.GetCachedPropertyValueEx(property, true) })
-    }
-
-    fn cached_bounding_rectangle(&self) -> Option<RECT> {
-        // SAFETY: as in `cached_value`; the typed accessor reads the cached
-        // `BoundingRectangle` property.
-        cached(unsafe { self.CachedBoundingRectangle() })
-    }
-
-    fn cached_control_type(&self) -> Option<UIA_CONTROLTYPE_ID> {
-        // SAFETY: as in `cached_value`.
-        cached(unsafe { self.CachedControlType() })
-    }
-
-    fn cached_framework_id(&self) -> Option<String> {
-        // SAFETY: as in `cached_value`; the BSTR is owned by the result.
-        cached(unsafe { self.CachedFrameworkId() }).map(|framework| framework.to_string())
-    }
-
     fn current_control_type(&self) -> windows::core::Result<UIA_CONTROLTYPE_ID> {
         count(CallKind::Uia);
         // SAFETY: `self` is a live element (see the module comment).
@@ -254,13 +149,6 @@ impl ElementExt for IUIAutomationElement {
         // property id is a plain value.
         let value = unsafe { self.GetCurrentPropertyValueEx(property, true) }?;
         Ok(variant_i32(&value))
-    }
-
-    fn cached_pattern<T: Interface>(&self, pattern: UIA_PATTERN_ID) -> Option<T> {
-        // SAFETY: `self` is a live element; a cached read stays in this
-        // process, and the pattern object is queried for `T`'s own
-        // interface id.
-        cached(unsafe { self.GetCachedPatternAs::<T>(pattern) })
     }
 
     fn has_keyboard_focus(&self) -> windows::core::Result<bool> {

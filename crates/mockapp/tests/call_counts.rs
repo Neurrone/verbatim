@@ -74,17 +74,15 @@ use verbatim_outpost::text::{
     Anchors, CaretSignal, TextSource, Watched, caret_report, check_caret, perform,
 };
 use verbatim_uia::{
-    Ancestor, BoundedClient, CACHED_PROPERTIES, Cached, DialogText, ElementExt, FOCUS_PROPERTIES,
-    Fill, ListenerEvent, Live, Node, NodeIdRegistry, PropertyEvent, Registration, Scope, Shape,
-    Subscription, TextEvent, Uia,
+    Ancestor, BoundedClient, Cached, DialogText, FOCUS_PROPERTIES, Fill, ListenerEvent, Live, Node,
+    NodeIdRegistry, Part, PropertyEvent, Registration, Scope, Shape, Subscription, TextEvent, Uia,
 };
 use verbatim_uia_rops::{Attributes, FocusAncestry, FocusQuery, TextAttribute, focus_ancestry};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationCacheRequest, IUIAutomationElement, TreeScope_Descendants,
-    UIA_HasKeyboardFocusPropertyId, UIA_MenuOpenedEventId,
-    UIA_SelectionItem_ElementSelectedEventId, UIA_Text_TextChangedEventId,
+    IUIAutomationElement, TreeScope_Descendants, UIA_HasKeyboardFocusPropertyId,
+    UIA_MenuOpenedEventId, UIA_SelectionItem_ElementSelectedEventId, UIA_Text_TextChangedEventId,
     UIA_Text_TextSelectionChangedEventId,
 };
 use windows::Win32::UI::Controls::{TVE_COLLAPSE, TVE_EXPAND, TVM_EXPAND};
@@ -958,28 +956,25 @@ fn msaa_navigation_steps_cost_exactly() {
 /// tree holds, by name, for the operations to start from.
 struct UiaUnderTest {
     uia: Uia,
-    cache: IUIAutomationCacheRequest,
     elements: HashMap<String, IUIAutomationElement>,
 }
 
 impl UiaUnderTest {
     fn new(hwnd: HWND) -> Self {
         let uia = Uia::new().expect("a UIA client");
-        let cache = uia.base_cache_request().expect("a cache request");
+        let nodes = uia
+            .request::<Node>(Node::all_on())
+            .expect("the node's cache request");
         let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
         let root = uia
-            .element_from_handle(hwnd.0 as isize, &cache)
+            .window_element(hwnd.0 as isize, &nodes)
             .expect("mockapp's root element");
         let (tree, _) = uia
-            .walk_tree(&root, &cache, &registry, 8, 64)
+            .tree(&root, &nodes, &registry, 8, 64)
             .expect("mockapp's tree");
         let mut elements = HashMap::new();
         collect(&tree, &registry, &mut elements);
-        Self {
-            uia,
-            cache,
-            elements,
-        }
+        Self { uia, elements }
     }
 
     fn element(&self, name: &str) -> &IUIAutomationElement {
@@ -1007,7 +1002,7 @@ impl UiaUnderTest {
     fn focused(&self, hwnd: HWND) -> Cached<ListenerEvent> {
         let root = self
             .uia
-            .element_from_handle(hwnd.0 as isize, &self.cache)
+            .window_live(hwnd.0 as isize)
             .expect("mockapp's root element");
         let condition = self
             .uia
@@ -1017,8 +1012,7 @@ impl UiaUnderTest {
             .uia
             .request_fixed::<ListenerEvent>()
             .expect("the listener's cache request");
-        Live::new(root)
-            .find_first(TreeScope_Descendants, &condition, &request)
+        root.find_first(TreeScope_Descendants, &condition, &request)
             .expect("the search")
             .expect("mockapp reports a focused element")
     }
@@ -1626,19 +1620,19 @@ fn uia_event_registrations_cost_exactly() {
     let mut ratchet = Ratchet::default();
 
     let (registration, cost) = under_test.measure(hwnd, |_| {
-        Registration::new(
+        Registration::with_parts(
             vec![
-                Subscription::Event {
+                Part::shaped::<ListenerEvent>(Subscription::Event {
                     event: UIA_SelectionItem_ElementSelectedEventId,
                     callback: Arc::new(|_| {}),
-                },
-                Subscription::Event {
+                }),
+                Part::shaped::<ListenerEvent>(Subscription::Event {
                     event: UIA_MenuOpenedEventId,
                     callback: Arc::new(|_| {}),
-                },
-                Subscription::Notifications {
+                }),
+                Part::shaped::<ListenerEvent>(Subscription::Notifications {
                     callback: Arc::new(|_, _, _, _, _| {}),
-                },
+                }),
             ],
             Scope::Desktop,
         )
@@ -1655,11 +1649,11 @@ fn uia_event_registrations_cost_exactly() {
 
     let focus = AgileReference::new(under_test.element("First")).expect("an agile reference");
     let (registration, cost) = under_test.measure(hwnd, |_| {
-        Registration::new(
-            vec![Subscription::Properties {
+        Registration::with_parts(
+            vec![Part::shaped::<PropertyEvent>(Subscription::Properties {
                 properties: FOCUS_PROPERTIES.to_vec(),
                 callback: Arc::new(|_, _| {}),
-            }],
+            })],
             Scope::Elements(vec![focus]),
         )
         .expect("the focus-following registration")
@@ -1857,7 +1851,7 @@ fn uia_selected_children_cost_exactly() {
 /// nothing is spoken from them (`TextEvent`), and a property change of the
 /// focus carries what its name, value, and states are read from
 /// (`PropertyEvent`); every event was registered with the base
-/// cache request before. Measured on demand because the calls UIA makes to
+/// cache request, 34 properties, before. Measured on demand because the calls UIA makes to
 /// route an event to its registration vary from one delivery to another
 /// with how busy the machine is, while a cache request's calls do not.
 fn uia_event_caches_cost_exactly() {
@@ -1867,10 +1861,6 @@ fn uia_event_caches_cost_exactly() {
     let under_test = UiaUnderTest::new(hwnd);
     let mut ratchet = Ratchet::default();
     let notes = under_test.element("Notes");
-    let base = under_test
-        .uia
-        .cache_request(CACHED_PROPERTIES)
-        .expect("the base cache request");
     let text = under_test
         .uia
         .request_fixed::<TextEvent>()
@@ -1880,26 +1870,6 @@ fn uia_event_caches_cost_exactly() {
         .request_fixed::<PropertyEvent>()
         .expect("the property event's request");
     let live = Live::new(notes.clone());
-    let (_, cost) = under_test.measure(hwnd, |_| {
-        notes
-            .build_updated_cache(&base)
-            .expect("the element's cache is filled")
-    });
-    ratchet.check(
-        "UIA event cache, the base request",
-        &cost,
-        calls(1, 0, 0),
-        0,
-        &[
-            ("ProviderOptions", 5),
-            ("GetPatternProvider", 11),
-            ("GetPropertyValue", 22),
-            ("HostRawElementProvider", 3),
-            ("GetRuntimeId", 2),
-            ("BoundingRectangle", 1),
-            ("FragmentRoot", 3),
-        ],
-    );
     let (_, cost) = under_test.measure(hwnd, |_| {
         live.refresh(&text).expect("the element's cache is filled")
     });
@@ -1952,22 +1922,22 @@ fn uia_active_text_position_costs_exactly() {
     let (seen, ranges) = mpsc::channel();
     let notes = AgileReference::new(under_test.element("Notes")).expect("an agile reference");
     let (registration, cost) = under_test.measure(hwnd, |_| {
-        Registration::new(
+        Registration::with_parts(
             vec![
-                Subscription::Events {
+                Part::shaped::<TextEvent>(Subscription::Events {
                     events: vec![
                         UIA_Text_TextSelectionChangedEventId,
                         UIA_Text_TextChangedEventId,
                     ],
                     callback: Arc::new(|_, _| {}),
-                },
-                Subscription::ActiveTextPosition {
+                }),
+                Part::shaped::<TextEvent>(Subscription::ActiveTextPosition {
                     callback: Arc::new(move |_, range| {
                         let range = range.and_then(|range| AgileReference::new(range).ok());
                         // The test may have finished.
                         let _ = seen.send(range);
                     }),
-                },
+                }),
             ],
             Scope::Elements(vec![notes]),
         )

@@ -2,6 +2,8 @@
 //! outpost starts its UIA threads together. A file of its own, so the test
 //! runs in a fresh process where UIA has not been set up yet.
 
+use verbatim_uia::Shape as _;
+
 #[test]
 fn clients_created_at_once_in_a_fresh_process_all_build_cache_requests() {
     const THREADS: usize = 6;
@@ -12,7 +14,7 @@ fn clients_created_at_once_in_a_fresh_process_all_build_cache_requests() {
             std::thread::spawn(move || {
                 barrier.wait();
                 let uia = verbatim_uia::Uia::new().map_err(|error| format!("client: {error}"))?;
-                uia.base_cache_request()
+                uia.request::<verbatim_uia::Node>(verbatim_uia::Node::all_on())
                     .map(|_| ())
                     .map_err(|error| format!("cache request: {error}"))
             })

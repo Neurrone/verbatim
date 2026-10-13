@@ -585,11 +585,7 @@ fn a_uia_window_in_a_win32_window_has_the_windows_client_as_context() {
     let island = unsafe { FindWindowExW(Some(host), None, w!("VerbatimMockAppUiaWindow"), None) }
         .expect("mockapp made the UIA window");
     let uia = Uia::new().expect("a UIA client");
-    let cache = uia.base_cache_request().expect("a cache request");
-    let root = uia
-        .element_from_handle(island.0 as isize, &cache)
-        .expect("the UIA window's element");
-    let ok = common::listener_focus(&uia, &root);
+    let ok = common::listener_focus(&uia, island.0 as isize);
     let reported = outpost.uia_focus(&ok);
     assert_eq!(
         reported.chain(),

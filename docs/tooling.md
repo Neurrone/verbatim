@@ -75,6 +75,29 @@ cargo hakari manage-deps
 
 `cargo xtask ci` fails until the crate is up to date.
 
+### What cargo xtask ci scans
+
+Before it builds anything, `cargo xtask ci` scans the sources with two
+checks of its own, each failing the run with the file, line, and text of
+every finding:
+
+- Waits in test code (`xtask/src/waits.rs`): a fixed sleep or a retry
+  counter anywhere in test code fails it, and the sleeps left in
+  production code are listed for review (`docs/testing.md`, "Waits are
+  for evidence").
+- UIA cached reads through shapes (`xtask/src/shapes.rs`): every cached
+  read of a UIA element goes through a shape
+  (`docs/design/uia-shapes.md`, section 3.5, item 7). A raw cached read
+  (an identifier starting `GetCached`, or a `.Cached` getter such as
+  `.CachedName(`) fails it anywhere but `verbatim-uia`'s shape module and
+  the cached-children read in its `client.rs`; a raw cache refill
+  (`build_updated_cache` or `BuildUpdatedCache`) fails it outside
+  `verbatim-uia`; and `.claim(`, which wraps a remote program's element
+  as a shape, fails it outside `verbatim-uia-rops`. Comments and strings
+  are not scanned, and tests are scanned like everything else: a test
+  reads an element through a shape, declaring one in the shape module if
+  none holds what it reads.
+
 ### Build disk use
 
 Most of a debug build is debug information (PDBs) and incremental

@@ -279,7 +279,7 @@ The snapshot code reads three properties that way, and each is handled:
 - `ValueIsReadOnly` (default true) and `RangeValueValue` (default zero)
   are now read only when `IsValuePatternAvailable` and
   `IsRangeValuePatternAvailable` say the pattern is there; both flags
-  joined `CACHED_PROPERTIES`. Without that, every container read
+  are in the `ValueSet` and `States` shapes. Without that, every container read
   remotely was read-only with a value of "0".
 - `IsDataValidForForm` (whose default reads as false) has no pattern, so
   the program leaves it out of the cache of an element that does not

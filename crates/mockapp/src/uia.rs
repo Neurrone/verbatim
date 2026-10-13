@@ -1227,7 +1227,7 @@ mod handler {
     /// building a cache still asks `GetPatternProvider` for the toggle and
     /// expand-collapse patterns before trusting a cached state, so a real
     /// pattern object is required for cached property fetches (which is what
-    /// `verbatim-uia`'s base cache request always does) to see the current
+    /// `verbatim-uia`'s shapes always make) to see the current
     /// state at all. A list also answers the `Selection` pattern, for
     /// reading its selected item.
     fn get_pattern_provider(

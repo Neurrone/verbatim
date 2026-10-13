@@ -35,7 +35,7 @@ use verbatim_outpost::text::{
     Anchors, CaretSignal, NodeText, TextSource, Watched, caret_report, check_caret, perform,
 };
 use verbatim_uia::text::Endpoint;
-use verbatim_uia::{NodeIdRegistry, Uia};
+use verbatim_uia::{Node, NodeIdRegistry, Shape, Uia};
 use verbatim_uia_rops::{
     Attributes, CaretAnswer, CaretQuery, FormatSpan, LocationQuery, Movement, Position,
     RangeAction, RangeEnd, RangeQuery, RunAttributes, TextAttribute, TextFrom, TextTarget,
@@ -73,13 +73,15 @@ fn answered(watched: Watched) -> TextReply {
 /// mockapp's "Notes" document's element.
 fn notes_element(hwnd: HWND) -> IUIAutomationElement {
     let uia = Uia::new().expect("a UIA client");
-    let cache = uia.base_cache_request().expect("a cache request");
+    let nodes = uia
+        .request::<Node>(Node::all_on())
+        .expect("a cache request");
     let root = uia
-        .element_from_handle(hwnd.0 as isize, &cache)
+        .window_element(hwnd.0 as isize, &nodes)
         .expect("mockapp's root element");
     let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
     let (tree, _) = uia
-        .walk_tree(&root, &cache, &registry, 8, 64)
+        .tree(&root, &nodes, &registry, 8, 64)
         .expect("mockapp's tree");
     let notes_id = tree
         .children

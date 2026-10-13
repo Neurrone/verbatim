@@ -6,8 +6,8 @@
 //! walks: [`request_shell_items`] resolves the notification area (a
 //! `TrayNotifyWnd` child of `Shell_TrayWnd`, plus the overflow flyout
 //! window when it is visible) or the taskbar (`Shell_TrayWnd` with the
-//! notification area's subtree excluded), walks the control view with the
-//! base cache request extended by the bounding rectangle, and collects
+//! notification area's subtree excluded), walks the control view with each
+//! element read as `verbatim_uia::ShellButton`, and collects
 //! every named, on-screen button as a [`ShellItem`] of name and screen
 //! rectangle.
 //!
@@ -250,7 +250,7 @@ fn collect_from_window(
 
 /// Recursive worker for [`collect_from_window`]: control-view children via
 /// `GetFirstChildElementBuildCache` and `GetNextSiblingElementBuildCache`,
-/// the same shape as `Uia::walk_tree`. Buttons are collected and not
+/// the same shape as `Uia::tree`. Buttons are collected and not
 /// descended into; the excluded window's subtree is skipped wholesale.
 fn collect_recursive(
     walker: &IUIAutomationTreeWalker,
@@ -285,7 +285,7 @@ fn collect_recursive(
         return;
     }
     // An Err from the walker means "no child / no sibling", the same
-    // convention Uia::walk_tree relies on.
+    // convention Uia::tree relies on.
     let mut next = element
         .live()
         .walk(walker, Direction::FirstChild, request)

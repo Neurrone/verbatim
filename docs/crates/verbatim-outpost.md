@@ -796,7 +796,7 @@ Implementation notes:
   named or not, as a focus on the window, since the foreground change is what
   moves the reducer's attention; the reducer does not speak a nameless
   foreground window, and nothing announces it later. The window's own
-  accessible object is read: UIA via `element_from_handle`, MSAA via the
+  accessible object is read: UIA via `window_element`, MSAA via the
   window's client object (`OBJID_CLIENT`), as NVDA reads a foreground
   window, so a focus event on the client area that follows is the same
   node and is not announced again; a popup menu window (`#32768`) reads
@@ -1314,7 +1314,7 @@ Implementation notes:
   it gets no caret report and no property subscription.
 - Queries (the worker): `DumpTree` walks the target's foreground window (or
   its first visible top-level window) through its backend — UIA via
-  `Uia::walk_tree` with the base cache request, MSAA via
+  `Uia::tree`, every node read as the `TreeDump` shape, MSAA via
   `verbatim_ia2::acquire::walk_tree` from `OBJID_CLIENT` — capped at depth 64
   and 4096 nodes, reporting whether a cap cut it short. `Ancestors`,
   `Navigate`, and `Activate` dispatch to whichever registry issued the node:
