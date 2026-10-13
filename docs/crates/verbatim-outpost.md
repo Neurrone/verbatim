@@ -922,7 +922,17 @@ Implementation notes:
   WinEvent delivery on that thread for the rest of the process, which
   decision D9's one-pid-per-outpost-for-life design sidesteps). Every event
   is arbitrated per window so exactly one backend reports it: an MSAA event
-  for a UIA window is dropped, and a UIA event for an MSAA window. An MSAA
+  for a UIA window is dropped, and a UIA event for an MSAA window. The
+  event thread drops an MSAA event whose window is already known to be
+  read through UIA before it is queued, asking its own record of the
+  application's windows (`arbitration::EventWindows`, kept by window
+  handle in a `verbatim_ia2::WindowCache`): a window's classes are read
+  once, and the arbitrator is asked only until its backend is decided for
+  the window's lifetime (`Arbitrator::lasting_verdict`), so a flood from
+  one window costs one lookup per event. A window's entry goes when its
+  destroy event arrives, or when its handle is found owned by another
+  thread; every backend is decided anew after Core changes the backend
+  override. An MSAA
   event's window is exact; a UIA element that is not a window itself is
   attributed to its window by `nearest_window_handle` (NVDA's
   `getNearestWindowHandle`), on the worker, since it is a cross-process call.

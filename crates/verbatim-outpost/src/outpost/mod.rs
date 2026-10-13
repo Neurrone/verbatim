@@ -38,6 +38,7 @@ pub(crate) mod text_reads;
 pub(crate) mod window;
 mod worker;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::{self, BufReader, Write};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -59,7 +60,7 @@ use verbatim_uia::{
     PropertyEvent, Registration, Request, Scope, Subscription, TextEvent, Uia,
 };
 
-use crate::arbitration::Arbitrator;
+use crate::arbitration::{Arbitrator, EventWindows, WindowClasses};
 use crate::event_thread::EventThread;
 use crate::protocol::{
     DeliveredFact, EventTiming, OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost,
@@ -197,6 +198,10 @@ pub(crate) struct Context {
     /// The failed cached reads the worker has made (`verbatim_uia::calls`),
     /// taken after each entry.
     failed_reads: AtomicU32,
+    /// How many times Core has changed the backend override, which decides
+    /// every window anew: the event thread's windows' backends are
+    /// decided again after a change ([`EventWindows`]).
+    override_changes: AtomicU64,
 }
 
 /// An event the outpost's own UIA handlers or `WinEvent` hooks took in from
@@ -462,8 +467,10 @@ impl Context {
     /// drops a `WinEvent` from a UIA window the same way, and a console
     /// flood raises them by the thousand. A window shown, a console's
     /// update, and a destroyed window are kept: the worker uses them for
-    /// UIA windows too.
-    fn take_in_win_event(&self, event: WinEvent, timing: EventTiming) {
+    /// UIA windows too. Whether a window is known to be read through UIA is
+    /// asked of `windows`, the event thread's own record, so a flood from
+    /// one window costs one read of its classes.
+    fn take_in_win_event(&self, event: WinEvent, timing: EventTiming, windows: &mut EventWindows) {
         let WinEvent {
             kind,
             hwnd,
@@ -484,8 +491,14 @@ impl Context {
             if !matches!(
                 kind,
                 WinEventKind::WindowShown | WinEventKind::ConsoleUpdate | WinEventKind::Destroy
-            ) && crate::arbitration::known_to_use_uia(&self.arbitrator, hwnd)
-            {
+            ) && windows.known_to_use_uia(
+                (
+                    &self.arbitrator,
+                    self.override_changes.load(Ordering::Acquire),
+                ),
+                (hwnd, window::window_thread(hwnd)),
+                WindowClasses::of,
+            ) {
                 self.tell_heard(Heard::Msaa(kind));
                 return;
             }
@@ -679,6 +692,7 @@ impl Outpost {
             handover: Mutex::new(handover::Handover::new(verbatim_ia2::event_clock())),
             focus_path: Mutex::new(None),
             failed_reads: AtomicU32::new(0),
+            override_changes: AtomicU64::new(0),
         });
         if let Some(registration) = register_focus_events(&context) {
             let _ = context.focus_events.set(registration);
@@ -695,12 +709,17 @@ impl Outpost {
         let hook_context = Arc::clone(&context);
         let make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync> = Arc::new(move || {
             let context = Arc::clone(&hook_context);
+            // The event thread's own record of its windows, which only it
+            // touches.
+            let known_windows = RefCell::new(EventWindows::default());
             Box::new(move |event: WinEvent| {
-                if event.kind == WinEventKind::Destroy
-                    && (event.id_object != windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0
-                        || event.id_child != verbatim_ia2::CHILDID_SELF)
-                {
-                    return;
+                if event.kind == WinEventKind::Destroy {
+                    if event.id_object != windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0
+                        || event.id_child != verbatim_ia2::CHILDID_SELF
+                    {
+                        return;
+                    }
+                    known_windows.borrow_mut().forget(event.hwnd);
                 }
                 context.take_in_win_event(
                     event,
@@ -709,6 +728,7 @@ impl Outpost {
                         observed_at_us: now_us(),
                         ..EventTiming::default()
                     },
+                    &mut known_windows.borrow_mut(),
                 );
             })
         });
@@ -866,6 +886,7 @@ impl Outpost {
                 context
                     .arbitrator()
                     .set_forced(backend_override.map(|backend| backend == Backend::Uia));
+                context.override_changes.fetch_add(1, Ordering::Release);
             }
             SupervisorToOutpost::DeliverFact {
                 trace_id,

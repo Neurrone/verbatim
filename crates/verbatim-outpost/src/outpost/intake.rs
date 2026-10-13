@@ -404,15 +404,17 @@ impl Intake {
                 .retain(|waiting| waiting.key.as_ref() != Some(key));
         }
         // Logged, with what is queued around it, so an entry that waits
-        // long in the intake can be told from one that arrived late.
-        tracing::debug!(
-            trace = %entry.trace,
-            key = ?key,
-            waiting = state.waiting.len() + 1,
-            in_batch = state.batch.len(),
-            batch = state.batch_number,
-            "intake pushed"
-        );
+        // long in the intake can be told from one that arrived late; once
+        // the lock is released, so the worker never waits on the log.
+        let logged = tracing::enabled!(tracing::Level::DEBUG).then(|| {
+            (
+                entry.trace,
+                key.clone(),
+                state.waiting.len() + 1,
+                state.batch.len(),
+                state.batch_number,
+            )
+        });
         let waiting = Waiting {
             key,
             category,
@@ -433,6 +435,9 @@ impl Intake {
         }
         drop(state);
         self.ready.notify_one();
+        if let Some((trace, key, waiting, in_batch, batch)) = logged {
+            tracing::debug!(%trace, ?key, waiting, in_batch, batch, "intake pushed");
+        }
     }
 
     /// The next entry to handle and the number of its batch, planning a new

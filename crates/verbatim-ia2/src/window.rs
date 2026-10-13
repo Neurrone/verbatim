@@ -84,6 +84,13 @@ pub(crate) fn class_name(hwnd: isize) -> String {
     String::from_utf16_lossy(&buffer[..len.min(buffer.len())])
 }
 
+/// The thread that owns the window, 0 for a handle that names no window.
+pub(crate) fn thread_of(hwnd: isize) -> u32 {
+    // SAFETY: GetWindowThreadProcessId tolerates any handle, returning 0
+    // for an invalid one.
+    unsafe { GetWindowThreadProcessId(handle(hwnd), None) }
+}
+
 /// Whether the window is a standard or rich edit control made multi-line
 /// (`ES_MULTILINE`), which NVDA's edit control class reports as the
 /// multi-line state. Any class with "edit" in its name counts, so the

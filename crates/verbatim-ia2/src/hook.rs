@@ -24,6 +24,9 @@
 //! thread, a thread-local is exactly the right scope.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::rc::Rc;
 
 use crate::com::CHILDID_SELF;
 
@@ -246,6 +249,60 @@ thread_local! {
     static CALLBACK: RefCell<Option<WinEventCallback>> = const { RefCell::new(None) };
     /// The kinds this thread's hooks were installed for.
     static KINDS: RefCell<Vec<WinEventKind>> = const { RefCell::new(Vec::new()) };
+    /// The class of each window [`is_wanted`] has asked about, while this
+    /// thread's hooks hear windows destroyed ([`WinEventKind::Destroy`]),
+    /// which forgets a destroyed window's: a flood of events from one
+    /// window asks its class once. `None` for hooks that do not hear it,
+    /// such as the focus listener's, which ask each time.
+    static CLASSES: RefCell<Option<WindowCache<Rc<str>>>> = const { RefCell::new(None) };
+}
+
+/// What a thread keeps about each window it hears events from, by the
+/// window's handle, until the window is destroyed. Each entry also keeps
+/// the thread that owned the window when it was learned, so a handle that
+/// another thread's window has reused, the first window's destruction
+/// having gone unheard, is learned afresh, as the outpost's arbitration
+/// keeps its verdicts.
+#[derive(Debug)]
+pub struct WindowCache<T> {
+    entries: HashMap<isize, (u32, T)>,
+}
+
+impl<T> Default for WindowCache<T> {
+    fn default() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+}
+
+impl<T> WindowCache<T> {
+    /// What is kept about window `hwnd`, owned now by thread `owner`:
+    /// learned with `learn` when nothing is kept for it, or when what is
+    /// kept was learned while another thread owned the handle.
+    pub fn get_or_learn(&mut self, hwnd: isize, owner: u32, learn: impl FnOnce() -> T) -> &mut T {
+        match self.entries.entry(hwnd) {
+            Entry::Occupied(entry) => {
+                let entry = entry.into_mut();
+                if entry.0 != owner {
+                    *entry = (owner, learn());
+                }
+                &mut entry.1
+            }
+            Entry::Vacant(entry) => &mut entry.insert((owner, learn())).1,
+        }
+    }
+
+    /// Forgets window `hwnd`: it was destroyed, and its handle may be
+    /// reused by an unrelated window.
+    pub fn forget(&mut self, hwnd: isize) {
+        self.entries.remove(&hwnd);
+    }
+
+    /// Forgets every window.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
 }
 
 /// A set of live out-of-context `WinEvent` hooks. Dropping it unhooks them and
@@ -285,6 +342,11 @@ impl WinEventHook {
             return Err("this thread already has a set of WinEvent hooks".to_owned());
         }
         KINDS.with(|slot| *slot.borrow_mut() = kinds.to_vec());
+        CLASSES.with(|slot| {
+            *slot.borrow_mut() = kinds
+                .contains(&WinEventKind::Destroy)
+                .then(WindowCache::default);
+        });
         let mut hooks = Vec::with_capacity(SUBSCRIPTIONS.len());
         let mut hooked: Vec<u32> = Vec::new();
         for (event, kind) in SUBSCRIPTIONS {
@@ -315,6 +377,7 @@ impl WinEventHook {
                 }
                 CALLBACK.with(|slot| *slot.borrow_mut() = None);
                 KINDS.with(|slot| slot.borrow_mut().clear());
+                CLASSES.with(|slot| *slot.borrow_mut() = None);
                 return Err(format!("SetWinEventHook failed for event {event}"));
             }
             hooks.push(hook);
@@ -333,16 +396,42 @@ impl Drop for WinEventHook {
         }
         CALLBACK.with(|slot| *slot.borrow_mut() = None);
         KINDS.with(|slot| slot.borrow_mut().clear());
+        CLASSES.with(|slot| *slot.borrow_mut() = None);
     }
 }
 
 /// The window class of a standard tooltip, help balloons included.
 pub const TOOLTIP_CLASS: &str = "tooltips_class32";
 
-/// Maps a raw event id to the [`WinEventKind`]s it has among this thread's
-/// kinds, none for events we do not want.
-fn kinds_of(event: u32) -> Vec<WinEventKind> {
-    KINDS.with(|kinds| kinds_among(event, &kinds.borrow()))
+/// The [`WinEventKind`]s the raw event `event` on (`hwnd`, `id_object`,
+/// `id_child`) has among `kinds` that [`is_wanted`] keeps, none for events
+/// we do not want. A window's class is asked of `classes` when it keeps
+/// them, with the window's owning thread (`window.0`) and its class read
+/// from Windows (`window.1`) when it is learned, and of Windows each time
+/// otherwise. A window's own destruction forgets its class first.
+fn wanted_kinds(
+    (event, hwnd, id_object, id_child): (u32, isize, i32, i32),
+    kinds: &[WinEventKind],
+    classes: &mut Option<WindowCache<Rc<str>>>,
+    (owner_of, class_of): (impl Fn(isize) -> u32, impl Fn(isize) -> String),
+) -> Vec<WinEventKind> {
+    if event == EVENT_OBJECT_DESTROY
+        && id_object == OBJID_WINDOW.0
+        && id_child == CHILDID_SELF
+        && let Some(classes) = classes.as_mut()
+    {
+        classes.forget(hwnd);
+    }
+    let mut class = || match classes.as_mut() {
+        Some(classes) => {
+            Rc::clone(classes.get_or_learn(hwnd, owner_of(hwnd), || Rc::from(class_of(hwnd))))
+        }
+        None => Rc::from(class_of(hwnd)),
+    };
+    kinds_among(event, kinds)
+        .into_iter()
+        .filter(|&kind| is_wanted(kind, hwnd, id_object, id_child, &mut class))
+        .collect()
 }
 
 /// Maps a raw event id to the [`WinEventKind`]s it has among `kinds`, in
@@ -363,8 +452,14 @@ fn kinds_among(event: u32, kinds: &[WinEventKind]) -> Vec<WinEventKind> {
 /// events proxied into MSAA, are dropped before anything asks the window
 /// for its provider, which freezes some builds of Excel 2016 (NVDA's
 /// `winEventCallback`, `internalWinEventHandler.py` 139 to 150, and its
-/// event limiter).
-fn is_wanted(kind: WinEventKind, hwnd: HWND, id_object: i32, id_child: i32) -> bool {
+/// event limiter). `class` gives the window's class.
+fn is_wanted(
+    kind: WinEventKind,
+    hwnd: isize,
+    id_object: i32,
+    id_child: i32,
+    class: &mut impl FnMut() -> Rc<str>,
+) -> bool {
     if kind == WinEventKind::Caret {
         return id_object == OBJID_CARET.0;
     }
@@ -377,27 +472,27 @@ fn is_wanted(kind: WinEventKind, hwnd: HWND, id_object: i32, id_child: i32) -> b
     {
         return false;
     }
-    let class = || crate::window::class_name(hwnd.0 as isize);
-    if id_object > 0 && class() == "EXCEL7" {
+    if id_object > 0 && &*class() == "EXCEL7" {
         return false;
     }
     match kind {
-        WinEventKind::Foreground => !matches!(class().as_str(), "Progman" | "Shell_TrayWnd"),
+        WinEventKind::Foreground => !matches!(&*class(), "Progman" | "Shell_TrayWnd"),
         WinEventKind::MenuPopupStart | WinEventKind::MenuEnd => {
-            class() != "Microsoft.IME.UIManager.CandidateWindow.Host"
+            &*class() != "Microsoft.IME.UIManager.CandidateWindow.Host"
         }
         // NVDA accepts a show event only from a few window classes, of
         // which the tooltip is the standard control's, and only for a
         // client or custom object; a window object stands for the client.
         WinEventKind::Show => {
             (id_object == OBJID_CLIENT.0 || id_object == OBJID_WINDOW.0 || id_object > 0)
-                && class() == TOOLTIP_CLASS
+                && &*class() == TOOLTIP_CLASS
         }
         WinEventKind::WindowShown => {
+            let window = HWND(hwnd as *mut std::ffi::c_void);
             id_object == OBJID_WINDOW.0
                 && id_child == CHILDID_SELF
                 // SAFETY: GetAncestor tolerates any handle.
-                && unsafe { GetAncestor(hwnd, GA_ROOT) } == hwnd
+                && unsafe { GetAncestor(window, GA_ROOT) } == window
         }
         _ => true,
     }
@@ -416,10 +511,17 @@ unsafe extern "system" fn win_event_proc(
     let raised_ms_ago = event_clock().wrapping_sub(time);
     // One raw event can be wanted as more than one kind: a tooltip window's
     // own show event is both a tooltip shown and a top-level window shown.
-    for kind in kinds_of(event) {
-        if !is_wanted(kind, hwnd, id_object, id_child) {
-            continue;
-        }
+    let wanted = KINDS.with(|kinds| {
+        CLASSES.with(|classes| {
+            wanted_kinds(
+                (event, hwnd.0 as isize, id_object, id_child),
+                &kinds.borrow(),
+                &mut classes.borrow_mut(),
+                (crate::window::thread_of, crate::window::class_name),
+            )
+        })
+    });
+    for kind in wanted {
         // An event on a window object stands for its client area, as NVDA's
         // event hook treats it, so a window's foreground report and a focus
         // on its client area name one object. A window's destruction keeps
@@ -463,6 +565,64 @@ unsafe extern "system" fn win_event_proc(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    /// [`is_wanted`] for window `hwnd`, its class read from Windows.
+    fn wanted(kind: WinEventKind, hwnd: HWND, id_object: i32, id_child: i32) -> bool {
+        let hwnd = hwnd.0 as isize;
+        let mut class = || Rc::from(crate::window::class_name(hwnd));
+        is_wanted(kind, hwnd, id_object, id_child, &mut class)
+    }
+
+    /// The kinds an outpost's hook keeps of the raw event `event` on object
+    /// `id_object` of window 42, its classes kept in `classes`, the window
+    /// owned by thread 7 and of class `Edit`, each class read counted in
+    /// `reads`.
+    fn outpost_kinds(
+        event: u32,
+        id_object: i32,
+        classes: &mut Option<WindowCache<Rc<str>>>,
+        reads: &Cell<u32>,
+    ) -> Vec<WinEventKind> {
+        let class_of = |_| {
+            reads.set(reads.get() + 1);
+            "Edit".to_owned()
+        };
+        wanted_kinds(
+            (event, 42, id_object, CHILDID_SELF),
+            APP_SUBSCRIPTIONS,
+            classes,
+            (|_| 7, class_of),
+        )
+    }
+
+    #[test]
+    fn a_windows_class_is_read_once_for_its_events() {
+        // Value changes of child objects, whose window NVDA's Excel check
+        // asks the class of.
+        let mut classes = Some(WindowCache::default());
+        let reads = Cell::new(0);
+        for _ in 0..3 {
+            assert_eq!(
+                outpost_kinds(EVENT_OBJECT_VALUECHANGE, 5, &mut classes, &reads),
+                [WinEventKind::ValueChange]
+            );
+        }
+        assert_eq!(reads.get(), 1);
+    }
+
+    #[test]
+    fn a_destroyed_windows_class_is_forgotten() {
+        let mut classes = Some(WindowCache::default());
+        let reads = Cell::new(0);
+        outpost_kinds(EVENT_OBJECT_VALUECHANGE, 5, &mut classes, &reads);
+        assert_eq!(
+            outpost_kinds(EVENT_OBJECT_DESTROY, OBJID_WINDOW.0, &mut classes, &reads),
+            [WinEventKind::Destroy]
+        );
+        outpost_kinds(EVENT_OBJECT_VALUECHANGE, 5, &mut classes, &reads);
+        assert_eq!(reads.get(), 2, "read again once its window was destroyed");
+    }
 
     #[test]
     fn only_a_plain_selection_announces_a_newly_selected_item() {
@@ -489,13 +649,13 @@ mod tests {
             kinds_among(EVENT_OBJECT_LOCATIONCHANGE, APP_SUBSCRIPTIONS),
             [WinEventKind::Caret]
         );
-        assert!(is_wanted(
+        assert!(wanted(
             WinEventKind::Caret,
             any,
             OBJID_CARET.0,
             CHILDID_SELF
         ));
-        assert!(!is_wanted(
+        assert!(!wanted(
             WinEventKind::Caret,
             any,
             OBJID_WINDOW.0,
@@ -517,7 +677,7 @@ mod tests {
         );
         // A window shown is the window's own show event, never a child
         // object's.
-        assert!(!is_wanted(
+        assert!(!wanted(
             WinEventKind::WindowShown,
             HWND::default(),
             OBJID_CLIENT.0,
@@ -529,7 +689,7 @@ mod tests {
     fn a_show_is_wanted_only_from_a_tooltip_window() {
         // A window that is no tooltip: the null handle, whose class reads
         // as empty.
-        assert!(!is_wanted(
+        assert!(!wanted(
             WinEventKind::Show,
             HWND::default(),
             OBJID_CLIENT.0,
@@ -540,24 +700,24 @@ mod tests {
     #[test]
     fn events_nvda_ignores_are_filtered_out() {
         let any = HWND::default();
-        assert!(!is_wanted(WinEventKind::NameChange, any, OBJID_ALERT.0, 0));
-        assert!(!is_wanted(
+        assert!(!wanted(WinEventKind::NameChange, any, OBJID_ALERT.0, 0));
+        assert!(!wanted(
             WinEventKind::Focus,
             any,
             OBJID_MENU.0,
             CHILDID_SELF
         ));
-        assert!(!is_wanted(
+        assert!(!wanted(
             WinEventKind::Focus,
             any,
             OBJID_SYSMENU.0,
             CHILDID_SELF
         ));
         assert!(
-            is_wanted(WinEventKind::Focus, any, OBJID_MENU.0, 3),
+            wanted(WinEventKind::Focus, any, OBJID_MENU.0, 3),
             "a menu item"
         );
-        assert!(is_wanted(
+        assert!(wanted(
             WinEventKind::Focus,
             any,
             OBJID_CLIENT.0,
