@@ -1356,16 +1356,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: measure::teardown,
     },
     ScenarioDef {
-        name: "measure_idle",
-        group: Group::Measure,
-        settings: None,
-        local_only: false,
-        document: None,
-        setup: crate::scenarios::no_setup,
-        body: measure::body_idle,
-        teardown: measure::teardown,
-    },
-    ScenarioDef {
         name: "measure_speech_real",
         group: Group::Measure,
         settings: None,

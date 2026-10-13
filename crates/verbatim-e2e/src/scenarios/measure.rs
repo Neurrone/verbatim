@@ -442,23 +442,6 @@ fn caret_keys(scenario: &mut Scenario, truth: &Truth, title: &str, key: &str, co
     truth.drain(scenario, "after caret keys");
 }
 
-/// How long `measure_idle` holds Verbatim idle.
-const IDLE: std::time::Duration = std::time::Duration::from_secs(20);
-
-/// `measure_idle`: Verbatim at the desktop with nothing happening, for
-/// [`IDLE`], so a trace taken meanwhile (`cargo xtask trace start`) shows
-/// what its threads do when there is nothing to do: each wake-up there is a
-/// cost with no purpose. The idle time is the workload, not a wait for
-/// anything.
-pub(crate) fn body_idle(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    let truth = Truth {
-        name: "measure_idle",
-    };
-    truth.drain(scenario, "started");
-    std::thread::sleep(IDLE);
-    truth.drain(scenario, "idle");
-}
-
 pub(crate) fn setup_keys_text_box(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     text_box::open(scenario, "m-keys-box", BOX_NAME, "")?;
     Ok(ScenarioState::None)

@@ -993,9 +993,6 @@ The eight scenarios, all named `measure_`:
   60 ms then Backspace at 33 ms; typing while a script prints a line
   every 50 ms; and five rounds of typing a line that wraps onto a second
   row, then Escape.
-- `measure_idle`: Verbatim at the desktop with nothing happening for 20
-  seconds, for a trace of what its threads do when there is nothing to do
-  (`cargo xtask trace start` a few seconds in, `stop` before the end).
 - `measure_speech_real` (`docs/design/communication.md`, section 10.3):
   the speech path through the real synthesizer host and audio device, so
   the ledger's host and device clock stages have figures: two Windows
