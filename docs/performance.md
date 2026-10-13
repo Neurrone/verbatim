@@ -1383,8 +1383,10 @@ the desktop. The reading thread reads what it needs beyond it from the
 sender, as it already did, and an outpost reads a selected item's states,
 value, and details from its focus's subtree, one search, when the
 listener's selection reaches it. No pinned count in `call_counts.rs`
-changed: its test client stands in for the listener's registration with
-the base cache request.
+changed: its test client then stood in for the listener's registration
+with the base cache request. Since the UIA shapes work (2026-10-13) the
+test client fills a focus's element with the listener's own request,
+`ListenerEvent`, as the registration does.
 
 ### Smaller caches for the focus's events
 
