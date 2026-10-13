@@ -295,6 +295,23 @@ line with no matching `event` line above it is Core-originated speech (for
 instance the startup announcement), which has no triggering accessibility
 event.
 
+## Tracing the CPU's scheduling
+
+`cargo xtask trace start` and `cargo xtask trace stop` record a Windows
+Performance Recorder trace with WPR's built-in CPU profile (context
+switches and ready threads), which `docs/design/communication.md` uses to
+attribute a slow hand-off to its cause and to check that raised thread
+priorities never keep Verbatim's GUI thread waiting. WPR needs
+administrator rights, so Dickson runs
+`vm\scripts\Register-VerbatimTraceTask.ps1` once from an elevated
+PowerShell; it registers two tasks that run WPR as SYSTEM and that his
+account may start without elevation, as the park task does. `stop` writes
+the trace to `C:\ProgramData\Verbatim\Traces\verbatim-<time>.etl` and
+prints its path; that folder is readable by his account, and he may
+delete what is in it. Windows' own `tracerpt` converts a trace to text;
+the Windows Performance Analyzer, which reads one graphically, is not
+installed.
+
 ## Measuring the platform floor
 
 `cargo xtask relay-floor` builds `verbatim-relay-floor` in release and

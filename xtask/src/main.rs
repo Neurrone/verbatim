@@ -23,6 +23,9 @@
 //! `park` moves this Remote Desktop session onto the machine's console, so a
 //! local end-to-end run keeps working with no RDP client connected. See
 //! `xtask/src/park.rs`.
+//!
+//! `trace start` and `trace stop` record a WPR trace of the CPU's
+//! scheduling through two elevated tasks. See `xtask/src/trace.rs`.
 
 use std::env;
 use std::process::{Command, ExitCode};
@@ -31,6 +34,7 @@ use std::str;
 mod demo;
 mod nvda;
 mod park;
+mod trace;
 mod vm;
 mod waits;
 
@@ -63,6 +67,7 @@ fn main() -> ExitCode {
         Some("ci") => ci(),
         Some("vm") => vm::run(&args[1..]),
         Some("park") => park::run(),
+        Some("trace") => trace::run(&args[1..]),
         Some("demo") => demo::run(&args[1..]),
         Some("nvda") => nvda::run(&args[1..]),
         Some("windows-terminal") => windows_terminal(),
@@ -82,6 +87,9 @@ fn main() -> ExitCode {
             );
             eprintln!(
                 "  park  move this Remote Desktop session to the console, unlocked, for unattended local runs"
+            );
+            eprintln!(
+                "  trace  start or stop a WPR trace of the CPU's scheduling (cargo xtask trace <start|stop>)"
             );
             eprintln!(
                 "  windows-terminal  download and unpack the terminal scenarios' pinned portable Windows Terminal into target/e2e-stage"
