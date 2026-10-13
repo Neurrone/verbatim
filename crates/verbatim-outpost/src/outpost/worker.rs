@@ -609,7 +609,9 @@ fn run_entry(
     context
         .watch
         .start(deadline, running, window_of(&entry.item));
-    let description = describe(&entry.item);
+    // Formatted only for the debug log, which is all that reads it: an
+    // entry handled at info level costs no string.
+    let description = tracing::enabled!(tracing::Level::DEBUG).then(|| describe(&entry.item));
     let trace = entry.trace;
     let started = Instant::now();
     let arbitration_started = context.arbitrator().now();
@@ -641,7 +643,7 @@ fn run_entry(
         .fetch_add(failed_reads, std::sync::atomic::Ordering::Relaxed);
     tracing::debug!(
         %trace,
-        item = %description,
+        item = description.as_deref().unwrap_or_default(),
         elapsed_us = started.elapsed().as_micros(),
         ?unpublished,
         failed_reads,
@@ -703,7 +705,7 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
 }
 
 /// A short description of an entry's item, for the debug log of what the
-/// worker spent its time on.
+/// worker spent its time on, formatted only when that log is enabled.
 fn describe(item: &Item) -> String {
     match item {
         Item::Msaa {

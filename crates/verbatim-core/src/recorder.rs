@@ -6,8 +6,6 @@
 //! same initial state always reproduces the same effects, which is what
 //! turns a flight-recorder dump from a live session into a regression test.
 
-use std::io;
-
 use serde::{Deserialize, Serialize};
 use verbatim_model::{Effect, Input};
 
@@ -28,31 +26,268 @@ pub struct RecordedInput {
 
 impl RecordedInput {
     /// An estimate of the memory this entry holds, in bytes: its inline size
-    /// plus the length of its compact JSON form. The JSON length tracks the
-    /// heap the entry owns, which its strings dominate, within a small
-    /// factor, needs no size accounting kept in step with every model type,
-    /// and is exactly what the entry costs in a dump. It is counted without
-    /// building the JSON, so estimating allocates nothing.
+    /// plus the heap it owns, which its strings dominate. The heap is found
+    /// by walking the entry's fields with [`HeapCounter`], a serde
+    /// serializer that formats nothing: it adds each string's length and,
+    /// for each element of a list or map, the element's inline size, so it
+    /// needs no size accounting kept in step with every model type, and
+    /// costs one pass over the fields, with no text written and nothing
+    /// allocated. A boxed value's own allocation is not seen, so the
+    /// estimate is a little low for inputs that box their parts; their
+    /// strings, which are what grows, are all counted.
     #[must_use]
     pub fn estimated_bytes(&self) -> usize {
-        let mut counter = ByteCounter(0);
-        // Serializing plain data into a sink that never fails cannot fail;
-        // were it to, the bytes counted so far would still serve.
-        let _ = serde_json::to_writer(&mut counter, self);
+        let mut counter = HeapCounter(0);
+        // Counting cannot fail: the counter has no error to raise.
+        let _ = self.serialize(&mut counter);
         size_of::<Self>() + counter.0
     }
 }
 
-/// A writer that only counts the bytes written to it.
-struct ByteCounter(usize);
+/// A serde serializer that only adds up the heap a value owns
+/// ([`RecordedInput::estimated_bytes`]): the length of every string and
+/// byte string, and the inline size of every element of a sequence and of
+/// every key and value of a map. A struct's fields and an option's content
+/// are inline in their parent, so they add only the heap they own.
+struct HeapCounter(usize);
 
-impl io::Write for ByteCounter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0 += buf.len();
-        Ok(buf.len())
+/// The error [`HeapCounter`] never raises.
+#[derive(Debug)]
+struct NeverFails;
+
+impl std::fmt::Display for NeverFails {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("counting heap bytes cannot fail")
     }
+}
 
-    fn flush(&mut self) -> io::Result<()> {
+impl std::error::Error for NeverFails {}
+
+impl serde::ser::Error for NeverFails {
+    fn custom<T: std::fmt::Display>(_: T) -> Self {
+        NeverFails
+    }
+}
+
+impl HeapCounter {
+    /// Adds an element held on the heap: its inline size, then what it
+    /// owns.
+    fn element<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), NeverFails> {
+        self.0 += size_of_val(value);
+        value.serialize(self)
+    }
+}
+
+impl serde::Serializer for &mut HeapCounter {
+    type Ok = ();
+    type Error = NeverFails;
+    type SerializeSeq = Self;
+    type SerializeTuple = Self;
+    type SerializeTupleStruct = Self;
+    type SerializeTupleVariant = Self;
+    type SerializeMap = Self;
+    type SerializeStruct = Self;
+    type SerializeStructVariant = Self;
+
+    fn serialize_bool(self, _: bool) -> Result<(), NeverFails> {
+        Ok(())
+    }
+    fn serialize_i8(self, _: i8) -> Result<(), NeverFails> {
+        Ok(())
+    }
+    fn serialize_i16(self, _: i16) -> Result<(), NeverFails> {
+        Ok(())
+    }
+    fn serialize_i32(self, _: i32) -> Result<(), NeverFails> {
+        Ok(())
+    }
+    fn serialize_i64(self, _: i64) -> Result<(), NeverFails> {
+        Ok(())
+    }
+    fn serialize_u8(self, _: u8) -> Result<(), NeverFails> {
+        Ok(())
+    }
+    fn serialize_u16(self, _: u16) -> Result<(), NeverFails> {
+        Ok(())
+    }
+    fn serialize_u32(self, _: u32) -> Result<(), NeverFails> {
+        Ok(())
+    }
+    fn serialize_u64(self, _: u64) -> Result<(), NeverFails> {
+        Ok(())
+    }
+    fn serialize_f32(self, _: f32) -> Result<(), NeverFails> {
+        Ok(())
+    }
+    fn serialize_f64(self, _: f64) -> Result<(), NeverFails> {
+        Ok(())
+    }
+    fn serialize_char(self, _: char) -> Result<(), NeverFails> {
+        Ok(())
+    }
+    fn serialize_str(self, value: &str) -> Result<(), NeverFails> {
+        self.0 += value.len();
+        Ok(())
+    }
+    fn serialize_bytes(self, value: &[u8]) -> Result<(), NeverFails> {
+        self.0 += value.len();
+        Ok(())
+    }
+    fn serialize_none(self) -> Result<(), NeverFails> {
+        Ok(())
+    }
+    fn serialize_some<T: Serialize + ?Sized>(self, value: &T) -> Result<(), NeverFails> {
+        value.serialize(self)
+    }
+    fn serialize_unit(self) -> Result<(), NeverFails> {
+        Ok(())
+    }
+    fn serialize_unit_struct(self, _: &'static str) -> Result<(), NeverFails> {
+        Ok(())
+    }
+    fn serialize_unit_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+    ) -> Result<(), NeverFails> {
+        Ok(())
+    }
+    fn serialize_newtype_struct<T: Serialize + ?Sized>(
+        self,
+        _: &'static str,
+        value: &T,
+    ) -> Result<(), NeverFails> {
+        value.serialize(self)
+    }
+    fn serialize_newtype_variant<T: Serialize + ?Sized>(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        value: &T,
+    ) -> Result<(), NeverFails> {
+        value.serialize(self)
+    }
+    fn serialize_seq(self, _: Option<usize>) -> Result<Self, NeverFails> {
+        Ok(self)
+    }
+    fn serialize_tuple(self, _: usize) -> Result<Self, NeverFails> {
+        Ok(self)
+    }
+    fn serialize_tuple_struct(self, _: &'static str, _: usize) -> Result<Self, NeverFails> {
+        Ok(self)
+    }
+    fn serialize_tuple_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        _: usize,
+    ) -> Result<Self, NeverFails> {
+        Ok(self)
+    }
+    fn serialize_map(self, _: Option<usize>) -> Result<Self, NeverFails> {
+        Ok(self)
+    }
+    fn serialize_struct(self, _: &'static str, _: usize) -> Result<Self, NeverFails> {
+        Ok(self)
+    }
+    fn serialize_struct_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        _: usize,
+    ) -> Result<Self, NeverFails> {
+        Ok(self)
+    }
+}
+
+impl serde::ser::SerializeSeq for &mut HeapCounter {
+    type Ok = ();
+    type Error = NeverFails;
+    fn serialize_element<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), NeverFails> {
+        self.element(value)
+    }
+    fn end(self) -> Result<(), NeverFails> {
+        Ok(())
+    }
+}
+
+impl serde::ser::SerializeTuple for &mut HeapCounter {
+    type Ok = ();
+    type Error = NeverFails;
+    fn serialize_element<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), NeverFails> {
+        value.serialize(&mut **self)
+    }
+    fn end(self) -> Result<(), NeverFails> {
+        Ok(())
+    }
+}
+
+impl serde::ser::SerializeTupleStruct for &mut HeapCounter {
+    type Ok = ();
+    type Error = NeverFails;
+    fn serialize_field<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), NeverFails> {
+        value.serialize(&mut **self)
+    }
+    fn end(self) -> Result<(), NeverFails> {
+        Ok(())
+    }
+}
+
+impl serde::ser::SerializeTupleVariant for &mut HeapCounter {
+    type Ok = ();
+    type Error = NeverFails;
+    fn serialize_field<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), NeverFails> {
+        value.serialize(&mut **self)
+    }
+    fn end(self) -> Result<(), NeverFails> {
+        Ok(())
+    }
+}
+
+impl serde::ser::SerializeMap for &mut HeapCounter {
+    type Ok = ();
+    type Error = NeverFails;
+    fn serialize_key<T: Serialize + ?Sized>(&mut self, key: &T) -> Result<(), NeverFails> {
+        self.element(key)
+    }
+    fn serialize_value<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), NeverFails> {
+        self.element(value)
+    }
+    fn end(self) -> Result<(), NeverFails> {
+        Ok(())
+    }
+}
+
+impl serde::ser::SerializeStruct for &mut HeapCounter {
+    type Ok = ();
+    type Error = NeverFails;
+    fn serialize_field<T: Serialize + ?Sized>(
+        &mut self,
+        _: &'static str,
+        value: &T,
+    ) -> Result<(), NeverFails> {
+        value.serialize(&mut **self)
+    }
+    fn end(self) -> Result<(), NeverFails> {
+        Ok(())
+    }
+}
+
+impl serde::ser::SerializeStructVariant for &mut HeapCounter {
+    type Ok = ();
+    type Error = NeverFails;
+    fn serialize_field<T: Serialize + ?Sized>(
+        &mut self,
+        _: &'static str,
+        value: &T,
+    ) -> Result<(), NeverFails> {
+        value.serialize(&mut **self)
+    }
+    fn end(self) -> Result<(), NeverFails> {
         Ok(())
     }
 }
@@ -68,7 +303,7 @@ impl ReducerRecorder {
     pub const DEFAULT_MAX_ENTRIES: usize = 1024;
 
     /// The byte bound the shell uses: 8 MiB. A focus event with a ten-deep
-    /// ancestor chain is about 3 KB by [`RecordedInput::estimated_bytes`],
+    /// ancestor chain is a few kilobytes by [`RecordedInput::estimated_bytes`],
     /// so 1,024 ordinary inputs stay well under it and the entry bound
     /// governs normal use; inputs that carry text bodies (a terminal's
     /// output, a document's lines) reach this bound first, which keeps the
@@ -117,4 +352,48 @@ pub fn replay(initial: &SrState, inputs: &[Input]) -> Vec<Vec<Effect>> {
         all_effects.push(reduce(&mut state, input));
     }
     all_effects
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use verbatim_model::TraceId;
+
+    /// A typed-text input carrying `text`.
+    fn typed(text: String) -> Input {
+        Input::CharacterTyped {
+            trace_id: TraceId::mint(),
+            text,
+        }
+    }
+
+    #[test]
+    fn an_inputs_text_is_counted_in_its_estimate() {
+        let small = RecordedInput {
+            input: typed(String::new()),
+            effect_count: 0,
+        };
+        let large = RecordedInput {
+            input: typed("x".repeat(100_000)),
+            effect_count: 0,
+        };
+        assert_eq!(small.estimated_bytes(), size_of::<RecordedInput>());
+        assert_eq!(
+            large.estimated_bytes(),
+            size_of::<RecordedInput>() + 100_000
+        );
+    }
+
+    #[test]
+    fn inputs_carrying_text_are_bounded_by_bytes() {
+        // Each a little over 1 MiB, far below the entry bound: the window
+        // drops whole segments of half the 8 MiB bound, four entries each,
+        // so four are kept.
+        let mut recorder = ReducerRecorder::with_default_bounds(SrState::new());
+        for _ in 0..20 {
+            recorder.record_input(typed("x".repeat(1 << 20)), 0, &SrState::new());
+        }
+        assert_eq!(recorder.len(), 4);
+        assert!(recorder.bytes() <= ReducerRecorder::DEFAULT_MAX_BYTES);
+    }
 }

@@ -700,7 +700,7 @@ Decided by Dickson, 2026-10-14, for steps 6, 7 and 11:
 - Changed held nodes (`NodesHeld`) are no longer sent once 32 of an outpost's messages have been handled. They go with Core's next write to that outpost (written after the request, so the request is handled first), or, if none comes, with the relay's next `Ping` to it, in the same write, so they are at most one ping interval (3 seconds) late and never cost a write of their own. The reducer leaves the latest changed list in a slot per outpost, and whichever writes to that outpost first, the reducer with a request or the relay with a ping, takes it and sends it. No idle detection is needed. Nothing is held indefinitely, and a flood costs no extra round trip.
 - The only other change left in this step is the entry's description, formatted only when debug logging is on or when the watchdog needs it.
 
-Done in part (fac2f04): the watchdog waits on an alarm, a waitable timer and an event, woken only for deadlines; held nodes are sent every 32 messages rather than with the next request or when the reducer goes idle. The description formatting and the logging inside the intake lock remain.
+Done (fac2f04, and 2026-10-14): the watchdog waits on an alarm, a waitable timer and an event, woken only for deadlines; held nodes are sent every 32 messages rather than with the next request or when the reducer goes idle; the intake's push logs once its lock is released; and the entry's description is formatted only when debug logging is on. The watchdog's warning does not name the entry, so it never needs the description. The intake's line for a planned batch is still logged under its lock, at debug level only.
 
 - Finding 12: the watchdog's deadline on a waitable timer (no wake per entry); the entry's description formatted only when debug logging is on; logging moved out of the intake lock; `NodesHeld` coalesced with the next request or sent when the reducer goes idle (evidence, not a timer).
 - Removes: a watchdog wake per entry; a string format per entry; a file write under a lock in test runs; three wake-ups after most focus changes.
@@ -880,7 +880,7 @@ Counts are from 18.2's key workload unless named; "removes" is the measured coun
 - Step 8, review keys straight to the reducer: up to the router's 120 here, of which lock keys, the menu and the time stay.
 - Step 9, the host protocol: the signalled cancel is done (3ebb7be), so its share is the host reader in verbatim.exe and the host's command thread, 455 here and 325 in real speech, and finding 4's round trip on every interrupting key.
 - Step 10, the speech manager without its queue thread: 412 here, 359 in real speech, one wake on every announcement.
-- Step 11, the outpost's per-event costs: done in part (fac2f04).
+- Step 11, the outpost's per-event costs: done (fac2f04, and 2026-10-14).
 
 Together steps 5 to 10 remove about 1,250 of the key workload's 10,672 wake-ups (12 percent) and about 110 ms of its 1.03 s, every one of them on the path; in the flood, 3,897 of 22,064 (18 percent), and with decision 3's alternative 7,433. They are worth doing for latency and for these savings, and the larger sources of 18.2 are not theirs.
 

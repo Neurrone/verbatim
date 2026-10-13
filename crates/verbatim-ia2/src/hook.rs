@@ -463,11 +463,11 @@ pub fn suspend_kinds(suspended: &[WinEventKind]) -> Result<(), String> {
             return Err("this thread has no set of WinEvent hooks".to_owned());
         };
         for (event, _) in SUBSCRIPTIONS {
-            let installed = kinds_among(event, &kinds);
-            if installed.is_empty() {
+            let mut installed = kinds_among(event, &kinds).peekable();
+            if installed.peek().is_none() {
                 continue;
             }
-            let wanted = installed.iter().any(|kind| !suspended.contains(kind));
+            let wanted = installed.any(|kind| !suspended.contains(&kind));
             let at = set.hooked.iter().position(|&(id, _)| id == event);
             match (wanted, at) {
                 (true, None) => {
@@ -485,9 +485,30 @@ pub fn suspend_kinds(suspended: &[WinEventKind]) -> Result<(), String> {
 /// The window class of a standard tooltip, help balloons included.
 pub const TOOLTIP_CLASS: &str = "tooltips_class32";
 
+/// The most kinds one raw event id has in [`SUBSCRIPTIONS`]: a show event
+/// is both `Show` and `WindowShown`. Checked as the crate compiles.
+const MOST_KINDS_PER_EVENT: usize = 2;
+
+const _: () = {
+    let mut at = 0;
+    while at < SUBSCRIPTIONS.len() {
+        let mut count = 0;
+        let mut other = 0;
+        while other < SUBSCRIPTIONS.len() {
+            if SUBSCRIPTIONS[other].0 == SUBSCRIPTIONS[at].0 {
+                count += 1;
+            }
+            other += 1;
+        }
+        assert!(count <= MOST_KINDS_PER_EVENT);
+        at += 1;
+    }
+};
+
 /// The [`WinEventKind`]s the raw event `event` on (`hwnd`, `id_object`,
-/// `id_child`) has among `kinds` that [`is_wanted`] keeps, none for events
-/// we do not want. A window's class is asked of `classes` when it keeps
+/// `id_child`) has among `kinds` that [`is_wanted`] keeps, in
+/// [`SUBSCRIPTIONS`] order and then `None`, all `None` for events we do not
+/// want. It is called for every event, so it allocates nothing. A window's class is asked of `classes` when it keeps
 /// them, with the window's owning thread (`window.0`) and its class read
 /// from Windows (`window.1`) when it is learned, and of Windows each time
 /// otherwise. A window's own destruction forgets its class first.
@@ -496,7 +517,7 @@ fn wanted_kinds(
     kinds: &[WinEventKind],
     classes: &mut Option<WindowCache<Rc<str>>>,
     (owner_of, class_of): (impl Fn(isize) -> u32, impl Fn(isize) -> String),
-) -> Vec<WinEventKind> {
+) -> [Option<WinEventKind>; MOST_KINDS_PER_EVENT] {
     if event == EVENT_OBJECT_DESTROY
         && id_object == OBJID_WINDOW.0
         && id_child == CHILDID_SELF
@@ -510,19 +531,21 @@ fn wanted_kinds(
         }
         None => Rc::from(class_of(hwnd)),
     };
-    kinds_among(event, kinds)
-        .into_iter()
-        .filter(|&kind| is_wanted(kind, hwnd, id_object, id_child, &mut class))
-        .collect()
+    let mut wanted = [None; MOST_KINDS_PER_EVENT];
+    let kept = kinds_among(event, kinds)
+        .filter(|&kind| is_wanted(kind, hwnd, id_object, id_child, &mut class));
+    for (slot, kind) in wanted.iter_mut().zip(kept) {
+        *slot = Some(kind);
+    }
+    wanted
 }
 
 /// Maps a raw event id to the [`WinEventKind`]s it has among `kinds`, in
-/// [`SUBSCRIPTIONS`] order.
-fn kinds_among(event: u32, kinds: &[WinEventKind]) -> Vec<WinEventKind> {
+/// [`SUBSCRIPTIONS`] order, without allocating.
+fn kinds_among(event: u32, kinds: &[WinEventKind]) -> impl Iterator<Item = WinEventKind> + '_ {
     SUBSCRIPTIONS
         .iter()
-        .filter_map(|&(id, kind)| (id == event && kinds.contains(&kind)).then_some(kind))
-        .collect()
+        .filter_map(move |&(id, kind)| (id == event && kinds.contains(&kind)).then_some(kind))
 }
 
 /// NVDA's early filters for `WinEvent`s, all local checks: a location
@@ -617,7 +640,7 @@ unsafe extern "system" fn win_event_proc(
             )
         })
     });
-    for kind in wanted {
+    for kind in wanted.into_iter().flatten() {
         // An event on a window object stands for its client area, as NVDA's
         // event hook treats it, so a window's foreground report and a focus
         // on its client area name one object. A window's destruction keeps
@@ -696,6 +719,9 @@ mod tests {
             classes,
             (|_| 7, class_of),
         )
+        .into_iter()
+        .flatten()
+        .collect()
     }
 
     #[test]
@@ -729,7 +755,7 @@ mod tests {
     #[test]
     fn only_a_plain_selection_announces_a_newly_selected_item() {
         assert_eq!(
-            kinds_among(EVENT_OBJECT_SELECTION, APP_SUBSCRIPTIONS),
+            kinds_among(EVENT_OBJECT_SELECTION, APP_SUBSCRIPTIONS).collect::<Vec<_>>(),
             [WinEventKind::Selection]
         );
         for removed_or_added in [
@@ -738,7 +764,7 @@ mod tests {
             EVENT_OBJECT_SELECTIONWITHIN,
         ] {
             assert_eq!(
-                kinds_among(removed_or_added, APP_SUBSCRIPTIONS),
+                kinds_among(removed_or_added, APP_SUBSCRIPTIONS).collect::<Vec<_>>(),
                 [WinEventKind::StateChange]
             );
         }
@@ -748,7 +774,7 @@ mod tests {
     fn only_the_carets_location_changes_are_wanted() {
         let any = HWND::default();
         assert_eq!(
-            kinds_among(EVENT_OBJECT_LOCATIONCHANGE, APP_SUBSCRIPTIONS),
+            kinds_among(EVENT_OBJECT_LOCATIONCHANGE, APP_SUBSCRIPTIONS).collect::<Vec<_>>(),
             [WinEventKind::Caret]
         );
         assert!(wanted(
@@ -768,13 +794,13 @@ mod tests {
     #[test]
     fn a_show_is_a_tooltip_for_the_listener_and_either_kind_for_an_outpost() {
         assert_eq!(
-            kinds_among(EVENT_OBJECT_SHOW, LISTENER_SUBSCRIPTIONS),
+            kinds_among(EVENT_OBJECT_SHOW, LISTENER_SUBSCRIPTIONS).collect::<Vec<_>>(),
             [WinEventKind::Show]
         );
         // The window's class and object decide which the outpost's hook
         // reports it as, or both for a tooltip's own window.
         assert_eq!(
-            kinds_among(EVENT_OBJECT_SHOW, APP_SUBSCRIPTIONS),
+            kinds_among(EVENT_OBJECT_SHOW, APP_SUBSCRIPTIONS).collect::<Vec<_>>(),
             [WinEventKind::Show, WinEventKind::WindowShown]
         );
         // A window shown is the window's own show event, never a child
