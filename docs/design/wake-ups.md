@@ -81,7 +81,17 @@ Counts are for one traced window of 5 to 8 seconds.
    channel, and the host's sink calls the waker as the cancel arrives.
    Waking the driver at once exposed an ordering the poll had hidden: the
    speech manager now cancels the mixer before the job, so an utterance the
-   woken driver returns from is already ended cancelled.
+   woken driver returns from is already ended cancelled. The saving is in
+   the long waits: `OneCore` sends nothing until it has synthesized the
+   whole utterance, and the driver's thread and the host's both polled
+   through it. `measure_speech_real` (eSpeak, whose replies come faster
+   than every 10 ms) does not show it: its synth thread is readied about
+   120 times a second before and after, varying by half between runs, by
+   the audio thread, the speech queue and the host reader, as it moves
+   each chunk from the host to the mixer. Every latency stage of the
+   measure set is unchanged or better: in release, replies taking over
+   1 ms on the way back from the host fell from 3.5% to 0.45%, and their
+   maximum from 10.5 ms to 2.2 ms.
 7. `WinEvent` hooks are out of context, so each wakes its thread for every
    event in its subscription before Verbatim's filter runs. In 8 seconds
    of `measure_focus_explorer`, File Explorer's outpost's event thread woke
@@ -143,7 +153,8 @@ scenario's startup.
 ## What follows
 
 - Fix 3, 4 and 6 at their sources, each measured with the same workloads
-  before and after, its wake-ups and its latency stages both.
+  before and after, its wake-ups and its latency stages both. Done:
+  fac2f04 for 3 and 4, 3ebb7be for 6.
 - Read the trace's stacks for 7, 8 and 9 (`verbatim-trace-waits` grows a
   report of the readying stacks), then decide each.
 - Revise `docs/design/communication.md` so that every step is judged on
