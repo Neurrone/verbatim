@@ -27,7 +27,9 @@ use std::sync::mpsc;
 use verbatim_model::{CallCounts, NormalizedEvent, PropertyChange, StateSet};
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, UiaSnapshotFact};
 use verbatim_outpost::{Heard, OutpostOptions};
-use verbatim_uia::{CACHED_PROPERTIES, ElementExt, Registration, Scope, Subscription, Uia};
+use verbatim_uia::{
+    CACHED_PROPERTIES, ElementExt, ListenerEvent, Live, Registration, Scope, Subscription, Uia,
+};
 use verbatim_uia_rops::{ControlledQuery, Path, controlled_selection};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
@@ -196,7 +198,17 @@ fn a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached() {
         .expect("element_from_handle");
 
     app.send("set-focus search");
-    let (judged, _) = outpost.listener_read(&find(&uia, &root, "Search box", &cache));
+    let listener = uia
+        .request_fixed::<ListenerEvent>()
+        .expect("the listener's cache request");
+    let condition = uia
+        .property_condition(UIA_NamePropertyId, &VARIANT::from(BSTR::from("Search box")))
+        .expect("name condition");
+    let search_box = Live::new(root.clone())
+        .find_first(TreeScope_Descendants, &condition, &listener)
+        .expect("the search")
+        .expect("the search box");
+    let (judged, _) = outpost.listener_read(&search_box);
     outpost.deliver(judged.into_fact(0));
     let search = match outpost.next() {
         OutpostToSupervisor::Event {

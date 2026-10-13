@@ -73,6 +73,8 @@ use verbatim_model::{Notification, NotificationKind, NotificationProcessing, Tra
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange};
 use windows::core::AgileReference;
 
+use verbatim_uia::{Agile, PropertyEvent, TextEvent};
+
 use crate::protocol::{DeliveredFact, Query, UiaSnapshotFact, WinEventStamp};
 
 /// How many MSAA focus events a batch keeps (NVDA's limiter's
@@ -122,7 +124,32 @@ pub(super) struct UiaEvent {
     /// process's keyboard focus window when the listener captured it, else
     /// 0: the window its acceptance is tested with.
     pub(super) focus_window: isize,
-    pub(super) element: Option<AgileReference<IUIAutomationElement>>,
+    pub(super) element: Option<EventElement>,
+}
+
+/// The element one of the outpost's own UIA events came with, as the
+/// shape its registration's part filled it as.
+pub(super) enum EventElement {
+    /// A property change's.
+    Property(Agile<PropertyEvent>),
+    /// A caret, text, or active text position change's.
+    Text(Agile<TextEvent>),
+}
+
+impl EventElement {
+    /// The element on this thread; `None` when it cannot be resolved.
+    pub(super) fn resolve(&self) -> Option<IUIAutomationElement> {
+        match self {
+            Self::Property(agile) => agile
+                .resolve()
+                .ok()
+                .map(|event| event.live().element().clone()),
+            Self::Text(agile) => agile
+                .resolve()
+                .ok()
+                .map(|event| event.live().element().clone()),
+        }
+    }
 }
 
 /// One unit of work for the worker.

@@ -65,7 +65,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, UIA_ClassNamePropertyId, UIA_LegacyIAccessibleStatePropertyId,
+    IUIAutomationElement, UIA_LegacyIAccessibleStatePropertyId,
 };
 use windows::core::AgileReference;
 
@@ -74,7 +74,7 @@ use verbatim_uia::map::{
     CachedUiaParts, add_legacy_checked_state, cached_is_control_and_content,
     cached_native_window_handle, snapshot_parts_from_cached_element, wants_legacy_checked_state,
 };
-use verbatim_uia::{ElementExt as _, Uia, WalkerExt as _};
+use verbatim_uia::{Cached, ElementExt as _, ListenerEvent, Uia, WalkerExt as _};
 use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, Path, focus_ancestry};
 
 use crate::ForegroundReader;
@@ -329,23 +329,23 @@ impl FocusReader {
     }
 
     /// Judges and reads the UIA focus event, or menu opening (`kind`),
-    /// whose sender is `element`, built with the base cache request as the
-    /// registration delivers it, and which came as `arrival`.
-    /// `focus_window` is the keyboard focus window of the element's
-    /// application when the event arrived, for an element that is not a
-    /// window (0 otherwise).
+    /// whose sender is `sender`, as the registration delivers it, and which
+    /// came as `arrival`. `focus_window` is the keyboard focus window of
+    /// the element's application when the event arrived, for an element
+    /// that is not a window (0 otherwise).
     pub fn read(
         &mut self,
-        element: &IUIAutomationElement,
+        sender: &Cached<ListenerEvent>,
         focus_window: isize,
         kind: FocusEvent,
         arrival: Arrival,
     ) -> Judged {
-        let hwnd = cached_native_window_handle(element);
+        let fields = sender.read();
+        let element = sender.live().element();
+        let hwnd = fields.role.hwnd;
         let window = if hwnd == 0 { focus_window } else { hwnd };
-        // The element arrives with NVDA's base cache request.
-        let event = event_parts(element);
-        let nearest = match self.judge_before_reading(element, hwnd, &event.runtime_id, kind) {
+        let event = fields.parts(sender.runtime_id());
+        let nearest = match self.judge_before_reading(element, &fields, &event.runtime_id, kind) {
             Ok(nearest) => nearest,
             Err(reason) => return Judged::Dropped(reason),
         };
@@ -448,7 +448,8 @@ impl FocusReader {
     /// snap results, which File Explorer's app module lets through
     /// (`appModules/explorer.py` 519 to 535). A sender that is a window
     /// takes no call.
-    pub fn check_fact(&mut self, element: &IUIAutomationElement, fact: DeliveredFact) -> Judged {
+    pub fn check_fact(&mut self, sender: &Cached<ListenerEvent>, fact: DeliveredFact) -> Judged {
+        let element = sender.live().element();
         match fact {
             DeliveredFact::UiaSelection {
                 hwnd,
@@ -622,10 +623,11 @@ impl FocusReader {
     fn judge_before_reading(
         &self,
         element: &IUIAutomationElement,
-        hwnd: isize,
+        sender: &ListenerEvent,
         runtime_id: &[i32],
         kind: FocusEvent,
     ) -> Result<isize, &'static str> {
+        let hwnd = sender.role.hwnd;
         // 1. A sender whose own window, from the event's cache, the system
         // reports hung (`_shouldSkipEventForHungWindow`, `utils.py` 438):
         // its cached handle only, so a windowless sender is not tested
@@ -669,7 +671,7 @@ impl FocusReader {
             .as_ref()
             .map(|last| self.uia.compare_elements(element, last));
         if tracing::enabled!(tracing::Level::DEBUG) {
-            Self::log_sender(element, hwnd, runtime_id, same_as_last_accepted.as_ref());
+            Self::log_sender(sender, runtime_id, same_as_last_accepted.as_ref());
         }
         if kind == FocusEvent::Focus
             && let (Some(Ok(true)), Some(last)) = (&same_as_last_accepted, &last)
@@ -755,20 +757,18 @@ impl FocusReader {
     /// the comparison come from the event's cache, as NVDA's debug strings
     /// do; nothing is read live for the log.
     fn log_sender(
-        element: &IUIAutomationElement,
-        hwnd: isize,
+        sender: &ListenerEvent,
         runtime_id: &[i32],
         same_as_last_accepted: Option<&windows::core::Result<bool>>,
     ) {
-        let class_name = element.cached_string(UIA_ClassNamePropertyId);
-        // From the event's cache, NVDA's base cache request, as NVDA's
-        // debug strings read it.
-        let framework = element.cached_framework_id();
+        // From the event's cache, as NVDA's debug strings read it.
+        let class_name = &sender.role.class_name;
+        let framework = &sender.framework_id;
         tracing::debug!(
             ?runtime_id,
             ?class_name,
             ?framework,
-            hwnd,
+            hwnd = sender.role.hwnd,
             ?same_as_last_accepted,
             "UIA focus sender"
         );
@@ -924,29 +924,6 @@ fn log_ancestor_fact(path: &str, fact: &UiaAncestorFact) {
 /// just above it.
 fn reused_ancestors(before: &[UiaAncestorFact], met: usize) -> Vec<UiaAncestorFact> {
     before.get(met..).map(<[_]>::to_vec).unwrap_or_default()
-}
-
-/// What an event's element tells from its cache, NVDA's base cache request
-/// (`verbatim_uia::NVDA_BASE_PROPERTIES`): its runtime id, its role from
-/// its control type, its name, and, as its only state, whether it has the
-/// keyboard focus. Nothing else of the element is in that cache, so its
-/// value, other states, and details are left empty rather than read as the
-/// defaults an uncached property gives (an uncached `IsEnabled` would read
-/// as unavailable); what Verbatim needs of them is read afresh.
-pub(crate) fn event_parts(element: &IUIAutomationElement) -> CachedUiaParts {
-    let parts = snapshot_parts_from_cached_element(element);
-    let mut states = verbatim_model::StateSet::new();
-    if element.cached_bool(windows::Win32::UI::Accessibility::UIA_HasKeyboardFocusPropertyId) {
-        states.insert(State::Focused);
-    }
-    CachedUiaParts {
-        runtime_id: parts.runtime_id,
-        role: parts.role,
-        name: parts.name,
-        value: None,
-        states,
-        details: verbatim_model::NodeDetails::default(),
-    }
 }
 
 /// The fact made of an element's cached parts.

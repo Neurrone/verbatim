@@ -55,10 +55,9 @@ use verbatim_ia2::{
 };
 use verbatim_model::{Backend, Fetches, NodeId, Pid, TraceId};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
-use verbatim_uia::map::{cached_native_window_handle, snapshot_parts_from_cached_element};
 use verbatim_uia::{
-    FOCUS_PROPERTIES, Group, NodeIdRegistry as UiaRegistry, Part, Registration, Scope,
-    Subscription, Uia,
+    Cached, FOCUS_PROPERTIES, Group, NodeIdRegistry as UiaRegistry, Part, PropertyEvent,
+    Registration, Scope, Subscription, TextEvent, Uia,
 };
 
 use crate::arbitration::Arbitrator;
@@ -70,7 +69,7 @@ use crate::protocol::{
 use crate::text::uia::UiaPos;
 use crate::text::{Anchors, HeldAnchors};
 
-use intake::{Entry, Intake, Item, UiaEvent, UiaKind};
+use intake::{Entry, EventElement, Intake, Item, UiaEvent, UiaKind};
 use outbound::Outbound;
 use worker::{Tracking, Watch};
 
@@ -989,18 +988,14 @@ fn unstamped(query: &Query) -> Query {
     }
 }
 
-/// What a UIA callback captures: the element's cached parts, its cached
-/// window handle, and an agile reference for anything the worker must ask
-/// it. No call reaches the application: both reads are cached. The parts
-/// are as complete as the registration's cache request: a text event's
-/// carry its runtime id alone, which is all its handling reads.
-fn capture(element: &IUIAutomationElement, kind: UiaKind) -> UiaEvent {
-    let (parts, hwnd) = (
-        snapshot_parts_from_cached_element(element),
-        cached_native_window_handle(element),
-    );
+/// What a UIA callback captures of a property change on the focus: the
+/// element's parts and window handle, read from its cache, and the element
+/// for anything the worker must ask it. No call reaches the application.
+fn capture_property(event: &Cached<PropertyEvent>, property_id: i32) -> UiaEvent {
+    let fields = event.read();
+    let parts = fields.parts(event.runtime_id());
     UiaEvent {
-        kind,
+        kind: UiaKind::Property(property_id),
         parts: UiaSnapshotFact {
             runtime_id: parts.runtime_id,
             role: parts.role,
@@ -1009,9 +1004,30 @@ fn capture(element: &IUIAutomationElement, kind: UiaKind) -> UiaEvent {
             states: parts.states,
             details: parts.details,
         },
-        hwnd,
+        hwnd: fields.role.hwnd,
         focus_window: 0,
-        element: AgileReference::new(element).ok(),
+        element: event.agile().ok().map(EventElement::Property),
+    }
+}
+
+/// What a UIA callback captures of a caret, text, or active text position
+/// change: the element's runtime id, which is all its handling reads of
+/// it, and its window handle, read from its cache, and the element. No
+/// call reaches the application.
+fn capture_text(event: &Cached<TextEvent>, kind: UiaKind) -> UiaEvent {
+    UiaEvent {
+        kind,
+        parts: UiaSnapshotFact {
+            runtime_id: event.runtime_id(),
+            role: verbatim_model::Role::Unknown,
+            name: None,
+            value: None,
+            states: verbatim_model::StateSet::new(),
+            details: verbatim_model::NodeDetails::default(),
+        },
+        hwnd: event.read().hwnd,
+        focus_window: 0,
+        element: event.agile().ok().map(EventElement::Text),
     }
 }
 
@@ -1031,19 +1047,16 @@ fn capture(element: &IUIAutomationElement, kind: UiaKind) -> UiaEvent {
 /// One group carries a cache request per handler, so each event's element
 /// arrives with what its handling reads: a property change with what the
 /// focus's name, value, and states are read from
-/// ([`verbatim_uia::FOCUS_EVENT_PROPERTIES`]), and a caret, text, or active
-/// text position change with little more than its window
-/// ([`verbatim_uia::TEXT_EVENT_PROPERTIES`]), since the worker reads the
-/// text itself.
+/// ([`verbatim_uia::PropertyEvent`]), and a caret, text, or active text
+/// position change with little more than its window
+/// ([`verbatim_uia::TextEvent`]), since the worker reads the text itself.
 fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
     let property_context = Arc::clone(context);
     let properties = Subscription::Properties {
         properties: FOCUS_PROPERTIES.to_vec(),
-        callback: Arc::new(move |element: &IUIAutomationElement, property_id: i32| {
-            // The property element carries cached values.
-            let event = capture(element, UiaKind::Property(property_id));
+        callback: Arc::new(move |event: &Cached<PropertyEvent>, property_id: i32| {
             property_context.take_in(
-                Item::Uia(event),
+                Item::Uia(capture_property(event, property_id)),
                 Heard::UiaProperty(property_id),
                 EventTiming {
                     observed_at_us: now_us(),
@@ -1053,15 +1066,15 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
         }),
     };
     let text_context = Arc::clone(context);
-    let text_callback: verbatim_uia::EventCallback =
-        Arc::new(move |element: &IUIAutomationElement, event_id: i32| {
+    let text_callback: verbatim_uia::EventCallback<Cached<TextEvent>> =
+        Arc::new(move |event: &Cached<TextEvent>, event_id: i32| {
             let (kind, heard) = if event_id == UIA_Text_TextSelectionChangedEventId.0 {
                 (UiaKind::TextSelection, Heard::UiaTextSelection)
             } else {
                 (UiaKind::TextChanged, Heard::UiaTextChanged)
             };
             text_context.take_in(
-                Item::Uia(capture(element, kind)),
+                Item::Uia(capture_text(event, kind)),
                 heard,
                 EventTiming {
                     observed_at_us: now_us(),
@@ -1080,12 +1093,12 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
     let position_context = Arc::clone(context);
     let position = Subscription::ActiveTextPosition {
         callback: Arc::new(
-            move |element: &IUIAutomationElement, range: Option<&IUIAutomationTextRange>| {
+            move |event: &Cached<TextEvent>, range: Option<&IUIAutomationTextRange>| {
                 let range = range
                     .and_then(|range| AgileReference::new(range).ok())
                     .map(intake::ActiveRange);
                 position_context.take_in(
-                    Item::Uia(capture(element, UiaKind::ActiveTextPosition(range))),
+                    Item::Uia(capture_text(event, UiaKind::ActiveTextPosition(range))),
                     Heard::UiaActiveTextPosition,
                     EventTiming {
                         observed_at_us: now_us(),
@@ -1095,12 +1108,11 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
             },
         ),
     };
-    let text_properties = verbatim_uia::TEXT_EVENT_PROPERTIES;
     let parts = vec![
-        Part::new(properties, verbatim_uia::FOCUS_EVENT_PROPERTIES),
-        Part::new(caret, text_properties),
-        Part::extended(text, text_properties).text_changes(),
-        Part::extended(position, text_properties),
+        Part::shaped::<PropertyEvent>(properties),
+        Part::shaped::<TextEvent>(caret),
+        Part::shaped::<TextEvent>(text).extended().text_changes(),
+        Part::shaped::<TextEvent>(position).extended(),
     ];
     match Registration::with_parts(parts, Scope::Nothing) {
         Ok(registration) => Some(registration),

@@ -526,3 +526,30 @@ pub fn another_applications_window() -> HWND {
     }
     .expect("a window of the test's own")
 }
+
+/// The element mockapp reports as having the keyboard focus under `root`,
+/// filled as the focus listener's registration fills a focus event's
+/// element ([`verbatim_uia::ListenerEvent`]): what the system's focused
+/// element would be if mockapp had the keyboard focus.
+pub fn listener_focus(
+    uia: &verbatim_uia::Uia,
+    root: &windows::Win32::UI::Accessibility::IUIAutomationElement,
+) -> verbatim_uia::Cached<verbatim_uia::ListenerEvent> {
+    let condition = uia
+        .property_condition(
+            windows::Win32::UI::Accessibility::UIA_HasKeyboardFocusPropertyId,
+            &windows::Win32::System::Variant::VARIANT::from(true),
+        )
+        .expect("a condition");
+    let request = uia
+        .request_fixed::<verbatim_uia::ListenerEvent>()
+        .expect("the listener's cache request");
+    verbatim_uia::Live::new(root.clone())
+        .find_first(
+            windows::Win32::UI::Accessibility::TreeScope_Descendants,
+            &condition,
+            &request,
+        )
+        .expect("the search")
+        .expect("mockapp reports a focused element")
+}

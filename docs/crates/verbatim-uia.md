@@ -33,7 +33,10 @@ Public API:
 - `Uia` — a per-thread client (one COM apartment, one `IUIAutomation`
   instance; nothing COM crosses threads), each of whose calls waits up to
   `CALL_TIMEOUT` for the application: `focused_element`,
-  `element_from_handle`, `element_by_runtime_id`, `base_cache_request`,
+  `element_from_handle`, `window_element(hwnd, request)` (the same, the
+  element filled by a shape's `Request` and returned as its `Cached`),
+  `element_by_runtime_id`, `base_cache_request`,
+  `request_fixed::<S>()` (the request of a shape with no gates; local),
   `controlled_descendant` (the selected element, when it is inside an
   element the focus names in its ControllerFor relation; the classic
   implementation behind `verbatim_uia_rops::controlled_selection`), plus
@@ -276,8 +279,7 @@ Public API:
   `SearchTextBox` or `TextBox`): what a help text or `ControllerFor`
   change of the focus reads when the outpost handles it, in one cache
   refresh.
-- `map::ignores_notifications(class, automation_id)` and
-  `map::cached_ignores_notifications(element)` — a terminal control's and
+- `map::ignores_notifications(class, automation_id)` — a terminal control's and
   the console host's text area's (automation id "Text Area")
   notifications are all ignored, as NVDA's terminal overlays ignore them.
 - `map::is_terminal_class(class)` — Windows Terminal's text control
@@ -288,9 +290,9 @@ Public API:
   window, in the outpost.
 - NVDA's base cache request (`nvda_base_cache_request`:
   `NVDA_BASE_PROPERTIES`, thirteen properties, and the Text pattern, with
-  UIA's default scope and filter). A `Part` built `with_text_pattern` adds
-  the Text pattern to its cache request, so a `Registration` of parts with
-  `NVDA_BASE_PROPERTIES` carries the same request.
+  UIA's default scope and filter). The listener no longer registers with
+  it: its parts are shaped as `ListenerEvent`, whose request is this one
+  with `IsDialog` and `IsTogglePatternAvailable` added.
 - `Registration::new(subscriptions, scope)`,
   `Registration::with_cache(subscriptions, scope, properties)`,
   `Registration::with_parts(parts, scope)`, `retarget(scope)`, and
@@ -333,8 +335,23 @@ Public API:
   registers its handlers: each handler is added to the group, which is
   local, and the group is registered on each element of the scope with one
   `AddEventHandlerGroup` call. Each subscription is a `Part`, with the
-  properties its events' elements arrive with, so one group can carry a
-  different cache request for each handler. A registration has NVDA's two
+  properties its events' elements arrive with (`Part.properties`) and the
+  patterns its cache request also holds (`Part.patterns`), so one group
+  can carry a different cache request for each handler.
+  `Part::shaped::<S>(subscription)`, for a shape with no gates, makes a
+  part whose request is `S`'s, properties and patterns both, and whose
+  callbacks receive each event's element as a `Cached<S>`: `Subscription`
+  and its callback types (`PropertyCallback`, `ElementCallback`,
+  `EventCallback`, `NotificationCallback`, `ActiveTextPositionCallback`,
+  `FocusCallback`) are generic over the element type they deliver, the raw
+  element by default, and a shaped part's subscription is
+  `Subscription<Cached<S>>`, wrapped inside into one that receives the raw
+  element, so a registration still holds parts of several shapes. The
+  wrapper runs inside the failed-read counting, so a shaped callback's
+  reads are counted in `Registration::failed_reads()`. `.extended()` marks
+  a part as held only by the extended groups, and `.text_changes()` as
+  one that delivers text changes. `Part::new` remains for parts not yet
+  shaped. A registration has NVDA's two
   local groups (`UIAHandler/__init__.py`, `_createLocalEventHandlerGroup`):
   `Group::Base`, which holds every part not marked `extended_only`, and
   `Group::Extended`, which holds every part; and a third,
@@ -348,15 +365,16 @@ Public API:
   elements of a scope of windows or the desktop are fetched with the first
   part's cache request.
 - The outpost's one focus-following registration has four parts: the
-  focus's property changes with `FOCUS_EVENT_PROPERTIES` (the base set
+  focus's property changes shaped as `PropertyEvent` (the base set
   without the details and focus context properties, since a change of
-  states carries the whole state set) and its caret event with
-  `TEXT_EVENT_PROPERTIES` (process id, native window handle, and class
+  states carries the whole state set) and its caret event shaped as
+  `TextEvent` (process id, native window handle, and class
   name: nothing is spoken from it, and the class name of an element one
   brings, which may become the node's kept element, says whether its text
   is a terminal's), in every group; and its text changes, marked
-  `text_changes`, and active text position changes, with
-  `TEXT_EVENT_PROPERTIES`, in the extended groups alone.
+  `text_changes`, and active text position changes, shaped as
+  `TextEvent`, in the extended groups alone. The focus listener's
+  desktop-wide registration has four parts shaped as `ListenerEvent`.
 - A move (`retarget` gives the base group, `retarget_to` the group named)
   is handed to the registration's thread, so the caller never waits on
   UIA's removal, which waits for running callbacks. The thread adds the
@@ -468,6 +486,51 @@ Public API:
   counters their owners keep: `Registration::failed_reads()` for the
   callbacks on UIA's threads, the listener's reading threads, and the
   outpost's worker (`docs/design/uia-shapes.md`, section 3.6).
+- The shape module (`docs/design/uia-shapes.md`, section 3). A shape is a
+  struct whose fields are what one purpose reads of an element; its cache
+  request and its read are generated from one field list by a macro
+  private to the crate, so a shape's read names exactly the properties and
+  patterns its request holds. Its public parts:
+  - `Shape`, `Ungated` and `Covers<T>`, sealed traits no other crate can
+    implement. `Shape` carries the shape's `PROPERTIES` and `PATTERNS`,
+    computed at compile time without repeats, and its gates type, `()` for
+    a shape with no gates, which is what `Ungated` marks. `Covers<T>` says
+    a shape's request holds every property and pattern of `T`'s, checked
+    by a compile-time assertion.
+  - The shapes so far, each a plain struct of public fields. The groups:
+    `RoleCore` (control type, class name, `IsDialog`,
+    `IsTogglePatternAvailable`, native window handle; `role()` maps them as
+    every read maps a role, refined for toggle buttons, terminals and
+    dialogs), `ValueSet` (the Value pattern's value and the range value
+    with its availability; `value(class_name)`), and `States` (the fifteen
+    state properties; `states(role)`). `Kept`: the native window handle
+    and class name, all any reader of a kept element reads, covered by
+    every shape whose elements are kept. The event shapes:
+    `ListenerEvent` (NVDA's thirteen base properties, `IsDialog` and
+    `IsTogglePatternAvailable`, with the Text pattern prefetched;
+    `parts(runtime_id)` gives its role, name and focused state, nothing
+    else), `PropertyEvent` (`RoleCore`, name, `ValueSet`, `States` and the
+    process id, 24 properties; `parts(runtime_id)` gives everything but
+    details), and `TextEvent` (process id, native window handle and class
+    name). All three cover `Kept`.
+  - `Request<S>`, a shape's cache request, keeping the gates it was built
+    with.
+  - `Cached<S>`, an element whose cache `S`'s request filled, made only by
+    this crate: by a fill from a `Request<S>`, by a registration's part for
+    `S`, by `Agile::resolve`, and by `narrow`. `read()` reads the shape
+    from the cache, locally; `live()` gives the `Live` element;
+    `runtime_id()`; `agile()` makes the `Agile<S>` that crosses threads;
+    `narrow::<T>()` reads the same element as a shape it covers.
+  - `Agile<S>`, a `Cached<S>` for another thread of this process, `Send`
+    and `Sync` with no `unsafe`; `resolve()` gives the `Cached<S>` back,
+    the same element and cache.
+  - `Live`, an element for calls into its application, with no cached
+    read: `new`, `element()` for the raw element, `refresh(request)`
+    (`BuildUpdatedCache` into a shape) and `find_first(scope, condition,
+    request)`.
+
+  Until step 5 of the migration the old lists and raw readers sit beside
+  the shapes, and a site not yet moved passes `live().element()` to them.
 - `NodeIdRegistry` — maps UIA runtime IDs to stable `NodeId`s and keeps the
   live element behind each; takes an injected shared counter so the UIA and
   MSAA registries in one outpost never hand out the same id. Nodes stay

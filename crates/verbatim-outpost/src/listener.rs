@@ -101,19 +101,17 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, NotificationKind, NotificationProcessing, UIA_MenuOpenedEventId,
+    NotificationKind, NotificationProcessing, UIA_MenuOpenedEventId,
     UIA_SelectionItem_ElementSelectedEventId,
 };
-use windows::core::AgileReference;
 
 use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEvent, WinEventCallback, WinEventKind};
 use verbatim_model::{Notification, OutpostId, Pid, TraceId};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_uia::map::{
-    cached_native_window_handle, cached_process_id, notification_kind_from_uia,
-    notification_processing_from_uia,
+    ignores_notifications, notification_kind_from_uia, notification_processing_from_uia,
 };
-use verbatim_uia::{Part, Registration, Scope, Subscription};
+use verbatim_uia::{Agile, Cached, ListenerEvent, Part, Registration, Scope, Subscription};
 
 use crate::OutpostOptions;
 use crate::arbitration::window_class_name;
@@ -374,7 +372,7 @@ impl Reading for UiaFocusReading {
     /// from the event's cache, the kind of event, and, for a selection or a
     /// notification, the fact captured from it.
     type Job = (
-        AgileReference<IUIAutomationElement>,
+        Agile<ListenerEvent>,
         isize,
         Vec<i32>,
         FocusEvent,
@@ -402,9 +400,9 @@ impl Reading for UiaFocusReading {
             return Judged::Dropped("its reading thread has no UIA client");
         };
         match (element.resolve(), fact) {
-            (Ok(element), Some(fact)) => reader.check_fact(&element, fact),
-            (Ok(element), None) => reader.read(
-                &element,
+            (Ok(sender), Some(fact)) => reader.check_fact(&sender, fact),
+            (Ok(sender), None) => reader.read(
+                &sender,
                 focus_window,
                 kind,
                 Arrival {
@@ -598,17 +596,17 @@ impl Listener {
     }
 }
 
-/// What a UIA callback captures from a cached element: its owning pid, its
-/// cached window handle, and its cached snapshot parts. `None` for an element
-/// with no owning process. `element` comes with the registration's base
-/// cache request, so every read is a cached local read.
-fn capture(element: &IUIAutomationElement) -> Option<(Pid, isize, UiaSnapshotFact)> {
-    let pid = cached_process_id(element).filter(|&pid| pid != 0)?;
-    let hwnd = cached_native_window_handle(element);
-    let parts = crate::focus_read::event_parts(element);
+/// What a UIA callback captures from an event's element, `sender`, read
+/// as `fields`: its cached window handle and snapshot parts. `None` for an
+/// element with no owning process.
+fn capture(
+    sender: &Cached<ListenerEvent>,
+    fields: &ListenerEvent,
+) -> Option<(isize, UiaSnapshotFact)> {
+    fields.process_id.filter(|&pid| pid != 0)?;
+    let parts = fields.parts(sender.runtime_id());
     Some((
-        Pid(pid),
-        hwnd,
+        fields.role.hwnd,
         UiaSnapshotFact {
             runtime_id: parts.runtime_id,
             role: parts.role,
@@ -643,11 +641,18 @@ fn focus_window_for(pid: Pid, hwnd: isize) -> isize {
 fn focus_subscription(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaFocusReading>>,
-) -> Subscription {
+) -> Subscription<Cached<ListenerEvent>> {
     let outgoing = Arc::clone(outgoing);
     let readers = Arc::clone(readers);
-    let callback = Arc::new(move |element: &IUIAutomationElement| {
-        queue_for_reading(&outgoing, &readers, element, FocusEvent::Focus, None);
+    let callback = Arc::new(move |sender: &Cached<ListenerEvent>| {
+        queue_for_reading(
+            &outgoing,
+            &readers,
+            sender,
+            &sender.read(),
+            FocusEvent::Focus,
+            None,
+        );
     });
     Subscription::Focus { callback }
 }
@@ -660,40 +665,47 @@ fn focus_subscription(
 fn menu_subscription(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaFocusReading>>,
-) -> Subscription {
+) -> Subscription<Cached<ListenerEvent>> {
     let outgoing = Arc::clone(outgoing);
     let readers = Arc::clone(readers);
     Subscription::Event {
         event: UIA_MenuOpenedEventId,
-        callback: Arc::new(move |element: &IUIAutomationElement| {
+        callback: Arc::new(move |sender: &Cached<ListenerEvent>| {
             if readers.focus_pending() {
                 tracing::debug!("UIA menu opening dropped: a focus is pending");
                 return;
             }
-            queue_for_reading(&outgoing, &readers, element, FocusEvent::MenuOpened, None);
+            queue_for_reading(
+                &outgoing,
+                &readers,
+                sender,
+                &sender.read(),
+                FocusEvent::MenuOpened,
+                None,
+            );
         }),
     }
 }
 
-/// Queues the UIA event `kind` whose sender is `element`, a cached element
-/// from the registration's base cache request, for its application's
-/// reading thread, after sending its marker; `fact`, for a selection or a
-/// notification, is what was captured from it. Makes no cross-process
-/// call.
+/// Queues the UIA event `kind` whose sender is `sender`, read as `fields`,
+/// for its application's reading thread, after sending its marker; `fact`,
+/// for a selection or a notification, is what was captured from it. Makes
+/// no cross-process call.
 fn queue_for_reading(
     outgoing: &Outgoing,
     readers: &Readers<UiaFocusReading>,
-    element: &IUIAutomationElement,
+    sender: &Cached<ListenerEvent>,
+    fields: &ListenerEvent,
     kind: FocusEvent,
     fact: Option<DeliveredFact>,
 ) {
-    let Some(pid) = cached_process_id(element).filter(|&pid| pid != 0).map(Pid) else {
+    let Some(pid) = fields.process_id.filter(|&pid| pid != 0).map(Pid) else {
         return;
     };
     if outgoing.ignored.contains(pid) {
         return;
     }
-    let focus_window = focus_window_for(pid, cached_native_window_handle(element));
+    let focus_window = focus_window_for(pid, fields.role.hwnd);
     let meta = Meta {
         marker: outgoing.next_marker(),
         trace: TraceId::mint(),
@@ -703,7 +715,7 @@ fn queue_for_reading(
             ..EventTiming::default()
         },
     };
-    let runtime_id = verbatim_uia::runtime_id(element);
+    let runtime_id = sender.runtime_id();
     // Every event's arrival, by its marker, whatever its read makes of it,
     // so a delay before the listener received it shows.
     tracing::debug!(%pid, marker = meta.marker, ?kind, ?runtime_id, "UIA focus event received");
@@ -715,7 +727,7 @@ fn queue_for_reading(
         },
         meta,
     );
-    match AgileReference::new(element) {
+    match sender.agile() {
         Ok(agile) => readers.push(pid, meta, (agile, focus_window, runtime_id, kind, fact)),
         Err(error) => {
             tracing::warn!(%error, "a UIA focus's element could not be kept for its read");
@@ -746,8 +758,8 @@ fn queue_for_reading(
 fn install_desktop_subscriptions(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaFocusReading>>,
-    focus: Subscription,
-    menu: Subscription,
+    focus: Subscription<Cached<ListenerEvent>>,
+    menu: Subscription<Cached<ListenerEvent>>,
 ) -> Option<Registration> {
     // A selection and a notification go through their application's
     // reading thread, behind a marker, for NVDA's checks of their sender's
@@ -757,9 +769,9 @@ fn install_desktop_subscriptions(
     let selection_readers = Arc::clone(readers);
     let selection = Subscription::Event {
         event: UIA_SelectionItem_ElementSelectedEventId,
-        callback: Arc::new(move |element: &IUIAutomationElement| {
-            // A cached element from the registration's cache request.
-            if let Some((_, hwnd, snapshot)) = capture(element) {
+        callback: Arc::new(move |sender: &Cached<ListenerEvent>| {
+            let fields = sender.read();
+            if let Some((hwnd, snapshot)) = capture(sender, &fields) {
                 let fact = DeliveredFact::UiaSelection {
                     hwnd,
                     focus_window: 0,
@@ -768,7 +780,8 @@ fn install_desktop_subscriptions(
                 queue_for_reading(
                     &selection_outgoing,
                     &selection_readers,
-                    element,
+                    sender,
+                    &fields,
                     FocusEvent::Selection,
                     Some(fact),
                 );
@@ -780,15 +793,19 @@ fn install_desktop_subscriptions(
     let notification_readers = Arc::clone(readers);
     let notifications = Subscription::Notifications {
         callback: Arc::new(
-            move |element: &IUIAutomationElement,
+            move |sender: &Cached<ListenerEvent>,
                   kind: NotificationKind,
                   processing: NotificationProcessing,
                   display_string: Option<String>,
                   activity_id: Option<String>| {
-                if verbatim_uia::map::cached_ignores_notifications(element) {
+                let fields = sender.read();
+                if ignores_notifications(
+                    fields.role.class_name.as_deref(),
+                    fields.automation_id.as_deref(),
+                ) {
                     return;
                 }
-                if let Some((_, hwnd, snapshot)) = capture(element) {
+                if let Some((hwnd, snapshot)) = capture(sender, &fields) {
                     let notification = Notification {
                         kind: notification_kind_from_uia(kind),
                         processing: notification_processing_from_uia(processing),
@@ -798,7 +815,8 @@ fn install_desktop_subscriptions(
                     queue_for_reading(
                         &notification_outgoing,
                         &notification_readers,
-                        element,
+                        sender,
+                        &fields,
                         FocusEvent::Notification,
                         Some(DeliveredFact::UiaNotification {
                             hwnd,
@@ -811,14 +829,13 @@ fn install_desktop_subscriptions(
         ),
     };
 
-    // NVDA's base cache request, as its global group carries: UIA fills
-    // only these in the application for each event, and the outpost reads
-    // what more it needs of a selected item when it handles the event.
+    // NVDA's base cache request, as its global group carries, with what
+    // refines a role (`ListenerEvent`): UIA fills only these in the
+    // application for each event, and the outpost reads what more it needs
+    // of a selected item when it handles the event.
     let parts = [focus, selection, menu, notifications]
         .into_iter()
-        .map(|subscription| {
-            Part::new(subscription, verbatim_uia::NVDA_BASE_PROPERTIES).with_text_pattern()
-        })
+        .map(Part::shaped::<ListenerEvent>)
         .collect();
     match Registration::with_parts(parts, Scope::Desktop) {
         Ok(registration) => Some(registration),

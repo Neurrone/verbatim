@@ -14,8 +14,10 @@ mod common;
 mod harness;
 
 use verbatim_model::{NodeDetails, Role, State, StateSet};
-use verbatim_uia::{NodeIdRegistry, Uia, map};
-use windows::Win32::UI::Accessibility::{IUIAutomationElement, TreeScope_Children};
+use verbatim_uia::{Live, NodeIdRegistry, PropertyEvent, TextEvent, Uia, map};
+use windows::Win32::UI::Accessibility::{
+    IUIAutomationElement, TreeScope_Children, TreeScope_Subtree,
+};
 
 /// One node of the tree as UIA reads it, with its children in order.
 #[derive(Debug, PartialEq)]
@@ -210,11 +212,78 @@ fn uia_client_reads_the_scripted_tree() {
     app.quit();
 }
 
+/// Every element of the scripted tree, filled with each event shape's own
+/// request, reads as the shape the same role, name, value, states, and
+/// window handle that the full read of the element gives
+/// (`map::snapshot_parts_from_cached_element` over [`verbatim_uia::CACHED_PROPERTIES`]),
+/// for the fields the shape carries: a property event's parts, which have
+/// no details, and its window handle; a text event's window handle.
+fn event_shapes_read_what_the_full_read_gives() {
+    let title = common::unique_title("mockapp-uia-event-shapes");
+    let app = common::spawn("tree.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+
+    let uia = Uia::new().expect("Uia::new");
+    let cache = uia
+        .cache_request(verbatim_uia::CACHED_PROPERTIES)
+        .expect("the full cache request");
+    let root = uia
+        .element_from_handle(hwnd.0 as isize, &cache)
+        .expect("element_from_handle");
+    // SAFETY: a live client; the condition takes no arguments.
+    let condition = unsafe { uia.client().CreateTrueCondition() }.expect("CreateTrueCondition");
+    // SAFETY: `root` is a live, cached element on this client's own
+    // apartment thread.
+    let elements = unsafe { root.FindAllBuildCache(TreeScope_Subtree, &condition, &cache) }
+        .expect("FindAllBuildCache");
+    let elements = verbatim_uia::elements_of(&elements);
+    assert_eq!(
+        elements.len(),
+        30,
+        "every element of the scripted tree, with the frame's title bar and its buttons"
+    );
+    let property_request = uia
+        .request_fixed::<PropertyEvent>()
+        .expect("the property event's request");
+    let text_request = uia
+        .request_fixed::<TextEvent>()
+        .expect("the text event's request");
+    for element in &elements {
+        let full = map::snapshot_parts_from_cached_element(element);
+        let full_hwnd = map::cached_native_window_handle(element);
+        let live = Live::new(element.clone());
+
+        let property = live
+            .refresh(&property_request)
+            .expect("the element filled as a property event");
+        let fields = property.read();
+        let expected = map::CachedUiaParts {
+            details: verbatim_model::NodeDetails::default(),
+            ..full.clone()
+        };
+        assert_eq!(fields.parts(property.runtime_id()), expected);
+        assert_eq!(fields.role.hwnd, full_hwnd, "{full:?}");
+
+        let text = live
+            .refresh(&text_request)
+            .expect("the element filled as a text event");
+        assert_eq!(text.read().hwnd, full_hwnd, "{full:?}");
+    }
+
+    app.quit();
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
-    harness::run_isolated(&[(
-        "uia_client_reads_the_scripted_tree",
-        uia_client_reads_the_scripted_tree,
-    )]);
+    harness::run_isolated(&[
+        (
+            "uia_client_reads_the_scripted_tree",
+            uia_client_reads_the_scripted_tree,
+        ),
+        (
+            "event_shapes_read_what_the_full_read_gives",
+            event_shapes_read_what_the_full_read_gives,
+        ),
+    ]);
 }

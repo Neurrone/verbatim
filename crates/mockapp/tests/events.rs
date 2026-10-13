@@ -28,8 +28,9 @@ use std::time::Instant;
 use verbatim_ia2::{APP_SUBSCRIPTIONS, WinEvent, WinEventHook, WinEventKind};
 use verbatim_model::{NotificationKind, NotificationProcessing, State, StateSet};
 use verbatim_uia::{
-    ElementExt, FOCUS_PROPERTIES, Registration, Scope, Subscription, Uia,
-    map::{notification_kind_from_uia, notification_processing_from_uia},
+    Cached, ElementExt, FOCUS_PROPERTIES, ListenerEvent, Part, Registration, Scope, Subscription,
+    Uia,
+    map::{ignores_notifications, notification_kind_from_uia, notification_processing_from_uia},
 };
 use windows::Win32::Foundation::{HWND, WAIT_TIMEOUT};
 use windows::Win32::UI::Accessibility::{
@@ -338,6 +339,88 @@ fn uia_notify_raises_a_notification_event() {
     app.quit();
 }
 
+/// What the focus listener reads of a selection's or notification's
+/// sender: the event, the sender's role and name from its parts, and, for
+/// a notification, whether its sender's notifications are ignored.
+type ListenerRead = (
+    &'static str,
+    verbatim_model::Role,
+    Option<String>,
+    Option<bool>,
+);
+
+/// A registration of the focus listener's shape, `ListenerEvent`, for
+/// selections and notifications on mockapp's window reads each event's
+/// sender as the listener does, its `ListenerEvent` read and parts and,
+/// for a notification, `ignores_notifications` from its class name and
+/// automation id, with no failed cached read.
+fn uia_listener_reads_its_facts_with_no_failed_read() {
+    let title = common::unique_title("mockapp-events-uia-listener-facts");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+
+    let (sender, reads) = mpsc::channel::<ListenerRead>();
+    let notified = sender.clone();
+    let registration = Registration::with_parts(
+        vec![
+            Part::shaped::<ListenerEvent>(Subscription::Event {
+                event: UIA_SelectionItem_ElementSelectedEventId,
+                callback: Arc::new(move |element: &Cached<ListenerEvent>| {
+                    let parts = element.read().parts(element.runtime_id());
+                    let _ = sender.send(("selection", parts.role, parts.name, None));
+                }),
+            }),
+            Part::shaped::<ListenerEvent>(Subscription::Notifications {
+                callback: Arc::new(move |element: &Cached<ListenerEvent>, _, _, _, _| {
+                    let fields = element.read();
+                    let ignored = ignores_notifications(
+                        fields.role.class_name.as_deref(),
+                        fields.automation_id.as_deref(),
+                    );
+                    let parts = fields.parts(element.runtime_id());
+                    let _ = notified.send(("notification", parts.role, parts.name, Some(ignored)));
+                }),
+            }),
+        ],
+        Scope::Windows(vec![hwnd.0 as isize]),
+    )
+    .expect("Registration::with_parts");
+
+    app.send("select item1");
+    app.send("notify Window snapped to the left");
+    // The marker.
+    app.send("select item2");
+    expect_events(
+        &reads,
+        &[
+            (
+                "selection",
+                verbatim_model::Role::ListItem,
+                Some("First".to_owned()),
+                None,
+            ),
+            (
+                "notification",
+                verbatim_model::Role::Window,
+                Some("Mockapp Events Fixture".to_owned()),
+                Some(false),
+            ),
+            (
+                "selection",
+                verbatim_model::Role::ListItem,
+                Some("Second".to_owned()),
+                None,
+            ),
+        ],
+    );
+    // Closing waits for every callback in progress, so each has counted
+    // its reads.
+    registration.close();
+    assert_eq!(registration.failed_reads(), 0);
+
+    app.quit();
+}
+
 /// The active text position changed event arrives with the element that
 /// raised it and the range now active, whose text the client reads.
 fn uia_active_text_position_arrives_with_its_range() {
@@ -641,6 +724,10 @@ fn main() {
         (
             "uia_notify_raises_a_notification_event",
             uia_notify_raises_a_notification_event,
+        ),
+        (
+            "uia_listener_reads_its_facts_with_no_failed_read",
+            uia_listener_reads_its_facts_with_no_failed_read,
         ),
         (
             "uia_one_group_delivers_each_of_its_subscriptions",

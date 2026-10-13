@@ -20,7 +20,9 @@ use verbatim_model::NormalizedEvent;
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::focus_read::Judged;
 use verbatim_outpost::protocol::OutpostToSupervisor;
-use verbatim_uia::{CACHED_PROPERTIES, ElementExt, NodeIdRegistry, Uia, map};
+use verbatim_uia::{
+    CACHED_PROPERTIES, Cached, ElementExt, ListenerEvent, Live, NodeIdRegistry, Uia, map,
+};
 use verbatim_uia_rops::{
     Ancestry, Error, FocusAncestry, FocusAncestryFn, FocusQuery, LEFT_OUT_WHEN_UNSUPPORTED,
     NavigationDirection, Status, StepQuery, focus_ancestry, focus_ancestry_classic,
@@ -117,6 +119,31 @@ impl Fixture {
         let element = self.find(name);
         assert_eq!(
             element.has_keyboard_focus().ok(),
+            Some(true),
+            "{name} has the keyboard focus"
+        );
+        element
+    }
+
+    /// [`focus`](Self::focus), the element filled as the focus listener's
+    /// registration fills a focus event's sender.
+    fn focus_delivered(&mut self, id: &str, name: &str) -> Cached<ListenerEvent> {
+        self.app.send(&format!("focus {id}"));
+        let value = VARIANT::from(BSTR::from(name));
+        let condition = self
+            .uia
+            .property_condition(UIA_NamePropertyId, &value)
+            .expect("condition");
+        let request = self
+            .uia
+            .request_fixed::<ListenerEvent>()
+            .expect("the listener's cache request");
+        let element = Live::new(self.root.clone())
+            .find_first(TreeScope_Descendants, &condition, &request)
+            .unwrap_or_else(|error| panic!("no element named {name:?}: {error}"))
+            .unwrap_or_else(|| panic!("no element named {name:?}"));
+        assert_eq!(
+            element.live().element().has_keyboard_focus().ok(),
             Some(true),
             "{name} has the keyboard focus"
         );
@@ -541,7 +568,7 @@ fn a_focus_whose_nearest_window_walk_times_out_is_dropped() {
     const TIMEOUT: Duration = Duration::from_millis(300);
     const SLOW_CALL: Duration = Duration::from_millis(15);
     let mut fixture = Fixture::start_alone("mockapp-rops-no-window", "ancestry.json");
-    let deep = fixture.focus("deep", "Deep button");
+    let deep = fixture.focus_delivered("deep", "Deep button");
     let outpost = OutpostUnderTest::new(&fixture.app);
     let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
     let restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
@@ -594,7 +621,7 @@ fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
         // answers a probe of the window that it has no provider once a
         // transaction with it has timed out; a listener of its own does not
         // touch the outpost's.)
-        let check = fixture.focus("check", "Remember");
+        let check = fixture.focus_delivered("check", "Remember");
         outpost.deliver(outpost.listener_fact(&check));
         assert!(
             matches!(
@@ -607,7 +634,7 @@ fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
             "{path}: the focus before is reported"
         );
         outpost.settled();
-        let deep = fixture.focus("deep", "Deep button");
+        let deep = fixture.focus_delivered("deep", "Deep button");
         let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
         let restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
 

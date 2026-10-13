@@ -59,8 +59,9 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationPropertyChangedEventHandler, IUIAutomationTextRange, NotificationKind,
     NotificationProcessing, TreeScope, TreeScope_Element, TreeScope_Subtree,
     UIA_ControllerForPropertyId, UIA_EVENT_ID, UIA_ExpandCollapseExpandCollapseStatePropertyId,
-    UIA_HelpTextPropertyId, UIA_IsEnabledPropertyId, UIA_NamePropertyId, UIA_PROPERTY_ID,
-    UIA_RangeValueValuePropertyId, UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId,
+    UIA_HelpTextPropertyId, UIA_IsEnabledPropertyId, UIA_NamePropertyId, UIA_PATTERN_ID,
+    UIA_PROPERTY_ID, UIA_RangeValueValuePropertyId, UIA_ToggleToggleStatePropertyId,
+    UIA_ValueValuePropertyId,
 };
 use windows::core::AgileReference;
 use windows_core::Interface;
@@ -68,30 +69,26 @@ use windows_core::Interface;
 use crate::cache::CACHED_PROPERTIES;
 use crate::client::Uia;
 use crate::focus::{FocusCallback, FocusHandler};
+use crate::shape::{Cached, Ungated, delivered};
 
 /// Invoked on a UIA callback thread for a property change, with the cached
 /// element and the changed property id.
-pub type PropertyCallback = Arc<dyn Fn(&IUIAutomationElement, i32) + Send + Sync>;
+pub type PropertyCallback<E = IUIAutomationElement> = Arc<dyn Fn(&E, i32) + Send + Sync>;
 
 /// Invoked on a UIA callback thread for an automation event, with the cached
 /// element that raised it.
-pub type ElementCallback = Arc<dyn Fn(&IUIAutomationElement) + Send + Sync>;
+pub type ElementCallback<E = IUIAutomationElement> = Arc<dyn Fn(&E) + Send + Sync>;
 
 /// Invoked on a UIA callback thread for one of several automation events,
 /// with the cached element that raised it and the event's id.
-pub type EventCallback = Arc<dyn Fn(&IUIAutomationElement, i32) + Send + Sync>;
+pub type EventCallback<E = IUIAutomationElement> = Arc<dyn Fn(&E, i32) + Send + Sync>;
 
 /// Invoked on a UIA callback thread for a notification: the raising element,
 /// the kind and processing hint, and the optional display string and
 /// activity id.
-pub type NotificationCallback = Arc<
-    dyn Fn(
-            &IUIAutomationElement,
-            NotificationKind,
-            NotificationProcessing,
-            Option<String>,
-            Option<String>,
-        ) + Send
+pub type NotificationCallback<E = IUIAutomationElement> = Arc<
+    dyn Fn(&E, NotificationKind, NotificationProcessing, Option<String>, Option<String>)
+        + Send
         + Sync,
 >;
 
@@ -100,8 +97,8 @@ pub type NotificationCallback = Arc<
 /// when the application moves the place being read without moving the
 /// caret, such as scrolling to an in-page link's target), with the cached
 /// element and the range that is now active, when the event carries one.
-pub type ActiveTextPositionCallback =
-    Arc<dyn Fn(&IUIAutomationElement, Option<&IUIAutomationTextRange>) + Send + Sync>;
+pub type ActiveTextPositionCallback<E = IUIAutomationElement> =
+    Arc<dyn Fn(&E, Option<&IUIAutomationTextRange>) + Send + Sync>;
 
 /// The properties an outpost follows on the focus, and only there: name,
 /// value (of the `Value` or the `RangeValue` pattern), the state-bearing
@@ -169,15 +166,17 @@ impl Group {
     }
 }
 
-/// What a registration listens for.
+/// What a registration listens for. Its callbacks receive each event's
+/// element as `E`: the raw element, or for a part made with
+/// [`Part::shaped`] the element as its shape.
 #[derive(Clone)]
-pub enum Subscription {
+pub enum Subscription<E = IUIAutomationElement> {
     /// Changes to these properties.
     Properties {
         /// The properties to watch.
         properties: Vec<UIA_PROPERTY_ID>,
         /// Called for each change.
-        callback: PropertyCallback,
+        callback: PropertyCallback<E>,
     },
     /// An automation event, such as `SelectionItem_ElementSelected` or
     /// `MenuOpened`.
@@ -185,12 +184,12 @@ pub enum Subscription {
         /// The event to watch.
         event: UIA_EVENT_ID,
         /// Called for each event.
-        callback: ElementCallback,
+        callback: ElementCallback<E>,
     },
     /// `AutomationNotification` events (`IUIAutomation5`).
     Notifications {
         /// Called for each notification.
-        callback: NotificationCallback,
+        callback: NotificationCallback<E>,
     },
     /// Several automation events through one handler, such as a text
     /// control's caret and text changes.
@@ -198,12 +197,12 @@ pub enum Subscription {
         /// The events to watch.
         events: Vec<UIA_EVENT_ID>,
         /// Called for each event, with its id.
-        callback: EventCallback,
+        callback: EventCallback<E>,
     },
     /// Active text position changes (`IUIAutomation6`).
     ActiveTextPosition {
         /// Called for each change.
-        callback: ActiveTextPositionCallback,
+        callback: ActiveTextPositionCallback<E>,
     },
     /// Focus changes anywhere on the desktop. Not part of the event handler
     /// groups: the handler is registered on the registration's client
@@ -218,8 +217,55 @@ pub enum Subscription {
     /// 2026-10-12, `docs/design/focus-pipeline.md`, section 16.8).
     Focus {
         /// Called for each focus change.
-        callback: FocusCallback,
+        callback: FocusCallback<E>,
     },
+}
+
+impl<S: Ungated> Subscription<Cached<S>> {
+    /// The subscription with callbacks that receive the raw element, each
+    /// wrapping it as the [`Cached<S>`] UIA filled it as.
+    fn erase(self) -> Subscription {
+        match self {
+            Self::Properties {
+                properties,
+                callback,
+            } => Subscription::Properties {
+                properties,
+                callback: Arc::new(move |element, property| {
+                    callback(&delivered::<S>(element), property);
+                }),
+            },
+            Self::Event { event, callback } => Subscription::Event {
+                event,
+                callback: Arc::new(move |element| callback(&delivered::<S>(element))),
+            },
+            Self::Notifications { callback } => Subscription::Notifications {
+                callback: Arc::new(move |element, kind, processing, display, activity| {
+                    callback(
+                        &delivered::<S>(element),
+                        kind,
+                        processing,
+                        display,
+                        activity,
+                    );
+                }),
+            },
+            Self::Events { events, callback } => Subscription::Events {
+                events,
+                callback: Arc::new(move |element, event| {
+                    callback(&delivered::<S>(element), event);
+                }),
+            },
+            Self::ActiveTextPosition { callback } => Subscription::ActiveTextPosition {
+                callback: Arc::new(move |element, range| {
+                    callback(&delivered::<S>(element), range);
+                }),
+            },
+            Self::Focus { callback } => Subscription::Focus {
+                callback: Arc::new(move |element| callback(&delivered::<S>(element))),
+            },
+        }
+    }
 }
 
 /// One [`Subscription`] of a registration, with the properties each of its
@@ -239,9 +285,10 @@ pub struct Part {
     /// Whether the part delivers text changes, which
     /// [`Group::ExtendedWithoutTextChanges`] leaves out.
     pub text_changes: bool,
-    /// Whether the cache request also holds the Text pattern, as NVDA's
-    /// base cache request does ([`Part::with_text_pattern`]).
-    pub text_pattern: bool,
+    /// The patterns the cache request also holds, such as the Text
+    /// pattern [`crate::ListenerEvent`] prefetches, as NVDA's base cache
+    /// request holds it.
+    pub patterns: &'static [UIA_PATTERN_ID],
 }
 
 impl Part {
@@ -253,29 +300,30 @@ impl Part {
             properties,
             extended_only: false,
             text_changes: false,
-            text_pattern: false,
+            patterns: &[],
         }
     }
 
-    /// The part, its cache request also holding the Text pattern: with
-    /// [`crate::NVDA_BASE_PROPERTIES`], NVDA's base cache request.
+    /// A part every group holds for shape `S`: each event's element arrives
+    /// with `S`'s request filled, and the subscription's callbacks receive
+    /// it as a [`Cached<S>`] (`docs/design/uia-shapes.md`).
     #[must_use]
-    pub fn with_text_pattern(self) -> Self {
+    pub fn shaped<S: Ungated>(subscription: Subscription<Cached<S>>) -> Self {
         Self {
-            text_pattern: true,
-            ..self
-        }
-    }
-
-    /// A part only the extended group holds.
-    #[must_use]
-    pub fn extended(subscription: Subscription, properties: &'static [UIA_PROPERTY_ID]) -> Self {
-        Self {
-            subscription,
-            properties,
-            extended_only: true,
+            subscription: subscription.erase(),
+            properties: S::PROPERTIES,
+            extended_only: false,
             text_changes: false,
-            text_pattern: false,
+            patterns: S::PATTERNS,
+        }
+    }
+
+    /// The part, held only by the extended groups.
+    #[must_use]
+    pub fn extended(self) -> Self {
+        Self {
+            extended_only: true,
+            ..self
         }
     }
 
@@ -826,21 +874,27 @@ fn set_up(parts: Vec<Part>, target: &Target, thread: &Thread) -> windows::core::
     // Parts asking for the same properties share one cache request, as
     // every one of NVDA's global handlers carries its one base cache
     // request.
-    let mut caches: Vec<(&'static [UIA_PROPERTY_ID], bool, IUIAutomationCacheRequest)> = Vec::new();
+    let mut caches: Vec<(
+        &'static [UIA_PROPERTY_ID],
+        &'static [UIA_PATTERN_ID],
+        IUIAutomationCacheRequest,
+    )> = Vec::new();
     let built = parts
         .into_iter()
         .map(|part| {
-            let shared = caches.iter().find(|(properties, text_pattern, _)| {
-                *properties == part.properties && *text_pattern == part.text_pattern
+            let shared = caches.iter().find(|(properties, patterns, _)| {
+                *properties == part.properties && *patterns == part.patterns
             });
             let cache = if let Some((_, _, cache)) = shared {
                 cache.clone()
             } else {
                 let cache = uia.cache_request(part.properties)?;
-                if part.text_pattern {
-                    crate::cache::add_text_pattern(&cache)?;
+                for &pattern in part.patterns {
+                    // SAFETY: `cache` is a live cache request; a pattern id
+                    // is a plain value.
+                    unsafe { cache.AddPattern(pattern) }?;
                 }
-                caches.push((part.properties, part.text_pattern, cache.clone()));
+                caches.push((part.properties, part.patterns, cache.clone()));
                 cache
             };
             Ok(Built {

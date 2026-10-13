@@ -18,7 +18,7 @@ pub(crate) use handler::FocusHandler;
 /// Receives the cached element; the listener reads its cached process id,
 /// window handle, and snapshot parts and forwards a focus fact. Must be
 /// `Send + Sync` because UIA delivers on library-managed apartment threads.
-pub type FocusCallback = Arc<dyn Fn(&IUIAutomationElement) + Send + Sync>;
+pub type FocusCallback<E = IUIAutomationElement> = Arc<dyn Fn(&E) + Send + Sync>;
 
 /// The `#[implement]`-generated COM object lives in its own module so the
 /// module-level allow covers the macro's generated glue (which uses

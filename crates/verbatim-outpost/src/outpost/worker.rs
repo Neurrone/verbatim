@@ -2111,7 +2111,7 @@ impl Worker<'_> {
         let element = event
             .element
             .as_ref()
-            .and_then(|agile| agile.resolve().ok());
+            .and_then(super::EventElement::resolve);
         // The event's window: its own, else the recorded window of the focus
         // it concerns, else its element's. Never the system's focus window,
         // which can belong to another application.

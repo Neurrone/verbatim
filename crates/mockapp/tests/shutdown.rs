@@ -27,10 +27,8 @@ use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, QueryResult};
 use verbatim_uia::{ElementExt, Uia};
 use windows::Win32::Foundation::HWND;
-use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, TreeScope_Descendants, UIA_ActiveTextPositionChangedEventId,
-    UIA_AutomationPropertyChangedEventId, UIA_HasKeyboardFocusPropertyId, UIA_NamePropertyId,
+    UIA_ActiveTextPositionChangedEventId, UIA_AutomationPropertyChangedEventId, UIA_NamePropertyId,
     UIA_Text_TextChangedEventId, UIA_Text_TextSelectionChangedEventId,
 };
 
@@ -56,18 +54,13 @@ fn registrations(hwnd: HWND) -> Vec<i64> {
 
 /// The element mockapp reports as having the keyboard focus, built with the
 /// listener's cache request, as a focus event's element arrives.
-fn focused(hwnd: HWND) -> IUIAutomationElement {
+fn focused(hwnd: HWND) -> verbatim_uia::Cached<verbatim_uia::ListenerEvent> {
     let uia = Uia::new().expect("a UIA client");
     let cache = uia.base_cache_request().expect("a cache request");
     let root = uia
         .element_from_handle(hwnd.0 as isize, &cache)
         .expect("mockapp's root element");
-    let condition = uia
-        .property_condition(UIA_HasKeyboardFocusPropertyId, &VARIANT::from(true))
-        .expect("a condition");
-    root.find_first_build_cache(TreeScope_Descendants, &condition, &cache)
-        .expect("the search")
-        .expect("mockapp reports a focused element")
+    common::listener_focus(&uia, &root)
 }
 
 /// Focuses mockapp's "Notes" document and returns its node, once the

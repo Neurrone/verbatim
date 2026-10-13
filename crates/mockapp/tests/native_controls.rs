@@ -31,10 +31,8 @@ use verbatim_model::{
 };
 
 use verbatim_outpost::protocol::DeliveredFact;
-use verbatim_uia::{ElementExt as _, Uia};
+use verbatim_uia::Uia;
 use windows::Win32::Foundation::HWND;
-use windows::Win32::System::Variant::VARIANT;
-use windows::Win32::UI::Accessibility::{TreeScope_Descendants, UIA_HasKeyboardFocusPropertyId};
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
 use windows::core::{PCWSTR, w};
 
@@ -591,13 +589,7 @@ fn a_uia_window_in_a_win32_window_has_the_windows_client_as_context() {
     let root = uia
         .element_from_handle(island.0 as isize, &cache)
         .expect("the UIA window's element");
-    let condition = uia
-        .property_condition(UIA_HasKeyboardFocusPropertyId, &VARIANT::from(true))
-        .expect("a condition");
-    let ok = root
-        .find_first_build_cache(TreeScope_Descendants, &condition, &cache)
-        .expect("the search")
-        .expect("the UIA window reports a focused element");
+    let ok = common::listener_focus(&uia, &root);
     let reported = outpost.uia_focus(&ok);
     assert_eq!(
         reported.chain(),

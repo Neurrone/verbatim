@@ -75,8 +75,8 @@ use verbatim_outpost::text::{
 };
 use verbatim_uia::map::snapshot_from_cached_element;
 use verbatim_uia::{
-    CACHED_PROPERTIES, ElementExt, FOCUS_EVENT_PROPERTIES, FOCUS_PROPERTIES, NodeIdRegistry,
-    Registration, Scope, Subscription, TEXT_EVENT_PROPERTIES, Uia,
+    CACHED_PROPERTIES, Cached, ElementExt, FOCUS_PROPERTIES, ListenerEvent, Live, NodeIdRegistry,
+    PropertyEvent, Registration, Scope, Subscription, TextEvent, Uia,
 };
 use verbatim_uia_rops::{Attributes, FocusAncestry, FocusQuery, TextAttribute, focus_ancestry};
 use windows::Win32::Foundation::HWND;
@@ -980,7 +980,7 @@ impl UiaUnderTest {
     /// under its window by that property and built with the listener's
     /// cache request, as a focus event's element arrives: what the system's
     /// focused element would be if mockapp had the keyboard focus.
-    fn focused(&self, hwnd: HWND) -> IUIAutomationElement {
+    fn focused(&self, hwnd: HWND) -> Cached<ListenerEvent> {
         let root = self
             .uia
             .element_from_handle(hwnd.0 as isize, &self.cache)
@@ -989,7 +989,12 @@ impl UiaUnderTest {
             .uia
             .property_condition(UIA_HasKeyboardFocusPropertyId, &VARIANT::from(true))
             .expect("a condition");
-        root.find_first_build_cache(TreeScope_Descendants, &condition, &self.cache)
+        let request = self
+            .uia
+            .request_fixed::<ListenerEvent>()
+            .expect("the listener's cache request");
+        Live::new(root)
+            .find_first(TreeScope_Descendants, &condition, &request)
             .expect("the search")
             .expect("mockapp reports a focused element")
     }
@@ -1028,9 +1033,7 @@ fn measure_uia_focus(
     app.send(&format!("set-focus {id}"));
     let focused = under_test.focused(hwnd);
     assert_eq!(
-        snapshot_from_cached_element(&focused, &under_test.registry)
-            .name
-            .as_deref(),
+        focused.read().name.as_deref(),
         Some(name),
         "the element mockapp reports focused"
     );
@@ -1753,9 +1756,9 @@ fn uia_selected_children_cost_exactly() {
 /// registrations asks of mockapp for its element's cache, measured as UIA
 /// fills that cache request on demand (`BuildUpdatedCache`): a text focus's
 /// caret and text change events carry little more than their window, since
-/// nothing is spoken from them (`TEXT_EVENT_PROPERTIES`), and a property
-/// change of the focus carries what its name, value, and states are read
-/// from (`FOCUS_EVENT_PROPERTIES`); every event was registered with the base
+/// nothing is spoken from them (`TextEvent`), and a property change of the
+/// focus carries what its name, value, and states are read from
+/// (`PropertyEvent`); every event was registered with the base
 /// cache request before. Measured on demand because the calls UIA makes to
 /// route an event to its registration vary from one delivery to another
 /// with how busy the machine is, while a cache request's calls do not.
@@ -1766,55 +1769,73 @@ fn uia_event_caches_cost_exactly() {
     let under_test = UiaUnderTest::new(hwnd);
     let mut ratchet = Ratchet::default();
     let notes = under_test.element("Notes");
-    for (operation, properties, expected) in [
-        (
-            "UIA event cache, the base request",
-            CACHED_PROPERTIES,
-            &[
-                ("ProviderOptions", 5),
-                ("GetPatternProvider", 11),
-                ("GetPropertyValue", 22),
-                ("HostRawElementProvider", 3),
-                ("GetRuntimeId", 2),
-                ("BoundingRectangle", 1),
-                ("FragmentRoot", 3),
-            ][..],
-        ),
-        (
-            "UIA event cache, a text focus's caret and text changes",
-            TEXT_EVENT_PROPERTIES,
-            &[
-                ("ProviderOptions", 5),
-                ("GetPropertyValue", 3),
-                ("HostRawElementProvider", 3),
-                ("GetRuntimeId", 2),
-                ("FragmentRoot", 3),
-            ][..],
-        ),
-        (
-            "UIA event cache, the focus's property changes",
-            FOCUS_EVENT_PROPERTIES,
-            &[
-                ("ProviderOptions", 5),
-                ("GetPatternProvider", 11),
-                ("GetPropertyValue", 13),
-                ("HostRawElementProvider", 3),
-                ("GetRuntimeId", 2),
-                ("FragmentRoot", 3),
-            ][..],
-        ),
-    ] {
-        let cache = under_test
-            .uia
-            .cache_request(properties)
-            .expect("a cache request");
-        let (_, cost) = under_test.measure(hwnd, |_| {
-            notes
-                .build_updated_cache(&cache)
-                .expect("the element's cache is filled")
-        });
-        ratchet.check(operation, &cost, calls(1, 0, 0), 0, expected);
-    }
+    let base = under_test
+        .uia
+        .cache_request(CACHED_PROPERTIES)
+        .expect("the base cache request");
+    let text = under_test
+        .uia
+        .request_fixed::<TextEvent>()
+        .expect("the text event's request");
+    let property = under_test
+        .uia
+        .request_fixed::<PropertyEvent>()
+        .expect("the property event's request");
+    let live = Live::new(notes.clone());
+    let (_, cost) = under_test.measure(hwnd, |_| {
+        notes
+            .build_updated_cache(&base)
+            .expect("the element's cache is filled")
+    });
+    ratchet.check(
+        "UIA event cache, the base request",
+        &cost,
+        calls(1, 0, 0),
+        0,
+        &[
+            ("ProviderOptions", 5),
+            ("GetPatternProvider", 11),
+            ("GetPropertyValue", 22),
+            ("HostRawElementProvider", 3),
+            ("GetRuntimeId", 2),
+            ("BoundingRectangle", 1),
+            ("FragmentRoot", 3),
+        ],
+    );
+    let (_, cost) = under_test.measure(hwnd, |_| {
+        live.refresh(&text).expect("the element's cache is filled")
+    });
+    ratchet.check(
+        "UIA event cache, a text focus's caret and text changes",
+        &cost,
+        calls(1, 0, 0),
+        0,
+        &[
+            ("ProviderOptions", 5),
+            ("GetPropertyValue", 3),
+            ("HostRawElementProvider", 3),
+            ("GetRuntimeId", 2),
+            ("FragmentRoot", 3),
+        ],
+    );
+    let (_, cost) = under_test.measure(hwnd, |_| {
+        live.refresh(&property)
+            .expect("the element's cache is filled")
+    });
+    ratchet.check(
+        "UIA event cache, the focus's property changes",
+        &cost,
+        calls(1, 0, 0),
+        0,
+        &[
+            ("ProviderOptions", 5),
+            ("GetPatternProvider", 11),
+            ("GetPropertyValue", 13),
+            ("HostRawElementProvider", 3),
+            ("GetRuntimeId", 2),
+            ("FragmentRoot", 3),
+        ],
+    );
     ratchet.finish();
     app.quit();
 }

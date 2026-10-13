@@ -136,6 +136,16 @@ impl Uia {
         crate::cache::cache_request_for(&self.client, fetches)
     }
 
+    /// The cache request of `S`, a shape with no gates
+    /// (`docs/design/uia-shapes.md`). Local.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the cache request cannot be built.
+    pub fn request_fixed<S: crate::Ungated>(&self) -> windows::core::Result<crate::Request<S>> {
+        crate::Request::build(&self.client, ())
+    }
+
     /// Builds a cache request for exactly `properties`. Local.
     ///
     /// # Errors
@@ -292,6 +302,24 @@ impl Uia {
             self.client
                 .ElementFromHandleBuildCache(HWND(hwnd as *mut _), cache)
         }
+    }
+
+    /// [`element_from_handle`](Self::element_from_handle), the element's
+    /// cache filled by `request`. Cross-process.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the handle has no UIA element or the call fails.
+    pub fn window_element<S: crate::Shape>(
+        &self,
+        hwnd: isize,
+        request: &crate::Request<S>,
+    ) -> windows::core::Result<crate::Cached<S>> {
+        let (cache, gates) = request.parts();
+        Ok(crate::Cached::filled(
+            self.element_from_handle(hwnd, cache)?,
+            gates,
+        ))
     }
 
     /// Re-finds an element by its UIA runtime id inside `root`'s subtree,

@@ -56,6 +56,7 @@ use verbatim_outpost::protocol::{
     SupervisorToOutpost, WinEventStamp, read_message,
 };
 use verbatim_outpost::{Heard, Outpost, OutpostOptions};
+use verbatim_uia::{Cached, ListenerEvent};
 use windows::Win32::Foundation::{E_FAIL, HWND};
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
 use windows::core::AgileReference;
@@ -363,9 +364,8 @@ impl OutpostUnderTest {
     /// Judges and reads a UIA focus event whose element is `element`, as
     /// the focus listener's thread for mockapp does, on this thread, and
     /// returns what became of it and the calls the read made. `element`
-    /// carries the base cache request, as the listener's registration
-    /// delivers it.
-    pub fn listener_read(&self, element: &IUIAutomationElement) -> (Judged, CallCounts) {
+    /// is filled as the listener's registration delivers it.
+    pub fn listener_read(&self, element: &Cached<ListenerEvent>) -> (Judged, CallCounts) {
         self.listener_read_as(element, FocusEvent::Focus)
     }
 
@@ -373,7 +373,7 @@ impl OutpostUnderTest {
     /// opening is judged and read as a focus on the menu.
     pub fn listener_read_as(
         &self,
-        element: &IUIAutomationElement,
+        element: &Cached<ListenerEvent>,
         kind: FocusEvent,
     ) -> (Judged, CallCounts) {
         let _ = verbatim_uia::calls::take();
@@ -397,7 +397,7 @@ impl OutpostUnderTest {
 
     /// The fact the focus listener sends for a UIA focus event on `element`
     /// once it has read it, which must not be dropped.
-    pub fn listener_fact(&self, element: &IUIAutomationElement) -> DeliveredFact {
+    pub fn listener_fact(&self, element: &Cached<ListenerEvent>) -> DeliveredFact {
         match self.listener_read(element).0 {
             read @ Judged::Read(_) => read.into_fact(0),
             Judged::Dropped(reason) => panic!("the listener dropped the focus: {reason}"),
@@ -408,7 +408,7 @@ impl OutpostUnderTest {
     /// What the focus listener's reading thread makes of `fact`, a
     /// selection or a notification captured from `element`, as its
     /// application's thread checks it (`FocusReader::check_fact`).
-    pub fn listener_check(&self, element: &IUIAutomationElement, fact: DeliveredFact) -> Judged {
+    pub fn listener_check(&self, element: &Cached<ListenerEvent>, fact: DeliveredFact) -> Judged {
         self.reader.borrow_mut().check_fact(element, fact)
     }
 
@@ -474,7 +474,7 @@ impl OutpostUnderTest {
     /// focused, as the listener reads and sends it, and returns the focus
     /// it reports, with the listener's calls added to the outpost's.
     /// `element` carries the listener's cache request.
-    pub fn uia_focus(&self, element: &IUIAutomationElement) -> Reported {
+    pub fn uia_focus(&self, element: &Cached<ListenerEvent>) -> Reported {
         let (judged, calls) = self.listener_read(element);
         let Judged::Read(_) = &judged else {
             panic!("the listener dropped the focus: {judged:?}");

@@ -79,17 +79,23 @@ another process and the listener is the one process that receives the
 event's own element:
 
 - The listener's focus registration and its desktop-wide event handler
-  group carry NVDA's base cache request (`verbatim_uia::nvda_base_cache_request`,
-  since 2026-10-12), so the events' elements arrive with their process,
-  window, runtime id, control type, name, keyboard focus, and NVDA's other
-  base properties alone (`focus_read::event_parts` reads just those). The
-  reading thread takes the role, value, states, and details from its read
-  of the sender, and an outpost reads a selected item it was sent from its
+  group are shaped as `verbatim_uia::ListenerEvent` (`Part::shaped`): NVDA's
+  base cache request, as since 2026-10-12, with `IsDialog` and
+  `IsTogglePatternAvailable` added (`docs/design/uia-shapes.md`, decision
+  6), so the events' elements arrive with their process, window, runtime
+  id, control type, name, keyboard focus, NVDA's other base properties,
+  and what refines a role, and every callback receives a
+  `Cached<ListenerEvent>`. The role is read through `RoleCore`, refined
+  for dialogs and toggle buttons as every other read refines it, which
+  departs from NVDA's base request at the cost of two properties per
+  desktop-wide event; `ListenerEvent::parts` gives the role, the name,
+  and the focused state, nothing else. The reading thread takes the
+  value, states, and details from its read of the sender, and an outpost reads a selected item it was sent from its
   focus's subtree (`Worker::fresh_selection`); a menu opening and a
   notification are reported from the role and name.
 - The listener's focus callback makes no call. It sends the element's
   application a marker (`DeliveredFact::UiaFocusMarker`, numbered by the
-  listener) and queues the element, as an agile reference, for that
+  listener) and queues the element, as an `Agile<ListenerEvent>`, for that
   application's reading thread (`focus_read::Readers`): one thread per
   application, created on its first focus event, and ended once the
   events waiting for it are read when the supervisor's `HookRemoved` tells
@@ -99,7 +105,10 @@ event's own element:
   (`docs/design/focus-pipeline.md`, section 16.6). A later event of an
   application still running starts a new thread.
 - The thread judges and reads each event in arrival order
-  (`focus_read::FocusReader::read`). An event from a hung window, a shell
+  (`focus_read::FocusReader::read`, which takes the sender as the
+  `Cached<ListenerEvent>` it resolves, as `FocusReader::check_fact` does
+  for a selection or notification, and reads the window, class name and
+  framework of its judgment and log from that cache). An event from a hung window, a shell
   window that only stages a switch, or the console window's own element
   is dropped before any call. Then one remote operation
   (`verbatim_uia_rops::focus_ancestry`, with `require_focus` and
@@ -322,10 +331,13 @@ Public API:
     are on the focused element only, since the reducer acts on no other
     element's changes (NVDA's scope also names the focus's ancestors, but
     UIA delivers no ancestor's event to it; `docs/parity.md`, "UIA event
-    registration"). A property change's element arrives with
-    `verbatim_uia::FOCUS_EVENT_PROPERTIES` cached, everything a name,
+    registration"). The parts are shaped: a property change's element
+    arrives as a `verbatim_uia::Cached<PropertyEvent>`, everything a name,
     value, or state set is read from and no detail; a caret, text, or
-    active text position change's with `verbatim_uia::TEXT_EVENT_PROPERTIES`.
+    active text position change's as a `Cached<TextEvent>`. The worker's
+    event carries it as `Agile<PropertyEvent>` or `Agile<TextEvent>`
+    (`intake::EventElement`), resolved to the raw element where the worker
+    keeps it, until the node registry keeps shaped elements.
     The worker moves it each time it reports a focus, without waiting
     (`follow_focus`): the matching group is added to the new focus, then
     removed from the previous one alone (`RemoveEventHandlerGroup`);
@@ -1261,7 +1273,7 @@ Implementation notes:
   the focus-following UIA subscription, given the focus with its extended
   group when the focus has text, its caret, text, and active text
   position events' elements arriving with
-  only `verbatim_uia::TEXT_EVENT_PROPERTIES` cached (nothing is spoken
+  only `verbatim_uia::TextEvent` cached (nothing is spoken
   from them), delivers `Text_TextSelectionChanged`,
   reported as `CaretMoved`, and `Text_TextChanged`, reported as
   `TextChanged`, and, in the same event handler group, the active text
@@ -1669,7 +1681,8 @@ finds it.
   outpost starts and whenever it changes, beside `Fetches`.
 - Every UIA notification from a terminal control or the console host's
   text area is ignored by the focus listener
-  (`verbatim_uia::map::cached_ignores_notifications`), whatever its
+  (`verbatim_uia::map::ignores_notifications`, from the class name and
+  automation id of the sender's `ListenerEvent` read), whatever its
   activity id, as NVDA's terminal overlays ignore them, or output would
   be spoken twice.
 - A UIA selection or notification goes, like a focus event, through its

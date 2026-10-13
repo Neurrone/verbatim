@@ -26,12 +26,10 @@ use verbatim_model::{NodeSnapshot, NormalizedEvent, PropertyChange, Role, State,
 use verbatim_outpost::focus_read::{FocusEvent, Judged};
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor};
 use verbatim_outpost::{Heard, OutpostOptions};
-use verbatim_uia::{ElementExt as _, Uia};
+use verbatim_uia::{Cached, ListenerEvent, Uia};
 use windows::Win32::Foundation::HWND;
-use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, TreeScope_Descendants, UIA_ControllerForPropertyId,
-    UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId, UIA_NamePropertyId,
+    UIA_ControllerForPropertyId, UIA_HelpTextPropertyId, UIA_NamePropertyId,
 };
 
 use common::outpost::OutpostUnderTest;
@@ -52,19 +50,13 @@ impl Client {
 
     /// The element mockapp reports as having the keyboard focus, built with
     /// the listener's cache request, as a focus event's element arrives.
-    fn focused(&self) -> IUIAutomationElement {
+    fn focused(&self) -> Cached<ListenerEvent> {
         let cache = self.uia.base_cache_request().expect("a cache request");
         let root = self
             .uia
             .element_from_handle(self.hwnd.0 as isize, &cache)
             .expect("mockapp's root element");
-        let condition = self
-            .uia
-            .property_condition(UIA_HasKeyboardFocusPropertyId, &VARIANT::from(true))
-            .expect("a condition");
-        root.find_first_build_cache(TreeScope_Descendants, &condition, &cache)
-            .expect("the search")
-            .expect("mockapp reports a focused element")
+        common::listener_focus(&self.uia, &root)
     }
 }
 
@@ -115,8 +107,8 @@ fn reused_runtime_id(remote: bool) {
     app.send("set-focus inner");
     let inner = client.focused();
     assert_eq!(
-        verbatim_uia::runtime_id(&inner),
-        verbatim_uia::runtime_id(&delta),
+        inner.runtime_id(),
+        delta.runtime_id(),
         "{path}: mockapp gave Inner the dead item's runtime id"
     );
     let reported = outpost.uia_focus(&inner);
@@ -374,7 +366,7 @@ fn a_focus_read_while_it_had_the_keyboard_focus_is_reported_though_the_focus_mov
 /// its ancestors unknown, which must be the only thing it says.
 fn focus_without_a_path(
     outpost: &OutpostUnderTest,
-    element: &IUIAutomationElement,
+    element: &Cached<ListenerEvent>,
 ) -> NodeSnapshot {
     let (judged, _) = outpost.listener_read(element);
     let Judged::Read(mut read) = judged else {
@@ -815,10 +807,13 @@ fn a_console_windows_own_focus_is_never_reported() {
     let outpost = OutpostUnderTest::new(&app);
 
     app.send("set-focus root");
-    let cache = client.uia.base_cache_request().expect("a cache request");
+    let listener = client
+        .uia
+        .request_fixed::<ListenerEvent>()
+        .expect("the listener's cache request");
     let window = client
         .uia
-        .element_from_handle(hwnd.0 as isize, &cache)
+        .window_element(hwnd.0 as isize, &listener)
         .expect("mockapp's root element");
     let (judged, calls) = outpost.listener_read(&window);
     let Judged::Dropped(reason) = judged else {
@@ -849,10 +844,13 @@ fn a_focus_whose_window_has_no_uia_provider_is_dropped() {
     let client = Client::new(hwnd);
     let outpost = OutpostUnderTest::new(&app);
 
-    let cache = client.uia.base_cache_request().expect("a cache request");
+    let listener = client
+        .uia
+        .request_fixed::<ListenerEvent>()
+        .expect("the listener's cache request");
     let window = client
         .uia
-        .element_from_handle(hwnd.0 as isize, &cache)
+        .window_element(hwnd.0 as isize, &listener)
         .expect("mockapp's window element, through the MSAA proxy");
     let (judged, calls) = outpost.listener_read(&window);
     let Judged::Dropped(reason) = judged else {
@@ -965,7 +963,7 @@ fn a_windowless_selection_is_given_its_nearest_window() {
     app.send("set-focus item1");
     let item = client.focused();
     let snapshot = || verbatim_outpost::protocol::UiaSnapshotFact {
-        runtime_id: verbatim_uia::runtime_id(&item),
+        runtime_id: item.runtime_id(),
         role: Role::ListItem,
         name: None,
         value: None,

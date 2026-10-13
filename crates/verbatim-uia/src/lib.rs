@@ -57,6 +57,7 @@ mod nearest;
 mod probe;
 mod proxy;
 mod registry;
+mod shape;
 mod subscribe;
 pub mod text;
 
@@ -80,6 +81,10 @@ pub use focus::FocusCallback;
 pub use nearest::nearest_window_handle;
 pub use probe::{PROBE_BUDGET, Probe, has_server_side_provider, probe, probe_server_side_provider};
 pub use registry::{NodeIdRegistry, Released};
+pub use shape::{
+    Agile, Cached, Covers, Kept, ListenerEvent, Live, PropertyEvent, Request, RoleCore, Shape,
+    States, TextEvent, Ungated, ValueSet,
+};
 pub use subscribe::{
     ActiveTextPositionCallback, ElementCallback, EventCallback, FOCUS_PROPERTIES, Group,
     MOVE_DEADLINE, NotificationCallback, Part, PropertyCallback, Registration, Scope, Subscription,

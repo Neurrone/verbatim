@@ -145,29 +145,29 @@ pub fn cached_is_control_and_content(element: &IUIAutomationElement) -> bool {
 /// "too many bools" lint does not apply.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy, Default)]
-struct RawUiaStates {
-    has_focus: bool,
-    focusable: bool,
-    enabled: bool,
-    offscreen: bool,
+pub(crate) struct RawUiaStates {
+    pub(crate) has_focus: bool,
+    pub(crate) focusable: bool,
+    pub(crate) enabled: bool,
+    pub(crate) offscreen: bool,
     /// Whether the element actually exposes `TogglePattern`. UIA returns a
     /// default `ToggleState` (`Indeterminate`) for controls that do not, so the
     /// state value must be ignored unless the pattern is available.
-    toggle_available: bool,
-    toggle_state: Option<i32>,
+    pub(crate) toggle_available: bool,
+    pub(crate) toggle_state: Option<i32>,
     /// Whether the element actually exposes `ExpandCollapsePattern`.
-    expand_available: bool,
-    expand_state: Option<i32>,
+    pub(crate) expand_available: bool,
+    pub(crate) expand_state: Option<i32>,
     /// Whether the element actually exposes `SelectionItemPattern` — which
     /// is also what makes it [`State::Selectable`], mirroring how MSAA's
     /// `STATE_SYSTEM_SELECTABLE` bit reads.
-    selection_available: bool,
-    selected: bool,
-    password: bool,
-    required: bool,
+    pub(crate) selection_available: bool,
+    pub(crate) selected: bool,
+    pub(crate) password: bool,
+    pub(crate) required: bool,
     /// `IsDataValidForForm`, `None` when unsupported, which counts as valid.
-    data_valid: Option<bool>,
-    value_read_only: bool,
+    pub(crate) data_valid: Option<bool>,
+    pub(crate) value_read_only: bool,
 }
 
 /// MSAA's `STATE_SYSTEM_CHECKED` bit, as `LegacyIAccessibleState` reports it.
@@ -225,7 +225,7 @@ pub fn with_legacy_checked_state(
 /// check box or toggle button (a list item or menu item with a check box)
 /// is [`State::Checkable`], and a radio button's selection is its checked
 /// state, as in NVDA.
-fn states_from_uia(raw: &RawUiaStates, role: Role) -> StateSet {
+pub(crate) fn states_from_uia(raw: &RawUiaStates, role: Role) -> StateSet {
     let mut states = StateSet::new();
     if raw.has_focus {
         states.insert(State::Focused);
@@ -400,6 +400,53 @@ fn keyboard_shortcut(
     }
 }
 
+/// An element's role, as NVDA's UIA objects decide it: from its control
+/// type, a button with the Toggle pattern a toggle button, a terminal's
+/// class a terminal, and a dialog by `IsDialog` or, for a window element
+/// (`hwnd` not 0), its class.
+pub(crate) fn role_of(
+    control_type: Option<i32>,
+    toggle_available: bool,
+    class_name: Option<&str>,
+    is_dialog_flag: bool,
+    hwnd: isize,
+) -> Role {
+    let mut role = refine_button_role(
+        role_from_control_type(control_type.unwrap_or(0)),
+        toggle_available,
+    );
+    if is_terminal_class(class_name) {
+        role = Role::Terminal;
+    }
+    if is_dialog(is_dialog_flag, hwnd != 0, class_name) {
+        role = Role::Dialog;
+    }
+    role
+}
+
+/// An element's value, from its `Value` pattern's `value`, else its
+/// `RangeValue` pattern's `range`, read only when `range_available`: a
+/// remotely filled cache stores the default of zero, as it stores
+/// `ValueIsReadOnly`'s. None for a class that reports no value.
+pub(crate) fn value_from(
+    value: Option<String>,
+    range_available: bool,
+    range: Option<f64>,
+    class_name: Option<&str>,
+) -> Option<String> {
+    value_of(value, range.filter(|_| range_available)).filter(|_| !reports_no_value(class_name))
+}
+
+/// Strips bidirectional formatting characters from each text: File
+/// Explorer's dates and the clock put left-to-right marks between their
+/// numbers, which NVDA strips, and every other such character goes with
+/// them.
+pub(crate) fn strip_bidi_controls<'a>(texts: impl IntoIterator<Item = &'a mut Option<String>>) {
+    for text in texts.into_iter().flatten() {
+        verbatim_text::strip_bidi_controls(text);
+    }
+}
+
 /// An element's value: its `Value` pattern's value, or failing that its
 /// `RangeValue` pattern's value rounded to a whole number, as NVDA reads it.
 fn value_of(value: Option<String>, range_value: Option<f64>) -> Option<String> {
@@ -466,41 +513,26 @@ pub struct CachedUiaParts {
 #[must_use]
 pub fn snapshot_parts_from_cached_element(element: &IUIAutomationElement) -> CachedUiaParts {
     let runtime_id = crate::com::runtime_id(element);
-    let control_type = element.cached_i32(UIA_ControlTypePropertyId).unwrap_or(0);
-    let toggle_available = element.cached_bool(UIA_IsTogglePatternAvailablePropertyId);
     let class_name = element.cached_string(UIA_ClassNamePropertyId);
-    let mut role = refine_button_role(role_from_control_type(control_type), toggle_available);
-    if is_terminal_class(class_name.as_deref()) {
-        role = Role::Terminal;
-    }
-    if is_dialog(
-        element.cached_bool(UIA_IsDialogPropertyId),
-        cached_native_window_handle(element) != 0,
+    let role = role_of(
+        element.cached_i32(UIA_ControlTypePropertyId),
+        element.cached_bool(UIA_IsTogglePatternAvailablePropertyId),
         class_name.as_deref(),
-    ) {
-        role = Role::Dialog;
-    }
+        element.cached_bool(UIA_IsDialogPropertyId),
+        cached_native_window_handle(element),
+    );
     let mut name = element.cached_string(UIA_NamePropertyId);
-    let mut value = value_of(
+    let range_available = element.cached_bool(UIA_IsRangeValuePatternAvailablePropertyId);
+    let mut value = value_from(
         element.cached_string(UIA_ValueValuePropertyId),
-        // Gated on the pattern, as `ValueIsReadOnly` is: a remotely
-        // filled cache stores the default of zero.
-        element
-            .cached_bool(UIA_IsRangeValuePatternAvailablePropertyId)
+        range_available,
+        range_available
             .then(|| element.cached_f64(UIA_RangeValueValuePropertyId))
             .flatten(),
-    )
-    .filter(|_| !reports_no_value(class_name.as_deref()));
+        class_name.as_deref(),
+    );
     let mut details = details_from_cached(element);
-    // File Explorer's dates and the clock put left-to-right marks between
-    // their numbers, which NVDA strips; so are they here, and every other
-    // bidirectional formatting character with them.
-    for text in [&mut name, &mut value, &mut details.description]
-        .into_iter()
-        .flatten()
-    {
-        verbatim_text::strip_bidi_controls(text);
-    }
+    strip_bidi_controls([&mut name, &mut value, &mut details.description]);
     CachedUiaParts {
         runtime_id,
         role,
@@ -557,16 +589,6 @@ pub fn cached_reports_suggestions(element: &IUIAutomationElement) -> bool {
             element.cached_string(UIA_AutomationIdPropertyId).as_deref(),
             Some("SearchTextBox" | "TextBox")
         )
-}
-
-/// [`ignores_notifications`] for `element`, from its cached class name and
-/// automation id, both in NVDA's base cache request.
-#[must_use]
-pub fn cached_ignores_notifications(element: &IUIAutomationElement) -> bool {
-    ignores_notifications(
-        element.cached_string(UIA_ClassNamePropertyId).as_deref(),
-        element.cached_string(UIA_AutomationIdPropertyId).as_deref(),
-    )
 }
 
 /// Whether an element of UIA class `class_name` reports no value. The
