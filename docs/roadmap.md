@@ -57,9 +57,12 @@ in the dated section named with each item.
   indication's sound and its speech start together and cancelling an
   utterance cancels both. The latency ledger stops counting the tail of
   earlier speech as "mixer and device".
-- Scheduling (2026-10-08, same section): every Verbatim process opts out
-  of Windows' power throttling (EcoQoS); the keyboard hook thread runs at
-  high priority, and the speech queue and synthesis threads above normal.
+- Scheduling: done, as measured and decided on 2026-10-13 (communication
+  step 3, 720f669), which replaced the 2026-10-08 plan: the threads that
+  only move messages, the keyboard hook among them, run at
+  `THREAD_PRIORITY_HIGHEST`; every other thread keeps normal priority and
+  the audio thread its MMCSS registration; no process or thread opts out
+  of power throttling, which measured no gain.
 - Status cues (2026-10-08, "Status cues settled"): every indication in
   the theme's Events group (start and exit, error, application not
   responding, browse and focus mode, suggestions opened and closed,
