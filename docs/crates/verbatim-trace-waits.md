@@ -33,12 +33,31 @@ many ready waits it had, their median, 99.9th percentile and maximum, and how ma
 10 and 100 ms. A Rust program's main thread is named `main`, which in
 verbatim.exe is the GUI thread.
 
+Three other reports each take a thread name, or `<process.exe>:<name>`
+for the threads of that name in processes of that image (an empty name
+meaning threads without one):
+
+- `--wakers <thread>`: for each blocked wait of half a millisecond or
+  more, the thread that readied it (the one running on the processor that
+  logged the ready event), grouped by waking thread, with how long the
+  waits were.
+- `--stacks <thread>`: the stacks recorded where those threads were
+  readied, each frame as a module and offset (no symbols are read), the
+  most frequent first; they name the cause even when the readying thread
+  is an interrupt's.
+- `--samples <thread>`: the profile's CPU samples of those threads (one
+  per processor each millisecond): how many, and for each module how many
+  were running in it and how many had it anywhere on their stack, which
+  says where their processor time went.
+
 The event layouts it reads are the kernel's documented ones on 64-bit
 Windows: a context switch's new and old thread ids at offsets 0 and 4 and
 the old thread's state at 14; a ready thread's id at 0; a thread event's
 process and thread ids at 0 and 4 and its name at 72; a name change's
 process and thread ids at 0 and 4 and its name at 8; an image event's
-process id at 16 and its file name at 56.
+process id at 16 and its file name at 56; a CPU sample's instruction
+pointer at 0 and thread at 8; a stack walk's process and thread at 8 and
+12, then its return addresses from 16.
 
 A trace of WPR's CPU profile grows by about 20 MB a second, so a trace is
 kept to the run being measured, and deleted once read.

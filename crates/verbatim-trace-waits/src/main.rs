@@ -33,6 +33,11 @@
 //! where those threads were readied, each frame as a module and offset (no
 //! symbols are read), the most frequent first: the code that woke them,
 //! which names the cause even when the readying thread is an interrupt's.
+//! With `--samples <thread name>` (named the same way) it reports the CPU
+//! samples the trace took of those threads (the CPU profile samples every
+//! processor each millisecond): how many, and for each module how many
+//! were running in it and how many had it anywhere on their stack, which
+//! says where their processor time went.
 //! Names come from the thread events (`SetThreadDescription`,
 //! which Rust's named threads set); a process is named by the `.exe` image
 //! the trace saw loaded in it.
@@ -58,6 +63,11 @@ const STACK: u8 = 32;
 
 /// How many frames of a stack are reported.
 const FRAMES: usize = 32;
+
+/// The kernel's profiling events (`PerfInfo`), and the opcode of a CPU
+/// sample: the instruction pointer at offset 0 and the thread at 8.
+const PERF_INFO: GUID = GUID::from_u128(0xce1dbfb4_137e_4da6_87b0_3f59aa102cbc);
+const SAMPLED_PROFILE: u8 = 46;
 
 /// The kernel's image load events (`Image`).
 const IMAGE: GUID = GUID::from_u128(0x2cb15d1d_5fc1_11d2_abe1_00a0c911f518);
@@ -114,6 +124,15 @@ struct Waits {
     /// Each process's loaded images: base, size and file name; the
     /// kernel's under process 0.
     modules: HashMap<u32, Vec<(u64, u64, String)>>,
+    /// The thread name whose CPU samples are collected, if any.
+    sample_target: Option<String>,
+    /// Sampled threads whose next stack walk is their sample's.
+    sample_pending: HashSet<u32>,
+    /// How many samples were taken, and in which module each was running.
+    samples: usize,
+    sampled_in: HashMap<String, usize>,
+    /// How many samples had each module anywhere on their stack.
+    sampled_under: HashMap<String, usize>,
 }
 
 /// The shortest blocked wait recorded, in 100-nanosecond units.
@@ -168,11 +187,14 @@ impl Waits {
             }
         } else if header.ProviderId == IMAGE && matches!(opcode, IMAGE_LOAD | IMAGE_DC_START) {
             self.image(data);
-        } else if header.ProviderId == STACK_WALK
-            && opcode == STACK
-            && self.stack_pending.remove(&processor)
-        {
-            self.stack(data);
+        } else if header.ProviderId == PERF_INFO && opcode == SAMPLED_PROFILE {
+            self.sample(data);
+        } else if header.ProviderId == STACK_WALK && opcode == STACK {
+            if u32_at(data, 12).is_some_and(|thread| self.sample_pending.remove(&thread)) {
+                self.sample_stack(data);
+            } else if self.stack_pending.remove(&processor) {
+                self.stack(data);
+            }
         }
     }
 
@@ -279,18 +301,61 @@ impl Waits {
         *self.stacks.entry(frames).or_default() += 1;
     }
 
-    /// `address` as a module and offset, from `process`'s images or the
-    /// kernel's, or as itself when no image holds it.
-    fn frame(&self, process: u32, address: u64) -> String {
+    /// A CPU sample: counted, with the module it was running in, when its
+    /// thread is the one asked for; its stack follows.
+    fn sample(&mut self, data: &[u8]) {
+        let (Some(address), Some(thread)) = (u64_at(data, 0), u32_at(data, 8)) else {
+            return;
+        };
+        if !self
+            .sample_target
+            .as_ref()
+            .is_some_and(|target| self.targets(thread, target))
+        {
+            return;
+        }
+        let process = self.process_of.get(&thread).copied().unwrap_or(0);
+        let module = self.module(process, address);
+        self.samples += 1;
+        *self.sampled_in.entry(module).or_default() += 1;
+        self.sample_pending.insert(thread);
+    }
+
+    /// A collected sample's stack: each module on it counted once.
+    fn sample_stack(&mut self, data: &[u8]) {
+        let process = u32_at(data, 8).unwrap_or(0);
+        let modules: HashSet<String> = (16..data.len())
+            .step_by(8)
+            .filter_map(|offset| u64_at(data, offset))
+            .map(|address| self.module(process, address))
+            .collect();
+        for module in modules {
+            *self.sampled_under.entry(module).or_default() += 1;
+        }
+    }
+
+    /// The image holding `address`, in `process` or the kernel.
+    fn image_at(&self, process: u32, address: u64) -> Option<&(u64, u64, String)> {
         [process, 0]
             .iter()
             .filter_map(|process| self.modules.get(process))
             .flatten()
             .find(|(base, size, _)| address >= *base && address < base + size)
-            .map_or_else(
-                || format!("{address:#x}"),
-                |(base, _, name)| format!("{name}+{:#x}", address - base),
-            )
+    }
+
+    /// The name of the module holding `address`, or "?" when none does.
+    fn module(&self, process: u32, address: u64) -> String {
+        self.image_at(process, address)
+            .map_or_else(|| "?".to_owned(), |(_, _, name)| name.clone())
+    }
+
+    /// `address` as a module and offset, from `process`'s images or the
+    /// kernel's, or as itself when no image holds it.
+    fn frame(&self, process: u32, address: u64) -> String {
+        self.image_at(process, address).map_or_else(
+            || format!("{address:#x}"),
+            |(base, _, name)| format!("{name}+{:#x}", address - base),
+        )
     }
 }
 
@@ -344,9 +409,14 @@ unsafe extern "system" fn on_event(record: *mut EVENT_RECORD) {
     waits.event(record);
 }
 
-fn read(path: &str, stack_target: Option<String>) -> Result<Waits, String> {
+fn read(
+    path: &str,
+    stack_target: Option<String>,
+    sample_target: Option<String>,
+) -> Result<Waits, String> {
     let mut waits = Waits {
         stack_target,
+        sample_target,
         ..Waits::default()
     };
     let mut name: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
@@ -453,6 +523,22 @@ fn report_wakers(waits: &Waits, target: &str) {
     }
 }
 
+/// The CPU samples collected: how many, then each module by how many were
+/// running in it, and by how many had it anywhere on their stack.
+fn report_samples(waits: &Waits, target: &str) {
+    println!("{target:?}: {} samples", waits.samples);
+    for (title, counts) in [
+        ("running in", &waits.sampled_in),
+        ("on the stack", &waits.sampled_under),
+    ] {
+        let mut rows: Vec<_> = counts.iter().collect();
+        rows.sort_by_key(|(_, count)| std::cmp::Reverse(**count));
+        for (module, count) in rows.into_iter().take(15) {
+            println!("{title} {module}: {count}");
+        }
+    }
+}
+
 /// The readying stacks collected, the most frequent first, the top ten.
 fn report_stacks(waits: &Waits) {
     let mut rows: Vec<_> = waits.stacks.iter().collect();
@@ -469,13 +555,14 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(path) = args.first() else {
         eprintln!(
-            "usage: verbatim-trace-waits <trace.etl> [--wakers <thread name> | --stacks <thread name>] [process.exe ...]"
+            "usage: verbatim-trace-waits <trace.etl> [--wakers <thread name> | --stacks <thread name> | --samples <thread name>] [process.exe ...]"
         );
         return ExitCode::from(2);
     };
     let mut rest = &args[1..];
     let mut wakers = None;
     let mut stacks = None;
+    let mut samples = None;
     match rest.first().map(String::as_str) {
         Some("--wakers") => {
             wakers = rest.get(1).cloned();
@@ -483,6 +570,10 @@ fn main() -> ExitCode {
         }
         Some("--stacks") => {
             stacks = rest.get(1).cloned();
+            rest = rest.get(2..).unwrap_or(&[]);
+        }
+        Some("--samples") => {
+            samples = rest.get(1).cloned();
             rest = rest.get(2..).unwrap_or(&[]);
         }
         _ => {}
@@ -497,12 +588,13 @@ fn main() -> ExitCode {
         .map(str::to_owned)
         .to_vec();
     }
-    match read(path, stacks.clone()) {
+    match read(path, stacks.clone(), samples.clone()) {
         Ok(waits) => {
-            match (&wakers, &stacks) {
-                (Some(target), _) => report_wakers(&waits, target),
-                (None, Some(_)) => report_stacks(&waits),
-                (None, None) => report(&waits, &processes),
+            match (&wakers, &stacks, &samples) {
+                (Some(target), _, _) => report_wakers(&waits, target),
+                (None, Some(_), _) => report_stacks(&waits),
+                (None, None, Some(target)) => report_samples(&waits, target),
+                (None, None, None) => report(&waits, &processes),
             }
             ExitCode::SUCCESS
         }
