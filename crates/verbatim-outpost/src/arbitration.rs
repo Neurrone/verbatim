@@ -349,6 +349,14 @@ pub(crate) fn uses_uia(arbitrator: &Mutex<Arbitrator>, hwnd: isize) -> bool {
     is_uia
 }
 
+/// Whether window `hwnd` is already known to be read through UIA, from the
+/// class lists or a kept verdict, without the probe ([`uses_uia`] probes
+/// when neither decides). Local calls only, so safe on the thread that
+/// takes in an outpost's `WinEvents`.
+pub(crate) fn known_to_use_uia(arbitrator: &Mutex<Arbitrator>, hwnd: isize) -> bool {
+    lock(arbitrator).verdict(hwnd, &WindowClasses::of(hwnd)) == Some(true)
+}
+
 /// `arbitrator`, locked: a poisoned lock is taken as it is, as its state
 /// stays consistent.
 fn lock(arbitrator: &Mutex<Arbitrator>) -> std::sync::MutexGuard<'_, Arbitrator> {

@@ -10,7 +10,9 @@
 //! registration has two such groups, as NVDA has two local groups
 //! (`UIAHandler/__init__.py`, `_createLocalEventHandlerGroup`): the base
 //! group, and the extended group, which also holds the parts marked
-//! [`Part::extended_only`]. Each group is built once per thread and client,
+//! [`Part::extended_only`]; and a third, the extended group without the
+//! parts marked [`Part::text_changes`], for an element whose text changes
+//! reach the caller another way. Each group is built once per thread and client,
 //! on first need, and every handler in it is added with its own part's
 //! cache request, so the element each event brings arrives with that part's
 //! properties prefetched and the callback reads them without a
@@ -139,7 +141,7 @@ pub enum Scope {
     Elements(Vec<AgileReference<IUIAutomationElement>>),
 }
 
-/// Which of a registration's two event handler groups the elements of its
+/// Which of a registration's event handler groups the elements of its
 /// scope are given, as NVDA gives a focus one of its two local groups
 /// (`UIAHandler/__init__.py`, `addLocalEventHandlerGroupToElement`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -149,6 +151,22 @@ pub enum Group {
     Base,
     /// Every part.
     Extended,
+    /// Every part but those marked [`Part::text_changes`]: for an element
+    /// whose text changes the caller learns of another way, so UIA is not
+    /// asked to deliver them.
+    ExtendedWithoutTextChanges,
+}
+
+impl Group {
+    /// Whether this group holds a part marked as `extended_only` and as
+    /// `text_changes`.
+    fn holds(self, extended_only: bool, text_changes: bool) -> bool {
+        match self {
+            Group::Base => !extended_only,
+            Group::Extended => true,
+            Group::ExtendedWithoutTextChanges => !text_changes,
+        }
+    }
 }
 
 /// What a registration listens for.
@@ -214,9 +232,13 @@ pub struct Part {
     /// The properties each event's element arrives with: the part's handler
     /// is added to its group with a cache request of exactly these.
     pub properties: &'static [UIA_PROPERTY_ID],
-    /// Whether only the extended group ([`Group::Extended`]) holds the part;
-    /// otherwise both groups do.
+    /// Whether only the extended groups ([`Group::Extended`] and
+    /// [`Group::ExtendedWithoutTextChanges`]) hold the part; otherwise every
+    /// group does.
     pub extended_only: bool,
+    /// Whether the part delivers text changes, which
+    /// [`Group::ExtendedWithoutTextChanges`] leaves out.
+    pub text_changes: bool,
     /// Whether the cache request also holds the Text pattern, as NVDA's
     /// base cache request does ([`Part::with_text_pattern`]).
     pub text_pattern: bool,
@@ -230,6 +252,7 @@ impl Part {
             subscription,
             properties,
             extended_only: false,
+            text_changes: false,
             text_pattern: false,
         }
     }
@@ -251,7 +274,18 @@ impl Part {
             subscription,
             properties,
             extended_only: true,
+            text_changes: false,
             text_pattern: false,
+        }
+    }
+
+    /// The part, marked as one that delivers text changes, which
+    /// [`Group::ExtendedWithoutTextChanges`] leaves out.
+    #[must_use]
+    pub fn text_changes(self) -> Self {
+        Self {
+            text_changes: true,
+            ..self
         }
     }
 }
@@ -684,6 +718,7 @@ struct Built {
     handler: Handler,
     cache: IUIAutomationCacheRequest,
     extended_only: bool,
+    text_changes: bool,
 }
 
 /// A group built on a registration's thread, for one [`Group`] and one tree
@@ -768,6 +803,7 @@ fn set_up(parts: Vec<Part>, target: &Target, thread: &Thread) -> windows::core::
                 cache,
                 handler: Handler::of(part.subscription, &thread.live),
                 extended_only: part.extended_only,
+                text_changes: part.text_changes,
             })
         })
         .collect::<windows::core::Result<Vec<_>>>()?;
@@ -1021,7 +1057,7 @@ impl Follower {
         // SAFETY: a local call on this thread's live client.
         let handlers = unsafe { self.client.CreateEventHandlerGroup() }?;
         for built in &self.built {
-            if group == Group::Extended || !built.extended_only {
+            if group.holds(built.extended_only, built.text_changes) {
                 built.handler.add_to(&handlers, tree_scope, &built.cache)?;
             }
         }
@@ -1185,7 +1221,24 @@ mod handlers {
 
 #[cfg(test)]
 mod tests {
-    use super::plan_keep;
+    use super::{Group, plan_keep};
+
+    /// Each group holds the parts it should, as (extended only, text
+    /// changes): the group without text changes holds the base parts and
+    /// the extended ones but for the text changes.
+    #[test]
+    fn the_group_without_text_changes_holds_every_part_but_the_text_changes() {
+        let parts = [(false, false), (true, false), (true, true)];
+        let held = |group: Group| -> Vec<bool> {
+            parts
+                .iter()
+                .map(|&(extended_only, text_changes)| group.holds(extended_only, text_changes))
+                .collect()
+        };
+        assert_eq!(held(Group::Base), [true, false, false]);
+        assert_eq!(held(Group::Extended), [true, true, true]);
+        assert_eq!(held(Group::ExtendedWithoutTextChanges), [true, true, false]);
+    }
 
     /// An element a registration's thread has registered on, by name, with
     /// its group, for the plan's tests.

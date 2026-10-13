@@ -439,7 +439,14 @@ impl Context {
     /// the listener forwards for one, queued unless it is the twin of the
     /// listener's copy, already queued ([`handover`]); one with no window
     /// is dropped, as the listener drops it. Any other event is queued as
-    /// it is.
+    /// it is, unless its window is already known to be read through UIA:
+    /// the worker would drop it at its window's UIA test, after acceptance
+    /// and the window's state, which have no effect but a log line, so it
+    /// is dropped here instead, and the worker is not woken for it. NVDA
+    /// drops a `WinEvent` from a UIA window the same way, and a console
+    /// flood raises them by the thousand. A window shown, a console's
+    /// update, and a destroyed window are kept: the worker uses them for
+    /// UIA windows too.
     fn take_in_win_event(&self, event: WinEvent, timing: EventTiming) {
         let WinEvent {
             kind,
@@ -458,6 +465,14 @@ impl Context {
                 | WinEventKind::Alert
                 | WinEventKind::Show
         ) {
+            if !matches!(
+                kind,
+                WinEventKind::WindowShown | WinEventKind::ConsoleUpdate | WinEventKind::Destroy
+            ) && crate::arbitration::known_to_use_uia(&self.arbitrator, hwnd)
+            {
+                self.tell_heard(Heard::Msaa(kind));
+                return;
+            }
             self.take_in(
                 Item::Msaa {
                     kind,
@@ -1056,7 +1071,7 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
     let parts = vec![
         Part::new(properties, verbatim_uia::FOCUS_EVENT_PROPERTIES),
         Part::new(caret, text_properties),
-        Part::extended(text, text_properties),
+        Part::extended(text, text_properties).text_changes(),
         Part::extended(position, text_properties),
     ];
     match Registration::with_parts(parts, Scope::Nothing) {

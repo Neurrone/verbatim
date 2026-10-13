@@ -315,7 +315,10 @@ Public API:
     group, given every UIA focus whose element the outpost has, holds the
     name, value, and state changes and `Text_TextSelectionChanged`; the
     extended group, given a focus with text read through UIA, also holds
-    `Text_TextChanged` and the active text position changed event. Both
+    `Text_TextChanged` and the active text position changed event, except
+    for the console host's text area, which takes it without
+    `Text_TextChanged`, since its console updates tell the outpost of its
+    output (`docs/design/wake-ups.md`, item 15). Both
     are on the focused element only, since the reducer acts on no other
     element's changes (NVDA's scope also names the focus's ancestors, but
     UIA delivers no ancestor's event to it; `docs/parity.md`, "UIA event
@@ -1632,11 +1635,15 @@ finds it.
   which the writing raises, reads again and answers it. In the console
   host, the console's own `WinEvents` (`EVENT_CONSOLE_UPDATE_REGION`,
   `_SIMPLE`, `_SCROLL` and `EVENT_CONSOLE_LAYOUT`, merged into one per
-  window while they wait) are its terminal's text changes as well as UIA's:
-  in 2 of 14 runs of a 12,000-line write, UIA's text changes stopped
-  reaching the outpost after a few reads of about 0.12 seconds, for the
-  rest of the write, while its value and text selection `WinEvents` (about
-  27,500) went on (measured 2026-10-08); why UIA's stopped is not known.
+  window while they wait) are its terminal's text changes, and UIA's text
+  changes are not subscribed for it. In 2 of 14 runs of a 12,000-line write
+  UIA's text changes stopped reaching the outpost (measured 2026-10-08):
+  UIA dropped them while the outpost's callbacks were slow
+  (`docs/design/wake-ups.md`, item 12). With the callbacks fast, UIA
+  delivered every one, and delivering them made the console host itself
+  spend more than three times the processor time and write more slowly,
+  while the console updates told the outpost of the same output more
+  cheaply, and alone reported a screen cleared (item 15).
   NVDA's console support for UIA listens to UIA's text changes alone
   (`UIAHandler/__init__.py` 145 to 147 and 674 to 679, the "Text Area"
   automation id given them at 713 to 721); its `WinEvent` handling of the

@@ -12,7 +12,7 @@ where it starts.
 ## How it is measured
 
 - `cargo xtask trace start` and `stop` record WPR's CPU profile through
-  the elevated tasks (`docs/tooling.md`, "Tracing the CPU's scheduling").
+  the elevated tasks (`docs/tooling.md`, "Measuring performance").
   A trace is about 20 MB a second, so each covers 5 to 8 seconds of one
   scenario and is deleted once read.
 - `cargo xtask trace waits` counts, for every thread of Verbatim's
@@ -146,6 +146,63 @@ Counts are for one traced window of 5 to 8 seconds.
 11. Threads that exist only for the test harness (the WAV recorder, the
     control plane's speech writers) wake often in every run and cost a
     user nothing.
+12. In a console flood (`conhost_flood`, 6 seconds from 8 seconds in) the
+    console's outpost used 7.5 seconds of processor time, more than a
+    processor, 3.5 seconds of it on UI Automation's callback threads. Their
+    CPU samples, named through `verbatim-trace-waits --samples` with the
+    build's PDBs, put a third of it under Verbatim's text event handler
+    reading the event's element (`capture`, through
+    `snapshot_parts_from_cached_element`) and the rest in UI Automation
+    raising, unwinding and formatting errors: the handler read every
+    property a snapshot is made of, while a text event's cache request
+    holds three, and UI Automation answers a read of a property its cache
+    lacks by raising and reporting an error inside itself. Property events
+    did the same for the details their cache request leaves out. An
+    experiment that read an event's element through the properties its
+    registration cached alone, each other one reading as unsupported
+    without asking UI Automation, gave the same window 0.83 seconds on the
+    callback threads and 3.2 in the outpost. The same pattern was found
+    across the workspace (the listener reads 25 absent properties on every
+    desktop-wide event), and Dickson chose to fix it systematically:
+    `docs/design/uia-shapes.md`, whose event shapes replace the
+    experiment.
+13. In the same flood the console window, read through UIA, raised about
+    56,000 MSAA `WinEvents` the outpost took in, text selection and value
+    changes above all, each waking the event thread and the worker, which
+    dropped it at the window's UIA test after its acceptance and state
+    checks. Fixed: the event thread drops one whose window is already known
+    to be read through UIA (the class lists or a kept verdict, no probe),
+    as NVDA drops it, keeping a window shown, a console's update and a
+    destroyed window, which the worker uses for UIA windows too. Over the
+    whole scenario the worker handled about 9,400 items instead of 38,000.
+    The event thread still wakes for each event, which only filtering
+    inside the application (D2's injection helper) avoids.
+14. While typing, the outpost's worker woke once for each reply to its
+    cross-process calls, from the application through `win32k` and from
+    `ctfmon.exe`, the Text Services Framework's server (634 of the ten
+    most frequent readying stacks in 8 seconds). Why `ctfmon.exe` answers
+    a windowless worker is not yet known.
+15. With the event reads cheap, UI Automation delivered every event the
+    console host raised in a footer flood (`conhost_footer_overflow`):
+    17,528 text changes and 17,024 caret changes, against 162 and 150 while
+    the callbacks were slow, when UI Automation dropped the rest. Over the
+    whole flood (20 seconds from 8 seconds in) the console host then spent
+    16.5 seconds of processor time delivering them, against 4.7, and wrote
+    so much more slowly that the scenario's 12,000-line write had not
+    finished when its group of thirty lines had been spoken. The same
+    flood's console updates (`EVENT_CONSOLE_UPDATE_*`, about 16,600) tell
+    the outpost of the same output more cheaply, and only they report a
+    screen being cleared: driving the console host's reads from them alone,
+    without UIA text changes, cut the flood's processor time in all
+    processes from 25.0 to 15.5 seconds and its wake-ups from about 296,000
+    to 154,000. Fixed, with Dickson's agreement on condition of no
+    regressions: the console host's text area takes the focus-following
+    subscription's extended group without its text changes
+    (`Group::ExtendedWithoutTextChanges`), and its console updates drive
+    its reads; NVDA, for a UIA console, listens to UIA text changes alone.
+    Windows Terminal throttles its own UIA events (94 text changes and 74
+    caret changes in a whole flood, 0.34 seconds in the outpost) and is
+    unchanged.
 
 Tracing has one hazard, seen three times on 2026-10-13 and not
 understood: after a trace started while a scenario was starting, twice,

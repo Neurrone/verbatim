@@ -332,11 +332,14 @@ Public API:
   local, and the group is registered on each element of the scope with one
   `AddEventHandlerGroup` call. Each subscription is a `Part`, with the
   properties its events' elements arrive with, so one group can carry a
-  different cache request for each handler. A registration has two groups,
-  as NVDA has two local groups (`UIAHandler/__init__.py`,
-  `_createLocalEventHandlerGroup`): `Group::Base`, which holds every part
-  not marked `extended_only`, and `Group::Extended`, which holds every
-  part. Each is built once per thread and client, on first need. `new`
+  different cache request for each handler. A registration has NVDA's two
+  local groups (`UIAHandler/__init__.py`, `_createLocalEventHandlerGroup`):
+  `Group::Base`, which holds every part not marked `extended_only`, and
+  `Group::Extended`, which holds every part; and a third,
+  `Group::ExtendedWithoutTextChanges`, every part but those marked
+  `text_changes` (`Part::text_changes`), for an element whose text changes
+  reach the caller another way, so UIA is not asked to deliver them. Each
+  is built once per thread and client, on first need. `new`
   gives every part the base cache request, `with_cache` exactly the given
   properties, for events whose callers read fewer, so the provider is asked
   for no more with each event, and `with_parts` each part its own. The
@@ -349,9 +352,9 @@ Public API:
   `TEXT_EVENT_PROPERTIES` (process id, native window handle, and class
   name: nothing is spoken from it, and the class name of an element one
   brings, which may become the node's kept element, says whether its text
-  is a terminal's), in both groups; and its text changes and active text
-  position changes, with `TEXT_EVENT_PROPERTIES`, in the extended group
-  alone.
+  is a terminal's), in every group; and its text changes, marked
+  `text_changes`, and active text position changes, with
+  `TEXT_EVENT_PROPERTIES`, in the extended groups alone.
 - A move (`retarget` gives the base group, `retarget_to` the group named)
   is handed to the registration's thread, so the caller never waits on
   UIA's removal, which waits for running callbacks. The thread adds the

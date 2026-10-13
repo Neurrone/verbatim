@@ -1412,7 +1412,10 @@ impl Worker<'_> {
     /// 756; `NVDAObjects/UIA/__init__.py` 1623 to 1630;
     /// `docs/design/focus-pipeline.md`, section 17): to the node's own
     /// element when the outpost has it, with the extended group when the
-    /// node may have text, and the base group otherwise; and to nothing for
+    /// node may have text, and the base group otherwise; the console host's
+    /// text area takes the extended group without its text changes, since
+    /// its console updates tell the outpost of its output
+    /// ([`text_reads::console_focus`]); and to nothing for
     /// a focus whose element the outpost does not have, or one read through
     /// MSAA, whose changes and caret events come from the hooks. The element
     /// alone, not its descendants, as the reducer acts on the focus's own
@@ -1428,10 +1431,12 @@ impl Worker<'_> {
     fn follow_focus(&self, (node_id, role): (NodeId, Role)) -> bool {
         let has_text = text_reads::may_have_text(self.context, node_id, role);
         let element = self.context.uia_registry.element_of(node_id);
-        let group = if has_text {
-            verbatim_uia::Group::Extended
-        } else {
+        let group = if !has_text {
             verbatim_uia::Group::Base
+        } else if role == Role::Terminal && text_reads::console_focus(self.context, node_id) {
+            verbatim_uia::Group::ExtendedWithoutTextChanges
+        } else {
+            verbatim_uia::Group::Extended
         };
         let wanted = element.as_ref().map(|_| (node_id, group));
         let mut followed = self
