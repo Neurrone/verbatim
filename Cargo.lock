@@ -1968,6 +1968,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "verbatim-trace-waits"
+version = "0.1.0"
+dependencies = [
+ "windows",
+ "workspace-hack",
+]
+
+[[package]]
 name = "verbatim-uia"
 version = "0.1.0"
 dependencies = [

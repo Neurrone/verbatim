@@ -308,9 +308,13 @@ PowerShell; it registers two tasks that run WPR as SYSTEM and that his
 account may start without elevation, as the park task does. `stop` writes
 the trace to `C:\ProgramData\Verbatim\Traces\verbatim-<time>.etl` and
 prints its path; that folder is readable by his account, and he may
-delete what is in it. Windows' own `tracerpt` converts a trace to text;
-the Windows Performance Analyzer, which reads one graphically, is not
-installed.
+delete what is in it. `cargo xtask trace waits <trace.etl>
+[process.exe ...]` then reports how long each thread of Verbatim's
+processes, or of those named, waited ready to run
+(`docs/crates/verbatim-trace-waits.md`). Windows' own `tracerpt` does not
+decode context switches, and the Windows Performance Analyzer is not
+installed. A trace grows by about 20 MB a second: trace only the run being
+measured, and delete the trace and its `.NGENPDB` folder once read.
 
 ## Measuring the platform floor
 

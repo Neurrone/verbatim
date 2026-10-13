@@ -37,7 +37,10 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("start") => start(),
         Some("stop") => stop(),
-        _ => Err("usage: cargo xtask trace <start|stop>".to_owned()),
+        Some("waits") => return waits(&args[1..]),
+        _ => Err(
+            "usage: cargo xtask trace <start|stop|waits <trace.etl> [process.exe ...]>".to_owned(),
+        ),
     };
     match result {
         Ok(message) => {
@@ -46,6 +49,27 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         }
         Err(message) => {
             eprintln!("xtask trace: {message}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `cargo xtask trace waits <trace.etl> [process.exe ...]`: how long each
+/// thread of Verbatim's processes, or of the processes named, waited ready
+/// to run, read from the trace by `verbatim-trace-waits`.
+fn waits(args: &[String]) -> ExitCode {
+    let status = Command::new(env!("CARGO"))
+        .args(["run", "--release", "-p", "verbatim-trace-waits", "--"])
+        .args(args)
+        .status();
+    match status {
+        Ok(status) if status.success() => ExitCode::SUCCESS,
+        Ok(status) => {
+            eprintln!("xtask trace: reading the trace failed ({status})");
+            ExitCode::FAILURE
+        }
+        Err(error) => {
+            eprintln!("xtask trace: could not run cargo: {error}");
             ExitCode::FAILURE
         }
     }

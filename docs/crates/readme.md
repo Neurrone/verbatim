@@ -47,6 +47,8 @@ commit updated only the changed crate's own guide.
   (power throttling, thread priority).
 - [verbatim-relay-floor](verbatim-relay-floor.md) — the platform floor's
   benchmark for Verbatim's pipes and relay (`cargo xtask relay-floor`).
+- [verbatim-trace-waits](verbatim-trace-waits.md) — how long threads
+  waited to run, from a WPR trace (`cargo xtask trace waits`).
 - [verbatim-synth-hosted](verbatim-synth-hosted.md) — `HostedSynth`, the
   driver that runs a synthesizer in a host process (D18).
 - [verbatim-synth-host](verbatim-synth-host.md) — `verbatim-synth-host.exe`,
