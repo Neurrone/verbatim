@@ -47,6 +47,9 @@ pub(crate) struct NodeData {
     /// How many of the text's last lines are on screen, as a terminal shows
     /// the end of its buffer (`screen`); `None` shows the whole text.
     pub(crate) screen_rows: Option<usize>,
+    /// Text written over the text at the caret, and the caret moved past
+    /// it, as the text is next read (`write-on-read`).
+    pub(crate) write_on_read: Option<Vec<u16>>,
     /// The text's spelling errors and bold stretches, UTF-16 offsets.
     pub(crate) formats: Formats,
     pub(crate) parent: Option<usize>,
@@ -197,6 +200,7 @@ fn insert(
         text: node.text.map(|text| text.encode_utf16().collect()),
         selection: (0, 0),
         screen_rows: None,
+        write_on_read: None,
         formats: Formats {
             spelling_errors: node.spelling_errors,
             bold: node.bold,

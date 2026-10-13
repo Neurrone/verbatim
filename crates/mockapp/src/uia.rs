@@ -194,6 +194,13 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
             guard.nodes[index].screen_rows = (rows > 0).then_some(rows);
         }
+        Command::WriteOnRead(id, text) => {
+            let mut guard = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
+            guard.nodes[index].write_on_read = Some(text.encode_utf16().collect());
+        }
         Command::SetText(id, text) => {
             let mut guard = tree
                 .lock()

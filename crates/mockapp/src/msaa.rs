@@ -233,6 +233,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::SetText(..) => {
             return Err("set-text is not supported on the msaa backend".into());
         }
+        Command::WriteOnRead(..) => {
+            return Err("write-on-read is not supported on the msaa backend".into());
+        }
         Command::Screen(..) => {
             return Err("screen is not supported on the msaa backend".into());
         }

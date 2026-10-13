@@ -409,6 +409,7 @@ fn caret_query<'a>(
         learning: Attributes::ALL,
         max_text: 1024,
         max_change_text: 1024,
+        recheck: false,
     }
 }
 

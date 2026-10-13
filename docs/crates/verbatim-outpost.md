@@ -1317,7 +1317,16 @@ Implementation notes:
     request arrived; only the caret's neighbors count, since a line can
     wrap anew with no key at all. A caret event alone is evidence only when
     nothing knew the caret: it can be the application's late report of
-    something earlier. The selection's changes are worked out by comparing
+    something earlier. Before a check answers, the caret is read again
+    (`CaretRequest::recheck`; at the end of the same program through UIA,
+    `CaretRead::moved_while_read`, and with one more read and comparison
+    for an edit control), and when it moved while it was read the check
+    answers nothing: the caret may be from before a write and the line
+    from after it (a Backspace's character message in an edit control,
+    the console host writing a typed character between two calls of the
+    one program), a state the text never had; the event that follows the
+    move (the control's caret event, the terminal's text change) checks
+    again. The selection's changes are worked out by comparing
     endpoints, as the contract says; through UIA the caret read works them
     out and reads their text in the same round trip when the selection
     moved (`CaretRead::changes`), and the edit controls work them out call

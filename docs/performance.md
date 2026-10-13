@@ -775,7 +775,7 @@ spelling and grammar errors. Measured against mockapp's text provider
 `crates/mockapp/tests/call_counts.rs`, both ways.
 
 - Minimum: 1 UIA call, one remote operations program
-  (`verbatim_uia_rops::caret_read`). Classically, 12 calls one at a time:
+  (`verbatim_uia_rops::caret_read`). Classically, 15 calls one at a time:
   the selection (`GetSelection`), whether it is empty (`CompareEndpoints`
   of its two ends), the evidence (`CompareEndpoints` with the caret Core
   knew), the line (a copy of the caret, `ExpandToEnclosingUnit`,
@@ -784,14 +784,20 @@ spelling and grammar errors. Measured against mockapp's text provider
   annotation types and link (a copy of the caret, `ExpandToEnclosingUnit`,
   and one `GetAttributeValues` call, which the provider answers with two
   `GetAttributeValue` reads since the default theme reports links, one
-  before). The character is cut from the line's text, at no cost.
+  before), and the caret read again with its comparison (`GetSelection`,
+  whether it is empty, and `CompareEndpoints` with the caret first read),
+  since a provider takes each call on its own and the application can
+  move the caret between them (2026-10-14, the console host writing a
+  typed character between the caret's read and its line's). The character
+  is cut from the line's text, at no cost.
 - Today: 1 remotely, 9 calls before remote operations (2026-10-06, with no
   formatting). The program makes inside the provider the classic reads'
   provider calls and one copy more (a `Clone` and a `MoveEndpointByRange`
   collapsing the caret), plus the import of the element and its text
   pattern (`GetPatternProvider` and four more provider calls UIA makes).
   Classically, with remote operations off or a provider that cannot run
-  programs: 12, the 9 of before and 3 for the character's spelling error.
+  programs: 15, the 9 of before, 3 for the character's spelling error,
+  and 3 for the caret read again (12 before 2026-10-14).
   A theme with the font, its attributes, or the color on adds one
   attribute read each classically, and nothing remotely.
 - Target: 1.
@@ -811,7 +817,7 @@ and in its edit control.
 
 - Minimum: one round trip for each check; nothing for waiting.
 - Today: 1 remotely for each check, the whole caret read above, so the
-  check that finds the evidence is the answer; classically 12 for each,
+  check that finds the evidence is the answer; classically 15 for each,
   the caret move's reads; in the edit control 5 window messages for a
   check that finds nothing and 6 for one that answers (the selection read
   again, as for a caret move).

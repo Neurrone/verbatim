@@ -441,8 +441,9 @@ which attributes to read (`attributes`, an `Attributes` set of
 the font's name, size, and weight, italic, the underline and
 strikethrough styles, the foreground and background colors, the bullet
 style, and the link attribute), and which of them are being learned
-(`learning`: those whose support the caller does not know yet). The
-`CaretAnswer`:
+(`learning`: those whose support the caller does not know yet), and
+whether to read the caret again at the end (`recheck`, which a caret
+key's watch asks for). The `CaretAnswer`:
 
 - `caret`, a range whose start is the caret, and whether it is known to
   be collapsed; `selection`, the selected range when text is selected.
@@ -468,6 +469,13 @@ style, and the link attribute), and which of them are being learned
   "not supported" for, the rest being supported; `None` when nothing was
   learned, as from a character's read or an empty line's, which say too
   little about the provider.
+- `moved_while_read`: with `recheck`, the caret read again once
+  everything else was read is not where it was first read. A program is
+  not atomic: the provider takes each of its calls on its own (the
+  console host takes its lock for each), so an application can write
+  between them, and the line then shows a character whose write moved the
+  caret past where the caret was read (2026-10-14, `conhost_up_typing`).
+  False without `recheck`.
 
 The program imports the element and gets its text pattern with the
 pattern getter instructions (Microsoft's `GetTextPattern`, whose opcode

@@ -1136,4 +1136,34 @@ moved and the reducer echoes the character; with value changes hooked,
 UI Automation raises its copy of each text change inside the console
 host, and the cursor had moved by the time of the read. Not fixed here:
 the read racing the shell's redraw is the cause, and hooking value
-changes only hid it (open).
+changes only hid it.
+
+Resolved on 2026-10-14. The race, from the failing runs' outpost logs
+and flight recorder: the watch's one read (the caret, then a copy of it
+expanded to its line and read) began as the request arrived, while the
+console host was writing; the shell's redraw of the recalled line had put
+the cursor at column 15, the read took the caret there, and the "x" was
+written (its `EVENT_CONSOLE_UPDATE_SIMPLE` reached the outpost during the
+read) before the line's text was read. A remote operations program is not
+atomic: the console host takes its lock for each provider call, and
+writes a character and moves its cursor under one lock between two of
+them. The answer paired "ready> echo onex" with the caret at 15, a state
+the console never had. Core did not speak it (a later key, the "x", had
+been pressed), but kept it as its caret; the update's read then found the
+caret at 16 on the same text, reported it, and the reducer took a caret
+moving over the typed "x" on an unchanged line as typing the terminal
+shows without changing its text (the rule for a space at a line's end and
+for ghost text), echoing "x" before the line's change was spoken. With
+the value changes hooked the read had come later, after the write.
+
+Fixed by reading the caret again at the end of the watch's program
+(`CaretQuery::recheck`, `CaretAnswer::moved_while_read`): when it moved
+while it was read, the check answers nothing, as an edit control's read
+by parts has done since 676d1275, and the update that follows the write
+reads again and answers with the caret past the "x". Two provider calls
+more inside the same round trip for each check, three more classically
+(`docs/performance.md`). A mockapp test has the terminal write between
+the program's calls (`write-on-read`) and failed without the change.
+`conhost_up_typing` then passed three runs in a row, the third having met
+the race and waited; every `conhost_` and `windows_terminal_` typing,
+editing, line key and commands scenario, and `notepad_editing`, passed.

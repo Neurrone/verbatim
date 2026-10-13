@@ -98,6 +98,9 @@ pub struct CaretRequest<'a, P> {
     pub unit: Option<TextUnit>,
     /// Whose formatting to read, with the attributes the theme asks for.
     pub formats: Option<FormatSpan>,
+    /// Whether to read the caret again once everything else is read, to
+    /// say whether it moved meanwhile ([`CaretRead::moved_while_read`]).
+    pub recheck: bool,
 }
 
 /// The answer to a [`CaretRequest`].
@@ -119,6 +122,10 @@ pub struct CaretRead<P> {
     /// rest; `None` when the source did not read them, which the caller
     /// then does.
     pub changes: Option<Vec<(bool, Vec<u16>)>>,
+    /// With [`CaretRequest::recheck`], whether the caret read again after
+    /// everything else had moved: the line may show what the application
+    /// wrote after the caret was read. False without a recheck.
+    pub moved_while_read: bool,
 }
 
 /// A point as a source is asked to find it: the protocol's [`TextPoint`],
@@ -948,6 +955,7 @@ pub fn caret_report_since<S: TextSource>(
         previous: None,
         unit: None,
         formats: formats.then_some(FormatSpan::Line),
+        recheck: false,
     };
     if let Some(read) = source.caret_read(&request)? {
         let read_at_ms = now_ms();
@@ -1160,9 +1168,9 @@ struct Polled<P> {
     formats: Vec<Formatting>,
     /// The selection's changes, when the read found them.
     changes: Option<Vec<(bool, Vec<u16>)>>,
-    /// Whether the caret and its line were read in one go
-    /// ([`TextSource::caret_read`]), rather than by parts.
-    in_one_go: bool,
+    /// Read in one go ([`TextSource::caret_read`]), whether the caret read
+    /// again at its end had moved; `None` when read by parts.
+    moved_while_read: Option<bool>,
 }
 
 /// Reads the caret for a caret key's watch: in one go where the source can
@@ -1184,7 +1192,7 @@ fn read_watched<S: TextSource>(
             unit: read.unit,
             formats: read.formats,
             changes: read.changes,
-            in_one_go: true,
+            moved_while_read: Some(read.moved_while_read),
         });
     }
     let state = source.caret()?;
@@ -1206,7 +1214,7 @@ fn read_watched<S: TextSource>(
         unit: None,
         formats: Vec::new(),
         changes: None,
-        in_one_go: false,
+        moved_while_read: None,
     })
 }
 
@@ -1257,6 +1265,7 @@ fn evidence<S: TextSource>(
         previous: previous.as_ref(),
         unit: extra_unit(source, watch.unit),
         formats: format_span(watch.unit),
+        recheck: true,
     };
     let mut polled = read_watched(source, &request, signal)?;
     let mut moved =
@@ -1284,18 +1293,25 @@ fn evidence<S: TextSource>(
     if !moved {
         return Ok(None);
     }
-    // Read by parts, the caret may be from before the key and the line from
-    // after it: an edit control can handle the key between the two reads
-    // (a Backspace's character message comes after the key's own), so the
-    // line has lost a character and the caret has not moved yet. The
-    // caret read again tells; when it moved, nothing is answered now, and
-    // the control's caret event checks again.
-    if !polled.in_one_go {
+    // The caret may be from before the key and the line from after it: an
+    // edit control can handle the key between the two reads (a Backspace's
+    // character message comes after the key's own), so the line has lost a
+    // character and the caret has not moved yet; and a provider takes each
+    // call of a read in one go on its own, so the console host can write a
+    // typed character between the caret's read and its line's, and the line
+    // shows it with the caret before it. The caret read again tells, at the
+    // end of a read in one go or here after one by parts; when it moved,
+    // nothing is answered now, and the event that follows the move (the
+    // control's caret event, the terminal's text change) checks again.
+    let moved_while_read = if let Some(moved) = polled.moved_while_read {
+        moved
+    } else {
         let again = source.caret()?.caret;
-        if source.compare(&again, &polled.state.caret)? != Ordering::Equal {
-            tracing::debug!("the caret moved while it was read; the watch waits for its event");
-            return Ok(None);
-        }
+        source.compare(&again, &polled.state.caret)? != Ordering::Equal
+    };
+    if moved_while_read {
+        tracing::debug!("the caret moved while it was read; the watch waits for its event");
+        return Ok(None);
     }
     polled.caret_moved = true;
     let same_line = match since.as_ref().filter(|_| watch.landing) {

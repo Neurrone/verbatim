@@ -2237,12 +2237,13 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         ])
     );
     // The caret's read, the evidence, the line and the caret's offset
-    // in it, and the character's spelling error and link, which a
-    // character's read never learns are not supported.
+    // in it, the character's spelling error and link, which a
+    // character's read never learns are not supported, and the caret read
+    // again and compared, to tell whether it moved while it was read.
     let move_hits = [
-        ("ITextProvider::GetSelection", 1),
+        ("ITextProvider::GetSelection", 2),
         ("Clone", 3),
-        ("CompareEndpoints", 2),
+        ("CompareEndpoints", 4),
         ("ExpandToEnclosingUnit", 2),
         ("GetAttributeValue", 2),
         ("GetText", 2),
@@ -2354,7 +2355,7 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         ratchet.check(
             "UIA caret move, classically",
             &answer,
-            calls(12, 0, 0),
+            calls(15, 0, 0),
             0,
             &move_hits,
         );
@@ -2403,18 +2404,19 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         );
         // A caret move's reads for each check. 134 before 2026-10-08, 12
         // for each of eleven reads and 2 comparing the caret with the
-        // document's end.
+        // document's end; 12 for each check before the caret was read
+        // again (2026-10-14).
         ratchet.check(
             "UIA caret watch finding nothing, classically",
             &nothing,
-            calls(12, 0, 0),
+            calls(15, 0, 0),
             0,
             &move_hits,
         );
         ratchet.check(
             "UIA caret watch answered by a later caret event, classically",
             &later,
-            calls(12, 0, 0),
+            calls(15, 0, 0),
             0,
             &move_hits,
         );
@@ -2801,20 +2803,21 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         .collect();
     assert_eq!(changes, [(true, "alpha", 5)]);
     // The character's spelling error and link: two attribute reads (one
-    // before the default theme reported links).
+    // before the default theme reported links). The caret read again at
+    // the end, the selection and `TextPattern2`'s caret, and compared.
     let expected: (CallCounts, &[(&str, u32)]) = if remote {
         (
             calls(1, 0, 0),
             &[
                 ("ProviderOptions", 2),
-                ("GetPatternProvider", 2),
+                ("GetPatternProvider", 3),
                 ("GetPropertyValue", 1),
                 ("HostRawElementProvider", 1),
                 ("Navigate", 1),
-                ("ITextProvider::GetSelection", 1),
-                ("GetCaretRange", 1),
+                ("ITextProvider::GetSelection", 2),
+                ("GetCaretRange", 2),
                 ("Clone", 5),
-                ("CompareEndpoints", 8),
+                ("CompareEndpoints", 10),
                 ("ExpandToEnclosingUnit", 2),
                 ("GetAttributeValue", 2),
                 ("GetText", 3),
@@ -2823,12 +2826,12 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         )
     } else {
         (
-            calls(23, 0, 0),
+            calls(27, 0, 0),
             &[
-                ("ITextProvider::GetSelection", 1),
-                ("GetCaretRange", 1),
+                ("ITextProvider::GetSelection", 2),
+                ("GetCaretRange", 2),
                 ("Clone", 4),
-                ("CompareEndpoints", 8),
+                ("CompareEndpoints", 10),
                 ("ExpandToEnclosingUnit", 2),
                 ("GetAttributeValue", 2),
                 ("GetText", 3),

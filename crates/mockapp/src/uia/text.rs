@@ -168,6 +168,25 @@ struct TextRange {
     end: Cell<usize>,
 }
 
+/// Writes the text waiting to be written as the node's text is read
+/// (`write-on-read`) over the text at the caret, and moves the caret past
+/// it.
+fn write_pending(tree: &SharedTree, index: usize) {
+    let mut guard = tree
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let node = &mut guard.nodes[index];
+    let Some(written) = node.write_on_read.take() else {
+        return;
+    };
+    let text = node.text.get_or_insert_with(Vec::new);
+    let at = node.selection.0.min(text.len());
+    let end = (at + written.len()).min(text.len());
+    text.splice(at..end, written.iter().copied());
+    let caret = at + written.len();
+    node.selection = (caret, caret);
+}
+
 /// The node's text now.
 fn text_of(tree: &SharedTree, index: usize) -> Vec<u16> {
     tree.lock()
@@ -731,6 +750,7 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
     }
     fn GetText(&self, maxlength: i32) -> WinResult<BSTR> {
         hits::hit(Method::RangeGetText);
+        write_pending(&self.tree, self.index);
         let text = text_of(&self.tree, self.index);
         let end = self.end.get().min(text.len());
         let start = self.start.get().min(end);

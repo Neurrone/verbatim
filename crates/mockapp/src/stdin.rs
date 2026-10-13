@@ -73,6 +73,12 @@ pub(crate) enum Command {
     /// in `text` is a line feed and `\\` a backslash, so one stdin line can
     /// carry many lines. UIA-only.
     SetText(String, String),
+    /// `write-on-read <id> <text>`: the next time any range of a UIA text
+    /// node's text is read, `text` is first written over the text at the
+    /// caret and the caret moved past it, raising no event, as a terminal
+    /// writes a typed character between two calls of a client's read.
+    /// UIA-only.
+    WriteOnRead(String, String),
     /// `text-changed <id>`: raises UIA's text changed event from a text
     /// node, as a terminal reports that its text changed. UIA-only.
     TextChanged(String),
@@ -167,6 +173,13 @@ fn console_caret(rest: &str) -> Option<Command> {
     ))
 }
 
+/// `write-on-read`'s arguments, a node's id and the text to write.
+fn write_on_read(rest: &str) -> Option<Command> {
+    let (id, text) = rest.split_once(' ')?;
+    (!id.is_empty() && !text.is_empty())
+        .then(|| Command::WriteOnRead(id.to_owned(), text.to_owned()))
+}
+
 /// Parses one stdin line into a [`Command`]. Blank lines and unrecognized
 /// verbs yield `None` (a stray blank line is ignored; the caller hands an
 /// unknown verb on as [`Command::Unrecognized`], to be rejected).
@@ -230,6 +243,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
             let (id, rows) = rest.split_once(' ')?;
             Some(Command::Screen(id.to_owned(), rows.trim().parse().ok()?))
         }
+        "write-on-read" => write_on_read(rest),
         "set-text" => {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
             (!id.is_empty()).then(|| Command::SetText(id.to_owned(), unescape(text)))

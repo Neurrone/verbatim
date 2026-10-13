@@ -494,6 +494,7 @@ fn remote_and_classic_caret_reads_agree() {
         learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
+        recheck: false,
     };
 
     // The caret in "beta", a spelling error after bold "alpha": the line's
@@ -614,6 +615,7 @@ fn a_failing_attribute_is_not_supported() {
         learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
+        recheck: false,
     };
     common::apply(&mut app, hwnd, "caret doc 1");
     let classic = caret_read_classic(&query).expect("the classic reads run");
@@ -656,6 +658,7 @@ fn a_mixed_stretch_is_read_by_words_then_characters() {
         learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
+        recheck: false,
     };
     let italic = |italic| RunAttributes {
         italic: Some(italic),
@@ -832,6 +835,7 @@ fn remote_and_classic_text_reads_agree() {
         learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
+        recheck: false,
     })
     .expect("the caret");
     let selection = selected.selection.expect("the selection made");
@@ -1260,6 +1264,7 @@ fn every_attribute_is_read_both_ways() {
         learning,
         max_text: 1024,
         max_change_text: 1024,
+        recheck: false,
     };
     let plain = plain_formatting;
     let read = |formats| {
@@ -1387,6 +1392,7 @@ fn unsupported_attributes_are_found_both_ways() {
         learning: Attributes::ALL,
         max_text: 1024,
         max_change_text: 1024,
+        recheck: false,
     };
     let unsupported = Some(Attributes::of(&[
         TextAttribute::StrikethroughStyle,

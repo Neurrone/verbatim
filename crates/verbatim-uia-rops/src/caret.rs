@@ -230,6 +230,9 @@ pub struct CaretQuery<'a> {
     /// The most UTF-16 code units read for each selection change, when the
     /// selection is not [`previous_selection`](Self::previous_selection).
     pub max_change_text: i32,
+    /// Whether to read the caret again once everything else is read, to
+    /// say whether it moved meanwhile ([`CaretAnswer::moved_while_read`]).
+    pub recheck: bool,
 }
 
 /// Text that became selected or stopped being selected
@@ -299,6 +302,10 @@ pub struct Run {
 
 /// The answer to a [`CaretQuery`].
 #[derive(Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is a separate fact the read found"
+)]
 pub struct CaretAnswer {
     /// A range whose start is the caret.
     pub caret: IUIAutomationTextRange,
@@ -333,6 +340,13 @@ pub struct CaretAnswer {
     /// `None` for any other read: a character's one read, or an empty
     /// line's, says too little about the provider.
     pub unsupported: Option<Attributes>,
+    /// With [`CaretQuery::recheck`], whether the caret read again after
+    /// everything else is not where it was first read. A provider takes
+    /// each call of a program on its own (the console host takes its lock
+    /// for each), so an application can write between them: the line then
+    /// shows a character whose write moved the caret past where the caret
+    /// was read. False without a recheck.
+    pub moved_while_read: bool,
 }
 
 /// The signature both implementations share.
@@ -392,6 +406,7 @@ impl CaretLineRegisters {
             runs: Vec::new(),
             changes: None,
             unsupported: None,
+            moved_while_read: false,
         })
     }
 }
@@ -449,6 +464,7 @@ pub(crate) fn caret_line_classic(query: &CaretLineQuery<'_>) -> Result<CaretAnsw
         learning: Attributes::NONE,
         max_text: query.max_text,
         max_change_text: 0,
+        recheck: false,
     })
 }
 
@@ -1009,6 +1025,14 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
         _ => None,
     };
 
+    // The caret read again, once everything else is read.
+    let moved_while_read = query.recheck.then(|| {
+        let again = emit_caret_with(b, &c, (element, pattern), query.pattern2.is_some(), false);
+        let order = b.text_range_compare_endpoints(again.caret, c.start, point, c.start);
+        let differs = b.not_equal(order, c.zero);
+        b.add_to_results(differs)
+    });
+
     ReadRegisters {
         caret: registers,
         moved,
@@ -1017,6 +1041,7 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
         line,
         unit,
         runs,
+        moved_while_read,
     }
 }
 
@@ -1034,6 +1059,7 @@ struct ProgramKey {
     learning: Attributes,
     max_text: i32,
     max_change_text: i32,
+    recheck: bool,
 }
 
 impl ProgramKey {
@@ -1053,6 +1079,7 @@ impl ProgramKey {
             learning: query.learning,
             max_text: query.max_text,
             max_change_text: query.max_change_text,
+            recheck: query.recheck,
         }
     }
 }
@@ -1081,6 +1108,7 @@ struct ReadRegisters {
     line: UnitRegisters,
     unit: Option<UnitRegisters>,
     runs: Option<RunRegisters>,
+    moved_while_read: Option<Reg<kind::Bool>>,
 }
 
 thread_local! {
@@ -1117,6 +1145,7 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
         line,
         unit,
         runs,
+        moved_while_read,
     } = r;
     let outcome = operation.execute()?;
     let caret_range = outcome
@@ -1153,6 +1182,10 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
             .map(|(selected, texts)| read_changes(&outcome, selected, texts))
             .transpose()?,
         unsupported,
+        moved_while_read: match moved_while_read {
+            Some(moved) => outcome.get(moved)?,
+            None => false,
+        },
     })
 }
 
@@ -1292,17 +1325,33 @@ pub(crate) struct CaretRegisters {
 pub(crate) fn emit_caret(
     b: &mut Builder,
     c: &Constants,
-    (element, pattern): (Reg<kind::Element>, Reg<kind::TextPattern>),
+    target: (Reg<kind::Element>, Reg<kind::TextPattern>),
     pattern2: bool,
 ) -> CaretRegisters {
+    emit_caret_with(b, c, target, pattern2, true)
+}
+
+/// [`emit_caret`], its registers among the program's results when
+/// `results`, and only the program's own otherwise (a caret read again to
+/// compare, [`CaretQuery::recheck`]).
+fn emit_caret_with(
+    b: &mut Builder,
+    c: &Constants,
+    (element, pattern): (Reg<kind::Element>, Reg<kind::TextPattern>),
+    pattern2: bool,
+    results: bool,
+) -> CaretRegisters {
+    fn kept<K>(b: &mut Builder, reg: Reg<K>, results: bool) -> Reg<K> {
+        if results { b.add_to_results(reg) } else { reg }
+    }
     let caret = b.new_null().assume::<kind::TextRange>();
-    let caret = b.add_to_results(caret);
+    let caret = kept(b, caret, results);
     let collapsed = b.new_bool(false);
-    let collapsed = b.add_to_results(collapsed);
+    let collapsed = kept(b, collapsed, results);
     let has_selection = b.new_bool(false);
-    let has_selection = b.add_to_results(has_selection);
+    let has_selection = kept(b, has_selection, results);
     let selection = b.new_null().assume::<kind::TextRange>();
-    let selection = b.add_to_results(selection);
+    let selection = kept(b, selection, results);
     let ranges = b.text_pattern_get_selection(pattern);
     let size = b.array_size(ranges);
     let none = b.uint(0);
@@ -1555,20 +1604,7 @@ fn classic_walk(
 ///
 /// [`Error::Uia`] when a call fails.
 pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
-    let ranges = query.pattern.selection()?;
-    let (caret, collapsed_caret, selection) = match ranges.first() {
-        None => (query.pattern.document_range()?, false, None),
-        Some(first) => {
-            if first.compare_endpoints(Endpoint::Start, first, Endpoint::End)? == 0 {
-                (first.clone(), true, None)
-            } else {
-                match query.pattern2 {
-                    Some(pattern2) => (caret_range(pattern2)?, true, Some(first.clone())),
-                    None => (first.clone(), false, Some(first.clone())),
-                }
-            }
-        }
-    };
+    let (caret, collapsed_caret, selection) = classic_caret(query)?;
     // A collapsed caret is its own point; the program copies it either way,
     // which costs nothing there.
     let point = if collapsed_caret {
@@ -1618,6 +1654,12 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         .map(|unit| unit_at(&point, unit, query.max_text))
         .transpose()?;
     let (runs, unsupported) = classic_formats(query, &point, &line, unit.as_ref())?;
+    let moved_while_read = if query.recheck {
+        let (again, _, _) = classic_caret(query)?;
+        again.compare_endpoints(Endpoint::Start, &point, Endpoint::Start)? != 0
+    } else {
+        false
+    };
     Ok(CaretAnswer {
         caret,
         collapsed: collapsed_caret,
@@ -1629,6 +1671,28 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         runs,
         changes,
         unsupported,
+        moved_while_read,
+    })
+}
+
+/// The caret, whether it is collapsed, and the selection, read the
+/// classic way as [`emit_caret`] emits them.
+fn classic_caret(
+    query: &CaretQuery<'_>,
+) -> Result<(IUIAutomationTextRange, bool, Option<IUIAutomationTextRange>), Error> {
+    let ranges = query.pattern.selection()?;
+    Ok(match ranges.first() {
+        None => (query.pattern.document_range()?, false, None),
+        Some(first) => {
+            if first.compare_endpoints(Endpoint::Start, first, Endpoint::End)? == 0 {
+                (first.clone(), true, None)
+            } else {
+                match query.pattern2 {
+                    Some(pattern2) => (caret_range(pattern2)?, true, Some(first.clone())),
+                    None => (first.clone(), false, Some(first.clone())),
+                }
+            }
+        }
     })
 }
 

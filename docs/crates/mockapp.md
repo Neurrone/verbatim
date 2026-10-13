@@ -151,6 +151,10 @@ the terminal tests write lines, discard the oldest, and clear the screen
 with it; UIA only), `screen <id> <rows>` (only the last `rows` lines of a
 UIA text node's text are on screen, its visible range, as a terminal shows
 the end of its buffer, 0 the whole text again; raises no event; UIA only),
+`write-on-read <id> <text>` (the next time any range of a UIA text node's
+text is read, `text` is first written over the text at the caret and the
+caret moved past it, raising no event, as a terminal writes a typed
+character between two calls of a client's read; UIA only),
 `take-runtime-id <id> <from>` (node `from` dies:
 its parent no longer lists it, and every call on its elements fails with
 `UIA_E_ELEMENTNOTAVAILABLE`, as on an element that is gone; node `id`

@@ -22,6 +22,10 @@
 //!   UI Automation's caret event is not subscribed for it.
 //! - A caret key's watch that knows no caret before the key is answered by
 //!   a read that covers a caret event waiting behind it.
+//! - A caret key's watch whose read finds the caret moved while the
+//!   terminal writes between the read's calls, so that the line shows a
+//!   character the caret was read before, answers nothing; the text change
+//!   that follows answers it.
 //! - While the console's window is the application's focus window and its
 //!   foreground window, both read through UI Automation, the outpost's
 //!   hook leaves out the change events of windows read through MSAA, UI
@@ -45,8 +49,8 @@ mod harness;
 
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{
-    CaretWatch, NodeId, NormalizedEvent, PropertyChange, Role, TerminalOutput, TextOp, TextReply,
-    TextUnit,
+    CaretWatch, LineChange, NodeId, NormalizedEvent, PropertyChange, Role, TerminalOutput, TextOp,
+    TextPosition, TextReply, TextUnit,
 };
 use verbatim_outpost::Heard;
 use verbatim_outpost::protocol::DeliveredFact;
@@ -487,6 +491,80 @@ fn the_hooks_change_events_wait_for_a_window_read_through_msaa() {
     app.quit();
 }
 
+/// Up Arrow and "x" pressed at once in the console host
+/// (`conhost_up_typing`): the shell has drawn the recalled line and put
+/// the caret after it, and writes the "x" between the calls of the caret
+/// key's read, after its caret and before its line. The line read shows
+/// "x" with the caret before it, a state the terminal never had; read again
+/// at the read's end, the caret is past the "x", so the read answers
+/// nothing. The text change that follows reads again, and the watch is
+/// answered with the caret past the "x"; the caret read with the text is
+/// that answer's, so it is not reported again, and the output follows.
+fn a_watch_read_while_the_terminal_writes_waits_for_its_change() {
+    let (mut app, mut outpost, term) = start("mockapp-terminal-written-while-read");
+    let padding = " ".repeat(10);
+    let prompt = format!("{START} {padding}\n");
+    app.send(&format!("set-text term {}", prompt.replace('\n', r"\n")));
+    app.send("caret term 15");
+    app.send("caret-event term");
+    let since = match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::CaretMoved { node_id, caret },
+            ..
+        } if node_id == term => TextPosition {
+            anchor: caret.line.start,
+            offset: caret.line.offset,
+        },
+        other => panic!("the outpost said {other:?}, not the terminal's caret"),
+    };
+    assert_eq!(since.offset, 7);
+    outpost.settled();
+    let recalled = format!("{START} echo one{padding}\n");
+    app.send(&format!("set-text term {}", recalled.replace('\n', r"\n")));
+    app.send("caret term 23");
+    app.send("write-on-read term x");
+    let key = ask(
+        &mut outpost,
+        term,
+        TextOp::AwaitCaret(CaretWatch {
+            landing: false,
+            since: Some(since),
+            pressed_at_ms: 0,
+            unit: TextUnit::Line,
+            compare: None,
+            previous_selection: None,
+        }),
+    );
+    // The read saw the caret move while it read: nothing is said.
+    outpost.settled();
+    app.send("text-changed term");
+    let TextReply::Caret(reply) = answer_to(&outpost, key) else {
+        panic!("the watch was not answered with the caret");
+    };
+    assert!(reply.moved);
+    assert_eq!(
+        (reply.caret.line.text.as_str(), reply.caret.line.offset),
+        ("ready> echo onex         \n", 16)
+    );
+    assert_eq!(
+        reported(&outpost, term),
+        TerminalOutput {
+            changed: Some(LineChange {
+                text: " echo onex".to_owned(),
+                line: "ready> echo onex".to_owned(),
+                appended: true,
+                uncertain: 1,
+                inserted: " echo onex".to_owned(),
+                since_read: None,
+            }),
+            ..TerminalOutput::default()
+        }
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -517,6 +595,10 @@ fn main() {
         (
             "a_read_covering_a_caret_event_answers_a_watch_with_no_caret",
             a_read_covering_a_caret_event_answers_a_watch_with_no_caret,
+        ),
+        (
+            "a_watch_read_while_the_terminal_writes_waits_for_its_change",
+            a_watch_read_while_the_terminal_writes_waits_for_its_change,
         ),
         (
             "an_unchanged_caret_is_not_reported_again",
