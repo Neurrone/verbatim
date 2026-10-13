@@ -17,7 +17,10 @@
 //!
 //! It prints, for every thread of the processes named (by default
 //! `verbatim.exe`, `verbatim-outpost.exe` and `verbatim-synth-host.exe`),
-//! its process, id and name, how many ready waits it had, their median,
+//! its process, id and name, how many times it was woken (readied from a
+//! wait), its time on a processor (from a context switch giving it one to
+//! the next taking it away, so a thread already running when the trace
+//! began is counted from its first switch), how many ready waits it had, their median,
 //! 99.9th percentile and maximum in milliseconds, and how many were over 1,
 //! 10 and 100 ms. With `--wakers <thread name>` it reports instead, for
 //! the threads of that name, which threads woke them after they had waited
@@ -81,6 +84,12 @@ struct Waits {
     ready_since: HashMap<u32, i64>,
     /// Each thread's ready waits, in 100-nanosecond units.
     by_thread: HashMap<u32, Vec<i64>>,
+    /// How many times each thread was readied from a wait: its wake-ups.
+    woken: HashMap<u32, usize>,
+    /// When each running thread was given its processor, and each thread's
+    /// time on a processor, in 100-nanosecond units.
+    on_cpu_since: HashMap<u32, i64>,
+    cpu: HashMap<u32, i64>,
     /// Each thread's process.
     process_of: HashMap<u32, u32>,
     /// Each thread's name, when it has one.
@@ -137,6 +146,7 @@ impl Waits {
                             self.stack_pending.insert(processor);
                         }
                         self.ready_since.entry(thread).or_insert(time);
+                        *self.woken.entry(thread).or_default() += 1;
                         if let Some(since) = self.blocked_since.remove(&thread)
                             && time - since >= SHORTEST_BLOCKED
                         {
@@ -172,6 +182,12 @@ impl Waits {
         };
         if let Some(since) = self.ready_since.remove(&new) {
             self.by_thread.entry(new).or_default().push(time - since);
+        }
+        if new != 0 {
+            self.on_cpu_since.insert(new, time);
+        }
+        if let Some(since) = self.on_cpu_since.remove(&old) {
+            *self.cpu.entry(old).or_default() += time - since;
         }
         // Taken off the processor while still ready: pre-empted, so it
         // waits from now; otherwise it blocks until something readies it.
@@ -388,7 +404,9 @@ fn report(waits: &Waits, processes: &[String]) {
                 .count()
         };
         println!(
-            "{process} thread {thread} {name:?}: {} waits; median {} ms, 99.9th {} ms, maximum {} ms; over 1 ms {}, over 10 ms {}, over 100 ms {}",
+            "{process} thread {thread} {name:?}: woken {}, on a processor {} ms; {} waits; median {} ms, 99.9th {} ms, maximum {} ms; over 1 ms {}, over 10 ms {}, over 100 ms {}",
+            waits.woken.get(&thread).copied().unwrap_or(0),
+            ms(waits.cpu.get(&thread).copied().unwrap_or(0)),
             sorted.len(),
             ms(at(500)),
             ms(at(999)),

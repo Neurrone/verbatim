@@ -25,8 +25,11 @@ file, and takes four kinds of kernel event:
 
 For each thread of the processes named (by default `verbatim.exe`,
 `verbatim-outpost.exe` and `verbatim-synth-host.exe`) it prints the
-process's image and id, the thread's id and name, how many ready waits it
-had, their median, 99.9th percentile and maximum, and how many were over 1,
+process's image and id, the thread's id and name, how many times it was
+woken (each ready event naming it), its time on a processor (summed from
+the context switch giving it one to the next taking it away; a thread
+already running when the trace began counts from its first switch), how
+many ready waits it had, their median, 99.9th percentile and maximum, and how many were over 1,
 10 and 100 ms. A Rust program's main thread is named `main`, which in
 verbatim.exe is the GUI thread.
 
