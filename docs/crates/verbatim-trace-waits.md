@@ -36,18 +36,21 @@ verbatim.exe is the GUI thread.
 one name summed across processes), the most woken first, after the
 totals for each image and for all of them.
 
-Three other reports each take a thread name, or `<process.exe>:<name>`
+Three other reports each take a thread name, `<process.exe>:<name>`
 for the threads of that name in processes of that image (an empty name
-meaning threads without one):
+meaning threads without one), or `<process.exe>:#<thread id>` for the one
+thread of that id, named or not, in a process of that image (as a waker
+report names it):
 
 - `--wakers <thread>`: for each blocked wait of half a millisecond or
   more, the thread that readied it (the one running on the processor that
-  logged the ready event), grouped by waking thread, with how long the
-  waits were.
+  logged the ready event), grouped by waking thread, each labelled by its
+  process's image and id and its own id and name, with how long the waits
+  were.
 - `--stacks <thread>`: the stacks recorded where those threads were
-  readied, each frame as a module and offset (no symbols are read), the
-  most frequent first; they name the cause even when the readying thread
-  is an interrupt's.
+  readied, each frame named as a function as `--samples` below names them,
+  the most frequent first; they name the cause even when the readying
+  thread is an interrupt's.
 - `--samples <thread>`: the profile's CPU samples of those threads (one
   per processor each millisecond): how many, and for each module how many
   were running in it and how many had it anywhere on their stack, then
@@ -59,8 +62,31 @@ meaning threads without one):
   each folder given with `--symbols <folder>` (the end-to-end harness runs
   copies from `target\e2e-stage`, whose PDBs are the build's in
   `target\debug`); a system library has no PDB at hand and is named by its
-  nearest exported function, a hint at best; the kernel's frames stay
-  module and offset.
+  nearest exported function, a hint at best. The kernel's images
+  (`ntoskrnl.exe`, `win32kfull.sys`, `win32kbase.sys`, the drivers) are
+  loaded at the bases the trace recorded, their paths under `\SystemRoot\`
+  or `\??\` turned into drive paths, and named the same way, by exports
+  when there is no PDB. A frame no image holds, or in an image that cannot
+  be read, stays an address or a module and offset.
+
+`--symbol-server`, off by default, fetches the PDB of each image a report
+names a frame in, user-mode or the kernel's, from Microsoft's public symbol
+server, so system code is named by its real functions (`server.rs`). The
+image's CodeView record (the PDB's file name, GUID and age) is read from
+its file on disk with a short parse of its PE headers and debug directory,
+and the PDB is downloaded with Windows' own WinHTTP from
+`https://msdl.microsoft.com/download/symbols/<pdb>/<GUID><age>/<pdb>`, the
+GUID as 32 upper-case hexadecimal digits and the age in hexadecimal,
+following the server's redirects. It is kept in a cache at
+`<cache>\<pdb>\<GUID><age>\<pdb>`, by default `target\symbols` (the
+`symbols` folder beside the folder holding the binary), or the folder
+given with `--symbol-cache <folder>`, and a later run reuses it; the
+folder is added to `DbgHelp`'s search path. When the server has only the
+compressed `.pd_`, Windows' own `expand.exe` expands it into the cache. For
+each image it prints to standard error whether the PDB was fetched, found
+in the cache, or could not be had and why; an image without one is named
+by its exports, and the run goes on. The download needs network access; a
+kernel PDB is about 11 MB.
 
 The event layouts it reads are the kernel's documented ones on 64-bit
 Windows: a context switch's new and old thread ids at offsets 0 and 4 and

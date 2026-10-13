@@ -2,13 +2,17 @@
 //! `DbgHelp`, which needs nothing installed: an image whose PDB is where its
 //! build left it (Verbatim's own) is named from the PDB, and any other from
 //! its exported functions, the nearest export below the address, which for
-//! a system library is a hint at best. Kernel addresses are left as module
-//! and offset.
+//! a system library is a hint at best, unless `--symbol-server` fetched its
+//! PDB from Microsoft's public symbol server (`server.rs`). The kernel's
+//! images (`ntoskrnl.exe`, `win32kfull.sys`, drivers) are named the same
+//! way, loaded at the bases the trace recorded.
 //!
 //! The trace names each image by its path on a device
 //! (`\Device\HarddiskVolume3\...`), turned into a drive path through the
-//! system's DOS device names. Each traced process gets its own `DbgHelp`
-//! session, keyed by a made-up handle as `DbgHelp` allows when it is not
+//! system's DOS device names; the kernel's are under `\SystemRoot\` (the
+//! Windows folder) or `\??\` (a drive path). Each traced process gets its own `DbgHelp`
+//! session (the kernel's images one of their own, as process 0), keyed by a
+//! made-up handle as `DbgHelp` allows when it is not
 //! asked to read a live process, since processes load images at the same
 //! addresses.
 
@@ -23,6 +27,8 @@ use windows::Win32::System::Diagnostics::Debug::{
     SymSetSearchPathW,
 };
 use windows::core::PCWSTR;
+
+use crate::server::Server;
 
 /// The longest name read, in UTF-16 units.
 const MAX_NAME: usize = 1024;
@@ -51,13 +57,17 @@ pub struct Symbols {
     /// Folders searched for every image's PDB, for images run from a copy
     /// without its PDB (the end-to-end harness's stage).
     given: Vec<String>,
+    /// The symbol server's PDBs, when asked for.
+    server: Option<Server>,
+    /// The Windows folder, which the kernel's image paths start from.
+    system_root: String,
     names: HashMap<(u32, u64), Option<String>>,
 }
 
 impl Symbols {
     /// Names addresses, searching `given` for every image's PDB as well as
-    /// the image's own folder.
-    pub fn new(given: Vec<String>) -> Self {
+    /// the image's own folder and, with `server`, the PDB it fetched.
+    pub fn new(given: Vec<String>, server: Option<Server>) -> Self {
         // SAFETY: sets process-wide `DbgHelp` options; no pointer is passed.
         unsafe {
             SymSetOptions(
@@ -73,13 +83,15 @@ impl Symbols {
             loaded: HashSet::new(),
             folders: HashMap::new(),
             given,
+            server,
+            system_root: std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_owned()),
             names: HashMap::new(),
         }
     }
 
-    /// The name of the function holding `address` in `image` of `process`,
-    /// or `None` when `DbgHelp` has none (a kernel image, or one that cannot
-    /// be read).
+    /// The name of the function holding `address` in `image` of `process`
+    /// (0 for the kernel's images), or `None` when `DbgHelp` has none (an
+    /// image that cannot be read).
     pub fn name(&mut self, process: u32, address: u64, image: &Image<'_>) -> Option<String> {
         if let Some(name) = self.names.get(&(process, address)) {
             return name.clone();
@@ -98,13 +110,25 @@ impl Symbols {
             unsafe { SymInitializeW(session, PCWSTR::null(), false) }.ok()?;
         }
         if self.loaded.insert((process, image.base)) {
-            let folder = path.rsplit_once('\\').map_or("", |(folder, _)| folder);
+            let mut wanted = vec![
+                path.rsplit_once('\\')
+                    .map_or("", |(folder, _)| folder)
+                    .to_owned(),
+            ];
+            if let Some(folder) = self.server.as_mut().and_then(|server| server.folder(&path)) {
+                wanted.push(folder.display().to_string());
+            }
             let folders = self
                 .folders
                 .entry(process)
                 .or_insert_with(|| self.given.clone());
-            if !folders.iter().any(|known| known == folder) {
-                folders.push(folder.to_owned());
+            let known = folders.len();
+            for folder in wanted {
+                if !folders.contains(&folder) {
+                    folders.push(folder);
+                }
+            }
+            if folders.len() != known {
                 let joined: Vec<u16> = folders
                     .join(";")
                     .encode_utf16()
@@ -160,9 +184,24 @@ impl Symbols {
         Some(String::from_utf16_lossy(units))
     }
 
-    /// `path` on a device as a path on a drive, or `None` for one on no
-    /// drive (the kernel's `\SystemRoot\...` images).
+    /// `path` as the trace names it, on a device, under `\SystemRoot\` or
+    /// as `\??\<drive path>`, as a path on a drive, or `None` for one on no
+    /// drive.
     fn drive_path(&self, path: &str) -> Option<String> {
+        const SYSTEM_ROOT: &str = r"\SystemRoot\";
+        if path
+            .get(..SYSTEM_ROOT.len())
+            .is_some_and(|start| start.eq_ignore_ascii_case(SYSTEM_ROOT))
+        {
+            return Some(format!(
+                r"{}\{}",
+                self.system_root,
+                &path[SYSTEM_ROOT.len()..]
+            ));
+        }
+        if let Some(rest) = path.strip_prefix(r"\??\") {
+            return Some(rest.to_owned());
+        }
         self.drives.iter().find_map(|(device, drive)| {
             let rest = path.strip_prefix(device.as_str())?;
             rest.starts_with('\\').then(|| format!("{drive}{rest}"))

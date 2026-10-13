@@ -402,7 +402,8 @@ reads it with `verbatim-trace-waits` (`docs/crates/verbatim-trace-waits.md`):
 A thread is named as the reader takes it: a name (`verbatim-worker`), or
 `<process.exe>:<name>` for that process's threads of that name, an empty
 name meaning threads without one (`verbatim-outpost.exe:` for UI
-Automation's own threads in the outposts). The trace is deleted once read
+Automation's own threads in the outposts), or `<process.exe>:#<thread id>`
+for one thread by its id, such as an unnamed waker a wakers report named. The trace is deleted once read
 unless `--keep` is given; a kept trace is about 20 MB a second, so delete
 it from `C:\ProgramData\Verbatim\Traces`, with its `.NGENPDB` folder, as
 soon as it has been read again (`cargo xtask trace waits <trace.etl>
@@ -453,7 +454,14 @@ and he may delete what is in it. `cargo xtask trace waits <trace.etl>
 [report] [process.exe ...]` reads a trace with `verbatim-trace-waits`, any
 of its reports (`--by-name`, `--wakers`, `--stacks`, `--samples`, with
 `--symbols <folder>` for the PDBs of binaries run from a copy, such as the
-end-to-end harness's `target\e2e-stage`). Windows' own `tracerpt` does not
+end-to-end harness's `target\e2e-stage`). Stacks and samples name kernel
+frames by the kernel's exported functions; add `--symbol-server` to fetch
+the PDBs of the system images they pass through from Microsoft's public
+symbol server, which names system and kernel code by its real functions.
+The PDBs are kept in `target\symbols` (`--symbol-cache <folder>` for
+another folder) and reused by later runs; the reader prints what it
+fetched, found in the cache, or could not get, and an image without a PDB
+falls back to its exports. Windows' own `tracerpt` does not
 decode context switches, and the Windows Performance Analyzer is not
 installed.
 

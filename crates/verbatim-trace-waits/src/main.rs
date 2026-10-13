@@ -29,11 +29,15 @@
 //! had waited: the waking thread is the one running on the processor that
 //! logged the ready event, known from the context switches.
 //! With `--stacks <thread name>` (or `<process.exe>:<thread name>` for
-//! that process's threads of that name, an empty name for those without one)
+//! that process's threads of that name, an empty name for those without one,
+//! or `<process.exe>:#<thread id>` for one thread by its id)
 //! it reports the stacks the trace recorded
-//! where those threads were readied, each frame as a module and offset (no
-//! symbols are read), the most frequent first: the code that woke them,
+//! where those threads were readied, each frame named as its function (as
+//! `symbols.rs` reads it) or else as a module and offset, the most
+//! frequent first: the code that woke them,
 //! which names the cause even when the readying thread is an interrupt's.
+//! `--symbol-server` fetches system images' PDBs from Microsoft's public
+//! symbol server for both reports (`server.rs`).
 //! With `--samples <thread name>` (named the same way) it reports the CPU
 //! samples the trace took of those threads (the CPU profile samples every
 //! processor each millisecond): how many, and for each module how many
@@ -43,6 +47,7 @@
 //! which Rust's named threads set); a process is named by the `.exe` image
 //! the trace saw loaded in it.
 
+mod server;
 mod symbols;
 
 use std::collections::{HashMap, HashSet};
@@ -122,8 +127,9 @@ struct Waits {
     stack_target: Option<String>,
     /// Processors whose next stack walk is a collected readying's.
     stack_pending: HashSet<u16>,
-    /// The readying stacks collected, as frames, and how many times each.
-    stacks: HashMap<Vec<String>, usize>,
+    /// The readying stacks collected, each as its process and return
+    /// addresses, innermost first, and how many times each.
+    stacks: HashMap<(u32, Vec<u64>), usize>,
     /// Each process's loaded images: base, size and file name; the
     /// kernel's under process 0.
     modules: HashMap<u32, Vec<(u64, u64, String)>>,
@@ -273,7 +279,8 @@ impl Waits {
 impl Waits {
     /// Whether `thread` is one `target` names: a thread of that name in
     /// any process, or, for `<process.exe>:<name>`, one of that name in a
-    /// process of that image, an empty name meaning a thread with none.
+    /// process of that image, an empty name meaning a thread with none,
+    /// and `<process.exe>:#<thread id>` the thread of that id.
     fn targets(&self, thread: u32, target: &str) -> bool {
         let name = self.names.get(&thread);
         match target.split_once(':') {
@@ -284,9 +291,10 @@ impl Waits {
                     .and_then(|process| self.images.get(process))
                     .is_some_and(|known| known.eq_ignore_ascii_case(image));
                 in_image
-                    && match name {
-                        Some(name) => name == wanted,
-                        None => wanted.is_empty(),
+                    && match (wanted.strip_prefix('#'), name) {
+                        (Some(id), _) => id.parse() == Ok(thread),
+                        (None, Some(name)) => name == wanted,
+                        (None, None) => wanted.is_empty(),
                     }
             }
             None => name.is_some_and(|name| name == target),
@@ -294,21 +302,16 @@ impl Waits {
     }
 
     /// A readying's stack: the process and thread it was taken in at
-    /// offsets 8 and 12, then the return addresses from 16, each named by
-    /// the module holding it, in that process or the kernel.
+    /// offsets 8 and 12, then the return addresses from 16, named when
+    /// the stacks are reported.
     fn stack(&mut self, data: &[u8]) {
         let process = u32_at(data, 8).unwrap_or(0);
-        let image = self.images.get(&process).map_or("?", String::as_str);
-        let frames: Vec<String> = std::iter::once(format!("in {image} {process}"))
-            .chain(
-                (16..data.len())
-                    .step_by(8)
-                    .filter_map(|offset| u64_at(data, offset))
-                    .take(FRAMES)
-                    .map(|address| self.frame(process, address)),
-            )
+        let addresses: Vec<u64> = (16..data.len())
+            .step_by(8)
+            .filter_map(|offset| u64_at(data, offset))
+            .take(FRAMES)
             .collect();
-        *self.stacks.entry(frames).or_default() += 1;
+        *self.stacks.entry((process, addresses)).or_default() += 1;
     }
 
     /// A CPU sample: counted, with the module it was running in, when its
@@ -371,17 +374,14 @@ impl Waits {
         let Some((owner, (base, size, name))) = self.owned_image_at(process, address) else {
             return format!("{address:#x}");
         };
-        let named = (owner != 0)
-            .then(|| self.paths.get(&(owner, *base)))
-            .flatten()
-            .and_then(|path| {
-                let image = symbols::Image {
-                    base: *base,
-                    size: *size,
-                    path,
-                };
-                symbols.name(process, address, &image)
-            });
+        let named = self.paths.get(&(owner, *base)).and_then(|path| {
+            let image = symbols::Image {
+                base: *base,
+                size: *size,
+                path,
+            };
+            symbols.name(owner, address, &image)
+        });
         named.map_or_else(
             || format!("{name}+{:#x}", address - base),
             |function| format!("{name}!{function}"),
@@ -392,15 +392,6 @@ impl Waits {
     fn module(&self, process: u32, address: u64) -> String {
         self.image_at(process, address)
             .map_or_else(|| "?".to_owned(), |(_, _, name)| name.clone())
-    }
-
-    /// `address` as a module and offset, from `process`'s images or the
-    /// kernel's, or as itself when no image holds it.
-    fn frame(&self, process: u32, address: u64) -> String {
-        self.image_at(process, address).map_or_else(
-            || format!("{address:#x}"),
-            |(base, _, name)| format!("{name}+{:#x}", address - base),
-        )
     }
 }
 
@@ -577,7 +568,7 @@ fn report_wakers(waits: &Waits, target: &str) {
 
 /// The CPU samples collected: how many, then each module by how many were
 /// running in it, and by how many had it anywhere on their stack.
-fn report_samples(waits: &Waits, target: &str, symbol_folders: Vec<String>) {
+fn report_samples(waits: &Waits, target: &str, mut symbols: symbols::Symbols) {
     println!("{target:?}: {} samples", waits.samples);
     for (title, counts) in [
         ("running in", &waits.sampled_in),
@@ -592,7 +583,6 @@ fn report_samples(waits: &Waits, target: &str, symbol_folders: Vec<String>) {
     // Where the time went by function: the function each sample was in,
     // then each function anywhere on its stack, counted once a sample,
     // Verbatim's own first.
-    let mut symbols = symbols::Symbols::new(symbol_folders);
     let mut running_in: HashMap<String, usize> = HashMap::new();
     let mut under: HashMap<String, usize> = HashMap::new();
     let mut calling_out: HashMap<String, usize> = HashMap::new();
@@ -694,9 +684,22 @@ fn report_by_name(waits: &Waits, processes: &[String]) {
     }
 }
 
-/// The readying stacks collected, the most frequent first, the top ten.
-fn report_stacks(waits: &Waits) {
-    let mut rows: Vec<_> = waits.stacks.iter().collect();
+/// The readying stacks collected, each frame named as the function holding
+/// it, the most frequent first, the top ten.
+fn report_stacks(waits: &Waits, mut symbols: symbols::Symbols) {
+    let mut named: HashMap<Vec<String>, usize> = HashMap::new();
+    for ((process, addresses), count) in &waits.stacks {
+        let image = waits.images.get(process).map_or("?", String::as_str);
+        let frames: Vec<String> = std::iter::once(format!("in {image} {process}"))
+            .chain(
+                addresses
+                    .iter()
+                    .map(|&address| waits.function(&mut symbols, *process, address)),
+            )
+            .collect();
+        *named.entry(frames).or_default() += count;
+    }
+    let mut rows: Vec<_> = named.iter().collect();
     rows.sort_by_key(|(_, count)| std::cmp::Reverse(**count));
     for (frames, count) in rows.into_iter().take(10) {
         println!("{count} times:");
@@ -717,9 +720,23 @@ fn main() -> ExitCode {
             symbol_folders.push(args.remove(at));
         }
     }
+    // `--symbol-server`, and `--symbol-cache <folder>` for where its PDBs
+    // are kept, by default `symbols` beside the build's own folder
+    // (`target\symbols`).
+    let symbol_server = args.iter().position(|arg| arg == "--symbol-server");
+    if let Some(at) = symbol_server {
+        args.remove(at);
+    }
+    let mut symbol_cache = None;
+    if let Some(at) = args.iter().position(|arg| arg == "--symbol-cache") {
+        args.remove(at);
+        if at < args.len() {
+            symbol_cache = Some(std::path::PathBuf::from(args.remove(at)));
+        }
+    }
     let Some(path) = args.first() else {
         eprintln!(
-            "usage: verbatim-trace-waits <trace.etl> [--by-name | --wakers <thread> | --stacks <thread> | --samples <thread>] [--symbols <folder>] [process.exe ...], a <thread> being a thread name or <process.exe>:<thread name>"
+            "usage: verbatim-trace-waits <trace.etl> [--by-name | --wakers <thread> | --stacks <thread> | --samples <thread>] [--symbols <folder>] [--symbol-server [--symbol-cache <folder>]] [process.exe ...], a <thread> being a thread name, <process.exe>:<thread name> or <process.exe>:#<thread id>"
         );
         return ExitCode::from(2);
     };
@@ -757,12 +774,21 @@ fn main() -> ExitCode {
         .map(str::to_owned)
         .to_vec();
     }
+    let server = symbol_server.map(|_| {
+        server::Server::new(symbol_cache.unwrap_or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|exe| Some(exe.parent()?.parent()?.join("symbols")))
+                .unwrap_or_else(|| "symbols".into())
+        }))
+    });
+    let symbols = || symbols::Symbols::new(symbol_folders.clone(), server);
     match read(path, stacks.clone(), samples.clone()) {
         Ok(waits) => {
             match (&wakers, &stacks, &samples) {
                 (Some(target), _, _) => report_wakers(&waits, target),
-                (None, Some(_), _) => report_stacks(&waits),
-                (None, None, Some(target)) => report_samples(&waits, target, symbol_folders),
+                (None, Some(_), _) => report_stacks(&waits, symbols()),
+                (None, None, Some(target)) => report_samples(&waits, target, symbols()),
                 (None, None, None) if by_name => report_by_name(&waits, &processes),
                 (None, None, None) => report(&waits, &processes),
             }
@@ -807,5 +833,31 @@ mod tests {
             woken_by(&waits, "verbatim-outpost.exe:"),
             HashMap::from([(waker, vec![20_000])])
         );
+    }
+
+    /// `<process.exe>:#<thread id>` takes the one thread of that id in a
+    /// process of that image, unnamed threads included, as
+    /// `docs/tooling.md` ("Measuring performance") documents.
+    #[test]
+    fn a_thread_id_selector_takes_that_thread_alone() {
+        let mut waits = Waits::default();
+        waits.images.insert(10, "verbatim-outpost.exe".to_owned());
+        waits.images.insert(20, "verbatim.exe".to_owned());
+        // Threads 1 and 2 are unnamed outpost threads, 3 a named one of
+        // verbatim.exe.
+        for (thread, process) in [(1, 10), (2, 10), (3, 20)] {
+            waits.process_of.insert(thread, process);
+        }
+        waits.names.insert(3, "main".to_owned());
+        let taken = |target: &str| -> Vec<u32> {
+            [1, 2, 3]
+                .into_iter()
+                .filter(|&thread| waits.targets(thread, target))
+                .collect()
+        };
+
+        assert_eq!(taken("verbatim-outpost.exe:#2"), vec![2]);
+        assert_eq!(taken("verbatim.exe:#3"), vec![3]);
+        assert_eq!(taken("verbatim.exe:#2"), Vec::<u32>::new());
     }
 }
