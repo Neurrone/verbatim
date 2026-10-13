@@ -47,6 +47,12 @@ use crate::{AudioDevice, AudioError, DeviceFormat, PcmFormat, Sound, Waker};
 /// from running ahead of what is heard.
 const AHEAD_MS: u32 = 40;
 
+/// How little audio the device may have queued before a source's write
+/// wakes the audio thread to pass it on at once: 20 ms, two device periods.
+/// Above it, the audio thread takes the write at its next period, as it
+/// wakes for the device anyway, so a write costs no wake-up of its own.
+const LOW_WATER_MS: u32 = 20;
+
 /// How much audio must be ready before a stopped device is started, unless
 /// the utterance is already complete: 10 ms. Without it, an utterance whose
 /// first write is only a few frames (what is left once leading silence is
@@ -161,6 +167,10 @@ struct State {
     completed_request: u64,
     underruns: u64,
     shutdown: bool,
+    /// Whether a source's write should wake the audio thread: the device is
+    /// stopped, or has less than [`LOW_WATER_MS`] queued, as the audio
+    /// thread last saw it.
+    device_needs_frames: bool,
 }
 
 enum Request {
@@ -265,6 +275,11 @@ struct SourceState {
     /// Utterances whose start has played, with the mix position of their
     /// first frame, until the device's clock passes it.
     awaiting_clock: Vec<(UtteranceId, TraceId, u64)>,
+    /// The room, in frames, a writer waiting on this full source needs
+    /// before it writes again: half the source's capacity, or what it has
+    /// left to write. The audio thread wakes it only once that much is
+    /// free, so a writer refills in large pieces, not frame by frame.
+    room_wanted: Option<u64>,
 }
 
 impl Mixer {
@@ -314,6 +329,7 @@ impl Mixer {
                 completed_request: 0,
                 underruns: 0,
                 shutdown: false,
+                device_needs_frames: true,
             }),
             changed: Condvar::new(),
             waker: device.waker(),
@@ -372,6 +388,7 @@ impl Mixer {
                 resumed: false,
                 voices: Vec::new(),
                 awaiting_clock: Vec::new(),
+                room_wanted: None,
             },
         );
         Source {
@@ -669,8 +686,7 @@ impl Source {
             }
             let format = state.format;
             let channels = usize::from(format.channels);
-            let capacity =
-                u64::from(format.buffer_frames) + u64::from(format.sample_rate * AHEAD_MS / 1_000);
+            let capacity = source_capacity(format);
             let Some(source) = state.sources.get_mut(&self.id) else {
                 return ControlFlow::Break(());
             };
@@ -691,9 +707,11 @@ impl Source {
                     kind: Kind::Start,
                 });
             }
-            let unplayed = source.write_end - source.data_start;
-            let room = capacity.saturating_sub(unplayed);
-            if room == 0 {
+            let room = capacity.saturating_sub(source.write_end - source.data_start);
+            let left = (frames.len() - offset) / channels;
+            let wanted = (left as u64).min(capacity / 2).max(1);
+            if room < wanted {
+                source.room_wanted = Some(wanted);
                 state = self
                     .shared
                     .changed
@@ -701,19 +719,34 @@ impl Source {
                     .unwrap_or_else(PoisonError::into_inner);
                 continue;
             }
-            let left = (frames.len() - offset) / channels;
+            source.room_wanted = None;
             let take = usize::try_from(room).unwrap_or(usize::MAX).min(left);
             source
                 .data
                 .extend(&frames[offset..offset + take * channels]);
             source.write_end += take as u64;
             offset += take * channels;
-            (self.shared.waker)();
+            if state.device_needs_frames {
+                (self.shared.waker)();
+            }
         }
     }
 }
 
+/// How many frames a source may hold unplayed: the device's queue and
+/// [`AHEAD_MS`] beyond it.
+fn source_capacity(format: DeviceFormat) -> u64 {
+    u64::from(format.buffer_frames) + u64::from(format.sample_rate * AHEAD_MS / 1_000)
+}
+
 impl SourceState {
+    /// Whether a writer waits on this source for room that is now free.
+    fn room_ready(&self, capacity: u64) -> bool {
+        self.room_wanted.is_some_and(|wanted| {
+            capacity.saturating_sub(self.write_end - self.data_start) >= wanted
+        })
+    }
+
     /// The tracked utterance `utterance`, if it still accepts frames.
     fn writing(&mut self, utterance: UtteranceId) -> Option<&mut Tracked> {
         self.tracked
@@ -1010,11 +1043,7 @@ fn run(shared: &Shared, device: &mut dyn AudioDevice, mut tap: Option<Box<dyn Au
         let mut notes: Vec<(PlaybackListener, PlaybackEvent)> = Vec::new();
         let mut state = shared.lock();
         if state.shutdown {
-            device.stop();
-            end_all(&mut state, &UtteranceEnding::Cancelled, &mut notes);
-            drop(state);
-            shared.changed.notify_all();
-            deliver(notes);
+            shut_down(shared, device, state);
             return;
         }
         let queued = poll_device(device, written, &mut played);
@@ -1045,7 +1074,8 @@ fn run(shared: &Shared, device: &mut dyn AudioDevice, mut tap: Option<Box<dyn Au
 
         // Requests discard the device's queue, so they are carried out
         // against what has actually played.
-        if !state.requests.is_empty() {
+        let requests_done = !state.requests.is_empty();
+        if requests_done {
             if running {
                 device.stop();
                 running = false;
@@ -1060,9 +1090,12 @@ fn run(shared: &Shared, device: &mut dyn AudioDevice, mut tap: Option<Box<dyn Au
         for source in state.sources.values_mut() {
             source.fire(played, &mut notes);
         }
-        if running {
-            heard_by_clock(&mut state, device, clock_base, &mut notes);
-        }
+        heard_by_clock(
+            &mut state,
+            device,
+            running.then_some(clock_base),
+            &mut notes,
+        );
 
         let frames = frames_to_mix(&state, queued, running, written);
         if frames > 0 {
@@ -1089,17 +1122,48 @@ fn run(shared: &Shared, device: &mut dyn AudioDevice, mut tap: Option<Box<dyn Au
                 tap_pending.extend(&mix);
             }
             written += frames;
+            queued += frames;
             running = true;
         } else if running && queued == 0 {
             device.stop();
             running = false;
             forget_clock(&mut state);
         }
+        let wake = end_pass(&mut state, running, queued, requests_done);
         drop(state);
-        shared.changed.notify_all();
+        if wake {
+            shared.changed.notify_all();
+        }
         deliver(notes);
         device.wait(if running { PLAYING_WAIT } else { IDLE_WAIT });
     }
+}
+
+/// Stops the device and ends every utterance still registered, as
+/// cancelled, for the mixer's shutdown, with the lock `state` held.
+fn shut_down(shared: &Shared, device: &mut dyn AudioDevice, mut state: MutexGuard<'_, State>) {
+    let mut notes = Vec::new();
+    device.stop();
+    end_all(&mut state, &UtteranceEnding::Cancelled, &mut notes);
+    drop(state);
+    shared.changed.notify_all();
+    deliver(notes);
+}
+
+/// Ends a pass of the audio thread: notes whether a source's write should
+/// wake it (the device is stopped, `running` false, or `queued` is under
+/// [`LOW_WATER_MS`]), and returns whether to wake the threads waiting on the
+/// mixer: only when a request was carried out, `requests_done`, or a
+/// writer's room is now free, so a writer is never woken for a sliver.
+fn end_pass(state: &mut State, running: bool, queued: u64, requests_done: bool) -> bool {
+    let low_water = u64::from(state.format.sample_rate * LOW_WATER_MS / 1_000);
+    state.device_needs_frames = !running || queued < low_water;
+    let capacity = source_capacity(state.format);
+    requests_done
+        || state
+            .sources
+            .values()
+            .any(|source| source.room_ready(capacity))
 }
 
 /// Counts and reports an underrun when the device ran dry, `ran_dry`, and
@@ -1117,13 +1181,17 @@ fn note_underrun(state: &mut State, ran_dry: bool) {
 
 /// Reports, for each utterance whose start has played, whether the
 /// device's clock has passed its first frame, and when, from one reading of
-/// the clock; `clock_base` is the mix position at which the clock started.
+/// the clock; `clock_base` is the mix position at which the clock started,
+/// `None` while the device is stopped.
 fn heard_by_clock(
     state: &mut State,
     device: &mut dyn AudioDevice,
-    clock_base: u64,
+    clock_base: Option<u64>,
     notes: &mut Vec<(PlaybackListener, PlaybackEvent)>,
 ) {
+    let Some(clock_base) = clock_base else {
+        return;
+    };
     if state
         .sources
         .values()

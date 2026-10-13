@@ -2,7 +2,7 @@
 //! advances by hand, so every ending and mark can be checked against
 //! exactly how much audio has played.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
@@ -52,6 +52,8 @@ struct ManualDevice {
     reopened_format: Arc<Mutex<Option<DeviceFormat>>>,
     /// What the device's clock reads, if it has one.
     clock: Arc<Mutex<Option<ClockReading>>>,
+    /// How many times the mixer's waker has been called.
+    wakes: Arc<AtomicU64>,
 }
 
 impl ManualDevice {
@@ -151,7 +153,10 @@ impl AudioDevice for ManualDevice {
 
     fn waker(&self) -> Waker {
         let device = self.clone();
-        Arc::new(move || device.play(0))
+        Arc::new(move || {
+            device.wakes.fetch_add(1, Ordering::SeqCst);
+            device.play(0);
+        })
     }
 
     fn needs_reopen(&self) -> bool {
@@ -305,6 +310,42 @@ fn a_start_is_heard_when_the_devices_clock_passes_its_first_frame() {
         }
     );
     harness.nothing_more();
+}
+
+/// A source may hold 50 frames unplayed (the 10-frame queue and 40 ms
+/// beyond it). A writer that fills it waits until at least half of that, 25
+/// frames, is free, and then writes all the room there is, so 200 frames
+/// take one write of 50 and at most six more, each waking the mixer once
+/// (this device's queue is always under the 20 ms that lets a write leave
+/// the mixer asleep), though the frames are played one at a time. Fewer
+/// than six when the test plays on while the woken writer is on its way,
+/// so that it finds more than 25 frames free; never one write per frame
+/// played, as a writer woken for any room at all made.
+#[test]
+fn a_writer_blocked_on_a_full_source_writes_again_only_once_half_its_room_is_free() {
+    let harness = harness();
+    let trace = TraceId::mint();
+    harness.source.register(utterance(1), trace);
+    let wakes_before = harness.device.wakes.load(Ordering::SeqCst);
+    let writer = {
+        let source = harness.source.clone();
+        std::thread::spawn(move || {
+            assert!(
+                source
+                    .write(utterance(1), PCM, &samples(200, 1_000))
+                    .is_continue()
+            );
+        })
+    };
+    while !writer.is_finished() {
+        harness.play(1);
+    }
+    writer.join().expect("the writer wrote every frame");
+    let wakes = harness.device.wakes.load(Ordering::SeqCst) - wakes_before;
+    assert!(
+        (2..=7).contains(&wakes),
+        "one write of 50 frames and at most six of 25 or more, not {wakes}"
+    );
 }
 
 #[test]
