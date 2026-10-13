@@ -22,8 +22,9 @@
 //! the next taking it away, so a thread already running when the trace
 //! began is counted from its first switch), how many ready waits it had, their median,
 //! 99.9th percentile and maximum in milliseconds, and how many were over 1,
-//! 10 and 100 ms. With `--wakers <thread name>` it reports instead, for
-//! the threads of that name, which threads woke them after they had waited
+//! 10 and 100 ms. With `--wakers <thread name>` (or
+//! `<process.exe>:<thread name>`, as for `--stacks` below) it reports
+//! instead, for the threads it names, which threads woke them after they had waited
 //! blocked, not ready, for half a millisecond or more, and how long they
 //! had waited: the waking thread is the one running on the processor that
 //! logged the ready event, known from the context switches.
@@ -532,9 +533,10 @@ fn report(waits: &Waits, processes: &[String]) {
     }
 }
 
-/// Which threads woke the threads named `target` after a blocked wait,
-/// grouped by the waking thread, with how many waits fell in each range.
-fn report_wakers(waits: &Waits, target: &str) {
+/// The blocked waits of the threads `target` names (as [`Waits::targets`]
+/// reads it), grouped by the thread that woke them, each labelled by its
+/// process image, process, thread id and name.
+fn woken_by(waits: &Waits, target: &str) -> HashMap<String, Vec<i64>> {
     let label = |thread: u32| {
         let process = waits.process_of.get(&thread).copied().unwrap_or(0);
         let image = waits.images.get(&process).map_or("?", String::as_str);
@@ -543,11 +545,17 @@ fn report_wakers(waits: &Waits, target: &str) {
     };
     let mut by_waker: HashMap<String, Vec<i64>> = HashMap::new();
     for &(thread, waker, blocked) in &waits.wakes {
-        if waits.names.get(&thread).is_some_and(|name| name == target) {
+        if waits.targets(thread, target) {
             by_waker.entry(label(waker)).or_default().push(blocked);
         }
     }
-    let mut rows: Vec<_> = by_waker.into_iter().collect();
+    by_waker
+}
+
+/// Which threads woke the threads `target` names after a blocked wait,
+/// grouped by the waking thread, with how many waits fell in each range.
+fn report_wakers(waits: &Waits, target: &str) {
+    let mut rows: Vec<_> = woken_by(waits, target).into_iter().collect();
     rows.sort_by_key(|(_, list)| std::cmp::Reverse(list.len()));
     for (waker, list) in rows {
         let within = |from_ms: i64, to_ms: i64| {
@@ -711,7 +719,7 @@ fn main() -> ExitCode {
     }
     let Some(path) = args.first() else {
         eprintln!(
-            "usage: verbatim-trace-waits <trace.etl> [--by-name | --wakers <thread name> | --stacks <thread name> | --samples <thread name>] [--symbols <folder>] [process.exe ...]"
+            "usage: verbatim-trace-waits <trace.etl> [--by-name | --wakers <thread> | --stacks <thread> | --samples <thread>] [--symbols <folder>] [process.exe ...], a <thread> being a thread name or <process.exe>:<thread name>"
         );
         return ExitCode::from(2);
     };
@@ -764,5 +772,40 @@ fn main() -> ExitCode {
             eprintln!("verbatim-trace-waits: {message}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `--wakers verbatim-outpost.exe:<name>` takes that process's threads
+    /// of that name, and an empty name its unnamed threads, as
+    /// `docs/tooling.md` ("Measuring performance") documents.
+    #[test]
+    fn a_process_waker_selector_takes_that_process_named_and_unnamed_threads() {
+        let mut waits = Waits::default();
+        waits.images.insert(10, "verbatim-outpost.exe".to_owned());
+        waits.images.insert(20, "verbatim.exe".to_owned());
+        // Thread 1 is the outpost's worker and thread 2 an unnamed outpost
+        // thread; thread 3 is a worker of verbatim.exe, and thread 4 the
+        // waker of them all.
+        for (thread, process) in [(1, 10), (2, 10), (3, 20), (4, 20)] {
+            waits.process_of.insert(thread, process);
+        }
+        waits.names.insert(1, "verbatim-worker".to_owned());
+        waits.names.insert(3, "verbatim-worker".to_owned());
+        waits.names.insert(4, "main".to_owned());
+        waits.wakes = vec![(1, 4, 10_000), (2, 4, 20_000), (3, 4, 30_000)];
+        let waker = r#"verbatim.exe 20 thread 4 "main""#.to_owned();
+
+        assert_eq!(
+            woken_by(&waits, "verbatim-outpost.exe:verbatim-worker"),
+            HashMap::from([(waker.clone(), vec![10_000])])
+        );
+        assert_eq!(
+            woken_by(&waits, "verbatim-outpost.exe:"),
+            HashMap::from([(waker, vec![20_000])])
+        );
     }
 }
