@@ -63,9 +63,11 @@ const START_MS: u32 = 10;
 /// The audio thread's longest wait between checks while playing.
 const PLAYING_WAIT: Duration = Duration::from_millis(100);
 
-/// The audio thread's longest wait while idle; it also bounds how long a
-/// request to reopen the device can go unnoticed.
-const IDLE_WAIT: Duration = Duration::from_secs(1);
+/// The audio thread's wait while idle: until a writer, a request or the
+/// device wakes it. A device that will ask to be reopened ends the wait
+/// itself ([`AudioDevice::needs_reopen`]), so idle the thread does not wake
+/// to look.
+const IDLE_WAIT: Duration = Duration::MAX;
 
 /// How long to wait before trying again to open a device that failed.
 const REOPEN_RETRY: Duration = Duration::from_secs(1);

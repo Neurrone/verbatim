@@ -39,5 +39,6 @@ silence, and logs a warning. When the system has no render device at all
 (`GetDefaultAudioEndpoint` returns `E_NOTFOUND`), the next default-device
 change brings a real device back. When a device exists but failed to
 open, which can happen briefly after a device change, `needs_reopen`
-asks for another attempt a second later. The mixer reopens with its
+asks for another attempt a second later, and `wait` ends by then; the
+default-device callback signals the wait's event itself. The mixer reopens with its
 shared state unlocked, so speech is never held up behind the device.

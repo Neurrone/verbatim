@@ -44,7 +44,11 @@ Counts are for one traced window of 5 to 8 seconds.
 2. Idle, Verbatim is quiet: about 50 wake-ups a second across all its
    processes, of which the audio thread's one-second wait (a poll for a
    reopen request, `mixer.rs` `IDLE_WAIT`) and the three-second liveness
-   pings to each child are its own. The rest are applications' events: File
+   pings to each child are its own. The audio thread's poll is fixed: the
+   new default device's callback already signalled the wait, and the
+   WASAPI device now ends a wait by its own retry time after a failed
+   open, so the idle mixer waits with no limit and did not wake once in 5
+   idle seconds. The rest are applications' events: File
    Explorer raises a burst on the desktop's icon list every 3 to 4 seconds
    (destroy, focus, selection), and each costs its outpost's worker about
    ten cross-process calls, as it would cost NVDA.

@@ -133,7 +133,9 @@ pub trait AudioDevice: Send {
     fn waker(&self) -> Waker;
 
     /// Whether the device asks to be reopened, for example because the
-    /// system's default output device changed.
+    /// system's default output device changed. A device ends any
+    /// [`wait`](Self::wait) once it asks, by its waker or by a deadline of
+    /// its own, since the mixer waits idle with no time limit.
     fn needs_reopen(&self) -> bool {
         false
     }

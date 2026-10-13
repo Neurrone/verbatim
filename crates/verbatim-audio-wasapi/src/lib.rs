@@ -554,7 +554,13 @@ impl AudioDevice for WasapiDevice {
     }
 
     fn wait(&mut self, timeout: Duration) {
-        let timeout_ms = u32::try_from(timeout.as_millis()).unwrap_or(INFINITE - 1);
+        // A failed open is retried at `retry_at`, which `needs_reopen`
+        // reports, so no wait lasts past it; a new default device signals
+        // `wake` from its callback.
+        let timeout = self.retry_at.map_or(timeout, |at| {
+            timeout.min(at.saturating_duration_since(Instant::now()))
+        });
+        let timeout_ms = u32::try_from(timeout.as_millis()).unwrap_or(INFINITE);
         // Each wait is on event handles this device owns.
         match &self.output {
             Output::Stream(stream) if stream.running => {

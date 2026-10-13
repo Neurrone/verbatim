@@ -112,7 +112,10 @@ every event whose moment has played, and mixes as many frames as the
 device has room for and some source has. Mixing sums every source's
 frames and clamps the result to the float range. When nothing is left to
 mix and the device has drained, it stops the device. It then waits on the
-device: at most 100 ms while playing and 1 s while idle.
+device: at most 100 ms while playing, and while idle until a writer, a
+request or the device wakes it. A device that will ask to be reopened
+ends the wait itself, by its waker or a deadline of its own, so an idle
+mixer never wakes to look.
 
 Positions. Each source numbers its frames from zero as they are written
 (source positions), and the mixer numbers the frames it writes to the
