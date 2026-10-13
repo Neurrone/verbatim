@@ -57,8 +57,14 @@ Public API:
   through (the manager adds its own source to it, and a second for
   events' sounds), an optional observer,
   the `ActiveTheme` to start with (`theme`: the configured theme, its
-  sounds loaded, so the manager never holds a stand-in), and an optional
-  presenter (`presenter`). `control()` returns a `SpeechControl`.
+  sounds loaded, so the manager never holds a stand-in), an optional
+  presenter (`presenter`), and an optional `thread_started`, a
+  `ThreadStartedFn` (an `Arc<dyn Fn(SpeechThread) + Send + Sync>`) called
+  first thing on each of the pipeline's own threads, naming it as a
+  `SpeechThread` (`Queue` or `Synth`). Verbatim raises those threads'
+  priority there (`docs/design/communication.md`, section 6.1), which
+  this platform-neutral crate cannot do itself. `control()` returns a
+  `SpeechControl`.
   `themes()` returns the manager's `ThemeHandle`, holding that theme,
   which the default presenter and `play_earcon` read and the settings
   dialog switches.

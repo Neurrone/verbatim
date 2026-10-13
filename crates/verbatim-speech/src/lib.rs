@@ -27,7 +27,10 @@ pub use driver::{
 };
 pub use events::SpeechEvents;
 pub use host::{PersistFn, SettingsHost};
-pub use manager::{SavedSettingsFn, SpeechControl, SpeechManager, SpeechManagerConfig};
+pub use manager::{
+    SavedSettingsFn, SpeechControl, SpeechManager, SpeechManagerConfig, SpeechThread,
+    ThreadStartedFn,
+};
 pub use registry::{SynthFactory, SynthRegistry};
 pub use settings::{SettingDescriptor, SettingId, SettingValue, SynthChoice, SynthId};
 pub use theme::{ActiveTheme, Presenter, ThemeHandle, ThemePresenter};

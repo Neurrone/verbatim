@@ -187,6 +187,7 @@ fn harness(presenter: Option<Box<dyn Presenter>>) -> Harness {
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: ActiveTheme::new(Theme::builtin_default(), |_| None, ThemeOptions::default()),
         presenter,
+        thread_started: None,
     })
     .expect("pipeline starts");
     Harness {
