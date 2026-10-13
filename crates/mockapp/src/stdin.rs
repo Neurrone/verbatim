@@ -64,6 +64,10 @@ pub(crate) enum Command {
     /// object, which a Common Controls version 6 edit control raises
     /// whenever its caret moves.
     CaretEvent(String),
+    /// `console-caret <column> <row>`: raises `EVENT_CONSOLE_CARET` from the
+    /// window, its cursor visible at that cell, as the console host raises
+    /// it for its console window.
+    ConsoleCaret(u16, u16),
     /// `set-text <id> <text>`: replaces a UIA text node's text, raising no
     /// event, as a terminal's text changes before a client reads it; `\n`
     /// in `text` is a line feed and `\\` a backslash, so one stdin line can
@@ -154,6 +158,15 @@ pub(crate) enum Command {
     Unrecognized(String),
 }
 
+/// `console-caret`'s arguments, a column and a row.
+fn console_caret(rest: &str) -> Option<Command> {
+    let (column, row) = rest.split_once(' ')?;
+    Some(Command::ConsoleCaret(
+        column.parse().ok()?,
+        row.trim().parse().ok()?,
+    ))
+}
+
 /// Parses one stdin line into a [`Command`]. Blank lines and unrecognized
 /// verbs yield `None` (a stray blank line is ignored; the caller hands an
 /// unknown verb on as [`Command::Unrecognized`], to be rejected).
@@ -174,6 +187,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "notify" if !rest.is_empty() => Some(Command::Notify(rest.to_owned())),
         "caret-event" if !rest.is_empty() => Some(Command::CaretEvent(rest.to_owned())),
         "text-changed" if !rest.is_empty() => Some(Command::TextChanged(rest.to_owned())),
+        "console-caret" => console_caret(rest),
         "stall" => rest.parse().ok().map(Command::Stall),
         "slow" => rest.parse().ok().map(Command::Slow),
         "slow-patterns" => rest.parse().ok().map(Command::SlowPatterns),

@@ -1228,6 +1228,33 @@ impl Worker<'_> {
         });
     }
 
+    /// A caret event of the text focus `node_id`, from UIA or, for the
+    /// console host's text area, from its console: evidence for an open
+    /// caret key's watch, and otherwise the caret reported, or noted while
+    /// the terminal's reading is held with its text changed.
+    fn caret_event(&mut self, node_id: NodeId, trace: TraceId, observed_at_ms: u64) {
+        if self.check_open_watch(node_id, true) {
+            return;
+        }
+        if self.held_with_changes(node_id) {
+            self.note_caret(node_id, trace, observed_at_ms);
+        } else {
+            self.caret_of(node_id, trace, observed_at_ms, false);
+        }
+    }
+
+    /// The focused terminal, when it is the text area of the console window
+    /// `hwnd`, whose console events are its own.
+    fn focused_console_terminal(&self, hwnd: isize) -> Option<NodeId> {
+        let (focus, window) = {
+            let tracking = self.context.tracking();
+            (tracking.focus, tracking.window)
+        };
+        focus
+            .filter(|_| window == Some(hwnd))
+            .filter(|&node_id| self.focused_terminal(node_id))
+    }
+
     /// Whether `node_id` is the focus and a terminal read through UIA, whose
     /// new output the outpost finds by diffing its text.
     fn focused_terminal(&self, node_id: NodeId) -> bool {
@@ -1485,9 +1512,10 @@ impl Worker<'_> {
     /// `docs/design/focus-pipeline.md`, section 17): to the node's own
     /// element when the outpost has it, with the extended group when the
     /// node may have text, and the base group otherwise; the console host's
-    /// text area takes the extended group without its text changes, since
-    /// its console updates tell the outpost of its output
-    /// ([`text_reads::console_focus`]); and to nothing for
+    /// text area takes the extended group without its text and caret
+    /// events, since its console's updates and caret events tell the
+    /// outpost of its output and its cursor ([`text_reads::console_focus`]);
+    /// and to nothing for
     /// a focus whose element the outpost does not have, or one read through
     /// MSAA, whose changes and caret events come from the hooks. The element
     /// alone, not its descendants, as the reducer acts on the focus's own
@@ -1506,7 +1534,7 @@ impl Worker<'_> {
         let group = if !has_text {
             verbatim_uia::Group::Base
         } else if role == Role::Terminal && text_reads::console_focus(self.context, node_id) {
-            verbatim_uia::Group::ExtendedWithoutTextChanges
+            verbatim_uia::Group::ExtendedWithoutTextEvents
         } else {
             verbatim_uia::Group::Extended
         };
@@ -1796,23 +1824,25 @@ impl Worker<'_> {
             return;
         }
         if kind == WinEventKind::ConsoleUpdate {
-            // The console host's text changed. Its UIA text changes stop
-            // reaching a client now and then in the middle of a large write,
-            // while these go on, so they are the focused console terminal's
-            // text changes too (`docs/crates/verbatim-outpost.md`,
+            // The console host's text changed: its updates are the focused
+            // console terminal's text changes, as its UIA text changes are
+            // not subscribed to (`docs/crates/verbatim-outpost.md`,
             // "Terminals").
-            let (focus, window) = {
-                let tracking = self.context.tracking();
-                (tracking.focus, tracking.window)
-            };
-            if let Some(node_id) = focus.filter(|_| window == Some(hwnd))
-                && self.focused_terminal(node_id)
-            {
+            if let Some(node_id) = self.focused_console_terminal(hwnd) {
                 // As for a UIA text change: a caret key's evidence is
                 // checked before the read, which reads the caret too and
                 // would leave the change nothing new to show.
                 self.check_open_watch(node_id, false);
                 self.terminal_output(node_id, trace, observed_at_ms);
+            }
+            return;
+        }
+        if kind == WinEventKind::ConsoleCaret {
+            // The console host's cursor moved: the focused console
+            // terminal's caret event, as its UIA caret events are not
+            // subscribed to either.
+            if let Some(node_id) = self.focused_console_terminal(hwnd) {
+                self.caret_event(node_id, trace, observed_at_ms);
             }
             return;
         }
@@ -2242,14 +2272,7 @@ impl Worker<'_> {
                     .existing_id(&event.parts.runtime_id)
                 {
                     text_reads::text_event_from(self.context, node_id, element.as_ref());
-                    if self.check_open_watch(node_id, true) {
-                        return;
-                    }
-                    if self.held_with_changes(node_id) {
-                        self.note_caret(node_id, trace, observed_at_ms);
-                    } else {
-                        self.caret_of(node_id, trace, observed_at_ms, false);
-                    }
+                    self.caret_event(node_id, trace, observed_at_ms);
                 }
                 return;
             }

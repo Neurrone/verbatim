@@ -34,9 +34,9 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_CONSOLE_LAYOUT, EVENT_CONSOLE_UPDATE_REGION, EVENT_CONSOLE_UPDATE_SCROLL,
-    EVENT_CONSOLE_UPDATE_SIMPLE, EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_DESTROY,
-    EVENT_OBJECT_FOCUS, EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE,
+    EVENT_CONSOLE_CARET, EVENT_CONSOLE_LAYOUT, EVENT_CONSOLE_UPDATE_REGION,
+    EVENT_CONSOLE_UPDATE_SCROLL, EVENT_CONSOLE_UPDATE_SIMPLE, EVENT_OBJECT_DESCRIPTIONCHANGE,
+    EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS, EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE,
     EVENT_OBJECT_SELECTION, EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE,
     EVENT_OBJECT_SELECTIONWITHIN, EVENT_OBJECT_SHOW, EVENT_OBJECT_STATECHANGE,
     EVENT_OBJECT_TEXTSELECTIONCHANGED, EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT,
@@ -109,6 +109,15 @@ pub enum WinEventKind {
     /// `EVENT_CONSOLE_UPDATE_SCROLL`, or `EVENT_CONSOLE_LAYOUT`: the console
     /// host's text changed, scrolled, or was laid out anew.
     ConsoleUpdate,
+    /// `EVENT_CONSOLE_CARET`: the console host's cursor moved, or the moving
+    /// end of a selection did. Its `idObject` holds flags
+    /// (`CONSOLE_CARET_SELECTION`, `CONSOLE_CARET_VISIBLE`) and its
+    /// `idChild` the cell, its column in the low word and its row in the
+    /// high. The console host raises it on its cursor's blink timer, about
+    /// every half second, when the cursor has moved since the last, and at
+    /// once for a selection's move (`docs/crates/verbatim-outpost.md`,
+    /// "Terminals").
+    ConsoleCaret,
 }
 
 /// Every raw `WinEvent` id Verbatim subscribes to, paired with its normalized
@@ -120,7 +129,7 @@ pub enum WinEventKind {
 /// from a tooltip window and `WindowShown` from a top-level window, and an
 /// install asking for both hooks the event once and reports it as each kind
 /// it is wanted as.
-const SUBSCRIPTIONS: [(u32, WinEventKind); 24] = [
+const SUBSCRIPTIONS: [(u32, WinEventKind); 25] = [
     (EVENT_OBJECT_FOCUS, WinEventKind::Focus),
     (EVENT_SYSTEM_FOREGROUND, WinEventKind::Foreground),
     (EVENT_OBJECT_VALUECHANGE, WinEventKind::ValueChange),
@@ -154,6 +163,7 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 24] = [
     (EVENT_CONSOLE_UPDATE_SIMPLE, WinEventKind::ConsoleUpdate),
     (EVENT_CONSOLE_UPDATE_SCROLL, WinEventKind::ConsoleUpdate),
     (EVENT_CONSOLE_LAYOUT, WinEventKind::ConsoleUpdate),
+    (EVENT_CONSOLE_CARET, WinEventKind::ConsoleCaret),
 ];
 
 /// The per-application outpost's subscription set (decision D13): the
@@ -181,6 +191,7 @@ pub const APP_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::Caret,
     WinEventKind::TextSelectionChange,
     WinEventKind::ConsoleUpdate,
+    WinEventKind::ConsoleCaret,
     WinEventKind::WindowShown,
 ];
 
@@ -526,10 +537,12 @@ unsafe extern "system" fn win_event_proc(
         // event hook treats it, so a window's foreground report and a focus
         // on its client area name one object. A window's destruction keeps
         // the window object, which is how its end is recognized.
-        // A console update's ids are coordinates or counts, never an
+        // A console event's ids are coordinates, counts, or flags, never an
         // object, and are kept as they are.
-        let id_object = if !matches!(kind, WinEventKind::Destroy | WinEventKind::ConsoleUpdate)
-            && id_object == OBJID_WINDOW.0
+        let id_object = if !matches!(
+            kind,
+            WinEventKind::Destroy | WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret
+        ) && id_object == OBJID_WINDOW.0
             && id_child == CHILDID_SELF
         {
             OBJID_CLIENT.0

@@ -354,13 +354,13 @@ Public API:
   element, so a registration still holds parts of several shapes. The
   wrapper runs inside the failed-read counting, so a shaped callback's
   reads are counted in `Registration::failed_reads()`. `.extended()` marks
-  a part as held only by the extended groups, and `.text_changes()` as
-  one that delivers text changes. A registration has NVDA's two
+  a part as held only by the extended groups, and `.text_events()` as
+  one that delivers text or caret changes. A registration has NVDA's two
   local groups (`UIAHandler/__init__.py`, `_createLocalEventHandlerGroup`):
   `Group::Base`, which holds every part not marked `.extended()`, and
   `Group::Extended`, which holds every part; and a third,
-  `Group::ExtendedWithoutTextChanges`, every part but those marked
-  `.text_changes()`, for an element whose text changes
+  `Group::ExtendedWithoutTextEvents`, every part but those marked
+  `.text_events()`, for an element whose text and caret changes
   reach the caller another way, so UIA is not asked to deliver them. Each
   is built once per thread and client, on first need, every part with its
   own shape's request, so the provider is asked for no more with each
@@ -375,9 +375,10 @@ Public API:
   `TextEvent` (process id, native window handle, and class
   name: nothing is spoken from it, and the class name of an element one
   brings, which may become the node's kept element, says whether its text
-  is a terminal's), in every group; and its text changes, marked
-  `text_changes`, and active text position changes, shaped as
-  `TextEvent`, in the extended groups alone. The focus listener's
+  is a terminal's), in every group but the one without text events; and
+  its text changes and active text position changes, shaped as
+  `TextEvent`, in the extended groups alone. The caret event and the text
+  changes are marked `text_events`. The focus listener's
   desktop-wide registration has four parts shaped as `ListenerEvent`.
 - A move (`retarget` gives the base group, `retarget_to` the group named)
   is handed to the registration's thread, so the caller never waits on

@@ -197,12 +197,25 @@ Counts are for one traced window of 5 to 8 seconds.
     processes from 25.0 to 15.5 seconds and its wake-ups from about 296,000
     to 154,000. Fixed, with Dickson's agreement on condition of no
     regressions: the console host's text area takes the focus-following
-    subscription's extended group without its text changes
-    (`Group::ExtendedWithoutTextChanges`), and its console updates drive
+    subscription's extended group without its text changes (then
+    `Group::ExtendedWithoutTextChanges`), and its console updates drive
     its reads; NVDA, for a UIA console, listens to UIA text changes alone.
     Windows Terminal throttles its own UIA events (94 text changes and 74
     caret changes in a whole flood, 0.34 seconds in the outpost) and is
-    unchanged.
+    unchanged. The UIA caret events went the same way, with Dickson's
+    agreement on the same condition: in `conhost_flood` the console host
+    raised 15,979 of them, one with nearly every line, which cost a wake on
+    UI Automation's receiving thread and one on a callback thread each
+    (12,701 and 9,776 wakes in a 10-second window) besides the console
+    host's own cost of raising them, while its own caret event
+    (`EVENT_CONSOLE_CARET`) came 25 times. That event comes on the
+    cursor's blink timer, about every 530 milliseconds, when the cursor
+    has moved, and at once for a selection's move, and outside output the
+    UIA caret event came with it, at the same tick, for the same cell; the
+    reads the console updates cause read the caret with the text. The text
+    area now takes the group without its text events
+    (`Group::ExtendedWithoutTextEvents`), and the console's caret events
+    are its caret events.
 
 Tracing has one hazard, seen three times on 2026-10-13 and not
 understood: after a trace started while a scenario was starting, twice,

@@ -649,10 +649,12 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
                 Category::Exempt,
                 *hwnd,
             ),
-            // Each console update names the cells it changed; only that the
-            // window's text changed matters, so they merge into one per
-            // window while they wait.
-            WinEventKind::ConsoleUpdate => (
+            // Each console update names the cells it changed, and each
+            // console caret event the cell its cursor is in; only that the
+            // window's text changed, or its cursor moved, matters, as both
+            // are read, so each kind merges into one per window while they
+            // wait.
+            WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret => (
                 Some(Key::Msaa(*kind as u8, *hwnd, 0, 0)),
                 Category::Other,
                 *hwnd,
@@ -692,7 +694,8 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
     }
 }
 
-/// Moves the focused terminal's caret event, when it waits ahead of a text
+/// Moves the focused terminal's caret event (its console's caret event, or
+/// its UIA caret event in Windows Terminal), when it waits ahead of a text
 /// change of the same terminal (its console update, or its UIA text change),
 /// to just after the newest such change, as long as only events lie between
 /// them. The text change's read reads the caret too, so the caret event is
@@ -710,11 +713,13 @@ fn caret_after_update(
     let (Some(Object::Uia(runtime_id)), Some(window)) = (focused, terminal) else {
         return;
     };
-    let caret = Key::Uia(2, 0, runtime_id.clone());
-    let Some(at) = waiting
-        .iter()
-        .position(|waiting| waiting.key.as_ref() == Some(&caret))
-    else {
+    let uia_caret = Key::Uia(2, 0, runtime_id.clone());
+    let console_caret =
+        (window != 0).then_some(Key::Msaa(WinEventKind::ConsoleCaret as u8, window, 0, 0));
+    let Some(at) = waiting.iter().position(|waiting| {
+        let key = waiting.key.as_ref();
+        key == Some(&uia_caret) || (key.is_some() && key == console_caret.as_ref())
+    }) else {
         return;
     };
     let text_changed = Key::Uia(3, 0, runtime_id.clone());
@@ -1712,9 +1717,19 @@ mod tests {
         let intake = Intake::default();
         intake.set_focused(Some(Object::Uia(terminal.to_vec())));
         intake.set_focus_is_terminal(7);
-        // The console host's text area, whose output its console updates
-        // tell of.
-        push_item(&intake, text_event(UiaKind::TextSelection, &terminal), 1);
+        // The console host's text area, whose caret its console's caret
+        // event tells of, and its output its console updates.
+        push_item(
+            &intake,
+            Item::Msaa {
+                kind: WinEventKind::ConsoleCaret,
+                hwnd: 7,
+                id_object: 2,
+                id_child: 9,
+                thread: 80,
+            },
+            1,
+        );
         push_item(
             &intake,
             Item::Msaa {

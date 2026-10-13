@@ -466,8 +466,8 @@ impl Context {
     /// is dropped here instead, and the worker is not woken for it. NVDA
     /// drops a `WinEvent` from a UIA window the same way, and a console
     /// flood raises them by the thousand. A window shown, a console's
-    /// update, and a destroyed window are kept: the worker uses them for
-    /// UIA windows too. Whether a window is known to be read through UIA is
+    /// update or caret event, and a destroyed window are kept: the worker
+    /// uses them for UIA windows too. Whether a window is known to be read through UIA is
     /// asked of `windows`, the event thread's own record, so a flood from
     /// one window costs one read of its classes.
     fn take_in_win_event(&self, event: WinEvent, timing: EventTiming, windows: &mut EventWindows) {
@@ -490,7 +490,10 @@ impl Context {
         ) {
             if !matches!(
                 kind,
-                WinEventKind::WindowShown | WinEventKind::ConsoleUpdate | WinEventKind::Destroy
+                WinEventKind::WindowShown
+                    | WinEventKind::ConsoleUpdate
+                    | WinEventKind::ConsoleCaret
+                    | WinEventKind::Destroy
             ) && windows.known_to_use_uia(
                 (
                     &self.arbitrator,
@@ -1135,8 +1138,8 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
     };
     let parts = vec![
         Part::shaped::<PropertyEvent>(properties),
-        Part::shaped::<TextEvent>(caret),
-        Part::shaped::<TextEvent>(text).extended().text_changes(),
+        Part::shaped::<TextEvent>(caret).text_events(),
+        Part::shaped::<TextEvent>(text).extended().text_events(),
         Part::shaped::<TextEvent>(position).extended(),
     ];
     match Registration::with_parts(parts, Scope::Nothing) {

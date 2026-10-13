@@ -15,6 +15,9 @@
 //!   after it, so the caret is read once, with the text.
 //! - Held with its text changed, a caret event is only noted, and the read
 //!   Core asks for reads the caret with the text.
+//! - The console host's text area, in a window of the console's class,
+//!   takes its caret event from its console (`EVENT_CONSOLE_CARET`), and
+//!   UI Automation's caret event is not subscribed for it.
 //!
 //! While the terminal is held, the evidence that the outpost has taken a
 //! text change is the report of a caret event raised after it: UI
@@ -32,11 +35,14 @@ mod common;
 mod harness;
 
 use verbatim_ia2::WinEventKind;
-use verbatim_model::{NodeId, NormalizedEvent, Role, TerminalOutput, TextOp, TextReply};
+use verbatim_model::{
+    NodeId, NormalizedEvent, PropertyChange, Role, TerminalOutput, TextOp, TextReply,
+};
 use verbatim_outpost::Heard;
 use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, QueryResult};
 use verbatim_uia::{Cached, ListenerEvent, Uia};
 use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::Accessibility::UIA_HelpTextPropertyId;
 
 use common::outpost::OutpostUnderTest;
 
@@ -64,12 +70,17 @@ fn caret_read(outpost: &OutpostUnderTest, node: NodeId) {
 /// mockapp's terminal fixture in its UIA backend, with an outpost watching
 /// it and the terminal focused: its focus and caret said, and nothing else.
 fn start(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
+    start_with(name, "terminal_reading.json", "term")
+}
+
+/// [`start`] for the terminal `id` of fixture `fixture`.
+fn start_with(name: &str, fixture: &str, id: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
     common::init_com();
     let title = common::unique_title(name);
-    let mut app = common::spawn("terminal_reading.json", "uia", &title);
+    let mut app = common::spawn(fixture, "uia", &title);
     let hwnd = common::find_window(&title);
     let outpost = OutpostUnderTest::new(&app);
-    app.send("set-focus term");
+    app.send(&format!("set-focus {id}"));
     let element = focused(hwnd);
     outpost.deliver(outpost.listener_fact(&element));
     let node = match outpost.next() {
@@ -286,6 +297,44 @@ fn a_held_terminals_caret_event_is_read_with_the_text() {
 }
 
 /// Runs each test on a desktop of its own (`common/harness.rs`).
+/// The console host's text area, in a window of the console's class,
+/// takes its caret event from its console: UI Automation's caret event
+/// reaches the outpost only as the `WinEvent` UIA raises for MSAA clients,
+/// which the outpost drops, as the subscription leaves UIA's out for it,
+/// and a description change UIA delivers after it is reported alone; the
+/// console's own caret event (`EVENT_CONSOLE_CARET`) has the caret read
+/// and reported.
+fn the_console_hosts_caret_comes_from_its_console() {
+    let (mut app, outpost, text) =
+        start_with("mockapp-console-caret", "console_terminal.json", "text");
+    app.send("caret text 1");
+    app.send("caret-event text");
+    app.send("set-description text moved");
+    outpost.heard(&[
+        Heard::Msaa(WinEventKind::TextSelectionChange),
+        Heard::UiaProperty(UIA_HelpTextPropertyId.0),
+    ]);
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::PropertyChanged {
+                    node_id,
+                    change: PropertyChange::Description(description),
+                    child_count: None,
+                },
+            ..
+        } => assert_eq!((node_id, description.as_deref()), (text, Some("moved"))),
+        other => panic!("the outpost said {other:?}, not the text area's description"),
+    }
+    outpost.settled();
+    app.send("console-caret 1 0");
+    outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
+    caret_read(&outpost, text);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
         (
@@ -307,6 +356,10 @@ fn main() {
         (
             "a_held_terminals_caret_event_is_read_with_the_text",
             a_held_terminals_caret_event_is_read_with_the_text,
+        ),
+        (
+            "the_console_hosts_caret_comes_from_its_console",
+            the_console_hosts_caret_comes_from_its_console,
         ),
     ]);
 }

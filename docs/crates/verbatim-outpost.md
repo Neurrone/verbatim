@@ -1739,7 +1739,24 @@ finds it.
   NVDA's console support for UIA listens to UIA's text changes alone
   (`UIAHandler/__init__.py` 145 to 147 and 674 to 679, the "Text Area"
   automation id given them at 713 to 721); its `WinEvent` handling of the
-  console (`winConsoleHandler.py` 84 to 87) is for the legacy console. A
+  console (`winConsoleHandler.py` 84 to 87) is for the legacy console.
+  Likewise the console's own caret event (`EVENT_CONSOLE_CARET`, merged
+  into one per window too) is its terminal's caret event, and UIA's caret
+  events are not subscribed for it either: the subscription gives the
+  text area the extended group without its text events
+  (`Group::ExtendedWithoutTextEvents`). The console host raises its caret
+  event on its cursor's blink timer, about every 530 milliseconds, when
+  the cursor has moved since the last, so moves between two ticks come as
+  one; and at once, with `CONSOLE_CARET_SELECTION`, for each move of a
+  selection's end. It raised its UIA caret event at the same tick, the
+  two within 5 milliseconds of each other in every quiet case measured
+  (2026-10-13: typing, arrow keys, history, cursor moves by a script on
+  either screen), the cell they named the same; but during output UIA's
+  came besides once for each write (15,979 in `conhost_flood` against 25
+  console caret events), each costing a wake on UI Automation's receiving
+  thread and one on a callback thread, and the console host the cost of
+  raising them, while the reads the console updates cause read the caret
+  with the text. A
   change observed before the last read that settled began is covered by
   it and reads nothing (`Terminal::note_read` and `Terminal::covers`); an
   unsettled read covers nothing. While reading is held with the text

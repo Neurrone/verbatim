@@ -11,8 +11,8 @@
 //! (`UIAHandler/__init__.py`, `_createLocalEventHandlerGroup`): the base
 //! group, and the extended group, which also holds the parts marked
 //! [`Part::extended`]; and a third, the extended group without the
-//! parts marked [`Part::text_changes`], for an element whose text changes
-//! reach the caller another way. Each group is built once per thread and client,
+//! parts marked [`Part::text_events`], for an element whose text and caret
+//! changes reach the caller another way. Each group is built once per thread and client,
 //! on first need, and every handler in it is added with its own part's
 //! cache request, so the element each event brings arrives with that part's
 //! properties prefetched and the callback reads them without a
@@ -147,20 +147,20 @@ pub enum Group {
     Base,
     /// Every part.
     Extended,
-    /// Every part but those marked [`Part::text_changes`]: for an element
-    /// whose text changes the caller learns of another way, so UIA is not
-    /// asked to deliver them.
-    ExtendedWithoutTextChanges,
+    /// Every part but those marked [`Part::text_events`]: for an element
+    /// whose text and caret changes the caller learns of another way, so
+    /// UIA is not asked to deliver them.
+    ExtendedWithoutTextEvents,
 }
 
 impl Group {
     /// Whether this group holds a part marked as `extended_only` and as
-    /// `text_changes`.
-    fn holds(self, extended_only: bool, text_changes: bool) -> bool {
+    /// `text_events`.
+    fn holds(self, extended_only: bool, text_events: bool) -> bool {
         match self {
             Group::Base => !extended_only,
             Group::Extended => true,
-            Group::ExtendedWithoutTextChanges => !text_changes,
+            Group::ExtendedWithoutTextEvents => !text_events,
         }
     }
 }
@@ -278,12 +278,12 @@ pub struct Part {
     /// is added to its group with a cache request of exactly these.
     properties: &'static [UIA_PROPERTY_ID],
     /// Whether only the extended groups ([`Group::Extended`] and
-    /// [`Group::ExtendedWithoutTextChanges`]) hold the part; otherwise every
+    /// [`Group::ExtendedWithoutTextEvents`]) hold the part; otherwise every
     /// group does.
     extended_only: bool,
-    /// Whether the part delivers text changes, which
-    /// [`Group::ExtendedWithoutTextChanges`] leaves out.
-    text_changes: bool,
+    /// Whether the part delivers text or caret changes, which
+    /// [`Group::ExtendedWithoutTextEvents`] leaves out.
+    text_events: bool,
     /// The patterns the cache request also holds, such as the Text
     /// pattern [`crate::ListenerEvent`] prefetches, as NVDA's base cache
     /// request holds it.
@@ -300,7 +300,7 @@ impl Part {
             subscription: subscription.erase(),
             properties: S::PROPERTIES,
             extended_only: false,
-            text_changes: false,
+            text_events: false,
             patterns: S::PATTERNS,
         }
     }
@@ -314,12 +314,12 @@ impl Part {
         }
     }
 
-    /// The part, marked as one that delivers text changes, which
-    /// [`Group::ExtendedWithoutTextChanges`] leaves out.
+    /// The part, marked as one that delivers text or caret changes, which
+    /// [`Group::ExtendedWithoutTextEvents`] leaves out.
     #[must_use]
-    pub fn text_changes(self) -> Self {
+    pub fn text_events(self) -> Self {
         Self {
-            text_changes: true,
+            text_events: true,
             ..self
         }
     }
@@ -764,7 +764,7 @@ struct Built {
     handler: Handler,
     cache: IUIAutomationCacheRequest,
     extended_only: bool,
-    text_changes: bool,
+    text_events: bool,
 }
 
 /// A group built on a registration's thread, for one [`Group`] and one tree
@@ -858,7 +858,7 @@ fn set_up(parts: Vec<Part>, target: &Target, thread: &Thread) -> windows::core::
                 cache,
                 handler: Handler::of(part.subscription, &thread.live, &thread.failed_reads),
                 extended_only: part.extended_only,
-                text_changes: part.text_changes,
+                text_events: part.text_events,
             })
         })
         .collect::<windows::core::Result<Vec<_>>>()?;
@@ -1115,7 +1115,7 @@ impl Follower {
         // SAFETY: a local call on this thread's live client.
         let handlers = unsafe { self.client.CreateEventHandlerGroup() }?;
         for built in &self.built {
-            if group.holds(built.extended_only, built.text_changes) {
+            if group.holds(built.extended_only, built.text_events) {
                 built.handler.add_to(&handlers, tree_scope, &built.cache)?;
             }
         }
@@ -1282,20 +1282,23 @@ mod tests {
     use super::{Group, plan_keep};
 
     /// Each group holds the parts it should, as (extended only, text
-    /// changes): the group without text changes holds the base parts and
-    /// the extended ones but for the text changes.
+    /// events): the group without text events holds the base parts and the
+    /// extended ones but for the text and caret events, base or extended.
     #[test]
-    fn the_group_without_text_changes_holds_every_part_but_the_text_changes() {
-        let parts = [(false, false), (true, false), (true, true)];
+    fn the_group_without_text_events_holds_every_part_but_the_text_events() {
+        let parts = [(false, false), (false, true), (true, false), (true, true)];
         let held = |group: Group| -> Vec<bool> {
             parts
                 .iter()
-                .map(|&(extended_only, text_changes)| group.holds(extended_only, text_changes))
+                .map(|&(extended_only, text_events)| group.holds(extended_only, text_events))
                 .collect()
         };
-        assert_eq!(held(Group::Base), [true, false, false]);
-        assert_eq!(held(Group::Extended), [true, true, true]);
-        assert_eq!(held(Group::ExtendedWithoutTextChanges), [true, true, false]);
+        assert_eq!(held(Group::Base), [true, true, false, false]);
+        assert_eq!(held(Group::Extended), [true, true, true, true]);
+        assert_eq!(
+            held(Group::ExtendedWithoutTextEvents),
+            [true, false, true, false]
+        );
     }
 
     /// An element a registration's thread has registered on, by name, with

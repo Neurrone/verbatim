@@ -16,9 +16,9 @@ use verbatim_model::{Role, State, StateSet};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{IAccessible, NotifyWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE,
-    EVENT_OBJECT_SELECTION, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_TEXTSELECTIONCHANGED,
-    EVENT_OBJECT_VALUECHANGE, OBJID_CLIENT,
+    CONSOLE_CARET_VISIBLE, EVENT_CONSOLE_CARET, EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_FOCUS,
+    EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION, EVENT_OBJECT_STATECHANGE,
+    EVENT_OBJECT_TEXTSELECTIONCHANGED, EVENT_OBJECT_VALUECHANGE, OBJID_CLIENT,
 };
 
 use crate::stdin::Command;
@@ -123,6 +123,19 @@ fn raise_caret_event(hwnd: HWND) -> Result<(), String> {
     Ok(())
 }
 
+/// Raises `EVENT_CONSOLE_CARET` from window `hwnd`, its cursor visible at
+/// `column` and `row`, as the console host raises it for its window (the
+/// `console-caret` command).
+pub(crate) fn raise_console_caret(hwnd: HWND, column: u16, row: u16) {
+    let cell = i32::from(column) | (i32::from(row) << 16);
+    let flags = i32::try_from(CONSOLE_CARET_VISIBLE).unwrap_or(i32::MAX);
+    // SAFETY: `hwnd` is this thread's live window; the event carries no
+    // object for anyone to ask for.
+    unsafe {
+        NotifyWinEvent(EVENT_CONSOLE_CARET, hwnd, flags, cell);
+    }
+}
+
 /// Applies a parsed stdin [`Command`] against `tree` and raises the matching
 /// `WinEvent`. Runs on the window thread.
 #[expect(clippy::too_many_lines, reason = "one arm per stdin command")]
@@ -211,6 +224,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             return Err("set-controller-for is not supported on the msaa backend".into());
         }
         Command::CaretEvent(_) => raise_caret_event(hwnd)?,
+        Command::ConsoleCaret(column, row) => raise_console_caret(hwnd, column, row),
         Command::Caret(_, start, end) => {
             // The text is the edit control's, in its own offsets.
             let edit = crate::edit::find(hwnd).ok_or("the window hosts no edit control")?;
