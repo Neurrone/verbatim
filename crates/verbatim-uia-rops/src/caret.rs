@@ -36,7 +36,7 @@ use crate::error::Error;
 use crate::focus::Path;
 use crate::instruction::TypeTest;
 use crate::opcode::Comparison;
-use crate::operation::{Outcome, Value};
+use crate::operation::{Import, Outcome, ProgramCache, Value};
 
 /// UIA's spelling error annotation type.
 pub const ANNOTATION_SPELLING_ERROR: i32 = 60001;
@@ -58,7 +58,7 @@ pub struct RangeEnd<'a> {
 }
 
 /// Which text's formatting to read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FormatSpan {
     /// The character at the caret.
     Character,
@@ -358,6 +358,7 @@ pub struct CaretLineQuery<'a> {
 }
 
 /// The registers of a caret and its line emitted into another program.
+#[derive(Clone, Copy)]
 pub(crate) struct CaretLineRegisters {
     caret: CaretRegisters,
     line: UnitRegisters,
@@ -396,8 +397,19 @@ impl CaretLineRegisters {
 }
 
 /// Emits the caret and its line into `b`, as [`caret_read_remote`] reads
-/// them.
-pub(crate) fn emit_caret_line(b: &mut Builder, query: &CaretLineQuery<'_>) -> CaretLineRegisters {
+/// them, from `element`, the query's element as the program imported it,
+/// with `pattern`, its text pattern as the program already has it, and, to
+/// say whether the caret moved, `since`, the query's `since` range as the
+/// program imported it.
+pub(crate) fn emit_caret_line(
+    b: &mut Builder,
+    query: &CaretLineQuery<'_>,
+    (element, pattern, since): (
+        Reg<kind::Element>,
+        Reg<kind::TextPattern>,
+        Option<Reg<kind::TextRange>>,
+    ),
+) -> CaretLineRegisters {
     let c = Constants {
         start: b.int(endpoint_number(Endpoint::Start)),
         end: b.int(endpoint_number(Endpoint::End)),
@@ -405,11 +417,9 @@ pub(crate) fn emit_caret_line(b: &mut Builder, query: &CaretLineQuery<'_>) -> Ca
         one: b.int(1),
         max_text: b.int(query.max_text),
     };
-    let element = b.import_element(query.element);
-    let caret = emit_caret(b, &c, element, query.pattern2.is_some());
+    let caret = emit_caret(b, &c, (element, pattern), query.pattern2.is_some());
     let point = c.collapsed(b, caret.caret);
-    let moved = query.since.map(|since| {
-        let known = b.import_text_range(since.range);
+    let moved = query.since.zip(since).map(|(since, known)| {
         let endpoint = b.int(endpoint_number(since.endpoint));
         let order = b.text_range_compare_endpoints(point, c.start, known, endpoint);
         let differs = b.not_equal(order, c.zero);
@@ -557,6 +567,7 @@ pub(crate) fn string_of(outcome: &Outcome, reg: Reg<kind::Str>) -> Result<String
 /// per attribute read, of the values as the provider gave them; and, for
 /// each attribute being learned, whether the span answered "not supported"
 /// for it.
+#[derive(Clone)]
 struct RunRegisters {
     lengths: Reg<kind::Array>,
     values: Vec<(TextAttribute, Reg<kind::Array>)>,
@@ -891,17 +902,20 @@ fn double(value: Option<&Value>) -> Option<f64> {
     }
 }
 
-/// The caret read in one cross-process round trip.
-///
-/// # Errors
-///
-/// Any [`Error`] from running the program.
+/// Emits the caret read's program into `b`.
 #[expect(
     clippy::too_many_lines,
     reason = "one program, read top to bottom as it runs"
 )]
-pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
-    let mut b = Builder::new();
+fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
+    let element = b.import_element(query.element);
+    let known = query.since.map(|since| b.import_text_range(since.range));
+    let previous = query.previous_selection.map(|(start, end)| {
+        (
+            b.import_text_range(start.range),
+            b.import_text_range(end.range),
+        )
+    });
     let c = Constants {
         start: b.int(endpoint_number(Endpoint::Start)),
         end: b.int(endpoint_number(Endpoint::End)),
@@ -909,20 +923,20 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
         one: b.int(1),
         max_text: b.int(query.max_text),
     };
-    let element = b.import_element(query.element);
+    let pattern = b.get_text_pattern(element, false);
+    let registers = emit_caret(b, &c, (element, pattern), query.pattern2.is_some());
     let CaretRegisters {
         caret,
-        collapsed,
         has_selection,
         selection,
-    } = emit_caret(&mut b, &c, element, query.pattern2.is_some());
-    let point = c.collapsed(&mut b, caret);
+        ..
+    } = registers;
+    let point = c.collapsed(b, caret);
 
     // The evidence.
     let moved = b.new_bool(false);
     let moved = b.add_to_results(moved);
-    if let Some(since) = query.since {
-        let known = b.import_text_range(since.range);
+    if let (Some(since), Some(known)) = (query.since, known) {
         let endpoint = b.int(endpoint_number(since.endpoint));
         let order = b.text_range_compare_endpoints(point, c.start, known, endpoint);
         let differs = b.not_equal(order, c.zero);
@@ -931,10 +945,10 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
     let selection_moved = b.new_bool(false);
     let selection_moved = b.add_to_results(selection_moved);
     let mut changes = None;
-    if let Some((old_start, old_end)) = query.previous_selection {
-        let start_range = b.import_text_range(old_start.range);
+    if let (Some((old_start, old_end)), Some((start_range, end_range))) =
+        (query.previous_selection, previous)
+    {
         let start_endpoint = b.int(endpoint_number(old_start.endpoint));
-        let end_range = b.import_text_range(old_end.range);
         let end_endpoint = b.int(endpoint_number(old_end.endpoint));
         let compare_ends = |b: &mut Builder,
                             range: Reg<kind::TextRange>,
@@ -953,7 +967,7 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
             |b| compare_ends(b, point, c.start, c.start),
         );
         changes = Some(emit_changes(
-            &mut b,
+            b,
             &c,
             (has_selection, selection, point),
             ((start_range, start_endpoint), (end_range, end_endpoint)),
@@ -963,10 +977,10 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
 
     // The line, the unit, and the formatting.
     let line_unit = b.int(TextUnit_Line.0);
-    let line = c.unit_at(&mut b, point, line_unit);
+    let line = c.unit_at(b, point, line_unit);
     let unit = query.unit.map(|unit| {
         let unit = b.int(unit.0);
-        c.unit_at(&mut b, point, unit)
+        c.unit_at(b, point, unit)
     });
     let ids: Vec<TextAttribute> = query.attributes.iter().collect();
     let runs = match query.formats {
@@ -984,7 +998,7 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
                 }
             };
             Some(emit_runs(
-                &mut b,
+                b,
                 &c,
                 (range, text),
                 character,
@@ -995,7 +1009,116 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
         _ => None,
     };
 
-    let outcome = b.finish().execute()?;
+    ReadRegisters {
+        caret: registers,
+        moved,
+        selection_moved,
+        changes,
+        line,
+        unit,
+        runs,
+    }
+}
+
+/// Everything the caret read's program is built from but its imports
+/// ([`ProgramCache`]): whether it has `TextPattern2`, the ends compared
+/// with, the unit, the formatting and its attributes, and the text limits.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ProgramKey {
+    pattern2: bool,
+    since: Option<i32>,
+    previous_selection: Option<(i32, i32)>,
+    unit: Option<i32>,
+    formats: Option<FormatSpan>,
+    attributes: Attributes,
+    learning: Attributes,
+    max_text: i32,
+    max_change_text: i32,
+}
+
+impl ProgramKey {
+    fn of(query: &CaretQuery<'_>) -> Self {
+        Self {
+            pattern2: query.pattern2.is_some(),
+            since: query.since.map(|since| endpoint_number(since.endpoint)),
+            previous_selection: query.previous_selection.map(|(start, end)| {
+                (
+                    endpoint_number(start.endpoint),
+                    endpoint_number(end.endpoint),
+                )
+            }),
+            unit: query.unit.map(|unit| unit.0),
+            formats: query.formats,
+            attributes: query.attributes,
+            learning: query.learning,
+            max_text: query.max_text,
+            max_change_text: query.max_change_text,
+        }
+    }
+}
+
+/// The caret read's imports, in the order its program imports them: the
+/// element, `since`, and the previous selection's ends.
+fn imports(query: &CaretQuery<'_>) -> Vec<Import> {
+    let mut imports = vec![Import::Element(query.element.clone())];
+    if let Some(since) = query.since {
+        imports.push(Import::TextRange(since.range.clone()));
+    }
+    if let Some((start, end)) = query.previous_selection {
+        imports.push(Import::TextRange(start.range.clone()));
+        imports.push(Import::TextRange(end.range.clone()));
+    }
+    imports
+}
+
+/// The registers the caret read's answer is read from.
+#[derive(Clone)]
+struct ReadRegisters {
+    caret: CaretRegisters,
+    moved: Reg<kind::Bool>,
+    selection_moved: Reg<kind::Bool>,
+    changes: Option<(Reg<kind::Array>, Reg<kind::Array>)>,
+    line: UnitRegisters,
+    unit: Option<UnitRegisters>,
+    runs: Option<RunRegisters>,
+}
+
+thread_local! {
+    /// The caret read programs this thread built.
+    static PROGRAMS: ProgramCache<ProgramKey, ReadRegisters> = ProgramCache::default();
+}
+
+/// The caret read in one cross-process round trip. The program is built
+/// once for each [`ProgramKey`] on a thread and run again with the next
+/// read's imports.
+///
+/// # Errors
+///
+/// Any [`Error`] from running the program.
+pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
+    let (operation, r) = PROGRAMS.with(|programs| {
+        programs.operation(
+            ProgramKey::of(query),
+            || imports(query),
+            |b| build(b, query),
+        )
+    });
+    let ReadRegisters {
+        caret:
+            CaretRegisters {
+                caret,
+                collapsed,
+                has_selection,
+                selection,
+            },
+        moved,
+        selection_moved,
+        changes,
+        line,
+        unit,
+        runs,
+    } = r;
+    let outcome = operation.execute()?;
     let caret_range = outcome
         .get(caret)?
         .ok_or(Error::MissingResult(caret.id()))?;
@@ -1169,10 +1292,9 @@ pub(crate) struct CaretRegisters {
 pub(crate) fn emit_caret(
     b: &mut Builder,
     c: &Constants,
-    element: Reg<kind::Element>,
+    (element, pattern): (Reg<kind::Element>, Reg<kind::TextPattern>),
     pattern2: bool,
 ) -> CaretRegisters {
-    let pattern = b.get_text_pattern(element, false);
     let caret = b.new_null().assume::<kind::TextRange>();
     let caret = b.add_to_results(caret);
     let collapsed = b.new_bool(false);

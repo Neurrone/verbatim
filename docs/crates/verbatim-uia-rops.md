@@ -106,6 +106,30 @@ importing took about half a microsecond and each support check 18
 nanoseconds in a release build: both are answered in Verbatim's process,
 and neither is counted.
 
+A finished program is an `Operation`: its imports, and a shared
+`Program`, the instructions, bytes, opcodes, requested results, and the
+kind of each import. The two programs a typing user runs most, a
+terminal's screen and the caret read, are kept per thread
+(`ProgramCache`, at most 16 of each, all forgotten when full) by a key
+naming everything the program was built from but its imports: the
+anchor's rows, the counts, the caret's shape and the ends compared with
+for the screen; the unit, formatting, attributes, limits, and ends for
+the caret. A query with the same key runs the kept program bound to its
+own imports (`Program::bind`, which checks they are as many and of the
+same kinds), so the program is not built or encoded again; both
+programs import everything first, in the order their `imports` function
+gives. A program holds no UI Automation object, but the cache is per
+thread all the same, as a remote operation and its imports are per
+client and thread. A program whose run on the thread found every opcode
+supported and ran skips the support check on later runs, since the
+provider is the thread's application; any failed run has the next check
+again. `work::programs_built` and `work::support_checks` count both per
+thread for tests. Measured on 2026-10-13 against mockapp, release, for
+each terminal read: building the program took 22 to 78 microseconds,
+the support check 2 to 7, importing 1 to 12, against 0.4 to 1.1
+milliseconds for `Execute`. Other programs are built per call, since
+their constants change with nearly every call (below).
+
 A failed run is an `Error`:
 
 - `Unavailable`: Windows lacks the API.

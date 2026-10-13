@@ -336,7 +336,13 @@ impl<'t> Program<'t> {
             return caret;
         }
         let element = self.element(b);
-        let caret = emit_caret(b, &self.c, element, self.target.pattern2.is_some());
+        let pattern = b.get_text_pattern(element, false);
+        let caret = emit_caret(
+            b,
+            &self.c,
+            (element, pattern),
+            self.target.pattern2.is_some(),
+        );
         self.caret = Some(caret);
         caret
     }

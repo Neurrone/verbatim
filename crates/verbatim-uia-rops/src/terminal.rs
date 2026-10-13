@@ -42,11 +42,14 @@ use verbatim_uia::Uia;
 use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt};
 
 use crate::builder::{Builder, Reg, kind};
-use crate::caret::{CaretAnswer, CaretLineQuery, caret_line_classic, emit_caret_line};
+use crate::caret::{
+    CaretAnswer, CaretLineQuery, CaretLineRegisters, caret_line_classic, emit_caret_line,
+    endpoint_number,
+};
 use crate::error::Error;
 use crate::focus::Path;
 use crate::opcode::Comparison;
-use crate::operation::{Outcome, Value};
+use crate::operation::{Import, Outcome, ProgramCache, Value};
 
 /// How many matches of the anchor's row are checked, nearest the screen
 /// first, before it counts as not found (Dickson, 2026-10-07). The search
@@ -359,7 +362,120 @@ impl Constants {
     }
 }
 
-/// The screen in one cross-process round trip.
+/// Everything the screen's program is built from but its imports
+/// ([`ProgramCache`]): the anchor's rows and what is known of it, how its
+/// row is sought, the rows to count and read, and the caret to read.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ProgramKey {
+    /// The anchor's top, next, and first rows, whether the old screen had
+    /// no history, and whether a range at its top is imported.
+    anchor: Option<(String, String, String, bool, bool)>,
+    matches_padding: bool,
+    seen_rows: u32,
+    last_rows: u32,
+    head_wanted: u32,
+    /// Whether the caret is read, with `TextPattern2`, at most how much of
+    /// its line, and the end of `since` it is compared with.
+    caret: Option<(bool, i32, Option<i32>)>,
+}
+
+impl ProgramKey {
+    fn of(query: &ScreenQuery<'_>) -> Self {
+        Self {
+            anchor: query.anchor.as_ref().map(|anchor| {
+                (
+                    anchor.top.to_owned(),
+                    anchor.next.to_owned(),
+                    anchor.first.to_owned(),
+                    anchor.no_history,
+                    anchor.range.is_some(),
+                )
+            }),
+            matches_padding: query.matches_padding,
+            seen_rows: query.seen_rows,
+            last_rows: query.last_rows,
+            head_wanted: query.head_wanted,
+            caret: query.caret.map(|caret| {
+                (
+                    caret.pattern2.is_some(),
+                    caret.max_text,
+                    caret.since.map(|since| endpoint_number(since.endpoint)),
+                )
+            }),
+        }
+    }
+}
+
+/// The screen program's imports, in the order it imports them
+/// ([`imported`]): the element, the anchor's range when the anchor is
+/// looked for and has one, and the caret's `since`.
+fn imports(query: &ScreenQuery<'_>) -> Vec<Import> {
+    let mut imports = vec![Import::Element(query.element.clone())];
+    if let Some(range) = anchor_range(query) {
+        imports.push(Import::TextRange(range.clone()));
+    }
+    if let Some(since) = query.caret.and_then(|caret| caret.since) {
+        imports.push(Import::TextRange(since.range.clone()));
+    }
+    imports
+}
+
+/// The anchor's range, when the anchor is looked for (it has a range or
+/// rows a search can find) and has one.
+fn anchor_range<'a>(query: &ScreenQuery<'a>) -> Option<&'a IUIAutomationTextRange> {
+    let anchor = query.anchor.as_ref()?;
+    let looked_for = anchor.range.is_some() || anchor.sought(query.matches_padding).is_some();
+    anchor.range.filter(|_| looked_for)
+}
+
+/// The screen program's imports, imported into `b` in the order
+/// [`imports`] gives them.
+fn imported(
+    b: &mut Builder,
+    query: &ScreenQuery<'_>,
+) -> (
+    Reg<kind::Element>,
+    Option<Reg<kind::TextRange>>,
+    Option<Reg<kind::TextRange>>,
+) {
+    let element = b.import_element(query.element);
+    let anchor = anchor_range(query).map(|range| b.import_text_range(range));
+    let since = query
+        .caret
+        .and_then(|caret| caret.since)
+        .map(|since| b.import_text_range(since.range));
+    (element, anchor, since)
+}
+
+/// The registers the screen program's answer is read from.
+#[derive(Clone, Copy)]
+struct ScreenRegisters {
+    text: Reg<kind::Str>,
+    top_text: Reg<kind::Str>,
+    top_after: Reg<kind::Str>,
+    next_text: Reg<kind::Str>,
+    alternate: Reg<kind::Bool>,
+    shift: Reg<kind::Int>,
+    head: Reg<kind::Str>,
+    head_rows: Reg<kind::Int>,
+    document_rows: Reg<kind::Int>,
+    old_last_row: Reg<kind::Str>,
+    walks_agree: Reg<kind::Bool>,
+    view_moved: Reg<kind::Bool>,
+    caret: Option<CaretLineRegisters>,
+    top_range: Reg<kind::TextRange>,
+    first_now: Reg<kind::Str>,
+}
+
+thread_local! {
+    /// The screen programs this thread built.
+    static PROGRAMS: ProgramCache<ProgramKey, ScreenRegisters> = ProgramCache::default();
+}
+
+/// The screen in one cross-process round trip. The program is built once
+/// for each [`ProgramKey`] on a thread and run again with the next read's
+/// imports, as a terminal read while its screen holds still, or while
+/// typing, asks the same.
 ///
 /// `uia` is unused; it is in the signature so that this and
 /// [`terminal_screen_classic`] are interchangeable ([`TerminalScreenFn`]).
@@ -367,14 +483,46 @@ impl Constants {
 /// # Errors
 ///
 /// Any [`Error`] from running the program.
+pub fn terminal_screen_remote(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Screen, Error> {
+    let (operation, r) = PROGRAMS.with(|programs| {
+        programs.operation(
+            ProgramKey::of(query),
+            || imports(query),
+            |b| build(b, query),
+        )
+    });
+    let outcome = operation.execute()?;
+    let text = outcome.get_utf16(r.text)?;
+    let top_row = string_of(&outcome, r.top_text)?;
+    let top_after = string_of(&outcome, r.top_after)?;
+    let shift = outcome.get(r.shift)?;
+    let document_rows = outcome.get(r.document_rows)?;
+    Ok(Screen {
+        settled: is_settled(&text, &top_row, &top_after) && outcome.get(r.walks_agree)?,
+        view_moved: outcome.get(r.view_moved)?,
+        text,
+        top_row,
+        next_row: string_of(&outcome, r.next_text)?,
+        alternate: outcome.get(r.alternate)?,
+        shift: (shift >= 0).then(|| count_of(shift)),
+        head: outcome.get_utf16(r.head)?,
+        old_last_row: string_of(&outcome, r.old_last_row)?,
+        head_rows: count_of(outcome.get(r.head_rows)?),
+        document_rows: (document_rows >= 0).then(|| count_of(document_rows)),
+        caret: r.caret.map(|caret| caret.read(&outcome)).transpose()?,
+        top: outcome.get(r.top_range)?,
+        first_row: string_of(&outcome, r.first_now)?,
+    })
+}
+
+/// Emits the screen's program into `b`.
 #[expect(
     clippy::too_many_lines,
     reason = "one program, read top to bottom as it runs"
 )]
-pub fn terminal_screen_remote(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Screen, Error> {
-    let mut b = Builder::new();
-    let c = Constants::new(&mut b);
-    let element = b.import_element(query.element);
+fn build(b: &mut Builder, query: &ScreenQuery<'_>) -> ScreenRegisters {
+    let (element, anchor_range, since) = imported(b, query);
+    let c = Constants::new(b);
     let pattern = b.get_text_pattern(element, false);
     let document = b.text_pattern_get_document_range(pattern);
 
@@ -391,12 +539,12 @@ pub fn terminal_screen_remote(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Scr
     });
     let text = b.text_range_get_text(screen, c.all);
     let text = b.add_to_results(text);
-    let top = c.collapsed(&mut b, screen);
+    let top = c.collapsed(b, screen);
     let top_range = b.add_to_results(top);
-    let top_row = c.row(&mut b, top);
+    let top_row = c.row(b, top);
     let top_text = b.text_range_get_text(top_row, c.all);
     let top_text = b.add_to_results(top_text);
-    let next = c.collapsed(&mut b, top);
+    let next = c.collapsed(b, top);
     let has_next = b.text_range_move(next, c.line, c.one);
     let has_next = b.not_equal(has_next, c.zero);
     let next_text = b.new_string("");
@@ -413,8 +561,8 @@ pub fn terminal_screen_remote(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Scr
     let order = b.text_range_compare_endpoints(document, c.start, screen, c.start);
     let alternate = b.equal(order, c.zero);
     let alternate = b.add_to_results(alternate);
-    let first = c.collapsed(&mut b, document);
-    let first = c.row(&mut b, first);
+    let first = c.collapsed(b, document);
+    let first = c.row(b, first);
     let first_now = b.text_range_get_text(first, c.all);
     let first_now = b.add_to_results(first_now);
 
@@ -448,8 +596,7 @@ pub fn terminal_screen_remote(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Scr
         // reads as it did, or when the old screen had no history above it.
         // A range from the other screen of a terminal that switched screens
         // cannot be compared with the text, which is not found.
-        if let Some(range) = anchor.range {
-            let range = b.import_text_range(range);
+        if let Some(range) = anchor_range {
             let first_then = b.string(anchor.first);
             b.try_catch(
                 |b| {
@@ -653,7 +800,7 @@ pub fn terminal_screen_remote(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Scr
         );
     }
 
-    let after = c.row(&mut b, top);
+    let after = c.row(b, top);
     let top_after = b.text_range_get_text(after, c.all);
     let top_after = b.add_to_results(top_after);
     // The screen still where the terminal shows it: a terminal that moved
@@ -673,30 +820,26 @@ pub fn terminal_screen_remote(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Scr
         let moved = b.not_equal(order, c.zero);
         b.set(view_moved, moved);
     });
-    let caret = query.caret.map(|caret| emit_caret_line(&mut b, &caret));
-    let outcome = b.finish().execute()?;
-
-    let text = outcome.get_utf16(text)?;
-    let top_row = string_of(&outcome, top_text)?;
-    let top_after = string_of(&outcome, top_after)?;
-    let shift = outcome.get(shift)?;
-    let document_rows = outcome.get(document_rows)?;
-    Ok(Screen {
-        settled: is_settled(&text, &top_row, &top_after) && outcome.get(walks_agree)?,
-        view_moved: outcome.get(view_moved)?,
+    let caret = query
+        .caret
+        .map(|caret| emit_caret_line(b, &caret, (element, pattern, since)));
+    ScreenRegisters {
         text,
-        top_row,
-        next_row: string_of(&outcome, next_text)?,
-        alternate: outcome.get(alternate)?,
-        shift: (shift >= 0).then(|| count_of(shift)),
-        head: outcome.get_utf16(head)?,
-        old_last_row: string_of(&outcome, old_last_row)?,
-        head_rows: count_of(outcome.get(head_rows)?),
-        document_rows: (document_rows >= 0).then(|| count_of(document_rows)),
-        caret: caret.map(|caret| caret.read(&outcome)).transpose()?,
-        top: outcome.get(top_range)?,
-        first_row: string_of(&outcome, first_now)?,
-    })
+        top_text,
+        top_after,
+        next_text,
+        alternate,
+        shift,
+        head,
+        head_rows,
+        document_rows,
+        old_last_row,
+        walks_agree,
+        view_moved,
+        caret,
+        top_range,
+        first_now,
+    }
 }
 
 /// A copy of `range` collapsed to its start. Two calls.

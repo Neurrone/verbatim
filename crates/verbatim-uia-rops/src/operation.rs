@@ -5,8 +5,11 @@
 //! contributors, GPL version 2 or later, used here under GPL-3.0-or-later),
 //! calling Windows' `CoreAutomationRemoteOperation` directly.
 
-use std::collections::BTreeSet;
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeSet, HashMap};
+use std::hash::Hash;
 use std::panic::Location;
+use std::rc::Rc;
 
 use windows::Foundation::{IPropertyValue, PropertyType};
 use windows::UI::UIAutomation::Core::{
@@ -30,17 +33,114 @@ pub(crate) enum Import {
     TextRange(IUIAutomationTextRange),
 }
 
-/// A finished program with its imports and requested results, ready to
-/// run. Running it is one cross-process round trip to the provider that
-/// serves the imported elements.
-pub struct Operation {
+impl Import {
+    /// Whether this is an element, not a text range.
+    fn is_element(&self) -> bool {
+        matches!(self, Import::Element(_))
+    }
+}
+
+/// A finished program without its imports: its instructions, its bytes,
+/// the opcodes it uses, its requested results, and the kind of each
+/// import it takes, so a thread can run it again with other imports
+/// ([`Operation::program`], [`Program::bind`]).
+pub(crate) struct Program {
     emitted: Vec<Emitted>,
     bytecode: Vec<u8>,
-    imports: Vec<(OperandId, Import)>,
+    /// Each import's register, and whether it is an element.
+    import_ids: Vec<(OperandId, bool)>,
     results: Vec<OperandId>,
     opcodes: BTreeSet<Opcode>,
     /// The first operand id the program does not use.
     next_id: u32,
+    /// Whether a run on this thread found every opcode supported and ran:
+    /// the support check is then not made again, as the provider is this
+    /// thread's application, until a run of the program fails.
+    verified: Cell<bool>,
+}
+
+impl Program {
+    /// The program with `imports`, given in the order the program first
+    /// imported its own, as runnable; `None` when they are not as many, or
+    /// not of the same kinds, as the program takes.
+    pub(crate) fn bind(self: &Rc<Self>, imports: Vec<Import>) -> Option<Operation> {
+        if imports.len() != self.import_ids.len()
+            || imports
+                .iter()
+                .zip(&self.import_ids)
+                .any(|(import, &(_, element))| import.is_element() != element)
+        {
+            return None;
+        }
+        Some(Operation {
+            program: Rc::clone(self),
+            imports: self
+                .import_ids
+                .iter()
+                .map(|&(id, _)| id)
+                .zip(imports)
+                .collect(),
+        })
+    }
+}
+
+/// How many programs of one kind a thread keeps ([`ProgramCache`]).
+const KEPT_PROGRAMS: usize = 16;
+
+/// The programs of one kind a thread built, each with the registers its
+/// answer is read from, by a key naming everything the program was built
+/// from but its imports: a run whose query has the same key runs the same
+/// program with its own imports ([`Program::bind`]), so the program is not
+/// built, encoded, or checked for support again. A program holds no
+/// objects of UI Automation's, so it may outlive the client and the
+/// imports it was built with; it is kept per thread all the same, as a
+/// remote operation and its imports are per client and thread. At most
+/// [`KEPT_PROGRAMS`]; when full, all are forgotten.
+pub(crate) struct ProgramCache<K, R> {
+    programs: RefCell<HashMap<K, (Rc<Program>, R)>>,
+}
+
+impl<K, R> Default for ProgramCache<K, R> {
+    fn default() -> Self {
+        Self {
+            programs: RefCell::new(HashMap::new()),
+        }
+    }
+}
+
+impl<K: Eq + Hash, R: Clone> ProgramCache<K, R> {
+    /// The program kept for `key`, bound to `imports`, with its registers;
+    /// else the program `build` builds, kept for `key`.
+    pub(crate) fn operation(
+        &self,
+        key: K,
+        imports: impl FnOnce() -> Vec<Import>,
+        build: impl FnOnce(&mut crate::Builder) -> R,
+    ) -> (Operation, R) {
+        let kept = self.programs.borrow().get(&key).cloned();
+        if let Some((program, registers)) = kept
+            && let Some(operation) = program.bind(imports())
+        {
+            return (operation, registers);
+        }
+        let mut b = crate::Builder::new();
+        let registers = build(&mut b);
+        let operation = b.finish();
+        let mut programs = self.programs.borrow_mut();
+        if programs.len() >= KEPT_PROGRAMS {
+            programs.clear();
+        }
+        programs.insert(key, (operation.program(), registers.clone()));
+        (operation, registers)
+    }
+}
+
+/// A finished program with its imports and requested results, ready to
+/// run. Running it is one cross-process round trip to the provider that
+/// serves the imported elements.
+pub struct Operation {
+    program: Rc<Program>,
+    imports: Vec<(OperandId, Import)>,
 }
 
 impl Operation {
@@ -57,14 +157,27 @@ impl Operation {
             item.instruction.encode(&mut bytecode);
             opcodes.insert(item.instruction.opcode());
         }
+        let import_ids = imports
+            .iter()
+            .map(|(id, import)| (*id, import.is_element()))
+            .collect();
         Self {
-            emitted,
-            bytecode,
+            program: Rc::new(Program {
+                emitted,
+                bytecode,
+                import_ids,
+                results,
+                opcodes,
+                next_id,
+                verified: Cell::new(false),
+            }),
             imports,
-            results,
-            opcodes,
-            next_id,
         }
+    }
+
+    /// The program alone, to run again with other imports.
+    pub(crate) fn program(&self) -> Rc<Program> {
+        Rc::clone(&self.program)
     }
 
     /// The same program counting what it executes: before each of its
@@ -76,8 +189,9 @@ impl Operation {
     /// executes twice as many and two more, so it reaches the platform's
     /// instruction limit at half the program's size.
     fn counting(&self) -> (Self, Reg<kind::Int>) {
-        let counter = OperandId(self.next_id);
-        let one = OperandId(self.next_id + 1);
+        let program = &self.program;
+        let counter = OperandId(program.next_id);
+        let one = OperandId(program.next_id + 1);
         let at = Location::caller();
         let mut emitted = vec![
             Emitted {
@@ -95,7 +209,7 @@ impl Operation {
                 location: at,
             },
         ];
-        for item in &self.emitted {
+        for item in &program.emitted {
             emitted.push(Emitted {
                 instruction: Instruction::Add {
                     target: counter,
@@ -133,48 +247,54 @@ impl Operation {
             .iter()
             .map(|(id, import)| (*id, import.clone()))
             .collect();
-        let mut results = self.results.clone();
+        let mut results = program.results.clone();
         results.push(counter);
         (
-            Self::new(emitted, imports, results, self.next_id + 2),
+            Self::new(emitted, imports, results, program.next_id + 2),
             Reg::new(counter),
         )
     }
 
     #[cfg(test)]
     pub(crate) fn emitted(&self) -> &[Emitted] {
-        &self.emitted
+        &self.program.emitted
     }
 
     /// The program's bytes, as `Execute` receives them.
     #[must_use]
     pub fn bytecode(&self) -> &[u8] {
-        &self.bytecode
+        &self.program.bytecode
     }
 
     /// The number of instructions.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.emitted.len()
+        self.program.emitted.len()
     }
 
     /// Whether the program has no instructions (never true of a finished
     /// program, which ends with a `Halt`).
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.emitted.is_empty()
+        self.program.emitted.is_empty()
     }
 
     /// The instruction at `index`, as a failure's location numbers it.
     #[must_use]
     pub fn instruction(&self, index: usize) -> Option<&Instruction> {
-        self.emitted.get(index).map(|emitted| &emitted.instruction)
+        self.program
+            .emitted
+            .get(index)
+            .map(|emitted| &emitted.instruction)
     }
 
     /// The Rust source location that emitted the instruction at `index`.
     #[must_use]
     pub fn location(&self, index: usize) -> Option<&'static Location<'static>> {
-        self.emitted.get(index).map(|emitted| emitted.location)
+        self.program
+            .emitted
+            .get(index)
+            .map(|emitted| emitted.location)
     }
 
     /// Runs the program: imports its elements and text ranges, checks that
@@ -210,8 +330,18 @@ impl Operation {
         result
     }
 
-    /// Runs the program as [`execute`](Self::execute) describes.
+    /// Runs the program as [`execute`](Self::execute) describes. A program
+    /// a run on this thread already verified and ran skips the support
+    /// check; any failure has the next run check again.
     fn run(&self) -> Result<Outcome, Error> {
+        let result = self.run_once();
+        self.program.verified.set(result.is_ok());
+        result
+    }
+
+    /// One run, as [`run`](Self::run) describes.
+    fn run_once(&self) -> Result<Outcome, Error> {
+        let program = &*self.program;
         let remote = CoreAutomationRemoteOperation::new().map_err(Error::Unavailable)?;
         for (id, import) in &self.imports {
             let operand = operand_id(*id);
@@ -228,8 +358,15 @@ impl Operation {
             .map_err(Error::Import)?;
         }
         // Support is known only once something is imported, since it
-        // depends on the provider's process.
-        for &opcode in &self.opcodes {
+        // depends on the provider's process: this thread's application,
+        // whose support a run that verified it already found.
+        let opcodes = if program.verified.get() {
+            None
+        } else {
+            Some(&program.opcodes)
+        };
+        for &opcode in opcodes.into_iter().flatten() {
+            work::checked();
             #[allow(clippy::cast_sign_loss)] // The opcode's bits, as the API takes them.
             let supported = remote
                 .IsOpcodeSupported(opcode.code() as u32)
@@ -238,7 +375,7 @@ impl Operation {
                 return Err(Error::Unsupported(opcode));
             }
         }
-        for id in &self.results {
+        for id in &program.results {
             remote
                 .AddToResults(operand_id(*id))
                 .map_err(Error::Execute)?;
@@ -246,7 +383,7 @@ impl Operation {
         // One cross-process round trip, counted as one UIA call
         // (`docs/performance.md`).
         verbatim_uia::calls::count(verbatim_model::CallKind::Uia);
-        let result = remote.Execute(&self.bytecode).map_err(Error::Execute)?;
+        let result = remote.Execute(&program.bytecode).map_err(Error::Execute)?;
         let outcome = Outcome { result };
         let status = Status::from_value(outcome.result.Status().map_err(Error::Execute)?.0);
         if status == Status::Success {
@@ -270,6 +407,38 @@ impl Operation {
             location,
             partial: outcome,
         })))
+    }
+}
+
+/// What this thread has spent on programs besides running them: how many
+/// it built and how many opcodes it checked the support of, so a test can
+/// see a program kept and run again ([`ProgramCache`]) spend neither.
+pub mod work {
+    use std::cell::Cell;
+
+    thread_local! {
+        static BUILT: Cell<u64> = const { Cell::new(0) };
+        static CHECKED: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// How many programs this thread has built ([`crate::Builder::finish`]).
+    #[must_use]
+    pub fn programs_built() -> u64 {
+        BUILT.with(Cell::get)
+    }
+
+    /// How many opcodes this thread's runs have checked the support of.
+    #[must_use]
+    pub fn support_checks() -> u64 {
+        CHECKED.with(Cell::get)
+    }
+
+    pub(crate) fn built() {
+        BUILT.with(|built| built.set(built.get() + 1));
+    }
+
+    pub(super) fn checked() {
+        CHECKED.with(|checked| checked.set(checked.get() + 1));
     }
 }
 

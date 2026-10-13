@@ -313,6 +313,7 @@ impl Builder {
     #[must_use]
     #[track_caller]
     pub fn finish(mut self) -> Operation {
+        crate::operation::work::built();
         self.emit(Instruction::Halt);
         let mut emitted = self.constants;
         emitted.append(&mut self.main);

@@ -40,9 +40,11 @@ use verbatim_outpost::text::uia::UiaText;
 use verbatim_outpost::text::{
     Anchors, CaretSignal, NodeText, Watched, caret_report_from, check_caret, perform,
 };
+use verbatim_uia::text::{Endpoint, TextPatternExt};
 use verbatim_uia::{Node, NodeIdRegistry, Shape, Uia};
 use verbatim_uia_rops::{
-    CaretLineQuery, ScreenAnchor, ScreenQuery, terminal_screen_classic, terminal_screen_remote,
+    CaretLineQuery, RangeEnd, ScreenAnchor, ScreenQuery, terminal_screen_classic,
+    terminal_screen_remote, work,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextPattern};
@@ -689,14 +691,17 @@ const TYPED_WITH_CARET_HITS: Hits = &[
     ("MoveEndpointByRange", 9),
 ];
 
-/// The same remotely: the caret's own reads in the program get the text
-/// pattern from the element again.
+/// The same remotely: the program imports the element once and the
+/// caret's reads use the text pattern the program already has, so the
+/// provider is asked for the element's options and pattern once
+/// (2026-10-13; it imported the element again for the caret, and got its
+/// pattern again, twice each before).
 const REMOTE_TYPED_WITH_CARET_HITS: Hits = &[
-    ("ProviderOptions", 4),
-    ("GetPatternProvider", 2),
-    ("GetPropertyValue", 2),
-    ("HostRawElementProvider", 2),
-    ("Navigate", 2),
+    ("ProviderOptions", 2),
+    ("GetPatternProvider", 1),
+    ("GetPropertyValue", 1),
+    ("HostRawElementProvider", 1),
+    ("Navigate", 1),
     ("ITextProvider::GetSelection", 1),
     ("GetVisibleRanges", 2),
     ("DocumentRange", 1),
@@ -933,8 +938,75 @@ fn backspace_says_what_it_deleted_without_caret_events_classic() {
 
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
+/// How many opcodes the screen's program with an anchor and a caret uses,
+/// each checked for support on its first run.
+const ANCHORED_OPCODES: u64 = 41;
+
+/// A screen read asked the same again, by a query with an anchor whose
+/// range is imported and a caret compared with another range, runs the
+/// program it built for the first with its own imports: nothing is built
+/// and no opcode is checked again, and both answer as the classic reads
+/// do, the caret's comparison included.
+fn a_screen_read_asked_again_runs_the_program_it_built() {
+    common::init_com();
+    let title = common::unique_title("mockapp-terminal-kept-program");
+    let mut app = common::spawn("terminal.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    let (element, pattern) = terminal_text(&uia, hwnd);
+    common::apply(&mut app, hwnd, "screen term 4");
+    let first = terminal_screen_remote(&uia, &query((&element, &pattern), None, 0))
+        .expect("the remote program runs");
+    let top = first.top.expect("a range at the top row");
+    let document = pattern.document_range().expect("the document's range");
+    let anchored = ScreenQuery {
+        anchor: Some(ScreenAnchor {
+            top: &first.top_row,
+            next: &first.next_row,
+            range: Some(&top),
+            first: &first.first_row,
+            no_history: false,
+        }),
+        caret: Some(CaretLineQuery {
+            element: &element,
+            pattern: &pattern,
+            pattern2: None,
+            max_text: 4096,
+            since: Some(RangeEnd {
+                range: &document,
+                endpoint: Endpoint::End,
+            }),
+        }),
+        ..query((&element, &pattern), None, 4)
+    };
+    let classic = terminal_screen_classic(&uia, &anchored).expect("the classic reads run");
+    let classic_moved = classic.caret.as_ref().map(|caret| caret.moved);
+    let mut answers = Vec::new();
+    for _ in 0..2 {
+        let (built, checked) = (work::programs_built(), work::support_checks());
+        let remote = terminal_screen_remote(&uia, &anchored).expect("the remote program runs");
+        answers.push((
+            work::programs_built() - built,
+            work::support_checks() - checked,
+        ));
+        assert_eq!(ScreenText::from(&remote), ScreenText::from(&classic));
+        assert_eq!(
+            remote.caret.as_ref().map(|caret| caret.moved),
+            classic_moved
+        );
+    }
+    assert_eq!(classic_moved, Some(true));
+    assert_eq!(answers, [(1, ANCHORED_OPCODES), (0, 0)]);
+    app.quit();
+}
+
+/// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_screen_read_asked_again_runs_the_program_it_built",
+            a_screen_read_asked_again_runs_the_program_it_built,
+        ),
         (
             "remote_and_classic_screen_reads_agree",
             remote_and_classic_screen_reads_agree,

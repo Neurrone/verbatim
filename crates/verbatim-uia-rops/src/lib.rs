@@ -81,7 +81,7 @@ pub use opcode::{
     Comparison, NavigationDirection, Opcode, PointProperty, RectProperty, Status, pattern_method,
     pattern_related_object_method,
 };
-pub use operation::{Operation, Outcome, Read, Value, counting};
+pub use operation::{Operation, Outcome, Read, Value, counting, work};
 pub use path::{
     ElementByPathFn, PathQuery, element_by_path, element_by_path_classic, element_by_path_remote,
 };
