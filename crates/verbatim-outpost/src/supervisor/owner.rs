@@ -5,8 +5,8 @@
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeSet, HashMap};
-use std::fs::File;
 use std::io::{self, BufReader};
+use std::os::windows::io::OwnedHandle;
 use std::path::PathBuf;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender, select, tick};
 use verbatim_model::{OutpostId, Pid, TraceId};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
+use verbatim_process::transport::BlockingReader;
 
 use crate::protocol::{
     DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
@@ -1087,7 +1088,7 @@ fn launch_child(
     role: Role,
     events_tx: &EventSink,
     writers: &Writers,
-) -> io::Result<(Child, File)> {
+) -> io::Result<(Child, OwnedHandle)> {
     let (launched, pipes) = process::launch(exe_path, role, options, (ignored, hooks_in))?;
     tracing::info!(%outpost, process_id = %launched.process_id, ?role, "launched");
     let writer_name = match role {
@@ -1118,7 +1119,7 @@ fn launch_child(
 fn start_reader(
     outpost: OutpostId,
     role: Role,
-    from_child: File,
+    from_child: OwnedHandle,
     events_tx: &EventSink,
     own_tx: &Sender<OwnerEvent>,
 ) -> io::Result<()> {
@@ -1128,6 +1129,7 @@ fn start_reader(
         Role::Outpost(_) => "verbatim-outpost-reader",
         Role::Listener => "verbatim-listener-reader",
     };
+    let from_child = BufReader::new(BlockingReader::new(from_child)?);
     thread::Builder::new()
         .name(name.to_owned())
         .spawn(move || {
@@ -1147,11 +1149,10 @@ fn start_reader(
 fn read_outpost(
     outpost: OutpostId,
     pid: Pid,
-    from_child: File,
+    mut reader: BufReader<BlockingReader>,
     events_tx: &EventSink,
     own_tx: &Sender<OwnerEvent>,
 ) {
-    let mut reader = BufReader::new(from_child);
     let mut position = 0u64;
     loop {
         let mut message = match read_message::<_, OutpostToSupervisor>(&mut reader) {
@@ -1202,8 +1203,11 @@ fn read_outpost(
 
 /// The listener's reader: focus facts, pongs, and `Ready` go to the owner;
 /// faults are logged.
-fn read_listener(outpost: OutpostId, from_child: File, own_tx: &Sender<OwnerEvent>) {
-    let mut reader = BufReader::new(from_child);
+fn read_listener(
+    outpost: OutpostId,
+    mut reader: BufReader<BlockingReader>,
+    own_tx: &Sender<OwnerEvent>,
+) {
     while let Ok(Some(message)) = read_message::<_, OutpostToSupervisor>(&mut reader) {
         let received = Received::now();
         let event = match message {

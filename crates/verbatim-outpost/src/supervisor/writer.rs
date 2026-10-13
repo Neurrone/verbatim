@@ -1,6 +1,10 @@
-//! Each child's writer: a bounded queue of commands and the thread that
-//! writes them to its pipe, so nothing that makes a decision ever waits on a
-//! pipe (outpost redesign, "The supervisor").
+//! Each child's writer: a [`Sender`] on its command pipe, so nothing that
+//! makes a decision ever waits on a pipe (outpost redesign, "The
+//! supervisor"; `docs/design/communication.md`, section 4.3). The thread
+//! that queues a command writes it itself when the pipe is free and
+//! nothing waits; while a write is in flight, commands wait in a bounded
+//! queue, written in order by the sender's finishing thread once that
+//! write completes.
 //!
 //! When the queue is full, each kind of command has its own policy:
 //!
@@ -27,22 +31,21 @@
 #![forbid(unsafe_code)]
 
 use std::collections::VecDeque;
-use std::fs::File;
-use std::io::{BufWriter, Write};
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
-use std::thread;
+use std::io;
+use std::os::windows::io::OwnedHandle;
 use std::time::Instant;
 
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
+use verbatim_process::transport::{Backlog, SendError, Sender};
 
-use crate::protocol::{EventTiming, FactKey, SupervisorToOutpost, now_us, write_message};
+use crate::protocol::{EventTiming, FactKey, SupervisorToOutpost, now_us, put_message};
 
 /// How many commands may wait for one child before the overload policy
 /// applies.
 pub(super) const WRITER_CAPACITY: usize = 64;
 
-/// The priority of each child's writer thread: it only writes each command
-/// to the child's pipe, for microseconds per wake
+/// The priority of each child's finishing thread: it only writes each
+/// waiting command to the child's pipe, for microseconds per wake
 /// (`docs/design/communication.md`, section 6.1).
 const WRITER_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
@@ -169,15 +172,11 @@ impl std::fmt::Display for QueueError {
 #[derive(Debug, Default)]
 pub(super) struct Queue {
     items: VecDeque<Outgoing>,
-    closed: bool,
 }
 
 impl Queue {
     /// Adds `item` under the overload policy for `capacity`.
     pub(super) fn push(&mut self, item: Outgoing, capacity: usize) -> Result<(), QueueError> {
-        if self.closed {
-            return Err(QueueError::Closed);
-        }
         match item {
             Outgoing::Ping(_)
             | Outgoing::Shutdown
@@ -222,74 +221,61 @@ impl Queue {
     }
 }
 
-/// The shared end of one child's queue: the owner and the reducer thread
-/// push, the writer thread pops.
+impl Backlog for Queue {
+    type Item = Outgoing;
+    type Refused = QueueError;
+
+    fn push(&mut self, item: Outgoing) -> Result<(), QueueError> {
+        Queue::push(self, item, WRITER_CAPACITY)
+    }
+
+    fn pop(&mut self) -> Option<Outgoing> {
+        Queue::pop(self)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    fn encode(item: Outgoing, buffer: &mut Vec<u8>) -> io::Result<()> {
+        put_message(buffer, &item.relayed())
+    }
+}
+
+/// The shared end of one child's writer: the owner and the reducer thread
+/// send through it.
 #[derive(Clone)]
 pub(crate) struct WriterHandle {
-    shared: Arc<(Mutex<Queue>, Condvar)>,
+    sender: Sender<Queue>,
 }
 
 impl WriterHandle {
-    /// Queues `item` without waiting.
+    /// Writes `item` now if the pipe is free, or queues it, without
+    /// waiting.
     pub(super) fn push(&self, item: Outgoing) -> Result<(), QueueError> {
-        let (queue, ready) = &*self.shared;
-        let result = queue
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(item, WRITER_CAPACITY);
-        if result.is_ok() {
-            ready.notify_one();
-        }
-        result
+        self.sender.send(item).map_err(|error| match error {
+            SendError::Refused(refused) => refused,
+            SendError::Closed => QueueError::Closed,
+        })
     }
 
-    /// Closes the queue: nothing more is accepted, and the writer thread
-    /// exits once the queue is empty.
+    /// Closes the writer: nothing more is accepted, and the pipe is closed
+    /// once everything queued is written.
     pub(super) fn close(&self) {
-        let (queue, ready) = &*self.shared;
-        queue.lock().unwrap_or_else(PoisonError::into_inner).closed = true;
-        ready.notify_one();
+        self.sender.close();
     }
 }
 
-/// Starts the writer thread for a child's command pipe, returning the handle
-/// commands are queued through. The thread exits when the queue is closed
-/// and drained, or when a write fails because the child has gone.
-pub(super) fn start(to_child: File, name: &str) -> std::io::Result<WriterHandle> {
-    let handle = WriterHandle {
-        shared: Arc::new((Mutex::new(Queue::default()), Condvar::new())),
-    };
-    let shared = Arc::clone(&handle.shared);
+/// Starts the writer for a child's command pipe, an overlapped end,
+/// returning the handle commands are sent through. Its finishing thread,
+/// named `name`, exits when the writer is closed and drained, or when a
+/// write fails because the child has gone.
+pub(super) fn start(to_child: OwnedHandle, name: &str) -> io::Result<WriterHandle> {
     let role = name.to_owned();
-    thread::Builder::new()
-        .name(name.to_owned())
-        .spawn(move || {
-            prioritize_role(&role, WRITER_PRIORITY);
-            let mut pipe = BufWriter::new(to_child);
-            loop {
-                let next = {
-                    let (queue, ready) = &*shared;
-                    let mut queue = queue.lock().unwrap_or_else(PoisonError::into_inner);
-                    loop {
-                        if let Some(item) = queue.pop() {
-                            break Some(item);
-                        }
-                        if queue.closed {
-                            break None;
-                        }
-                        queue = ready.wait(queue).unwrap_or_else(PoisonError::into_inner);
-                    }
-                };
-                let Some(item) = next else { return };
-                if write_message(&mut pipe, &item.relayed())
-                    .and_then(|()| pipe.flush())
-                    .is_err()
-                {
-                    return;
-                }
-            }
-        })?;
-    Ok(handle)
+    let sender = Sender::start(to_child, Queue::default(), name, move || {
+        prioritize_role(&role, WRITER_PRIORITY);
+    })?;
+    Ok(WriterHandle { sender })
 }
 
 #[cfg(test)]
@@ -400,14 +386,5 @@ mod tests {
             })
             .collect();
         assert_eq!(order, ["1", "2", "ended"]);
-    }
-
-    #[test]
-    fn a_closed_queue_refuses_everything() {
-        let mut queue = Queue {
-            closed: true,
-            ..Queue::default()
-        };
-        assert_eq!(queue.push(ping(), 8), Err(QueueError::Closed));
     }
 }

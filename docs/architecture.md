@@ -927,7 +927,9 @@ descriptor restricting access to the owning interactive user,
 `PIPE_REJECT_REMOTE_CLIENTS` to keep it local-only, and no control plane at
 all in `--secure` instances. Core's internal channels to outposts and the
 synth host are the parent-child case and use inherited handles instead
-(section 1) — no name, no ACL surface. Remote access never reuses the pipe;
+(section 1): pipes made with no name at any moment, as the standard
+library makes its child pipes, overlapped on Core's side, so no ACL
+surface (`docs/design/communication.md`, section 4.1). Remote access never reuses the pipe;
 it is the separate, opt-in TLS transport with pairing.
 
 ## 11. GUI

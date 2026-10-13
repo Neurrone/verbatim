@@ -23,6 +23,7 @@
 pub mod overlapped;
 pub mod scheduling;
 pub mod session;
+pub mod transport;
 
 use std::ffi::c_void;
 use std::fs::File;

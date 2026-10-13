@@ -661,7 +661,7 @@ impl Drop for PipeIo {
 
 /// A Windows error as an I/O error with its Win32 code, so its kind (a
 /// broken pipe, say) is known.
-fn win32_error(error: windows::core::Error) -> io::Error {
+pub(crate) fn win32_error(error: windows::core::Error) -> io::Error {
     let code = error.code().0.cast_unsigned();
     // HRESULT_FROM_WIN32: facility 7, the Win32 code in the low 16 bits.
     if code & 0xFFFF_0000 == 0x8007_0000 {

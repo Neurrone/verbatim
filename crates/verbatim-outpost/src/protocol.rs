@@ -1,11 +1,12 @@
 //! The private Core-outpost protocol (architecture section 1).
 //!
-//! Transport: two anonymous pipes created by the supervisor with inheritable
-//! child ends, their handle values passed on the outpost command line — no
-//! named endpoint exists, so there is nothing to discover or secure. Framing
-//! is newline-delimited compact JSON: debuggable, flight-recorder friendly,
-//! and isolated behind [`write_message`] and [`read_message`] so the
-//! encoding can be renegotiated later without touching either end's logic.
+//! Transport: two pipes with no name, made by the supervisor, whose child
+//! ends the child inherits, their handle values passed on its command line,
+//! so there is nothing to discover or secure. Each message is one frame of
+//! `verbatim_process::transport`: a `Content-Length` header, then the
+//! message as compact JSON, readable by eye and in captures, and isolated
+//! behind [`write_message`], [`encode_message`] and [`read_message`] so
+//! neither end's logic sees the framing.
 
 #![forbid(unsafe_code)]
 
@@ -1004,21 +1005,20 @@ pub struct DumpedTree {
     pub truncated: bool,
 }
 
-/// The most bytes one message may take, its line feed aside, in either
+/// The most bytes one message may take, its frame's header aside, in either
 /// direction between Core and a child (`phase6-design.md`, "Terminal risks
 /// found by studying NVDA", the limit on outpost messages): room for 10 MB
 /// of terminal output and JSON's escaping. A writer never sends more, and a
-/// reader that receives more treats the other end as failed rather than
-/// reading on, so an enormous line from an application cannot make it
-/// allocate without bound.
-pub const MAX_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
+/// reader that is told of more treats the other end as failed rather than
+/// reading on, so an enormous message cannot make it allocate without
+/// bound.
+pub const MAX_MESSAGE_BYTES: usize = verbatim_process::transport::MAX_FRAME_BYTES;
 
-/// Writes one message as a single JSON line and flushes.
+/// Writes one message as one frame and flushes.
 ///
-/// The line and its line feed go to `writer` in one `write_all`, so on a
-/// bare pipe, as the listener and every outpost write to, a message is one
-/// `WriteFile` and the reader never receives a line without its line feed
-/// (`docs/design/relay.md`, section 4.3).
+/// The frame goes to `writer` in one `write_all`, so on a bare pipe, as the
+/// listener and every outpost write to, a message is one `WriteFile`
+/// (`docs/design/communication.md`, section 4.3).
 ///
 /// # Errors
 ///
@@ -1027,55 +1027,49 @@ pub const MAX_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
 /// [`MAX_MESSAGE_BYTES`], which is not sent; serialization of these
 /// message types cannot fail.
 pub fn write_message<W: Write, T: Serialize>(writer: &mut W, message: &T) -> io::Result<()> {
-    let line = encode_message(message)?;
-    writer.write_all(&line)?;
+    let frame = encode_message(message)?;
+    writer.write_all(&frame)?;
     writer.flush()
 }
 
-/// One message as the bytes [`write_message`] writes: its JSON line with
-/// the line feed.
+/// One message as the frame [`write_message`] writes.
 ///
 /// # Errors
 ///
 /// As [`write_message`], without the I/O.
 pub fn encode_message<T: Serialize>(message: &T) -> io::Result<Vec<u8>> {
-    let mut line = serde_json::to_vec(message).map_err(io::Error::other)?;
-    if line.len() > MAX_MESSAGE_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "a message of {} bytes is larger than the {MAX_MESSAGE_BYTES} a message may take",
-                line.len()
-            ),
-        ));
-    }
-    line.push(b'\n');
-    Ok(line)
+    let mut frame = Vec::new();
+    put_message(&mut frame, message)?;
+    Ok(frame)
 }
 
-/// Reads one JSON-line message. Returns `Ok(None)` on clean end of stream —
-/// the peer closed its pipe end.
+/// Puts one message's frame in `buffer`, which is cleared first, so a
+/// sender encodes straight into the buffer it writes from.
 ///
 /// # Errors
 ///
-/// Returns an error for I/O failures, for a message larger than
-/// [`MAX_MESSAGE_BYTES`] ([`io::ErrorKind::InvalidData`], read no further
-/// than the limit), and for lines that are not valid messages (a protocol
-/// violation, not a recoverable condition).
+/// As [`write_message`], without the I/O.
+pub fn put_message<T: Serialize>(buffer: &mut Vec<u8>, message: &T) -> io::Result<()> {
+    verbatim_process::transport::put_frame(buffer, |body| {
+        serde_json::to_writer(body, message).map_err(io::Error::other)
+    })
+}
+
+/// Reads one message's frame. Returns `Ok(None)` on clean end of stream:
+/// the peer closed its pipe end between messages.
+///
+/// # Errors
+///
+/// Returns an error for I/O failures, for the stream ending inside a
+/// frame, for a frame larger than [`MAX_MESSAGE_BYTES`]
+/// ([`io::ErrorKind::InvalidData`], read no further than its header), and
+/// for a frame that is not a valid message (a protocol violation, not a
+/// recoverable condition).
 pub fn read_message<R: BufRead, T: DeserializeOwned>(reader: &mut R) -> io::Result<Option<T>> {
-    let mut line = Vec::new();
-    let limit = u64::try_from(MAX_MESSAGE_BYTES).unwrap_or(u64::MAX) + 1;
-    let mut limited = io::Read::take(&mut *reader, limit);
-    if limited.read_until(b'\n', &mut line)? == 0 {
+    let Some(body) = verbatim_process::transport::read_frame(reader)? else {
         return Ok(None);
-    }
-    if line.len() > MAX_MESSAGE_BYTES && line.last() != Some(&b'\n') {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("a message is larger than the {MAX_MESSAGE_BYTES} bytes a message may take"),
-        ));
-    }
-    serde_json::from_slice(line.trim_ascii_end())
+    };
+    serde_json::from_slice(&body)
         .map(Some)
         .map_err(io::Error::other)
 }
@@ -1095,13 +1089,14 @@ mod tests {
         let error = write_message(&mut written, &large).expect_err("too large to send");
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(written, Vec::<u8>::new());
-        // A peer that sends one anyway: the reader stops at the limit.
-        let mut stream = std::io::Cursor::new(format!("\"{large}\"\n").into_bytes());
+        // A peer that sends one anyway: the reader stops at its header.
+        let header = format!("Content-Length: {}\r\n\r\n", MAX_MESSAGE_BYTES + 2);
+        let mut stream = std::io::Cursor::new(format!("{header}\"{large}\"").into_bytes());
         let error = read_message::<_, String>(&mut stream).expect_err("too large to read");
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         assert_eq!(
             usize::try_from(stream.position()).expect("a position"),
-            MAX_MESSAGE_BYTES + 1
+            header.len()
         );
         // One at the limit is read.
         let fits = "y".repeat(MAX_MESSAGE_BYTES - 2);
@@ -1112,7 +1107,7 @@ mod tests {
     }
 
     #[test]
-    fn a_message_and_its_line_feed_are_one_write() {
+    fn a_message_and_its_header_are_one_write() {
         /// Records each write it is given.
         #[derive(Default)]
         struct Writes(Vec<Vec<u8>>);
@@ -1127,7 +1122,10 @@ mod tests {
         }
         let mut writes = Writes::default();
         write_message(&mut writes, &"one").expect("written");
-        assert_eq!(writes.0, vec![b"\"one\"\n".to_vec()]);
+        assert_eq!(
+            writes.0,
+            vec![b"Content-Length: 0000000005\r\n\r\n\"one\"".to_vec()]
+        );
     }
 
     #[test]

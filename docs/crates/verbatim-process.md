@@ -30,10 +30,11 @@ Public API:
   ends, overlapped or synchronous as it made them. Returns the
   `Contained`. `spec.from_child_buffer` is not used, since the caller's
   pipes have their buffers already. The containment, the inheritance list
-  and the log are `launch`'s. The relay floor's benchmark launches its
-  children with it; migration step 4 of `docs/design/communication.md`
-  moves every child onto it, after which `launch` and its anonymous pipes
-  go.
+  and the log are `launch`'s. The supervisor launches outposts and the listener with it, over
+  `overlapped::pipe`s whose child ends are synchronous, and the relay
+  floor's benchmark launches its children with it; the synthesizer host
+  still uses `launch` until migration step 9 of
+  `docs/design/communication.md` moves it.
 - `Contained` — the launched child: `job`, the kill-on-close job handle,
   whose closing kills the process; `process`, the process handle (closing
   it only releases the reference); and `pid`, for logs. Dropping a
@@ -102,6 +103,31 @@ Public API:
   calling thread out of execution-speed power throttling; only the relay
   floor's benchmark calls them, since the same measurement found no gain
   that would pay for the energy. Timer resolution is not raised.
+- `transport` — the frames and senders of the pipes between verbatim.exe
+  and its outposts and listener (`docs/design/communication.md`, section
+  4). A frame is `Content-Length: ` and the body's length in ten digits, a
+  blank line, then the body, at most `MAX_FRAME_BYTES` (32 MB); the fixed
+  width lets a frame be encoded in place. `put_frame(buffer, put_body)`
+  puts one in a buffer; `read_frame(reader)` reads one whole from a
+  `BufRead`, the header then the body at once, returning `None` at the end
+  of the stream between frames and an error for one cut short, a header
+  that is not one, or a length over the limit (refused before any body is
+  read). `EVENT_PIPE_BUFFER` is the event pipes' 64 KiB.
+  `BlockingReader::new(pipe)` is a `Read` over an overlapped end for a
+  thread that blocks on each read, as verbatim.exe's reader threads do; a
+  closed writer reads as the end of the stream. `Sender::start(pipe,
+  backlog, name, started)` writes an overlapped end: `send(item)` writes
+  at once when no write is in flight and nothing waits, on the sending
+  thread, so in the common case no other thread wakes; otherwise the item
+  joins the `Backlog`, a caller's policy (`push`, `pop`, `is_empty`, and
+  `encode`, which frames an item just before it is written). The
+  finishing thread, named `name`, which first runs `started`, waits on a
+  completion port of its own and wakes only when a write that pended
+  completes, then writes what waited, in order. `close()` takes nothing
+  more, writes what waits, then drops the pipe so the reader sees its
+  end. A failed write closes the sender (`SendError::Closed`); a backlog's
+  refusal is `SendError::Refused`. A started frame is always finished:
+  nothing cancels a write.
 - `session::current()` — the calling process's `Session`: its session
   `id`, whether its window station is interactive
   (`interactive_window_station`), and the input desktop's name when it can

@@ -71,10 +71,17 @@ struct MessageSink {
 impl Write for MessageSink {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         self.pending.extend_from_slice(bytes);
-        while let Some(end) = self.pending.iter().position(|&byte| byte == b'\n') {
-            let line: Vec<u8> = self.pending.drain(..=end).collect();
-            let message = read_message::<_, OutpostToSupervisor>(&mut line.as_slice())?
-                .expect("a whole line holds a message");
+        loop {
+            let mut rest = self.pending.as_slice();
+            let message = match read_message::<_, OutpostToSupervisor>(&mut rest) {
+                Ok(Some(message)) => message,
+                // Nothing pending, or a frame not yet whole.
+                Ok(None) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(error) => return Err(error),
+            };
+            let taken = self.pending.len() - rest.len();
+            self.pending.drain(..taken);
             // The test may have finished with the outpost's messages.
             let _ = self.messages.send(message);
         }

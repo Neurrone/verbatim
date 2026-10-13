@@ -256,10 +256,13 @@ Public API:
   has routed it. Node ids arrive from Core stamped with this outpost's id;
   the outpost looks them up with the stamp cleared (`NodeId::unstamped`).
   `OutpostToSupervisor::assign_outpost` is the stamp Core applies to every
-  node id in a message. Framing is newline-delimited compact JSON via
-  `write_message` and `read_message`; `write_message` hands its writer the
-  line and its line feed in one write, so a message is one `WriteFile` on a
-  bare pipe, and `encode_message` gives those bytes without writing them.
+  node id in a message. Each message is one frame of
+  `verbatim_process::transport`, a `Content-Length` header and the message
+  as compact JSON, through `write_message` and `read_message`;
+  `write_message` hands its writer the whole frame in one write, so a
+  message is one `WriteFile` on a bare pipe, `encode_message` gives those
+  bytes without writing them, and `put_message` puts them in a buffer a
+  sender writes from.
 - `Arbitrator` — NVDA's per-window backend decision (`_isUIAWindowHelper`):
   `verdict(hwnd, &WindowClasses)` answers from the good class list, the
   Windows 11 shell rule (the root ancestor's class is a shell top-level
@@ -441,7 +444,7 @@ Public API:
   application exits, from a thread that waits on the application's
   process. `run_attach`
   watches a pid directly, asks for its focus, and prints outbound messages as
-  JSON lines to stdout, the standalone dev mode. Both take an
+  frames to stdout, the standalone dev mode. Both take an
   `OutpostOptions`, fixed for the outpost's life, whose one field,
   `remote_operations`, says whether a UIA focus's ancestry may be read
   with a remote operation (`Outpost::with_options`; `Outpost::new` uses
@@ -617,16 +620,23 @@ Public API:
     helper thread, which starts the child's writer, sends `Started`, starts
     its reader, and reports back; a second fact meanwhile is held, never a
     second launch.
-  - Each child has a writer thread with a bounded queue (`writer`, capacity
-    64), so the owner never writes to a pipe while deciding and the reducer
-    thread never waits on one. When the queue is full a ping still gets
+  - Each child's commands go through a `transport::Sender` on verbatim.exe's
+    overlapped end of its command pipe (`writer`): the thread that sends a
+    command, the owner or the reducer, writes it itself when no write is
+    in flight and nothing waits, and otherwise it waits in a bounded queue
+    (capacity 64), written in order by the sender's finishing thread,
+    which wakes only when a write that pended completes. So the owner
+    never waits on a pipe while deciding and the reducer thread never
+    waits on one. When the queue is full a ping still gets
     through, and so does a message of the MSAA hand-over, which keeps its
     place behind everything queued before it, a routed fact replaces any
     waiting fact for the same object and kind (or the oldest waiting fact
-    makes room), and anything else, a query above all, fails at once. Each child has a reader thread that stamps
-    every node id with the child's outpost id, forwards messages to the app,
-    and reports `Ready`, pongs, and the end of its pipe to the owner. Core's
-    thread count is two per child plus the owner.
+    makes room), and anything else, a query above all, fails at once. Each child has a reader thread that reads
+    verbatim.exe's overlapped end of its message pipe, blocking on each read
+    (`transport::BlockingReader`), stamps every node id with the child's
+    outpost id, forwards messages to the app, and reports `Ready`, pongs,
+    and the end of its pipe to the owner. Core's thread count is two per
+    child plus the owner.
   - Facts that arrive while an outpost is starting are held in arrival
     order, a newer fact for the same object and kind replacing the older one
     and moving to the back (NVDA's limiter rule), and released in that order
@@ -702,8 +712,10 @@ Public API:
 Implementation notes:
 
 - Spawning (`Supervisor`, through `verbatim-process`): the outpost is
-  created suspended with two
-  anonymous pipes whose child ends are the only inheritable handles, placed
+  created suspended with two pipes with no name
+  (`verbatim_process::overlapped::pipe`, 64 KiB each way), verbatim.exe's
+  ends overlapped and the child's synchronous, whose child ends are the
+  only inheritable handles, placed
   in a job object carrying kill-on-job-close and a 200 MB memory cap, and
   only then resumed — inside the job before executing a single
   instruction. Core holds the only job handle, so kernel teardown of Core,

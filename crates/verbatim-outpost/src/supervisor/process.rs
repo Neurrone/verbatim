@@ -15,8 +15,9 @@ use windows::Win32::System::Threading::{
 use windows::core::PWSTR;
 
 use verbatim_model::Pid;
-pub(super) use verbatim_process::ChildPipes;
-use verbatim_process::{ChildSpec, Contained};
+use verbatim_process::overlapped::{End, Flow, pipe};
+use verbatim_process::transport::EVENT_PIPE_BUFFER;
+use verbatim_process::{ChildEnds, ChildSpec, Contained, launch_with_ends};
 
 /// A 200 MB per-outpost memory cap: past it a leaking outpost's allocations
 /// fail, the resulting abort ends it, and the supervisor replaces it.
@@ -29,6 +30,16 @@ pub(super) enum Role {
     Outpost(Pid),
     /// The focus listener (decision D13).
     Listener,
+}
+
+/// verbatim.exe's ends of a child's two pipes, both overlapped
+/// (`docs/design/communication.md`, section 4.1); the child's ends are
+/// synchronous, as its threads read and write them today.
+pub(super) struct ChildPipes {
+    /// verbatim.exe writes commands here.
+    pub(super) to_child: OwnedHandle,
+    /// verbatim.exe reads the child's messages here.
+    pub(super) from_child: OwnedHandle,
 }
 
 /// A launched process: its job, which kills it when dropped.
@@ -93,13 +104,22 @@ pub(super) fn launch(
             }),
         ),
     };
-    let (contained, pipes) = verbatim_process::launch(&ChildSpec {
-        exe: exe_path,
-        arguments: &*arguments,
-        log_stem: &log_stem,
-        memory_cap: Some(OUTPOST_MEMORY_CAP),
-        from_child_buffer: 0,
-    })?;
+    let (to_child, commands) = pipe(Flow::Outbound, EVENT_PIPE_BUFFER, End::Synchronous)?;
+    let (from_child, messages) = pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Synchronous)?;
+    let contained = launch_with_ends(
+        &ChildSpec {
+            exe: exe_path,
+            arguments: &*arguments,
+            log_stem: &log_stem,
+            memory_cap: Some(OUTPOST_MEMORY_CAP),
+            from_child_buffer: 0,
+        },
+        ChildEnds { commands, messages },
+    )?;
+    let pipes = ChildPipes {
+        to_child,
+        from_child,
+    };
     let process_id = Pid(contained.pid);
     Ok((
         Launched {
