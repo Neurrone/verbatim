@@ -15,8 +15,8 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomation, IUIAutomation2, IUIAutomation6, IUIAutomationCacheRequest,
     IUIAutomationCondition, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, IUIAutomationTreeWalker,
-    TreeScope, TreeScope_Children, TreeScope_Element, TreeScope_Subtree, UIA_InvokePatternId,
-    UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId, UIA_TogglePatternId,
+    TreeScope_Children, TreeScope_Subtree, UIA_InvokePatternId, UIA_PROPERTY_ID,
+    UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId, UIA_TogglePatternId,
 };
 
 use windows::core::Interface;
@@ -234,10 +234,10 @@ impl Uia {
     }
 
     /// `parent`'s children in the raw view, in order, each with its cache
-    /// filled by `request`, in one call: `parent`'s cache is rebuilt with
-    /// its children in scope, through a copy of `request` set to that
-    /// scope, and the children are read from it; nothing of `parent`'s own
-    /// cache is read. Cross-process; the outpost's worker only.
+    /// filled by `request`, in one call: `parent`'s cache is rebuilt
+    /// through a copy of `request` scoped to its children alone, as NVDA
+    /// fetches children, so `parent` itself is filled with nothing, and the
+    /// children are read from it. Cross-process; the outpost's worker only.
     ///
     /// # Errors
     ///
@@ -259,7 +259,7 @@ impl Uia {
     }
 
     /// `element`'s raw-view children, read by rebuilding its cache with
-    /// `request` set to the element and its children in the raw view.
+    /// `request` set to its children alone in the raw view.
     fn children_from(
         &self,
         element: &IUIAutomationElement,
@@ -267,7 +267,7 @@ impl Uia {
     ) -> windows::core::Result<Vec<IUIAutomationElement>> {
         // SAFETY: `request` is a live cache request; the scope is a plain
         // value.
-        unsafe { request.SetTreeScope(TreeScope(TreeScope_Element.0 | TreeScope_Children.0)) }?;
+        unsafe { request.SetTreeScope(TreeScope_Children) }?;
         // SAFETY: `self.client` is a live IUIAutomation; the call takes no
         // arguments.
         let raw_view = unsafe { self.client.RawViewCondition() }?;

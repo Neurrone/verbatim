@@ -731,11 +731,15 @@ no cached read fails (`docs/design/uia-shapes.md`, step 4).
 
 - Minimum: 1 UIA call per container read: the dialog's children, with
   every property the rules look at cached, in one `BuildUpdatedCache` whose
-  scope takes in the children.
-- Today: 1 UIA call. mockapp answered 172 provider calls, 208 before
-  each child was read as the `DialogText` shape, which leaves out the
-  properties the rules never read, the bounding rectangle among them
-  (`docs/design/uia-shapes.md`, step 3).
+  scope is the children alone, as NVDA's is.
+- Today: 1 UIA call. mockapp answered 138 provider calls: 26
+  `ProviderOptions`, 33 `GetPatternProvider`, 46 `GetPropertyValue`, 11
+  `HostRawElementProvider`, 9 `Navigate`, 6 `GetRuntimeId`, and 7
+  `FragmentRoot`. It answered 172 while the scope took in the dialog's
+  own element too, filled with the children's properties though nothing
+  read them, and 208 before each child was read as the `DialogText`
+  shape, which leaves out the properties the rules never read, the
+  bounding rectangle among them (`docs/design/uia-shapes.md`, step 3).
 - Target: 1, met.
 
 ### An object navigation step, MSAA
@@ -1398,6 +1402,8 @@ base request too until the request was removed in step 5 of
 `docs/design/uia-shapes.md`): the base request cost mockapp 22 `GetPropertyValue`, 11 `GetPatternProvider`, and 1
 `BoundingRectangle`; the text events' 3 `GetPropertyValue`, and the
 property changes' 13 `GetPropertyValue` and the 11 `GetPatternProvider`;
+and the listener's desktop-wide events (`ListenerEvent`), measured in
+the same test, 15 `GetPropertyValue` and 3 `GetPatternProvider`;
 each also costs the same 5 `ProviderOptions`, 3
 `HostRawElementProvider`, 3 `FragmentRoot`, and 2 `GetRuntimeId`. On
 demand because the calls UIA makes to route an event to its registration

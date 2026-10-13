@@ -1056,9 +1056,11 @@ impl Follower {
         self.registered = now;
     }
 
-    /// The elements of `scope`, fetched with the first part's cache
-    /// request where they must be fetched, and the tree scope a group
-    /// registered on them listens over.
+    /// The elements of `scope`, and the tree scope a group registered on
+    /// them listens over. A window's element is fetched with nothing
+    /// cached, since nothing reads it: it is only where the group is
+    /// registered. The desktop's root is fetched with the first part's
+    /// cache request.
     fn resolve(&self, scope: &Scope) -> (Vec<IUIAutomationElement>, TreeScope) {
         let Some(cache) = self.built.first().map(|built| &built.cache) else {
             return (Vec::new(), TreeScope_Element);
@@ -1068,7 +1070,8 @@ impl Follower {
             Scope::Windows(hwnds) => (
                 hwnds
                     .iter()
-                    .filter_map(|&hwnd| self.uia.element_from_handle(hwnd, cache).ok())
+                    .filter_map(|&hwnd| self.uia.window_live(hwnd).ok())
+                    .map(|window| window.element().clone())
                     .collect(),
                 TreeScope_Subtree,
             ),

@@ -797,8 +797,10 @@ fn msaa_list_view_costs_exactly() {
 /// `verbatim-outpost`'s `read.rs`): the dialog's element is the one the
 /// node registry keeps, here kept from a property event, whose cache holds
 /// no detail, and is resolved on the bounded client's thread as `Kept`;
-/// one call reads the dialog's children with their properties cached, and
-/// nothing of the dialog's own element is read, so no cached read fails.
+/// one call reads the dialog's children with their properties cached,
+/// scoped to the children alone as NVDA fetches them, so the dialog's own
+/// element is filled with nothing and nothing of it is read, and no cached
+/// read fails.
 /// Each child is read with its description whatever the theme, as NVDA's
 /// dialog text includes it, so the question's description is in the text
 /// with descriptions off as with them on: no theme gate reaches the
@@ -839,13 +841,13 @@ fn uia_dialog_text_costs_exactly() {
         calls(1, 0, 0),
         0,
         &[
-            ("ProviderOptions", 29),
-            ("GetPatternProvider", 44),
-            ("GetPropertyValue", 60),
-            ("HostRawElementProvider", 13),
+            ("ProviderOptions", 26),
+            ("GetPatternProvider", 33),
+            ("GetPropertyValue", 46),
+            ("HostRawElementProvider", 11),
             ("Navigate", 9),
-            ("GetRuntimeId", 8),
-            ("FragmentRoot", 9),
+            ("GetRuntimeId", 6),
+            ("FragmentRoot", 7),
         ],
     );
     ratchet.finish();
@@ -1850,7 +1852,9 @@ fn uia_selected_children_cost_exactly() {
 /// caret and text change events carry little more than their window, since
 /// nothing is spoken from them (`TextEvent`), and a property change of the
 /// focus carries what its name, value, and states are read from
-/// (`PropertyEvent`); every event was registered with the base
+/// (`PropertyEvent`), while every desktop-wide event of the listener's
+/// registration carries what the listener judges and reads a focus from
+/// (`ListenerEvent`); every event was registered with the base
 /// cache request, 34 properties, before. Measured on demand because the calls UIA makes to
 /// route an event to its registration vary from one delivery to another
 /// with how busy the machine is, while a cache request's calls do not.
@@ -1869,6 +1873,10 @@ fn uia_event_caches_cost_exactly() {
         .uia
         .request_fixed::<PropertyEvent>()
         .expect("the property event's request");
+    let listener = under_test
+        .uia
+        .request_fixed::<ListenerEvent>()
+        .expect("the listener event's request");
     let live = Live::new(notes.clone());
     let (_, cost) = under_test.measure(hwnd, |_| {
         live.refresh(&text).expect("the element's cache is filled")
@@ -1899,6 +1907,24 @@ fn uia_event_caches_cost_exactly() {
             ("ProviderOptions", 5),
             ("GetPatternProvider", 11),
             ("GetPropertyValue", 13),
+            ("HostRawElementProvider", 3),
+            ("GetRuntimeId", 2),
+            ("FragmentRoot", 3),
+        ],
+    );
+    let (_, cost) = under_test.measure(hwnd, |_| {
+        live.refresh(&listener)
+            .expect("the element's cache is filled")
+    });
+    ratchet.check(
+        "UIA event cache, a desktop-wide event",
+        &cost,
+        calls(1, 0, 0),
+        0,
+        &[
+            ("ProviderOptions", 5),
+            ("GetPatternProvider", 3),
+            ("GetPropertyValue", 15),
             ("HostRawElementProvider", 3),
             ("GetRuntimeId", 2),
             ("FragmentRoot", 3),

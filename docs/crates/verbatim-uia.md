@@ -43,8 +43,9 @@ Public API:
   that reads nothing of it, only searches under it: `ElementFromHandle`,
   one call), `children(parent, request)` (`parent`'s raw-view children,
   each filled by `request`, in one `BuildUpdatedCache` on a copy of the
-  request set to the element and its children, nothing of `parent`'s
-  own cache read; a dialog's own text is gathered this way),
+  request scoped to the children alone in the raw view, as NVDA fetches
+  children, so `parent` itself is filled with nothing; a dialog's own
+  text is gathered this way),
   `find_by_runtime_id(root, runtime_id, request)` (a search under `root`,
   the fallback when no element is kept) and `controlled(focused,
   runtime_id, request)` (the selected element, when it is inside an
@@ -364,8 +365,9 @@ Public API:
   is built once per thread and client, on first need, every part with its
   own shape's request, so the provider is asked for no more with each
   event than the part's callbacks read. The
-  elements of a scope of windows or the desktop are fetched with the first
-  part's cache request.
+  element of each window in a scope of windows is fetched with nothing
+  cached, since it is only where the group is registered, and the
+  desktop's root with the first part's cache request.
 - The outpost's one focus-following registration has four parts: the
   focus's property changes shaped as `PropertyEvent` (the base set
   without the details and focus context properties, since a change of
