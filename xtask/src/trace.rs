@@ -69,7 +69,10 @@ fn stop() -> Result<String, String> {
         if now.is_some() && now != before {
             let text = now.unwrap_or_default();
             let mut lines = text.lines().map(str::trim);
-            let file = lines.next().unwrap_or_default().trim_start_matches('\u{feff}');
+            let file = lines
+                .next()
+                .unwrap_or_default()
+                .trim_start_matches('\u{feff}');
             let code = lines.next().unwrap_or_default();
             return if code == "0" {
                 Ok(format!("trace written to {file}"))
