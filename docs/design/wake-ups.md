@@ -78,22 +78,38 @@ Counts are for one traced window of 5 to 8 seconds.
    shows from every process (`LISTENER_SUBSCRIPTIONS`), and every outpost
    to thirteen kinds from its application (`APP_SUBSCRIPTIONS`), among them
    name, state and show changes that File Explorer raises in thousands.
-   Open: which kinds dominate, and whether each is needed in that hook
-   (the listener needs shows only for tooltips and windows of
-   applications without an outpost).
+   The stacks (`--stacks`) show who raises them: File Explorer, Steam's web
+   helper (about 850 in 5 seconds while Steam merely runs), and the test
+   agent. NVDA's main thread hooks about thirty kinds, location changes
+   among them, from every process out of context too
+   (`internalWinEventHandler.py` 35 to 62), so it pays the same per event;
+   its console events, unlike Verbatim's before item 10, it hooks only
+   while connected to a focused legacy console (`winConsoleHandler.py`).
+   Narrowing this means filtering inside the application before the event
+   leaves it, which is the injection helper of decision D2; until then, the
+   question for each kind is whether that hook needs it.
 8. In the same run one of the listener's unnamed threads woke 10,089
    times, about 1,260 a second, and two others 4,185 and 1,674. They are
    not Verbatim's (it names its threads); they are most likely UI
    Automation's own, serving the listener's desktop-wide subscriptions,
    including the `WinEvent` processing UI Automation does to raise events
-   for windows without a native provider. Open: confirming that needs the
-   trace's stacks, and then whether a narrower subscription removes it.
+   for windows without a native provider. The threads UI Automation runs
+   Verbatim's handlers on now name themselves `verbatim-uia-callback` at
+   their first event, and their stacks show them readied from File
+   Explorer, the source of the events; UI Automation's other threads stay
+   unnamed. Each handled event costs this hop, which the application's
+   event rate decides.
 9. verbatim.exe's GUI thread woke 361 times in 8 seconds of typing and
    almost never while idle, though no Verbatim window was open and nothing
    in Verbatim's code wakes its event loop except the menu, a shell list
    and shutdown. Its wakers are unrelated processes after waits of 20 ms or
-   more, which points to a timer or to messages Windows sends the thread.
-   Open: needs the trace's stacks.
+   more. The stacks show it readied from File Explorer, Steam's web helper,
+   PowerShell and Edge's web view: messages Windows broadcasts to every
+   top-level window, which Verbatim's hidden frame and tray icon are; any
+   application with a hidden top-level window pays them. A message-only
+   window receives no broadcasts, but the tray icon and the menus need the
+   frame; a later design question, about 67 wake-ups a second while
+   typing.
 10. The keyboard hook thread hooked every console's events from every
     console on the desktop, to learn which console host thread to
     translate typed keys with: a console flooding in the background woke
@@ -105,6 +121,13 @@ Counts are for one traced window of 5 to 8 seconds.
 11. Threads that exist only for the test harness (the WAV recorder, the
     control plane's speech writers) wake often in every run and cost a
     user nothing.
+
+Tracing has one hazard, seen twice on 2026-10-13 and not understood:
+after a trace started while a scenario was starting, File Explorer kept
+putting keyboard focus on the taskbar's Start button whenever the desktop
+was brought forward, and every scenario then failed at its start until
+Explorer was restarted. Traces are therefore started well after a
+scenario's startup.
 
 ## What follows
 

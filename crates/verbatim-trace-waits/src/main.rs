@@ -24,11 +24,17 @@
 //! blocked, not ready, for half a millisecond or more, and how long they
 //! had waited: the waking thread is the one running on the processor that
 //! logged the ready event, known from the context switches.
+//! With `--stacks <thread name>` (or `<process.exe>:<thread name>` for
+//! that process's threads of that name, an empty name for those without one)
+//! it reports the stacks the trace recorded
+//! where those threads were readied, each frame as a module and offset (no
+//! symbols are read), the most frequent first: the code that woke them,
+//! which names the cause even when the readying thread is an interrupt's.
 //! Names come from the thread events (`SetThreadDescription`,
 //! which Rust's named threads set); a process is named by the `.exe` image
 //! the trace saw loaded in it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process::ExitCode;
 
 use windows::Win32::System::Diagnostics::Etw::{
@@ -39,6 +45,16 @@ use windows::core::{GUID, PWSTR};
 
 /// The kernel's thread events (`Thread` in the kernel logger's MOF).
 const THREAD: GUID = GUID::from_u128(0x3d6fa8d1_fe05_11d0_9dda_00c04fd7ba7c);
+
+/// The kernel's stack walk events, each the stack of the event logged just
+/// before it on the same processor.
+const STACK_WALK: GUID = GUID::from_u128(0xdef2fe46_7bd6_4b80_bd94_f57fe20d0ce3);
+
+/// The stack walk event's opcode.
+const STACK: u8 = 32;
+
+/// How many frames of a stack are reported.
+const FRAMES: usize = 32;
 
 /// The kernel's image load events (`Image`).
 const IMAGE: GUID = GUID::from_u128(0x2cb15d1d_5fc1_11d2_abe1_00a0c911f518);
@@ -80,6 +96,15 @@ struct Waits {
     /// context switches: the thread that readies another, since a ready
     /// event does not name it.
     running: HashMap<u16, u32>,
+    /// The thread name whose readying stacks are collected, if any.
+    stack_target: Option<String>,
+    /// Processors whose next stack walk is a collected readying's.
+    stack_pending: HashSet<u16>,
+    /// The readying stacks collected, as frames, and how many times each.
+    stacks: HashMap<Vec<String>, usize>,
+    /// Each process's loaded images: base, size and file name; the
+    /// kernel's under process 0.
+    modules: HashMap<u32, Vec<(u64, u64, String)>>,
 }
 
 /// The shortest blocked wait recorded, in 100-nanosecond units.
@@ -104,6 +129,13 @@ impl Waits {
                 }
                 READY_THREAD => {
                     if let Some(thread) = u32_at(data, 0) {
+                        if self
+                            .stack_target
+                            .as_ref()
+                            .is_some_and(|target| self.targets(thread, target))
+                        {
+                            self.stack_pending.insert(processor);
+                        }
                         self.ready_since.entry(thread).or_insert(time);
                         if let Some(since) = self.blocked_since.remove(&thread)
                             && time - since >= SHORTEST_BLOCKED
@@ -126,6 +158,11 @@ impl Waits {
             }
         } else if header.ProviderId == IMAGE && matches!(opcode, IMAGE_LOAD | IMAGE_DC_START) {
             self.image(data);
+        } else if header.ProviderId == STACK_WALK
+            && opcode == STACK
+            && self.stack_pending.remove(&processor)
+        {
+            self.stack(data);
         }
     }
 
@@ -170,6 +207,12 @@ impl Waits {
             return;
         };
         let file = path.rsplit('\\').next().unwrap_or(&path).to_lowercase();
+        if let (Some(base), Some(size)) = (u64_at(data, 0), u64_at(data, 8)) {
+            self.modules
+                .entry(process)
+                .or_default()
+                .push((base, size, file.clone()));
+        }
         if std::path::Path::new(&file)
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
@@ -177,6 +220,68 @@ impl Waits {
             self.images.entry(process).or_insert(file);
         }
     }
+}
+
+impl Waits {
+    /// Whether `thread` is one `target` names: a thread of that name in
+    /// any process, or, for `<process.exe>:<name>`, one of that name in a
+    /// process of that image, an empty name meaning a thread with none.
+    fn targets(&self, thread: u32, target: &str) -> bool {
+        let name = self.names.get(&thread);
+        match target.split_once(':') {
+            Some((image, wanted)) => {
+                let in_image = self
+                    .process_of
+                    .get(&thread)
+                    .and_then(|process| self.images.get(process))
+                    .is_some_and(|known| known.eq_ignore_ascii_case(image));
+                in_image
+                    && match name {
+                        Some(name) => name == wanted,
+                        None => wanted.is_empty(),
+                    }
+            }
+            None => name.is_some_and(|name| name == target),
+        }
+    }
+
+    /// A readying's stack: the process and thread it was taken in at
+    /// offsets 8 and 12, then the return addresses from 16, each named by
+    /// the module holding it, in that process or the kernel.
+    fn stack(&mut self, data: &[u8]) {
+        let process = u32_at(data, 8).unwrap_or(0);
+        let image = self.images.get(&process).map_or("?", String::as_str);
+        let frames: Vec<String> = std::iter::once(format!("in {image} {process}"))
+            .chain(
+                (16..data.len())
+                    .step_by(8)
+                    .filter_map(|offset| u64_at(data, offset))
+                    .take(FRAMES)
+                    .map(|address| self.frame(process, address)),
+            )
+            .collect();
+        *self.stacks.entry(frames).or_default() += 1;
+    }
+
+    /// `address` as a module and offset, from `process`'s images or the
+    /// kernel's, or as itself when no image holds it.
+    fn frame(&self, process: u32, address: u64) -> String {
+        [process, 0]
+            .iter()
+            .filter_map(|process| self.modules.get(process))
+            .flatten()
+            .find(|(base, size, _)| address >= *base && address < base + size)
+            .map_or_else(
+                || format!("{address:#x}"),
+                |(base, _, name)| format!("{name}+{:#x}", address - base),
+            )
+    }
+}
+
+fn u64_at(data: &[u8], offset: usize) -> Option<u64> {
+    Some(u64::from_le_bytes(
+        data.get(offset..offset + 8)?.try_into().ok()?,
+    ))
 }
 
 fn user_data(record: &EVENT_RECORD) -> &[u8] {
@@ -223,8 +328,11 @@ unsafe extern "system" fn on_event(record: *mut EVENT_RECORD) {
     waits.event(record);
 }
 
-fn read(path: &str) -> Result<Waits, String> {
-    let mut waits = Waits::default();
+fn read(path: &str, stack_target: Option<String>) -> Result<Waits, String> {
+    let mut waits = Waits {
+        stack_target,
+        ..Waits::default()
+    };
     let mut name: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
     let mut logfile = EVENT_TRACE_LOGFILEW {
         LogFileName: PWSTR(name.as_mut_ptr()),
@@ -327,19 +435,39 @@ fn report_wakers(waits: &Waits, target: &str) {
     }
 }
 
+/// The readying stacks collected, the most frequent first, the top ten.
+fn report_stacks(waits: &Waits) {
+    let mut rows: Vec<_> = waits.stacks.iter().collect();
+    rows.sort_by_key(|(_, count)| std::cmp::Reverse(**count));
+    for (frames, count) in rows.into_iter().take(10) {
+        println!("{count} times:");
+        for frame in frames {
+            println!("    {frame}");
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(path) = args.first() else {
         eprintln!(
-            "usage: verbatim-trace-waits <trace.etl> [--wakers <thread name>] [process.exe ...]"
+            "usage: verbatim-trace-waits <trace.etl> [--wakers <thread name> | --stacks <thread name>] [process.exe ...]"
         );
         return ExitCode::from(2);
     };
     let mut rest = &args[1..];
     let mut wakers = None;
-    if rest.first().is_some_and(|arg| arg == "--wakers") {
-        wakers = rest.get(1).cloned();
-        rest = rest.get(2..).unwrap_or(&[]);
+    let mut stacks = None;
+    match rest.first().map(String::as_str) {
+        Some("--wakers") => {
+            wakers = rest.get(1).cloned();
+            rest = rest.get(2..).unwrap_or(&[]);
+        }
+        Some("--stacks") => {
+            stacks = rest.get(1).cloned();
+            rest = rest.get(2..).unwrap_or(&[]);
+        }
+        _ => {}
     }
     let mut processes: Vec<String> = rest.iter().map(|name| name.to_lowercase()).collect();
     if processes.is_empty() {
@@ -351,11 +479,12 @@ fn main() -> ExitCode {
         .map(str::to_owned)
         .to_vec();
     }
-    match read(path) {
+    match read(path, stacks.clone()) {
         Ok(waits) => {
-            match &wakers {
-                Some(target) => report_wakers(&waits, target),
-                None => report(&waits, &processes),
+            match (&wakers, &stacks) {
+                (Some(target), _) => report_wakers(&waits, target),
+                (None, Some(_)) => report_stacks(&waits),
+                (None, None) => report(&waits, &processes),
             }
             ExitCode::SUCCESS
         }

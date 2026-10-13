@@ -213,10 +213,59 @@ pub fn variant_bool(value: &VARIANT) -> bool {
 /// Logs, at debug, that a UIA event of kind `event` (`id`, its event or
 /// property id, 0 for a focus) from `element` was received, the first
 /// thing each handler does, so its arrival time shows whatever becomes of
-/// it. The runtime id is a local read.
+/// it. The runtime id is a local read. Also names the thread the callback
+/// runs on, once (`name_callback_thread`).
 pub(crate) fn log_arrival(event: &str, id: i32, element: &IUIAutomationElement) {
+    name_callback_thread();
     if tracing::enabled!(tracing::Level::DEBUG) {
         tracing::debug!(event, id, runtime_id = ?runtime_id(element), "UIA event received");
+    }
+}
+
+/// The name the threads UI Automation runs Verbatim's event handlers on
+/// are given, when they have none, so a trace of the CPU's scheduling
+/// tells them from UI Automation's other threads
+/// (`docs/design/wake-ups.md`).
+const CALLBACK_THREAD_NAME: &str = "verbatim-uia-callback";
+
+thread_local! {
+    /// Whether this thread's name has been looked at.
+    static CALLBACK_THREAD_NAMED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Names the calling thread, one of UI Automation's running a Verbatim
+/// handler, [`CALLBACK_THREAD_NAME`], unless it has a name already; once
+/// per thread, so later callbacks cost a thread-local read.
+fn name_callback_thread() {
+    if CALLBACK_THREAD_NAMED.with(|named| named.replace(true)) {
+        return;
+    }
+    // SAFETY: returns a pseudo-handle and has no preconditions.
+    let thread = unsafe { windows::Win32::System::Threading::GetCurrentThread() };
+    // SAFETY: the pseudo-handle of the calling thread; the description
+    // returned is freed below.
+    let unnamed = match unsafe { windows::Win32::System::Threading::GetThreadDescription(thread) } {
+        Ok(description) => {
+            // SAFETY: a NUL-terminated string the call allocated.
+            let empty = unsafe { description.as_wide() }.is_empty();
+            // SAFETY: allocated by GetThreadDescription, freed once.
+            unsafe {
+                let _ = windows::Win32::Foundation::LocalFree(Some(
+                    windows::Win32::Foundation::HLOCAL(description.0.cast()),
+                ));
+            }
+            empty
+        }
+        Err(_) => false,
+    };
+    if unnamed {
+        // SAFETY: as above; the name is a HSTRING alive across the call.
+        let _ = unsafe {
+            windows::Win32::System::Threading::SetThreadDescription(
+                thread,
+                &windows::core::HSTRING::from(CALLBACK_THREAD_NAME),
+            )
+        };
     }
 }
 

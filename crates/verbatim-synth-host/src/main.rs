@@ -80,29 +80,32 @@ fn main() -> ExitCode {
     {
         let cancelled = Arc::clone(&cancelled);
         let mut from_core = BufReader::new(from_core);
-        std::thread::spawn(move || {
-            loop {
-                let request = match read_to_host(&mut from_core) {
-                    Ok(Some(request)) => (request, now_us()),
-                    // Core closed the command pipe: it is done with this host.
-                    Ok(None) => return,
-                    Err(error) => {
-                        tracing::error!(%error, "a command from Core could not be read");
-                        return;
-                    }
-                };
-                match request {
-                    (ToHost::Cancel(utterance), _) => {
-                        cancelled.store(utterance.0, Ordering::Release);
-                    }
-                    other => {
-                        if requests_tx.send(other).is_err() {
+        std::thread::Builder::new()
+            .name("verbatim-host-commands".to_owned())
+            .spawn(move || {
+                loop {
+                    let request = match read_to_host(&mut from_core) {
+                        Ok(Some(request)) => (request, now_us()),
+                        // Core closed the command pipe: it is done with this host.
+                        Ok(None) => return,
+                        Err(error) => {
+                            tracing::error!(%error, "a command from Core could not be read");
                             return;
+                        }
+                    };
+                    match request {
+                        (ToHost::Cancel(utterance), _) => {
+                            cancelled.store(utterance.0, Ordering::Release);
+                        }
+                        other => {
+                            if requests_tx.send(other).is_err() {
+                                return;
+                            }
                         }
                     }
                 }
-            }
-        });
+            })
+            .expect("spawn the host's command reader");
     }
 
     while let Ok((request, received_at_us)) = requests.recv() {
