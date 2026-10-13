@@ -87,11 +87,21 @@ Public API:
   `ProcessPowerThrottling`), which Windows otherwise applies to a
   windowless background process; the power plan is untouched.
   `prioritize_current_thread(priority)` runs the calling thread at a
-  `ThreadPriority` (`Normal`, `AboveNormal`, `Highest`, `TimeCritical`)
-  and opts it out of power throttling too; `prioritize_role(role,
-  priority)` does the same and logs a refusal. Only the relay floor's
-  benchmark calls them so far: the communication design's migration step
-  3 gives every process and hot-path thread its level. Timer resolution is not raised.
+  `ThreadPriority` (`Normal`, `AboveNormal`, `Highest`, `TimeCritical`);
+  `prioritize_role(role, priority)` does the same and logs a refusal as
+  a warning, the thread carrying on as it was. The threads that only move
+  messages run at `Highest`: the keyboard hook, verbatim.exe's supervisor
+  owner, its reader and writer for each child, the listener's and each
+  outpost's pipe-reading main thread and outbound writer, the `WinEvent`
+  threads, and both ends' synthesizer host readers. Each caller names its
+  level once per role in a constant of its own. Every other thread keeps
+  normal priority: raising the threads that compute did not pay when
+  measured (`docs/design/communication.md`, section 11, step 3).
+  `opt_out_of_power_throttling()` and
+  `opt_current_thread_out_of_power_throttling()` opt the process or the
+  calling thread out of execution-speed power throttling; only the relay
+  floor's benchmark calls them, since the same measurement found no gain
+  that would pay for the energy. Timer resolution is not raised.
 - `session::current()` — the calling process's `Session`: its session
   `id`, whether its window station is interactive
   (`interactive_window_station`), and the input desktop's name when it can

@@ -22,6 +22,7 @@ use std::time::Instant;
 
 use crossbeam_channel::unbounded;
 use verbatim_audio::PcmFormat;
+use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_speech::hosting::{
     FromHost, HostDescription, HostTiming, ToHost, now_us, read_to_host, synth_ids, write_from_host,
 };
@@ -36,6 +37,11 @@ macro_rules! report_error {
         let _ = writeln!(std::io::stderr(), $($arg)*);
     }};
 }
+
+/// The priority of the command reader thread, which only moves each
+/// command on, for microseconds per wake (`docs/design/communication.md`,
+/// section 6.1).
+const READER_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 fn main() -> ExitCode {
     // Core redirects this process's output to a log file of its own.
@@ -83,6 +89,7 @@ fn main() -> ExitCode {
         std::thread::Builder::new()
             .name("verbatim-host-commands".to_owned())
             .spawn(move || {
+                prioritize_role("command reader", READER_PRIORITY);
                 loop {
                     let request = match read_to_host(&mut from_core) {
                         Ok(Some(request)) => (request, now_us()),

@@ -68,6 +68,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use verbatim_input::map::SharedGestureMap;
 use verbatim_input::state::{DecisionConfig, DecisionMachine, EmittedGesture, KeySpeechEffect};
+use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 
 /// The `dwExtraInfo` Verbatim puts on keys it injects for its own purposes
 /// (the Control tap that lets it take the foreground). The hook leaves
@@ -275,6 +276,11 @@ impl Drop for InputHook {
     }
 }
 
+/// The hook thread's priority: it decides each key and hands it on, for
+/// microseconds per key, and Windows removes a low-level hook that keeps a
+/// key waiting too long (`docs/design/communication.md`, section 6.1).
+const HOOK_PRIORITY: ThreadPriority = ThreadPriority::Highest;
+
 /// The body of the hook thread: install the hook, publish readiness, pump
 /// messages until `WM_QUIT`, then unhook.
 fn hook_thread(
@@ -284,6 +290,7 @@ fn hook_thread(
     (speech, reports): (SpeechEffectFn, KeyReportFn),
     ready_tx: &mpsc::Sender<io::Result<u32>>,
 ) {
+    prioritize_role("keyboard hook", HOOK_PRIORITY);
     // COM for the text services' profile manager, which typing asks which
     // keyboard profile is active (`typed`); it lives as long as the thread
     // and is released before COM is uninitialized.

@@ -50,6 +50,9 @@ pub fn prioritize(priority: ThreadPriority) {
     if let Err(error) = verbatim_process::scheduling::prioritize_current_thread(priority) {
         eprintln!("relay-floor: a thread keeps its priority: {error}");
     }
+    if let Err(error) = verbatim_process::scheduling::opt_current_thread_out_of_power_throttling() {
+        eprintln!("relay-floor: a thread stays throttled: {error}");
+    }
 }
 
 /// One message, as a sender writes it.

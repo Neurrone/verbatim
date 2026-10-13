@@ -15,6 +15,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use verbatim_ia2::{WinEventCallback, WinEventHook, WinEventKind};
+use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
+
+/// The `WinEvent` thread's priority: it only moves each event on, for
+/// microseconds per wake (`docs/design/communication.md`, section 6.1).
+const EVENT_THREAD_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// The event thread: installs the requested MSAA hooks once (scoped to the
 /// given pid, or global for pid zero), then pumps messages so the
@@ -72,6 +77,7 @@ fn event_thread_main(
     id_tx: &Sender<u32>,
     make_callback: &Arc<dyn Fn() -> WinEventCallback + Send + Sync>,
 ) {
+    prioritize_role("WinEvent", EVENT_THREAD_PRIORITY);
     // SAFETY: GetCurrentThreadId is always sound.
     let thread_id = unsafe { GetCurrentThreadId() };
     // Makes this thread's message queue now, before its id is reported, so

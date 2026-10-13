@@ -30,6 +30,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 
 use verbatim_model::{NodeId, NormalizedEvent, PropertyChange};
+use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 
 use crate::protocol::{OutpostToSupervisor, write_message};
 
@@ -258,6 +259,10 @@ pub(crate) struct Outbound {
     shared: Arc<Shared>,
 }
 
+/// The outbound writer's priority: it only writes each message to Core,
+/// for microseconds per wake (`docs/design/communication.md`, section 6.1).
+const OUTBOUND_PRIORITY: ThreadPriority = ThreadPriority::Highest;
+
 impl Outbound {
     /// Starts the writer thread over `pipe`.
     ///
@@ -274,7 +279,10 @@ impl Outbound {
         let writer = Arc::clone(&shared);
         let join = thread::Builder::new()
             .name("verbatim-outbound".to_owned())
-            .spawn(move || write_loop(pipe, &writer))
+            .spawn(move || {
+                prioritize_role("outpost outbound", OUTBOUND_PRIORITY);
+                write_loop(pipe, &writer);
+            })
             .expect("spawn the outbound writer");
         (Self { shared }, join)
     }

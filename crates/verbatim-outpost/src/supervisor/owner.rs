@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, select, tick};
 use verbatim_model::{OutpostId, Pid, TraceId};
+use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 
 use crate::protocol::{
     DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
@@ -30,6 +31,16 @@ use super::{
     ABANDONED_WORKER_LIMIT, CRASH_LIMIT, CRASH_WINDOW, EndReason, EventSink, IDLE_RETIREMENT,
     MISSED_PONG_THRESHOLD, OutpostMessage, PING_INTERVAL, SWEEP_INTERVAL, Writers,
 };
+
+/// The owner thread's priority: it routes each of the listener's facts
+/// to its outpost and handles each child's reports, for microseconds per
+/// wake (`docs/design/communication.md`, section 6.1).
+const OWNER_PRIORITY: ThreadPriority = ThreadPriority::Highest;
+
+/// The priority of each child's reader thread, the listener's and every
+/// outpost's: it only reads each message and hands it on, for
+/// microseconds per wake (`docs/design/communication.md`, section 6.1).
+const READER_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// A fact reported to the owner.
 #[expect(
@@ -213,6 +224,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
     thread::Builder::new()
         .name("verbatim-supervisor".to_owned())
         .spawn(move || {
+            prioritize_role("supervisor", OWNER_PRIORITY);
             owner.start_listener(false);
             let heartbeat = tick(PING_INTERVAL);
             let sweep = tick(SWEEP_INTERVAL);
@@ -1118,9 +1130,12 @@ fn start_reader(
     };
     thread::Builder::new()
         .name(name.to_owned())
-        .spawn(move || match role {
-            Role::Outpost(pid) => read_outpost(outpost, pid, from_child, &events_tx, &own_tx),
-            Role::Listener => read_listener(outpost, from_child, &own_tx),
+        .spawn(move || {
+            prioritize_role(name, READER_PRIORITY);
+            match role {
+                Role::Outpost(pid) => read_outpost(outpost, pid, from_child, &events_tx, &own_tx),
+                Role::Listener => read_listener(outpost, from_child, &own_tx),
+            }
         })?;
     Ok(())
 }

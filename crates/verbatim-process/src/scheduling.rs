@@ -2,19 +2,24 @@
 //! scheduled, under whatever power plan the machine has (Dickson's decision
 //! of 2026-10-08, `docs/roadmap.md`; `docs/design/relay.md`, section 4.4).
 //!
-//! - Every Verbatim process opts out of power throttling
-//!   ([`opt_out_of_power_throttling`]). Verbatim's processes have no
-//!   visible window, which is what makes Windows treat a process as a
-//!   background candidate for `EcoQoS`: confined to efficiency cores and
-//!   run at a low clock. This is a per-process quality-of-service request,
-//!   not a change of power plan; Balanced stays Balanced.
-//! - The few threads an event waits on as it crosses processes run at a
-//!   raised priority ([`prioritize_current_thread`]), so a thread made
+//! - The threads that only move messages as an event crosses processes run
+//!   at a raised priority ([`prioritize_current_thread`]), so a thread made
 //!   ready by a pipe pre-empts the normal-priority threads of whatever
 //!   application is busy rather than waiting out their quantum. They do
 //!   microseconds of work per message and block between messages. Each
-//!   caller names its level in one constant of its own, which the
-//!   platform floor's benchmark (`cargo xtask relay-floor`) chooses.
+//!   caller names its level in one constant of its own. Measured on
+//!   2026-10-13 (`docs/design/communication.md`, section 11, step 3), this
+//!   took verbatim.exe's own stage's maximum from about 4 ms to under
+//!   half a millisecond, with no measurable change in processor time or
+//!   wake-ups; raising the threads that compute did not pay, and is not
+//!   done.
+//! - Opting out of power throttling, for a process
+//!   ([`opt_out_of_power_throttling`]) or a thread
+//!   ([`opt_current_thread_out_of_power_throttling`]), keeps it on fast
+//!   cores at full clocks, which costs energy for every unit of work. The
+//!   same measurement found no latency gain from it, so Verbatim's
+//!   processes do not ask for it; the platform floor's benchmark (`cargo
+//!   xtask relay-floor`) still measures it.
 //!
 //! Timer resolution is not raised: nothing on the relay's path waits on a
 //! timer.
@@ -87,18 +92,27 @@ pub fn opt_out_of_power_throttling() -> io::Result<()> {
     .map_err(io::Error::other)
 }
 
-/// Runs the calling thread at `priority` and opts it out of
-/// execution-speed power throttling, for a thread an event waits on as it
-/// crosses processes. Dynamic priority boosts stay on.
+/// Runs the calling thread at `priority`, for a thread an event waits on
+/// as it crosses processes. Dynamic priority boosts stay on.
 ///
 /// # Errors
 ///
-/// Returns the error of whichever request Windows refuses.
+/// Returns the error if Windows refuses the request.
 pub fn prioritize_current_thread(priority: ThreadPriority) -> io::Result<()> {
     // SAFETY: returns a pseudo-handle and has no preconditions.
     let thread = unsafe { GetCurrentThread() };
     // SAFETY: the pseudo-handle of the calling thread.
-    unsafe { SetThreadPriority(thread, priority.value()) }.map_err(io::Error::other)?;
+    unsafe { SetThreadPriority(thread, priority.value()) }.map_err(io::Error::other)
+}
+
+/// Opts the calling thread out of execution-speed power throttling.
+///
+/// # Errors
+///
+/// Returns the error if Windows refuses the request.
+pub fn opt_current_thread_out_of_power_throttling() -> io::Result<()> {
+    // SAFETY: returns a pseudo-handle and has no preconditions.
+    let thread = unsafe { GetCurrentThread() };
     let state = THREAD_POWER_THROTTLING_STATE {
         Version: THREAD_POWER_THROTTLING_CURRENT_VERSION,
         ControlMask: THREAD_POWER_THROTTLING_EXECUTION_SPEED,
