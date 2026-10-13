@@ -32,6 +32,7 @@ mod alarm;
 mod focus_path;
 mod handover;
 mod intake;
+mod narrowing;
 mod outbound;
 mod read;
 pub(crate) mod text_reads;
@@ -50,9 +51,7 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::core::AgileReference;
 
-use verbatim_ia2::{
-    APP_SUBSCRIPTIONS, NodeIdRegistry as MsaaRegistry, WinEvent, WinEventCallback, WinEventKind,
-};
+use verbatim_ia2::{APP_SUBSCRIPTIONS, NodeIdRegistry as MsaaRegistry, WinEvent, WinEventKind};
 use verbatim_model::{Backend, Fetches, NodeId, Pid, TraceId};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_uia::{
@@ -61,7 +60,7 @@ use verbatim_uia::{
 };
 
 use crate::arbitration::{Arbitrator, EventWindows, WindowClasses};
-use crate::event_thread::EventThread;
+use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use crate::protocol::{
     DeliveredFact, EventTiming, OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost,
     UiaSnapshotFact, WinEventStamp, now_us, read_message,
@@ -202,6 +201,9 @@ pub(crate) struct Context {
     /// every window anew: the event thread's windows' backends are
     /// decided again after a change ([`EventWindows`]).
     override_changes: AtomicU64,
+    /// What nudges the event thread, which decides whether the hook is
+    /// narrowed ([`narrowing`]); set once the thread runs.
+    event_thread: OnceLock<Nudger>,
 }
 
 /// An event the outpost's own UIA handlers or `WinEvent` hooks took in from
@@ -455,6 +457,23 @@ impl Context {
         }
     }
 
+    /// Core's backend override, forced on every window, or none
+    /// ([`SupervisorToOutpost::SetBackendOverride`]): every window is
+    /// decided anew, the event thread's too, which decides its hook again.
+    fn set_backend_override(&self, backend_override: Option<Backend>) {
+        self.arbitrator()
+            .set_forced(backend_override.map(|backend| backend == Backend::Uia));
+        self.override_changes.fetch_add(1, Ordering::Release);
+        self.nudge_event_thread(narrowing::Nudge::Decide);
+    }
+
+    /// Nudges the event thread, once it runs ([`narrowing`]).
+    fn nudge_event_thread(&self, nudge: narrowing::Nudge) {
+        if let Some(nudger) = self.event_thread.get() {
+            nudger.nudge(nudge.words());
+        }
+    }
+
     /// Takes in a `WinEvent` the outpost's own hook delivered. A focus,
     /// foreground change, menu opening, alert, or tooltip becomes the fact
     /// the listener forwards for one, queued unless it is the twin of the
@@ -553,6 +572,17 @@ impl Context {
             && !self.admit_win_event(handover::Source::Listener, fact, stamp)
         {
             return;
+        }
+        // The event thread takes the application's focus and foreground
+        // windows from these until its own hook delivers them.
+        match fact {
+            DeliveredFact::MsaaFocus { hwnd, .. } | DeliveredFact::MenuPopup { hwnd, .. } => {
+                self.nudge_event_thread(narrowing::Nudge::RoutedFocus(*hwnd));
+            }
+            DeliveredFact::Foreground { hwnd } => {
+                self.nudge_event_thread(narrowing::Nudge::RoutedForeground(*hwnd));
+            }
+            _ => {}
         }
         self.push(
             Item::Fact(fact.clone(), win_event),
@@ -696,6 +726,7 @@ impl Outpost {
             focus_path: Mutex::new(None),
             failed_reads: AtomicU32::new(0),
             override_changes: AtomicU64::new(0),
+            event_thread: OnceLock::new(),
         });
         if let Some(registration) = register_focus_events(&context) {
             let _ = context.focus_events.set(registration);
@@ -710,32 +741,51 @@ impl Outpost {
         // name, selection, and destroy events. A destroy is queued only for
         // a window, the one kind of object whose end the outpost tracks.
         let hook_context = Arc::clone(&context);
-        let make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync> = Arc::new(move || {
-            let context = Arc::clone(&hook_context);
-            // The event thread's own record of its windows, which only it
+        let make_handlers: MakeHandlers = Arc::new(move || {
+            // The event thread's own record of its windows and of the
+            // application's focus and foreground windows, which only it
             // touches.
-            let known_windows = RefCell::new(EventWindows::default());
-            Box::new(move |event: WinEvent| {
-                if event.kind == WinEventKind::Destroy {
-                    if event.id_object != windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0
-                        || event.id_child != verbatim_ia2::CHILDID_SELF
-                    {
-                        return;
+            let state = std::rc::Rc::new(RefCell::new(narrowing::EventThreadState::default()));
+            let context = Arc::clone(&hook_context);
+            let nudge_context = Arc::clone(&hook_context);
+            let nudge_state = std::rc::Rc::clone(&state);
+            EventHandlers {
+                win_event: Box::new(move |event: WinEvent| {
+                    let mut state = state.borrow_mut();
+                    if event.kind == WinEventKind::Destroy {
+                        if event.id_object
+                            != windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0
+                            || event.id_child != verbatim_ia2::CHILDID_SELF
+                        {
+                            return;
+                        }
+                        state.windows.forget(event.hwnd);
                     }
-                    known_windows.borrow_mut().forget(event.hwnd);
-                }
-                context.take_in_win_event(
-                    event,
-                    EventTiming {
-                        raised_ms_ago: Some(event.raised_ms_ago),
-                        observed_at_us: now_us(),
-                        ..EventTiming::default()
-                    },
-                    &mut known_windows.borrow_mut(),
-                );
-            })
+                    // Before the event is queued, so a focus moving into a
+                    // window read through MSAA hooks its kinds again at once.
+                    state.note_win_event(&event, &context);
+                    context.take_in_win_event(
+                        event,
+                        EventTiming {
+                            raised_ms_ago: Some(event.raised_ms_ago),
+                            observed_at_us: now_us(),
+                            ..EventTiming::default()
+                        },
+                        &mut state.windows,
+                    );
+                }),
+                nudge: Some(Box::new(move |word, hwnd| {
+                    if let Some(nudge) = narrowing::Nudge::from_words(word, hwnd) {
+                        nudge_state.borrow_mut().nudged(nudge, &nudge_context);
+                    }
+                })),
+            }
         });
-        let event_thread = EventThread::spawn(target_pid, APP_SUBSCRIPTIONS, make_callback);
+        let event_thread = EventThread::spawn(target_pid, APP_SUBSCRIPTIONS, make_handlers);
+        let _ = context.event_thread.set(event_thread.nudger());
+        // A verdict the worker kept before the line above nudged no event
+        // thread.
+        context.nudge_event_thread(narrowing::Nudge::Decide);
 
         let outpost = Self {
             context,
@@ -766,6 +816,10 @@ impl Outpost {
         );
         // An error means the worker dropped the request, abandoned.
         let _ = done_rx.recv();
+        // The hook changes the worker's handling asked for are made too.
+        if let Some(nudger) = self.context.event_thread.get() {
+            nudger.sync();
+        }
     }
 
     /// Shuts the outpost down cleanly ([`SupervisorToOutpost::Shutdown`]),
@@ -886,10 +940,7 @@ impl Outpost {
         let context = &self.context;
         match command {
             SupervisorToOutpost::SetBackendOverride { backend_override } => {
-                context
-                    .arbitrator()
-                    .set_forced(backend_override.map(|backend| backend == Backend::Uia));
-                context.override_changes.fetch_add(1, Ordering::Release);
+                context.set_backend_override(*backend_override);
             }
             SupervisorToOutpost::DeliverFact {
                 trace_id,

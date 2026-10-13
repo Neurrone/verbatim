@@ -506,7 +506,9 @@ Public API:
   subscriptions have made every move asked of them, and every message
   published has been written to the pipe: the evidence those tests wait on
   before they read what the application answered, and before they assert
-  the outpost said nothing more. `settle` covers only what has reached the
+  the outpost said nothing more. It then waits for the event thread to
+  have taken every nudge sent before it, so any change of the hook that
+  handling asked for has been made. `settle` covers only what has reached the
   outpost: an application's event reaches a client after the call that
   raised it has returned, on UI Automation's threads or the hook thread.
   `Outpost::failed_reads` gives the failed cached reads the outpost has
@@ -932,7 +934,31 @@ Implementation notes:
   one window costs one lookup per event. A window's entry goes when its
   destroy event arrives, or when its handle is found owned by another
   thread; every backend is decided anew after Core changes the backend
-  override. An MSAA
+  override. The event thread also narrows the hook (`outpost/narrowing.rs`,
+  `docs/design/wake-ups.md`, "Narrowing the outpost's hook"): while the
+  application's focus window and foreground window are both known to be
+  read through UIA, it unhooks the value, state, name, description,
+  selection, text selection and caret location events
+  (`narrowing::NARROWED`, with `verbatim_ia2::suspend_kinds`), which it
+  would drop for those windows anyway, nearly all of them UI Automation's
+  own copies of its events, and it hooks them again as soon as the focus,
+  a menu opening, or the foreground is in a window read through MSAA or
+  not yet decided. Focus, foreground, menu opening, alert, tooltip, window
+  shown, window destroyed, and the console's updates and caret stay hooked
+  for the outpost's life, since the worker uses them for UIA windows too.
+  The focus and foreground windows are those of the hook's own focus,
+  menu-opening and foreground events, decided again before each is
+  queued; until the hook delivers one, those of the facts the listener
+  routed, which the reader passes on as nudges (`event_thread::Nudger`, a
+  thread message the event thread hands to its owner's nudge handler). The
+  worker nudges it to decide again when it has just kept a UIA verdict for
+  a window, and the reader when Core changes the backend override. What can
+  be lost is an event of a narrowed kind raised in a window read through
+  MSAA after the focus or foreground entered it but before the event
+  thread took that event, and one from a window read through MSAA that is
+  neither the focus window nor the foreground window, which the worker's
+  acceptance takes only from a topmost window such as a menu or a
+  drop-down list. An MSAA
   event's window is exact; a UIA element that is not a window itself is
   attributed to its window by `nearest_window_handle` (NVDA's
   `getNearestWindowHandle`), on the worker, since it is a cross-process call.

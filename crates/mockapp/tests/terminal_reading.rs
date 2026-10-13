@@ -22,6 +22,11 @@
 //!   UI Automation's caret event is not subscribed for it.
 //! - A caret key's watch that knows no caret before the key is answered by
 //!   a read that covers a caret event waiting behind it.
+//! - While the console's window is the application's focus window and its
+//!   foreground window, both read through UI Automation, the outpost's
+//!   hook leaves out the change events of windows read through MSAA, UI
+//!   Automation's `WinEvent` copies of its events among them, and hooks
+//!   them again once the focus is in a Win32 button read through MSAA.
 //!
 //! While the terminal is held, the evidence that the outpost has taken a
 //! text change is the report of a caret event raised after it: UI
@@ -44,10 +49,13 @@ use verbatim_model::{
     TextUnit,
 };
 use verbatim_outpost::Heard;
+use verbatim_outpost::protocol::DeliveredFact;
 use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, QueryResult};
 use verbatim_uia::{Cached, ListenerEvent, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::UIA_HelpTextPropertyId;
+use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
+use windows::core::w;
 
 use common::outpost::OutpostUnderTest;
 
@@ -421,6 +429,64 @@ fn an_unchanged_caret_is_not_reported_again() {
     app.quit();
 }
 
+/// While the console's window is both the focus window and the
+/// foreground window, as the listener routes them for the console host,
+/// and is read through UI Automation, UI Automation's `WinEvent` copy of
+/// the text area's caret event does not reach the outpost: the hook has
+/// left those events out, and the console's caret event, raised after it
+/// and always hooked, is the first event heard. Once a Win32 button in the
+/// window, read through MSAA, has the focus, the copy is heard again,
+/// before the console's caret event.
+fn the_hooks_change_events_wait_for_a_window_read_through_msaa() {
+    let (mut app, outpost, _text) = start_with(
+        "mockapp-console-narrowed",
+        "console_terminal_button.json",
+        "text",
+    );
+    let console = common::find_window(&app.title);
+    // UI Automation owns the window: neither is reported.
+    outpost.deliver(DeliveredFact::Foreground {
+        hwnd: console.0 as isize,
+    });
+    outpost.deliver(DeliveredFact::MsaaFocus {
+        hwnd: console.0 as isize,
+        id_object: OBJID_CLIENT.0,
+        id_child: 0,
+    });
+    outpost.settled();
+    app.send("caret-event text");
+    app.send("console-caret 0 0");
+    outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
+    // The caret has not moved.
+    outpost.settled();
+
+    // The window has the focused state, which an MSAA focus in it needs,
+    // as when a dialog's button takes the focus.
+    app.send("set-focus root");
+    // SAFETY: a local search of the console window's children.
+    let find = unsafe { FindWindowExW(Some(console), None, w!("Button"), w!("Find")) }
+        .expect("mockapp made the button");
+    let focus = outpost.focus(DeliveredFact::MsaaFocus {
+        hwnd: find.0 as isize,
+        id_object: OBJID_CLIENT.0,
+        id_child: 0,
+    });
+    assert_eq!(
+        focus.chain(),
+        [Some("Mockapp Console Terminal Fixture"), Some("Find")]
+    );
+    app.send("caret-event text");
+    app.send("console-caret 0 0");
+    outpost.heard(&[
+        Heard::Msaa(WinEventKind::TextSelectionChange),
+        Heard::Msaa(WinEventKind::ConsoleCaret),
+    ]);
+    // The text area is no longer the focus.
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -455,6 +521,10 @@ fn main() {
         (
             "an_unchanged_caret_is_not_reported_again",
             an_unchanged_caret_is_not_reported_again,
+        ),
+        (
+            "the_hooks_change_events_wait_for_a_window_read_through_msaa",
+            the_hooks_change_events_wait_for_a_window_read_through_msaa,
         ),
     ]);
 }

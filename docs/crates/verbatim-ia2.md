@@ -68,6 +68,18 @@ Public API:
   data, such as a scroll's horizontal distance, which is at or below
   `OBJID_ALERT` for ten or more columns to the left; NVDA hooks them
   apart (`winConsoleHandler.py`), where its filters do not run.
+- `suspend_kinds(suspended)` — narrows the calling thread's hook set while
+  it runs: every raw event of the kinds it was installed for is hooked
+  except one whose installed kinds are all in `suspended`, which is
+  unhooked, and an empty list hooks everything again. Each raw event's
+  hook is set and removed on its own within the one set, never a second
+  set on the thread, and it may be called from the thread's own callback,
+  as the keyboard hook thread hooks and unhooks the console's events. The
+  set's hooks are kept in a thread-local beside its callback, so dropping
+  the `WinEventHook` removes whichever are hooked then. An outpost
+  unhooks the change events of windows read through MSAA this way while
+  its application's focus and foreground windows are read through UIA
+  (`docs/crates/verbatim-outpost.md`, "Event flow").
 - `WindowCache<T>` — what a thread keeps about each window by its handle
   until the window is destroyed (`forget`): `get_or_learn(hwnd, owner,
   learn)` learns an entry anew when none is kept or the handle is now

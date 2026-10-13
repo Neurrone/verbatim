@@ -1047,3 +1047,93 @@ On Verbatim's side, other than the desktop-wide group:
   --seconds 8`) no longer falls in one phase of it.
 - `verbatim-trace-waits --stacks` prints the ten most frequent stacks, so
   the readying causes above are shares of those, not of every readying.
+
+## Narrowing the outpost's hook (2026-10-14)
+
+Approved by Dickson. An outpost hooked its application for a fixed set of
+`WinEvent` kinds for the process's life. The event thread already dropped
+every value, state, name, description, selection, text selection and
+caret location event of a window known to be read through UIA, but only
+after the event had woken it: in `conhost_flood` those were 57 percent of
+the events the console's outpost took (30,888 of 53,783 over a whole run,
+nearly all UI Automation's own `WinEvent` copies of its events), and UI
+Automation raises those copies only while some client hooks them.
+
+The change (`crates/verbatim-outpost/src/outpost/narrowing.rs`): while the
+application's focus window and foreground window are both known to be read
+through UIA, those seven kinds are unhooked
+(`verbatim_ia2::suspend_kinds`, one raw event at a time within the one
+hook set, as the keyboard hook thread hooks the console's events); as soon
+as the focus, a menu opening, or the foreground is in a window read
+through MSAA, or not yet decided, they are hooked again, before that event
+is queued. Focus, foreground, menu opening, alert, tooltip, window shown,
+window destroyed and the console's updates and caret stay hooked: the
+worker uses them for UIA windows too. The event thread takes the focus
+and foreground windows from its own hook's events, and from the
+listener's routed facts until its hook delivers one; the worker nudges it
+to decide again when it keeps a UIA verdict, and the reader when Core
+changes the backend override. Selection and mark mode are untouched: the
+console host's comes through `EVENT_CONSOLE_CARET`, Windows Terminal's
+through UI Automation's text selection events, and neither kind is
+narrowed; every review and marker scenario below passed.
+
+What can be lost, and the evidence:
+
+- An event of a narrowed kind raised by a window read through MSAA after
+  the focus or foreground entered it but before the event thread took
+  that focus or foreground event. Checked by hand in the console host's
+  Find dialog (Control+F), with a separate logging hook on every event of
+  the console host: the dialog raised one `EVENT_OBJECT_VALUECHANGE` on
+  its edit before its foreground event, which the outpost did not
+  receive; the hook was in again 0.1 ms after the foreground event
+  reached the event thread, before the dialog's focus event, and every
+  later event of the dialog arrived. Verbatim said "Find dialog", "Find
+  what: edit Alt+n", "blank", the same in both trials, the second with
+  the logging hook making UI Automation raise its copies. The lost value
+  change was on an edit that was not yet the focus, which the worker
+  reads with the focus anyway.
+- Such events from a window read through MSAA that is neither the focus
+  window nor the foreground window, which the worker's acceptance takes
+  only from a topmost window, such as a menu or a drop-down list, whose own
+  focus or menu-opening event hooks them again. Application support may
+  later ask for events from any window (`RequestedEvents`, empty today);
+  it will need those kinds kept hooked.
+
+Measured, debug build, one trace each with the 2026-10-14 windows (10
+seconds, 54 seconds in for `conhost_flood` and 56 for
+`windows_terminal_flood`), harness threads left out, before (from
+"Measurements after the terminal and typing changes") then after:
+
+- `conhost_flood`: the event thread 38,235 wakes and 2.57 s, then 22,673
+  and 1.52 s; Verbatim's processes 56,848 wakes and 6.51 s, then 36,663
+  and 4.75 s; the worker 9,562 and 2.33 s, then 5,828 and 1.83 s; UI
+  Automation's threads in the outpost 1,542 and 161 ms, then 1,371 and
+  133 ms. Over the whole run the outpost received 23,705 `WinEvent`s
+  (23,672 console updates, 25 console carets, 4 value changes before the
+  hook was narrowed, 4 focus events) against 53,783; it was narrowed 18
+  ms after its first focus event, once the worker had probed the window.
+- `windows_terminal_flood`: Verbatim's processes 4,364 wakes and 785 ms,
+  then 3,887 and 737 ms; the event thread did not wake in the window.
+  Over the whole run the outpost received 7 `WinEvent`s (5 focus, a
+  window shown and a name change before it was narrowed) against 249 to
+  391 in the day's earlier runs. It was narrowed, hooked again for a
+  focus in a window not yet decided, and narrowed again once the worker
+  had probed the input site window, all within 60 ms of starting.
+
+Correctness: `conhost_flood` and `windows_terminal_flood` passed in the
+traced runs; the other 37 scenarios named for this change (every
+`conhost_` and `windows_terminal_` scenario with review, marker, typing,
+editing, commands, pager or flood in its name, `menu_and_settings_dialog`
+and `system_information_tree`) were run once, and 36 passed.
+`conhost_up_typing` failed, and failed again in three more runs: Up Arrow
+and "x" pressed at once are now spoken "x", "echo onex" instead of
+"echo onex" (`docs/parity.md` keeps Verbatim's single reading, Dickson,
+2026-10-09). It passed twice on the same build without the change, and
+three times with value changes left hooked. The caret key's answering
+read now finds the cursor still before the "x" the shell had just
+written, one column short, so the update after it reports the caret
+moved and the reducer echoes the character; with value changes hooked,
+UI Automation raises its copy of each text change inside the console
+host, and the cursor had moved by the time of the read. Not fixed here:
+the read racing the shell's redraw is the cause, and hooking value
+changes only hid it (open).

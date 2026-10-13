@@ -324,9 +324,16 @@ pub fn post_probe_check(classes: &WindowClasses) -> Option<PostProbeCheck> {
 /// its probe is cancelled, and is probed again next time. Returns `true` for
 /// UIA.
 pub(crate) fn uses_uia(arbitrator: &Mutex<Arbitrator>, hwnd: isize) -> bool {
+    uses_uia_keeping(arbitrator, hwnd).0
+}
+
+/// [`uses_uia`], and whether this call probed the window and kept a verdict
+/// of UIA for its lifetime: an outpost's event thread may then narrow its
+/// hook (`outpost::narrowing`).
+pub(crate) fn uses_uia_keeping(arbitrator: &Mutex<Arbitrator>, hwnd: isize) -> (bool, bool) {
     let classes = WindowClasses::of(hwnd);
     if let Some(verdict) = lock(arbitrator).verdict(hwnd, &classes) {
-        return verdict;
+        return (verdict, false);
     }
     let started = std::time::Instant::now();
     let answer = verbatim_uia::probe_server_side_provider(hwnd);
@@ -338,7 +345,7 @@ pub(crate) fn uses_uia(arbitrator: &Mutex<Arbitrator>, hwnd: isize) -> bool {
         "arbitration probed"
     );
     let Some(is_uia) = answer else {
-        return false;
+        return (false, false);
     };
     if is_uia && let Some(check) = post_probe_check(&classes) {
         // NVDA uses some providers only after checking them.
@@ -350,18 +357,18 @@ pub(crate) fn uses_uia(arbitrator: &Mutex<Arbitrator>, hwnd: isize) -> bool {
         return match usable {
             Some(true) => {
                 lock(arbitrator).record_probe(hwnd, true);
-                true
+                (true, true)
             }
             Some(false) => {
                 lock(arbitrator).record_excluded(hwnd);
-                false
+                (false, false)
             }
             // The application did not answer: asked again next time.
-            None => false,
+            None => (false, false),
         };
     }
     lock(arbitrator).record_probe(hwnd, is_uia);
-    is_uia
+    (is_uia, is_uia)
 }
 
 /// What an outpost's event thread knows of each window it takes in

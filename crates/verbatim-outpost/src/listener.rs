@@ -105,7 +105,7 @@ use windows::Win32::UI::Accessibility::{
     UIA_SelectionItem_ElementSelectedEventId,
 };
 
-use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEvent, WinEventCallback, WinEventKind};
+use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEvent, WinEventKind};
 use verbatim_model::{Notification, OutpostId, Pid, TraceId};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_uia::map::{
@@ -115,7 +115,7 @@ use verbatim_uia::{Agile, Cached, ListenerEvent, Part, Registration, Scope, Subs
 
 use crate::OutpostOptions;
 use crate::arbitration::window_class_name;
-use crate::event_thread::EventThread;
+use crate::event_thread::{EventHandlers, EventThread, MakeHandlers};
 use crate::focus_read::{
     Arrival, FocusEvent, FocusReader, Judged, LastAccepted, Meta, READ_DEADLINE, Readers, Reading,
 };
@@ -545,11 +545,14 @@ impl Listener {
         );
 
         let msaa_outgoing = Arc::clone(&outgoing);
-        let make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync> = Arc::new(move || {
+        let make_handlers: MakeHandlers = Arc::new(move || {
             let outgoing = Arc::clone(&msaa_outgoing);
-            Box::new(move |event: WinEvent| forward_msaa_event(&outgoing, event))
+            EventHandlers {
+                win_event: Box::new(move |event: WinEvent| forward_msaa_event(&outgoing, event)),
+                nudge: None,
+            }
         });
-        let event_thread = EventThread::spawn(0, LISTENER_SUBSCRIPTIONS, make_callback);
+        let event_thread = EventThread::spawn(0, LISTENER_SUBSCRIPTIONS, make_handlers);
 
         // The listener has no target application; `target_pid` is a sentinel
         // the supervisor only logs.

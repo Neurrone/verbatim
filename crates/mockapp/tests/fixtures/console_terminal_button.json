@@ -1,0 +1,18 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Console Terminal Fixture",
+  "window_class": "ConsoleWindowClass",
+  "msaa_client": true,
+  "children": [
+    {
+      "id": "text",
+      "role": "editable_text",
+      "name": "Text Area",
+      "automation_id": "Text Area",
+      "states": ["focusable"],
+      "text": "one\ntwo\nready>"
+    },
+    { "id": "find", "role": "button", "name": "Find", "native": "button" }
+  ]
+}

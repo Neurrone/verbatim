@@ -266,6 +266,47 @@ thread_local! {
     /// window asks its class once. `None` for hooks that do not hear it,
     /// such as the focus listener's, which ask each time.
     static CLASSES: RefCell<Option<WindowCache<Rc<str>>>> = const { RefCell::new(None) };
+    /// This thread's hook set: the process it is scoped to, and each raw
+    /// event hooked now with its hook, `None` while the thread has none.
+    static HOOKS: RefCell<Option<HookSet>> = const { RefCell::new(None) };
+}
+
+/// A thread's live hooks ([`HOOKS`]).
+struct HookSet {
+    target_pid: u32,
+    hooked: Vec<(u32, HWINEVENTHOOK)>,
+}
+
+/// Hooks raw event `event` out of context, scoped to `target_pid`, on the
+/// calling thread, delivering to [`win_event_proc`].
+fn hook_event(event: u32, target_pid: u32) -> Result<HWINEVENTHOOK, String> {
+    // SAFETY: a null module and out-of-context flag are the documented
+    // combination for a hook with a same-process proc; `win_event_proc`
+    // has the required signature.
+    let hook = unsafe {
+        SetWinEventHook(
+            event,
+            event,
+            None,
+            Some(win_event_proc),
+            target_pid,
+            0,
+            WINEVENT_OUTOFCONTEXT,
+        )
+    };
+    if hook.0.is_null() {
+        return Err(format!("SetWinEventHook failed for event {event}"));
+    }
+    Ok(hook)
+}
+
+/// Removes `hook`, which [`hook_event`] made.
+fn unhook_event(hook: HWINEVENTHOOK) {
+    // SAFETY: the handle came from a successful SetWinEventHook and is
+    // removed once.
+    unsafe {
+        let _ = UnhookWinEvent(hook);
+    }
 }
 
 /// What a thread keeps about each window it hears events from, by the
@@ -316,10 +357,13 @@ impl<T> WindowCache<T> {
     }
 }
 
-/// A set of live out-of-context `WinEvent` hooks. Dropping it unhooks them and
-/// clears the thread-local callback.
+/// A set of live out-of-context `WinEvent` hooks on the thread that
+/// installed it. Dropping it unhooks them and clears the thread-local
+/// callback.
 pub struct WinEventHook {
-    hooks: Vec<HWINEVENTHOOK>,
+    /// The hooks are the installing thread's ([`HOOKS`]), so the set
+    /// stays on that thread.
+    _thread_bound: std::marker::PhantomData<*const ()>,
 }
 
 impl WinEventHook {
@@ -329,7 +373,8 @@ impl WinEventHook {
     /// loop. The per-application outpost passes [`APP_SUBSCRIPTIONS`]; the
     /// focus listener passes [`LISTENER_SUBSCRIPTIONS`] with `target_pid` zero.
     /// One set of hooks at a time per thread: the thread's callback is
-    /// shared by every hook on it.
+    /// shared by every hook on it. While the set lives, [`suspend_kinds`]
+    /// unhooks some of its kinds and hooks them again.
     ///
     /// # Errors
     ///
@@ -358,57 +403,83 @@ impl WinEventHook {
                 .contains(&WinEventKind::Destroy)
                 .then(WindowCache::default);
         });
-        let mut hooks = Vec::with_capacity(SUBSCRIPTIONS.len());
-        let mut hooked: Vec<u32> = Vec::new();
+        let mut hooked: Vec<(u32, HWINEVENTHOOK)> = Vec::with_capacity(SUBSCRIPTIONS.len());
         for (event, kind) in SUBSCRIPTIONS {
-            if !kinds.contains(&kind) || hooked.contains(&event) {
+            if !kinds.contains(&kind) || hooked.iter().any(|&(id, _)| id == event) {
                 continue;
             }
-            hooked.push(event);
-            // SAFETY: a null module and out-of-context flag are the documented
-            // combination for a hook with a same-process proc; `win_event_proc`
-            // has the required signature.
-            let hook = unsafe {
-                SetWinEventHook(
-                    event,
-                    event,
-                    None,
-                    Some(win_event_proc),
-                    target_pid,
-                    0,
-                    WINEVENT_OUTOFCONTEXT,
-                )
-            };
-            if hook.0.is_null() {
-                for installed in hooks {
-                    // SAFETY: each handle came from a successful SetWinEventHook.
-                    unsafe {
-                        let _ = UnhookWinEvent(installed);
+            match hook_event(event, target_pid) {
+                Ok(hook) => hooked.push((event, hook)),
+                Err(error) => {
+                    for (_, hook) in hooked {
+                        unhook_event(hook);
                     }
+                    CALLBACK.with(|slot| *slot.borrow_mut() = None);
+                    KINDS.with(|slot| slot.borrow_mut().clear());
+                    CLASSES.with(|slot| *slot.borrow_mut() = None);
+                    return Err(error);
                 }
-                CALLBACK.with(|slot| *slot.borrow_mut() = None);
-                KINDS.with(|slot| slot.borrow_mut().clear());
-                CLASSES.with(|slot| *slot.borrow_mut() = None);
-                return Err(format!("SetWinEventHook failed for event {event}"));
             }
-            hooks.push(hook);
         }
-        Ok(Self { hooks })
+        HOOKS.with(|slot| *slot.borrow_mut() = Some(HookSet { target_pid, hooked }));
+        Ok(Self {
+            _thread_bound: std::marker::PhantomData,
+        })
     }
 }
 
 impl Drop for WinEventHook {
     fn drop(&mut self) {
-        for hook in self.hooks.drain(..) {
-            // SAFETY: each handle came from a successful SetWinEventHook.
-            unsafe {
-                let _ = UnhookWinEvent(hook);
+        if let Some(set) = HOOKS.with(|slot| slot.borrow_mut().take()) {
+            for (_, hook) in set.hooked {
+                unhook_event(hook);
             }
         }
         CALLBACK.with(|slot| *slot.borrow_mut() = None);
         KINDS.with(|slot| slot.borrow_mut().clear());
         CLASSES.with(|slot| *slot.borrow_mut() = None);
     }
+}
+
+/// Narrows the calling thread's set of hooks while it runs: every raw
+/// event of the kinds it was installed for is hooked, except one whose
+/// installed kinds are all in `suspended`, which is unhooked. An empty
+/// `suspended` hooks every kind again. Events raised while their kind is
+/// unhooked never reach the thread, and the thread is not woken for them.
+/// Each raw event is hooked and unhooked on its own, within the one set,
+/// so this is never a second set on the thread; it may be called from the
+/// thread's own callback.
+///
+/// # Errors
+///
+/// Returns an error string if the thread has no set of hooks, or if a
+/// hook fails to install; the hooks changed before the failure stay
+/// changed, and a later call makes the rest.
+pub fn suspend_kinds(suspended: &[WinEventKind]) -> Result<(), String> {
+    let kinds = KINDS.with(|slot| slot.borrow().clone());
+    HOOKS.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let Some(set) = slot.as_mut() else {
+            return Err("this thread has no set of WinEvent hooks".to_owned());
+        };
+        for (event, _) in SUBSCRIPTIONS {
+            let installed = kinds_among(event, &kinds);
+            if installed.is_empty() {
+                continue;
+            }
+            let wanted = installed.iter().any(|kind| !suspended.contains(kind));
+            let at = set.hooked.iter().position(|&(id, _)| id == event);
+            match (wanted, at) {
+                (true, None) => {
+                    let hook = hook_event(event, set.target_pid)?;
+                    set.hooked.push((event, hook));
+                }
+                (false, Some(at)) => unhook_event(set.hooked.swap_remove(at).1),
+                _ => {}
+            }
+        }
+        Ok(())
+    })
 }
 
 /// The window class of a standard tooltip, help balloons included.
