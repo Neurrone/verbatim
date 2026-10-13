@@ -33,18 +33,11 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread;
 use std::time::Instant;
 
-use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
-
 use crate::protocol::{EventTiming, FactKey, SupervisorToOutpost, now_us, write_message};
 
 /// How many commands may wait for one child before the overload policy
 /// applies.
 pub(super) const WRITER_CAPACITY: usize = 64;
-
-/// The priority of each child's writer thread: it only writes each command
-/// to the child's pipe, for microseconds per wake
-/// (`docs/design/communication.md`, section 6.1).
-const WRITER_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// One command waiting to be written, with what the overload policy needs
 /// to know about it.
@@ -260,11 +253,9 @@ pub(super) fn start(to_child: File, name: &str) -> std::io::Result<WriterHandle>
         shared: Arc::new((Mutex::new(Queue::default()), Condvar::new())),
     };
     let shared = Arc::clone(&handle.shared);
-    let role = name.to_owned();
     thread::Builder::new()
         .name(name.to_owned())
         .spawn(move || {
-            prioritize_role(&role, WRITER_PRIORITY);
             let mut pipe = BufWriter::new(to_child);
             loop {
                 let next = {

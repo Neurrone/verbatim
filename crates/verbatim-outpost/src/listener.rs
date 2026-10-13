@@ -108,7 +108,6 @@ use windows::core::AgileReference;
 
 use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEvent, WinEventCallback, WinEventKind};
 use verbatim_model::{Notification, OutpostId, Pid, TraceId};
-use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_uia::map::{
     cached_native_window_handle, cached_process_id, notification_kind_from_uia,
     notification_processing_from_uia,
@@ -133,16 +132,6 @@ use crate::supervisor::IgnoredProcesses;
 /// before telling Core, so a focus event the end causes can arrive first:
 /// NVDA's fake-focus delay (`processFakeFocusWinEvent`).
 const MENU_END_GRACE: Duration = Duration::from_millis(50);
-
-/// The priority of the listener's writer, which wakes for each fact and
-/// writes it to Core, for microseconds per wake
-/// (`docs/design/communication.md`, section 6.1).
-const WRITER_PRIORITY: ThreadPriority = ThreadPriority::Highest;
-
-/// The priority of the listener's main thread, which reads Core's pipe and
-/// handles each command, for microseconds per wake
-/// (`docs/design/communication.md`, section 6.1).
-const READER_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// The listener's outgoing queue: urgent messages first, then facts,
 /// coalesced one per element and kind.
@@ -483,7 +472,6 @@ impl Listener {
         let writer = thread::Builder::new()
             .name("verbatim-listener-outbound".to_owned())
             .spawn(move || {
-                prioritize_role("listener outbound", WRITER_PRIORITY);
                 while let Some(message) = writer_outgoing.next() {
                     if write_message(&mut pipe, &message).is_err() {
                         return;
@@ -965,8 +953,6 @@ pub fn run_listener(
     options: OutpostOptions,
 ) -> io::Result<()> {
     let listener = Listener::new(pipe_out, ignored, hooks_in, options);
-    // This thread reads Core's pipe from here on.
-    prioritize_role("listener reader", READER_PRIORITY);
     let mut reader = BufReader::new(pipe_in);
     let ended = loop {
         match read_message::<_, SupervisorToOutpost>(&mut reader) {

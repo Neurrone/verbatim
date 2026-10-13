@@ -22,7 +22,6 @@ use std::time::Instant;
 
 use crossbeam_channel::unbounded;
 use verbatim_audio::PcmFormat;
-use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_speech::hosting::{
     FromHost, HostDescription, HostTiming, ToHost, now_us, read_to_host, synth_ids, write_from_host,
 };
@@ -38,24 +37,9 @@ macro_rules! report_error {
     }};
 }
 
-/// The priority of the command reader thread, which only moves each
-/// command on, for microseconds per wake (`docs/design/communication.md`,
-/// section 6.1).
-const READER_PRIORITY: ThreadPriority = ThreadPriority::Highest;
-
-/// The priority of the synthesis thread, this process's main thread, which
-/// computes each utterance's audio (`docs/design/communication.md`,
-/// section 6.1).
-const SYNTHESIS_PRIORITY: ThreadPriority = ThreadPriority::AboveNormal;
-
 fn main() -> ExitCode {
     // Core redirects this process's output to a log file of its own.
     init_tracing();
-    // A windowless process, which Windows would otherwise throttle as a
-    // background one (`verbatim_process::scheduling`).
-    if let Err(error) = verbatim_process::scheduling::opt_out_of_power_throttling() {
-        tracing::warn!(%error, "power throttling stays as Windows decides");
-    }
     let Some((pipe_in, pipe_out, synth)) = parse_args(&std::env::args().collect::<Vec<_>>()) else {
         report_error!(
             "usage: verbatim-synth-host --pipe-in <handle> --pipe-out <handle> --synth <id>"
@@ -97,7 +81,6 @@ fn main() -> ExitCode {
         let cancelled = Arc::clone(&cancelled);
         let mut from_core = BufReader::new(from_core);
         std::thread::spawn(move || {
-            prioritize_role("command reader", READER_PRIORITY);
             loop {
                 let request = match read_to_host(&mut from_core) {
                     Ok(Some(request)) => (request, now_us()),
@@ -122,8 +105,6 @@ fn main() -> ExitCode {
         });
     }
 
-    // This thread synthesizes from here on.
-    prioritize_role("synthesis", SYNTHESIS_PRIORITY);
     while let Ok((request, received_at_us)) = requests.recv() {
         let reply = match request {
             ToHost::Speak(sequence) => {

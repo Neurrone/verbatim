@@ -18,8 +18,7 @@ use verbatim_model::{
 use verbatim_speech::{
     ActiveTheme, IndexMark, Presenter, SettingDescriptor, SettingId, SettingValue, SpeechEvents,
     SpeechItem, SpeechManager, SpeechManagerConfig, SpeechSequence, SpeechSettingsHost,
-    SpeechThread, SynthChoice, SynthDriver, SynthError, SynthFactory, SynthId, SynthRegistry,
-    SynthSink,
+    SynthChoice, SynthDriver, SynthError, SynthFactory, SynthId, SynthRegistry, SynthSink,
 };
 use verbatim_synth_capture::{CaptureLog, CaptureSynth};
 
@@ -310,7 +309,6 @@ fn control_manager() -> ControlHarness {
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: theme_without_sounds(),
         presenter: None,
-        thread_started: None,
     })
     .expect("pipeline starts");
 
@@ -357,31 +355,22 @@ fn recv_started(started: &Receiver<String>) -> String {
     started.recv_timeout(STEP_TIMEOUT).expect("synth started")
 }
 
-/// A registry holding only the capture synth, as `capture`, writing to
-/// `log`.
-fn capture_registry_with_log(log: &CaptureLog) -> SynthRegistry {
-    let log = Arc::clone(log);
+fn capture_manager(
+    presenter: Option<Box<dyn Presenter>>,
+) -> (SpeechManager, CaptureLog, Arc<Recorder>) {
+    let log: CaptureLog = CaptureSynth::new().log();
+    let log_for_factory = Arc::clone(&log);
     let mut registry = SynthRegistry::new();
     registry.register(
         SynthId::new("capture"),
         "Capture synth",
         Box::new(move || {
-            Ok(Box::new(CaptureSynth::with_log(Arc::clone(&log))) as Box<dyn SynthDriver>)
+            Ok(
+                Box::new(CaptureSynth::with_log(Arc::clone(&log_for_factory)))
+                    as Box<dyn SynthDriver>,
+            )
         }),
     );
-    registry
-}
-
-/// A registry holding only the capture synth, as `capture`.
-fn capture_registry() -> SynthRegistry {
-    capture_registry_with_log(&CaptureSynth::new().log())
-}
-
-fn capture_manager(
-    presenter: Option<Box<dyn Presenter>>,
-) -> (SpeechManager, CaptureLog, Arc<Recorder>) {
-    let log: CaptureLog = CaptureSynth::new().log();
-    let registry = capture_registry_with_log(&log);
     let recorder = Arc::new(Recorder::default());
     let manager = SpeechManager::new(SpeechManagerConfig {
         registry,
@@ -391,7 +380,6 @@ fn capture_manager(
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: theme_without_sounds(),
         presenter,
-        thread_started: None,
     })
     .expect("pipeline starts");
     (manager, log, recorder)
@@ -627,7 +615,6 @@ fn a_synth_that_places_marks_gets_the_whole_sequence_in_one_call() {
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: theme_without_sounds(),
         presenter: Some(Box::new(MarkingTheme)),
-        thread_started: None,
     })
     .expect("pipeline starts");
 
@@ -982,45 +969,7 @@ fn settings_manager(
         events: None,
         theme: theme_without_sounds(),
         presenter: None,
-        thread_started: None,
     })
-}
-
-#[test]
-fn thread_started_runs_once_on_each_speech_thread_naming_it() {
-    // Each call: the thread named, and the name of the thread it ran on.
-    type Calls = Mutex<Vec<(SpeechThread, Option<String>)>>;
-    let calls: Arc<Calls> = Arc::default();
-    let recorded = Arc::clone(&calls);
-    let manager = SpeechManager::new(SpeechManagerConfig {
-        registry: capture_registry(),
-        initial_synth: SynthId::new("capture"),
-        saved_settings: Box::new(|_| Vec::new()),
-        mixer: mixer(),
-        events: None,
-        theme: theme_without_sounds(),
-        presenter: None,
-        thread_started: Some(Arc::new(move |thread| {
-            let name = std::thread::current().name().map(str::to_owned);
-            recorded.lock().unwrap().push((thread, name));
-        })),
-    })
-    .expect("pipeline starts");
-    // Dropping the manager joins both threads, so both have started. The
-    // synth thread starts first: the queue thread is started only once the
-    // synth thread has reported its synthesizer up.
-    drop(manager);
-    let calls = calls.lock().unwrap().clone();
-    assert_eq!(
-        calls,
-        vec![
-            (SpeechThread::Synth, Some("verbatim-synth".to_owned())),
-            (
-                SpeechThread::Queue,
-                Some("verbatim-speech-queue".to_owned())
-            ),
-        ]
-    );
 }
 
 fn voice_and_rate(voice: &str, rate: i32) -> Vec<(SettingId, SettingValue)> {
@@ -1329,7 +1278,6 @@ fn a_spelled_capital_is_spoken_at_a_raised_pitch() {
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: theme_without_sounds(),
         presenter: None,
-        thread_started: None,
     })
     .expect("pipeline starts");
 

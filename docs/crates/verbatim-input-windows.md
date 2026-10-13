@@ -45,9 +45,7 @@ gives keys it injects for its own purposes (the GUI's Control tap that
 unlocks the foreground): the hook still decides them, but leaves speech
 alone and reports nothing, as NVDA ignores the keys it injects itself.
 
-Implementation notes: the hook thread runs at `THREAD_PRIORITY_HIGHEST`
-with power throttling off (`verbatim_process::scheduling`;
-`docs/design/communication.md`, section 6.1). It keeps the machine in a thread-local
+Implementation notes: the hook thread keeps the machine in a thread-local
 (the hook procedure is a bare callback with no user pointer, and only ever
 runs on the thread that installed it), tells it before each key whether
 Num Lock is on (`DecisionMachine::set_num_lock`, from the keyboard's own

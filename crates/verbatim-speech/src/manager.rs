@@ -130,28 +130,6 @@ pub struct SpeechManagerConfig {
     /// what Verbatim uses. A test may present otherwise; events are still
     /// reported with the active theme.
     pub presenter: Option<Box<dyn Presenter>>,
-    /// Called on each of the pipeline's own threads as it starts, before
-    /// it does anything else, naming which thread it is. Verbatim raises
-    /// their priority there (`docs/design/communication.md`, section 6.1),
-    /// which this platform-neutral crate cannot do itself. `None` leaves
-    /// them as they start.
-    pub thread_started: Option<ThreadStartedFn>,
-}
-
-/// Called on each speech pipeline thread as it starts
-/// ([`SpeechManagerConfig::thread_started`]).
-pub type ThreadStartedFn = Arc<dyn Fn(SpeechThread) + Send + Sync>;
-
-/// One of the speech pipeline's own threads
-/// ([`SpeechManagerConfig::thread_started`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SpeechThread {
-    /// The queue thread (`verbatim-speech-queue`), which presents
-    /// utterances and hands them to the synth thread.
-    Queue,
-    /// The synth thread (`verbatim-synth`), which drives the synthesizer
-    /// and feeds the mixer.
-    Synth,
 }
 
 /// Commands the queue thread accepts, from the manager, the settings host, and
@@ -304,7 +282,6 @@ impl SpeechManager {
             saved_settings,
             mixer,
             events,
-            thread_started,
             ..
         } = config;
         // Every ending passes through the waiters on its way to the
@@ -326,13 +303,9 @@ impl SpeechManager {
             let source = source.clone();
             let queue_tx = queue_tx.clone();
             let events = events.clone();
-            let thread_started = thread_started.clone();
             std::thread::Builder::new()
                 .name("verbatim-synth".to_owned())
                 .spawn(move || {
-                    if let Some(started) = thread_started {
-                        started(SpeechThread::Synth);
-                    }
                     synth_thread(
                         &registry,
                         &initial_synth,
@@ -377,9 +350,6 @@ impl SpeechManager {
         let queue_handle = std::thread::Builder::new()
             .name("verbatim-speech-queue".to_owned())
             .spawn(move || {
-                if let Some(started) = thread_started {
-                    started(SpeechThread::Queue);
-                }
                 QueueThread::new(synth_tx, source, queue_events, theme, queue_paused)
                     .run(&queue_rx);
             })

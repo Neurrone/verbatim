@@ -31,7 +31,6 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, bounded};
 use tracing::warn;
-use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::{ChildSpec, Contained};
 use verbatim_speech::hosting::{
     FromHost, HostDescription, ToHost, now_us, read_from_host, write_to_host,
@@ -54,11 +53,6 @@ const CANCEL_CHECK: Duration = Duration::from_millis(10);
 /// The buffer asked for on the pipe the host writes PCM to: about 90 ms of
 /// 22 kHz mono, so the host cannot run far ahead of playback.
 const PIPE_BUFFER: u32 = 4_096;
-
-/// The priority of the thread reading a host's replies, which only hands
-/// each one to the synth thread, for microseconds per wake
-/// (`docs/design/communication.md`, section 6.1).
-const READER_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// A synthesizer in a host process.
 pub struct HostedSynth {
@@ -175,7 +169,6 @@ impl Host {
         std::thread::Builder::new()
             .name(format!("verbatim-synth-host-{}", synth.0))
             .spawn(move || {
-                prioritize_role("synthesizer host reader", READER_PRIORITY);
                 loop {
                     let reply = match read_from_host(&mut from_host) {
                         Ok(Some(reply)) => Ok(reply),

@@ -53,7 +53,6 @@ use verbatim_ia2::{
     APP_SUBSCRIPTIONS, NodeIdRegistry as MsaaRegistry, WinEvent, WinEventCallback, WinEventKind,
 };
 use verbatim_model::{Backend, Fetches, NodeId, Pid, TraceId};
-use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_uia::map::{cached_native_window_handle, snapshot_parts_from_cached_element};
 use verbatim_uia::{
     FOCUS_PROPERTIES, Group, NodeIdRegistry as UiaRegistry, Part, Registration, Scope,
@@ -1074,11 +1073,6 @@ fn fault(context: &Context, detail: String) {
     context.outbound.send(OutpostToSupervisor::Fault { detail });
 }
 
-/// The priority of the outpost's main thread, which reads Core's pipe and
-/// hands each command to the intake, for microseconds per wake
-/// (`docs/design/communication.md`, section 6.1).
-const READER_PRIORITY: ThreadPriority = ThreadPriority::Highest;
-
 /// Runs an outpost driven by the Core pipes, watching `target_pid` for its
 /// whole life: reads commands from `pipe_in` and writes outbound messages to
 /// `pipe_out` until Core asks it to shut down
@@ -1098,8 +1092,6 @@ pub fn run_pipe(
 ) -> io::Result<()> {
     let outpost = Outpost::with_options(pipe_out, target_pid, options);
     watch_target(&outpost.context);
-    // This thread reads Core's pipe from here on.
-    prioritize_role("outpost reader", READER_PRIORITY);
     let mut reader = BufReader::new(pipe_in);
     let ended = loop {
         match read_message::<_, SupervisorToOutpost>(&mut reader) {

@@ -89,20 +89,9 @@ Public API:
   `prioritize_current_thread(priority)` runs the calling thread at a
   `ThreadPriority` (`Normal`, `AboveNormal`, `Highest`, `TimeCritical`)
   and opts it out of power throttling too; `prioritize_role(role,
-  priority)` does the same and logs a refusal as a warning, the thread
-  carrying on as it was. Every Verbatim process (verbatim.exe, the
-  outposts and the listener, the synthesizer host) opts out first thing.
-  The threads that only move messages run at `Highest`: the keyboard
-  hook, verbatim.exe's supervisor owner, its reader and writer for each
-  child, the listener's and each outpost's pipe-reading main thread and
-  outbound writer, the `WinEvent` threads, and both ends' synthesizer
-  host readers. The threads that compute on the path or call into an
-  application run at `AboveNormal`: the reducer, the speech queue and
-  synth threads (through `SpeechManagerConfig::thread_started`), the
-  host's synthesis thread, each outpost's worker, and the listener's
-  per-application reading threads. Each caller names its level once per
-  role in a constant of its own (`docs/design/communication.md`, section
-  6.1). Timer resolution is not raised.
+  priority)` does the same and logs a refusal. Only the relay floor's
+  benchmark calls them so far: the communication design's migration step
+  3 gives every process and hot-path thread its level. Timer resolution is not raised.
 - `session::current()` — the calling process's `Session`: its session
   `id`, whether its window station is interactive
   (`interactive_window_station`), and the input desktop's name when it can

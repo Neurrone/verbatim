@@ -54,11 +54,6 @@ fn main() -> ExitCode {
     // (see `verbatim-outpost::supervisor`); install a subscriber so the
     // outpost's `tracing` output actually lands there instead of nowhere.
     init_tracing();
-    // A windowless process, which Windows would otherwise throttle as a
-    // background one (`verbatim_process::scheduling`).
-    if let Err(error) = verbatim_process::scheduling::opt_out_of_power_throttling() {
-        tracing::warn!(%error, "power throttling stays as Windows decides");
-    }
     let args: Vec<String> = std::env::args().collect();
     match parse_args(&args) {
         Some(Mode::Pipe {

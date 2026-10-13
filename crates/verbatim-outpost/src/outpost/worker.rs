@@ -40,7 +40,6 @@ use verbatim_model::{
     Backend, CallCounts, CaretWatch, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role,
     State, StateSet, TerminalOutput, TextOp, TextReply, TraceId,
 };
-use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_uia::map::{snapshot_from_cached_element, snapshot_parts_from_cached_element};
 use verbatim_uia::{ElementExt as _, nearest_window_handle};
 use windows::Win32::UI::Accessibility::{
@@ -71,11 +70,6 @@ use crate::terminal::reading::{Action, Event};
 use crate::terminal::{Found, Memory, ReadMode};
 use crate::text::Watched;
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
-
-/// The worker's priority: it calls into the application for each entry
-/// (`docs/design/communication.md`, section 6.1). Every worker, the first
-/// and each that replaces an abandoned one, runs at it.
-const WORKER_PRIORITY: ThreadPriority = ThreadPriority::AboveNormal;
 
 /// The deadline for handling an event, a focus, or a focus-now query: NVDA's
 /// `NORMAL_CORE_ALIVE_TIMEOUT` (`watchdog.py`), the time NVDA waits for an
@@ -408,10 +402,7 @@ fn spawn_worker(context: Arc<Context>, generation: u64) {
     let watch = Arc::clone(&context);
     let worker = thread::Builder::new()
         .name("verbatim-worker".to_owned())
-        .spawn(move || {
-            prioritize_role("outpost worker", WORKER_PRIORITY);
-            run(&context, generation);
-        })
+        .spawn(move || run(&context, generation))
         .expect("spawn a worker");
     let mut workers = watch
         .watch
