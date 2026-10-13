@@ -987,11 +987,11 @@ All are declared in `verbatim-uia`'s shape module (section 3.1).
 
 Event shapes, declared `gates: none`:
 
-- `ListenerEvent`: NVDA's 13 properties, each a field so that the read
+- `ListenerEvent`: NVDA's 13 properties and, by decision 6,
+  `IsDialog` and `IsTogglePatternAvailable`, each a field so that the read
   covers the request exactly (section 3.6), and the Text pattern as a
-  prefetch, as now. Its role is read through a reduced group, `EventRole`
-  (`ControlType`, `ClassName`, `NativeWindowHandle`), which gives exactly
-  the role `event_parts` gives today (decision 6). It covers `Kept` and
+  prefetch, as now. Its role is read through `RoleCore`, refined for
+  dialogs and toggle buttons as every other read is. It covers `Kept` and
   `FocusInput`.
 - `PropertyEvent`: today's 24 (`RoleCore`, `Name`, `ValueSet`, `States`,
   `ProcessId`). It covers `Kept`.
@@ -1179,8 +1179,8 @@ element, and its tested request-per-combination logic stays.
 Properties per request (established by counting the lists; the cost per
 property in a provider is not measured):
 
-- The listener's events: 13 and the Text pattern, unchanged; failed reads
-  per event from 25 to none.
+- The listener's events: 15 and the Text pattern, two more than today by
+  decision 6; failed reads per event from 25 to none.
 - The outpost's property events: 24, unchanged. Text events: 3, unchanged.
   Failed reads already none with the working tree's fix.
 - Node fetches (focus, neighbours, selections, windows, tree dumps): 27 to
@@ -1389,58 +1389,39 @@ declare a shape of its own.
   field that holds it).
 - No expected count changes.
 
-## 10. Decisions for Dickson
+## 10. Decisions
 
-Open:
+Every decision was settled by Dickson on 2026-10-13.
 
-- Decision 1. Declarative macro or hand-written shapes. Both carry the
-  same typed handles (`Cached`, `Agile`, `Request`, `Fill`, sealed
-  `Shape`, `Ungated`, `Covers`), the same scan, and the same recording
-  test. With the macro, a shape's request and read come from one field
-  list and the recording test checks the macro. Hand-written, each shape
-  is a plain struct with a read over `CachedReads` and a function giving
-  its properties for given gates, and the recording test is what ties the
-  two together, so a drift fails `cargo xtask ci` rather than the build;
-  there is no const evaluation or nested-gate machinery, though the
-  `UNGATED` lists the `covers` assertion needs are written by hand too.
-  The macro costs about a hundred lines of `macro_rules!` and its error
-  messages (estimated from the scratch crate's prototype, which is about
-  sixty). Since Dickson asked for compile-time guarantees, recommend: the
-  macro, with the recording test as its check, which is the review's
-  recommendation too.
-- Decision 2. The kept-element registry (section 6): an enum of kept
-  kinds, or one `Kept` shape that every kept kind covers, stored as
-  `Agile<Kept>`, with readers that need more refreshing explicitly.
-  Recommend: the `Kept` shape. Every current reader is served by it
-  without a new call (`read.rs:1000` and 1061, `navigate.rs:96`,
-  `text_reads.rs:172` and the rest), given that the focus query's input is
-  typed as `FocusInput` (section 7), which keeps the control type out of
-  `Kept`.
-- Decision 3. `IsDataValidForForm` in remotely filled caches (section 7):
-  an absent record from the program's existing support test, the program
-  always filling the property with the same record, or the state dropped
-  for remote reads. The first two make the record part of the audited
-  trust boundary (section 3.5, item 9). Recommend: the absent record, with
-  the program changed by one result per element.
-- Decision 6. The listener's event role. `ListenerEvent` reads the role
-  through `ControlType`, `ClassName` and `NativeWindowHandle` alone,
-  giving the role it gives today; adding `IsDialog` and
-  `IsTogglePatternAvailable` to the listener's request would refine it but
-  departs from NVDA's base request, which is a decision on record, and the
-  outpost reads the role afresh anyway. Recommend: the reduced group.
-- Decision 7. The log line in `text_event_from` (bug 5): log the runtime
-  id and class name only, or refresh both elements for the name and
-  framework. It is an `info` line for a rare event. Recommend: runtime id
-  and class name.
+- Decision 1. Declarative macro or hand-written shapes. Decided: the
+  macro, with the recording test as its check. Both forms carry the same
+  typed handles (`Cached`, `Agile`, `Request`, `Fill`, sealed `Shape`,
+  `Ungated`, `Covers`), the same scan and the same recording test; with
+  the macro a shape's request and read come from one field list, so a
+  drift fails the build, not only `cargo xtask ci`.
+- Decision 2. The kept-element registry (section 6). Decided: one `Kept`
+  shape that every kept kind covers, stored as `Agile<Kept>`, with readers
+  that need more refreshing into a declared shape explicitly. Every current
+  reader is served by it without a new call, given that the focus query's
+  input is typed as `FocusInput` (section 7).
+- Decision 3. `IsDataValidForForm` in remotely filled caches (section 7).
+  Decided: the absent record, from the program's existing support test,
+  the program changed by one result per element; it is part of the audited
+  trust boundary (section 3.5, item 9).
+- Decision 6. The listener's event role. Decided: widened. The listener's
+  request gains `IsDialog` and `IsTogglePatternAvailable`, so
+  `ListenerEvent` reads the role through `RoleCore`, refined for dialogs
+  and toggle buttons as every other read is. This departs from NVDA's base
+  request, which the listener matched until now (a decision of record it
+  replaces), at the cost of two properties per desktop-wide event; the
+  outpost's own reading of the role is unchanged. Lands in step 2 with
+  `ListenerEvent`.
+- Decision 7. The log line in `text_event_from` (bug 5). Decided: it logs
+  the runtime id and class name only.
 - Decision 8. `wants_selected_child`'s live fallback in
-  `verbatim-uia-rops` (section 5.2): remove it. This is safe only because
-  the focus query's input is typed: it takes `Cached<FocusInput>`, which
-  carries the control type, so no caller can hand it an element whose
-  cache lacks it. Without that typing, a `Cached<Kept>` handed to the
-  query would silently lose the selected child. Recommend: remove,
-  together with the typed input, in step 3.
+  `verbatim-uia-rops` (section 5.2). Decided: removed, together with the
+  typed `Cached<FocusInput>` input that makes it safe, in step 3.
 
-Decided by Dickson on 2026-10-13:
 
 - Decision 4. The description of ancestors, and `is_layout` (section 5.4).
   The layout judgment always has ancestors' descriptions, whatever the
@@ -1453,6 +1434,24 @@ Decided by Dickson on 2026-10-13:
   `basicText` does, through an ungated `Description` group in
   `DialogText`; and nothing of the dialog's own element is read. Lands in
   step 3, with the kept dialog's typed hand-off in step 4.
+
+## Later: extensions
+
+Wasm extensions (D6, milestone M5) never hold a UI Automation element: the
+elements are in the outposts, another process, and a Wasm guest cannot
+hold a COM object. An app module will declare, when it is activated, the
+properties it wants for a purpose (focus, navigation), validated by Core
+against the properties UI Automation defines and the extension's grant,
+and sent to its application's outpost, which adds them as a run-time group
+to its requests and returns their values in the snapshot; a hook needing
+something unusual makes one declared fetch of a node. The run-time list is
+the one value that builds the request and that the read iterates, so the
+guarantee holds by construction for extension properties as the compiler
+holds it for Core's. Extension properties join fetches only; adding them
+to event registrations, which UI Automation fills for every event
+delivered, is a separate, budgeted grant. Nothing of this is built until
+the extensions are (Dickson, 2026-10-13): the shapes code carries no
+run-time group until then.
 
 ## 11. Later: formatting attributes
 
