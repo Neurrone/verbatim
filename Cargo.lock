@@ -1807,6 +1807,7 @@ dependencies = [
  "tracing",
  "verbatim-input",
  "verbatim-model",
+ "verbatim-process",
  "windows",
  "workspace-hack",
 ]

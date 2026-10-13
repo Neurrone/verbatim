@@ -566,6 +566,14 @@ The figures come from the ledger's latency lines, which round to 0.1 ms, through
 - Tests: the scheduling module's tests (the branch's, reading the priority back).
 - Pass: the measure set and `measure_speech_real`, compared with step 1: every stage's share over 2 ms no worse, and the per-hop shares lower; the flood scenarios (`conhost_leave_flood`, the terminal flood) pass with the priorities in place and no thread runs hot (CPU per thread from the ETW trace); and the starvation check of section 6.1: `rapid_tabbing_in_settings`, `settings_dialog_keys` and `menu_and_settings_dialog`, ten runs each while a terminal flood runs in another window, on the two-processor dev VM in a debug build, with the GUI thread's longest ready wait under 100 ms in the ETW trace.
 
+Built on 2026-10-13, applied to today's threads since the transport of later steps does not exist yet; each level is named once per role in a constant beside the thread's start, and a refused request is logged as a warning while the thread carries on (`prioritize_role`). The measurements and the starvation check of the pass criteria are not yet run.
+
+- Power throttling off, first thing after logging starts: verbatim.exe, verbatim-outpost.exe (outposts and the listener), and verbatim-synth-host.exe.
+- `THREAD_PRIORITY_HIGHEST`: the keyboard hook thread (`verbatim-input-windows` now depends on `verbatim-process`); verbatim.exe's supervisor owner thread, its listener reader and per-outpost reader threads, and its writer thread for each child; the listener's outbound writer and its pipe-reading main thread; each outpost's outbound writer and its pipe-reading main thread; the `WinEvent` threads of outposts and the listener; the synthesizer host's command reader; and Core's reader of each host's replies in `verbatim-synth-hosted`.
+- `THREAD_PRIORITY_ABOVE_NORMAL`: the reducer thread; the speech queue and synth threads, through the new `SpeechManagerConfig::thread_started` callback that verbatim.exe supplies; the synthesizer host's synthesis (main) thread; each outpost's worker, including each worker started in place of an abandoned one; and the listener's per-application reading threads.
+- Unchanged: the audio thread keeps its MMCSS registration, and every other thread stays at normal priority (the GUI and its events thread, the router, the control plane, launch and retire helpers, the watchdogs, the target watch, the clipboard, session-end and shutdown threads, and UIA's subscription and bounded-call threads).
+- Tests: the scheduling module's existing tests, and a pipeline test that `thread_started` runs once on each speech thread, naming it.
+
 ### Step 4. The transport: frames, pipes, senders
 
 - `verbatim_process::transport`: the frame format of 4.2, the pipes of 4.1 (overlapped on both ends, 64 KiB for event pipes), the `Sender` of 4.3 with backlog policies supplied by the caller, the inbound frame reader, the port and mailbox from db16548.

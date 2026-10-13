@@ -51,10 +51,11 @@ use verbatim_outpost::protocol::{
 };
 use verbatim_outpost::supervisor::EndReason;
 use verbatim_outpost::{OutpostMessage, OutpostOptions, Supervisor};
+use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_speech::hosting::synth_ids;
 use verbatim_speech::{
-    SettingId, SettingValue, SpeechManager, SpeechManagerConfig, SpeechSettingsHost, SynthId,
-    SynthRegistry,
+    SettingId, SettingValue, SpeechManager, SpeechManagerConfig, SpeechSettingsHost, SpeechThread,
+    SynthId, SynthRegistry,
 };
 use verbatim_synth_capture::CaptureSynth;
 
@@ -81,6 +82,27 @@ type SharedRecorder = Arc<Mutex<ReducerRecorder>>;
 /// The folder flight-recorder dumps are written to, next to the executable.
 const DUMPS_FOLDER: &str = "dumps";
 
+/// The reducer thread's priority: it computes on the path for every event
+/// and key (`docs/design/communication.md`, section 6.1).
+const REDUCER_PRIORITY: ThreadPriority = ThreadPriority::AboveNormal;
+
+/// The speech queue thread's priority: it presents every utterance on its
+/// way to the synthesizer (`docs/design/communication.md`, section 6.1).
+const SPEECH_QUEUE_PRIORITY: ThreadPriority = ThreadPriority::AboveNormal;
+
+/// The synth thread's priority: it drives the synthesizer and feeds the
+/// mixer (`docs/design/communication.md`, section 6.1).
+const SYNTH_PRIORITY: ThreadPriority = ThreadPriority::AboveNormal;
+
+/// Raises each speech pipeline thread as it starts
+/// (`SpeechManagerConfig::thread_started`).
+fn speech_thread_started(thread: SpeechThread) {
+    match thread {
+        SpeechThread::Queue => prioritize_role("speech queue", SPEECH_QUEUE_PRIORITY),
+        SpeechThread::Synth => prioritize_role("synth", SYNTH_PRIORITY),
+    }
+}
+
 /// Writes a line to standard error, as `eprintln!` does, but ignores a
 /// failed write instead of panicking: a full disk or a closed pipe under
 /// redirected output must not take the process down.
@@ -100,6 +122,12 @@ fn main() -> ExitCode {
     let config = load_config(&exe_dir);
     init_tracing(config.settings().log_filter.as_deref());
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "verbatim starting");
+    // Verbatim shows no window of its own most of the time, which is what
+    // makes Windows throttle a process as a background one
+    // (`verbatim_process::scheduling`).
+    if let Err(error) = verbatim_process::scheduling::opt_out_of_power_throttling() {
+        tracing::warn!(%error, "power throttling stays as Windows decides");
+    }
 
     // Checked before replacing a running instance, so a launch that cannot
     // work never stops one that does.
@@ -303,7 +331,10 @@ fn run(
         };
         thread::Builder::new()
             .name("verbatim-reducer".to_owned())
-            .spawn(move || reducer_loop(&command_rx, &context, reader_settings))?;
+            .spawn(move || {
+                prioritize_role("reducer", REDUCER_PRIORITY);
+                reducer_loop(&command_rx, &context, reader_settings);
+            })?;
     }
 
     // The gesture router: bound gestures become GUI commands, direct speech,
@@ -665,6 +696,7 @@ fn build_speech_manager(
         events: Some(events),
         theme,
         presenter: None,
+        thread_started: Some(Arc::new(speech_thread_started)),
     })?))
 }
 

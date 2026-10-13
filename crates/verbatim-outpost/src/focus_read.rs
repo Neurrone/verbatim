@@ -70,6 +70,7 @@ use windows::Win32::UI::Accessibility::{
 use windows::core::AgileReference;
 
 use verbatim_model::{Fetches, Pid, State, TraceId};
+use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_uia::map::{
     CachedUiaParts, add_legacy_checked_state, cached_is_control_and_content,
     cached_native_window_handle, snapshot_parts_from_cached_element, wants_legacy_checked_state,
@@ -88,6 +89,11 @@ use crate::protocol::{DeliveredFact, EventTiming, UiaAncestorFact, UiaFocusRead,
 
 /// The most ancestors read for a focus, as many as the outpost walks.
 const MAX_ANCESTORS: u32 = 64;
+
+/// The priority of an application's reading thread: it calls into the
+/// application for each focus it judges and reads
+/// (`docs/design/communication.md`, section 6.1).
+const READING_PRIORITY: ThreadPriority = ThreadPriority::AboveNormal;
 
 /// How long the classic ancestor walk, used where a remote operation
 /// cannot import the element, may take before the focus is reported with
@@ -1231,7 +1237,10 @@ fn start<R: Reading>(shared: &Arc<Shared<R>>, state: &mut ReadersState<R::Job>, 
     let reading = Arc::clone(shared);
     let spawned = thread::Builder::new()
         .name("verbatim-listener-read".to_owned())
-        .spawn(move || run(&reading, pid, generation));
+        .spawn(move || {
+            prioritize_role("listener read", READING_PRIORITY);
+            run(&reading, pid, generation);
+        });
     match spawned {
         Ok(thread) => {
             state.threads.retain(|thread| !thread.is_finished());
