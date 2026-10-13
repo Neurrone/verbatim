@@ -292,7 +292,11 @@ knowing for review:
   ID, bounded both by count (`DEFAULT_CAPACITY`, 256) and by an estimate of
   the bytes they hold (`DEFAULT_MAX_BYTES`, 1 MiB; each timeline counts its
   inline size plus its utterance text), dropping the oldest first and
-  always keeping the newest, fed from three threads across two processes: the reducer thread
+  always keeping the newest; a timeline whose speech is still owed (asked
+  for or queued, and neither measured nor ended) goes only when every other
+  but the newest is owed too, since every outpost event starts a timeline
+  and a flood's unspoken events otherwise pushed out the timelines of lines
+  spoken hundreds of milliseconds later before they were measured. It is fed from three threads across two processes: the reducer thread
   records event observation (using the outpost's own timestamp), and the
   pipeline observer callbacks record queue and audio start (when several
   utterances share a trace, the first to be heard counts). It also keeps

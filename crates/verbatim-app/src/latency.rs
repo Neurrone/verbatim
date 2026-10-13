@@ -85,6 +85,8 @@ struct Stages {
     /// passed the first frame, or, for a device without a clock or
     /// playback that stopped first, once the utterance ended.
     line_written: bool,
+    /// Whether the trace's first utterance has ended, heard or not.
+    ended: bool,
 }
 
 impl Entry {
@@ -92,6 +94,16 @@ impl Entry {
     /// plus its utterance text's buffer, the only part that grows.
     fn estimated_bytes(&self) -> usize {
         size_of::<Self>() + self.stages.text.capacity()
+    }
+
+    /// Whether the trace's speech is still owed: asked for or queued, and
+    /// neither measured nor ended. Such a timeline is evicted only when no
+    /// other is left to evict ([`LatencyLedger::update`]).
+    fn speech_owed(&self) -> bool {
+        let stages = &self.stages;
+        (stages.speech_requested || stages.utterance.is_some())
+            && !stages.line_written
+            && !stages.ended
     }
 }
 
@@ -427,9 +439,13 @@ struct Timelines {
 
 /// A bounded ring of recent timelines, bounded both by count and by an
 /// estimate of the bytes they hold (see `Entry::estimated_bytes`), dropping
-/// the oldest first. The newest timeline is always kept, so a single
-/// utterance larger than the byte bound is held until the next trace
-/// arrives.
+/// the oldest first, except that a timeline whose speech is still owed
+/// goes only when every other but the newest is owed too: every event an
+/// outpost sends starts a timeline, most are never spoken, and in a flood
+/// they would otherwise push out the timelines of lines spoken hundreds of
+/// milliseconds later, before their speech was measured. The newest
+/// timeline is always kept, so a single utterance larger than the byte
+/// bound is held until the next trace arrives.
 ///
 /// Also implements [`SpeechEvents`], so the speech pipeline reports queue and
 /// audio-start milestones directly into it; those callbacks run on pipeline
@@ -612,7 +628,8 @@ impl LatencyLedger {
     }
 
     /// Applies `apply` to the entry for `trace_id`, creating it when new and
-    /// evicting the oldest entries beyond either bound; returns `apply`'s
+    /// evicting entries beyond either bound, the oldest whose speech is not
+    /// owed first ([`Entry::speech_owed`]), then the oldest; returns `apply`'s
     /// result, so callers can read fields under the same lock they write
     /// under.
     fn update<R>(&self, trace_id: TraceId, apply: impl FnOnce(&mut Entry) -> R) -> R {
@@ -638,8 +655,13 @@ impl LatencyLedger {
             result
         };
         while entries.len() > 1 && (entries.len() > self.capacity || *bytes > self.max_bytes) {
-            if let Some(oldest) = entries.pop_front() {
-                *bytes -= oldest.estimated_bytes();
+            let at = entries
+                .iter()
+                .take(entries.len() - 1)
+                .position(|entry| !entry.speech_owed())
+                .unwrap_or(0);
+            if let Some(evicted) = entries.remove(at) {
+                *bytes -= evicted.estimated_bytes();
             }
         }
         result
@@ -773,6 +795,18 @@ impl SpeechEvents for LatencyLedger {
         // The line of an utterance whose device has no clock, or whose
         // playback stopped before the clock passed its first frame.
         self.write_line(utterance, trace_id);
+        // Its speech is no longer owed, measured or not.
+        if let Some(entry) = self
+            .timelines
+            .lock()
+            .expect("ledger lock")
+            .entries
+            .iter_mut()
+            .rev()
+            .find(|entry| entry.trace_id == trace_id && entry.stages.utterance == Some(utterance))
+        {
+            entry.stages.ended = true;
+        }
         // Mirrored to speech subscribers, letting a consumer wait for an
         // utterance to be heard in full.
         if let Some(server) = self.server.get() {
@@ -931,6 +965,7 @@ mod tests {
             audio_started: Some(62_500),
             audio_heard: None,
             line_written: false,
+            ended: false,
         };
         assert_eq!(
             stages.line().as_deref(),
@@ -1256,6 +1291,7 @@ mod tests {
             audio_started: Some(106_500),
             audio_heard: None,
             line_written: false,
+            ended: false,
         };
         let kinds: Vec<_> = stages.breakdown().iter().map(|stage| stage.kind).collect();
         assert_eq!(
@@ -1396,6 +1432,27 @@ mod tests {
         assert_eq!(records.len(), 3, "capacity bounds the ring");
         assert_eq!(records[0].trace_id, traces[4], "newest first");
         assert_eq!(records[2].trace_id, traces[2]);
+    }
+
+    #[test]
+    fn a_flood_of_unspoken_events_does_not_evict_a_timeline_whose_speech_is_queued() {
+        let ledger = ledger();
+        let spoken = TraceId::mint();
+        ledger.event_observed(spoken, 1);
+        ledger.speech_requested(spoken);
+        ledger.utterance_queued(UtteranceId(1), spoken, "line", std::time::Instant::now());
+        let unspoken: Vec<TraceId> = (0..5).map(|_| TraceId::mint()).collect();
+        for (at, trace) in (2..).zip(&unspoken) {
+            ledger.event_observed(*trace, at);
+        }
+        ledger.audio_started(UtteranceId(1), spoken, std::time::Instant::now());
+        let records = ledger.recent(10);
+        let kept: Vec<TraceId> = records.iter().map(|record| record.trace_id).collect();
+        assert_eq!(kept, [unspoken[4], unspoken[3], spoken]);
+        assert!(
+            records[2].audio_started_at_ms.is_some(),
+            "the queued speech's start is measured"
+        );
     }
 
     #[test]
