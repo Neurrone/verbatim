@@ -28,7 +28,7 @@
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 use std::ptr::NonNull;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use windows::Wdk::Foundation::OBJECT_ATTRIBUTES;
@@ -198,10 +198,11 @@ pub fn pipe(flow: Flow, buffer: u32, other: End) -> io::Result<(OwnedHandle, Own
 }
 
 /// The named pipe file system's root, `\Device\NamedPipe\`, opened once for
-/// the process's life: unnamed pipes are made relative to it.
+/// the process's life: unnamed pipes are made relative to it. A failure to
+/// open it is not kept, so the next pipe tries again.
 fn pipe_root() -> io::Result<HANDLE> {
-    static ROOT: OnceLock<Result<isize, i32>> = OnceLock::new();
-    let root = ROOT.get_or_init(|| {
+    static ROOT: Mutex<Option<isize>> = Mutex::new(None);
+    let root = opened_once(&ROOT, || {
         let path: Vec<u16> = r"\Device\NamedPipe\".encode_utf16().collect();
         let bytes = u16::try_from(path.len() * 2).unwrap_or(0);
         let name = UNICODE_STRING {
@@ -234,11 +235,27 @@ fn pipe_root() -> io::Result<HANDLE> {
             .map_err(|error| error.code().0)
     });
     match root {
-        Ok(handle) => Ok(HANDLE(*handle as *mut core::ffi::c_void)),
+        Ok(handle) => Ok(HANDLE(handle as *mut core::ffi::c_void)),
         Err(code) => Err(io::Error::other(format!(
             "the named pipe file system could not be opened: {code:#x}"
         ))),
     }
+}
+
+/// The value in `slot`, or, while it has none, what `open` gives, kept
+/// only when it succeeded: a failure is answered and forgotten, so one
+/// transient failure does not fail every later call.
+fn opened_once<T: Copy, E>(
+    slot: &Mutex<Option<T>>,
+    open: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E> {
+    let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(value) = *slot {
+        return Ok(value);
+    }
+    let value = open()?;
+    *slot = Some(value);
+    Ok(value)
 }
 
 /// An I/O completion port: where the overlapped operations of every file
@@ -855,6 +872,19 @@ mod tests {
     };
 
     use super::*;
+
+    /// A failure to open the pipe file system's root is not kept: the
+    /// next call opens it, and only a success is kept.
+    #[test]
+    fn a_failed_open_is_tried_again_and_only_a_success_is_kept() {
+        let slot = Mutex::new(None);
+        assert_eq!(opened_once(&slot, || Err::<isize, i32>(5)), Err(5));
+        assert_eq!(opened_once(&slot, || Ok::<isize, i32>(7)), Ok(7));
+        assert_eq!(
+            opened_once(&slot, || -> Result<isize, i32> { panic!("opened again") }),
+            Ok(7)
+        );
+    }
 
     /// Whether `handle` was opened for synchronous I/O.
     fn is_synchronous(handle: &OwnedHandle) -> bool {
