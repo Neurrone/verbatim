@@ -113,7 +113,6 @@ pub(super) fn launch(
             arguments: &*arguments,
             log_stem: &log_stem,
             memory_cap: Some(OUTPOST_MEMORY_CAP),
-            from_child_buffer: 0,
         },
         ChildEnds { commands, messages },
     )?;

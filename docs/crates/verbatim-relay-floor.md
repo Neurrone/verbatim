@@ -9,10 +9,12 @@ read it.
 It has no library API. One executable plays every role. `run` is the
 orchestrator, which is also the relay (verbatim.exe's stand-in) and
 Core's synthesizer thread, and launches the others as contained
-children: with `verbatim_process::launch` over anonymous pipes for the
-variants that model today's synchronous pipes, and with
-`verbatim_process::launch_with_ends` over `verbatim_process::overlapped`
-pipes for the ones that model the design's. The child roles are
+children with `verbatim_process::launch_with_ends`: over anonymous
+pipes it makes itself with `CreatePipe`, synchronous at both ends, for
+the variants that model the synchronous pipes Verbatim used before the
+communication design (F1, F2 and F4), and over
+`verbatim_process::overlapped` pipes for the ones that model the
+design's. The child roles are
 `--sender`, the listener's stand-in, whose producing threads each send a
 burst of frames after a random gap waited out on a high-resolution
 waitable timer; `--receiver`, the outpost's stand-in, which stamps each

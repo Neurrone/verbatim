@@ -15,27 +15,23 @@ Public API:
   closure given the raw values of the child's two inherited pipe handles
   (the one it reads commands from, then the one it writes messages to)
   that returns the rest of the command line; `log_stem`, which names the
-  child's log file `<log_stem>.log`; `memory_cap`, an optional
-  per-process memory limit; and `from_child_buffer`, the buffer size in
-  bytes to ask for on the pipe the child writes to, `0` for the system
-  default.
-- `launch(spec)` — launches the child over two new anonymous pipes and
-  returns a `Contained` and a `ChildPipes`, or the error of whichever
-  step failed (creating the job, creating the pipes, or spawning).
+  child's log file `<log_stem>.log`; and `memory_cap`, an optional
+  per-process memory limit.
 - `launch_with_ends(spec, ends)` — launches the child over pipes the
   caller made, typically with `overlapped::pipe`: `ChildEnds` holds the
   child's two ends (`commands`, the one it reads, and `messages`, the one
   it writes), which the child inherits and which are closed in Core once
   it has, whether or not the spawn succeeded; the caller keeps its own
-  ends, overlapped or synchronous as it made them. Returns the
-  `Contained`. `spec.from_child_buffer` is not used, since the caller's
-  pipes have their buffers already. The containment, the inheritance list
-  and the log are `launch`'s. The supervisor launches outposts and the
-  listener with it, over `overlapped::pipe`s whose child ends are
-  overlapped too (since communication step 6), and the relay
-  floor's benchmark launches its children with it; the synthesizer host
-  still uses `launch` until migration step 9 of
-  `docs/design/communication.md` moves it.
+  ends, overlapped or synchronous as it made them, with the buffers it
+  gave them. Returns the `Contained`, or the error of whichever step
+  failed (creating the job or spawning). It is the only way this crate
+  launches a child. The supervisor launches outposts and the listener
+  with it, over `overlapped::pipe`s whose child ends are overlapped too
+  (since communication step 6); `verbatim-synth-hosted` launches the
+  synthesizer host with it over `overlapped::pipe`s (since step 9); and
+  the relay floor's benchmark launches its children with it, over
+  `overlapped::pipe`s or, for the conditions that measure synchronous
+  anonymous pipes, over pipes it makes itself with `CreatePipe`.
 - `Contained` — the launched child: `job`, the kill-on-close job handle,
   whose closing kills the process; `process`, the process handle (closing
   it only releases the reference); and `pid`, for logs. Dropping a
@@ -47,9 +43,6 @@ Public API:
   on purpose, the supervisor's fallback when a child does not shut down in
   time, says so in the exit code, apart from a clean exit (0) or a crash
   (an exception code).
-- `ChildPipes` — Core's ends of the two pipes: `to_child`, where Core
-  writes commands, and `from_child`, where Core reads the child's
-  messages. Both are `std::fs::File`.
 - `launch_log_dir(exe_dir)` — this Verbatim launch's child log directory,
   `logs\<Verbatim's pid>` next to the executables.
 - `prepare_launch_logs(exe_dir)` — prepares that directory at startup,
@@ -238,9 +231,9 @@ Public API:
   with a diagnosis then, and the agent refuses to bind its socket. A locked
   or secure input desktop is not refused.
 
-Implementation notes, launching. `launch` creates the job, then the two
-anonymous pipes (`launch_with_ends` is given its pipes instead), then asks `arguments` for the command line with the
-child ends' handle values, and spawns the executable with
+Implementation notes, launching. `launch_with_ends` creates the job,
+then asks `arguments` for the command line with the child ends' handle
+values, and spawns the executable with
 `CREATE_NO_WINDOW`, naming the job in a `PROC_THREAD_ATTRIBUTE_JOB_LIST`
 attribute, so `CreateProcessW` creates the process already inside the
 job. It is contained from its first instruction, and creation and
@@ -256,9 +249,9 @@ The job. It always carries `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. With a
 limit, past which the child's allocations fail. Outposts pass 200 MB;
 synthesizer hosts pass none.
 
-Pipes and inheritance. Each pipe is created with inheritable handles, and
-the parent end is then marked non-inheritable, so only the child ends can
-cross. The spawn goes further: `bInheritHandles` is true, but a
+Pipes and inheritance. The caller makes the pipes with every end
+non-inheritable, as `overlapped::pipe` does; the child ends are marked
+inheritable only for the `CreateProcessW` call. The spawn goes further: `bInheritHandles` is true, but a
 `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, in the same attribute list as the
 job, names exactly the handles this child
 inherits, its two pipe ends and its log file. Without the list, two
@@ -266,11 +259,10 @@ launches running at once on different threads could each inherit the
 other's pipe ends and keep that pipe open after its own child died, so
 Core would never see the end of the stream. After the spawn, Core closes
 its copies of the child ends whether the spawn succeeded or not, so that
-the child's exit is seen as the end of the stream on `from_child`.
-`from_child_buffer` is passed to `CreatePipe` for the child-to-Core pipe
-only; the command pipe always uses the default. A small buffer makes a
-child that streams data block on its writes when Core stops reading,
-which is how the synthesizer host is paced.
+the child's exit is seen as the end of the stream on the caller's end.
+Each pipe's buffer is whatever the caller gave it; a small one on the
+pipe from the child makes a child that streams data block on its writes
+when Core stops reading, which is how the synthesizer host is paced.
 
 Logs. Each child's standard output and error (and, harmlessly, standard
 input) are a file handle opened for appending in this launch's log

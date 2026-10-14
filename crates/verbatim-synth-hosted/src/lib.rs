@@ -224,7 +224,6 @@ impl Host {
                 arguments: &arguments,
                 log_stem: &format!("synth-{}", synth.0),
                 memory_cap: None,
-                from_child_buffer: PIPE_BUFFER,
             },
             ChildEnds {
                 commands: commands_end,

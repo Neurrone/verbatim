@@ -6,11 +6,11 @@
 //! instruction, and dies when Core's job handle closes, whatever ends Core.
 //! Creation and containment are one step: a Core that dies while
 //! launching a child cannot leave it outside a job, running or suspended.
-//! It talks to Core over two anonymous pipes whose child ends it inherits;
-//! it inherits exactly those and its log file, never another child's
-//! handles, so two launches running at once cannot keep each other's pipes
-//! open. Those handles are created non-inheritable and are inheritable only
-//! for the duration of the `CreateProcessW` call that launches the child, so
+//! It talks to Core over two pipes the caller makes, typically with
+//! [`overlapped::pipe`], whose child ends it inherits; it inherits exactly
+//! those and its log file, never another child's handles, so two launches
+//! running at once cannot keep each other's pipes open. Those handles are
+//! made non-inheritable and are inheritable only for the duration of the `CreateProcessW` call that launches the child, so
 //! another process creation elsewhere in Core that inherits every
 //! inheritable handle can pick them up only if it runs at that same moment;
 //! Core creates processes only through this module today. Each child's
@@ -47,7 +47,6 @@ use windows::Win32::System::JobObjects::{
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
     SetInformationJobObject, TerminateJobObject,
 };
-use windows::Win32::System::Pipes::CreatePipe;
 use windows::Win32::System::Threading::{
     CREATE_NO_WINDOW, CreateProcessW, DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT,
     InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
@@ -69,10 +68,6 @@ pub struct ChildSpec<'a> {
     pub log_stem: &'a str,
     /// A memory limit for the child; past it its allocations fail.
     pub memory_cap: Option<usize>,
-    /// The buffer size to ask for on the pipe the child writes to, in bytes;
-    /// `0` for the system default. A small buffer keeps a child that
-    /// streams data (a synthesizer host) from running far ahead of Core.
-    pub from_child_buffer: u32,
 }
 
 /// The exit code a child is given when [`Contained::kill`] ends it: the
@@ -154,34 +149,6 @@ impl Contained {
     }
 }
 
-/// Core's ends of a launched child's two pipes.
-pub struct ChildPipes {
-    /// Core writes commands here.
-    pub to_child: File,
-    /// Core reads the child's messages here.
-    pub from_child: File,
-}
-
-/// Launches a contained child as `spec` describes, over two new anonymous
-/// pipes whose ends on Core's side are synchronous [`File`]s.
-///
-/// # Errors
-///
-/// Returns the error of whichever step failed: creating the job or the
-/// pipes, or spawning the process.
-pub fn launch(spec: &ChildSpec<'_>) -> io::Result<(Contained, ChildPipes)> {
-    let job = create_job(spec.memory_cap)?;
-    let pipes = Pipes::create(spec.from_child_buffer)?;
-    let contained = spawn_contained(spec, job, [pipes.child_in, pipes.child_out])?;
-    Ok((
-        contained,
-        ChildPipes {
-            to_child: pipes.parent_out,
-            from_child: pipes.parent_in,
-        },
-    ))
-}
-
 /// The child's ends of two pipes the caller made, for
 /// [`launch_with_ends`]: typically the other ends of
 /// [`overlapped::pipe`]s, whose Verbatim ends the caller keeps.
@@ -194,11 +161,10 @@ pub struct ChildEnds {
 
 /// Launches a contained child as `spec` describes, over pipes the caller
 /// made: the child inherits `ends`, and the caller keeps its own ends of
-/// those pipes, overlapped or synchronous as it made them.
-/// `spec.from_child_buffer` is not used, since the caller's pipes already
-/// have their buffers. The ends are closed here once the child has
-/// inherited them, whether or not the spawn succeeded, so the child's exit
-/// is seen as the end of the stream on the caller's end.
+/// those pipes, overlapped or synchronous as it made them. The ends are
+/// closed here once the child has inherited them, whether or not the spawn
+/// succeeded, so the child's exit is seen as the end of the stream on the
+/// caller's end.
 ///
 /// # Errors
 ///
@@ -247,66 +213,6 @@ fn spawn_contained(
         // SAFETY: `spawned.process` is a valid process handle we now own.
         process: unsafe { OwnedHandle::from_raw_handle(spawned.process.0 as RawHandle) },
         pid: spawned.pid,
-    })
-}
-
-/// The four pipe handles: parent and child ends of two anonymous pipes.
-struct Pipes {
-    /// Parent end: Core reads the child's messages.
-    parent_in: File,
-    /// Child end: the child writes messages.
-    child_out: HANDLE,
-    /// Parent end: Core writes commands.
-    parent_out: File,
-    /// Child end: the child reads commands.
-    child_in: HANDLE,
-}
-
-impl Pipes {
-    /// Creates both pipes, every end non-inheritable; the child ends are
-    /// made inheritable only while the child is created.
-    fn create(from_child_buffer: u32) -> io::Result<Self> {
-        let (child_in, parent_out) = anonymous_pipe(PipeInherit::Read, 0)?;
-        // SAFETY: the parent end is a valid pipe handle we own.
-        let parent_out = unsafe { File::from_raw_handle(parent_out.0 as RawHandle) };
-        let (child_out, parent_in) = match anonymous_pipe(PipeInherit::Write, from_child_buffer) {
-            Ok(ends) => ends,
-            Err(error) => {
-                close_handle(child_in);
-                return Err(error);
-            }
-        };
-        // SAFETY: the parent end is a valid pipe handle we own.
-        let parent_in = unsafe { File::from_raw_handle(parent_in.0 as RawHandle) };
-        Ok(Self {
-            parent_in,
-            child_out,
-            parent_out,
-            child_in,
-        })
-    }
-}
-
-/// Which end of an anonymous pipe should be inheritable by a child.
-#[derive(Clone, Copy)]
-enum PipeInherit {
-    /// The read end is inheritable (the child reads).
-    Read,
-    /// The write end is inheritable (the child writes).
-    Write,
-}
-
-/// Creates one anonymous pipe, returning `(child_end, parent_end)`, both
-/// non-inheritable.
-fn anonymous_pipe(inherit: PipeInherit, buffer: u32) -> io::Result<(HANDLE, HANDLE)> {
-    let mut read = HANDLE::default();
-    let mut write = HANDLE::default();
-    // SAFETY: both out-handles are written by CreatePipe before use; no
-    // security attributes, so neither end is inheritable.
-    unsafe { CreatePipe(&raw mut read, &raw mut write, None, buffer) }.map_err(to_io)?;
-    Ok(match inherit {
-        PipeInherit::Read => (read, write),
-        PipeInherit::Write => (write, read),
     })
 }
 

@@ -10,8 +10,8 @@
 //! sender for the focus listener, a relay for verbatim.exe, a receiver for
 //! an outpost, and a host for a synthesizer host. The relay is this
 //! process, which launches the others as Verbatim launches its children,
-//! contained in a job (`verbatim_process::launch`, or
-//! `verbatim_process::launch_with_ends` over `overlapped::pipe`s). The
+//! contained in a job (`verbatim_process::launch_with_ends`, over
+//! anonymous pipes it makes itself or over `overlapped::pipe`s). The
 //! variants:
 //!
 //! - F0: two threads in one process and a condition variable, the floor
@@ -50,7 +50,7 @@ mod wire;
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::{self, BufReader, Write};
-use std::os::windows::io::OwnedHandle;
+use std::os::windows::io::{FromRawHandle, OwnedHandle, RawHandle};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
@@ -61,6 +61,8 @@ use serde::{Deserialize, Serialize};
 use verbatim_process::overlapped::{self, Completions, End, Flow, PipeIo, Port, Started};
 use verbatim_process::scheduling::{ThreadPriority, opt_out_of_power_throttling};
 use verbatim_process::{ChildEnds, ChildSpec, Contained};
+use windows::Win32::Foundation::HANDLE;
+use windows::Win32::System::Pipes::CreatePipe;
 
 use stats::{Samples, allocations};
 use wire::{
@@ -472,23 +474,48 @@ fn child_arguments(role: &str, plan: Plan, overlapped: bool) -> impl Fn(usize, u
     }
 }
 
-/// Launches this executable in `role` as Verbatim launches its children
-/// today: anonymous pipes, synchronous at both ends.
+/// Launches this executable in `role` as Verbatim launched its children
+/// before the communication design: two anonymous pipes, synchronous at
+/// both ends, with the system's default buffers. The variants that measure
+/// those pipes (F1, F2 and F4) launch their children this way, so the
+/// pipes are made here, `verbatim_process` making only overlapped ones.
 fn launch_sync(role: &str, plan: Plan) -> io::Result<SyncChild> {
     let exe = std::env::current_exe()?;
     let arguments = child_arguments(role, plan, false);
-    let (process, pipes) = verbatim_process::launch(&ChildSpec {
-        exe: &exe,
-        arguments: &arguments,
-        log_stem: "relay-floor",
-        memory_cap: None,
-        from_child_buffer: 0,
-    })?;
+    let (commands, to_child) = anonymous_pipe()?;
+    let (from_child, messages) = anonymous_pipe()?;
+    let process = verbatim_process::launch_with_ends(
+        &ChildSpec {
+            exe: &exe,
+            arguments: &arguments,
+            log_stem: "relay-floor",
+            memory_cap: None,
+        },
+        ChildEnds { commands, messages },
+    )?;
     Ok(SyncChild {
         process,
-        to_child: pipes.to_child,
-        from_child: pipes.from_child,
+        to_child: File::from(to_child),
+        from_child: File::from(from_child),
     })
+}
+
+/// Makes one anonymous pipe with the system's default buffer, both ends
+/// synchronous and neither inheritable (`launch_with_ends` lets the child
+/// inherit its end only while it is created): the read end, then the
+/// write end.
+fn anonymous_pipe() -> io::Result<(OwnedHandle, OwnedHandle)> {
+    let mut read = HANDLE::default();
+    let mut write = HANDLE::default();
+    // SAFETY: CreatePipe writes both out-handles before they are used; with
+    // no security attributes, neither end is inheritable.
+    unsafe { CreatePipe(&raw mut read, &raw mut write, None, 0) }.map_err(io::Error::from)?;
+    // SAFETY: CreatePipe succeeded, so each is a valid pipe handle this
+    // process now owns and nothing else holds.
+    let read = unsafe { OwnedHandle::from_raw_handle(read.0 as RawHandle) };
+    // SAFETY: as for the read end.
+    let write = unsafe { OwnedHandle::from_raw_handle(write.0 as RawHandle) };
+    Ok((read, write))
 }
 
 /// Launches this executable in `role` over two `overlapped::pipe`s: Core's
@@ -510,7 +537,6 @@ fn launch_overlapped(
             arguments: &arguments,
             log_stem: "relay-floor",
             memory_cap: None,
-            from_child_buffer: 0,
         },
         ChildEnds { commands, messages },
     )?;

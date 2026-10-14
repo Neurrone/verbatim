@@ -50,7 +50,6 @@ fn an_outpost_whose_application_exits_says_so_and_shuts_down_cleanly() {
             arguments: &arguments,
             log_stem: "target-exit-test",
             memory_cap: None,
-            from_child_buffer: 0,
         },
         ChildEnds { commands, messages },
     )
