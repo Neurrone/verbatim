@@ -158,6 +158,15 @@ impl<T: Send> Poster<T> {
         Err(*unsafe { Box::from_raw(item) })
     }
 
+    /// Whether the [`PortQueue`] is still there to take items: after a
+    /// [`send`](Self::send) that gave its item back, true means the port
+    /// refused the packet, and a later send may succeed; false, that the
+    /// taker has gone.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.shared.open.load(Ordering::SeqCst)
+    }
+
     /// How many items have been posted and taken so far.
     #[must_use]
     pub fn progress(&self) -> Progress {

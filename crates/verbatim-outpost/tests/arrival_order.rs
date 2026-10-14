@@ -266,13 +266,17 @@ impl Reducer {
         let (stalls_tx, stalls) = unbounded();
         let progress = poster.clone();
         let deliver = poster.clone();
-        let sink = EventSink::new(move |message| deliver.send(Input::Outpost(message)).is_ok())
-            .watched(
-                move || progress.progress(),
-                move |stall| {
-                    let _ = stalls_tx.send(stall);
-                },
-            );
+        let sink = EventSink::new(move |message| {
+            deliver
+                .send(Input::Outpost(message))
+                .map_err(|_| verbatim_outpost::Undelivered::Gone)
+        })
+        .watched(
+            move || progress.progress(),
+            move |stall| {
+                let _ = stalls_tx.send(stall);
+            },
+        );
         let exe = std::env::current_exe().expect("this test binary's path");
         let supervisor = Supervisor::with_executable(
             sink,

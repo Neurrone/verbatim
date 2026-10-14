@@ -130,7 +130,7 @@ impl std::fmt::Display for EndReason {
 /// [`OutpostMessage`]s converts into a sink, for tests.
 #[derive(Clone)]
 pub struct EventSink {
-    deliver: Arc<dyn Fn(OutpostMessage) -> bool + Send + Sync>,
+    deliver: Arc<dyn Fn(OutpostMessage) -> Result<(), Undelivered> + Send + Sync>,
     watch: Option<Arc<ReducerWatch>>,
 }
 
@@ -154,12 +154,27 @@ pub struct ReducerStall {
     pub waiting: u64,
 }
 
+/// Why an [`EventSink`] did not deliver a message.
+#[derive(Debug)]
+pub enum Undelivered {
+    /// The app has gone: nothing it is sent is taken any more.
+    Gone,
+    /// The app is there, but the message could not be put in line now,
+    /// such as a completion port refusing the packet, which only a system
+    /// out of memory does; it is given back, and a later attempt may
+    /// succeed.
+    Refused(OutpostMessage),
+}
+
 impl EventSink {
-    /// A sink that hands each message to `deliver`, which returns whether
-    /// the app is still there to take it: once it returns false, the
-    /// helper parsing large frames stops.
+    /// A sink that hands each message to `deliver`, which says whether the
+    /// app took it, has gone, or refused it for now ([`Undelivered`]):
+    /// once the app has gone, the helper parsing large frames stops, and a
+    /// result it refused is delivered again.
     #[must_use]
-    pub fn new(deliver: impl Fn(OutpostMessage) -> bool + Send + Sync + 'static) -> Self {
+    pub fn new(
+        deliver: impl Fn(OutpostMessage) -> Result<(), Undelivered> + Send + Sync + 'static,
+    ) -> Self {
         Self {
             deliver: Arc::new(deliver),
             watch: None,
@@ -186,10 +201,12 @@ impl EventSink {
         }
     }
 
-    /// Delivers `message`, returning whether the app took it: false means
-    /// the app has gone.
-    #[must_use]
-    pub fn send(&self, message: OutpostMessage) -> bool {
+    /// Delivers `message`.
+    ///
+    /// # Errors
+    ///
+    /// Returns why it was not delivered ([`Undelivered`]).
+    pub fn send(&self, message: OutpostMessage) -> Result<(), Undelivered> {
         (self.deliver)(message)
     }
 
@@ -208,7 +225,7 @@ impl EventSink {
 
 impl From<Sender<OutpostMessage>> for EventSink {
     fn from(events_tx: Sender<OutpostMessage>) -> Self {
-        Self::new(move |message| events_tx.send(message).is_ok())
+        Self::new(move |message| events_tx.send(message).map_err(|_| Undelivered::Gone))
     }
 }
 

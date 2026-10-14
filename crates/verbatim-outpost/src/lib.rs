@@ -38,4 +38,4 @@ pub use outpost::{
     FocusedElementReader, ForegroundReader, Heard, HeardObserver, Outpost, OutpostOptions,
     run_attach, run_pipe,
 };
-pub use supervisor::{EventSink, OutpostMessage, Supervisor};
+pub use supervisor::{EventSink, OutpostMessage, Supervisor, Undelivered};

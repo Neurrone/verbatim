@@ -24,13 +24,14 @@
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::thread;
+use std::time::Duration;
 
 use crossbeam_channel::{Sender, unbounded};
 use verbatim_model::{OutpostId, Pid};
 
 use super::owner::OwnerEvent;
 use super::relay::Mailbox;
-use super::{EventSink, OutpostMessage};
+use super::{EventSink, OutpostMessage, Undelivered};
 use crate::protocol::{OutpostToSupervisor, decode_message};
 
 /// The size of body above which a frame is parsed by the helper thread
@@ -274,7 +275,7 @@ impl Frames {
                             outpost: frame.outpost,
                             message,
                         };
-                        if !sink.send(OutpostMessage::Parsed(parsed)) {
+                        if !deliver(&sink, OutpostMessage::Parsed(parsed)) {
                             return;
                         }
                     }
@@ -291,6 +292,34 @@ impl Frames {
     }
 }
 
+/// How long the helper waits before it delivers again a result the app
+/// refused for now ([`Undelivered::Refused`]).
+const REDELIVER_AFTER: Duration = Duration::from_millis(50);
+
+/// Delivers `message`, the helper's result, through `sink`, again after
+/// [`REDELIVER_AFTER`] for as long as the app refuses it for now, since
+/// its outpost's later messages wait in [`Frames`] until it arrives and the
+/// idle barrier waits for it. Returns false once the app has gone.
+fn deliver(sink: &EventSink, mut message: OutpostMessage) -> bool {
+    let mut logged = false;
+    loop {
+        match sink.send(message) {
+            Ok(()) => return true,
+            Err(Undelivered::Gone) => return false,
+            Err(Undelivered::Refused(refused)) => {
+                if !logged {
+                    tracing::error!(
+                        "a large frame's parse could not be put in line; it is tried again until it is"
+                    );
+                    logged = true;
+                }
+                message = refused;
+                thread::sleep(REDELIVER_AFTER);
+            }
+        }
+    }
+}
+
 /// Parses `frame` into the message it carries, stamped with when the relay
 /// read it and with its outpost on every node id: node ids name the
 /// incarnation whose pipe they arrived on, never whatever the body claims.
@@ -299,4 +328,65 @@ fn parse(frame: &Frame) -> io::Result<Box<OutpostToSupervisor>> {
     message.core_read(frame.read_at_us);
     message.assign_outpost(frame.outpost);
     Ok(message)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use crossbeam_channel::RecvTimeoutError;
+    use verbatim_process::overlapped::Port;
+
+    use super::*;
+    use crate::supervisor::relay::mailbox;
+
+    /// How long the test waits for the helper's result before it fails.
+    const BOUND: Duration = Duration::from_secs(10);
+
+    /// A frame larger than [`LARGE_FRAME_BYTES`] from outpost 1, which the
+    /// helper parses.
+    fn large_frame() -> Frame {
+        let message = OutpostToSupervisor::Fault {
+            detail: "x".repeat(LARGE_FRAME_BYTES + 1),
+        };
+        let body = serde_json::to_vec(&message).expect("encoded");
+        Frame::new(Pid(5), OutpostId(1), (body, 0), 0)
+    }
+
+    /// The app refusing the helper's result for now, as a port that
+    /// refuses a packet does, loses nothing: the helper delivers it again,
+    /// and the frame's outpost goes on.
+    #[test]
+    fn a_parse_the_app_refuses_for_now_is_delivered_again() {
+        let (delivered_tx, delivered) = crossbeam_channel::unbounded();
+        let refused_once = AtomicBool::new(false);
+        let sink = EventSink::new(move |message| {
+            if !refused_once.swap(true, Ordering::SeqCst) {
+                return Err(Undelivered::Refused(message));
+            }
+            delivered_tx.send(message).map_err(|_| Undelivered::Gone)
+        });
+        let (owner, _inbox) = mailbox(Arc::new(Port::new().expect("a port")));
+        let mut frames = Frames::new(sink, owner);
+        let mut out = Vec::new();
+        frames.arrived(OutpostMessage::Frame(large_frame()), &mut out);
+        assert!(out.is_empty(), "the frame went to the helper");
+        assert!(frames.parsing());
+        let parsed = match delivered.recv_timeout(BOUND) {
+            Ok(parsed) => parsed,
+            Err(RecvTimeoutError::Timeout) => panic!("the refused result never came again"),
+            Err(RecvTimeoutError::Disconnected) => panic!("the helper stopped"),
+        };
+        frames.arrived(parsed, &mut out);
+        assert!(
+            matches!(
+                out.as_slice(),
+                [OutpostMessage::Event { outpost: OutpostId(1), position: 0, message, .. }]
+                    if matches!(**message, OutpostToSupervisor::Fault { .. })
+            ),
+            "{out:?}"
+        );
+        assert!(!frames.parsing());
+    }
 }

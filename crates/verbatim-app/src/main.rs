@@ -1692,7 +1692,14 @@ impl ReducerThread<'_> {
 fn outpost_sink(command_tx: Commands) -> verbatim_outpost::EventSink {
     let progress = command_tx.clone();
     verbatim_outpost::EventSink::new(move |message| {
-        command_tx.send(ShellCommand::Outpost(message)).is_ok()
+        match command_tx.send(ShellCommand::Outpost(message)) {
+            Ok(()) => Ok(()),
+            // The port refused the packet; the queue is still taken.
+            Err(ShellCommand::Outpost(message)) if command_tx.is_open() => {
+                Err(verbatim_outpost::Undelivered::Refused(message))
+            }
+            Err(_) => Err(verbatim_outpost::Undelivered::Gone),
+        }
     })
     .watched(
         move || progress.progress(),
@@ -2161,12 +2168,18 @@ mod tests {
     fn outpost_messages_and_commands_reach_the_reducer_in_arrival_order() {
         let (command_tx, mut command_rx) = port_queue().expect("a port");
         let sink = outpost_sink(command_tx.clone());
-        assert!(sink.send(OutpostMessage::NotWatched { target_pid: Pid(1) }));
+        assert!(
+            sink.send(OutpostMessage::NotWatched { target_pid: Pid(1) })
+                .is_ok()
+        );
         command_tx
             .send(ShellCommand::InputHandled(7))
             .map_err(|_| "refused")
             .expect("the receiver is held");
-        assert!(sink.send(OutpostMessage::NotWatched { target_pid: Pid(2) }));
+        assert!(
+            sink.send(OutpostMessage::NotWatched { target_pid: Pid(2) })
+                .is_ok()
+        );
         let arrived: Vec<String> = std::iter::from_fn(|| command_rx.try_recv())
             .map(|command| match command {
                 ShellCommand::Outpost(OutpostMessage::NotWatched { target_pid }) => {

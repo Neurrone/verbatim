@@ -105,7 +105,9 @@ Public API:
   the one taker, on a completion port of their own. `Poster::send(item)`
   posts the item as one packet, its box's address carried as the
   packet's `OVERLAPPED` pointer, with one `PostQueuedCompletionStatus`
-  that never waits, and gives the item back when the taker has gone.
+  that never waits, and gives the item back when the taker has gone or
+  the port refuses the packet; `Poster::is_open()` tells the two apart,
+  true while the taker is there, so a refused item may be sent again.
   `PortQueue::recv`, `recv_timeout` and `try_recv` (a zero-timeout
   dequeue) take the items in the order the port received them, which is
   first in, first out across every poster, up to 64 per wait; `recv`

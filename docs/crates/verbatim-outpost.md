@@ -726,7 +726,12 @@ Public API:
   through the `EventSink` given to `new`: a channel of `OutpostMessage`s
   converts into one (the tests use that), and `EventSink::new` takes a
   function, which the app uses to post the messages to the reducer
-  thread's port, in line with its keys and commands.
+  thread's port, in line with its keys and commands. The function says
+  why a message was not delivered (`Undelivered`): `Gone`, the app having
+  gone, which stops the helper parsing large frames; or `Refused`, the
+  message given back because the port refused its packet, in which case
+  the helper delivers its result again every 50 ms until it is taken,
+  since that outpost's later messages and the idle barrier wait for it.
   `EventSink::watched(progress, stalled)` lets the relay watch the thread
   taking them: at each heartbeat it reads `progress`, the counts of a
   `verbatim_process::port_queue` (`Progress`), and once that thread has
