@@ -209,6 +209,20 @@ pub enum OutpostMessage {
         /// The application.
         target_pid: Pid,
     },
+    /// The idle barrier's round `round` (`docs/design/communication.md`,
+    /// section 6.7; [`Supervisor::query_idle`]): the listener has answered,
+    /// or has gone, and every outpost in `outposts` is asked now, each
+    /// behind every fact relayed to it before, one still starting once it
+    /// is ready. Sent before any of them is asked, so it reaches the app
+    /// ahead of every answer. Each answers
+    /// [`OutpostToSupervisor::IdleAnswer`] as a message of its own, or
+    /// ends ([`OutpostMessage::Ended`]), which counts as its answer.
+    IdleQueried {
+        /// The round.
+        round: u64,
+        /// The outpost incarnations asked.
+        outposts: Vec<OutpostId>,
+    },
 }
 
 /// The live writers, by outpost id, so the reducer thread can queue a
@@ -387,6 +401,17 @@ impl Supervisor {
         let _ = self
             .owner
             .send(owner::OwnerEvent::Views { attention, holding });
+    }
+
+    /// Runs the idle barrier's round `round` through the children
+    /// (`docs/design/communication.md`, section 6.7): the listener is asked
+    /// first, behind every command sent to it before; once it answers, or
+    /// if it has gone, every outpost, ready or starting, is asked behind
+    /// every fact relayed to it before, and the app hears which
+    /// ([`OutpostMessage::IdleQueried`]). An outpost still being launched
+    /// is waited for first, so the round covers the facts held for it.
+    pub fn query_idle(&self, round: u64) {
+        let _ = self.owner.send(owner::OwnerEvent::IdleRound(round));
     }
 
     /// Tells the focus listener that Core took the event traced

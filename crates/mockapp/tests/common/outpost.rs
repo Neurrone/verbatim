@@ -171,6 +171,11 @@ struct GateState {
     closed: bool,
     /// Whether a read is waiting.
     waiting: bool,
+    /// How many times a read has come to wait at the gate.
+    arrivals: u64,
+    /// How many waiting reads may go on while the gate stays closed
+    /// ([`OutpostUnderTest::step_worker`]).
+    passes: u64,
 }
 
 impl WorkerGate {
@@ -178,20 +183,50 @@ impl WorkerGate {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// On the worker: waits while the gate is closed, saying so.
+    /// On the worker: waits while the gate is closed, saying so, unless
+    /// the test lets it pass once.
     fn pass(&self) {
         let mut state = self.lock();
         if !state.closed {
             return;
         }
         state.waiting = true;
+        state.arrivals += 1;
         self.changed.notify_all();
         let (mut state, timeout) = self
             .changed
-            .wait_timeout_while(state, super::WAIT_TIMEOUT, |state| state.closed)
+            .wait_timeout_while(state, super::WAIT_TIMEOUT, |state| {
+                state.closed && state.passes == 0
+            })
             .unwrap_or_else(PoisonError::into_inner);
+        if state.closed {
+            state.passes = state.passes.saturating_sub(1);
+        }
         state.waiting = false;
+        self.changed.notify_all();
         assert!(!timeout.timed_out(), "the test never let the worker go on");
+    }
+
+    /// On the test: lets the read waiting at the closed gate and the
+    /// `reads - 1` after it go on, and waits for the worker to wait at the
+    /// gate with the read after those.
+    fn step(&self, reads: u64) {
+        let mut state = self.lock();
+        assert!(state.waiting, "the worker is not waiting at the gate");
+        let arrived = state.arrivals + reads;
+        state.passes += reads;
+        self.changed.notify_all();
+        let (state, timeout) = self
+            .changed
+            .wait_timeout_while(state, super::WAIT_TIMEOUT, |state| {
+                state.arrivals < arrived || !state.waiting
+            })
+            .unwrap_or_else(PoisonError::into_inner);
+        drop(state);
+        assert!(
+            !timeout.timed_out(),
+            "the worker never came back to the gate"
+        );
     }
 
     /// On the test: waits for the worker to wait at the gate.
@@ -275,9 +310,17 @@ impl OutpostUnderTest {
     /// itself ready, and nothing else. It reads `app`'s window as the
     /// foreground window.
     pub fn with_options(app: &super::MockApp, options: OutpostOptions) -> Self {
+        Self::with_pipe_buffer(app, options, MESSAGES_PIPE_BUFFER)
+    }
+
+    /// [`Self::with_options`], its pipe to Core holding `buffer` bytes
+    /// unread: a test that leaves a message larger than that unread has
+    /// its write in flight, and what the outpost sends after it waiting
+    /// in its backlog.
+    pub fn with_pipe_buffer(app: &super::MockApp, options: OutpostOptions, buffer: u32) -> Self {
         let pid = app.pid();
-        let (ours, theirs) = pipe(Flow::Inbound, MESSAGES_PIPE_BUFFER, End::Overlapped)
-            .expect("the outpost's pipe to Core");
+        let (ours, theirs) =
+            pipe(Flow::Inbound, buffer, End::Overlapped).expect("the outpost's pipe to Core");
         let messages = MessagePipe::new(BlockingReader::new(ours).expect("a reader"));
         let focus = FocusSlot::default();
         let slot = Arc::clone(&focus);
@@ -548,6 +591,18 @@ impl OutpostUnderTest {
             hwnd: self.foreground.load(Ordering::Relaxed),
         });
         self.gate.wait_for_worker();
+    }
+
+    /// Lets the worker [`Self::hold_worker`] held go on through `reads`
+    /// reads of the foreground window, the one it waits in included, and
+    /// returns once it waits in the read after them. A foreground change
+    /// of mockapp's window reads it twice, its acceptance test and its
+    /// check that the window is in front, and reads nothing more, since
+    /// UIA owns the window: stepping two reads from one held foreground
+    /// change to the next has the worker handle everything handed to it
+    /// between the two and hold it again.
+    pub fn step_worker(&self, reads: u64) {
+        self.gate.step(reads);
     }
 
     /// Lets the worker [`Self::hold_worker`] held go on.

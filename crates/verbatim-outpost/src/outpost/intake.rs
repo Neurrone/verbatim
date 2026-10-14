@@ -197,6 +197,11 @@ pub(super) enum Item {
     /// else is waiting, the focus-following subscriptions have made every
     /// move asked of them, and every message published has been written.
     Settle(std::sync::mpsc::Sender<()>),
+    /// The harness's idle barrier, round `n` (`docs/design/communication.md`,
+    /// section 6.7): reached once everything that arrived before it has
+    /// been handled, and answered once the follow-ups those entries queued
+    /// are handled and no deferred work is pending.
+    IdleQuery(u64),
     /// The time [`Intake::wake_at`] named has come with nothing else to do:
     /// a caret key's watch may have reached the bound on its age.
     Wake,
@@ -734,9 +739,11 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         // Only the newest caret report for a node matters, and it is never
         // limited: the focus's caret.
         Item::CaretOf { node_id } => (Some(Key::CaretOf(node_id.number())), Category::Exempt, 0),
-        Item::Query { .. } | Item::NotedCaret { .. } | Item::Settle(_) | Item::Wake => {
-            (None, Category::Exempt, 0)
-        }
+        Item::Query { .. }
+        | Item::NotedCaret { .. }
+        | Item::Settle(_)
+        | Item::IdleQuery(_)
+        | Item::Wake => (None, Category::Exempt, 0),
     }
 }
 

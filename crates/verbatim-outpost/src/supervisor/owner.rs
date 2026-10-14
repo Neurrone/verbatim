@@ -120,6 +120,8 @@ pub(super) enum OwnerEvent {
     /// From a hang check's thread: whether `outpost`'s application has a
     /// visible window the system reports hung.
     HangChecked { outpost: OutpostId, hung: bool },
+    /// From the app: run the idle barrier's round through the children.
+    IdleRound(u64),
     /// From the app: Verbatim is exiting. Every child is shut down, and the
     /// summary of every ending in Verbatim's life is sent back once all
     /// have ended; the owner then ends.
@@ -171,6 +173,20 @@ struct Record {
     hang_check: bool,
     /// When the application last held attention.
     last_attention_at: Instant,
+    /// The idle barrier's round, held behind the held facts until `Ready`.
+    idle_query: Option<u64>,
+}
+
+/// Where the idle barrier's round is in the relay
+/// (`docs/design/communication.md`, section 6.7).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IdleStage {
+    /// The listener has been asked and has not answered.
+    Listener(u64),
+    /// The listener has answered, or has gone, and an outpost is still
+    /// being launched: the outposts are asked once every launch has
+    /// reported, so the round covers the facts held for it.
+    Launches(u64),
 }
 
 /// The focus listener.
@@ -224,6 +240,9 @@ struct Owner {
     /// The processes ignored entirely: no outpost is started for them, and
     /// the listener, told of them, drops their facts.
     ignored: std::sync::Arc<IgnoredProcesses>,
+    /// The idle barrier's round under way in the relay, until the
+    /// outposts are asked.
+    idle: Option<IdleStage>,
 }
 
 /// Starts the owner thread, which starts the listener at once.
@@ -261,6 +280,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         ping_seq: 0,
         own_pid: Pid(std::process::id()),
         ignored,
+        idle: None,
     };
     thread::Builder::new()
         .name("verbatim-relay".to_owned())
@@ -407,6 +427,10 @@ impl Owner {
                 OwnerEvent::MenuOrSwitchEnded { ended_at_ms }
             }
             OutpostToSupervisor::Ready { .. } => OwnerEvent::Ready(outpost),
+            OutpostToSupervisor::IdleAnswer { round } => {
+                self.listener_idle(outpost, round);
+                return;
+            }
             OutpostToSupervisor::Fault { detail } => {
                 tracing::warn!(detail, "focus listener fault");
                 return;
@@ -514,6 +538,87 @@ impl Owner {
                 self.summary.count(ending);
             }
             OwnerEvent::HangChecked { outpost, hung } => self.on_hang_checked(outpost, hung),
+            OwnerEvent::IdleRound(round) => self.idle_round(round),
+        }
+    }
+
+    /// Starts the idle barrier's round `round` (section 6.7): the listener
+    /// is asked behind every command sent to it before, or, while it is
+    /// launching, as soon as it can be; with no listener, the outposts are
+    /// asked at once.
+    fn idle_round(&mut self, round: u64) {
+        let exiting = self.shutting_down.is_some();
+        let listener = self.listener.as_mut().filter(|_| !exiting);
+        let Some(listener) = listener else {
+            self.query_outposts(round);
+            return;
+        };
+        let query = SupervisorToOutpost::IdleQuery { round };
+        let reached = if let Some(child) = &listener.child {
+            let pushed = child.writer.push(Outgoing::IdleQuery(query));
+            if let Err(error) = &pushed {
+                tracing::warn!(%error, "the idle query could not reach the listener");
+            }
+            pushed.is_ok()
+        } else {
+            listener.pending.push(query);
+            true
+        };
+        self.idle = Some(IdleStage::Listener(round));
+        if !reached {
+            self.listener_gone();
+        }
+    }
+
+    /// The listener `listener` answered round `round`, behind every fact it
+    /// sent before, each routed in the pass that read it: the outposts are
+    /// asked now, each behind them.
+    fn listener_idle(&mut self, listener: OutpostId, round: u64) {
+        let current = self
+            .listener
+            .as_ref()
+            .is_some_and(|current| current.outpost == listener);
+        if current && self.idle == Some(IdleStage::Listener(round)) {
+            self.query_outposts(round);
+        }
+    }
+
+    /// The listener has gone, its pipe closed or its launch failed, or it
+    /// is replaced: one that ends during a round counts as having answered.
+    fn listener_gone(&mut self) {
+        if let Some(IdleStage::Listener(round)) = self.idle {
+            self.query_outposts(round);
+        }
+    }
+
+    /// Asks every outpost, ready or starting, for round `round`, in this
+    /// one pass, behind every fact relayed to it before, and tells the app
+    /// which first ([`OutpostMessage::IdleQueried`]). One still starting is
+    /// asked behind its held facts once it is ready. While an outpost is
+    /// still being launched, the app may not have heard it started, so the
+    /// outposts are asked once every launch has reported.
+    fn query_outposts(&mut self, round: u64) {
+        if self.shutting_down.is_none()
+            && self.records.values().any(|record| record.child.is_none())
+        {
+            self.idle = Some(IdleStage::Launches(round));
+            return;
+        }
+        self.idle = None;
+        let outposts = self
+            .records
+            .values()
+            .filter(|record| record.child.is_some())
+            .map(|record| record.outpost)
+            .collect();
+        let _ = self
+            .events_tx
+            .send(OutpostMessage::IdleQueried { round, outposts });
+        for record in self.records.values_mut() {
+            match record.child.as_ref().filter(|_| record.ready) {
+                Some(child) => ask_idle(&child.writer, round),
+                None => record.idle_query = Some(round),
+            }
         }
     }
 
@@ -573,6 +678,7 @@ impl Owner {
                 abandoned: 0,
                 hang_check: false,
                 last_attention_at: now,
+                idle_query: None,
             },
         );
         self.launch(outpost, Role::Outpost(pid));
@@ -770,6 +876,11 @@ impl Owner {
             tracing::error!(%error, %outpost, "the focus listener's pipe cannot be read");
             self.on_pipe_closed(outpost);
         }
+        // An idle round waiting for the launches asks the outposts once
+        // none is left.
+        if let Some(IdleStage::Launches(round)) = self.idle {
+            self.query_outposts(round);
+        }
     }
 
     fn launched(&mut self, outpost: OutpostId, result: io::Result<Child>) {
@@ -794,6 +905,7 @@ impl Owner {
                 Err(error) => {
                     tracing::error!(%error, "failed to launch the focus listener; retrying on the next heartbeat");
                     self.listener = None;
+                    self.listener_gone();
                 }
             }
             return;
@@ -866,6 +978,9 @@ impl Owner {
             held.timing.core_held_us = held.received.elapsed_us();
             deliver(&writer, held);
         }
+        if let Some(round) = record.idle_query.take() {
+            ask_idle(&writer, round);
+        }
         // An outpost is ready once its own `WinEvent` hook is in: the
         // listener stops forwarding the application's MSAA events raised
         // from now on, and says so behind the last it forwarded.
@@ -929,6 +1044,7 @@ impl Owner {
             tracing::warn!(%outpost, "focus listener exited; replacing it");
             self.end_listener("its pipe closed; it is replaced");
             self.focus_reads_ended();
+            self.listener_gone();
             self.start_listener(true);
             return;
         }
@@ -1220,6 +1336,7 @@ impl Owner {
                         tracing::warn!("focus listener stopped answering; replacing it");
                         self.end_listener("it stopped answering pings; it is replaced");
                         self.focus_reads_ended();
+                        self.listener_gone();
                         self.start_listener(true);
                     } else {
                         let _ = child.writer.push(Outgoing::Ping(ping));
@@ -1339,6 +1456,15 @@ struct Retirement {
 impl Drop for Retirement {
     fn drop(&mut self) {
         let _ = self.own_tx.send(OwnerEvent::Retired(self.ending));
+    }
+}
+
+/// Asks an outpost for the idle barrier's round `round`, behind everything
+/// queued for it before. One that has ended answers by its end.
+fn ask_idle(writer: &WriterHandle, round: u64) {
+    let query = SupervisorToOutpost::IdleQuery { round };
+    if let Err(error) = writer.push(Outgoing::IdleQuery(query)) {
+        tracing::debug!(%error, "the idle query could not reach an outpost");
     }
 }
 

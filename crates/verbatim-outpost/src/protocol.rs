@@ -715,6 +715,20 @@ pub enum SupervisorToOutpost {
         /// The position of the last message Core has handled.
         acknowledged: u64,
     },
+    /// The harness's idle barrier, round `round`
+    /// (`docs/design/communication.md`, section 6.7): answered
+    /// [`OutpostToSupervisor::IdleAnswer`] once nothing that came before
+    /// this query is still in progress. The listener answers once its
+    /// `WinEvent` thread and its reading threads have nothing in progress;
+    /// an outpost once its worker has handled everything that reached its
+    /// intake before the query, with the follow-ups those entries queued,
+    /// and no caret key's watch or owed terminal read is open. Either
+    /// answers behind every message it sent before, never merged and never
+    /// ahead as urgent.
+    IdleQuery {
+        /// The round, echoed in the answer.
+        round: u64,
+    },
     /// Shut down cleanly and exit: take no new work, let the call or remote
     /// operation in progress finish (UIA's own timeouts end one the
     /// application never answers), remove every UIA event handler and
@@ -1007,6 +1021,22 @@ pub enum OutpostToSupervisor {
     /// ([`SupervisorToOutpost::Shutdown`]), as it has nothing left to
     /// watch.
     TargetExited,
+    /// The answer to [`SupervisorToOutpost::IdleQuery`] for `round`, sent
+    /// behind every message sent before it: never sent ahead as urgent,
+    /// and nothing is merged across it.
+    IdleAnswer {
+        /// The round answered.
+        round: u64,
+    },
+}
+
+impl OutpostToSupervisor {
+    /// Whether this is an [`OutpostToSupervisor::IdleAnswer`]: no message
+    /// sent after it is merged into one sent before it.
+    #[must_use]
+    pub fn is_idle_answer(&self) -> bool {
+        matches!(self, OutpostToSupervisor::IdleAnswer { .. })
+    }
 }
 
 impl OutpostToSupervisor {
@@ -1526,6 +1556,24 @@ mod tests {
         let read_back: Option<OutpostToSupervisor> =
             read_message(&mut buffer.as_slice()).expect("reads");
         assert_eq!(read_back, Some(ended));
+    }
+
+    #[test]
+    fn the_idle_barriers_query_and_answer_round_trip() {
+        let query = SupervisorToOutpost::IdleQuery { round: 12 };
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &query).expect("writes");
+        let read_back: Option<SupervisorToOutpost> =
+            read_message(&mut buffer.as_slice()).expect("reads");
+        assert_eq!(read_back, Some(query));
+        let answer = OutpostToSupervisor::IdleAnswer { round: 12 };
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &answer).expect("writes");
+        let read_back: Option<OutpostToSupervisor> =
+            read_message(&mut buffer.as_slice()).expect("reads");
+        assert_eq!(read_back, Some(answer));
+        // It carries no node, so Core and the outpost do not count it.
+        assert!(!OutpostToSupervisor::IdleAnswer { round: 12 }.carries_nodes());
     }
 
     #[test]

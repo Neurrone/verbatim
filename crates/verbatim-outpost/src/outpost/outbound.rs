@@ -16,7 +16,9 @@
 //!   the same node and goes to the back, and a terminal's new output is
 //!   combined with its output still waiting, under the flood policy's
 //!   limits ([`crate::terminal::combine`]). Answers to Core's requests,
-//!   notifications, and faults are never merged, and keep their order.
+//!   notifications, and faults are never merged, and keep their order. The
+//!   idle barrier's answer is never merged either, and no event is merged
+//!   across it, so it never overtakes what was sent before it.
 //!   What waits is therefore bounded by the nodes and kinds there are, by
 //!   Core's requests, and by the intake's own limits.
 //! - The messages that carry node ids are numbered as Core counts them, as
@@ -171,11 +173,13 @@ impl Pending {
     }
 
     /// Where the waiting message with `key` is, if one is waiting since the
-    /// last flush marker.
+    /// last flush marker and the last answer to the idle barrier: a message
+    /// merged across an answer would move what it reports behind it.
     fn waiting_with(&self, key: &Key) -> Option<usize> {
         for (index, waiting) in self.ordinary.iter().enumerate().rev() {
             match waiting {
                 Waiting::Message(Some(other), ..) if other == key => return Some(index),
+                Waiting::Message(_, message, _) if message.is_idle_answer() => return None,
                 Waiting::Message(..) => {}
                 Waiting::Flushed(_) => return None,
             }
@@ -759,6 +763,46 @@ mod tests {
                 summary(&no_text(1)),
                 summary(&text_changed(2)),
                 "reply 7".to_owned(),
+                summary(&text_changed(1)),
+            ]
+        );
+        outbound.close();
+        assert_eq!(
+            read_message::<_, OutpostToSupervisor>(&mut reader).expect("read"),
+            None
+        );
+    }
+
+    /// The idle barrier's answer, sent behind a write in flight, goes after
+    /// every message waiting before it, a pong sent after it going ahead of
+    /// both, and a newer event of a node whose event waits before it is not
+    /// merged into that one across it, so what that event reports is never
+    /// moved behind the answer.
+    #[test]
+    fn the_idle_answer_waits_behind_every_message_before_it_and_nothing_is_merged_across_it() {
+        let (outbound, mut reader) = outbound();
+        outbound.send(large());
+        outbound.send(text_changed(1));
+        outbound.send(reply(7));
+        outbound.send(OutpostToSupervisor::IdleAnswer { round: 4 });
+        outbound.send(text_changed(1));
+        outbound.urgent(OutpostToSupervisor::Pong {
+            seq: 3,
+            parked_count: 0,
+            written_at_us: 0,
+        });
+        assert_eq!(summary(&read(&mut reader)), summary(&large()));
+        assert!(
+            matches!(read(&mut reader), OutpostToSupervisor::Pong { seq: 3, .. }),
+            "the pong goes ahead of what waited"
+        );
+        let rest: Vec<String> = (0..4).map(|_| summary(&read(&mut reader))).collect();
+        assert_eq!(
+            rest,
+            vec![
+                summary(&text_changed(1)),
+                "reply 7".to_owned(),
+                summary(&OutpostToSupervisor::IdleAnswer { round: 4 }),
                 summary(&text_changed(1)),
             ]
         );

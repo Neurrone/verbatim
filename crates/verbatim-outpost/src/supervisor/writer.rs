@@ -25,6 +25,10 @@
 //!   every part of a UIA focus's read (its marker, its read or drop, and
 //!   the end of a listener's reads), since an outpost waits on a marker
 //!   until its read or drop arrives;
+//! - the idle barrier's query (`docs/design/communication.md`, section 6.7)
+//!   always gets through, past the bound, behind everything queued before
+//!   it, and no fact queued after it replaces one queued before it, which
+//!   would move that fact behind the query;
 //! - anything else, a query above all, fails at once, so its asker gets an
 //!   outcome straight away instead of waiting behind a stuck outpost.
 
@@ -67,6 +71,9 @@ pub(super) enum Outgoing {
     /// its marker, so it gets through as a hand-over message does, with
     /// when verbatim.exe read it from the listener.
     FocusRead(SupervisorToOutpost, Received),
+    /// The idle barrier's query for a round,
+    /// [`SupervisorToOutpost::IdleQuery`].
+    IdleQuery(SupervisorToOutpost),
     /// Anything else: a query, an activation, a configuration command, with
     /// when it was queued.
     Other(SupervisorToOutpost, Received),
@@ -99,6 +106,7 @@ impl Outgoing {
         match self {
             Outgoing::Shutdown => &SupervisorToOutpost::Shutdown,
             Outgoing::Ping(command)
+            | Outgoing::IdleQuery(command)
             | Outgoing::NodesHeld(command)
             | Outgoing::Fact(_, command, _)
             | Outgoing::HandOver(command)
@@ -134,7 +142,7 @@ impl Outgoing {
                 command.stamp_sent(now);
                 command
             }
-            Outgoing::NodesHeld(command) => command,
+            Outgoing::NodesHeld(command) | Outgoing::IdleQuery(command) => command,
         }
     }
 }
@@ -213,16 +221,27 @@ impl Queue {
             Outgoing::Ping(_)
             | Outgoing::Shutdown
             | Outgoing::HandOver(_)
-            | Outgoing::FocusRead(..) => {}
+            | Outgoing::FocusRead(..)
+            | Outgoing::IdleQuery(_) => {}
             Outgoing::NodesHeld(_) => {
                 self.items
                     .retain(|waiting| !matches!(waiting, Outgoing::NodesHeld(_)));
             }
             Outgoing::Fact(ref key, ..) => {
+                // Never one queued before the idle barrier's query.
+                let after_query = self
+                    .items
+                    .iter()
+                    .rposition(|waiting| matches!(waiting, Outgoing::IdleQuery(_)))
+                    .map_or(0, |query| query + 1);
                 let same = key.as_ref().and_then(|key| {
-                    self.items.iter().position(
-                        |waiting| matches!(waiting, Outgoing::Fact(Some(other), ..) if other == key),
-                    )
+                    self.items
+                        .iter()
+                        .skip(after_query)
+                        .position(
+                            |waiting| matches!(waiting, Outgoing::Fact(Some(other), ..) if other == key),
+                        )
+                        .map(|index| index + after_query)
                 });
                 if let Some(index) = same {
                     self.items.remove(index);
@@ -499,6 +518,30 @@ mod tests {
             })
             .collect();
         assert_eq!(order, ["1", "2", "ended"]);
+    }
+
+    /// The idle barrier's query gets through a full queue behind
+    /// everything queued before it, and a fact queued after it replaces no
+    /// fact queued before it, which would move that fact's object behind
+    /// the query.
+    #[test]
+    fn the_idle_query_gets_through_behind_the_facts_before_it_and_nothing_merges_across_it() {
+        let idle = || Outgoing::IdleQuery(SupervisorToOutpost::IdleQuery { round: 3 });
+        let mut queue = Queue::default();
+        queue.push(fact(1), 2).expect("queued");
+        queue.push(fact(2), 2).expect("queued");
+        queue.push(idle(), 2).expect("gets through the full queue");
+        queue
+            .push(fact(1), 8)
+            .expect("queued behind it, the waiting fact 1 kept");
+        let order: Vec<String> = std::iter::from_fn(|| queue.pop())
+            .map(|item| match item.command() {
+                SupervisorToOutpost::Ping { seq, .. } => seq.to_string(),
+                SupervisorToOutpost::IdleQuery { round } => format!("idle {round}"),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(order, ["1", "2", "idle 3", "1"]);
     }
 
     #[test]

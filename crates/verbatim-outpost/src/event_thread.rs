@@ -113,12 +113,13 @@ impl Synced {
 }
 
 impl Nudger {
-    /// Hands the two words to the event thread's nudge handler. Returns at
-    /// once; a thread that has ended takes no nudge.
-    pub(crate) fn nudge(&self, (word, hwnd): (usize, isize)) {
+    /// Hands the two words to the event thread's nudge handler, behind
+    /// every event already delivered to the thread. Returns at once, saying
+    /// whether the thread took the nudge: one that has ended takes none.
+    pub(crate) fn nudge(&self, (word, hwnd): (usize, isize)) -> bool {
         // SAFETY: posting a message with no pointer parameters; the call
         // fails safely for a thread that has ended.
-        let _ = unsafe { PostThreadMessageW(self.thread_id, WM_NUDGE, WPARAM(word), LPARAM(hwnd)) };
+        unsafe { PostThreadMessageW(self.thread_id, WM_NUDGE, WPARAM(word), LPARAM(hwnd)) }.is_ok()
     }
 
     /// Returns once the event thread has handled every nudge sent before

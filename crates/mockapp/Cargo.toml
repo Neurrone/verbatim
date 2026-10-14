@@ -60,6 +60,10 @@ name = "focus_reports"
 harness = false
 
 [[test]]
+name = "idle_barrier"
+harness = false
+
+[[test]]
 name = "instruction_limit"
 harness = false
 

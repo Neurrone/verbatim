@@ -1033,6 +1033,31 @@ struct ReadersState<J> {
     next_generation: u64,
     threads: Vec<JoinHandle<()>>,
     stopping: bool,
+    /// What runs once no application has an event waiting or being read
+    /// ([`Readers::when_idle`]).
+    idle_waiters: Vec<IdleWaiter>,
+}
+
+/// What [`Readers::when_idle`] runs.
+pub(crate) type IdleWaiter = Box<dyn FnOnce() + Send>;
+
+impl<J> ReadersState<J> {
+    /// Runs what waits for the readers to be idle, if they are: no
+    /// application has an event waiting or being read, so every outcome
+    /// has been sent. Called under the readers' lock, as outcomes are sent.
+    fn wake_idle_waiters(&mut self) {
+        if self.idle_waiters.is_empty()
+            || self
+                .apps
+                .values()
+                .any(|app| app.running.is_some() || !app.queue.is_empty())
+        {
+            return;
+        }
+        for waiter in self.idle_waiters.drain(..) {
+            waiter();
+        }
+    }
 }
 
 struct Shared<R: Reading> {
@@ -1074,6 +1099,7 @@ impl<R: Reading> Readers<R> {
                 next_generation: 0,
                 threads: Vec::new(),
                 stopping: false,
+                idle_waiters: Vec::new(),
             }),
             changed: Condvar::new(),
             failed_reads: AtomicU32::new(0),
@@ -1179,6 +1205,21 @@ impl<R: Reading> Readers<R> {
         app.wake.notify_one();
     }
 
+    /// Runs `waiter` once no application has an event waiting for its read
+    /// or being read, at once if none has, under the readers' lock, behind
+    /// the outcome of every event queued before this call: the idle
+    /// barrier's answer goes behind them (`docs/design/communication.md`,
+    /// section 6.7). Never waits on a read. Once the readers are stopping,
+    /// `waiter` is dropped unrun.
+    pub(crate) fn when_idle(&self, waiter: IdleWaiter) {
+        let mut state = self.shared.lock();
+        if state.stopping {
+            return;
+        }
+        state.idle_waiters.push(waiter);
+        state.wake_idle_waiters();
+    }
+
     /// The failed cached reads the reading threads have made so far.
     pub(crate) fn failed_reads(&self) -> u32 {
         self.shared.failed_reads.load(Ordering::Relaxed)
@@ -1240,6 +1281,7 @@ fn start<R: Reading>(shared: &Arc<Shared<R>>, state: &mut ReadersState<R::Job>, 
                     .reading
                     .outcome(pid, meta, Judged::Dropped("no thread to read it"));
             }
+            state.wake_idle_waiters();
         }
     }
 }
@@ -1265,6 +1307,7 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
         if app.live == Some(generation) {
             app.running = None;
             shared.reading.outcome(pid, meta, judged);
+            state.wake_idle_waiters();
             continue;
         }
         // Abandoned while it read: the watchdog said the event was dropped,
@@ -1391,6 +1434,7 @@ fn abandon<R: Reading>(shared: &Arc<Shared<R>>, state: &mut ReadersState<R::Job>
     } else if !app.queue.is_empty() {
         start(shared, state, pid);
     }
+    state.wake_idle_waiters();
 }
 
 #[cfg(test)]
@@ -1558,6 +1602,58 @@ mod tests {
                 (Pid(5), 1, "read"),
                 (Pid(5), 3, "read"),
                 (Pid(5), 4, "read"),
+            ]
+        );
+        assert_eq!(fixture.readers.stop(), 1);
+    }
+
+    /// The idle barrier's wait on the reading threads: run at once when no
+    /// event waits or is read, and otherwise only once the outcome of every
+    /// event queued before it has been sent, a held read's included.
+    #[test]
+    fn the_idle_waiter_runs_after_the_outcome_of_every_event_queued_before_it() {
+        let fixture = fixture(Duration::from_secs(60));
+        let idle = |round: u64| -> IdleWaiter {
+            let outcomes = fixture
+                .readers
+                .shared
+                .reading
+                .outcomes
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone();
+            Box::new(move || {
+                let _ = outcomes.send((Pid(0), round, "idle"));
+            })
+        };
+        fixture.readers.when_idle(idle(1));
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (Pid(0), 1, "idle"),
+            "nothing is read, so the waiter runs at once"
+        );
+        let (open, gate) = mpsc::channel();
+        fixture
+            .readers
+            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
+        fixture.readers.push(Pid(5), meta(2), (2, None, Vec::new()));
+        fixture.readers.when_idle(idle(2));
+        assert_eq!(
+            fixture.outcomes.try_recv(),
+            Err(mpsc::TryRecvError::Empty),
+            "event 1 is being read and event 2 waits"
+        );
+        open.send(()).expect("the held read waits");
+        let outcomes: Vec<(Pid, u64, &str)> = (0..3)
+            .map(|_| fixture.outcomes.recv_timeout(WAIT).expect("an outcome"))
+            .collect();
+        assert_eq!(
+            outcomes,
+            [
+                (Pid(5), 1, "read"),
+                (Pid(5), 2, "read"),
+                (Pid(0), 2, "idle")
             ]
         );
         assert_eq!(fixture.readers.stop(), 1);

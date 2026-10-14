@@ -154,6 +154,10 @@ pub(crate) struct Context {
     /// The caret key's watch for evidence the worker keeps open between its
     /// entries, if one is open.
     caret_watch: Mutex<Option<text_reads::OpenWatch>>,
+    /// The idle barrier's round the worker has reached and not yet
+    /// answered, kept while deferred work is pending
+    /// (`worker::answer_idle`).
+    idle_query: Mutex<Option<u64>>,
     /// The text anchors Core holds, set by the reader as Core's list
     /// arrives, under a lock of their own that the worker never holds
     /// across a call into the application, as it holds the anchor stores'.
@@ -362,6 +366,24 @@ impl Context {
     /// theme wants.
     fn ancestor_request(&self, uia: &Uia) -> windows::core::Result<Request<Ancestor>> {
         uia.request(crate::gates::ancestor_gates(&self.fetches()))
+    }
+
+    /// Queues the idle barrier's query for `round` for the worker, behind
+    /// everything that reached the intake before it.
+    fn queue_idle_query(&self, round: u64) {
+        self.push(
+            Item::IdleQuery(round),
+            TraceId::mint(),
+            now_ms(),
+            EventTiming::default(),
+        );
+    }
+
+    /// The idle barrier's round the worker has reached and not answered.
+    fn idle_query(&self) -> MutexGuard<'_, Option<u64>> {
+        self.idle_query
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The caret key's watch the worker keeps open, if any.
@@ -750,6 +772,7 @@ impl Outpost {
             remote_operations: options.remote_operations,
             classic_windows: Mutex::new(HashMap::new()),
             caret_watch: Mutex::new(None),
+            idle_query: Mutex::new(None),
             held_anchors: Arc::clone(&held_anchors),
             uia_anchors: Mutex::new(Anchors::sharing(
                 Arc::clone(&anchor_counter),
@@ -1042,6 +1065,7 @@ impl Outpost {
                     ..EventTiming::default()
                 },
             ),
+            SupervisorToOutpost::IdleQuery { round } => context.queue_idle_query(*round),
             SupervisorToOutpost::Cancel { request_id } => {
                 if context.intake.cancel(*request_id) {
                     // Queuing never waits, so the answer keeps its place

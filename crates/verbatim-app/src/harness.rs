@@ -11,7 +11,8 @@
 //!
 //! Idleness: `AwaitIdle` puts a waiter in line behind every gesture and
 //! numbered key that reached the gesture router before it, and the reducer
-//! answers it once it is idle (see [`IdleWaiter`]).
+//! answers it once a round through every child has found everything idle
+//! (see [`IdleWaiter`] and [`crate::idle`]).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -122,8 +123,9 @@ fn close(handle: HANDLE) {
 }
 
 /// One control-plane `AwaitIdle` in line: answered once the reducer has
-/// handled input `after_input` (when given), its queues are empty, no
-/// request to an outpost is outstanding, and the speech queue has taken in
+/// handled input `after_input` (when given), a round of the idle barrier
+/// started after that has found the listener, every outpost and the
+/// reducer idle ([`crate::idle`]), and the speech queue has taken in
 /// everything the reducer gave it.
 pub(crate) struct IdleWaiter {
     /// The numbered key to wait for.

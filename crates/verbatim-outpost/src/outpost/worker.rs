@@ -601,6 +601,34 @@ fn run_loop(context: &Context, generation: u64) {
         if outcome.is_err() {
             return;
         }
+        answer_idle(context);
+    }
+}
+
+/// Answers the idle barrier's query the worker has reached
+/// ([`Item::IdleQuery`]) once no deferred work is pending: no caret key's
+/// watch is open and no terminal owes Core a read. Called by the worker in
+/// charge after each entry, so the answer goes as soon as the entry that
+/// ends the watch or pays the read is handled, behind what that entry
+/// published.
+fn answer_idle(context: &Context) {
+    if context.idle_query().is_none() {
+        return;
+    }
+    if context.caret_watch().is_some()
+        || context
+            .terminals()
+            .values()
+            .any(|terminal| terminal.owed.is_some())
+    {
+        return;
+    }
+    let answered = context.idle_query().take();
+    if let Some(round) = answered {
+        tracing::debug!(round, "the idle barrier's query is answered");
+        context
+            .outbound
+            .send(OutpostToSupervisor::IdleAnswer { round });
     }
 }
 
@@ -711,6 +739,7 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
         | Item::CaretOf { .. }
         | Item::NotedCaret { .. }
         | Item::Settle(_)
+        | Item::IdleQuery(_)
         | Item::Wake => (HANDLING_DEADLINE, None),
         // Releasing thousands of objects after a tree dump takes a while.
         Item::NodesHeld { .. } => (WALK_DEADLINE, None),
@@ -740,6 +769,7 @@ fn describe(item: &Item) -> String {
         Item::CaretOf { node_id } => format!("caret of {node_id:?}"),
         Item::NotedCaret { node_id } => format!("noted caret of {node_id:?}"),
         Item::Settle(_) => "settle".to_owned(),
+        Item::IdleQuery(round) => format!("idle query {round}"),
         Item::Wake => "wake".to_owned(),
     }
 }
@@ -914,6 +944,7 @@ impl Worker<'_> {
             // Read now that nothing else waits, unless a read since saw it.
             Item::NotedCaret { node_id } => self.caret_of(node_id, trace, observed_at_ms, false),
             Item::Settle(done) => self.settle(done, trace),
+            Item::IdleQuery(round) => self.idle_query(round, trace),
             Item::Wake => self.wake(),
         }
     }
@@ -1145,6 +1176,37 @@ impl Worker<'_> {
         }
         context.outbound.flush();
         let _ = done.send(());
+    }
+
+    /// The idle barrier's query, reached at the front of the intake, so
+    /// every entry that arrived before it has been handled. A follow-up one
+    /// of them queued, the caret of a focus just reported, is part of that
+    /// entry's work, and a noted caret is work owed: the query goes behind
+    /// them. Otherwise it is kept until no deferred work is pending, and
+    /// answered then ([`answer_idle`]), at once if none is. Entries that
+    /// arrived after it are not waited for, so a flood cannot keep the
+    /// answer back.
+    fn idle_query(&self, round: u64, trace: TraceId) {
+        let context = self.context;
+        let again = || Entry {
+            item: Item::IdleQuery(round),
+            trace,
+            observed_at_ms: now_ms(),
+            timing: EventTiming::default(),
+        };
+        if context
+            .intake
+            .any_waiting(|entry| matches!(entry.item, Item::CaretOf { .. }))
+        {
+            context.intake.push(again());
+            return;
+        }
+        if let Some(noted) = context.intake.take_idle() {
+            context.intake.push(noted);
+            context.intake.push(again());
+            return;
+        }
+        *context.idle_query() = Some(round);
     }
 
     /// Whether `node_id` is the focus this outpost last reported.

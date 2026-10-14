@@ -12,6 +12,7 @@ mod datetime;
 mod error_sound;
 mod flight_dump;
 mod harness;
+mod idle;
 mod latency;
 mod live;
 mod requests;
@@ -934,9 +935,10 @@ struct ReducerThread<'a> {
     views: (Option<Pid>, BTreeSet<OutpostId>),
     /// The highest numbered harness key handled so far.
     handled_input: u64,
-    /// Control-plane `AwaitIdle` waiters that reached their place in line
-    /// and wait for the reducer to be idle.
-    idle_waiters: Vec<harness::IdleWaiter>,
+    /// Control-plane `AwaitIdle` waiters that reached their place in line,
+    /// and the idle barrier's round through every child that answers them
+    /// (`docs/design/communication.md`, section 6.7).
+    barrier: idle::IdleBarrier<Sender<()>>,
 }
 
 /// How many messages from an outpost may be handled before the nodes held in
@@ -990,6 +992,9 @@ impl ReducerThread<'_> {
                 reason,
             } => {
                 tracing::info!(%outpost, %target_pid, %reason, "outpost ended");
+                // Everything it sent is ahead of its end: in the idle
+                // barrier's round, its end is its answer.
+                self.barrier.ended(outpost);
                 // A crashed or killed outpost of the attention application,
                 // or of the focus's when that is another (a Settings page's
                 // content, inside ApplicationFrameHost's window), is
@@ -1038,6 +1043,9 @@ impl ReducerThread<'_> {
                 }
             }
             OutpostMessage::MenuOrSwitchEnded { ended_at_ms } => self.fake_focus(ended_at_ms),
+            OutpostMessage::IdleQueried { round, outposts } => {
+                self.barrier.queried(round, outposts);
+            }
             OutpostMessage::NotWatched { target_pid } => {
                 // The application is not running, or its outposts crashed
                 // repeatedly: no outpost will answer for it, so its focus is
@@ -1255,6 +1263,7 @@ impl ReducerThread<'_> {
             OutpostToSupervisor::Fault { detail } => {
                 tracing::warn!(%source, %outpost, detail, "outpost fault");
             }
+            OutpostToSupervisor::IdleAnswer { round } => self.barrier.answered(round, outpost),
             // Pong and any future message kinds carry nothing for the reducer.
             _ => {}
         }
@@ -1287,7 +1296,7 @@ impl ReducerThread<'_> {
             }
             ShellCommand::AwaitIdle(token) => {
                 if let Some(waiter) = self.context.idle_line.take(token) {
-                    self.idle_waiters.push(waiter);
+                    self.barrier.push(waiter.after_input, waiter.reply);
                 }
             }
             ShellCommand::DumpFocus(reply) => {
@@ -1301,43 +1310,70 @@ impl ReducerThread<'_> {
         }
     }
 
-    /// Answers the `AwaitIdle` waiters whose input has been handled, once
-    /// nothing is waiting in the reducer's queues and no request to an
-    /// outpost is outstanding: the speech queue answers each, once it has
-    /// taken in everything the reducer gave it. Called between steps, so
-    /// the reducer is never in the middle of one.
-    fn answer_idle_waiters(&mut self, queued: usize) {
-        if self.idle_waiters.is_empty() {
+    /// Moves the idle barrier on (`docs/design/communication.md`, section
+    /// 6.7), between steps, so the reducer is never in the middle of one.
+    /// Once every outpost the round asked has answered or ended, takes in
+    /// everything already queued for the reducer, then checks its own
+    /// conditions: when they hold, the round has passed, and the speech
+    /// queue answers each of its waiters once it has taken in everything
+    /// the reducer gave it; when not, the round waits for them to clear.
+    /// Starts a round, through the supervisor's relay, when one is due.
+    fn advance_idle_barrier(&mut self, command_rx: &Receiver<ShellCommand>) {
+        if !self.barrier.has_waiters() {
             return;
         }
+        if self.barrier.all_answered() {
+            // What is queued now is ahead of the answers, or came with
+            // them: it is handled before the conditions are checked.
+            while let Ok(command) = command_rx.try_recv() {
+                self.on_command(command);
+                self.send_views();
+            }
+            let clear = self.idle_conditions_clear();
+            for reply in self.barrier.finish(clear) {
+                self.context.manager.after_queued(move || {
+                    let _ = reply.send(());
+                });
+            }
+        }
+        let clear = self.idle_conditions_clear();
+        if let Some(round) = self.barrier.start(self.handled_input, clear) {
+            self.context.supervisor.query_idle(round);
+        }
         let requests = self.requests.outstanding();
-        // An outpost still starting has facts or a focus query waiting for
-        // it, as a replacement for a crashed one does.
         let starting = self.live.starting();
         let focus_wanted = self.focus_now_wanted.len();
+        let standing = match self.barrier.standing() {
+            idle::Standing::NoRound => "no round under way".to_owned(),
+            idle::Standing::AwaitingRelay(round) => {
+                format!("round {round} waits for the listener's answer or an outpost's launch")
+            }
+            idle::Standing::AwaitingOutposts(round, outposts) => {
+                format!("round {round} waits for the answers of outposts {outposts:?}")
+            }
+            idle::Standing::Clearing(round) => {
+                format!("round {round} was answered and waits for the reducer to clear")
+            }
+        };
         *self
             .context
             .idle_line
             .outstanding
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = format!(
-            "handled input {}, {queued} inputs queued, {requests} outpost requests outstanding, {starting} outposts starting, focus wanted from {focus_wanted} applications",
+            "handled input {}, {standing}, {requests} outpost requests outstanding, {starting} outposts starting, focus wanted from {focus_wanted} applications",
             self.handled_input
         );
-        if queued > 0 || requests > 0 || starting > 0 || focus_wanted > 0 {
-            return;
-        }
-        let handled = self.handled_input;
-        let (ready, waiting): (Vec<_>, Vec<_>) = self
-            .idle_waiters
-            .drain(..)
-            .partition(|waiter| waiter.after_input.is_none_or(|input| input <= handled));
-        self.idle_waiters = waiting;
-        for waiter in ready {
-            self.context.manager.after_queued(move || {
-                let _ = waiter.reply.send(());
-            });
-        }
+    }
+
+    /// The reducer's own conditions for the idle barrier: no request to an
+    /// outpost is outstanding, no outpost is starting (one still starting
+    /// has facts or a focus query waiting for it, as a replacement for a
+    /// crashed one does), and no application's focus is wanted.
+    fn idle_conditions_clear(&self) -> bool {
+        self.requests.outstanding() == 0
+            && self.live.starting() == 0
+            && self.focus_now_wanted.is_empty()
     }
 
     /// Merges a change from the settings dialog's Terminal page into the
@@ -1670,7 +1706,7 @@ fn reducer_loop(
         focus_now_wanted: HashMap::new(),
         views: (None, BTreeSet::new()),
         handled_input: 0,
-        idle_waiters: Vec::new(),
+        barrier: idle::IdleBarrier::default(),
     };
     // The settings come first, before anything they govern.
     thread.apply(Input::Settings(settings));
@@ -1678,7 +1714,7 @@ fn reducer_loop(
     while let Ok(command) = command_rx.recv() {
         thread.on_command(command);
         thread.send_views();
-        thread.answer_idle_waiters(command_rx.len());
+        thread.advance_idle_barrier(command_rx);
     }
 }
 

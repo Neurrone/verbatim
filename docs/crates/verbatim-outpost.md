@@ -263,8 +263,10 @@ Public API:
   request id and a `Query`: `FocusNow`, `Navigate` with a model `QueryKind`,
   `Activate`, `Ancestors`, `DumpTree`, or `Text`, a node and a model
   `TextOp`, milestone M4's text protocol), `Cancel` (withdraws a query that
-  has not started), `Ping`, and `Shutdown` (shut down cleanly and exit,
-  under "Shutting down" below). `OutpostToSupervisor`: `Ready`, `Event`
+  has not started), `Ping`, `IdleQuery` (the harness's idle barrier's
+  round, under "The idle barrier" below), and `Shutdown` (shut down
+  cleanly and exit, under "Shutting down" below). `OutpostToSupervisor`:
+  `Ready`, `Event`
   (trace id, observation timestamp, backend, the event window's
   `WindowFacts`, normalized event), `Reply` (exactly one per accepted query,
   echoing its request id, with its `EventTiming`, default for a query
@@ -275,9 +277,11 @@ Public API:
   activation may already have happened), `Pong` (echoes the ping's sequence
   number and reports how many abandoned workers have not yet returned, which
   the supervisor watches), `Fault`, `FocusFact` and `ForwardingEnded` (sent
-  only by the listener), and `TargetExited` (the outpost's application has exited,
+  only by the listener), `TargetExited` (the outpost's application has exited,
   sent once, ahead of ordinary messages, so the supervisor shuts the
-  outpost down). A `FocusNow` answer carries the application's foreground
+  outpost down), and `IdleAnswer` (the answer to `IdleQuery`, behind
+  every message sent before it; `is_idle_answer` names it, since nothing
+  is merged across it). A `FocusNow` answer carries the application's foreground
   window and its facts, when it holds the system foreground, and its focused
   control with ancestors, selected child, and window facts, and the time
   the outpost began reading it, which orders it among the focus events. A
@@ -684,8 +688,11 @@ Public API:
   Core's own pid, so its outpost is warm before the first gesture);
   `send_to_outpost(outpost_id, command)` queues a command for one outpost
   incarnation without waiting, failing at once with a `QueueError` when that
-  incarnation has ended or its queue is full; and `note_views(attention,
-  holding)` passes the views the app derives from the reducer state. The
+  incarnation has ended or its queue is full; `note_views(attention,
+  holding)` passes the views the app derives from the reducer state; and
+  `query_idle(round)` runs the idle barrier's round through the children
+  (under "The idle barrier" below), the app hearing which outposts it
+  asked through `OutpostMessage::IdleQueried`. The
   app hears that the listener is ready, and whether it replaced one that
   ended, through `OutpostMessage::ListenerReady`, and of each incarnation
   through
@@ -1540,6 +1547,51 @@ maps of writers are locked only to look one up, never across a push or a
 write. The focus listener writes the same way, each fact by the thread
 that produced it, and its backlog merges its facts by element and kind
 and never waits either.
+
+## The idle barrier
+
+The harness's `AwaitIdle` (`verbatim-app`'s `idle` module;
+`docs/design/communication.md`, section 6.7 and step 6a of section 11)
+is answered only after a round in which every child said nothing that
+came before the question was still in progress. The round is in band, so
+it covers whatever is in pipes and backlogs without counting it.
+
+- `Supervisor::query_idle(round)` posts the round to the relay. The relay
+  writes `IdleQuery` to the listener, behind every command sent to it
+  before; while the listener is launching, the query waits with the
+  hand-over's news and is written once it is launched. A listener that is
+  missing, fails to launch, or ends or is replaced during the round
+  counts as having answered.
+- The listener hands the query to its `WinEvent` thread as a thread
+  message (`Nudger::nudge`), behind every event delivered to that thread,
+  and the thread hands it to the reading threads (`Readers::when_idle`),
+  which run the answer under their lock once no application has an event
+  waiting or being read, so it goes behind every read's or drop's outcome.
+  A menu or switcher end still in its grace goes first, and the answer
+  behind it. The answer goes through the listener's sender behind every
+  fact sent before it, and no fact is coalesced with one before it across
+  it.
+- On reading the listener's answer, the relay asks every outpost in the
+  same pass, so each query is behind every fact routed to that outpost
+  before it, and first tells the app which it asks
+  (`OutpostMessage::IdleQueried`), so that message reaches the app ahead
+  of every answer. While an outpost is still being launched, the app may
+  not have heard it started, so the relay asks once every launch has
+  reported; an outpost not yet ready is asked behind its held facts when
+  it is. In the relay's writer the query gets through a full queue and no
+  fact queued after it replaces one queued before it.
+- An outpost queues the query in its intake (`Item::IdleQuery`). The
+  worker reaches it once everything that arrived before it has been
+  handled; a caret follow-up those entries queued, or a noted caret, goes
+  first, the query going back behind it. It is then answered as soon as no
+  caret key's watch is open and no terminal owes Core a read: checked after
+  every entry the worker in charge handles. Entries that arrive after the
+  query are not waited for, so a flood cannot hold the answer back. The
+  answer goes through the ordinary queue, never merged, and no event is
+  merged across it (`Pending::waiting_with` stops at it).
+- An outpost's answer reaches the app as an `Event` like any other
+  message; an outpost that ends during the round answers by its `Ended`,
+  which follows everything it sent.
 
 ## Shutting down
 

@@ -281,7 +281,11 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    declined), and the migration resumes with step 3 as decision 14
    redefines it.
 10. The harness's idle barrier covers outposts' and the listener's work in
-    flight.
+    flight. Done as the communication migration's step 6a (2026-10-14,
+    `docs/design/communication.md` section 6.7 and step 6a of section 11):
+    `AwaitIdle` is answered after an in-band round through the listener
+    and every outpost, and the reducer's channel length is no longer
+    counted.
 11. Measure again (debug and release), full suite, push.
 
 Order from 2026-10-11 (Dickson): the outpost's UIA crash fix first; then
@@ -675,7 +679,8 @@ Other open items, taken after the steps above unless they fold into one:
 - After step 6 (Dickson, 2026-10-10): the harness's idle barrier
   (`Request::AwaitIdle`) answers only once every outpost's work in flight
   is done, events not yet published and caret watches included; the
-  measurement runs heard speech arrive after it.
+  measurement runs heard speech arrive after it. Done as stage A step 10,
+  communication step 6a (2026-10-14).
 - An elevated console window is named "Administrator: <title>" or just
   "<title>" depending on when it is first read: on GitHub's elevated
   runner, run 38031529579, `conhost_raised_flood` heard the prefix while

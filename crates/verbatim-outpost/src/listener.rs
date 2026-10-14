@@ -122,7 +122,7 @@ use verbatim_uia::{Agile, Cached, ListenerEvent, Part, Registration, Scope, Subs
 
 use crate::OutpostOptions;
 use crate::arbitration::window_class_name;
-use crate::event_thread::{EventHandlers, EventThread, MakeHandlers};
+use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use crate::focus_read::{
     Arrival, FocusEvent, FocusReader, Judged, LastAccepted, Meta, READ_DEADLINE, Readers, Reading,
 };
@@ -213,6 +213,9 @@ enum Sent {
     },
     /// A menu's or the switcher's end, its grace passed.
     MenuEnd(OutpostToSupervisor),
+    /// The idle barrier's answer for a round, behind everything waiting
+    /// ([`Outgoing::idle_answer`]).
+    IdleAnswer(u64),
     /// A message taken from what waits, to be written.
     Message(OutpostToSupervisor),
 }
@@ -234,8 +237,21 @@ impl Backlog for Waiting {
                     return Ok(());
                 }
                 if let Some(key) = &key {
-                    self.facts
-                        .retain(|(waiting, _)| waiting.as_ref() != Some(key));
+                    // Never across the idle barrier's answer: the fact
+                    // replaced would move behind it.
+                    let after_answer = self
+                        .facts
+                        .iter()
+                        .rposition(|(_, waiting)| waiting.is_idle_answer())
+                        .map_or(0, |answer| answer + 1);
+                    let mut index = after_answer;
+                    while index < self.facts.len() {
+                        if self.facts[index].0.as_ref() == Some(key) {
+                            self.facts.remove(index);
+                        } else {
+                            index += 1;
+                        }
+                    }
                 }
                 self.facts.push_back((key, message));
             }
@@ -255,6 +271,15 @@ impl Backlog for Waiting {
                 ));
             }
             Sent::MenuEnd(message) => self.menu_end = Some(message),
+            Sent::IdleAnswer(round) => {
+                // A menu end waiting for no fact goes ahead of the answer,
+                // as it was sent before it.
+                if let Some(end) = self.menu_end.take() {
+                    self.facts.push_back((None, end));
+                }
+                self.facts
+                    .push_back((None, OutpostToSupervisor::IdleAnswer { round }));
+            }
         }
         Ok(())
     }
@@ -277,6 +302,7 @@ impl Backlog for Waiting {
             | Sent::Message(message)
             | Sent::Fact(_, message, _)
             | Sent::MenuEnd(message) => message,
+            Sent::IdleAnswer(round) => OutpostToSupervisor::IdleAnswer { round },
             Sent::ForwardingEnded {
                 pid,
                 outpost,
@@ -302,20 +328,31 @@ impl Backlog for Waiting {
 /// still be dropped or fail to read, so Core, which knows which focus it
 /// applied, decides, and every end is told.
 struct MenuEnd {
-    waiting: Mutex<Option<(u64, EventTiming)>>,
+    waiting: Mutex<Grace>,
     sender: Sender<Waiting>,
 }
 
+/// What waits for a menu end's grace to pass.
+#[derive(Default)]
+struct Grace {
+    /// The end, when it ended and its stamps.
+    end: Option<(u64, EventTiming)>,
+    /// The idle barrier's rounds answered once the end is sent, behind it:
+    /// the end is work the listener still owes Core.
+    answers: Vec<u64>,
+}
+
 impl MenuEnd {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Grace> {
+        self.waiting.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// The grace has passed: the end waiting is sent, behind every fact
-    /// waiting.
+    /// waiting, and then the idle barrier's answers that waited for it.
+    /// Sent under the grace's lock, so no answer can pass the end.
     fn grace_ended(&self) {
-        let ended = self
-            .waiting
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        if let Some((ended_at_ms, timing)) = ended {
+        let mut grace = self.lock();
+        if let Some((ended_at_ms, timing)) = grace.end.take() {
             sent(
                 &self
                     .sender
@@ -324,6 +361,9 @@ impl MenuEnd {
                         timing,
                     })),
             );
+        }
+        for round in grace.answers.drain(..) {
+            sent(&self.sender.send(Sent::IdleAnswer(round)));
         }
     }
 }
@@ -422,7 +462,7 @@ impl Outgoing {
     /// Returns the error of creating the menu end's grace timer.
     fn new(sender: Sender<Waiting>, ignored: IgnoredProcesses) -> io::Result<Self> {
         let menu_end = Arc::new(MenuEnd {
-            waiting: Mutex::new(None),
+            waiting: Mutex::new(Grace::default()),
             sender: sender.clone(),
         });
         let grace = GraceTimer::new(&menu_end)?;
@@ -549,11 +589,19 @@ impl Outgoing {
             listener_handled_at_us: self.now(),
             ..EventTiming::default()
         };
-        *self
-            .menu_end
-            .waiting
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some((now_ms(), timing));
+        self.menu_end.lock().end = Some((now_ms(), timing));
+    }
+
+    /// Answers the idle barrier's round `round`, behind every fact sent
+    /// before, never merged and never ahead as urgent; behind a menu end
+    /// still in its grace too, once that is sent.
+    fn idle_answer(&self, round: u64) {
+        let mut grace = self.menu_end.lock();
+        if grace.end.is_some() {
+            grace.answers.push(round);
+        } else {
+            sent(&self.sender.send(Sent::IdleAnswer(round)));
+        }
     }
 
     /// Now, on the clock the listener's stamps are read from.
@@ -582,6 +630,9 @@ struct Listener {
     /// focuses supersede ([`SupervisorToOutpost::FocusQueued`]).
     last_accepted: LastAccepted,
     _registration: Option<Registration>,
+    /// What nudges the `WinEvent` thread: the idle barrier's query goes
+    /// through it, behind every event delivered to it before.
+    nudger: Nudger,
     _event_thread: EventThread,
 }
 
@@ -721,14 +772,23 @@ impl Listener {
         );
 
         let msaa_outgoing = Arc::clone(&outgoing);
+        let idle_readers = Arc::clone(&readers);
         let make_handlers: MakeHandlers = Arc::new(move || {
             let outgoing = Arc::clone(&msaa_outgoing);
+            let idle_outgoing = Arc::clone(&msaa_outgoing);
+            let readers = Arc::clone(&idle_readers);
             EventHandlers {
                 win_event: Box::new(move |event: WinEvent| forward_msaa_event(&outgoing, event)),
-                nudge: None,
+                // The only nudge is the idle barrier's query, its round in
+                // the first word: every event delivered before it has been
+                // handled, so the reading threads are waited for next.
+                nudge: Some(Box::new(move |round, _| {
+                    answer_when_reads_are_done(&readers, &idle_outgoing, round as u64);
+                })),
             }
         });
         let event_thread = EventThread::spawn(0, LISTENER_SUBSCRIPTIONS, make_handlers);
+        let nudger = event_thread.nudger();
 
         // The listener has no target application; `target_pid` is a sentinel
         // the supervisor only logs.
@@ -742,6 +802,7 @@ impl Listener {
             readers,
             last_accepted,
             _registration: registration,
+            nudger,
             _event_thread: event_thread,
         })
     }
@@ -763,6 +824,7 @@ impl Listener {
             readers,
             last_accepted: _,
             _registration: registration,
+            nudger: _,
             _event_thread: event_thread,
         } = self;
         drop(event_thread);
@@ -783,7 +845,8 @@ impl Listener {
 
     /// Answers `Ping` with a `Pong` (the listener never abandons a worker, so
     /// its count is always zero), takes the hand-over's news of outposts'
-    /// hooks, and ignores everything else. An application with no outpost
+    /// hooks, starts the idle barrier's round ([`Self::idle_query`]), and
+    /// ignores everything else. An application with no outpost
     /// any more has its reading thread ended too
     /// ([`Readers::outpost_ended`]). `received_at_us` is when the command
     /// was read off Core's pipe: the hop from verbatim.exe's write is
@@ -813,9 +876,34 @@ impl Listener {
                 observed_at_ms,
                 ..
             } => self.last_accepted.queued(*trace_id, *observed_at_ms),
+            SupervisorToOutpost::IdleQuery { round } => self.idle_query(*round),
             _ => {}
         }
     }
+
+    /// The idle barrier's query for `round` (`docs/design/communication.md`,
+    /// section 6.7): handed to the `WinEvent` thread behind every event
+    /// delivered to it, then to the reading threads behind every event
+    /// queued for them, and answered once both have nothing in progress.
+    /// A `WinEvent` thread that has ended has nothing in progress.
+    fn idle_query(&self, round: u64) {
+        let posted = usize::try_from(round).is_ok_and(|word| self.nudger.nudge((word, 0)));
+        if !posted {
+            answer_when_reads_are_done(&self.readers, &self.outgoing, round);
+        }
+    }
+}
+
+/// Answers the idle barrier's round `round` once no reading thread has an
+/// event waiting or being read, behind the outcome of every one queued
+/// before ([`Readers::when_idle`]).
+fn answer_when_reads_are_done(
+    readers: &Readers<UiaFocusReading>,
+    outgoing: &Arc<Outgoing>,
+    round: u64,
+) {
+    let outgoing = Arc::clone(outgoing);
+    readers.when_idle(Box::new(move || outgoing.idle_answer(round)));
 }
 
 /// What a UIA callback captures from an event's element, `sender`, read
@@ -1626,6 +1714,60 @@ mod tests {
             })
             .collect();
         assert_eq!(order, ["fact 7", "fact 5", "fact 6", "menu end"]);
+    }
+
+    /// The idle barrier's answer, sent behind a write in flight: it goes
+    /// after every fact waiting before it, a pong sent after it going
+    /// ahead of both; a newer fact for an element whose fact waits before
+    /// it is not coalesced into that one across it; and an answer sent
+    /// while a menu end waits for its grace goes after the end.
+    #[test]
+    fn the_idle_answer_waits_behind_every_fact_and_menu_end_before_it() {
+        let (outgoing, mut reader) = outgoing_with(4096, IgnoredProcesses::default());
+        let mut large = uia_snapshot();
+        large.name = Some("x".repeat(20_000));
+        outgoing.fact(
+            Pid(7),
+            DeliveredFact::UiaSelection {
+                hwnd: 1,
+                focus_window: 0,
+                snapshot: large,
+            },
+            None,
+            None,
+            1_000,
+        );
+        outgoing.fact(Pid(5), msaa_focus(), None, None, 1_000);
+        outgoing.idle_answer(1);
+        outgoing.fact(Pid(5), msaa_focus(), None, None, 2_000);
+        outgoing.urgent(OutpostToSupervisor::Pong {
+            seq: 4,
+            parked_count: 0,
+            written_at_us: 0,
+        });
+        outgoing.note_menu_end(3_000);
+        outgoing.idle_answer(2);
+        outgoing.fact(Pid(6), msaa_focus(), None, None, 3_000);
+        // As the timer's callback does when the grace ends.
+        outgoing.menu_end.grace_ended();
+        let order: Vec<String> = sent(&outgoing, &mut reader)
+            .into_iter()
+            .map(|message| match message {
+                OutpostToSupervisor::FocusFact { fact, timing, .. } => {
+                    format!("{} {}", fact.pid.0, timing.observed_at_us)
+                }
+                OutpostToSupervisor::Pong { seq, .. } => format!("pong {seq}"),
+                OutpostToSupervisor::IdleAnswer { round } => format!("idle {round}"),
+                OutpostToSupervisor::MenuOrSwitchEnded { .. } => "menu end".to_owned(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            order,
+            [
+                "7 1000", "pong 4", "5 1000", "idle 1", "5 2000", "6 3000", "menu end", "idle 2"
+            ]
+        );
     }
 
     /// An `Outgoing` whose clock always reads 7,000.
