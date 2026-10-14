@@ -70,7 +70,8 @@ Counts are for one traced window of 5 to 8 seconds.
    they are now sent once 32 messages have passed since the last, the
    unconditional resend every 256 kept. "Nodes held" items fell from 8,729
    to 294 in a run, and the outbound, reader and reducer threads' wake-ups
-   by about two thirds.
+   by about two thirds. Replaced since by communication
+   step 11 (c65b6e95): Core leaves a changed list in a slot in the outpost's writer, and it goes in the same write as Core's next command to that outpost, after the command, or with the relay's next ping, so it never costs a write of its own and is at most one ping interval (3 seconds) late; a change in the acknowledged position counts as a change, so the resend every 256 messages is gone too.
 5. Every message from an outpost wakes three threads before the reducer
    handles it: the outpost's outbound thread, verbatim.exe's reader for
    that outpost, and the reducer (3,296, 3,061 and 3,622 in the flood). The
