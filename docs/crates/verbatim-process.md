@@ -122,8 +122,9 @@ Public API:
   messages run at `Highest`: the keyboard hook, verbatim.exe's relay
   thread, the listener's and each
   outpost's I/O thread (and, for an outpost made in a test's process, its
-  sender's finishing thread), the `WinEvent` threads, and both ends'
-  synthesizer host readers. Each caller names its
+  sender's finishing thread), and the `WinEvent` threads; the synthesizer
+  host's reader threads, raised too, went with communication step 9. Each
+  caller names its
   level once per role in a constant of its own. Every other thread keeps
   normal priority: raising the threads that compute did not pay when
   measured (`docs/design/communication.md`, section 11, step 3).
