@@ -36,8 +36,11 @@
 //! comes next, a request from the reducer, a ping from the relay, or any
 //! other command but the shutdown message, takes it and carries it in the
 //! same write, after its own frame, so the command is handled first and the
-//! list never costs a write of its own. The relay pings every outpost every
-//! three seconds, so a list waits at most that long.
+//! list never costs a write of its own. While commands queued before the
+//! list was left still wait, the list waits behind the last of them, so a
+//! request the reducer issued before the list is always handled before it.
+//! The relay pings every outpost every three seconds, so a list waits at
+//! most that long once nothing is queued ahead of it.
 
 #![forbid(unsafe_code)]
 
@@ -218,8 +221,13 @@ impl std::fmt::Display for QueueError {
 pub(super) struct Queue {
     items: VecDeque<Outgoing>,
     /// The latest [`SupervisorToOutpost::NodesHeld`] not yet sent, which
-    /// the next command written carries after its own frame.
+    /// the next command written carries after its own frame, once every
+    /// command queued before it was left has been written.
     held: Option<SupervisorToOutpost>,
+    /// How many of the commands waiting were queued before `held` was
+    /// left: the list goes with the last of them, or, with none, with the
+    /// next command written.
+    held_behind: usize,
 }
 
 impl Queue {
@@ -248,14 +256,14 @@ impl Queue {
                         .map(|index| index + after_query)
                 });
                 if let Some(index) = same {
-                    self.items.remove(index);
+                    self.remove(index);
                 } else if self.items.len() >= capacity
                     && let Some(oldest) = self
                         .items
                         .iter()
                         .position(|waiting| matches!(waiting, Outgoing::Fact(..)))
                 {
-                    self.items.remove(oldest);
+                    self.remove(oldest);
                 }
                 if self.items.len() >= capacity {
                     return Err(QueueError::Full);
@@ -272,7 +280,24 @@ impl Queue {
     }
 
     fn pop(&mut self) -> Option<Outgoing> {
-        self.items.pop_front()
+        let item = self.items.pop_front()?;
+        self.held_behind = self.held_behind.saturating_sub(1);
+        Some(item)
+    }
+
+    /// Removes the command waiting at `index`, a fact merged or dropped.
+    fn remove(&mut self, index: usize) {
+        self.items.remove(index);
+        if index < self.held_behind {
+            self.held_behind -= 1;
+        }
+    }
+
+    /// Leaves `held` in the slot, replacing a list not yet sent, behind
+    /// every command waiting now.
+    fn leave(&mut self, held: SupervisorToOutpost) {
+        self.held = Some(held);
+        self.held_behind = self.items.len();
     }
 }
 
@@ -293,10 +318,11 @@ impl Backlog for Queue {
     }
 
     /// Appends `item`'s frame, then the held nodes' list in the slot, if
-    /// any, which the item's write then carries; the shutdown message
-    /// carries none, since the outpost is ending.
+    /// any and nothing queued before it was left still waits, which the
+    /// item's write then carries; the shutdown message carries none, since
+    /// the outpost is ending.
     fn encode(&mut self, item: Outgoing, buffer: &mut Vec<u8>) -> io::Result<()> {
-        let carries = !matches!(item, Outgoing::Shutdown);
+        let carries = !matches!(item, Outgoing::Shutdown) && self.held_behind == 0;
         put_message(buffer, &item.relayed())?;
         if carries && let Some(held) = self.held.take() {
             let before = buffer.len();
@@ -348,9 +374,10 @@ impl WriterHandle {
 
     /// Leaves `held`, a [`SupervisorToOutpost::NodesHeld`], in the slot,
     /// replacing a list not yet sent: it writes nothing, and the next
-    /// command written carries it.
+    /// command written once every command waiting now has been written
+    /// carries it.
     pub(super) fn leave_held(&self, held: SupervisorToOutpost) {
-        self.sender.with_backlog(|queue| queue.held = Some(held));
+        self.sender.with_backlog(|queue| queue.leave(held));
     }
 
     /// Closes the writer: nothing more is accepted, and the pipe is closed
@@ -501,25 +528,74 @@ mod tests {
             self.reading
                 .complete(&self.pipe, &completion)
                 .expect("read");
-            let mut data = self.reading.data();
-            let mut names = Vec::new();
-            while let Some(command) =
-                crate::protocol::read_message::<_, SupervisorToOutpost>(&mut data).expect("a frame")
-            {
-                names.push(match command {
-                    SupervisorToOutpost::Ping { seq, .. } => format!("ping {seq}"),
-                    SupervisorToOutpost::Query { request_id, .. } => {
-                        format!("query {request_id}")
-                    }
-                    SupervisorToOutpost::NodesHeld { acknowledged, .. } => {
-                        format!("held {acknowledged}")
-                    }
-                    other => format!("{other:?}"),
-                });
-            }
+            let names = names(self.reading.data());
             self.arm();
             names
         }
+    }
+
+    /// Each frame in `data`, named.
+    fn names(mut data: &[u8]) -> Vec<String> {
+        let mut names = Vec::new();
+        while let Some(command) =
+            crate::protocol::read_message::<_, SupervisorToOutpost>(&mut data).expect("a frame")
+        {
+            names.push(match command {
+                SupervisorToOutpost::Ping { seq, .. } => format!("ping {seq}"),
+                SupervisorToOutpost::Query { request_id, .. } => {
+                    format!("query {request_id}")
+                }
+                SupervisorToOutpost::NodesHeld { acknowledged, .. } => {
+                    format!("held {acknowledged}")
+                }
+                other => format!("{other:?}"),
+            });
+        }
+        names
+    }
+
+    /// A list left while requests wait goes after the last of them, never
+    /// ahead of one the reducer issued before it; a fact queued before it
+    /// that a later one replaces no longer counts as ahead of it.
+    #[test]
+    fn held_nodes_go_after_every_command_queued_before_they_were_left() {
+        let request = |id| {
+            Outgoing::Other(
+                SupervisorToOutpost::Query {
+                    trace_id: TraceId::mint(),
+                    request_id: id,
+                    query: crate::protocol::Query::DumpTree,
+                    timing: EventTiming::default(),
+                },
+                Received::now(),
+            )
+        };
+        let writes = |queue: &mut Queue| {
+            let mut writes = Vec::new();
+            while let Some(item) = queue.pop() {
+                let mut buffer = Vec::new();
+                Backlog::encode(queue, item, &mut buffer).expect("encoded");
+                writes.push(names(&buffer));
+            }
+            writes
+        };
+        let mut queue = Queue::default();
+        queue.push(request(1), WRITER_CAPACITY).expect("queued");
+        queue.push(request(2), WRITER_CAPACITY).expect("queued");
+        queue.leave(held_list(7));
+        queue.push(request(3), WRITER_CAPACITY).expect("queued");
+        assert_eq!(
+            writes(&mut queue),
+            [vec!["query 1"], vec!["query 2", "held 7"], vec!["query 3"]]
+        );
+        queue.push(fact(10), WRITER_CAPACITY).expect("queued");
+        queue.push(request(4), WRITER_CAPACITY).expect("queued");
+        queue.leave(held_list(8));
+        queue.push(fact(10), WRITER_CAPACITY).expect("replaces");
+        assert_eq!(
+            writes(&mut queue),
+            [vec!["query 4", "held 8"], vec!["ping 10"]]
+        );
     }
 
     /// A list left in the slot is not written; the next request carries it

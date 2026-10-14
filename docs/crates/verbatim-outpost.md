@@ -1229,7 +1229,9 @@ Implementation notes:
   app leaves it in the writer's slot (`Supervisor::leave_nodes_held`), and
   the next command written to that outpost, a request or the relay's ping
   within three seconds, carries it after its own frame in the same
-  write. The worker then releases every node not held that was
+  write; while commands queued before it was left still wait, it goes
+  with the last of them, so every request the app issued before it is
+  handled first. The worker then releases every node not held that was
   reported at or before the acknowledged position; a node reported later,
   or not yet reported, is kept, since Core may not have seen it. Only the
   worker in charge releases, and the released nodes leave both registries
