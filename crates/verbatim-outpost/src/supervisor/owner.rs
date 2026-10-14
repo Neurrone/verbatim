@@ -430,7 +430,8 @@ impl Owner {
         }
     }
 
-    /// A frame read from the pipe of `outpost`, watching `pid`: a pong and
+    /// A frame read from the pipe of `outpost`, watching `pid`, dropped
+    /// once the owner has ended that outpost: a pong and
     /// `TargetExited` are handled here, `Ready` is handled here and handed
     /// on, and every other frame is handed on to the app whole, unparsed,
     /// with when it was read (`docs/design/communication.md`, section
@@ -445,6 +446,16 @@ impl Owner {
         pid: Pid,
         body: FrameBody<'_>,
     ) -> io::Result<()> {
+        if self
+            .records
+            .get(&pid)
+            .is_none_or(|record| record.outpost != outpost)
+        {
+            // The owner has ended this incarnation itself, and told the
+            // app, which drops whatever it sent after; its pipe is read
+            // until it ends, and the rest is dropped here.
+            return Ok(());
+        }
         let read_at_us = now_us();
         match message_kind(body.bytes()) {
             Some("Pong") => {

@@ -722,7 +722,10 @@ Public API:
   goes on with its other inputs (`docs/design/communication.md`, section
   4.8). `Frames::parsing()` says whether a frame is with the helper; the
   idle barrier waits for it. A frame that is not a message has its
-  outpost ended, as a pipe that fails does. Every message is delivered
+  outpost ended, as a pipe that fails does, and its later frames are
+  dropped, only its `Ended` handed on. The relay drops every frame from
+  an outpost it has already ended itself (wedged, retired, its target
+  gone, or unreadable), though it reads that pipe until it ends. Every message is delivered
   through the `EventSink` given to `new`: a channel of `OutpostMessage`s
   converts into one (the tests use that), and `EventSink::new` takes a
   function, which the app uses to post the messages to the reducer

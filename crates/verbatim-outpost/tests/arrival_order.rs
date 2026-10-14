@@ -16,7 +16,8 @@
 //! The stand-in outpost answers pings and writes, for each `Cancel` Core
 //! sends it, the script that request number names (`script`), with
 //! blocking writes, so it gets past a frame only once the pipe has taken
-//! it. The stand-in listener says it is ready, answers pings, and sets a
+//! it; for requests 8 and 9 it first writes a frame that is not a message,
+//! and after request 9 it writes one more frame when Core shuts it down. The stand-in listener says it is ready, answers pings, and sets a
 //! named event each time Core tells it an outpost's hook is in, which Core
 //! does as the relay handles that outpost's `Ready`: since the relay reads
 //! an outpost's pipe in order, the event is the evidence that the relay
@@ -24,7 +25,7 @@
 //! held.
 
 use std::collections::HashMap;
-use std::io::{BufReader, Read as _};
+use std::io::{BufReader, Read as _, Write as _};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
@@ -127,8 +128,25 @@ fn script(request: u64, ready: &OutpostToSupervisor) -> Vec<Option<OutpostToSupe
             frames
         }
         7 => vec![Some(fault("C", 0))],
+        8 => vec![Some(fault("G1", 0)), Some(ready.clone())],
         _ => Vec::new(),
     }
+}
+
+/// Writes `message` to Core.
+fn send(messages: &mut BlockingWriter, message: &OutpostToSupervisor) {
+    write_message(messages, message).expect("a message is written");
+}
+
+/// Writes Core a whole frame whose body is not a message.
+fn send_unreadable(messages: &mut BlockingWriter) {
+    let mut frame = Vec::new();
+    verbatim_process::transport::put_frame(&mut frame, |body| {
+        body.extend_from_slice(b"{\"NoSuchMessage\":1}");
+        Ok(())
+    })
+    .expect("framed");
+    messages.write_all(&frame).expect("the frame is written");
 }
 
 /// A stand-in child, as the module says.
@@ -154,9 +172,6 @@ fn stand_in(args: &[String]) -> ! {
     } else {
         Pid(value(args, "--target-pid").parse().expect("a pid"))
     };
-    let mut send = |message: &OutpostToSupervisor| {
-        write_message(&mut messages, message).expect("a message is written");
-    };
     let ready = OutpostToSupervisor::Ready {
         outpost_pid: Pid(std::process::id()),
         target_pid,
@@ -168,8 +183,10 @@ fn stand_in(args: &[String]) -> ! {
         unsafe { CreateEventW(None, false, false, &HSTRING::from(name)) }.expect("the test's event")
     });
     if listener {
-        send(&ready);
+        send(&mut messages, &ready);
     }
+    // Whether to write a frame when shut down.
+    let mut farewell = false;
     let mut commands = BufReader::new(commands);
     loop {
         let command = match read_message::<_, SupervisorToOutpost>(&mut commands) {
@@ -178,12 +195,20 @@ fn stand_in(args: &[String]) -> ! {
             Err(error) => panic!("the command pipe failed: {error}"),
         };
         match command {
-            SupervisorToOutpost::Ping { seq, .. } => send(&OutpostToSupervisor::Pong {
-                seq,
-                parked_count: 0,
-                written_at_us: 0,
-            }),
-            SupervisorToOutpost::Shutdown => std::process::exit(0),
+            SupervisorToOutpost::Ping { seq, .. } => send(
+                &mut messages,
+                &OutpostToSupervisor::Pong {
+                    seq,
+                    parked_count: 0,
+                    written_at_us: 0,
+                },
+            ),
+            SupervisorToOutpost::Shutdown => {
+                if farewell {
+                    send(&mut messages, &fault("Z", 0));
+                }
+                std::process::exit(0)
+            }
             SupervisorToOutpost::HookInstalled { .. } => {
                 if let Some(signal) = signal {
                     // SAFETY: an event handle this process holds.
@@ -191,9 +216,13 @@ fn stand_in(args: &[String]) -> ! {
                 }
             }
             SupervisorToOutpost::Cancel { request_id } if !listener => {
+                if matches!(request_id, 8 | 9) {
+                    send_unreadable(&mut messages);
+                }
+                farewell |= request_id == 9;
                 for message in script(request_id, &ready) {
                     match message {
-                        Some(message) => send(&message),
+                        Some(message) => send(&mut messages, &message),
                         None => std::process::exit(3),
                     }
                 }
@@ -580,6 +609,54 @@ fn while_the_reducer_is_held_the_relay_drains_every_frame_and_two_value_changes_
     end(app);
 }
 
+/// A frame that is not a message has its outpost ended, and nothing that
+/// outpost sent after it reaches the reducer but its end: a frame and its
+/// `Ready`, read by the relay behind it while the reducer was held, are
+/// dropped.
+fn nothing_an_outpost_sent_after_a_frame_that_is_not_a_message_reaches_the_reducer_but_its_end(
+    signal: &Signal,
+) {
+    let (app, pid) = application();
+    let mut reducer = Reducer::start();
+    reducer.with_outposts(&[pid]);
+
+    // Held from here: the outpost writes the frame that is not a message,
+    // then G1, then Ready, which the relay handles by telling the
+    // listener.
+    reducer.cue("O1", 8);
+    signal.wait("the unreadable frame, G1 and Ready");
+    assert_eq!(reducer.take(1), ["O1 ended: exited"]);
+
+    reducer.finish(ShutdownSummary {
+        clean: 2,
+        exited: 0,
+        killed: 0,
+    });
+    end(app);
+}
+
+/// What an outpost the supervisor has ended itself writes afterwards is
+/// dropped: here a frame it writes as the retirement shuts it down, which
+/// the relay reads before the pipe ends, and before the supervisor's
+/// shutdown returns.
+fn nothing_an_outpost_writes_after_the_supervisor_ended_it_reaches_the_reducer() {
+    let (app, pid) = application();
+    let mut reducer = Reducer::start();
+    reducer.with_outposts(&[pid]);
+
+    reducer.cue("O1", 9);
+    assert_eq!(reducer.take(1), ["O1 ended: exited"]);
+
+    // The retirement's shutdown message had the outpost write Z, then
+    // exit cleanly; `finish` asserts Z never arrived.
+    reducer.finish(ShutdownSummary {
+        clean: 2,
+        exited: 0,
+        killed: 0,
+    });
+    end(app);
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == APPLICATION) {
@@ -610,6 +687,16 @@ fn main() {
     );
     println!(
         "test while_the_reducer_is_held_the_relay_drains_every_frame_and_two_value_changes_both_arrive ... ok"
+    );
+    nothing_an_outpost_sent_after_a_frame_that_is_not_a_message_reaches_the_reducer_but_its_end(
+        &signal,
+    );
+    println!(
+        "test nothing_an_outpost_sent_after_a_frame_that_is_not_a_message_reaches_the_reducer_but_its_end ... ok"
+    );
+    nothing_an_outpost_writes_after_the_supervisor_ended_it_reaches_the_reducer();
+    println!(
+        "test nothing_an_outpost_writes_after_the_supervisor_ended_it_reaches_the_reducer ... ok"
     );
     a_reducer_held_past_three_ping_intervals_ends_no_outpost_and_is_reported_as_its_own_stall();
     println!(

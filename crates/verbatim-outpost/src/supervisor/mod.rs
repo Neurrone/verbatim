@@ -41,8 +41,8 @@
 //! The app hears of each outpost incarnation through [`OutpostMessage`]:
 //! `Started` before any of its messages, then its messages, then `Ended`.
 //! When an outpost exits on its own, `Ended` follows everything it wrote; when
-//! the owner kills or retires it, `Ended` is sent at once and anything the
-//! child wrote afterwards follows it, which the app drops.
+//! the owner kills or retires it, `Ended` is sent at once, and the relay
+//! drops anything the child wrote afterwards.
 
 mod frames;
 mod ignored;

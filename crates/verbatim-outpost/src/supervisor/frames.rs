@@ -114,6 +114,9 @@ struct Stream {
     /// What arrived from it, or about it, while a frame was with the
     /// helper, in order.
     behind: VecDeque<OutpostMessage>,
+    /// One of its frames was not a message: its later frames are dropped,
+    /// and only its end is handed on.
+    failed: bool,
 }
 
 /// Turns the frames the relay posts into the messages they carry, in each
@@ -158,7 +161,9 @@ impl Frames {
         match message {
             OutpostMessage::Frame(frame) => {
                 let stream = self.streams.entry(frame.outpost).or_default();
-                if stream.parsing {
+                if stream.failed {
+                    // Its outpost is being ended; the frame is dropped.
+                } else if stream.parsing {
                     stream.behind.push_back(OutpostMessage::Frame(frame));
                 } else {
                     self.take_frame(frame, out);
@@ -214,7 +219,7 @@ impl Frames {
 
     /// Numbers `message`, parsed from `outpost`'s frame, and appends it; a
     /// frame that is not a message has the outpost ended, as a pipe that
-    /// fails does.
+    /// fails does, and nothing it sent after is handed on but its end.
     fn finish(
         &mut self,
         pid: Pid,
@@ -237,6 +242,7 @@ impl Frames {
             }
             Err(error) => {
                 tracing::warn!(%outpost, %error, "an outpost's message could not be read");
+                self.streams.entry(outpost).or_default().failed = true;
                 let _ = self.owner.send(OwnerEvent::Unreadable(outpost));
             }
         }
