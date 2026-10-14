@@ -129,7 +129,8 @@ fn words(segments: &[verbatim_model::UtteranceSegment]) -> String {
 /// drives it: output the terminal writes reaches Core at once while the
 /// outpost reads live, and waits in the outpost while it holds, until Core
 /// asks for it. Requests are answered at once, unless `answer_late` holds
-/// a read request back until the test answers it.
+/// a read request back until the test answers it; a cancel sent while one
+/// is held back waits behind it, as the outpost answers them in order.
 #[derive(Default)]
 struct Playback {
     queued: VecDeque<(Vec<SpeechMark>, String)>,
@@ -144,6 +145,8 @@ struct Playback {
     answer_late: bool,
     /// A read request held back.
     late: Option<QueryId>,
+    /// A cancel sent while a read request was held back.
+    late_cancel: Option<QueryId>,
     /// Whether the front utterance has started playing.
     started: bool,
 }
@@ -192,7 +195,11 @@ impl Playback {
                         TextOp::TerminalCancel => {
                             self.held = false;
                             self.unread.clear();
-                            self.reply(state, query_id, TextReply::Terminal(Box::default()));
+                            if self.late.is_some() {
+                                self.late_cancel = Some(query_id);
+                            } else {
+                                self.reply(state, query_id, TextReply::Terminal(Box::default()));
+                            }
                         }
                         other => panic!("unexpected text request: {other:?}"),
                     }
@@ -432,6 +439,52 @@ fn a_cut_while_held_reads_to_the_end_without_speaking() {
     // Reading is live again: output after the cut is spoken as it comes.
     playback.feed(&mut state, &output(lines(51..=51)));
     assert_eq!(playback.play_all(&mut state), ["line 1", "line 51"]);
+}
+
+#[test]
+fn typing_shown_by_a_read_a_cut_overtook_is_echoed() {
+    let mut state = terminal();
+    let mut playback = Playback {
+        answer_late: true,
+        ..Playback::default()
+    };
+    // A group's worth of output holds the outpost; nothing more comes, so
+    // once the group has been heard Core asks for what is new and for live
+    // reading again.
+    playback.feed(&mut state, &output(lines(1..=30)));
+    for _ in 0..28 {
+        assert!(playback.play_one(&mut state));
+    }
+    playback.answer(&mut state);
+    assert_eq!(playback.play_all(&mut state), lines(1..=30));
+    assert_eq!(
+        playback.requests,
+        [
+            TextOp::TerminalHold,
+            TextOp::TerminalRead { hold: true },
+            TextOp::TerminalRead { hold: false },
+        ]
+    );
+    // A key cuts speech before that read is answered, and types "." after
+    // a prompt whose trailing space the read could not tell from padding.
+    playback.feed(&mut state, &Input::SpeechCancelled { at_ms: 0 });
+    assert_eq!(playback.requests.last(), Some(&TextOp::TerminalCancel));
+    playback.feed(&mut state, &typed("."));
+    // The read sees the typing; the cancel's read after it finds nothing.
+    let read = playback.late.take().expect("the read is held back");
+    let mut change = appended(" .", "ready> .");
+    change.uncertain = 1;
+    playback.reply(
+        &mut state,
+        read,
+        TextReply::Terminal(Box::new(TerminalOutput {
+            changed: Some(change),
+            ..TerminalOutput::default()
+        })),
+    );
+    let cancel = playback.late_cancel.take().expect("the cancel waits");
+    playback.reply(&mut state, cancel, TextReply::Terminal(Box::default()));
+    assert_eq!(playback.play_all(&mut state), ["."]);
 }
 
 #[test]

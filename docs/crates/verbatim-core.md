@@ -692,7 +692,11 @@ screen and sends what is new as `NormalizedEvent::TerminalOutput`
   read to the end without speaking (`TextOp::TerminalCancel`), as NVDA
   drops what is pending; output read before a cut
   (`Input::SpeechCancelled::at_ms` against the event's observed time), or
-  before the cancel's answer, is used only to echo typing.
+  before the cancel's answer, is used only to echo typing. So is the
+  answer to a request the cancel overtook (`TerminalSpeech::overtaken`),
+  which the outpost sends ahead of the cancel's: its read may be the one
+  that saw the typing the key that cut speech typed, and the cancel's read
+  after it then finds nothing new.
 - The last line read, changed in place, speaks what changed; while an
   earlier version of that line is still waiting, the whole new line takes
   its place, so a progress bar rewritten quickly is spoken once, as it

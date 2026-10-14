@@ -380,6 +380,7 @@ Two different things go by this name.
 - Decided (Dickson, 2026-10-07). With the base read, a read after a long hold returns the whole output since the last read in one snapshot, so the count is exact without the anchor machinery.
 - Cost: one large read per group during a flood, up to the whole history (measure 3), against continuous reads while Core is full.
 - Recommendation: keep as decided, with two states.
+- A cut while Core's read is unanswered (fixed 2026-10-14): the cancel overtakes the read, but the outpost answers the read first, from a read made before it took the cancel, so that answer is output read before the cut and is used only to echo typing, as the cancel's own answer is. Dropped before (since 9b1c7941), a key pressed as the group's last line ended, typing into the prompt a moment after Core asked to read live again, lost its echo: the read found the typing, its answer was thrown away, and the cancel's read after it found nothing new. Release `conhost_flood` failed this way on 2026-10-14 (communication.md, step 12).
 
 ### Extra 14: short output not taken for typing
 

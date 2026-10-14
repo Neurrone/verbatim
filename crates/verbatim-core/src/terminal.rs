@@ -119,6 +119,12 @@ pub(crate) struct TerminalSpeech {
     /// answered.
     #[serde(default)]
     pub(crate) cancel: Option<QueryId>,
+    /// Core's request for what is new that a cancel overtook, not yet
+    /// answered. The outpost answers it before the cancel, from a read made
+    /// before it took the cancel, so its answer is output read before a cut:
+    /// used only to echo typing, which may be the change that read found.
+    #[serde(default)]
+    pub(crate) overtaken: Option<QueryId>,
     /// When speech was last cut off (Unix milliseconds): output from a
     /// change observed before it was read before the cut, and is used only
     /// to echo typing.
@@ -390,13 +396,15 @@ fn ask(state: &mut SrState, hold: bool) -> Vec<Effect> {
 
 /// Whether `query_id` is a terminal request Core is waiting on.
 pub(crate) fn is_pending(state: &SrState, query_id: QueryId) -> bool {
-    state.terminal.request == Some(query_id) || state.terminal.cancel == Some(query_id)
+    state.terminal.request == Some(query_id)
+        || state.terminal.cancel == Some(query_id)
+        || state.terminal.overtaken == Some(query_id)
 }
 
 /// Handles the outpost's answer to a terminal request: what was new when
 /// Core asked, taken in, and the backlog looked at when the group's last
-/// line is already playing; or the cancel's read, used only to echo
-/// typing.
+/// line is already playing; or the cancel's read, or the answer to a
+/// request the cancel overtook, used only to echo typing.
 pub(crate) fn reply(
     state: &mut SrState,
     trace_id: TraceId,
@@ -409,6 +417,10 @@ pub(crate) fn reply(
     };
     if state.terminal.cancel == Some(query_id) {
         state.terminal.cancel = None;
+        return take(state, trace_id, &output, true);
+    }
+    if state.terminal.overtaken == Some(query_id) {
+        state.terminal.overtaken = None;
         return take(state, trace_id, &output, true);
     }
     state.terminal.request = None;
@@ -886,7 +898,9 @@ pub(crate) fn cut(state: &mut SrState, at_ms: u64) -> Vec<Effect> {
 }
 
 /// Tells an outpost that holds, or that Core asked, to read to the end
-/// without speaking, and to read each change at once again.
+/// without speaking, and to read each change at once again. A request
+/// still unanswered is overtaken: its answer still comes, ahead of the
+/// cancel's, and may hold typing the terminal showed after the cut.
 fn cancel(state: &mut SrState) -> Vec<Effect> {
     if !state.terminal.held && state.terminal.request.is_none() {
         return Vec::new();
@@ -895,7 +909,7 @@ fn cancel(state: &mut SrState) -> Vec<Effect> {
         return Vec::new();
     };
     state.terminal.held = false;
-    state.terminal.request = None;
+    state.terminal.overtaken = state.terminal.request.take();
     state.terminal.cancel = Some(query_id);
     vec![effect]
 }
