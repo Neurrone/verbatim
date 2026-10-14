@@ -42,7 +42,10 @@
 //! `Started` before any of its messages, then its messages, then `Ended`.
 //! When an outpost exits on its own, `Ended` follows everything it wrote; when
 //! the owner kills or retires it, `Ended` is sent at once, and the relay
-//! drops anything the child wrote afterwards.
+//! drops anything the child wrote afterwards. One application's
+//! incarnations come in the order the supervisor ended and started them:
+//! an outpost's `Ended` before its replacement's `Started`, even while
+//! [`Frames`] holds that `Ended` behind a large frame.
 
 mod frames;
 mod ignored;

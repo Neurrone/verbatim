@@ -9,7 +9,10 @@
 //! for instance, is parsed by a helper thread while the reducer goes on
 //! with its other inputs, keys and other outposts' frames among them. That
 //! outpost's later frames, and its end, wait behind the parse, so each
-//! outpost's order holds; the helper's result comes back through the
+//! outpost's order holds; and while its end waits, so does everything about
+//! the same application that came after it, its replacement's start and
+//! frames above all, so the app hears of one application's incarnations in
+//! the order the supervisor ended and started them; the helper's result comes back through the
 //! supervisor's sink as [`OutpostMessage::Parsed`], and so is ordered among
 //! the reducer's inputs at the moment the parse finished, as a reader
 //! thread's parse once was.
@@ -129,6 +132,10 @@ pub struct Frames {
     /// The helper thread's work, once it has been started.
     helper: Option<Sender<Frame>>,
     streams: HashMap<OutpostId, Stream>,
+    /// By the application it watched, the outpost whose end waits behind
+    /// one of its frames with the helper: what arrives about that
+    /// application waits behind the end.
+    held_ends: HashMap<Pid, OutpostId>,
 }
 
 impl std::fmt::Debug for Frames {
@@ -147,6 +154,7 @@ impl Frames {
             owner,
             helper: None,
             streams: HashMap::new(),
+            held_ends: HashMap::new(),
         }
     }
 
@@ -156,8 +164,19 @@ impl Frames {
     /// behind a parse of that outpost's or goes to the helper; or, for the
     /// helper's result, that event and everything of the outpost's that
     /// waited behind it, up to its next large frame. An outpost's end
-    /// waits behind its frames too.
+    /// waits behind its frames too, and while it waits, so does everything
+    /// about the same application that arrives after it: another outpost's
+    /// start, frames and end, and word that the application is not
+    /// watched, each handed on after the end, in the order it arrived.
     pub fn arrived(&mut self, message: OutpostMessage, out: &mut Vec<OutpostMessage>) {
+        if let Some(pid) = application_of(&message)
+            && let Some(&held) = self.held_ends.get(&pid)
+            && !matches!(&message, OutpostMessage::Ended { outpost, .. } if *outpost == held)
+            && let Some(stream) = self.streams.get_mut(&held)
+        {
+            stream.behind.push_back(message);
+            return;
+        }
         match message {
             OutpostMessage::Frame(frame) => {
                 let stream = self.streams.entry(frame.outpost).or_default();
@@ -177,11 +196,25 @@ impl Frames {
                 self.finish(parsed.pid, outpost, parsed.message, out);
                 self.release(outpost, out);
             }
-            OutpostMessage::Ended { outpost, .. } => match self.streams.get_mut(&outpost) {
-                Some(stream) if stream.parsing => stream.behind.push_back(message),
+            OutpostMessage::Ended {
+                outpost,
+                target_pid,
+                ..
+            } => match self.streams.get_mut(&outpost) {
+                Some(stream) if stream.parsing => {
+                    stream.behind.push_back(message);
+                    self.held_ends.insert(target_pid, outpost);
+                }
                 _ => {
-                    self.streams.remove(&outpost);
+                    if self.held_ends.get(&target_pid) == Some(&outpost) {
+                        self.held_ends.remove(&target_pid);
+                    }
+                    let stream = self.streams.remove(&outpost);
                     out.push(message);
+                    // What waited behind the end, about its application.
+                    for next in stream.into_iter().flat_map(|stream| stream.behind) {
+                        self.arrived(next, out);
+                    }
                 }
             },
             other => out.push(other),
@@ -298,6 +331,20 @@ impl Frames {
     }
 }
 
+/// The application `message` is about, for those that can follow an
+/// outpost's end: an outpost's start, frame or end, and word that an
+/// application is not watched. The helper's result is its own outpost's
+/// and waits for nothing.
+fn application_of(message: &OutpostMessage) -> Option<Pid> {
+    match message {
+        OutpostMessage::Started { target_pid, .. }
+        | OutpostMessage::Ended { target_pid, .. }
+        | OutpostMessage::NotWatched { target_pid } => Some(*target_pid),
+        OutpostMessage::Frame(frame) => Some(frame.pid),
+        _ => None,
+    }
+}
+
 /// How long the helper waits before it delivers again a result the app
 /// refused for now ([`Undelivered::Refused`]).
 const REDELIVER_AFTER: Duration = Duration::from_millis(50);
@@ -353,11 +400,94 @@ mod tests {
     /// A frame larger than [`LARGE_FRAME_BYTES`] from outpost 1, which the
     /// helper parses.
     fn large_frame() -> Frame {
+        frame(1, &"x".repeat(LARGE_FRAME_BYTES + 1))
+    }
+
+    /// A frame from `outpost`, watching application 5, carrying a fault
+    /// whose detail is `detail`.
+    fn frame(outpost: u64, detail: &str) -> Frame {
         let message = OutpostToSupervisor::Fault {
-            detail: "x".repeat(LARGE_FRAME_BYTES + 1),
+            detail: detail.to_owned(),
         };
         let body = serde_json::to_vec(&message).expect("encoded");
-        Frame::new(Pid(5), OutpostId(1), (body, 0), 0)
+        Frame::new(Pid(5), OutpostId(outpost), (body, 0), 0)
+    }
+
+    /// Names each message handed on, for the order asserted.
+    fn names(out: &[OutpostMessage]) -> Vec<String> {
+        out.iter()
+            .map(|message| match message {
+                OutpostMessage::Event {
+                    outpost, message, ..
+                } => match &**message {
+                    OutpostToSupervisor::Fault { detail } if detail.len() > 16 => {
+                        format!("{outpost} large")
+                    }
+                    OutpostToSupervisor::Fault { detail } => format!("{outpost} {detail}"),
+                    other => format!("{outpost} {other:?}"),
+                },
+                OutpostMessage::Started { outpost, .. } => format!("{outpost} started"),
+                OutpostMessage::Ended { outpost, .. } => format!("{outpost} ended"),
+                OutpostMessage::NotWatched { target_pid } => {
+                    format!("{} not watched", target_pid.0)
+                }
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
+    /// An outpost's end waiting behind its large frame holds everything
+    /// about its application that came after it, its replacement's start
+    /// and frames and word that the application is not watched, so the app
+    /// hears of the application's incarnations in the order the supervisor
+    /// ended and started them; another application's messages pass.
+    #[test]
+    fn what_follows_an_outposts_end_about_its_application_waits_behind_it() {
+        let (delivered_tx, delivered) = crossbeam_channel::unbounded();
+        let sink = EventSink::from(delivered_tx);
+        let (owner, _inbox) = mailbox(Arc::new(Port::new().expect("a port")));
+        let mut frames = Frames::new(sink, owner);
+        let mut out = Vec::new();
+        frames.arrived(OutpostMessage::Frame(large_frame()), &mut out);
+        frames.arrived(
+            OutpostMessage::Ended {
+                outpost: OutpostId(1),
+                target_pid: Pid(5),
+                reason: crate::supervisor::EndReason::Exited,
+            },
+            &mut out,
+        );
+        frames.arrived(
+            OutpostMessage::Started {
+                outpost: OutpostId(2),
+                target_pid: Pid(5),
+            },
+            &mut out,
+        );
+        frames.arrived(OutpostMessage::Frame(frame(2, "ready")), &mut out);
+        frames.arrived(OutpostMessage::NotWatched { target_pid: Pid(5) }, &mut out);
+        frames.arrived(
+            OutpostMessage::Started {
+                outpost: OutpostId(3),
+                target_pid: Pid(6),
+            },
+            &mut out,
+        );
+        assert_eq!(names(&out), ["3 started"], "only the other application's");
+        out.clear();
+        let parsed = delivered.recv_timeout(BOUND).expect("the helper's result");
+        frames.arrived(parsed, &mut out);
+        assert_eq!(
+            names(&out),
+            [
+                "1 large",
+                "1 ended",
+                "2 started",
+                "2 ready",
+                "5 not watched"
+            ]
+        );
+        assert!(!frames.parsing());
     }
 
     /// The app refusing the helper's result for now, as a port that

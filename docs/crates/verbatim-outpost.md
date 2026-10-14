@@ -723,7 +723,12 @@ Public API:
   4.8). `Frames::parsing()` says whether a frame is with the helper; the
   idle barrier waits for it. A frame that is not a message has its
   outpost ended, as a pipe that fails does, and its later frames are
-  dropped, only its `Ended` handed on. The relay drops every frame from
+  dropped, only its `Ended` handed on. While an outpost's `Ended` waits
+  behind its frame with the helper, everything about the same application
+  that arrives after it waits behind it too (a replacement's `Started`,
+  frames and `Ended`, and `NotWatched`), so the app, which keys its
+  outpost state by application, always hears an outpost's end before its
+  replacement's start. The relay drops every frame from
   an outpost it has already ended itself (wedged, retired, its target
   gone, or unreadable), though it reads that pipe until it ends. Every message is delivered
   through the `EventSink` given to `new`: a channel of `OutpostMessage`s
