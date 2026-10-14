@@ -739,7 +739,12 @@ Public API:
   gone, which stops the helper parsing large frames; or `Refused`, the
   message given back because the port refused its packet, in which case
   the helper delivers its result again every 50 ms until it is taken,
-  since that outpost's later messages and the idle barrier wait for it.
+  since that outpost's later messages and the idle barrier wait for it,
+  and the relay keeps a message refused, with every message it sends
+  after it, behind it, and delivers them again, in order, at its next
+  send and at every heartbeat, so nothing it sends is lost or overtaken
+  (an `Ended` still comes before its replacement's `Started`;
+  `crates/verbatim-outpost/tests/target_gone.rs`).
   `EventSink::watched(progress, stalled)` lets the relay watch the thread
   taking them: at each heartbeat it reads `progress`, the counts of a
   `verbatim_process::port_queue` (`Progress`), and once that thread has
@@ -777,8 +782,9 @@ Public API:
     interval); there is no shared map lock. It never
     blocks: launching blocks, so the owner records the application as
     starting and hands the launch to a helper thread, which makes the
-    child's writer, sends `Started`, and reports back, the relay reading
-    the child's pipe from then on, a second fact meanwhile being held,
+    child's writer and reports back; the relay then sends `Started`, in
+    order with its other messages to the app, and reads the child's pipe
+    from then on, a second fact meanwhile being held,
     never a second launch; a retirement runs on a thread of its own
     and reports how the child ended; and whether an application with
     eight abandoned workers is hung, which walks its windows, is checked

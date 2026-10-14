@@ -17,7 +17,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::io;
 use std::os::windows::io::OwnedHandle;
 use std::path::PathBuf;
@@ -48,7 +48,8 @@ use super::retire::{Ending, ShutdownSummary, retire};
 use super::writer::{Outgoing, Received, WriterHandle};
 use super::{
     ABANDONED_WORKER_LIMIT, CRASH_LIMIT, CRASH_WINDOW, EndReason, EventSink, IDLE_RETIREMENT,
-    MISSED_PONG_THRESHOLD, OutpostMessage, PING_INTERVAL, ReducerStall, SWEEP_INTERVAL, Writers,
+    MISSED_PONG_THRESHOLD, OutpostMessage, PING_INTERVAL, ReducerStall, SWEEP_INTERVAL,
+    Undelivered, Writers,
 };
 
 /// The relay thread's priority: it reads each of the listener's facts and
@@ -198,12 +199,73 @@ struct ListenerRecord {
     pending: Vec<SupervisorToOutpost>,
 }
 
+/// The relay's messages to the app, delivered through its sink in the
+/// order the relay sends them. One the app refuses for now
+/// ([`Undelivered::Refused`]: its port refusing the packet, which only a
+/// system out of memory does) is kept, and so is every message sent after
+/// it, behind it, and they are delivered again, in order, at the relay's
+/// next send and at every heartbeat, as the relay's own mailbox is taken
+/// again then after a wake its port refused. So nothing the relay sends is
+/// lost, and nothing overtakes a message before it: an outpost's `Ended`
+/// still comes before its replacement's `Started`. Everything is dropped
+/// once the app has gone, since Verbatim is exiting.
+struct Outbox {
+    sink: EventSink,
+    /// Refused and not yet delivered, in order.
+    refused: VecDeque<OutpostMessage>,
+}
+
+impl Outbox {
+    fn new(sink: EventSink) -> Self {
+        Self {
+            sink,
+            refused: VecDeque::new(),
+        }
+    }
+
+    /// Delivers `message`, behind any refused before it.
+    fn send(&mut self, message: OutpostMessage) {
+        if !self.refused.is_empty() {
+            self.refused.push_back(message);
+            self.retry();
+            return;
+        }
+        match self.sink.send(message) {
+            Ok(()) | Err(Undelivered::Gone) => {}
+            Err(Undelivered::Refused(message)) => {
+                tracing::error!(
+                    "a message to the app could not be put in line; it and every later one are tried again at each send and heartbeat"
+                );
+                self.refused.push_back(message);
+            }
+        }
+    }
+
+    /// Delivers again, in order, what was refused, stopping at the first
+    /// message refused again.
+    fn retry(&mut self) {
+        while let Some(message) = self.refused.pop_front() {
+            match self.sink.send(message) {
+                Ok(()) => {}
+                Err(Undelivered::Gone) => {
+                    self.refused.clear();
+                    return;
+                }
+                Err(Undelivered::Refused(message)) => {
+                    self.refused.push_front(message);
+                    return;
+                }
+            }
+        }
+    }
+}
+
 /// The owner thread's state.
 struct Owner {
     exe_path: PathBuf,
     /// What every outpost is launched with.
     options: crate::OutpostOptions,
-    events_tx: EventSink,
+    outbox: Outbox,
     writers: Writers,
     own_tx: Mailbox<OwnerEvent>,
     /// The port this thread waits on, and the pipes it serves.
@@ -305,7 +367,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         retiring: 0,
         summary: ShutdownSummary::default(),
         shutting_down: None,
-        events_tx,
+        outbox: Outbox::new(events_tx),
         writers,
         own_tx,
         port: Arc::clone(relay.port()),
@@ -374,10 +436,12 @@ impl Owner {
             }
             let now = Instant::now();
             if now >= heartbeat_due {
-                // What was sent while the port refused the mailbox's wake.
+                // What was sent while the port refused the mailbox's wake,
+                // and what the app's port refused.
                 for event in events.take() {
                     self.handle(event);
                 }
+                self.outbox.retry();
                 self.heartbeat();
                 heartbeat_due = next_due(heartbeat_due, now, PING_INTERVAL);
             }
@@ -491,8 +555,8 @@ impl Owner {
 
     /// Hands an outpost's frame on to the app. One the app no longer takes
     /// is dropped: it is exiting.
-    fn hand_on(&self, frame: Frame) {
-        let _ = self.events_tx.send(OutpostMessage::Frame(frame));
+    fn hand_on(&mut self, frame: Frame) {
+        self.outbox.send(OutpostMessage::Frame(frame));
     }
 
     /// A message read from the listener `outpost`'s pipe at `received`:
@@ -633,8 +697,7 @@ impl Owner {
                 through,
             } => self.forwarding_ended(pid, outpost, through),
             OwnerEvent::MenuOrSwitchEnded { ended_at_ms } => {
-                let _ = self
-                    .events_tx
+                self.outbox
                     .send(OutpostMessage::MenuOrSwitchEnded { ended_at_ms });
             }
             OwnerEvent::Ready(outpost) => self.on_ready(outpost),
@@ -730,8 +793,7 @@ impl Owner {
             .filter(|record| record.child.is_some())
             .map(|record| record.outpost)
             .collect();
-        let _ = self
-            .events_tx
+        self.outbox
             .send(OutpostMessage::IdleQueried { round, outposts });
         for record in self.records.values_mut() {
             match record.child.as_ref().filter(|_| record.ready) {
@@ -769,8 +831,7 @@ impl Owner {
     fn start_outpost(&mut self, pid: Pid, first: Option<HeldFact>) -> bool {
         if self.ignored.contains(pid) {
             tracing::debug!(%pid, "no outpost is started for a process Verbatim ignores");
-            let _ = self
-                .events_tx
+            self.outbox
                 .send(OutpostMessage::NotWatched { target_pid: pid });
             return false;
         }
@@ -806,9 +867,8 @@ impl Owner {
 
     /// Tells the app that no outpost will watch `pid` for now
     /// ([`OutpostMessage::NotWatched`]), so nothing waits for one.
-    fn not_watched(&self, pid: Pid) {
-        let _ = self
-            .events_tx
+    fn not_watched(&mut self, pid: Pid) {
+        self.outbox
             .send(OutpostMessage::NotWatched { target_pid: pid });
     }
 
@@ -917,13 +977,14 @@ impl Owner {
     }
 
     /// Launches a child on a helper thread. The helper makes the child's
-    /// writer on the relay's port and, for an outpost, registers it and
-    /// sends `Started` to the app; then it reports [`OwnerEvent::Launched`];
-    /// the relay reads the child's pipe only once it has the launch. So the
-    /// app hears of an incarnation before any of its messages, a query can
-    /// reach the outpost as soon as the app has heard, and the owner always
-    /// learns of the launch before the child's `Ready` or the end of its
-    /// pipe.
+    /// writer on the relay's port and, for an outpost, registers it; then
+    /// it reports [`OwnerEvent::Launched`]. The relay sends `Started` to the
+    /// app as it takes the launch, through the same [`Outbox`] as the end
+    /// of the incarnation before, and only then reads the child's pipe. So
+    /// the app hears of an incarnation after the end of the one before and
+    /// before any of its messages, a query can reach the outpost as soon as
+    /// the app has heard, and the owner always learns of the launch before
+    /// the child's `Ready` or the end of its pipe.
     fn launch(&self, outpost: OutpostId, role: Role) {
         let ignored = self.ignored.list();
         let hooks_in = match role {
@@ -932,7 +993,6 @@ impl Owner {
         };
         let exe_path = self.exe_path.clone();
         let options = self.options;
-        let events_tx = self.events_tx.clone();
         let own_tx = self.own_tx.clone();
         let writers = self.writers.clone();
         let commands = self.relay.commands().clone();
@@ -944,7 +1004,7 @@ impl Owner {
                     (options, &ignored, &hooks_in),
                     outpost,
                     role,
-                    (&events_tx, &writers, &commands),
+                    (&writers, &commands),
                 );
                 let _ = own_tx.send(OwnerEvent::Launched { outpost, result });
             });
@@ -957,6 +1017,16 @@ impl Owner {
     }
 
     fn on_launched(&mut self, outpost: OutpostId, result: io::Result<Launch>) {
+        if let Ok(Launch {
+            source: Source::Outpost(pid),
+            ..
+        }) = &result
+        {
+            self.outbox.send(OutpostMessage::Started {
+                outpost,
+                target_pid: *pid,
+            });
+        }
         // The child's pipe to Core is read from now on, whoever ends up
         // ending the child, so its end is always seen.
         let mut unread = None;
@@ -1056,9 +1126,9 @@ impl Owner {
             .filter(|listener| listener.outpost == outpost)
         {
             tracing::info!(%outpost, "focus listener ready");
-            let _ = self.events_tx.send(OutpostMessage::ListenerReady {
-                replacement: listener.replacement,
-            });
+            let replacement = listener.replacement;
+            self.outbox
+                .send(OutpostMessage::ListenerReady { replacement });
             return;
         }
         let Some(pid) = self.pid_of(outpost) else {
@@ -1183,7 +1253,7 @@ impl Owner {
             return;
         };
         tracing::info!(%outpost, %pid, %reason, "outpost ended");
-        let _ = self.events_tx.send(OutpostMessage::Ended {
+        self.outbox.send(OutpostMessage::Ended {
             outpost,
             target_pid: pid,
             reason,
@@ -1368,10 +1438,10 @@ impl Owner {
             return;
         }
         let now = Instant::now();
-        if let Some(progress) = self.events_tx.progress()
+        if let Some(progress) = self.outbox.sink.progress()
             && let Some(stall) = self.reducer.note(progress, now)
         {
-            self.events_tx.stalled(stall);
+            self.outbox.sink.stalled(stall);
         }
         self.ping_seq += 1;
         let ping = SupervisorToOutpost::Ping {
@@ -1581,14 +1651,14 @@ pub(super) fn deliver(writer: &WriterHandle, held: HeldFact) {
 }
 
 /// The launch helper's work: launch the process and make its writer on the
-/// relay's port; for an outpost, register the writer and tell the app it
-/// started. Returns the launch, with the pipe the relay will read.
+/// relay's port; for an outpost, register the writer. Returns the launch,
+/// with the pipe the relay will read.
 fn launch_child(
     exe_path: &std::path::Path,
     (options, ignored, hooks_in): (crate::OutpostOptions, &str, &str),
     outpost: OutpostId,
     role: Role,
-    (events_tx, writers, commands): (&EventSink, &Writers, &CommandPipes),
+    (writers, commands): (&Writers, &CommandPipes),
 ) -> io::Result<Launch> {
     let (launched, pipes) = process::launch(exe_path, role, options, (ignored, hooks_in))?;
     tracing::info!(%outpost, process_id = %launched.process_id, ?role, "launched");
@@ -1598,15 +1668,11 @@ fn launch_child(
         Role::Listener => Source::Listener,
         Role::Outpost(pid) => Source::Outpost(pid),
     };
-    if let Role::Outpost(pid) = role {
+    if let Role::Outpost(_) = role {
         writers
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(outpost, writer.clone());
-        let _ = events_tx.send(OutpostMessage::Started {
-            outpost,
-            target_pid: pid,
-        });
     }
     Ok(Launch {
         child: Child {

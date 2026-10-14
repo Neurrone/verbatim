@@ -6,7 +6,9 @@
 //! application's outposts have crashed three times within a minute, the
 //! supervisor says so after the third crash, since the app may be waiting
 //! for a replacement, and again whenever an outpost is asked for, until
-//! the next foreground change to it.
+//! the next foreground change to it. And an outpost's end that the app
+//! refuses for now, as a completion port refusing its packet does, is not
+//! lost: it reaches the app later, still before its replacement's start.
 //!
 //! This test binary runs itself three ways: as the application, a process
 //! with no windows that runs until its standard input closes; as a stand-in
@@ -19,6 +21,8 @@
 
 use std::io::{BufReader, Read as _};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 
@@ -27,11 +31,11 @@ use crossbeam_channel::unbounded;
 mod common;
 use common::Delivered;
 use verbatim_model::{OutpostId, Pid};
-use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::protocol::{
     OutpostToSupervisor, SupervisorToOutpost, read_message, write_message,
 };
 use verbatim_outpost::supervisor::{EndReason, OutpostMessage, ShutdownSummary, Supervisor};
+use verbatim_outpost::{EventSink, OutpostOptions, Undelivered};
 
 /// The application's argument.
 const APPLICATION: &str = "--stand-in-application";
@@ -283,6 +287,87 @@ fn an_application_whose_outposts_crashed_repeatedly_is_reported_not_watched() {
     assert!(status.success(), "the application exited with {status}");
 }
 
+/// An outpost's end that the app refuses for now is delivered again, and
+/// nothing about its application overtakes it. The sink refuses the first
+/// `Ended` once, giving it back as a port that refuses a packet does. The
+/// outpost crashes while its application holds attention, so the relay
+/// starts a replacement at once, with the end still undelivered; the app
+/// hears the end, then the replacement's start and its `Ready`, in that
+/// order.
+fn an_end_the_app_refuses_for_now_still_comes_before_its_replacement() {
+    let (events_tx, events) = unbounded();
+    let refused = Arc::new(AtomicBool::new(false));
+    let refusing = Arc::clone(&refused);
+    let sink = EventSink::new(move |message| {
+        if matches!(message, OutpostMessage::Ended { .. }) && !refusing.swap(true, Ordering::SeqCst)
+        {
+            return Err(Undelivered::Refused(message));
+        }
+        events_tx.send(message).map_err(|_| Undelivered::Gone)
+    });
+    let exe = std::env::current_exe().expect("this test binary's path");
+    let supervisor = Supervisor::with_executable(
+        sink,
+        OutpostOptions::default(),
+        exe.clone(),
+        LIMIT,
+        std::sync::Arc::default(),
+    )
+    .expect("the supervisor starts");
+    let events = Delivered::new(events, &supervisor);
+    match next(&events) {
+        OutpostMessage::ListenerReady { replacement: false } => {}
+        other => panic!("the supervisor said {other:?} before the listener was ready"),
+    }
+
+    let mut application = Command::new(&exe)
+        .arg(APPLICATION)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("the application starts");
+    let target_pid = Pid(application.id());
+    supervisor.note_views(Some(target_pid), std::collections::BTreeSet::new());
+    supervisor.ensure_spawned(target_pid);
+    let outpost = started_and_ready(&events, target_pid);
+
+    supervisor
+        .send_to_outpost(outpost, SupervisorToOutpost::Cancel { request_id: 0 })
+        .expect("the command that crashes the stand-in is queued");
+    match next(&events) {
+        OutpostMessage::Ended {
+            outpost: ended,
+            target_pid: ended_pid,
+            reason: EndReason::Exited,
+        } if ended == outpost && ended_pid == target_pid => {}
+        other => panic!("the supervisor said {other:?}, not that the outpost ended"),
+    }
+    assert!(
+        refused.load(Ordering::SeqCst),
+        "the sink refused the end once"
+    );
+    let replacement = started_and_ready(&events, target_pid);
+    assert_ne!(replacement, outpost, "a new incarnation replaced it");
+
+    assert_eq!(
+        supervisor.shutdown(),
+        ShutdownSummary {
+            clean: 2,
+            exited: 1,
+            killed: 0,
+        },
+        "the listener and the replacement shut down cleanly and the crashed outpost had exited"
+    );
+    let rest: Vec<OutpostMessage> = events.try_iter().collect();
+    assert!(
+        rest.is_empty(),
+        "the supervisor said nothing more: {rest:?}"
+    );
+    drop(application.stdin.take());
+    let status = application.wait().expect("the application exits");
+    assert!(status.success(), "the application exited with {status}");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == APPLICATION) {
@@ -294,7 +379,7 @@ fn main() {
         stand_in(&args);
     }
     // libtest's own options, such as a name filter, are accepted and
-    // ignored: the binary runs both of its tests.
+    // ignored: the binary runs all of its tests.
     an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited();
     println!(
         "test an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited ... ok"
@@ -303,4 +388,6 @@ fn main() {
     println!(
         "test an_application_whose_outposts_crashed_repeatedly_is_reported_not_watched ... ok"
     );
+    an_end_the_app_refuses_for_now_still_comes_before_its_replacement();
+    println!("test an_end_the_app_refuses_for_now_still_comes_before_its_replacement ... ok");
 }
