@@ -37,9 +37,11 @@ the key. Or `Typed`, the text the
 key types, with a trace id minted when it was observed (the source of
 `Input::CharacterTyped`, milestone M4). Or `Passed`, any other key-down
 passed to the application that types no text and is neither observed, a
-modifier, nor a lock key, with its trace id and `pressed_at_us` (the
-source of a caret key judged by where the caret landed,
-`CaretMotion::Other`). All are called on the hook thread,
+modifier, a lock key, nor a key Windows gives a meaning outside the text
+(Pause, Print Screen, Sleep, and the browser, volume, media and launch
+keys, which never edit and would only leave a caret watch open until its
+bound), with its trace id and `pressed_at_us` (the source of a caret key
+judged by where the caret landed, `CaretMotion::Other`). All are called on the hook thread,
 so they must not block. `OWN_INPUT_TAG` is the `dwExtraInfo` Verbatim
 gives keys it injects for its own purposes (the GUI's Control tap that
 unlocks the foreground): the hook still decides them, but leaves speech

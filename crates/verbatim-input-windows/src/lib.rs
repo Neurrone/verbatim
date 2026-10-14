@@ -424,6 +424,20 @@ fn is_modifier(vk: u16) -> bool {
     matches!(vk, 0x10..=0x12 | 0x5B | 0x5C | 0xA0..=0xA5)
 }
 
+/// Whether `vk`, passed to the application without typing text, may edit
+/// the text or move the caret, so the hook reports it
+/// ([`KeyReport::Passed`]) and the reducer watches for its evidence: any
+/// key but a modifier, which does nothing alone, a lock key, whose new
+/// state is announced instead, and a key Windows gives a meaning outside
+/// the text (Pause, Print Screen, Sleep, and the browser, volume, media and
+/// launch keys). NVDA says nothing for any of these; a watch for one would
+/// only wait out its bound.
+fn may_edit(vk: u16) -> bool {
+    !is_modifier(vk)
+        && verbatim_input::ToggleKey::from_vk(vk).is_none()
+        && !matches!(vk, 0x13 | 0x2C | 0x5F | 0xA6..=0xB7)
+}
+
 /// Called by the operating system with `WH_KEYBOARD_LL` conventions: when
 /// `code == HC_ACTION`, `lparam` points to a valid [`KBDLLHOOKSTRUCT`]. The
 /// function only dereferences it in that case.
@@ -498,10 +512,7 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                         record_key_origin(trace_id, key_number);
                         (state.reports)(KeyReport::Typed { trace_id, text });
                     }
-                    None if !was_observed
-                        && !is_modifier(event.vk)
-                        && verbatim_input::ToggleKey::from_vk(event.vk).is_none() =>
-                    {
+                    None if !was_observed && may_edit(event.vk) => {
                         record_key_origin(trace_id, key_number);
                         (state.reports)(KeyReport::Passed {
                             trace_id,
@@ -570,5 +581,22 @@ mod tests {
             record_key_origin(TraceId::mint(), next_key());
         }
         assert_eq!(key_of(first), None);
+    }
+
+    #[test]
+    fn a_key_with_a_meaning_outside_the_text_is_not_watched() {
+        // Pause, Print Screen, Sleep, Volume Up, Play/Pause, Launch Mail.
+        for vk in [0x13, 0x2C, 0x5F, 0xAF, 0xB3, 0xB4] {
+            assert!(!may_edit(vk), "{vk:#04x}");
+        }
+        // Left Control and Caps Lock, as before.
+        for vk in [0xA2, 0x14] {
+            assert!(!may_edit(vk), "{vk:#04x}");
+        }
+        // Keys Verbatim does not know that may move the caret: bash's
+        // Control+A and Alt+F, and F3, Find Next.
+        for vk in [0x41, 0x46, 0x72] {
+            assert!(may_edit(vk), "{vk:#04x}");
+        }
     }
 }
