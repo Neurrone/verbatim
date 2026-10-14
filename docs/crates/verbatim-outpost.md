@@ -666,7 +666,11 @@ Public API:
   the Alt+Tab switcher is told to Core once its grace, 50 milliseconds, has
   passed with no later end: a threadpool timer, set again by a later end,
   whose callback sends it through the same sender, behind every fact
-  waiting, so no thread of the listener's waits for the grace. It answers
+  waiting, so no thread of the listener's waits for the grace. The end
+  carries when its grace is over, and a callback that runs before then (one
+  of an earlier end's grace that took the lock only once a later end was
+  noted, or a timer firing a little early) sends nothing and sets the
+  timer again for the rest. It answers
   `Ping` with a `Pong`, takes the hand-over's
   `HookInstalled` and `HookRemoved` (above), `HookRemoved` also ending the
   application's reading thread, and ignores everything else.

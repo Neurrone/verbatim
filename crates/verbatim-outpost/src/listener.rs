@@ -98,7 +98,7 @@ use std::convert::Infallible;
 use std::io;
 use std::os::windows::io::OwnedHandle;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::FILETIME;
@@ -330,16 +330,31 @@ impl Backlog for Waiting {
 struct MenuEnd {
     waiting: Mutex<Grace>,
     sender: Sender<Waiting>,
+    /// The timer that ends the grace, set once it is made, which the
+    /// callback sets again when it runs before the end's grace is over.
+    timer: OnceLock<TimerHandle>,
 }
+
+/// A threadpool timer's handle, shared with its own callback.
+struct TimerHandle(PTP_TIMER);
+
+// SAFETY: a threadpool timer may be set from any thread, its own callback
+// included; the handle stays open until `GraceTimer::drop`, which stops
+// the callback setting it first (`Grace::closed`).
+unsafe impl Send for TimerHandle {}
+// SAFETY: as above.
+unsafe impl Sync for TimerHandle {}
 
 /// What waits for a menu end's grace to pass.
 #[derive(Default)]
 struct Grace {
-    /// The end, when it ended and its stamps.
-    end: Option<(u64, EventTiming)>,
+    /// The end, when it ended, its stamps, and when its grace is over.
+    end: Option<(u64, EventTiming, Instant)>,
     /// The idle barrier's rounds answered once the end is sent, behind it:
     /// the end is work the listener still owes Core.
     answers: Vec<u64>,
+    /// Whether the timer is being closed, so the callback sets it no more.
+    closed: bool,
 }
 
 impl MenuEnd {
@@ -349,10 +364,25 @@ impl MenuEnd {
 
     /// The grace has passed: the end waiting is sent, behind every fact
     /// waiting, and then the idle barrier's answers that waited for it.
-    /// Sent under the grace's lock, so no answer can pass the end.
+    /// Sent under the grace's lock, so no answer can pass the end. A
+    /// callback that runs before the end's grace is over, one of a grace an
+    /// earlier end began that took the lock only once a newer end had come,
+    /// or a timer that fired a little early, sends nothing and sets the
+    /// timer again for the rest of the grace.
     fn grace_ended(&self) {
         let mut grace = self.lock();
-        if let Some((ended_at_ms, timing)) = grace.end.take() {
+        if let Some((_, _, over)) = grace.end {
+            let now = Instant::now();
+            if now < over {
+                if !grace.closed
+                    && let Some(timer) = self.timer.get()
+                {
+                    set_timer(timer.0, over - now);
+                }
+                return;
+            }
+        }
+        if let Some((ended_at_ms, timing, _)) = grace.end.take() {
             sent(
                 &self
                     .sender
@@ -400,7 +430,11 @@ impl GraceTimer {
         let timer =
             unsafe { CreateThreadpoolTimer(Some(grace_ended), Some(end.cast_mut().cast()), None) };
         match timer {
-            Ok(timer) => Ok(Self { timer, end }),
+            Ok(timer) => {
+                // Set before the timer is first set, so before any callback.
+                let _ = end_of(end).timer.set(TimerHandle(timer));
+                Ok(Self { timer, end })
+            }
             Err(error) => {
                 // SAFETY: from `Arc::into_raw` above, never given out.
                 drop(unsafe { Arc::from_raw(end) });
@@ -412,23 +446,37 @@ impl GraceTimer {
     /// Ends the grace [`MENU_END_GRACE`] from now, in place of any grace
     /// already running.
     fn arm(&self) {
-        // Relative, in 100-nanosecond units.
-        let due = -i64::try_from(MENU_END_GRACE.as_nanos() / 100).unwrap_or(i64::MAX);
-        let due = due.cast_unsigned();
-        let due = FILETIME {
-            dwLowDateTime: (due & 0xFFFF_FFFF) as u32,
-            dwHighDateTime: (due >> 32) as u32,
-        };
-        // SAFETY: the timer is open until `drop`; the due time is read
-        // during the call.
-        unsafe { SetThreadpoolTimer(self.timer, Some(&raw const due), 0, Some(0)) };
+        set_timer(self.timer, MENU_END_GRACE);
     }
+}
+
+/// The [`MenuEnd`] a [`GraceTimer`] was made with.
+fn end_of<'a>(end: *const MenuEnd) -> &'a MenuEnd {
+    // SAFETY: from `Arc::into_raw` in `GraceTimer::new`, released only in
+    // `GraceTimer::drop`, after the last use.
+    unsafe { &*end }
+}
+
+/// Sets `timer`, open until its [`GraceTimer`] is dropped, to fire once
+/// `after` from now, in place of any time it was set for.
+fn set_timer(timer: PTP_TIMER, after: Duration) {
+    // Relative, in 100-nanosecond units.
+    let due = -i64::try_from(after.as_nanos() / 100).unwrap_or(i64::MAX);
+    let due = due.cast_unsigned();
+    let due = FILETIME {
+        dwLowDateTime: (due & 0xFFFF_FFFF) as u32,
+        dwHighDateTime: (due >> 32) as u32,
+    };
+    // SAFETY: the timer is open; the due time is read during the call.
+    unsafe { SetThreadpoolTimer(timer, Some(&raw const due), 0, Some(0)) };
 }
 
 impl Drop for GraceTimer {
     fn drop(&mut self) {
-        // The timer is stopped, its callbacks waited for or cancelled, and
-        // only then closed and its end released.
+        // The callback sets the timer no more; then the timer is stopped,
+        // its callbacks waited for or cancelled, and only then closed and
+        // its end released.
+        end_of(self.end).lock().closed = true;
         // SAFETY: the timer is open.
         unsafe { SetThreadpoolTimer(self.timer, None, 0, None) };
         // SAFETY: as above.
@@ -464,6 +512,7 @@ impl Outgoing {
         let menu_end = Arc::new(MenuEnd {
             waiting: Mutex::new(Grace::default()),
             sender: sender.clone(),
+            timer: OnceLock::new(),
         });
         let grace = GraceTimer::new(&menu_end)?;
         Ok(Self {
@@ -577,19 +626,19 @@ impl Outgoing {
     /// listener's callback observed at `observed_at_us`, and starts its
     /// grace, which a later end starts again.
     fn menu_or_switch_ended(&self, observed_at_us: u64) {
-        self.note_menu_end(observed_at_us);
+        self.note_menu_end(observed_at_us, Instant::now() + MENU_END_GRACE);
         self.grace.arm();
     }
 
     /// Notes that a menu or the Alt+Tab switcher closed, observed at
-    /// `observed_at_us`, to be sent once its grace has passed.
-    fn note_menu_end(&self, observed_at_us: u64) {
+    /// `observed_at_us`, to be sent once its grace is over, at `over`.
+    fn note_menu_end(&self, observed_at_us: u64, over: Instant) {
         let timing = EventTiming {
             observed_at_us,
             listener_handled_at_us: self.now(),
             ..EventTiming::default()
         };
-        self.menu_end.lock().end = Some((now_ms(), timing));
+        self.menu_end.lock().end = Some((now_ms(), timing, over));
     }
 
     /// Answers the idle barrier's round `round`, behind every fact sent
@@ -1659,6 +1708,29 @@ mod tests {
         assert!(ended.elapsed() >= MENU_END_GRACE, "not before the grace");
     }
 
+    /// A grace timer's callback that runs as a newer end comes, taking the
+    /// lock only once that end is noted, sends nothing: the newer end is
+    /// sent once its own grace is over, and only once.
+    #[test]
+    fn a_menu_end_is_not_sent_before_its_grace_by_a_callback_of_an_earlier_one() {
+        let (outgoing, reader) = outgoing();
+        let messages = drain(reader);
+        let ended = Instant::now();
+        outgoing.menu_or_switch_ended(1_000);
+        // As an earlier grace's callback does, run just as this end came.
+        outgoing.menu_end.grace_ended();
+        let message = messages
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the menu end is sent");
+        assert!(matches!(
+            message,
+            OutpostToSupervisor::MenuOrSwitchEnded { .. }
+        ));
+        assert!(ended.elapsed() >= MENU_END_GRACE, "not before the grace");
+        outgoing.close();
+        assert_eq!(messages.iter().count(), 0, "the end is sent once");
+    }
+
     #[test]
     fn a_menu_end_a_focus_follows_is_sent_after_the_focus() {
         // Whether the focus was usable is Core's to judge: it may yet be
@@ -1701,7 +1773,7 @@ mod tests {
             1_000,
         );
         outgoing.fact(Pid(5), msaa_focus(), None, None, 1_000);
-        outgoing.note_menu_end(1_000);
+        outgoing.note_menu_end(1_000, Instant::now());
         // As the timer's callback does when the grace ends.
         outgoing.menu_end.grace_ended();
         outgoing.fact(Pid(6), msaa_focus(), None, None, 1_000);
@@ -1745,7 +1817,7 @@ mod tests {
             parked_count: 0,
             written_at_us: 0,
         });
-        outgoing.note_menu_end(3_000);
+        outgoing.note_menu_end(3_000, Instant::now());
         outgoing.idle_answer(2);
         outgoing.fact(Pid(6), msaa_focus(), None, None, 3_000);
         // As the timer's callback does when the grace ends.
