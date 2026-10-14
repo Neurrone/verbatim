@@ -103,7 +103,7 @@ impl Contained {
     /// has.
     #[must_use]
     pub fn wait_for_exit(&self, timeout: std::time::Duration) -> bool {
-        let milliseconds = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX - 1);
+        let milliseconds = overlapped::wait_milliseconds(timeout);
         // SAFETY: the process handle this value owns, open for its life.
         let state =
             unsafe { WaitForSingleObject(HANDLE(self.process.as_raw_handle()), milliseconds) };

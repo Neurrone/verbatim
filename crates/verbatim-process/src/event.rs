@@ -13,7 +13,7 @@ use windows::Win32::System::Threading::{
     CreateEventW, INFINITE, ResetEvent, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
 };
 
-use crate::overlapped::win32_error;
+use crate::overlapped::{wait_milliseconds, win32_error};
 
 /// An unnamed manual-reset event: set, it stays set until reset, or until
 /// an overlapped operation it is given to starts.
@@ -65,7 +65,8 @@ impl Event {
 
 /// Waits until any of `events` is set, at most `timeout` (`None` waits for
 /// as long as it takes), and returns the index of the first one set, the
-/// lowest when several are; `None` when the time ran out. A thread blocked
+/// lowest when several are; `None` when the time ran out, which is never
+/// before `timeout` has passed. A thread blocked
 /// here uses no processor time and wakes for nothing else.
 ///
 /// # Errors
@@ -82,9 +83,7 @@ pub fn wait_any(events: &[&Event], timeout: Option<Duration>) -> io::Result<Opti
         "a wait takes one to 64 events"
     );
     let handles: Vec<HANDLE> = events.iter().map(|event| event.raw()).collect();
-    let milliseconds = timeout.map_or(INFINITE, |timeout| {
-        u32::try_from(timeout.as_millis()).unwrap_or(INFINITE - 1)
-    });
+    let milliseconds = timeout.map_or(INFINITE, wait_milliseconds);
     // SAFETY: every handle is an event the caller's references keep open
     // across the call.
     let waited = unsafe { WaitForMultipleObjects(&handles, false, milliseconds) };
@@ -123,5 +122,19 @@ mod tests {
         first.reset();
         assert!(!first.is_set());
         assert!(second.is_set());
+    }
+
+    /// A timeout is waited in whole milliseconds rounded up, so a wait for
+    /// a deadline less than a millisecond away waits rather than returning
+    /// at once, and a caller looping to a deadline never spins.
+    #[test]
+    fn a_timeout_is_rounded_up_to_whole_milliseconds() {
+        use crate::overlapped::wait_milliseconds;
+        assert_eq!(wait_milliseconds(Duration::ZERO), 0);
+        assert_eq!(wait_milliseconds(Duration::from_micros(1)), 1);
+        assert_eq!(wait_milliseconds(Duration::from_micros(999)), 1);
+        assert_eq!(wait_milliseconds(Duration::from_millis(1)), 1);
+        assert_eq!(wait_milliseconds(Duration::from_micros(1_001)), 2);
+        assert_eq!(wait_milliseconds(Duration::MAX), u32::MAX - 1);
     }
 }

@@ -345,7 +345,7 @@ fn blocking_io(
         Ok(()) => {}
         Err(error) if error.code() == ERROR_IO_PENDING.to_hresult() => {
             if let Some(timeout) = timeout {
-                let milliseconds = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX - 1);
+                let milliseconds = crate::overlapped::wait_milliseconds(timeout);
                 // SAFETY: the event is open; the wait only reads it.
                 let waited =
                     unsafe { WaitForSingleObject(HANDLE(event.as_raw_handle()), milliseconds) };

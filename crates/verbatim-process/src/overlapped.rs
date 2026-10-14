@@ -319,10 +319,7 @@ impl Port {
         completions: &mut Completions,
         timeout: Option<Duration>,
     ) -> io::Result<usize> {
-        let milliseconds = timeout.map_or(u32::MAX, |timeout| {
-            // Rounded up, so a deadline is never woken for early.
-            u32::try_from(timeout.as_micros().div_ceil(1_000)).unwrap_or(u32::MAX - 1)
-        });
+        let milliseconds = timeout.map_or(u32::MAX, wait_milliseconds);
         let mut taken = 0u32;
         // SAFETY: the port is open; the entries are written by the call,
         // up to their number, and `taken` says how many.
@@ -350,6 +347,14 @@ impl Port {
             }
         }
     }
+}
+
+/// `timeout` in the whole milliseconds a system wait takes, rounded up, so
+/// a wait for a deadline never ends before it: rounded down, a wait of
+/// less than a millisecond would be none, and a caller looping to a
+/// deadline would spin. Capped below `INFINITE`, which would wait for ever.
+pub(crate) fn wait_milliseconds(timeout: Duration) -> u32 {
+    u32::try_from(timeout.as_micros().div_ceil(1_000)).unwrap_or(u32::MAX - 1)
 }
 
 /// Room for the completions one [`Port::wait`] takes.

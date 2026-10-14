@@ -91,7 +91,9 @@ Public API:
   `Event`, an unnamed manual-reset event (`new`, `set`, `reset`,
   `is_set`), and `wait_any(events, timeout)`, which waits until any of
   up to 64 events is set and returns the lowest one's index, or `None`
-  when the time runs out: what the synth thread waits on for its host's
+  when the time runs out, its timeout rounded up to whole milliseconds as
+  every wait in the crate rounds it, so a wait never ends before its
+  deadline and a caller looping to one never spins: what the synth thread waits on for its host's
   next frame and its utterance's cancel together, and a synthesizer host
   for its write to Core and Core's next command.
 - `port_queue` (`docs/design/communication.md`, sections 4.5 and 6.2) —
