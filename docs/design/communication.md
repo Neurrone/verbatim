@@ -284,7 +284,7 @@ The idle barrier of 6.7 needs no change for it, since the round is in-band.
 
 - Every frame from the host names its utterance: `Pcm(utterance, format, samples)`, `Mark(utterance, mark)`, `Done(utterance)`, `Failed(utterance, reason)`. Setting replies and `Ready` carry none.
 - Commands are as today: `Speak(sequence)` (the sequence carries its utterance id), `Cancel(utterance)`, `SetSetting`.
-- The first `Pcm` of an utterance carries the host's stamps in the timing block: when the host read the `Speak`, when the driver started, and when the first chunk was ready (section 10).
+- The first `Pcm` of an utterance carries the host's stamps in the timing block: when the host read the `Speak`, when the driver started, and when the first chunk was ready (section 10). As built in step 9, the stamps go in a `FirstAudio` message of their own, written in the same write as the first `Pcm`, and the first chunk is measured from the host's receipt of the `Speak`, so a wait for its turn in the host is counted (section 10.1).
 
 ### 7.2 The next Speak goes right behind a Cancel (finding 4)
 
