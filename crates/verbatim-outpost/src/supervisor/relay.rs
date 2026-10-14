@@ -88,13 +88,23 @@ impl<T> Mailbox<T> {
     /// Returns [`OwnerGone`] when the owner has ended.
     pub(super) fn send(&self, item: T) -> Result<(), OwnerGone> {
         self.sender.send(item).map_err(|_| OwnerGone)?;
-        if !self.posted.swap(true, Ordering::SeqCst)
-            && let Err(error) = self.port.post(OWNER_KEY)
-        {
-            // The port lives as long as any mailbox does; not expected.
-            tracing::error!(%error, "the relay could not be woken");
-        }
+        wake(&self.posted, || self.port.post(OWNER_KEY));
         Ok(())
+    }
+}
+
+/// Posts the mailbox's wake with `post` unless one is already waiting to be
+/// taken, as `posted` says. A wake the port refuses, which only a system
+/// out of memory does, is not counted as waiting, so the next send tries
+/// again; and the relay takes its inbox at every heartbeat as well, so
+/// what was sent meanwhile waits at most a ping interval.
+fn wake(posted: &AtomicBool, post: impl FnOnce() -> io::Result<()>) {
+    if posted.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if let Err(error) = post() {
+        posted.store(false, Ordering::SeqCst);
+        tracing::error!(%error, "the relay could not be woken; it takes its mailbox at its next heartbeat");
     }
 }
 
@@ -390,6 +400,25 @@ mod tests {
                 name(&command)
             })
             .collect()
+    }
+
+    /// A wake the port refuses is not counted as waiting: the next send
+    /// posts again.
+    #[test]
+    fn a_refused_wake_is_posted_again_by_the_next_send() {
+        let posted = AtomicBool::new(false);
+        wake(&posted, || Err(io::Error::other("refused")));
+        let mut posts = 0;
+        wake(&posted, || {
+            posts += 1;
+            Ok(())
+        });
+        assert_eq!(posts, 1, "the next send posted");
+        wake(&posted, || {
+            posts += 1;
+            Ok(())
+        });
+        assert_eq!(posts, 1, "one wake waits, so no other is posted");
     }
 
     /// The owner's order through the relay's writer: facts held while the

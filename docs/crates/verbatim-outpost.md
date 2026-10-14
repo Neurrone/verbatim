@@ -758,7 +758,10 @@ Public API:
     handled after every frame before it. Launch helpers, retirements,
     hang checks and the app report to it through the mailbox
     (`relay::Mailbox`, a channel whose sends post one wake to the port
-    unless one is already waiting); there is no shared map lock. It never
+    unless one is already waiting; a wake the port refuses is not counted
+    as waiting, so the next send posts again, and the relay also takes the
+    mailbox at every heartbeat, so nothing sent waits longer than a ping
+    interval); there is no shared map lock. It never
     blocks: launching blocks, so the owner records the application as
     starting and hands the launch to a helper thread, which makes the
     child's writer, sends `Started`, and reports back, the relay reading

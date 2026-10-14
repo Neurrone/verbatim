@@ -374,6 +374,10 @@ impl Owner {
             }
             let now = Instant::now();
             if now >= heartbeat_due {
+                // What was sent while the port refused the mailbox's wake.
+                for event in events.take() {
+                    self.handle(event);
+                }
                 self.heartbeat();
                 heartbeat_due = next_due(heartbeat_due, now, PING_INTERVAL);
             }
