@@ -999,13 +999,18 @@ pub(crate) trait Reading: Send + Sync + 'static {
 
 /// One application's reading.
 struct App<J> {
-    /// Its events waiting for a read, oldest first.
-    queue: VecDeque<(Meta, J)>,
+    /// Its events waiting for a read, oldest first, each with its place
+    /// in the order every application's events were queued in
+    /// ([`ReadersState::queued`]).
+    queue: VecDeque<(u64, Meta, J)>,
     /// The thread in charge of its events, by generation, if one is.
     live: Option<u64>,
     /// When the thread in charge began the event it is reading, that
     /// event, and its kind (a focus when the job has no key).
     running: Option<(Instant, Meta, FocusEvent)>,
+    /// The place of the event being read in the order events were queued,
+    /// while one is.
+    running_place: u64,
     /// Its threads abandoned to reads that have not returned yet.
     abandoned: usize,
     /// Whether its outpost has ended, so the thread in charge ends once no
@@ -1021,6 +1026,7 @@ impl<J> App<J> {
             queue: VecDeque::new(),
             live: None,
             running: None,
+            running_place: 0,
             abandoned: 0,
             ending: false,
             wake: Arc::new(Condvar::new()),
@@ -1033,29 +1039,48 @@ struct ReadersState<J> {
     next_generation: u64,
     threads: Vec<JoinHandle<()>>,
     stopping: bool,
-    /// What runs once no application has an event waiting or being read
-    /// ([`Readers::when_idle`]).
-    idle_waiters: Vec<IdleWaiter>,
+    /// How many events have been queued, of every application: an event's
+    /// place in that order is the count once it is queued.
+    queued: u64,
+    /// What runs once every event queued before it has its outcome sent,
+    /// each with the count of events queued when it was added
+    /// ([`Readers::when_idle`]), oldest first.
+    idle_waiters: VecDeque<(u64, IdleWaiter)>,
 }
 
 /// What [`Readers::when_idle`] runs.
 pub(crate) type IdleWaiter = Box<dyn FnOnce() + Send>;
 
 impl<J> ReadersState<J> {
-    /// Runs what waits for the readers to be idle, if they are: no
-    /// application has an event waiting or being read, so every outcome
-    /// has been sent. Called under the readers' lock, as outcomes are sent.
+    /// Runs each waiter for which every event queued before it has its
+    /// outcome sent: no application has one of those waiting or being
+    /// read. Events queued after a waiter are not waited for, so a stream
+    /// of them cannot hold it back. Called under the readers' lock, as
+    /// outcomes are sent.
     fn wake_idle_waiters(&mut self) {
-        if self.idle_waiters.is_empty()
-            || self
-                .apps
-                .values()
-                .any(|app| app.running.is_some() || !app.queue.is_empty())
-        {
+        if self.idle_waiters.is_empty() {
             return;
         }
-        for waiter in self.idle_waiters.drain(..) {
-            waiter();
+        // An application's oldest event in progress is the one being read,
+        // or, with none, the first waiting: each queue keeps the order its
+        // events were queued in.
+        let oldest = self
+            .apps
+            .values()
+            .filter_map(|app| {
+                if app.running.is_some() {
+                    Some(app.running_place)
+                } else {
+                    app.queue.front().map(|(place, _, _)| *place)
+                }
+            })
+            .min();
+        while let Some((before, _)) = self.idle_waiters.front()
+            && oldest.is_none_or(|oldest| *before < oldest)
+        {
+            if let Some((_, waiter)) = self.idle_waiters.pop_front() {
+                waiter();
+            }
         }
     }
 }
@@ -1099,7 +1124,8 @@ impl<R: Reading> Readers<R> {
                 next_generation: 0,
                 threads: Vec::new(),
                 stopping: false,
-                idle_waiters: Vec::new(),
+                queued: 0,
+                idle_waiters: VecDeque::new(),
             }),
             changed: Condvar::new(),
             failed_reads: AtomicU32::new(0),
@@ -1147,7 +1173,7 @@ impl<R: Reading> Readers<R> {
         // replaced is reported dropped, which resolves its marker.
         if let Some(key) = shared.reading.key(&job) {
             let mut kept = VecDeque::with_capacity(app.queue.len());
-            for (waiting_meta, waiting) in app.queue.drain(..) {
+            for (place, waiting_meta, waiting) in app.queue.drain(..) {
                 if shared.reading.key(&waiting) == Some(key) {
                     shared.reading.outcome(
                         pid,
@@ -1155,12 +1181,17 @@ impl<R: Reading> Readers<R> {
                         Judged::Dropped("a newer focus event of its element replaced it"),
                     );
                 } else {
-                    kept.push_back((waiting_meta, waiting));
+                    kept.push_back((place, waiting_meta, waiting));
                 }
             }
             app.queue = kept;
         }
-        app.queue.push_back((meta, job));
+        state.queued += 1;
+        let place = state.queued;
+        let Some(app) = state.apps.get_mut(&pid) else {
+            return;
+        };
+        app.queue.push_back((place, meta, job));
         if app.live.is_some() {
             app.wake.notify_one();
         } else {
@@ -1179,7 +1210,7 @@ impl<R: Reading> Readers<R> {
         state.apps.values().any(|app| {
             app.running
                 .is_some_and(|(_, _, kind)| kind == FocusEvent::Focus)
-                || app.queue.iter().any(|(_, job)| {
+                || app.queue.iter().any(|(_, _, job)| {
                     shared
                         .reading
                         .key(job)
@@ -1205,18 +1236,19 @@ impl<R: Reading> Readers<R> {
         app.wake.notify_one();
     }
 
-    /// Runs `waiter` once no application has an event waiting for its read
-    /// or being read, at once if none has, under the readers' lock, behind
-    /// the outcome of every event queued before this call: the idle
-    /// barrier's answer goes behind them (`docs/design/communication.md`,
-    /// section 6.7). Never waits on a read. Once the readers are stopping,
-    /// `waiter` is dropped unrun.
+    /// Runs `waiter` once no event queued before this call is waiting for
+    /// its read or being read, at once if none is, under the readers'
+    /// lock, behind the outcome of every one of them: the idle barrier's
+    /// answer goes behind them (`docs/design/communication.md`, section
+    /// 6.7). Events queued after this call are not waited for. Never waits
+    /// on a read. Once the readers are stopping, `waiter` is dropped unrun.
     pub(crate) fn when_idle(&self, waiter: IdleWaiter) {
         let mut state = self.shared.lock();
         if state.stopping {
             return;
         }
-        state.idle_waiters.push(waiter);
+        let queued = state.queued;
+        state.idle_waiters.push_back((queued, waiter));
         state.wake_idle_waiters();
     }
 
@@ -1276,7 +1308,7 @@ fn start<R: Reading>(shared: &Arc<Shared<R>>, state: &mut ReadersState<R::Job>, 
         Err(error) => {
             tracing::error!(%pid, %error, "no thread to read UIA focus events; they are dropped");
             app.live = None;
-            for (meta, _) in app.queue.drain(..) {
+            for (_, meta, _) in app.queue.drain(..) {
                 shared
                     .reading
                     .outcome(pid, meta, Judged::Dropped("no thread to read it"));
@@ -1339,12 +1371,13 @@ fn next_job<R: Reading>(shared: &Shared<R>, pid: Pid, generation: u64) -> Option
         if app.live != Some(generation) {
             return None;
         }
-        if let Some((meta, job)) = app.queue.pop_front() {
+        if let Some((place, meta, job)) = app.queue.pop_front() {
             let kind = shared
                 .reading
                 .key(&job)
                 .map_or(FocusEvent::Focus, |(kind, _)| kind);
             app.running = Some((Instant::now(), meta, kind));
+            app.running_place = place;
             shared.changed.notify_all();
             return Some((meta, job));
         }
@@ -1424,7 +1457,7 @@ fn abandon<R: Reading>(shared: &Arc<Shared<R>>, state: &mut ReadersState<R::Job>
         Judged::Dropped("its read did not return in time"),
     );
     if abandoned >= ABANDONED_LIMIT {
-        for (meta, _) in app.queue.drain(..) {
+        for (_, meta, _) in app.queue.drain(..) {
             shared.reading.outcome(
                 pid,
                 meta,
@@ -1654,6 +1687,45 @@ mod tests {
                 (Pid(5), 1, "read"),
                 (Pid(5), 2, "read"),
                 (Pid(0), 2, "idle")
+            ]
+        );
+        assert_eq!(fixture.readers.stop(), 1);
+    }
+
+    /// The idle barrier's waiter does not wait for events queued after it:
+    /// it runs once the event being read when it came has its outcome,
+    /// ahead of the read of an event queued behind it, so a stream of
+    /// events cannot hold it back.
+    #[test]
+    fn the_idle_waiter_does_not_wait_for_events_queued_after_it() {
+        let fixture = fixture(Duration::from_secs(60));
+        let outcomes = fixture
+            .readers
+            .shared
+            .reading
+            .outcomes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let (open, gate) = mpsc::channel();
+        fixture
+            .readers
+            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
+        fixture.readers.when_idle(Box::new(move || {
+            let _ = outcomes.send((Pid(0), 1, "idle"));
+        }));
+        fixture.readers.push(Pid(5), meta(2), (2, None, Vec::new()));
+        open.send(()).expect("the held read waits");
+        let outcomes: Vec<(Pid, u64, &str)> = (0..3)
+            .map(|_| fixture.outcomes.recv_timeout(WAIT).expect("an outcome"))
+            .collect();
+        assert_eq!(
+            outcomes,
+            [
+                (Pid(5), 1, "read"),
+                (Pid(0), 1, "idle"),
+                (Pid(5), 2, "read")
             ]
         );
         assert_eq!(fixture.readers.stop(), 1);

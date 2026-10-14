@@ -1605,8 +1605,11 @@ it covers whatever is in pipes and backlogs without counting it.
 - The listener hands the query to its `WinEvent` thread as a thread
   message (`Nudger::nudge`), behind every event delivered to that thread,
   and the thread hands it to the reading threads (`Readers::when_idle`),
-  which run the answer under their lock once no application has an event
-  waiting or being read, so it goes behind every read's or drop's outcome.
+  which run the answer under their lock once no event queued before it is
+  waiting or being read, so it goes behind every such read's or drop's
+  outcome. Each queued event takes its place from one count across every
+  application and the answer keeps the count when it came, so events
+  queued after it are not waited for.
   A menu or switcher end still in its grace goes first, and the answer
   behind it. The answer goes through the listener's sender behind every
   fact sent before it, and no fact is coalesced with one before it across
