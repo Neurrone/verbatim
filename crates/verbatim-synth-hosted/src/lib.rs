@@ -20,16 +20,28 @@
 //! included, unread by anyone. So the next utterance's `Speak` goes right
 //! behind the `Cancel`, and the host reads both at its next chunk.
 //!
-//! Recovery. A host that exits, sends nothing for [`HANG_TIMEOUT`] while
-//! the driver waits for it, or answers out of turn, fails the request in
-//! flight and is ended; the next request starts a new host and gives it
-//! the settings the old one had. A synthesis error the host reports in
-//! turn fails only that utterance, and the host carries on. A host that
-//! dies while an utterance drains is found at the next request.
+//! Recovery. A host that exits, or answers out of turn, fails the request
+//! in flight and is ended; so does a hung one, which has owed the driver a
+//! message for [`HANG_TIMEOUT`] and sent nothing. It owes one from the
+//! moment a request is written to it while it owes nothing until it has
+//! ended that request and every utterance draining. The time counts from
+//! the latest of that moment, the last frame read from it, and the sink
+//! handing back the last message relayed, so time the sink spends blocked
+//! while playback is behind never counts, but the time an utterance
+//! drains does: a host frozen while its utterances keep being cancelled,
+//! each before the limit, is still found, at the next request or in the
+//! next wait, and never by a timer of its own. The next request starts a
+//! new host and gives it the settings the old one had. A synthesis error
+//! the host reports in turn fails only that utterance, and the host
+//! carries on. A host that dies while an utterance drains is found at the
+//! next request.
 //!
 //! Commands are written whole before the driver goes on: the host keeps a
 //! read of its command pipe in flight at all times, even while it waits
-//! to write audio, so a write waits only on a host that is frozen outright.
+//! to write audio, so a write waits only on a host that is frozen outright,
+//! and then only until the host is judged hung. That write is never
+//! cancelled: the host is ended with the write still in flight, and the
+//! write ends as the pipe closes.
 //!
 //! Backpressure crosses the process boundary unchanged: the driver reads a
 //! frame only once the sink has taken the one before, and the pipe the
@@ -42,7 +54,7 @@ use std::collections::VecDeque;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tracing::warn;
 use verbatim_model::UtteranceId;
@@ -58,9 +70,11 @@ use verbatim_speech::{
     SynthFactory, SynthId, SynthSink, SynthTiming,
 };
 
-/// How long a host may stay silent while starting or speaking before it is
-/// judged hung and ended. A synthesizer produces audio many times faster
-/// than real time, so ten seconds without a message is never normal.
+/// How long a host may stay silent while it owes the driver a message (its
+/// `Ready`, a request's answer, or a cancelled utterance's end) before it
+/// is judged hung and ended. A synthesizer produces audio many times
+/// faster than real time, so ten seconds without a message is never
+/// normal.
 pub const HANG_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The buffer of the pipe the host writes PCM to, and how much a read of
@@ -87,6 +101,11 @@ struct Host {
     /// Utterances cancelled whose `Done` or `Failed` has not been read:
     /// every frame of theirs is dropped as it is read.
     draining: VecDeque<UtteranceId>,
+    /// Since when the host has owed a message and sent none: the latest of
+    /// the last frame read from it, the sink handing back after the last
+    /// message relayed, and the request written while it owed nothing. It
+    /// is judged hung [`HANG_TIMEOUT`] after this.
+    silent_since: Instant,
     /// Ends the process when dropped.
     contained: Contained,
 }
@@ -103,7 +122,7 @@ enum Next {
 enum Lost {
     /// Its pipe ended or failed: the process ended, or was ending.
     Ended(String),
-    /// It sent nothing for [`HANG_TIMEOUT`] while the driver waited for it.
+    /// It owed a message for [`HANG_TIMEOUT`] and sent nothing.
     Hung,
     /// It sent something out of turn.
     OutOfTurn(String),
@@ -237,6 +256,7 @@ impl Host {
             read: VecDeque::new(),
             ended: None,
             draining: VecDeque::new(),
+            silent_since: Instant::now(),
             contained,
         };
         match host.next(None) {
@@ -253,13 +273,41 @@ impl Host {
     }
 
     /// Writes `message` to the host, whole, returning the shared clock's
-    /// stamp taken as the write began.
+    /// stamp taken as the write began. A write the host has not taken by
+    /// the time it is judged hung is left in flight, never cancelled, and
+    /// the host is lost.
     fn send(&mut self, message: &ToHost) -> Result<u64, Lost> {
+        // A request written to a host that owes nothing starts its time; a
+        // cancel is written only while its utterance is owed.
+        if self.draining.is_empty() && !matches!(message, ToHost::Cancel(_)) {
+            self.silent_since = Instant::now();
+        }
+        let deadline = self.hung_at();
         let commands = &mut self.commands;
         stamped(now_us, || {
-            commands.write(|buffer| put_frame(buffer, |body| encode_to_host(message, body)))
+            write_by(commands, deadline, |buffer| {
+                put_frame(buffer, |body| encode_to_host(message, body))
+            })
         })
-        .map_err(|error| Lost::Ended(error.to_string()))
+        .map_err(|error| {
+            if error.kind() == io::ErrorKind::TimedOut {
+                Lost::Hung
+            } else {
+                Lost::Ended(error.to_string())
+            }
+        })
+    }
+
+    /// When the host is judged hung if it sends nothing before then.
+    fn hung_at(&self) -> Instant {
+        self.silent_since + HANG_TIMEOUT
+    }
+
+    /// The sink has handed back after taking a message: the time it took,
+    /// blocked while playback is behind, is never counted against the
+    /// host.
+    fn handed_back(&mut self) {
+        self.silent_since = Instant::now();
     }
 
     /// Cancels `utterance`, whose `Speak` was written, and notes it as
@@ -282,7 +330,10 @@ impl Host {
             Ok(())
         });
         match taken {
-            Taken::Frames => false,
+            Taken::Frames => {
+                self.silent_since = Instant::now();
+                false
+            }
             Taken::Waiting => true,
             Taken::Ended(Ok(())) => {
                 self.ended = Some("its pipe closed".to_owned());
@@ -296,7 +347,7 @@ impl Host {
     }
 
     /// The next message read that is not of a draining utterance, dropping
-    /// those, waiting for one at most [`HANG_TIMEOUT`] at a time; or, when
+    /// those, waiting for one until the host is judged hung; or, when
     /// `cancel` is given, its being set, the utterance's cancel.
     fn next(&mut self, cancel: Option<&Event>) -> Result<Next, Lost> {
         loop {
@@ -317,9 +368,10 @@ impl Host {
             if !self.fill() {
                 continue;
             }
+            let left = self.hung_at().saturating_duration_since(Instant::now());
             let signalled = match cancel {
-                Some(cancel) => wait_any(&[self.replies.event(), cancel], Some(HANG_TIMEOUT)),
-                None => wait_any(&[self.replies.event()], Some(HANG_TIMEOUT)),
+                Some(cancel) => wait_any(&[self.replies.event(), cancel], Some(left)),
+                None => wait_any(&[self.replies.event()], Some(left)),
             };
             match signalled {
                 Ok(Some(0)) => {}
@@ -330,13 +382,15 @@ impl Host {
         }
     }
 
-    /// Looks over what has been read from the host and not yet handled, as
-    /// a request is about to be made: only draining utterances' frames may
-    /// be among it, and those are dropped. Nothing more is read here: the
-    /// draining utterances' frames still in the pipe are read, and
-    /// dropped, by the request's own reads, which leaves a host blocked in
-    /// a paced write of a cancelled utterance waiting, at no cost, until
-    /// the next request.
+    /// Looks over what the host has sent and not yet been handled, as a
+    /// request is about to be made, reading what has come without waiting:
+    /// only draining utterances' frames may be among it, and those are
+    /// dropped. Nothing is read between requests, which leaves a host
+    /// blocked in a paced write of a cancelled utterance waiting, at no
+    /// cost, until the next one. A host still owing a draining utterance's
+    /// end that has sent nothing for [`HANG_TIMEOUT`] is hung, though no
+    /// wait for it ran that long: its utterances were cancelled, each
+    /// before the limit.
     fn between_requests(&mut self) -> Result<(), Lost> {
         loop {
             if let Some(message) = self.read.front() {
@@ -352,11 +406,17 @@ impl Host {
                 self.read.pop_front();
                 continue;
             }
-            return match &self.ended {
-                Some(why) => Err(Lost::Ended(why.clone())),
-                None => Ok(()),
-            };
+            if let Some(why) = &self.ended {
+                return Err(Lost::Ended(why.clone()));
+            }
+            if self.fill() {
+                break;
+            }
         }
+        if !self.draining.is_empty() && Instant::now() >= self.hung_at() {
+            return Err(Lost::Hung);
+        }
+        Ok(())
     }
 
     fn set_setting(&mut self, id: &SettingId, value: SettingValue) -> Result<(), SynthError> {
@@ -522,6 +582,33 @@ fn speak_with(
             FromHost::Done(_) => return Ok(Ok(())),
             FromHost::Failed(_, reason) => return Ok(Err(SynthError::Synthesis(reason))),
             other => return Err(Lost::OutOfTurn(format!("{other:?}"))),
+        }
+        host.handed_back();
+    }
+}
+
+/// Writes the frames `put` appends with `writer`, waiting for the write to
+/// finish until `deadline` at the latest. A write still in flight then is
+/// left so, never cancelled, and [`io::ErrorKind::TimedOut`] returned: the
+/// caller ends the host, whose pipe closes and ends the write with it.
+fn write_by(
+    writer: &mut EventWriter,
+    deadline: Instant,
+    put: impl FnOnce(&mut Vec<u8>) -> io::Result<()>,
+) -> io::Result<()> {
+    if writer.start(put)? {
+        return Ok(());
+    }
+    loop {
+        if let Some(done) = writer.poll() {
+            return done;
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if wait_any(&[writer.event()], Some(left))?.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the synthesizer host took no command",
+            ));
         }
     }
 }

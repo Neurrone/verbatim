@@ -5,7 +5,9 @@
 //! next reads; a driver waiting for a synthesis that never completes is
 //! stopped by the cancel through the command event, with no timer; and a
 //! cancel that comes while a frame larger than the pipe is pended leaves
-//! that frame whole, so the host carries on.
+//! that frame whole, so the host carries on; and a host frozen in its
+//! driver is ended once it has owed an answer for the hang limit, rather
+//! than a write to it waiting for good.
 //!
 //! This test binary runs itself as a synthesizer host: `HostedSynth`
 //! launches it with the host's command line, which its own `main`
@@ -19,12 +21,16 @@
 //! utterance's id times 100 plus the chunk's index. The text "never" makes
 //! it wait as `OneCore` does, through `OneCore`'s own wait, for a
 //! synthesis that never completes, after setting the test's named event.
+//! The text "frozen" sets that event and then waits on the gate, which the
+//! test never opens, reading no command: a host frozen in a native call.
 
 use std::ops::ControlFlow;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 use verbatim_audio::PcmFormat;
 use verbatim_model::{TraceId, UtteranceId};
@@ -38,7 +44,7 @@ use verbatim_synth_hosted::HostedSynth;
 use verbatim_synth_onecore::{Waited, wait_for_synthesis};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{
-    CreateEventW, CreateSemaphoreW, EVENT_MODIFY_STATE, OpenEventW, OpenSemaphoreW,
+    CreateEventW, CreateSemaphoreW, EVENT_MODIFY_STATE, INFINITE, OpenEventW, OpenSemaphoreW,
     ReleaseSemaphore, SYNCHRONIZATION_SYNCHRONIZE, SetEvent, WaitForSingleObject,
 };
 use windows::core::HSTRING;
@@ -134,6 +140,14 @@ impl SynthDriver for Scripted {
                     "a synthesis that never completes completed".to_owned(),
                 )),
             };
+        }
+        if text == "frozen" {
+            // SAFETY: the stand-in's open event handle.
+            unsafe { SetEvent(self.waiting) }.expect("the test's event is set");
+            // SAFETY: the stand-in's open semaphore handle, which the test
+            // never releases for this text.
+            unsafe { WaitForSingleObject(self.gate, INFINITE) };
+            return Ok(());
         }
         let extra = usize::try_from(self.rate).expect("a rate of 0 to 100");
         for (index, length) in text.split_whitespace().enumerate() {
@@ -330,19 +344,15 @@ fn a_new_utterance_goes_right_behind_a_cancel() {
     assert_eq!(synth.process_id(), pid, "the same host speaks both");
 }
 
-/// A cancel before any audio stops a driver waiting, as `OneCore` does,
-/// for a synthesis that never completes: the command event wakes its
-/// wait, with no timer. The cancel comes from another thread once the
-/// driver has begun to wait. The host's `Done` for the cancelled utterance
-/// comes before anything of the next, which the test waits for, bounded
-/// only by the driver's hang limit.
-fn a_cancel_stops_a_synthesis_that_never_completes() {
-    let script = Script::new(1_000);
-    let mut synth = script.start();
-    let pid = synth.process_id();
-
-    let mut never = TestSink::new(CancelAt::Never);
-    let token = Arc::clone(&never.token);
+/// Speaks `sequence` with `sink`, which another thread cancels once the
+/// scripted driver has set the script's event as it begins to wait.
+fn speak_cancelled_once_waiting(
+    script: &Script,
+    synth: &mut HostedSynth,
+    sink: &mut TestSink,
+    sequence: &SpeechSequence,
+) {
+    let token = Arc::clone(&sink.token);
     let waiting = waiting_name(&script.name);
     let canceller = thread::spawn(move || {
         // SAFETY: opening the script's event by name; closed below.
@@ -356,12 +366,27 @@ fn a_cancel_stops_a_synthesis_that_never_completes() {
         waited == WAIT_OBJECT_0
     });
     synth
-        .speak(&sequence(1, "never"), &mut never)
+        .speak(sequence, sink)
         .expect("a cancelled utterance is not a failure");
     assert!(
         canceller.join().expect("the canceller"),
         "the driver began to wait before the cancel"
     );
+}
+
+/// A cancel before any audio stops a driver waiting, as `OneCore` does,
+/// for a synthesis that never completes: the command event wakes its
+/// wait, with no timer. The cancel comes from another thread once the
+/// driver has begun to wait. The host's `Done` for the cancelled utterance
+/// comes before anything of the next, which the test waits for, bounded
+/// only by the driver's hang limit.
+fn a_cancel_stops_a_synthesis_that_never_completes() {
+    let script = Script::new(1_000);
+    let mut synth = script.start();
+    let pid = synth.process_id();
+
+    let mut never = TestSink::new(CancelAt::Never);
+    speak_cancelled_once_waiting(&script, &mut synth, &mut never, &sequence(1, "never"));
     assert_eq!(never.received, Vec::<Vec<i16>>::new());
 
     let mut next = TestSink::new(CancelAt::Never);
@@ -426,6 +451,48 @@ fn a_setting_after_a_cancel_is_answered_past_the_cancelled_frames() {
     assert_eq!(synth.process_id(), pid, "the same host is kept");
 }
 
+/// How long the test waits for a request to a frozen host to end; it only
+/// bounds a hang, and is well past the hang limit the request ends at.
+const FROZEN_LIMIT: Duration = Duration::from_secs(40);
+
+/// A host frozen in its driver, its utterance cancelled, is judged hung and
+/// ended once it has owed that utterance's end for the hang limit, rather
+/// than the next request waiting for good on a write the host never takes.
+/// The utterance is cancelled once the driver is frozen, so the host reads
+/// the cancel with no thread left to act on it; the next `Speak` is larger
+/// than the command pipe's buffer and the host's read together, so its
+/// write can finish only by the host reading, which it never does. That
+/// request fails as a hung host's, and the host is gone. The request runs
+/// on its own thread so that a write waiting for good fails the test at
+/// the bound instead of hanging it.
+fn a_frozen_host_is_ended_rather_than_waited_for_for_good() {
+    let script = Script::new(0);
+    let mut synth = script.start();
+    let mut frozen = TestSink::new(CancelAt::Never);
+    speak_cancelled_once_waiting(&script, &mut synth, &mut frozen, &sequence(1, "frozen"));
+    assert_eq!(frozen.received, Vec::<Vec<i16>>::new());
+
+    let (ended_tx, ended) = mpsc::channel();
+    thread::spawn(move || {
+        let mut next = TestSink::new(CancelAt::Never);
+        let result = synth.speak(&sequence(2, &"5 ".repeat(10_000)), &mut next);
+        let _ = ended_tx.send((
+            result.map_err(|error| error.to_string()),
+            next.received,
+            synth.process_id(),
+        ));
+    });
+    let (result, received, process) = ended
+        .recv_timeout(FROZEN_LIMIT)
+        .expect("the request to a frozen host ends");
+    assert_eq!(
+        result,
+        Err("synthesis failed: the synthesizer host sent nothing for 10s".to_owned())
+    );
+    assert_eq!(received, Vec::<Vec<i16>>::new());
+    assert_eq!(process, None, "the frozen host was ended");
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == "--pipe-in") {
@@ -433,7 +500,7 @@ fn main() -> ExitCode {
     }
     // libtest's own options, such as a name filter, are accepted and
     // ignored: the binary runs all its tests.
-    let tests: [(&str, fn()); 4] = [
+    let tests: [(&str, fn()); 5] = [
         (
             "a_new_utterance_goes_right_behind_a_cancel",
             a_new_utterance_goes_right_behind_a_cancel,
@@ -449,6 +516,10 @@ fn main() -> ExitCode {
         (
             "a_setting_after_a_cancel_is_answered_past_the_cancelled_frames",
             a_setting_after_a_cancel_is_answered_past_the_cancelled_frames,
+        ),
+        (
+            "a_frozen_host_is_ended_rather_than_waited_for_for_good",
+            a_frozen_host_is_ended_rather_than_waited_for_for_good,
         ),
     ];
     for (name, test) in tests {

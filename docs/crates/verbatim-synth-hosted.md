@@ -28,9 +28,10 @@ Public API:
 - `factory(exe, synth)` — a `SynthFactory` that calls `start`, which is
   how `verbatim-app` registers eSpeak NG and OneCore.
 - `HANG_TIMEOUT` — ten seconds: how long a host may send nothing while
-  Core waits on it, starting or speaking or applying a setting, before
-  it is judged hung. A synthesizer produces audio many times faster than
-  real time, so ten seconds of silence is never normal.
+  it owes Core a message (its `Ready`, a request's answer, or a cancelled
+  utterance's end) before it is judged hung. A synthesizer produces audio
+  many times faster than real time, so ten seconds of silence is never
+  normal.
 
 Implementation notes, lifecycle. `start` makes two overlapped pipes with
 `overlapped::pipe`, the one the host writes to with a 4096-byte buffer,
@@ -49,8 +50,8 @@ bytes while a frame's length is unknown, and for the whole rest of a
 frame once it is known. Every message read that names a draining
 utterance (below) is dropped, its `Done` or `Failed` ending the
 draining. While it waits, the thread waits on the read's event, and
-while speaking on the utterance's cancel too, at most `HANG_TIMEOUT` at a
-time. A `FirstAudio` frame is stamped with the shared clock
+while speaking on the utterance's cancel too, until the host would be
+judged hung (Recovery, below). A `FirstAudio` frame is stamped with the shared clock
 (`hosting::now_us`) as it is read.
 
 Speaking. `speak` writes `Speak(sequence)`, whole, and then relays each
@@ -89,11 +90,25 @@ the driver reads the next frame only once it returns. The pipe's
 read of the same size, then fills, and the host's next write pends, which
 pauses the host's synthesizer inside its own `push_pcm`. Pacing therefore
 crosses the process boundary unchanged, and a cancel has little queued
-audio to drop. The hang timeout applies only while the driver waits for
-the host, so time spent blocked in the sink is never counted against it.
+audio to drop. The sink handing back after each message restarts the
+host's silence, so time spent blocked in the sink is never counted
+against the host.
 
 Recovery. A host that is no longer usable is ended: a closed pipe, a
-host that sent nothing for `HANG_TIMEOUT`, or a message out of turn. The
+hung host, or a message out of turn. A host is hung once it has owed a
+message for `HANG_TIMEOUT` and sent nothing. It owes one from the moment
+a request (`Speak` or `SetSetting`) is written to it while it owes
+nothing, until it has ended that request and every draining utterance;
+the time counts from the latest of that moment, the last frame read from
+it, and the sink handing back. So the time an utterance drains counts: a
+host frozen in a native call while every utterance is cancelled before
+the limit, as fast typing does, is judged hung at the next request once
+the limit has passed, or in the next wait when it passes then. A write to
+the host waits for it to take the command only until the same moment: a
+frozen host stops reading its command pipe, whose buffer then fills, and
+the write is left in flight, never cancelled, as the host is ended, which
+closes the pipe. Nothing of this runs on a timer: the time is looked at
+only when a request is made or a wait or write is already running. The
 host is dropped, which kills it through its job, and the error is
 returned, so the speech manager fails that utterance, unless `speak`
 resends it (see below). A `Failed` reply
@@ -112,9 +127,9 @@ A host that died between requests is found before the next one when it
 can be. Between requests a host sends only the last frames of draining
 utterances, so if anything else has already been read from it, or its
 pipe's end has, or its process has exited (`Contained::has_exited`), the
-host is ended and a new one started before the request is sent. Nothing
-more is read between requests: the draining frames still in the pipe are
-read by the next request's own reads.
+host is ended and a new one started before the request is sent. To know,
+what the host has sent is read as the request is made, without waiting,
+its draining frames dropped; nothing is read while no request is made.
 
 Ending a process is not immediate, so a request can still reach a host
 that is dying. `speak` therefore sends an utterance once more, to a fresh
