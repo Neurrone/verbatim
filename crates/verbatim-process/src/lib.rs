@@ -10,10 +10,14 @@
 //! [`overlapped::pipe`], whose child ends it inherits; it inherits exactly
 //! those and its log file, never another child's handles, so two launches
 //! running at once cannot keep each other's pipes open. Those handles are
-//! made non-inheritable and are inheritable only for the duration of the `CreateProcessW` call that launches the child, so
-//! another process creation elsewhere in Core that inherits every
-//! inheritable handle can pick them up only if it runs at that same moment;
-//! Core creates processes only through this module today. Each child's
+//! made non-inheritable and are inheritable only for the duration of the
+//! `CreateProcessW` call that launches the child, so another process
+//! creation elsewhere in Core that inherits every inheritable handle can
+//! pick them up only if it runs at that same moment; Core creates
+//! processes only through this module today, every one with a handle list.
+//! The child makes its copies non-inheritable as it takes them
+//! ([`inherited_pipe_handles`]), so no process it creates can hold its
+//! pipes open after it exits either. Each child's
 //! standard output and error go to a log file named for it in this
 //! launch's log directory.
 //!
@@ -526,10 +530,13 @@ pub unsafe fn inherited_pipes(pipe_in: usize, pipe_out: usize) -> io::Result<(Fi
 /// value that fails the check is an error rather than a handle that would
 /// close some other handle when dropped.
 ///
+/// Both handles are made non-inheritable, so no process the child creates
+/// can hold its pipes open after it exits.
+///
 /// # Errors
 ///
 /// Returns an error when the values are equal or either is not an open
-/// pipe handle.
+/// pipe handle, or when either cannot be made non-inheritable.
 ///
 /// # Safety
 ///
@@ -566,9 +573,63 @@ pub unsafe fn inherited_pipe_handles(
     let reader = unsafe { OwnedHandle::from_raw_handle(pipe_in as *mut c_void) };
     // SAFETY: as above.
     let writer = unsafe { OwnedHandle::from_raw_handle(pipe_out as *mut c_void) };
+    // Inherited handles arrive inheritable. Left so, a process this child
+    // created with handle inheritance, or one a library inside it created,
+    // would hold the pipes open after the child exited, and Core would
+    // never see their end.
+    set_inheritable(
+        &[
+            HANDLE(reader.as_raw_handle()),
+            HANDLE(writer.as_raw_handle()),
+        ],
+        false,
+    )?;
     Ok((reader, writer))
 }
 
 fn to_io(error: windows::core::Error) -> io::Error {
     io::Error::other(error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Whether `handle` is inheritable.
+    fn is_inheritable(handle: &OwnedHandle) -> bool {
+        let mut flags = 0u32;
+        // SAFETY: an open handle; the call only reads its flags.
+        unsafe { GetHandleInformation(HANDLE(handle.as_raw_handle()), &raw mut flags) }
+            .expect("its flags");
+        flags & HANDLE_FLAG_INHERIT.0 != 0
+    }
+
+    /// A child's inherited pipe ends arrive inheritable; taking them makes
+    /// them not, so no process the child creates can hold its pipes open
+    /// after it exits.
+    #[test]
+    fn a_childs_inherited_ends_are_not_inheritable_once_taken() {
+        let (_core_in, child_in) =
+            overlapped::pipe(overlapped::Flow::Outbound, 0, overlapped::End::Overlapped)
+                .expect("a pipe");
+        let (_core_out, child_out) =
+            overlapped::pipe(overlapped::Flow::Inbound, 0, overlapped::End::Overlapped)
+                .expect("a pipe");
+        let raw = [
+            HANDLE(child_in.as_raw_handle()),
+            HANDLE(child_out.as_raw_handle()),
+        ];
+        set_inheritable(&raw, true).expect("made inheritable, as inherited");
+        assert!(is_inheritable(&child_in) && is_inheritable(&child_out));
+        let (pipe_in, pipe_out) = (
+            child_in.into_raw_handle() as usize,
+            child_out.into_raw_handle() as usize,
+        );
+        // SAFETY: both values are pipe handles this test owns, given up
+        // above and owned by nothing else.
+        let (reader, writer) =
+            unsafe { inherited_pipe_handles(pipe_in, pipe_out) }.expect("taken");
+        assert!(!is_inheritable(&reader));
+        assert!(!is_inheritable(&writer));
+    }
 }

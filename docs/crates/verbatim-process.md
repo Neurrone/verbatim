@@ -53,7 +53,10 @@ Public API:
   that each names an open pipe handle, answering an error otherwise, so a
   malformed command line fails the start. It is still `unsafe` because
   each value must be an inherited pipe handle the process owns and nothing
-  else uses, which no check can prove. `verbatim-synth-host` uses it.
+  else uses, which no check can prove. It makes both handles
+  non-inheritable, as they arrive inheritable, so no process the child
+  creates, or a library inside it creates, can hold Core's pipes open
+  after the child exits. `verbatim-synth-host` uses it.
   Its ends must be synchronous: a `File` must never hold an overlapped
   handle.
 - `inherited_pipe_handles(pipe_in, pipe_out)` — the same checks, giving
@@ -260,7 +263,11 @@ job, names exactly the handles this child
 inherits, its two pipe ends and its log file. Without the list, two
 launches running at once on different threads could each inherit the
 other's pipe ends and keep that pipe open after its own child died, so
-Core would never see the end of the stream. After the spawn, Core closes
+Core would never see the end of the stream. The child, in turn, makes
+its inherited ends non-inheritable as it takes them
+(`inherited_pipe_handles`), so a process it creates cannot keep them
+open either: the relay waits for every outpost's pipe to end at exit,
+and a write end held open elsewhere would hold that wait. After the spawn, Core closes
 its copies of the child ends whether the spawn succeeded or not, so that
 the child's exit is seen as the end of the stream on the caller's end.
 Each pipe's buffer is whatever the caller gave it; a small one on the
