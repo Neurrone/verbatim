@@ -62,12 +62,21 @@ The end-to-end harness's hooks (private `harness` module):
   which records it and broadcasts `Frame::InputHandled`. A control-plane
   `AwaitIdle` travels the same way, as `Routed::Barrier` through the
   router, so it is answered only after every key before it; on the
-  reducer thread it waits (`IdleWaiter`) until the input it names has been
-  handled, both of the thread's queues are empty, no outpost request is
-  outstanding, no outpost is still starting, and no focus is wanted from
-  an outpost being started (a crashed outpost's replacement), and then
-  until everything queued so far has reached the speech manager. A wait
-  that runs out answers with what was still outstanding.
+  reducer thread it waits until the input it names has been handled, then
+  runs a round through every child (`idle.rs`, `IdleBarrier`;
+  `docs/design/communication.md`, section 6.7). The supervisor's relay
+  asks the listener, then every outpost, whether anything that came before
+  the question is still in progress, and tells the reducer which outposts
+  it asked (`OutpostMessage::IdleQueried`). Each child answers behind
+  every message it sent before, and an outpost that ends counts as having
+  answered. When every answer is in, the reducer takes in what is already
+  on its port and checks its own conditions: no outpost request
+  outstanding, no outpost still starting, no focus wanted from an outpost
+  being started (a crashed outpost's replacement), and no large frame
+  still being parsed. If they hold, the waiters are answered once
+  everything queued so far has reached the speech manager; if not, the
+  round runs again once they clear. A wait that runs out answers with
+  what was still outstanding.
 - `DumpFocus` answers with `SrState::focus_report`, within five seconds.
 
 Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
