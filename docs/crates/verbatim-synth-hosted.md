@@ -62,10 +62,10 @@ turn.
 
 Timing. `speak` stamps the shared clock as it is asked, and again just
 before the `Speak` request's write begins. With the host's `FirstAudio`
-stamps, the stamp on reading that frame, and a stamp as it is handled, it
-reports a `SynthTiming` to the sink: the request, the trip to the host,
-the host's first chunk, the trip back, and the time from reading the
-frame to handling it (`docs/design/communication.md`, section 10.1).
+stamps and a stamp as that frame is handled, it reports a `SynthTiming`
+to the sink: the request, the trip to the host, the host's first chunk,
+and the trip back to the frame's handling
+(`docs/design/communication.md`, section 10.1).
 
 Cancellation (sections 7.2 and 7.3). Once the request is written, the
 driver registers a waker with the sink (`SynthSink::on_cancel`) that sets

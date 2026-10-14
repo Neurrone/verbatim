@@ -292,13 +292,12 @@ which is reported separately. The stages, in milliseconds:
   manager.
 - Synthesis: from synthesis starting to the synthesizer's first audio,
   for a synthesizer in Verbatim's own process. A synthesizer host's is
-  split in five: synthesizer request (the driver asked to speak until its
+  split in four: synthesizer request (the driver asked to speak until its
   request's write begins), to the synthesizer host (from that write until
   the host has read the request), the host's first chunk (the host's
-  synthesizer to its first audio), back from the synthesizer host (from
-  the host beginning to write that audio until the driver's reader thread
-  has read it), and host reader to synth thread (from that read until the
-  synth thread takes the audio from the reader thread).
+  synthesizer to its first audio), and back from the synthesizer host
+  (from the host beginning to write that audio until the synth thread,
+  which reads the host's pipe itself, handles it).
 - Leading silence: audio the trimmer held back as leading silence.
 - Mixer and device: until the audio engine took the first sample.
 - Device clock: from the engine taking the first sample until the

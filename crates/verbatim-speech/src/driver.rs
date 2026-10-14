@@ -248,12 +248,8 @@ pub struct SynthTiming {
     /// From the host taking the request to its synthesizer's first chunk.
     pub first_chunk_us: u64,
     /// From the host beginning to write the first chunk to the driver
-    /// having read it from the pipe.
+    /// handling it, on the thread it speaks on, which reads the pipe itself.
     pub return_us: u64,
-    /// From the driver having read the first chunk to its handling it: the
-    /// frames read with it ahead of it, now that the thread the driver
-    /// speaks on reads the pipe itself.
-    pub hand_off_us: u64,
 }
 
 /// Receives a driver's output during [`SynthDriver::speak`].

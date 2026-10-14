@@ -81,7 +81,7 @@ struct Host {
     commands: EventWriter,
     replies: EventReader,
     /// Messages read and not yet handled, in order.
-    read: VecDeque<Reply>,
+    read: VecDeque<FromHost>,
     /// Why the reading of the host's pipe ended, once it has.
     ended: Option<String>,
     /// Utterances cancelled whose `Done` or `Failed` has not been read:
@@ -91,19 +91,10 @@ struct Host {
     contained: Contained,
 }
 
-/// A message from the host.
-struct Reply {
-    message: FromHost,
-    /// For [`FromHost::FirstAudio`], when the frame was read, on the clock
-    /// every process shares; 0 for the rest, which the latency ledger does
-    /// not time.
-    read_at_us: u64,
-}
-
 /// What a wait for the host brought.
 enum Next {
     /// A message, not of a draining utterance.
-    Message(Reply),
+    Message(FromHost),
     /// The utterance's cancel woke the wait.
     Cancelled,
 }
@@ -250,15 +241,11 @@ impl Host {
             contained,
         };
         match host.next(None) {
-            Ok(Next::Message(Reply {
-                message: FromHost::Ready(description),
-                ..
-            })) => Ok((host, description)),
-            Ok(Next::Message(Reply {
-                message: FromHost::Unavailable(reason),
-                ..
-            })) => Err(SynthError::Unavailable(reason)),
-            Ok(Next::Message(Reply { message, .. })) => Err(SynthError::Unavailable(format!(
+            Ok(Next::Message(FromHost::Ready(description))) => Ok((host, description)),
+            Ok(Next::Message(FromHost::Unavailable(reason))) => {
+                Err(SynthError::Unavailable(reason))
+            }
+            Ok(Next::Message(message)) => Err(SynthError::Unavailable(format!(
                 "the synthesizer host began with {message:?}"
             ))),
             Ok(Next::Cancelled) => unreachable!("no cancel is watched"),
@@ -292,16 +279,7 @@ impl Host {
         }
         let Self { replies, read, .. } = self;
         let taken = replies.take(|body| {
-            let message = decode_from_host(body)?;
-            let read_at_us = if matches!(message, FromHost::FirstAudio(..)) {
-                now_us()
-            } else {
-                0
-            };
-            read.push_back(Reply {
-                message,
-                read_at_us,
-            });
+            read.push_back(decode_from_host(body)?);
             Ok(())
         });
         match taken {
@@ -323,16 +301,16 @@ impl Host {
     /// `cancel` is given, its being set, the utterance's cancel.
     fn next(&mut self, cancel: Option<&Event>) -> Result<Next, Lost> {
         loop {
-            while let Some(reply) = self.read.pop_front() {
-                if let Some(utterance) = reply.message.utterance()
+            while let Some(message) = self.read.pop_front() {
+                if let Some(utterance) = message.utterance()
                     && let Some(at) = self.draining.iter().position(|d| *d == utterance)
                 {
-                    if reply.message.ends_utterance() {
+                    if message.ends_utterance() {
                         self.draining.remove(at);
                     }
                     continue;
                 }
-                return Ok(Next::Message(reply));
+                return Ok(Next::Message(message));
             }
             if let Some(why) = &self.ended {
                 return Err(Lost::Ended(why.clone()));
@@ -362,15 +340,14 @@ impl Host {
     /// the next request.
     fn between_requests(&mut self) -> Result<(), Lost> {
         loop {
-            if let Some(reply) = self.read.front() {
-                let draining = reply
-                    .message
+            if let Some(message) = self.read.front() {
+                let draining = message
                     .utterance()
                     .and_then(|utterance| self.draining.iter().position(|d| *d == utterance));
                 let Some(at) = draining else {
-                    return Err(Lost::OutOfTurn(format!("{:?}", reply.message)));
+                    return Err(Lost::OutOfTurn(format!("{message:?}")));
                 };
-                if reply.message.ends_utterance() {
+                if message.ends_utterance() {
                     self.draining.remove(at);
                 }
                 self.read.pop_front();
@@ -391,15 +368,11 @@ impl Host {
             })
             .and_then(|_| self.next(None));
         match answer {
-            Ok(Next::Message(Reply {
-                message: FromHost::SettingApplied(None),
-                ..
-            })) => Ok(()),
-            Ok(Next::Message(Reply {
-                message: FromHost::SettingApplied(Some(refusal)),
-                ..
-            })) => Err(SynthError::Setting(refusal)),
-            Ok(Next::Message(Reply { message, .. })) => Err(SynthError::Synthesis(format!(
+            Ok(Next::Message(FromHost::SettingApplied(None))) => Ok(()),
+            Ok(Next::Message(FromHost::SettingApplied(Some(refusal)))) => {
+                Err(SynthError::Setting(refusal))
+            }
+            Ok(Next::Message(message)) => Err(SynthError::Synthesis(format!(
                 "the synthesizer host answered a setting with {message:?}"
             ))),
             Ok(Next::Cancelled) => unreachable!("no cancel is watched"),
@@ -517,11 +490,8 @@ fn speak_with(
             host.cancel(utterance)?;
             return Ok(Ok(()));
         }
-        let Reply {
-            message,
-            read_at_us,
-        } = match host.next(Some(&cancelled))? {
-            Next::Message(reply) => reply,
+        let message = match host.next(Some(&cancelled))? {
+            Next::Message(message) => message,
             Next::Cancelled => continue,
         };
         if message.utterance() != Some(utterance) {
@@ -534,7 +504,6 @@ fn speak_with(
                     &DriverStamps {
                         asked: asked_at_us,
                         sent: sent_at_us,
-                        read: read_at_us,
                         taken: taken_at_us,
                     },
                     timing,
@@ -574,9 +543,7 @@ struct DriverStamps {
     asked: u64,
     /// The `Speak` request's write began.
     sent: u64,
-    /// The synth thread read the host's first audio from the pipe.
-    read: u64,
-    /// The synth thread handled the first audio.
+    /// The synth thread handled the host's first audio.
     taken: u64,
 }
 
@@ -587,8 +554,7 @@ fn split_synthesis(driver: &DriverStamps, host: HostTiming) -> SynthTiming {
         request_us: driver.sent.saturating_sub(driver.asked),
         to_host_us: host.received_at_us.saturating_sub(driver.sent),
         first_chunk_us: host.first_chunk_us,
-        return_us: driver.read.saturating_sub(host.sent_at_us),
-        hand_off_us: driver.taken.saturating_sub(driver.read),
+        return_us: driver.taken.saturating_sub(host.sent_at_us),
     }
 }
 
@@ -607,8 +573,8 @@ mod tests {
 
     /// The split of a start asked for at 900, whose request's write began
     /// at 1,000 and took 300 microseconds, was read by the host at 1,450,
-    /// and whose first audio the host wrote at 5,500, the synth thread read
-    /// at 6,000, and handled at 6,050.
+    /// and whose first audio the host wrote at 5,500 and the synth thread
+    /// handled at 6,050.
     fn split() -> SynthTiming {
         let clock = Cell::new(1_000);
         let sent = stamped(
@@ -623,7 +589,6 @@ mod tests {
             &DriverStamps {
                 asked: 900,
                 sent,
-                read: 6_000,
                 taken: 6_050,
             },
             HostTiming {
@@ -645,12 +610,7 @@ mod tests {
     }
 
     #[test]
-    fn the_trip_back_runs_from_the_hosts_write_to_the_synth_threads_read() {
-        assert_eq!(split().return_us, 500);
-    }
-
-    #[test]
-    fn the_hand_off_runs_from_the_synth_threads_read_to_its_handling() {
-        assert_eq!(split().hand_off_us, 50);
+    fn the_trip_back_runs_from_the_hosts_write_to_the_synth_threads_handling() {
+        assert_eq!(split().return_us, 550);
     }
 }

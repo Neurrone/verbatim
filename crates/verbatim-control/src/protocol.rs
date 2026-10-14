@@ -440,9 +440,8 @@ pub enum LatencyStageKind {
     /// From synthesis starting to the synthesizer's first audio, for a
     /// synthesizer that does not tell its parts apart; one that does has
     /// [`SynthRequest`](Self::SynthRequest), [`ToHost`](Self::ToHost),
-    /// [`HostFirstChunk`](Self::HostFirstChunk),
-    /// [`HostReturn`](Self::HostReturn) and
-    /// [`HostReaderToSynth`](Self::HostReaderToSynth) instead.
+    /// [`HostFirstChunk`](Self::HostFirstChunk) and
+    /// [`HostReturn`](Self::HostReturn) instead.
     Synthesis,
     /// From the synthesizer's driver asked to speak to its request's write
     /// to the synthesizer host beginning.
@@ -454,15 +453,9 @@ pub enum LatencyStageKind {
     /// first chunk of audio.
     HostFirstChunk,
     /// From the synthesizer host beginning to write the first chunk to the
-    /// driver's reader thread having read it: the encoding, the pipe, and
-    /// the reader.
+    /// synth thread handling it: the encoding, the pipe, the synth thread's
+    /// wake and read, and any frames read with the chunk and handled first.
     HostReturn,
-    /// From the driver having read the first chunk from the host's pipe to
-    /// the synth thread handling it. Since communication step 9 the synth
-    /// thread reads the pipe itself, so this is only the frames read with
-    /// the chunk and handled first; the name is kept from when a reader
-    /// thread handed the chunk on.
-    HostReaderToSynth,
     /// The synthesizer's leading silence, skipped before the mixer.
     LeadingSilence,
     /// From the mixer to the audio device starting.
@@ -506,7 +499,6 @@ impl LatencyStageKind {
             Self::ToHost => "to the synthesizer host",
             Self::HostFirstChunk => "the host's first chunk",
             Self::HostReturn => "back from the synthesizer host",
-            Self::HostReaderToSynth => "host reader to synth thread",
             Self::LeadingSilence => "leading silence",
             Self::MixerAndDevice => "mixer and device",
             Self::DeviceClock => "device clock",
@@ -524,7 +516,6 @@ impl LatencyStageKind {
                 | Self::ToHost
                 | Self::HostFirstChunk
                 | Self::HostReturn
-                | Self::HostReaderToSynth
                 | Self::LeadingSilence
                 | Self::MixerAndDevice
                 | Self::DeviceClock
