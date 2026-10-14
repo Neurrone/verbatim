@@ -7,7 +7,9 @@
 //! cancel that comes while a frame larger than the pipe is pended leaves
 //! that frame whole, so the host carries on; and a host frozen in its
 //! driver is ended once it has owed an answer for the hang limit, rather
-//! than a write to it waiting for good.
+//! than a write to it waiting for good; and the host's first-chunk stage
+//! runs from its taking the request in, so a request's wait in the host
+//! behind a cancelled utterance is in it.
 //!
 //! This test binary runs itself as a synthesizer host: `HostedSynth`
 //! launches it with the host's command line, which its own `main`
@@ -23,6 +25,11 @@
 //! synthesis that never completes, after setting the test's named event.
 //! The text "frozen" sets that event and then waits on the gate, which the
 //! test never opens, reading no command: a host frozen in a native call.
+//! A chunk "hold" pushes nothing: it waits at the gate, then reads the
+//! commands that have come by asking whether it was cancelled, then
+//! [`HANDSHAKES`] times sets the test's event and waits at the gate again;
+//! it is held even once the utterance is cancelled, as a driver finishes
+//! the chunk it is in.
 
 use std::ops::ControlFlow;
 use std::process::ExitCode;
@@ -35,6 +42,7 @@ use std::time::Duration;
 use verbatim_audio::PcmFormat;
 use verbatim_model::{TraceId, UtteranceId};
 use verbatim_process::event::Event;
+use verbatim_speech::hosting::now_us;
 use verbatim_speech::{
     CancelToken, CancelWake, IndexMark, SettingDescriptor, SettingId, SettingValue, SpeechItem,
     SpeechSequence, SynthDriver, SynthError, SynthId, SynthSink, SynthTiming,
@@ -151,6 +159,23 @@ impl SynthDriver for Scripted {
         }
         let extra = usize::try_from(self.rate).expect("a rate of 0 to 100");
         for (index, length) in text.split_whitespace().enumerate() {
+            if length == "hold" {
+                // SAFETY: the stand-in's open semaphore handle.
+                let waited = unsafe { WaitForSingleObject(self.gate, WAIT_LIMIT_MS) };
+                assert_eq!(waited, WAIT_OBJECT_0, "the gate opens");
+                let cancelled = sink.is_cancelled();
+                for _ in 0..HANDSHAKES {
+                    // SAFETY: the stand-in's open event handle.
+                    unsafe { SetEvent(self.waiting) }.expect("the test's event is set");
+                    // SAFETY: as above.
+                    let waited = unsafe { WaitForSingleObject(self.gate, WAIT_LIMIT_MS) };
+                    assert_eq!(waited, WAIT_OBJECT_0, "the gate opens");
+                }
+                if cancelled {
+                    return Ok(());
+                }
+                continue;
+            }
             let length: usize = length.parse().expect("a chunk length");
             // SAFETY: the stand-in's open semaphore handle.
             let waited = unsafe { WaitForSingleObject(self.gate, WAIT_LIMIT_MS) };
@@ -265,6 +290,7 @@ struct TestSink {
     token: Arc<CancelToken>,
     cancel_at: CancelAt,
     received: Vec<Vec<i16>>,
+    timing: Option<SynthTiming>,
     on_register: Option<Box<dyn FnOnce()>>,
 }
 
@@ -274,6 +300,7 @@ impl TestSink {
             token: Arc::new(CancelToken::new()),
             cancel_at,
             received: Vec::new(),
+            timing: None,
             on_register: None,
         }
     }
@@ -296,7 +323,8 @@ impl SynthSink for TestSink {
         self.token.is_cancelled()
     }
 
-    fn synth_timing(&mut self, _timing: SynthTiming) {
+    fn synth_timing(&mut self, timing: SynthTiming) {
+        self.timing = Some(timing);
         if self.cancel_at == CancelAt::Stamps {
             self.token.cancel();
         }
@@ -493,6 +521,76 @@ fn a_frozen_host_is_ended_rather_than_waited_for_for_good() {
     assert_eq!(process, None, "the frozen host was ended");
 }
 
+/// How many times a "hold" hands over to the test and back once it has
+/// read the commands: each is a wake in each process, so together they
+/// keep the host in the old utterance, with the new request taken in, far
+/// longer than the scripted driver takes to its first chunk.
+const HANDSHAKES: usize = 20;
+
+/// The host's first-chunk stage runs from its taking the request in
+/// (`docs/design/communication.md`, section 10.1), so the time a request
+/// waits in the host behind a cancelled utterance is in it, and the stages
+/// before the first chunk leave no gap. The old utterance's second chunk
+/// holds the host at the gate, which the new utterance's sink opens once
+/// the new request is written; the host then reads the commands waiting,
+/// the new request among them, and hands over to the sink and back
+/// [`HANDSHAKES`] times. At the last, the sink stamps the shared clock and
+/// opens the gate for the rest of the hold and the new utterance's chunk.
+/// So the host took the new request in before that stamp and began it only
+/// after, and the trip to the host and the first chunk, which together run
+/// from the request's write to the first chunk, span at least from the
+/// sink's first stamp, taken after the write, to its second.
+fn a_request_waiting_in_the_host_is_in_its_first_chunk() {
+    let script = Script::new(1);
+    let mut synth = script.start();
+    let pid = synth.process_id();
+
+    let mut old = TestSink::new(CancelAt::FirstAudio);
+    synth
+        .speak(&sequence(1, "5 hold"), &mut old)
+        .expect("a cancelled utterance is not a failure");
+    assert_eq!(old.received, [chunk(1, 0, 5)]);
+
+    let mut new = TestSink::new(CancelAt::Never);
+    let (gate, waiting) = (script.gate, script.waiting);
+    let stamps = Arc::new(std::sync::Mutex::new(None));
+    let taken = Arc::clone(&stamps);
+    new.on_register = Some(Box::new(move || {
+        let written = now_us();
+        // SAFETY: the script's semaphore, open while the script lives.
+        unsafe { ReleaseSemaphore(gate, 1, None) }.expect("the gate opens");
+        for handshake in 1..=HANDSHAKES {
+            // SAFETY: the script's event, open while the script lives.
+            let waited = unsafe { WaitForSingleObject(waiting, WAIT_LIMIT_MS) };
+            assert_eq!(waited, WAIT_OBJECT_0, "the host read the new request");
+            if handshake == HANDSHAKES {
+                let held = now_us();
+                *taken.lock().expect("the stamps") = Some((written, held));
+                // SAFETY: as above.
+                unsafe { ReleaseSemaphore(gate, 2, None) }.expect("the gate opens");
+            } else {
+                // SAFETY: as above.
+                unsafe { ReleaseSemaphore(gate, 1, None) }.expect("the gate opens");
+            }
+        }
+    }));
+    synth
+        .speak(&sequence(2, "5"), &mut new)
+        .expect("the new utterance is spoken");
+    assert_eq!(new.received, [chunk(2, 0, 5)]);
+    assert_eq!(synth.process_id(), pid, "the same host speaks both");
+    let timing = new.timing.expect("the first audio's stages");
+    let (written, held) = stamps
+        .lock()
+        .expect("the stamps")
+        .expect("the sink stamped");
+    assert!(
+        timing.to_host_us + timing.first_chunk_us >= held - written,
+        "{timing:?} leaves out part of the {} us from the request's write to the host beginning it",
+        held - written
+    );
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == "--pipe-in") {
@@ -500,7 +598,7 @@ fn main() -> ExitCode {
     }
     // libtest's own options, such as a name filter, are accepted and
     // ignored: the binary runs all its tests.
-    let tests: [(&str, fn()); 5] = [
+    let tests: [(&str, fn()); 6] = [
         (
             "a_new_utterance_goes_right_behind_a_cancel",
             a_new_utterance_goes_right_behind_a_cancel,
@@ -520,6 +618,10 @@ fn main() -> ExitCode {
         (
             "a_frozen_host_is_ended_rather_than_waited_for_for_good",
             a_frozen_host_is_ended_rather_than_waited_for_for_good,
+        ),
+        (
+            "a_request_waiting_in_the_host_is_in_its_first_chunk",
+            a_request_waiting_in_the_host_is_in_its_first_chunk,
         ),
     ];
     for (name, test) in tests {

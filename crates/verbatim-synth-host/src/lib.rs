@@ -104,9 +104,9 @@ pub fn serve(
         };
         let reply = match command {
             Command::Skip(utterance) => FromHost::Done(utterance),
-            Command::Speak(sequence, received_at_us) => {
+            Command::Speak(sequence, received) => {
                 let utterance = sequence.utterance;
-                let result = speak(&host, driver.as_mut(), &sequence, received_at_us);
+                let result = speak(&host, driver.as_mut(), &sequence, received);
                 if host.broken.get() {
                     return ExitCode::FAILURE;
                 }
@@ -134,12 +134,13 @@ pub fn serve(
     }
 }
 
-/// Speaks `sequence` with `driver`, its audio and marks going to Core.
+/// Speaks `sequence`, taken in at `received`, with `driver`, its audio and
+/// marks going to Core.
 fn speak(
     host: &Host,
     driver: &mut dyn SynthDriver,
     sequence: &SpeechSequence,
-    received_at_us: u64,
+    received: Received,
 ) -> Result<(), SynthError> {
     tracing::trace!(target: "verbatim::stage", trace = %sequence.trace_id, stage = "host request");
     host.commands.borrow_mut().begin(sequence.utterance);
@@ -148,8 +149,7 @@ fn speak(
         utterance: sequence.utterance,
         trace_id: sequence.trace_id,
         audio: false,
-        received_at_us,
-        started: Instant::now(),
+        received,
     };
     let result = driver.speak(sequence, &mut sink);
     host.commands.borrow_mut().end();
@@ -299,10 +299,30 @@ impl Host {
     }
 }
 
+/// When a `Speak` was taken in: on the shared clock, for Core's trip to
+/// the host, and on this process's own clock, for the first chunk's time,
+/// which runs from here (`docs/design/communication.md`, section 10.1), so
+/// the time the request waits its turn behind an utterance still ending
+/// is counted in it.
+#[derive(Clone, Copy)]
+struct Received {
+    at_us: u64,
+    at: Instant,
+}
+
+impl Received {
+    fn now() -> Self {
+        Self {
+            at: Instant::now(),
+            at_us: now_us(),
+        }
+    }
+}
+
 /// A command waiting its turn.
 enum Command {
-    /// Speak this, taken in at this time on the shared clock.
-    Speak(SpeechSequence, u64),
+    /// Speak this, taken in at this time.
+    Speak(SpeechSequence, Received),
     /// This utterance was cancelled before its turn: it is answered with
     /// `Done`, unspoken.
     Skip(UtteranceId),
@@ -357,7 +377,9 @@ impl Commands {
                             *command = Command::Skip(utterance);
                         }
                     }
-                    ToHost::Speak(sequence) => waiting.push_back(Command::Speak(sequence, now_us())),
+                    ToHost::Speak(sequence) => {
+                        waiting.push_back(Command::Speak(sequence, Received::now()));
+                    }
                     ToHost::SetSetting { id, value } => {
                         waiting.push_back(Command::SetSetting(id, value));
                     }
@@ -431,10 +453,8 @@ struct PipeSink<'a> {
     /// audio yet, for the stage log.
     trace_id: TraceId,
     audio: bool,
-    /// When the request was read, on the shared clock, and when the driver
-    /// was started on it, for the first audio's timing.
-    received_at_us: u64,
-    started: Instant,
+    /// When the request was read, for the first audio's timing.
+    received: Received,
 }
 
 impl SynthSink for PipeSink<'_> {
@@ -448,8 +468,8 @@ impl SynthSink for PipeSink<'_> {
             FromHost::FirstAudio(
                 self.utterance,
                 HostTiming {
-                    received_at_us: self.received_at_us,
-                    first_chunk_us: u64::try_from(self.started.elapsed().as_micros())
+                    received_at_us: self.received.at_us,
+                    first_chunk_us: u64::try_from(self.received.at.elapsed().as_micros())
                         .unwrap_or(u64::MAX),
                     sent_at_us: now_us(),
                 },

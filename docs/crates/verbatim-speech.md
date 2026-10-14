@@ -205,8 +205,9 @@ Public API:
   before exiting; then, for each utterance, every message naming it:
   `FirstAudio(utterance, HostTiming)` just before its first audio (when
   the host read the request and when it wrote this, on the clock every
-  process shares, `hosting::now_us()`, and how long its synthesizer took
-  to the first chunk), `Pcm(utterance, format, samples)`,
+  process shares, `hosting::now_us()`, and how long it took from reading
+  the request to the first chunk, any wait behind an utterance still
+  ending included), `Pcm(utterance, format, samples)`,
   `Mark(utterance, mark)`, and `Done(utterance)` or
   `Failed(utterance, reason)`; and `SettingApplied(refusal)` for each
   setting. `FromHost::utterance()` names a message's utterance and

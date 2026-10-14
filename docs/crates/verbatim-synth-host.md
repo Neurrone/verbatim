@@ -137,7 +137,10 @@ a synthesis that never completes, by the command event, with no timer;
 a host cancelled while a frame far larger than its pipe's buffer is
 pended delivers the next utterance whole, with no restart; a setting
 applied right after such a cancel is answered without the cancelled
-utterance's frames being taken for its reply; and a host frozen in its
+utterance's frames being taken for its reply; the host's first-chunk
+time runs from its reading the request, so a request read while the
+cancelled utterance before it is still held in its driver has that wait
+counted; and a host frozen in its
 driver, its utterance cancelled, is ended as hung once it has owed that
 utterance's end for `HANG_TIMEOUT`, rather than the next request, a
 `Speak` larger than the command pipe can hold, waiting for good on its

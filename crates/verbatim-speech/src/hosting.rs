@@ -124,7 +124,8 @@ pub struct HostTiming {
     /// When the host read the request, in microseconds since the Unix
     /// epoch.
     pub received_at_us: u64,
-    /// From the host taking the request to its synthesizer's first chunk.
+    /// From the host taking the request to its synthesizer's first chunk,
+    /// any wait for its turn behind an utterance still ending included.
     pub first_chunk_us: u64,
     /// When the host wrote this message, just before the first chunk, in
     /// microseconds since the Unix epoch.
