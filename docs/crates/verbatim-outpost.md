@@ -751,7 +751,9 @@ Public API:
     read for its kind only (`message_kind`): a pong and `TargetExited` are
     handled there, `Ready` is handled and handed on, and every other frame
     is handed to the app whole as `OutpostMessage::Frame`, with when it
-    was read, and the pipe's read is armed again at once, so every pipe
+    was read: the reader's own buffer when it gave it up
+    (`transport::FrameBody::Owned`, a frame read over several reads), a
+    copy of the body otherwise. The pipe's read is armed again at once, so every pipe
     drains however busy the reducer is (section 4.4). The pipe's end is
     handled after every frame before it. Launch helpers, retirements,
     hang checks and the app report to it through the mailbox

@@ -186,7 +186,15 @@ Public API:
   inside a frame or brought something that is not one, or a frame
   `frame` refused). A read asks for 64 KiB while the next frame's length
   is unknown and for the whole rest of a frame once it is, so a large
-  frame is read in one read into a buffer of its size. `Sender` writes an
+  frame is read in one read into a buffer of its size.
+  `take_bodies(completion, port, frame)` is the same turn, handing each
+  body out as a `FrameBody`: `Borrowed`, lent for the call, or `Owned`,
+  the reader's own buffer given up (the whole frame, with `start` where
+  its body begins), which it is for a frame gathered over several reads
+  that fills the buffer with nothing of the next frame after it, a large
+  frame above all, so a caller that keeps the body does not copy it.
+  `bytes()` reads either; `into_owned()` gives the buffer and the body's
+  start, copying only a lent body. `Sender` writes an
   overlapped end: `send(item)` puts the item in the `Backlog`, a caller's
   policy (`push`, `pop`, `is_empty`, and `encode`, which appends an
   item's frame just before it is written, whichever thread writes it, so

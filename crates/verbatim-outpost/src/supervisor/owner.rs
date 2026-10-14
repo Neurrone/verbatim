@@ -30,7 +30,7 @@ use verbatim_model::{OutpostId, Pid, TraceId};
 use verbatim_process::overlapped::{Completion, Completions, Port};
 use verbatim_process::port_queue::Progress;
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
-use verbatim_process::transport::Reading;
+use verbatim_process::transport::{FrameBody, Reading};
 
 use crate::protocol::{
     DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
@@ -394,16 +394,18 @@ impl Owner {
         let port = Arc::clone(&self.port);
         let outpost = read.outpost;
         let source = read.source;
-        let reading = read.pipe.take(completion, &port, |body| match source {
-            Source::Listener => {
-                // When verbatim.exe took the message in, before it is
-                // parsed (`docs/design/relay.md`, section 4.5).
-                let received = Received::now();
-                self.listener_message(outpost, received, decode_message(body)?);
-                Ok(())
-            }
-            Source::Outpost(pid) => self.outpost_frame(outpost, pid, body),
-        });
+        let reading = read
+            .pipe
+            .take_bodies(completion, &port, |body| match source {
+                Source::Listener => {
+                    // When verbatim.exe took the message in, before it is
+                    // parsed (`docs/design/relay.md`, section 4.5).
+                    let received = Received::now();
+                    self.listener_message(outpost, received, decode_message(body.bytes())?);
+                    Ok(())
+                }
+                Source::Outpost(pid) => self.outpost_frame(outpost, pid, body),
+            });
         match (reading, source) {
             (Reading::Waiting | Reading::Yielded, _) => self.relay.put_reader(key, read),
             (Reading::Ended(Ok(())), Source::Listener) => {
@@ -429,16 +431,24 @@ impl Owner {
     /// on, and every other frame is handed on to the app whole, unparsed,
     /// with when it was read (`docs/design/communication.md`, section
     /// 6.2). Only the frame's kind is read, from its first bytes; a pong,
-    /// a few dozen bytes, is parsed for its count of abandoned workers.
-    fn outpost_frame(&mut self, outpost: OutpostId, pid: Pid, body: &[u8]) -> io::Result<()> {
+    /// a few dozen bytes, is parsed for its count of abandoned workers. A
+    /// frame handed on keeps the reader's buffer when the reader gave it
+    /// up, a large frame read over several reads, and is copied out of the
+    /// buffer it was lent from otherwise.
+    fn outpost_frame(
+        &mut self,
+        outpost: OutpostId,
+        pid: Pid,
+        body: FrameBody<'_>,
+    ) -> io::Result<()> {
         let read_at_us = now_us();
-        match message_kind(body) {
+        match message_kind(body.bytes()) {
             Some("Pong") => {
                 let OutpostToSupervisor::Pong {
                     parked_count,
                     written_at_us,
                     ..
-                } = decode_message(body)?
+                } = decode_message(body.bytes())?
                 else {
                     return Err(io::Error::other("a pong that is not a pong"));
                 };
@@ -456,10 +466,10 @@ impl Owner {
                 }
             }
             Some("Ready") => {
-                self.hand_on(Frame::new(pid, outpost, body.to_vec(), read_at_us));
+                self.hand_on(Frame::new(pid, outpost, body.into_owned(), read_at_us));
                 self.on_ready(outpost);
             }
-            _ => self.hand_on(Frame::new(pid, outpost, body.to_vec(), read_at_us)),
+            _ => self.hand_on(Frame::new(pid, outpost, body.into_owned(), read_at_us)),
         }
         Ok(())
     }

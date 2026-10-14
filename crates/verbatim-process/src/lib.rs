@@ -627,8 +627,7 @@ mod tests {
         );
         // SAFETY: both values are pipe handles this test owns, given up
         // above and owned by nothing else.
-        let (reader, writer) =
-            unsafe { inherited_pipe_handles(pipe_in, pipe_out) }.expect("taken");
+        let (reader, writer) = unsafe { inherited_pipe_handles(pipe_in, pipe_out) }.expect("taken");
         assert!(!is_inheritable(&reader));
         assert!(!is_inheritable(&writer));
     }

@@ -43,19 +43,36 @@ pub const LARGE_FRAME_BYTES: usize = 256 * 1024;
 pub struct Frame {
     pid: Pid,
     outpost: OutpostId,
-    body: Vec<u8>,
+    /// The buffer the body is in: the reader's own, given up, for a frame
+    /// read over several reads, its header still ahead of the body; a copy
+    /// of the body otherwise.
+    buffer: Vec<u8>,
+    /// Where the body starts in `buffer`.
+    start: usize,
     /// When the relay read it, in microseconds since the Unix epoch.
     read_at_us: u64,
 }
 
 impl Frame {
-    pub(super) fn new(pid: Pid, outpost: OutpostId, body: Vec<u8>, read_at_us: u64) -> Self {
+    /// The frame `outpost` sent, its body in `buffer` from `start` on.
+    pub(super) fn new(
+        pid: Pid,
+        outpost: OutpostId,
+        (buffer, start): (Vec<u8>, usize),
+        read_at_us: u64,
+    ) -> Self {
         Self {
             pid,
             outpost,
-            body,
+            buffer,
+            start,
             read_at_us,
         }
+    }
+
+    /// The frame's body.
+    fn body(&self) -> &[u8] {
+        &self.buffer[self.start..]
     }
 }
 
@@ -64,7 +81,7 @@ impl std::fmt::Debug for Frame {
         formatter
             .debug_struct("Frame")
             .field("outpost", &self.outpost)
-            .field("bytes", &self.body.len())
+            .field("bytes", &self.body().len())
             .finish_non_exhaustive()
     }
 }
@@ -174,7 +191,7 @@ impl Frames {
 
     /// Parses `frame` now, or hands it to the helper when it is large.
     fn take_frame(&mut self, frame: Frame, out: &mut Vec<OutpostMessage>) {
-        if frame.body.len() > LARGE_FRAME_BYTES {
+        if frame.body().len() > LARGE_FRAME_BYTES {
             let outpost = frame.outpost;
             match self.helper().send(frame) {
                 Ok(()) => {
@@ -278,7 +295,7 @@ impl Frames {
 /// read it and with its outpost on every node id: node ids name the
 /// incarnation whose pipe they arrived on, never whatever the body claims.
 fn parse(frame: &Frame) -> io::Result<Box<OutpostToSupervisor>> {
-    let mut message: Box<OutpostToSupervisor> = Box::new(decode_message(&frame.body)?);
+    let mut message: Box<OutpostToSupervisor> = Box::new(decode_message(frame.body())?);
     message.core_read(frame.read_at_us);
     message.assign_outpost(frame.outpost);
     Ok(message)
