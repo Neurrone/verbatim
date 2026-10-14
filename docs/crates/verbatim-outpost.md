@@ -1620,9 +1620,11 @@ it covers whatever is in pipes and backlogs without counting it.
   reported; an outpost not yet ready is asked behind its held facts when
   it is. In the relay's writer the query gets through a full queue and no
   fact queued after it replaces one queued before it.
-- An outpost queues the query in its intake (`Item::IdleQuery`). The
-  worker reaches it once everything that arrived before it has been
-  handled; a caret follow-up those entries queued, or a noted caret, goes
+- An outpost queues the query in its intake (`Item::IdleQuery`), where
+  it divides what waits: no entry that arrives after it replaces one
+  waiting before it, and it ends the batch it is planned in, so that
+  batch's menu opening goes before it. The worker reaches it once
+  everything that arrived before it has been handled; a caret follow-up those entries queued, or a noted caret, goes
   first, the query going back behind it. It is then answered as soon as no
   caret key's watch is open and no terminal owes Core a read: checked after
   every entry the worker in charge handles. Entries that arrive after the

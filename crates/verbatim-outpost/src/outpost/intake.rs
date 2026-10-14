@@ -367,7 +367,10 @@ impl Intake {
     /// Adds an entry. The thread it is counted by and the window are read
     /// here, with local calls, so the limiter never needs them later. A UIA
     /// focus's read takes its marker's place, and a drop, or the end of the
-    /// listener's reads, removes the markers it resolves.
+    /// listener's reads, removes the markers it resolves. An entry with a
+    /// key replaces the one waiting with the same key, unless an idle query
+    /// waits between them (`docs/design/communication.md`, section 6.7):
+    /// the older entry then keeps its place ahead of the query.
     pub(super) fn push(&self, entry: Entry) {
         // A marked UIA event takes its marker's place as itself.
         let (entry, resolved_by_read) = match entry.item {
@@ -424,10 +427,22 @@ impl Intake {
             Item::Fact(DeliveredFact::UiaFocusRead { marker, .. }, _) => Some(*marker),
             _ => resolved_by_read,
         };
-        if let Some(key) = &key {
+        let mut place = resolves.and_then(|resolves| {
             state
                 .waiting
-                .retain(|waiting| waiting.key.as_ref() != Some(key));
+                .iter()
+                .position(|waiting| waiting.marker == Some(resolves))
+        });
+        if let Some(key) = &key {
+            // Never across an idle query: the entry replaced would move
+            // behind it.
+            let at = place.unwrap_or(state.waiting.len());
+            if let Some(removed) = remove_keyed(&mut state.waiting, key, at)
+                && let Some(place) = place.as_mut()
+                && removed < *place
+            {
+                *place -= 1;
+            }
         }
         // Logged, with what is queued around it, so an entry that waits
         // long in the intake can be told from one that arrived late; once
@@ -449,12 +464,6 @@ impl Intake {
             marker,
             entry,
         };
-        let place = resolves.and_then(|resolves| {
-            state
-                .waiting
-                .iter()
-                .position(|waiting| waiting.marker == Some(resolves))
-        });
         match place {
             Some(place) => state.waiting[place] = waiting,
             None => state.waiting.push_back(waiting),
@@ -480,12 +489,22 @@ impl Intake {
                 return Some((planned, state.batch_number));
             }
             // Everything before the first marker still waiting for its
-            // read; with a marker first, the worker waits for the read.
+            // read; with a marker first, the worker waits for the read. An
+            // idle query ends its batch, so nothing that arrived after it
+            // is planned with what arrived before.
             let ready = state
                 .waiting
                 .iter()
-                .position(|waiting| waiting.marker.is_some())
-                .unwrap_or(state.waiting.len());
+                .position(|waiting| {
+                    waiting.marker.is_some() || matches!(waiting.entry.item, Item::IdleQuery(_))
+                })
+                .map_or(state.waiting.len(), |at| {
+                    if state.waiting[at].marker.is_some() {
+                        at
+                    } else {
+                        at + 1
+                    }
+                });
             if ready > 0 {
                 let mut waiting: Vec<Waiting> = state.waiting.drain(..ready).collect();
                 let taken = waiting.len();
@@ -675,6 +694,30 @@ impl Intake {
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// Removes the entry waiting with `key` among those around index `at` that
+/// no idle query divides from it, and returns its index. An idle query
+/// splits what waits into stretches, each holding at most one entry per
+/// key, so the first found is the only one.
+fn remove_keyed(waiting: &mut VecDeque<Waiting>, key: &Key, at: usize) -> Option<usize> {
+    let is_query = |waiting: &Waiting| matches!(waiting.entry.item, Item::IdleQuery(_));
+    let matches = |waiting: &Waiting| waiting.key.as_ref() == Some(key);
+    let found = waiting
+        .range(..at)
+        .rev()
+        .take_while(|waiting| !is_query(waiting))
+        .position(matches)
+        .map(|back| at - 1 - back)
+        .or_else(|| {
+            waiting
+                .range(at..)
+                .take_while(|waiting| !is_query(waiting))
+                .position(matches)
+                .map(|ahead| at + ahead)
+        })?;
+    waiting.remove(found);
+    Some(found)
 }
 
 /// The window an item concerns, 0 for none.
@@ -981,7 +1024,7 @@ fn admit(
 /// only the newest foreground change, tries each consecutive run of MSAA
 /// focus events newest first at the place of its newest, handles each UIA
 /// focus event at its own place, and moves the newest menu opening from
-/// each backend to the end.
+/// each backend to the end, ahead of an idle query that ends the batch.
 ///
 /// NVDA's `pumpAll` walks the flushed events in order, collecting focus and
 /// foreground events, and when another event comes processes those
@@ -1055,7 +1098,19 @@ fn plan(
             _ => planned.push(Planned::Run(entry)),
         }
     }
+    // An idle query ends its batch ([`Intake::next`]): the menu opening
+    // that arrived before it is handled before it.
+    let query = matches!(
+        planned.last(),
+        Some(Planned::Run(Entry {
+            item: Item::IdleQuery(_),
+            ..
+        }))
+    )
+    .then(|| planned.pop())
+    .flatten();
     planned.extend(deferred.into_iter().map(Planned::Menu));
+    planned.extend(query);
     planned
 }
 
@@ -1844,6 +1899,53 @@ mod tests {
         intake.set_focused(None);
         push_console_update(&intake, 7, 5);
         assert_eq!(handed_out(&intake), [5], "a new focus clears the mark");
+    }
+
+    fn idle_query(round: u64) -> Item {
+        Item::IdleQuery(round)
+    }
+
+    /// An idle query divides what waits: a console update that waited
+    /// before it is not replaced by a newer one of the same window behind
+    /// it, and is handled ahead of it.
+    #[test]
+    fn an_entry_waiting_before_an_idle_query_is_never_replaced_from_behind_it() {
+        let intake = Intake::default();
+        push_console_update(&intake, 7, 1);
+        push_item(&intake, idle_query(1), 2);
+        push_console_update(&intake, 7, 3);
+        // Ahead of the query, a newer update of the same window behind
+        // the first still replaces the one waiting with it.
+        push_console_update(&intake, 7, 4);
+        assert_eq!(handed_out(&intake), [1, 2, 4]);
+    }
+
+    /// An idle query ends its batch: the menu opening that arrived before
+    /// it is handled before it, and a foreground change that arrived after
+    /// it does not replace one that arrived before.
+    #[test]
+    fn a_batch_ends_at_an_idle_query_with_its_menu_opening_ahead_of_it() {
+        let intake = Intake::default();
+        push_fact(
+            &intake,
+            DeliveredFact::MenuPopup {
+                hwnd: 77,
+                id_object: -4,
+                id_child: 0,
+            },
+        );
+        push_item(
+            &intake,
+            Item::Fact(DeliveredFact::Foreground { hwnd: 77 }, None),
+            2,
+        );
+        push_item(&intake, idle_query(1), 3);
+        push_item(
+            &intake,
+            Item::Fact(DeliveredFact::Foreground { hwnd: 78 }, None),
+            4,
+        );
+        assert_eq!(handed_out(&intake), [2, 0, 3, 4]);
     }
 
     #[test]
