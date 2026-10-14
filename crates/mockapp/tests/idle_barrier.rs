@@ -3,7 +3,8 @@
 //! against mockapp's UIA text provider: the answer to an idle query goes
 //! behind every message the outpost sent before it, one whose write is in
 //! flight and one waiting in its backlog included, and is held back while
-//! a caret key's watch is open, going behind the watch's answer.
+//! a caret key's watch is open, going behind the watch's answer; a held
+//! terminal's noted caret holds it back only for that caret's read.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -182,9 +183,111 @@ fn the_answer_waits_for_an_open_caret_watch() {
     app.quit();
 }
 
+/// mockapp's terminal fixture in its UIA backend, with an outpost watching
+/// it, the terminal focused, its focus and caret said, and nothing else;
+/// then held, as Core holds it for a flood, and written to, so that its
+/// caret events are only noted. The noted caret is read once nothing else
+/// waits, and finds the caret Core has: nothing is said.
+fn held_terminal(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
+    common::init_com();
+    let title = common::unique_title(name);
+    let mut app = common::spawn("terminal_reading.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let mut outpost = OutpostUnderTest::new(&app);
+    app.send("set-focus term");
+    let uia = Uia::new().expect("a UIA client");
+    let element = common::listener_focus(&uia, hwnd.0 as isize);
+    outpost.deliver(outpost.listener_fact(&element));
+    let term = match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::FocusChanged { node, .. },
+            ..
+        } => node.id,
+        other => panic!("the outpost said {other:?}, not the terminal's focus"),
+    };
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::CaretMoved { node_id, .. },
+            ..
+        } if node_id == term => {}
+        other => panic!("the outpost said {other:?}, not the terminal's caret"),
+    }
+    outpost.settled();
+    let hold = outpost.ask(Query::Text {
+        node_id: term,
+        op: TextOp::TerminalHold,
+    });
+    match outpost.next() {
+        OutpostToSupervisor::Reply {
+            request_id,
+            outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Done)),
+            ..
+        } if request_id == hold => {}
+        other => panic!("the outpost said {other:?}, not the answer to the hold"),
+    }
+    app.send(r"set-text term one\ntwo\nready>\nthree");
+    app.send("text-changed term");
+    outpost.heard(&[
+        Heard::UiaTextChanged,
+        Heard::Msaa(WinEventKind::ValueChange),
+    ]);
+    outpost.settled();
+    (app, outpost, term)
+}
+
+/// An idle query reached while a held terminal's caret is noted goes
+/// directly behind the noted caret's read, not behind what arrived after
+/// the query: Core's read of the terminal, asked after the query, is
+/// answered after the idle answer. During a flood, what arrives after the
+/// query notes the caret again on nearly every write, so a query sent
+/// behind it would never be answered.
+fn a_noted_caret_holds_the_answer_back_only_for_its_own_read() {
+    let (mut app, mut outpost, term) = held_terminal("mockapp-idle-noted-caret");
+    outpost.hold_worker();
+    // Noted when handled, the terminal being held with its text changed.
+    app.send("caret-event term");
+    outpost.heard(&[
+        Heard::UiaTextSelection,
+        Heard::Msaa(WinEventKind::TextSelectionChange),
+    ]);
+    outpost
+        .outpost
+        .handle_command(&SupervisorToOutpost::IdleQuery { round: 5 });
+    let read = outpost.ask(Query::Text {
+        node_id: term,
+        op: TextOp::TerminalRead { hold: false },
+    });
+    outpost.release_worker();
+    assert_eq!(outpost.next(), OutpostToSupervisor::IdleAnswer { round: 5 });
+    // The read reads the caret with the text, and answers with the line
+    // written while the terminal was held.
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::CaretMoved { node_id, .. },
+            ..
+        } if node_id == term => {}
+        other => panic!("the outpost said {other:?}, not the terminal's caret"),
+    }
+    match outpost.next() {
+        OutpostToSupervisor::Reply {
+            request_id,
+            outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Terminal(output))),
+            ..
+        } if request_id == read => assert_eq!(output.lines, ["three"]),
+        other => panic!("the outpost said {other:?}, not the answer to the read"),
+    }
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_noted_caret_holds_the_answer_back_only_for_its_own_read",
+            a_noted_caret_holds_the_answer_back_only_for_its_own_read,
+        ),
         (
             "the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog",
             the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog,

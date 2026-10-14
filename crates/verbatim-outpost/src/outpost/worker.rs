@@ -739,7 +739,7 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
         | Item::CaretOf { .. }
         | Item::NotedCaret { .. }
         | Item::Settle(_)
-        | Item::IdleQuery(_)
+        | Item::IdleQuery { .. }
         | Item::Wake => (HANDLING_DEADLINE, None),
         // Releasing thousands of objects after a tree dump takes a while.
         Item::NodesHeld { .. } => (WALK_DEADLINE, None),
@@ -769,7 +769,7 @@ fn describe(item: &Item) -> String {
         Item::CaretOf { node_id } => format!("caret of {node_id:?}"),
         Item::NotedCaret { node_id } => format!("noted caret of {node_id:?}"),
         Item::Settle(_) => "settle".to_owned(),
-        Item::IdleQuery(round) => format!("idle query {round}"),
+        Item::IdleQuery { round, .. } => format!("idle query {round}"),
         Item::Wake => "wake".to_owned(),
     }
 }
@@ -944,7 +944,10 @@ impl Worker<'_> {
             // Read now that nothing else waits, unless a read since saw it.
             Item::NotedCaret { node_id } => self.caret_of(node_id, trace, observed_at_ms, false),
             Item::Settle(done) => self.settle(done, trace),
-            Item::IdleQuery(round) => self.idle_query(round, trace),
+            Item::IdleQuery {
+                round,
+                behind_follow_ups,
+            } => self.idle_query(round, behind_follow_ups, trace),
             Item::Wake => self.wake(),
         }
     }
@@ -1181,30 +1184,36 @@ impl Worker<'_> {
     /// The idle barrier's query, reached at the front of the intake, so
     /// every entry that arrived before it has been handled. A follow-up one
     /// of them queued, the caret of a focus just reported, is part of that
-    /// entry's work, and a noted caret is work owed: the query goes behind
-    /// them. Otherwise it is kept until no deferred work is pending, and
-    /// answered then ([`answer_idle`]), at once if none is. Entries that
-    /// arrived after it are not waited for, so a flood cannot keep the
-    /// answer back.
-    fn idle_query(&self, round: u64, trace: TraceId) {
+    /// entry's work, and a noted caret is work owed: the query goes
+    /// directly behind them, the noted caret first, and waits for nothing
+    /// more when it is reached again (`behind_follow_ups`). Otherwise it is
+    /// kept until no deferred work is pending, and answered then
+    /// ([`answer_idle`]), at once if none is. Entries that arrived after it
+    /// are not waited for, nor are the follow-ups they queue or the carets
+    /// they note, so a flood cannot keep the answer back.
+    fn idle_query(&self, round: u64, behind_follow_ups: bool, trace: TraceId) {
         let context = self.context;
-        let again = || Entry {
-            item: Item::IdleQuery(round),
-            trace,
-            observed_at_ms: now_ms(),
-            timing: EventTiming::default(),
-        };
-        if context
-            .intake
-            .any_waiting(|entry| matches!(entry.item, Item::CaretOf { .. }))
-        {
-            context.intake.push(again());
-            return;
-        }
-        if let Some(noted) = context.intake.take_idle() {
-            context.intake.push(noted);
-            context.intake.push(again());
-            return;
+        if !behind_follow_ups {
+            let noted = context.intake.take_idle();
+            if noted.is_some()
+                || context
+                    .intake
+                    .any_waiting(|entry| matches!(entry.item, Item::CaretOf { .. }))
+            {
+                let query = Entry {
+                    item: Item::IdleQuery {
+                        round,
+                        behind_follow_ups: true,
+                    },
+                    trace,
+                    observed_at_ms: now_ms(),
+                    timing: EventTiming::default(),
+                };
+                context
+                    .intake
+                    .push_behind_follow_ups(noted.into_iter().chain([query]));
+                return;
+            }
         }
         *context.idle_query() = Some(round);
     }

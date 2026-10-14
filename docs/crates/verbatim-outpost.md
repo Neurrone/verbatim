@@ -1625,10 +1625,12 @@ it covers whatever is in pipes and backlogs without counting it.
   waiting before it, and it ends the batch it is planned in, so that
   batch's menu opening goes before it. The worker reaches it once
   everything that arrived before it has been handled; a caret follow-up those entries queued, or a noted caret, goes
-  first, the query going back behind it. It is then answered as soon as no
+  first, the query going directly behind it, ahead of what arrived after
+  the query, and waiting for no follow-up when it is reached again. It is then answered as soon as no
   caret key's watch is open and no terminal owes Core a read: checked after
   every entry the worker in charge handles. Entries that arrive after the
-  query are not waited for, so a flood cannot hold the answer back. The
+  query are not waited for, nor are the follow-ups they queue or the
+  carets they note, so a flood cannot hold the answer back. The
   answer goes through the ordinary queue, never merged, and no event is
   merged across it (`Pending::waiting_with` stops at it).
 - An outpost's answer reaches the app as an `Event` like any other

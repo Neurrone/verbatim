@@ -197,11 +197,14 @@ pub(super) enum Item {
     /// else is waiting, the focus-following subscriptions have made every
     /// move asked of them, and every message published has been written.
     Settle(std::sync::mpsc::Sender<()>),
-    /// The harness's idle barrier, round `n` (`docs/design/communication.md`,
-    /// section 6.7): reached once everything that arrived before it has
-    /// been handled, and answered once the follow-ups those entries queued
-    /// are handled and no deferred work is pending.
-    IdleQuery(u64),
+    /// The harness's idle barrier, round `round`
+    /// (`docs/design/communication.md`, section 6.7): reached once
+    /// everything that arrived before it has been handled, and answered
+    /// once the follow-ups those entries queued are handled and no deferred
+    /// work is pending. `behind_follow_ups` once the worker has put it
+    /// directly behind those follow-ups ([`Intake::push_behind_follow_ups`]),
+    /// so that reaching it again waits for nothing more.
+    IdleQuery { round: u64, behind_follow_ups: bool },
     /// The time [`Intake::wake_at`] named has come with nothing else to do:
     /// a caret key's watch may have reached the bound on its age.
     Wake,
@@ -496,7 +499,7 @@ impl Intake {
                 .waiting
                 .iter()
                 .position(|waiting| {
-                    waiting.marker.is_some() || matches!(waiting.entry.item, Item::IdleQuery(_))
+                    waiting.marker.is_some() || matches!(waiting.entry.item, Item::IdleQuery { .. })
                 })
                 .map_or(state.waiting.len(), |at| {
                     if state.waiting[at].marker.is_some() {
@@ -625,6 +628,42 @@ impl Intake {
                 .any(|planned| planned.entries().into_iter().any(&wanted))
     }
 
+    /// Puts `entries` directly behind the newest caret follow-up waiting
+    /// ([`Item::CaretOf`]), or ahead of everything waiting when none is,
+    /// for the idle barrier's query the worker has reached: every follow-up
+    /// waiting then was queued by an entry that arrived before the query,
+    /// since the query ends its batch and nothing after it has been
+    /// handled, so the query waits for those and for nothing that arrived
+    /// after it.
+    pub(super) fn push_behind_follow_ups(&self, entries: impl IntoIterator<Item = Entry>) {
+        let mut state = self.lock();
+        if state.closed {
+            return;
+        }
+        let at = state
+            .waiting
+            .iter()
+            .rposition(|waiting| matches!(waiting.entry.item, Item::CaretOf { .. }))
+            .map_or(0, |caret| caret + 1);
+        for (offset, entry) in entries.into_iter().enumerate() {
+            let (key, category, hwnd) = classify(&entry.item);
+            let thread = thread_of(&entry.item);
+            state.waiting.insert(
+                at + offset,
+                Waiting {
+                    key,
+                    category,
+                    hwnd,
+                    thread,
+                    marker: None,
+                    entry,
+                },
+            );
+        }
+        drop(state);
+        self.ready.notify_one();
+    }
+
     /// Keeps `entry` to be handed out once nothing else is ready, in place
     /// of one kept before: the worker reads a held terminal's noted caret
     /// then ([`Item::NotedCaret`]), when the burst of events that kept it
@@ -701,7 +740,7 @@ impl Intake {
 /// splits what waits into stretches, each holding at most one entry per
 /// key, so the first found is the only one.
 fn remove_keyed(waiting: &mut VecDeque<Waiting>, key: &Key, at: usize) -> Option<usize> {
-    let is_query = |waiting: &Waiting| matches!(waiting.entry.item, Item::IdleQuery(_));
+    let is_query = |waiting: &Waiting| matches!(waiting.entry.item, Item::IdleQuery { .. });
     let matches = |waiting: &Waiting| waiting.key.as_ref() == Some(key);
     let found = waiting
         .range(..at)
@@ -785,7 +824,7 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         Item::Query { .. }
         | Item::NotedCaret { .. }
         | Item::Settle(_)
-        | Item::IdleQuery(_)
+        | Item::IdleQuery { .. }
         | Item::Wake => (None, Category::Exempt, 0),
     }
 }
@@ -1103,7 +1142,7 @@ fn plan(
     let query = matches!(
         planned.last(),
         Some(Planned::Run(Entry {
-            item: Item::IdleQuery(_),
+            item: Item::IdleQuery { .. },
             ..
         }))
     )
@@ -1902,7 +1941,10 @@ mod tests {
     }
 
     fn idle_query(round: u64) -> Item {
-        Item::IdleQuery(round)
+        Item::IdleQuery {
+            round,
+            behind_follow_ups: false,
+        }
     }
 
     /// An idle query divides what waits: a console update that waited

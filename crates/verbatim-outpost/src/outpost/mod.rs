@@ -372,7 +372,10 @@ impl Context {
     /// everything that reached the intake before it.
     fn queue_idle_query(&self, round: u64) {
         self.push(
-            Item::IdleQuery(round),
+            Item::IdleQuery {
+                round,
+                behind_follow_ups: false,
+            },
             TraceId::mint(),
             now_ms(),
             EventTiming::default(),
