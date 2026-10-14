@@ -1203,6 +1203,23 @@ pub fn read_message<R: BufRead, T: DeserializeOwned>(reader: &mut R) -> io::Resu
     decode_message(&body).map(Some)
 }
 
+/// The kind of message a frame's body holds, read from the body's first
+/// bytes without parsing the rest: the name of its variant, which serde's
+/// external tagging writes first, as `{"Pong":...}` for a variant with
+/// fields and `"TargetExited"` for one without. `None` for a body that
+/// starts neither way. verbatim.exe's relay reads it on every frame from
+/// an outpost, to handle pongs, `Ready` and `TargetExited` itself and pass
+/// every other frame on whole (`docs/design/communication.md`, section
+/// 6.2).
+#[must_use]
+pub fn message_kind(body: &[u8]) -> Option<&str> {
+    let name = body
+        .strip_prefix(b"{\"")
+        .or_else(|| body.strip_prefix(b"\""))?;
+    let end = name.iter().position(|&byte| byte == b'"')?;
+    std::str::from_utf8(&name[..end]).ok()
+}
+
 /// Parses one frame's body as a message.
 ///
 /// # Errors
@@ -1219,6 +1236,38 @@ mod tests {
         NodeDetails, NodeId, NodeSnapshot, NotificationKind, NotificationProcessing, Role, State,
         StateSet,
     };
+
+    /// The kind read from a body's first bytes is the variant's name, for
+    /// a variant with fields and for one without.
+    #[test]
+    fn a_frames_kind_is_its_variants_name() {
+        let kind_of = |message: &OutpostToSupervisor| {
+            let frame = encode_message(message).expect("encoded");
+            let body = verbatim_process::transport::read_frame(&mut frame.as_slice())
+                .expect("a frame")
+                .expect("not the end");
+            message_kind(&body).map(str::to_owned)
+        };
+        let pong = OutpostToSupervisor::Pong {
+            seq: 1,
+            parked_count: 0,
+            written_at_us: 0,
+        };
+        assert_eq!(kind_of(&pong).as_deref(), Some("Pong"));
+        assert_eq!(
+            kind_of(&OutpostToSupervisor::TargetExited).as_deref(),
+            Some("TargetExited")
+        );
+        assert_eq!(
+            kind_of(&OutpostToSupervisor::Ready {
+                outpost_pid: Pid(1),
+                target_pid: Pid(2),
+            })
+            .as_deref(),
+            Some("Ready")
+        );
+        assert_eq!(message_kind(b"[]"), None);
+    }
 
     #[test]
     fn a_message_larger_than_the_limit_is_neither_sent_nor_read() {

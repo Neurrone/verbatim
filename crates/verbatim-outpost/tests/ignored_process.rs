@@ -21,7 +21,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 
-use crossbeam_channel::{Receiver, unbounded};
+use crossbeam_channel::unbounded;
+
+mod common;
+use common::Delivered;
 use verbatim_model::{Pid, TraceId};
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::protocol::{
@@ -133,7 +136,7 @@ fn stand_in(args: &[String]) -> ! {
 }
 
 /// The next message from the supervisor, which must come within [`WAIT`].
-fn next(events: &Receiver<OutpostMessage>) -> OutpostMessage {
+fn next(events: &Delivered) -> OutpostMessage {
     events
         .recv_timeout(WAIT)
         .unwrap_or_else(|error| panic!("the supervisor said nothing: {error}"))
@@ -175,6 +178,7 @@ fn an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere() {
         Arc::new(IgnoredProcesses::hold([ignored_pid])),
     )
     .expect("the supervisor starts");
+    let events = Delivered::new(events, &supervisor);
     assert!(supervisor.is_ignored(ignored_pid));
     assert!(!supervisor.is_ignored(other_pid));
     match next(&events) {

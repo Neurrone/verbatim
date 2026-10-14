@@ -9,7 +9,7 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use crossbeam_channel::Sender;
+use crate::Commands;
 use verbatim_config::ConfigStore;
 use verbatim_gui::{TerminalChange, TerminalHost};
 use verbatim_model::ReaderSettings;
@@ -17,10 +17,10 @@ use verbatim_model::ReaderSettings;
 use crate::ShellCommand;
 
 /// The Terminal page's host, over the configuration store and the
-/// reducer thread's command channel.
+/// reducer thread's port.
 pub(crate) struct AppTerminalHost {
     pub(crate) store: Arc<Mutex<ConfigStore>>,
-    pub(crate) commands: Sender<ShellCommand>,
+    pub(crate) commands: Commands,
 }
 
 impl TerminalHost for AppTerminalHost {

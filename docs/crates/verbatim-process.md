@@ -86,6 +86,21 @@ Public API:
   time, whose `OVERLAPPED` and buffer stay put, untouched
   and not freed, while its operation is in flight. The relay floor's
   benchmark (`verbatim-relay-floor`) and `transport` use it.
+- `port_queue` (`docs/design/communication.md`, sections 4.5 and 6.2) —
+  how verbatim.exe's reducer takes its inputs: `port_queue()` gives a
+  `Poster<T>`, cloned for every thread that posts, and a `PortQueue<T>`,
+  the one taker, on a completion port of their own. `Poster::send(item)`
+  posts the item as one packet, its box's address carried as the
+  packet's `OVERLAPPED` pointer, with one `PostQueuedCompletionStatus`
+  that never waits, and gives the item back when the taker has gone.
+  `PortQueue::recv`, `recv_timeout` and `try_recv` (a zero-timeout
+  dequeue) take the items in the order the port received them, which is
+  first in, first out across every poster, up to 64 per wait; `recv`
+  answers `None` once every poster has gone and every item is taken.
+  `Poster::progress()` gives the counts posted and taken (`Progress`,
+  with `waiting()`), which the supervisor's relay reads to watch the
+  reducer. Items still on the port when everything is dropped are
+  dropped with it.
 - `scheduling` (Dickson's decision of 2026-10-08;
   `docs/design/communication.md`, section 6.1) —
   `opt_out_of_power_throttling()` opts the process out of execution-speed
@@ -97,7 +112,7 @@ Public API:
   `prioritize_role(role, priority)` does the same and logs a refusal as
   a warning, the thread carrying on as it was. The threads that only move
   messages run at `Highest`: the keyboard hook, verbatim.exe's relay
-  thread and its reader for each outpost, the listener's and each
+  thread, the listener's and each
   outpost's I/O thread (and, for an outpost made in a test's process, its
   sender's finishing thread), the `WinEvent` threads, and both ends'
   synthesizer host readers. Each caller names its
@@ -121,8 +136,8 @@ Public API:
   that is not one, or a length over the limit (refused before any body is
   read). `EVENT_PIPE_BUFFER` is the event pipes' 64 KiB.
   `BlockingReader::new(pipe)` is a `Read` over an overlapped end for a
-  thread that blocks on each read, as verbatim.exe's outpost reader
-  threads do; a closed writer reads as the end of the stream.
+  thread that blocks on each read, as the tests' harnesses and stand-in
+  children do; a closed writer reads as the end of the stream.
   `read_within(buffer, timeout)` reads as `read` does but waits at most
   `timeout`, then cancels the read (a read may be cancelled; a write
   never is) and answers `None`; `available()` says how many bytes wait

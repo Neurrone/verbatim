@@ -18,9 +18,9 @@ synth `speak`), which an async runtime cannot await anyway without
 parking a thread per call — so the thread-per-role design pays the
 same thread cost with far less machinery. Examples of the pattern:
 the speech queue thread and synth thread (`verbatim-speech`), the
-input hook thread (`verbatim-input-windows`), one reader thread per outpost
-pipe beside the relay thread, which serves the listener's pipe and every
-child's writes on one completion port (`verbatim-outpost`'s supervisor), the
+input hook thread (`verbatim-input-windows`), the relay thread, which
+serves every child's pipe to Core and every child's writes on one
+completion port (`verbatim-outpost`'s supervisor), the
 query-pool workers, and the agent's two tunnel copy threads
 (`verbatim-agent`).
 

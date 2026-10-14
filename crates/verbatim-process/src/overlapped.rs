@@ -264,7 +264,7 @@ impl Port {
         })
     }
 
-    fn raw(&self) -> HANDLE {
+    pub(crate) fn raw(&self) -> HANDLE {
         HANDLE(self.handle.as_raw_handle())
     }
 
@@ -392,6 +392,12 @@ impl Completion {
     #[must_use]
     pub fn is_posted(&self) -> bool {
         self.overlapped.is_null()
+    }
+
+    /// The pointer the completion carries: an operation's `OVERLAPPED`,
+    /// or whatever a packet posted with one carried ([`crate::port_queue`]).
+    pub(crate) fn pointer(&self) -> *mut OVERLAPPED {
+        self.overlapped
     }
 }
 

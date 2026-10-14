@@ -20,12 +20,17 @@ whenever the clipboard did not take it. The gesture router also
 announces a lock key's new state ("caps lock on") 30 ms after the keyboard
 hook reports it reached the operating system, waiting for its channel
 with a deadline rather than starting a thread per key. The reducer thread
-takes everything from one channel, in the order it arrived: the
-supervisor's messages (through an `EventSink` that wraps each in
-`ShellCommand::Outpost`), the router's commands, and the keyboard hook's
-keys and typing, so a key is reduced before an application's reaction that
-reached Core after it, as NVDA queues keys with events
-(`docs/design/focus-pipeline.md`, section 4.1), and a review or
+waits only on its own I/O completion port
+(`verbatim_process::port_queue`; `docs/design/communication.md`, section
+6.2) and takes everything posted to it, one packet per input, in the
+order it arrived: the supervisor's messages, each outpost's frames among
+them, posted by the relay as it reads them (through an `EventSink` that
+wraps each in `ShellCommand::Outpost`), the router's commands, the
+keyboard hook's keys and typing, speech marks, GUI events and
+control-plane commands, so a key is reduced before an application's
+reaction that reached Core after it, and after one that reached Core
+before it, however busy the reducer was, as NVDA queues keys with events
+(`docs/design/communication.md`, section 4.5), and a review or
 object-navigation gesture is reduced and its effects executed by the same
 path as an accessibility event; `Effect::Activate` is executed there alongside
 `Speak` and `Fetch`, and so are
@@ -91,9 +96,9 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   [verbatim-input-windows](verbatim-input-windows.md)), and each key that
   cancels speech also sends `Input::SpeechCancelled`, as does a gesture
   injected through the control plane, so say-all stops. All of these go
-  straight from the hook thread to the reducer thread's command channel,
-  which is unbounded, so the hook never waits, and in the order the keys
-  were pressed. The hook's `DecisionConfig` takes the two speech interrupt
+  straight from the hook thread to the reducer thread's port, each one
+  post, so the hook never waits, and in the order the keys were
+  pressed. The hook's `DecisionConfig` takes the two speech interrupt
   settings from `keyboard.speech_interrupt_for_characters` and
   `keyboard.speech_interrupt_for_enter`. The router maps a script action
   to its reducer command with `ScriptAction::review_command`.
@@ -104,7 +109,7 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   outpost is gone, and `Unanswered` for any failure.
 - The speech pipeline's observer (`speech_events`) is the latency ledger
   plus the marks: every index mark playback reaches becomes
-  `Input::MarkReached` on the same command channel, so say-all advances.
+  `Input::MarkReached` posted to the same port, so say-all advances.
   Every synthesizer reports marks: `OneCore` from its own bookmarks, and
   eSpeak NG from its mark events
   ([verbatim-synth-espeak](verbatim-synth-espeak.md), "Index marks"), so
@@ -206,10 +211,17 @@ knowing for review:
   lower-integrity replacer's quit message through.
 - `ReducerThread` — owns the reducer state, the request table, and the
   live-outpost set, and is the only thread that touches them. It takes
-  every input from one `ShellCommand` channel, first in, first out across
-  all its senders: the supervisor's messages (`ShellCommand::Outpost`),
-  router inputs, the keyboard hook's keys, speech marks, and control-plane
-  requests. The idle barrier counts that one channel's length. Every outpost message arrives tagged with the
+  every input from its port (`Commands`, a `port_queue::Poster` of
+  `ShellCommand`s, is what every other thread posts through), first in,
+  first out across all its posters: the supervisor's messages
+  (`ShellCommand::Outpost`), router inputs, the keyboard hook's keys,
+  speech marks, and control-plane requests. It passes every supervisor
+  message through the supervisor's `Frames`, which turns each outpost's
+  frame into the message it carries, a frame over 256 KiB parsed on a
+  helper thread while the reducer goes on, that outpost's later frames
+  waiting behind it. The supervisor's relay watches the port's counts and
+  logs a warning when the reducer has taken nothing for three ping
+  intervals while inputs waited (`EventSink::watched`). Every outpost message arrives tagged with the
   outpost incarnation whose pipe carried it; an outpost joins the live set
   on `OutpostMessage::Started`, which precedes all its messages, and leaves
   it on `OutpostMessage::Ended`, and a message from an outpost not in the

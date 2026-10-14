@@ -50,8 +50,9 @@ use verbatim_model::{
 use verbatim_outpost::protocol::{
     EventTiming, OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost,
 };
-use verbatim_outpost::supervisor::EndReason;
+use verbatim_outpost::supervisor::{EndReason, Frames};
 use verbatim_outpost::{OutpostMessage, OutpostOptions, Supervisor};
+use verbatim_process::port_queue::{PortQueue, Poster, port_queue};
 use verbatim_speech::hosting::synth_ids;
 use verbatim_speech::{
     SettingId, SettingValue, SpeechManager, SpeechManagerConfig, SpeechSettingsHost, SynthId,
@@ -213,15 +214,15 @@ fn run(
     // The reader settings the reducer reads, handed to it first.
     let reader_settings = config.settings().reader;
 
-    // The reducer thread's one input channel: every outpost's messages
-    // (through the supervisor's sink, below), review and object-navigation
-    // commands from the router, the keys and typing the keyboard hook
-    // reports, the index marks speech reaches, and tree dumps from the
-    // control plane. One channel is first in, first out across all its
-    // senders, so the reducer takes its inputs in the order they reached it,
-    // as NVDA queues keys with events (`docs/design/focus-pipeline.md`,
-    // section 4.1). Unbounded, so no sender ever waits.
-    let (command_tx, command_rx) = unbounded::<ShellCommand>();
+    // The reducer thread's port: every outpost's frames and the
+    // supervisor's notices (through the supervisor's sink, below), review
+    // and object-navigation commands from the router, the keys and typing
+    // the keyboard hook reports, the index marks speech reaches, GUI events
+    // and control-plane commands, each one packet posted to it. The port is
+    // first in, first out across all its posters, so the reducer takes its
+    // inputs in the order they reached it, as NVDA queues keys with events
+    // (`docs/design/communication.md`, section 4.5). A post never waits.
+    let (command_tx, command_rx) = port_queue::<ShellCommand>()?;
 
     // Speech pipeline: eSpeak NG through WASAPI by default, observed by the
     // latency ledger and reporting the marks it reaches to the reducer;
@@ -304,7 +305,7 @@ fn run(
         };
         thread::Builder::new()
             .name("verbatim-reducer".to_owned())
-            .spawn(move || reducer_loop(&command_rx, &context, reader_settings))?;
+            .spawn(move || reducer_loop(command_rx, &context, reader_settings))?;
     }
 
     // The gesture router: bound gestures become GUI commands, direct speech,
@@ -365,7 +366,7 @@ fn run(
     // before there is somewhere to route it. A key that cancels speech also
     // tells the reducer, whose say-all stops; a caret key the hook passed and
     // the text a key types go to the reducer as they are, on the same
-    // channel and so in the order the keys were pressed.
+    // port and so in the order the keys were pressed.
     let speech_control = manager.control();
     let cancelled_tx = command_tx.clone();
     let reports_tx = command_tx.clone();
@@ -871,12 +872,16 @@ struct ReducerContext {
     idle_line: Arc<harness::IdleLine>,
 }
 
-/// Everything handed to the reducer thread, on its one channel and so in
-/// the order it arrived: a message from the supervisor (an outpost's event
-/// or reply, or an outpost's start or end), a reducer input (a review or
-/// object-navigation command from the router, a caret key, typed text, or a
-/// cancelled speech from the keyboard hook, a mark speech reached), or a
-/// control-plane tree dump, answered on the given channel.
+/// Where every thread posts the reducer thread's inputs: its port.
+pub(crate) type Commands = Poster<ShellCommand>;
+
+/// Everything handed to the reducer thread, each one packet posted to its
+/// port and so taken in the order it arrived: a message from the
+/// supervisor (an outpost's frame, or an outpost's start or end), a
+/// reducer input (a review or object-navigation command from the router, a
+/// caret key, typed text, or a cancelled speech from the keyboard hook, a
+/// mark speech reached), or a control-plane tree dump, answered on the
+/// given channel.
 pub(crate) enum ShellCommand {
     /// A message from the supervisor, put in line by [`outpost_sink`].
     Outpost(OutpostMessage),
@@ -935,6 +940,11 @@ struct ReducerThread<'a> {
     views: (Option<Pid>, BTreeSet<OutpostId>),
     /// The highest numbered harness key handled so far.
     handled_input: u64,
+    /// Turns the outposts' frames, which the supervisor's relay posts
+    /// unparsed, into the messages they carry, in each outpost's order.
+    frames: Frames,
+    /// Room for the messages [`Frames`] hands on for one input.
+    decoded: Vec<OutpostMessage>,
     /// Control-plane `AwaitIdle` waiters that reached their place in line,
     /// and the idle barrier's round through every child that answers them
     /// (`docs/design/communication.md`, section 6.7).
@@ -1046,6 +1056,9 @@ impl ReducerThread<'_> {
             OutpostMessage::IdleQueried { round, outposts } => {
                 self.barrier.queried(round, outposts);
             }
+            // `Frames` turns these into the messages they carry, before
+            // anything reaches here.
+            OutpostMessage::Frame(_) | OutpostMessage::Parsed(_) => {}
             OutpostMessage::NotWatched { target_pid } => {
                 // The application is not running, or its outposts crashed
                 // repeatedly: no outpost will answer for it, so its focus is
@@ -1272,7 +1285,14 @@ impl ReducerThread<'_> {
     /// Handles work handed over by another thread.
     fn on_command(&mut self, command: ShellCommand) {
         match command {
-            ShellCommand::Outpost(message) => self.on_outpost_message(message),
+            ShellCommand::Outpost(message) => {
+                let mut decoded = std::mem::take(&mut self.decoded);
+                self.frames.arrived(message, &mut decoded);
+                for message in decoded.drain(..) {
+                    self.on_outpost_message(message);
+                }
+                self.decoded = decoded;
+            }
             ShellCommand::Input(input) => self.apply(*input),
             ShellCommand::CaretKey {
                 input,
@@ -1318,14 +1338,14 @@ impl ReducerThread<'_> {
     /// queue answers each of its waiters once it has taken in everything
     /// the reducer gave it; when not, the round waits for them to clear.
     /// Starts a round, through the supervisor's relay, when one is due.
-    fn advance_idle_barrier(&mut self, command_rx: &Receiver<ShellCommand>) {
+    fn advance_idle_barrier(&mut self, command_rx: &mut PortQueue<ShellCommand>) {
         if !self.barrier.has_waiters() {
             return;
         }
         if self.barrier.all_answered() {
             // What is queued now is ahead of the answers, or came with
             // them: it is handled before the conditions are checked.
-            while let Ok(command) = command_rx.try_recv() {
+            while let Some(command) = command_rx.try_recv() {
                 self.on_command(command);
                 self.send_views();
             }
@@ -1374,6 +1394,7 @@ impl ReducerThread<'_> {
         self.requests.outstanding() == 0
             && self.live.starting() == 0
             && self.focus_now_wanted.is_empty()
+            && !self.frames.parsing()
     }
 
     /// Merges a change from the settings dialog's Terminal page into the
@@ -1679,22 +1700,35 @@ impl ReducerThread<'_> {
     }
 }
 
-/// Puts the supervisor's messages on the reducer thread's one input channel,
-/// in line with its keys and commands, so the reducer takes them all in the
-/// order they arrived (`docs/design/focus-pipeline.md`, section 4.1).
-fn outpost_sink(command_tx: Sender<ShellCommand>) -> verbatim_outpost::EventSink {
+/// Posts the supervisor's messages to the reducer thread's port, in line
+/// with its keys and commands, so the reducer takes them all in the order
+/// they arrived (`docs/design/communication.md`, section 4.5); and lets the
+/// supervisor's relay watch the reducer through the port's counts, logging
+/// a stall it reports (section 6.8).
+fn outpost_sink(command_tx: Commands) -> verbatim_outpost::EventSink {
+    let progress = command_tx.clone();
     verbatim_outpost::EventSink::new(move |message| {
         command_tx.send(ShellCommand::Outpost(message)).is_ok()
     })
+    .watched(
+        move || progress.progress(),
+        |stall| {
+            tracing::warn!(
+                stalled_for = ?stall.stalled_for,
+                waiting = stall.waiting,
+                "the reducer has taken none of its inputs for three ping intervals while some waited; no outpost is ended for it"
+            );
+        },
+    )
 }
 
 /// The reducer thread body: takes outpost messages and commands from other
-/// threads off its one channel, in the order they arrived, feeds the pure
+/// threads off its port, in the order they arrived, feeds the pure
 /// reducer, and executes its effects, so a key, a review or
 /// object-navigation gesture, and an accessibility event are each handled
 /// by the same reduce-and-execute step, in turn.
 fn reducer_loop(
-    command_rx: &Receiver<ShellCommand>,
+    mut command_rx: PortQueue<ShellCommand>,
     context: &ReducerContext,
     settings: ReaderSettings,
 ) {
@@ -1706,15 +1740,17 @@ fn reducer_loop(
         focus_now_wanted: HashMap::new(),
         views: (None, BTreeSet::new()),
         handled_input: 0,
+        frames: context.supervisor.frames(),
+        decoded: Vec::new(),
         barrier: idle::IdleBarrier::default(),
     };
     // The settings come first, before anything they govern.
     thread.apply(Input::Settings(settings));
     thread.send_views();
-    while let Ok(command) = command_rx.recv() {
+    while let Some(command) = command_rx.recv() {
         thread.on_command(command);
         thread.send_views();
-        thread.advance_idle_barrier(command_rx);
+        thread.advance_idle_barrier(&mut command_rx);
     }
 }
 
@@ -1729,7 +1765,7 @@ fn router_loop(
     gesture_rx: &Receiver<Routed>,
     gui_handle: &Arc<OnceLock<GuiHandle>>,
     manager: &Arc<SpeechManager>,
-    command_tx: &crossbeam_channel::Sender<ShellCommand>,
+    command_tx: &Commands,
     layout: KeyboardLayout,
 ) {
     let show_menu = GestureId::parse(SHOW_MENU_GESTURE).expect("valid binding");
@@ -1815,7 +1851,7 @@ fn router_loop(
                         .send(ShellCommand::Input(Box::new(input)))
                         .is_err()
                     {
-                        tracing::warn!("reducer command channel closed; dropping gesture");
+                        tracing::warn!("the reducer thread is gone; dropping gesture");
                     }
                 }
             }
@@ -1829,7 +1865,7 @@ fn router_loop(
 fn pass_in_line(
     toggles: &VecDeque<(Instant, verbatim_input::ToggleKey)>,
     behind_toggles: &mut Vec<ShellCommand>,
-    command_tx: &crossbeam_channel::Sender<ShellCommand>,
+    command_tx: &Commands,
     command: ShellCommand,
 ) {
     if toggles.is_empty() {
@@ -1991,7 +2027,7 @@ struct ControlHandlersConfig {
     /// Cancels speech for an injected gesture, as a key press does.
     speech_control: verbatim_speech::SpeechControl,
     gui_handle: Arc<OnceLock<GuiHandle>>,
-    command_tx: Sender<ShellCommand>,
+    command_tx: Commands,
     recorder: SharedRecorder,
     dumps_dir: PathBuf,
     readiness: Arc<harness::Readiness>,
@@ -2103,7 +2139,7 @@ const DUMP_FOCUS_TIMEOUT: Duration = Duration::from_secs(5);
 /// request table, then waits for the answer with a timeout, withdrawing the
 /// dump when it expires. Every request has its own id, so a late answer to
 /// one that timed out can never satisfy a newer one.
-fn request_dump_tree(command_tx: &Sender<ShellCommand>) -> DumpTreeResult {
+fn request_dump_tree(command_tx: &Commands) -> DumpTreeResult {
     let ticket = DumpTicket::mint();
     let (reply_tx, reply_rx) = bounded(1);
     command_tx
@@ -2135,19 +2171,19 @@ mod tests {
     }
 
     /// The supervisor's messages and the reducer's other inputs share one
-    /// channel, so the reducer takes them in the order they arrived: a key
+    /// port, so the reducer takes them in the order they arrived: a key
     /// handled between two outpost messages comes out between them.
     #[test]
     fn outpost_messages_and_commands_reach_the_reducer_in_arrival_order() {
-        let (command_tx, command_rx) = unbounded();
+        let (command_tx, mut command_rx) = port_queue().expect("a port");
         let sink = outpost_sink(command_tx.clone());
         assert!(sink.send(OutpostMessage::NotWatched { target_pid: Pid(1) }));
         command_tx
             .send(ShellCommand::InputHandled(7))
+            .map_err(|_| "refused")
             .expect("the receiver is held");
         assert!(sink.send(OutpostMessage::NotWatched { target_pid: Pid(2) }));
-        let arrived: Vec<String> = command_rx
-            .try_iter()
+        let arrived: Vec<String> = std::iter::from_fn(|| command_rx.try_recv())
             .map(|command| match command {
                 ShellCommand::Outpost(OutpostMessage::NotWatched { target_pid }) => {
                     format!("outpost message for {}", target_pid.0)

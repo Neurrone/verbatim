@@ -25,9 +25,10 @@ placed in kill-on-close job objects, so they die with it however it ends
      and the set of live outposts (`ReducerThread` in
      `crates/verbatim-app/src/main.rs`);
    - `verbatim-relay`, the supervisor's lifecycle owner, which also reads
-     the focus listener's pipe and finishes every child's writes on one
-     completion port, plus a reader thread per outpost and short-lived
-     launch helpers (`crates/verbatim-outpost/src/supervisor/`);
+     the focus listener's pipe and every outpost's and finishes every
+     child's writes on one completion port, plus short-lived launch
+     helpers and `verbatim-parse`, which parses a frame over 256 KiB for
+     the reducer (`crates/verbatim-outpost/src/supervisor/`);
    - `verbatim-speech-queue` and `verbatim-synth`, the speech manager;
    - `verbatim-audio`, the mixer's one audio thread;
    - one control-plane reader and writer per connected client;

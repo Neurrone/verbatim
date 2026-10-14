@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use crossbeam_channel::Sender;
+use crate::Commands;
 use verbatim_audio::Sound;
 use verbatim_config::themes::{self, LoadedTheme};
 use verbatim_config::{ConfigStore, ThemeConfig};
@@ -29,7 +29,7 @@ use crate::ShellCommand;
 pub(crate) struct AppThemeHost {
     pub(crate) store: Arc<Mutex<ConfigStore>>,
     pub(crate) manager: Arc<SpeechManager>,
-    pub(crate) commands: Sender<ShellCommand>,
+    pub(crate) commands: Commands,
 }
 
 impl AppThemeHost {
@@ -124,7 +124,7 @@ pub(crate) fn prepare(
 }
 
 /// Tells the reducer what `theme` wants fetched (`Input::Fetches`).
-pub(crate) fn send_fetches(commands: &Sender<ShellCommand>, theme: &ActiveTheme) {
+pub(crate) fn send_fetches(commands: &Commands, theme: &ActiveTheme) {
     if commands
         .send(ShellCommand::Input(Box::new(Input::Fetches(
             theme.fetches(),
@@ -140,7 +140,7 @@ pub(crate) fn send_fetches(commands: &Sender<ShellCommand>, theme: &ActiveTheme)
 /// reducer what it wants fetched.
 pub(crate) fn activate(
     manager: &SpeechManager,
-    commands: &Sender<ShellCommand>,
+    commands: &Commands,
     loaded: &LoadedTheme,
     sounds_dir: &Path,
     options: ThemeOptions,

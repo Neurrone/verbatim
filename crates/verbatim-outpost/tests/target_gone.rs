@@ -22,7 +22,10 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 
-use crossbeam_channel::{Receiver, unbounded};
+use crossbeam_channel::unbounded;
+
+mod common;
+use common::Delivered;
 use verbatim_model::{OutpostId, Pid};
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::protocol::{
@@ -99,7 +102,7 @@ fn stand_in(args: &[String]) -> ! {
 }
 
 /// The next message from the supervisor, which must come within [`WAIT`].
-fn next(events: &Receiver<OutpostMessage>) -> OutpostMessage {
+fn next(events: &Delivered) -> OutpostMessage {
     events
         .recv_timeout(WAIT)
         .unwrap_or_else(|error| panic!("the supervisor said nothing: {error}"))
@@ -116,6 +119,7 @@ fn an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited() 
         std::sync::Arc::default(),
     )
     .expect("the supervisor starts");
+    let events = Delivered::new(events, &supervisor);
     match next(&events) {
         OutpostMessage::ListenerReady { replacement: false } => {}
         other => panic!("the supervisor said {other:?} before the listener was ready"),
@@ -184,7 +188,7 @@ fn an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited() 
 
 /// Waits for the outpost watching `target_pid` to start and say it is
 /// ready, and returns its incarnation.
-fn started_and_ready(events: &Receiver<OutpostMessage>, target_pid: Pid) -> OutpostId {
+fn started_and_ready(events: &Delivered, target_pid: Pid) -> OutpostId {
     let outpost = match next(events) {
         OutpostMessage::Started {
             outpost,
@@ -211,6 +215,7 @@ fn an_application_whose_outposts_crashed_repeatedly_is_reported_not_watched() {
         std::sync::Arc::default(),
     )
     .expect("the supervisor starts");
+    let events = Delivered::new(events, &supervisor);
     match next(&events) {
         OutpostMessage::ListenerReady { replacement: false } => {}
         other => panic!("the supervisor said {other:?} before the listener was ready"),

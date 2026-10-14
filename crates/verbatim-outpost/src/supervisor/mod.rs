@@ -6,17 +6,20 @@
 //! or are no longer needed. Its parts:
 //!
 //! - One lifecycle owner thread ([`owner`]) makes every lifecycle decision and
-//!   owns the per-application records and the listener record. The
-//!   outposts' reader threads, launch helpers, retirements, and the app only
-//!   report facts to it through one mailbox; nothing else changes a record,
-//!   and there is no shared map lock. Its heartbeat and sweep run when its
-//!   wait's deadline passes.
+//!   owns the per-application records and the listener record. Launch
+//!   helpers, retirements, and the app only report facts to it through one
+//!   mailbox; nothing else changes a record, and there is no shared map
+//!   lock. Its heartbeat and sweep run when its wait's deadline passes.
 //! - The owner thread is also the relay ([`relay`];
 //!   `docs/design/communication.md`, section 6.2): it waits only on an I/O
 //!   completion port, reads the listener's pipe and routes each fact in the
 //!   pass that read it, writing it to its outpost there and then, so a fact
-//!   crosses verbatim.exe with one thread's wake-up; and it finishes every
-//!   child's writes that pended. It never blocks: launching a process,
+//!   crosses verbatim.exe with one thread's wake-up; it reads every
+//!   outpost's pipe, handles pongs, `Ready`, `TargetExited` and the pipe's
+//!   end itself, and delivers every other frame whole and unparsed
+//!   ([`OutpostMessage::Frame`]), which the app parses through [`Frames`];
+//!   and it finishes every child's writes that pended. It never blocks:
+//!   launching a process,
 //!   ending one, and checking whether an application is hung run on threads
 //!   of their own and report back. The owner records the application as
 //!   starting before the launch, so a second fact meanwhile is held, not a
@@ -26,10 +29,14 @@
 //!   so the reducer thread sends a query without waiting and without a
 //!   hand-off, and a write the pipe cannot take at once is finished by the
 //!   relay.
-//! - Each outpost has a reader thread that stamps every node id with the
-//!   outpost's id, forwards its messages to the app, and reports `Ready`,
-//!   pongs, and the pipe's end to the owner.
-//! - Core's thread count is therefore one per outpost, plus the relay.
+//! - The relay watches the reducer too: at each heartbeat it reads how many
+//!   of the app's inputs wait and how many the reducer has taken, and
+//!   reports a reducer that has taken nothing for three ping intervals
+//!   while inputs waited ([`EventSink::watched`]). Since the relay reads
+//!   the pongs itself, a stalled reducer never makes an outpost look
+//!   wedged (section 6.8).
+//! - The supervisor therefore runs on one thread, the relay, plus a helper
+//!   that parses large frames for the app ([`Frames`]).
 //!
 //! The app hears of each outpost incarnation through [`OutpostMessage`]:
 //! `Started` before any of its messages, then its messages, then `Ended`.
@@ -37,6 +44,7 @@
 //! the owner kills or retires it, `Ended` is sent at once and anything the
 //! child wrote afterwards follows it, which the app drops.
 
+mod frames;
 mod ignored;
 mod owner;
 mod policy;
@@ -52,9 +60,11 @@ use std::time::Duration;
 
 use crossbeam_channel::Sender;
 use verbatim_model::{OutpostId, Pid, TraceId};
+use verbatim_process::port_queue::Progress;
 
 use crate::protocol::{OutpostToSupervisor, SupervisorToOutpost};
 
+pub use frames::{Frame, Frames, LARGE_FRAME_BYTES, Parsed};
 pub use ignored::{IGNORE_PIDS_ENV, IgnoredProcesses, parse_pids};
 pub use retire::ShutdownSummary;
 pub use writer::QueueError;
@@ -111,30 +121,88 @@ impl std::fmt::Display for EndReason {
     }
 }
 
-/// Where the supervisor delivers its [`OutpostMessage`]s. Every reader
-/// thread and the owner deliver through the same sink, so a sink that puts
-/// each message on one channel gives the app every outpost's messages in
-/// the order they reached the supervisor. The app's sink puts them on the
-/// reducer thread's one input channel, among its keys and commands
-/// (`docs/design/focus-pipeline.md`, section 4.1); a channel of
+/// Where the supervisor delivers its [`OutpostMessage`]s. The relay, the
+/// launch helpers and the helper parsing large frames deliver through the
+/// same sink, so a sink that puts each message in one queue gives the app
+/// every outpost's messages in the order they reached the supervisor. The
+/// app's sink posts them to the reducer thread's port, among its keys and
+/// commands (`docs/design/communication.md`, section 4.5); a channel of
 /// [`OutpostMessage`]s converts into a sink, for tests.
 #[derive(Clone)]
-pub struct EventSink(Arc<dyn Fn(OutpostMessage) -> bool + Send + Sync>);
+pub struct EventSink {
+    deliver: Arc<dyn Fn(OutpostMessage) -> bool + Send + Sync>,
+    watch: Option<Arc<ReducerWatch>>,
+}
+
+/// How the relay watches the thread taking the sink's messages: what it
+/// reads at each heartbeat, and where it reports a stall.
+struct ReducerWatch {
+    progress: Box<dyn Fn() -> Progress + Send + Sync>,
+    stalled: Box<dyn Fn(ReducerStall) + Send + Sync>,
+}
+
+/// A stall of the thread taking the sink's messages, the reducer: it has
+/// taken none of its inputs for at least three ping intervals while some
+/// waited (`docs/design/communication.md`, section 6.8). It is a fault of
+/// its own, and nothing is ended for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReducerStall {
+    /// How long it has taken nothing while inputs waited, as the relay's
+    /// heartbeats measured it.
+    pub stalled_for: Duration,
+    /// How many of its inputs waited at the last heartbeat.
+    pub waiting: u64,
+}
 
 impl EventSink {
     /// A sink that hands each message to `deliver`, which returns whether
-    /// the app is still there to take it: once it returns false, readers
-    /// stop forwarding.
+    /// the app is still there to take it: once it returns false, the
+    /// helper parsing large frames stops.
     #[must_use]
     pub fn new(deliver: impl Fn(OutpostMessage) -> bool + Send + Sync + 'static) -> Self {
-        Self(Arc::new(deliver))
+        Self {
+            deliver: Arc::new(deliver),
+            watch: None,
+        }
+    }
+
+    /// This sink, with the thread taking its messages watched: at each
+    /// heartbeat the relay reads `progress`, how many of that thread's
+    /// inputs have been posted and how many taken, and once it has taken
+    /// none for three ping intervals while some waited, reports the stall
+    /// to `stalled`, once until it takes something again.
+    #[must_use]
+    pub fn watched(
+        self,
+        progress: impl Fn() -> Progress + Send + Sync + 'static,
+        stalled: impl Fn(ReducerStall) + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            deliver: self.deliver,
+            watch: Some(Arc::new(ReducerWatch {
+                progress: Box::new(progress),
+                stalled: Box::new(stalled),
+            })),
+        }
     }
 
     /// Delivers `message`, returning whether the app took it: false means
     /// the app has gone.
     #[must_use]
     pub fn send(&self, message: OutpostMessage) -> bool {
-        (self.0)(message)
+        (self.deliver)(message)
+    }
+
+    /// The watched thread's progress, if it is watched.
+    fn progress(&self) -> Option<Progress> {
+        self.watch.as_ref().map(|watch| (watch.progress)())
+    }
+
+    /// Reports a stall of the watched thread.
+    fn stalled(&self, stall: ReducerStall) {
+        if let Some(watch) = &self.watch {
+            (watch.stalled)(stall);
+        }
     }
 }
 
@@ -209,6 +277,14 @@ pub enum OutpostMessage {
         /// The application.
         target_pid: Pid,
     },
+    /// A frame from an outpost's pipe, read whole by the relay and not yet
+    /// parsed: the app passes it through [`Frames`], which turns it into
+    /// the [`OutpostMessage::Event`] it carries.
+    Frame(Frame),
+    /// A large frame parsed by the helper of [`Frames`], ordered among the
+    /// app's inputs where the parse finished: the app passes it through
+    /// [`Frames`] too.
+    Parsed(Parsed),
     /// The idle barrier's round `round` (`docs/design/communication.md`,
     /// section 6.7; [`Supervisor::query_idle`]): the listener has answered,
     /// or has gone, and every outpost in `outposts` is asked now, each
@@ -236,6 +312,8 @@ pub struct Supervisor {
     owner: relay::Mailbox<owner::OwnerEvent>,
     writers: Writers,
     ignored: Arc<IgnoredProcesses>,
+    /// The sink, for the helper of [`Supervisor::frames`].
+    events: EventSink,
 }
 
 impl Supervisor {
@@ -284,11 +362,12 @@ impl Supervisor {
         let writers: Writers = Arc::default();
         let relay = relay::Relay::new()?;
         let (owner_tx, owner_rx) = relay::mailbox(std::sync::Arc::clone(relay.port()));
+        let events: EventSink = events.into();
         owner::start(owner::Setup {
             exe_path,
             options,
             shutdown_limit,
-            events_tx: events.into(),
+            events_tx: events.clone(),
             writers: Arc::clone(&writers),
             own_tx: owner_tx.clone(),
             events: owner_rx,
@@ -299,7 +378,17 @@ impl Supervisor {
             owner: owner_tx,
             writers,
             ignored,
+            events,
         })
+    }
+
+    /// What the app passes every message this supervisor delivers through,
+    /// on the thread that takes them: it parses each outpost's frame into
+    /// the message it carries, a large one on a helper thread, keeping each
+    /// outpost's order ([`Frames`]).
+    #[must_use]
+    pub fn frames(&self) -> Frames {
+        Frames::new(self.events.clone(), self.owner.clone())
     }
 
     /// Whether `pid` names a process Verbatim ignores entirely

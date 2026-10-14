@@ -13,7 +13,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use crossbeam_channel::Sender;
+use crate::Commands;
 use verbatim_model::{Indication, Input, SpeechMark, TraceId, UtteranceEnding, UtteranceId};
 use verbatim_speech::{IndexMark, SpeechEvents, SynthTiming};
 
@@ -21,11 +21,11 @@ use crate::ShellCommand;
 use crate::latency::LatencyLedger;
 
 /// Forwards every milestone to the latency ledger, and each mark reached to
-/// the reducer thread. Runs on the pipeline's threads, so it only sends on
-/// an unbounded channel, which never waits.
+/// the reducer thread. Runs on the pipeline's threads, so it only posts to
+/// the reducer's port, which never waits.
 pub(crate) struct ShellSpeechEvents {
     pub(crate) ledger: Arc<LatencyLedger>,
-    pub(crate) commands: Sender<ShellCommand>,
+    pub(crate) commands: Commands,
 }
 
 impl SpeechEvents for ShellSpeechEvents {

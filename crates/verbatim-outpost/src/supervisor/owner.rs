@@ -5,17 +5,20 @@
 //! It is also the relay (`docs/design/communication.md`, sections 4.7 and
 //! 6.2): it waits only on the relay's completion port ([`super::relay`]),
 //! reads the listener's frames and routes each fact in the pass that read
-//! it, writing it to its outpost inline, finishes every child's writes that
-//! pended, and takes everything other threads report from its mailbox when
-//! the port says there is something. Its heartbeat and sweep run when the
-//! wait's deadline passes. It never blocks: launches, retirements, and the
-//! check of whether an application is hung run on threads of their own and
-//! report back.
+//! it, writing it to its outpost inline; reads every outpost's frames,
+//! handling pongs, `Ready`, `TargetExited` and the pipe's end itself and
+//! delivering every other frame to the app whole, in the pass that read
+//! it; finishes every child's writes that pended; and takes everything
+//! other threads report from its mailbox when the port says there is
+//! something. Its heartbeat, which also watches the reducer, and its sweep
+//! run when the wait's deadline passes. It never blocks: launches,
+//! retirements, and the check of whether an application is hung run on
+//! threads of their own and report back.
 
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeSet, HashMap};
-use std::io::{self, BufReader};
+use std::io;
 use std::os::windows::io::OwnedHandle;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,37 +28,34 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::Sender;
 use verbatim_model::{OutpostId, Pid, TraceId};
 use verbatim_process::overlapped::{Completion, Completions, Port};
+use verbatim_process::port_queue::Progress;
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
-use verbatim_process::transport::{BlockingReader, Reading};
+use verbatim_process::transport::Reading;
 
 use crate::protocol::{
     DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
-    WinEventStamp, decode_message, hop_us, now_us, read_message,
+    WinEventStamp, decode_message, hop_us, message_kind, now_us,
 };
 
+use super::frames::Frame;
 use super::ignored::IgnoredProcesses;
 use super::policy::{
     CrashHistory, HeldFact, HeldFacts, WedgeReason, retirement_decision, wedge_decision,
 };
 use super::process::{self, Launched, Role, Target};
-use super::relay::{COMPLETIONS_PER_WAIT, CommandPipes, Inbox, Mailbox, Relay, Taken};
+use super::relay::{COMPLETIONS_PER_WAIT, CommandPipes, Inbox, Mailbox, Relay, Source, Taken};
 use super::retire::{Ending, ShutdownSummary, retire};
 use super::writer::{Outgoing, Received, WriterHandle};
 use super::{
     ABANDONED_WORKER_LIMIT, CRASH_LIMIT, CRASH_WINDOW, EndReason, EventSink, IDLE_RETIREMENT,
-    MISSED_PONG_THRESHOLD, OutpostMessage, PING_INTERVAL, SWEEP_INTERVAL, Writers,
+    MISSED_PONG_THRESHOLD, OutpostMessage, PING_INTERVAL, ReducerStall, SWEEP_INTERVAL, Writers,
 };
 
 /// The relay thread's priority: it reads each of the listener's facts and
-/// routes it to its outpost, finishes writes that pended, and handles each
-/// child's reports, for microseconds per wake
-/// (`docs/design/communication.md`, section 6.1).
+/// routes it to its outpost, reads each outpost's frame and hands it on,
+/// finishes writes that pended, and handles each child's reports, for
+/// microseconds per wake (`docs/design/communication.md`, section 6.1).
 const RELAY_PRIORITY: ThreadPriority = ThreadPriority::Highest;
-
-/// The priority of each outpost's reader thread: it only reads each
-/// message and hands it on, for microseconds per wake
-/// (`docs/design/communication.md`, section 6.1).
-const READER_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// A fact reported to the owner.
 #[expect(
@@ -96,25 +96,21 @@ pub(super) enum OwnerEvent {
     /// Read from the listener's pipe: a menu or the Alt+Tab switcher
     /// closed.
     MenuOrSwitchEnded { ended_at_ms: u64 },
-    /// From an outpost's reader, or read from the listener's pipe: the
-    /// child sent `Ready`.
+    /// Read from a child's pipe: the child sent `Ready`.
     Ready(OutpostId),
-    /// From an outpost's reader, or read from the listener's pipe: the
-    /// child answered a ping.
+    /// Read from a child's pipe: the child answered a ping.
     Pong {
         outpost: OutpostId,
         abandoned: usize,
     },
-    /// From an outpost's reader: the child's pipe closed, after everything
-    /// it wrote was forwarded.
-    PipeClosed(OutpostId),
+    /// From the app's [`super::Frames`]: a frame `outpost` sent is not a
+    /// message, so it is ended as though its pipe had failed.
+    Unreadable(OutpostId),
     /// From a launch helper: the launch finished.
     Launched {
         outpost: OutpostId,
         result: io::Result<Launch>,
     },
-    /// From an outpost's reader: its target application exited.
-    TargetExited(OutpostId),
     /// From a retirement's thread: a child has ended, this way.
     Retired(Ending),
     /// From a hang check's thread: whether `outpost`'s application has a
@@ -135,11 +131,11 @@ pub(super) struct Child {
     pub(super) writer: WriterHandle,
 }
 
-/// A launched child, with, for the listener, its pipe to Core, which the
-/// relay reads; an outpost's is read by a reader thread of its own.
+/// A launched child, with its pipe to Core, which the relay reads.
 pub(super) struct Launch {
     child: Child,
-    from_listener: Option<OwnedHandle>,
+    from_child: OwnedHandle,
+    source: Source,
 }
 
 /// What the owner thread starts with.
@@ -243,6 +239,50 @@ struct Owner {
     /// The idle barrier's round under way in the relay, until the
     /// outposts are asked.
     idle: Option<IdleStage>,
+    /// The watch over the reducer, read at each heartbeat.
+    reducer: ReducerWatch,
+}
+
+/// The relay's watch over the thread taking the app's inputs, the reducer
+/// (`docs/design/communication.md`, section 6.8): a fault of its own,
+/// reported and never acted on.
+#[derive(Default)]
+struct ReducerWatch {
+    /// Its progress at the last heartbeat, and when that was.
+    last: Option<(Progress, Instant)>,
+    /// How many heartbeats in a row have found it taking nothing while
+    /// inputs waited, and since when.
+    stuck: Option<(u32, Instant)>,
+    /// Whether this stall has been reported.
+    reported: bool,
+}
+
+impl ReducerWatch {
+    /// Notes the reducer's `progress` at `now`, a heartbeat, and returns
+    /// the stall to report, once per stall: none of its inputs taken for
+    /// [`MISSED_PONG_THRESHOLD`] heartbeats in a row while some waited.
+    fn note(&mut self, progress: Progress, now: Instant) -> Option<ReducerStall> {
+        let stuck = self
+            .last
+            .is_some_and(|(last, _)| last.waiting() > 0 && last.taken == progress.taken);
+        let since = self.last.map_or(now, |(_, at)| at);
+        self.last = Some((progress, now));
+        if !stuck {
+            self.stuck = None;
+            self.reported = false;
+            return None;
+        }
+        let (count, since) = self.stuck.get_or_insert((0, since));
+        *count += 1;
+        if *count < MISSED_PONG_THRESHOLD || self.reported {
+            return None;
+        }
+        self.reported = true;
+        Some(ReducerStall {
+            stalled_for: now.saturating_duration_since(*since),
+            waiting: progress.waiting(),
+        })
+    }
 }
 
 /// Starts the owner thread, which starts the listener at once.
@@ -281,6 +321,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         own_pid: Pid(std::process::id()),
         ignored,
         idle: None,
+        reducer: ReducerWatch::default(),
     };
     thread::Builder::new()
         .name("verbatim-relay".to_owned())
@@ -328,7 +369,7 @@ impl Owner {
                         }
                     }
                     Taken::Write => {}
-                    Taken::Listener(key) => self.read_listener(key, &completion),
+                    Taken::Read(key) => self.read_pipe(key, &completion),
                 }
             }
             let now = Instant::now();
@@ -343,32 +384,90 @@ impl Owner {
         }
     }
 
-    /// Reads the listener's pipe under `key` on `completion`: handles each
+    /// Reads the child's pipe under `key` on `completion`: handles each
     /// message read, in order, and the pipe's end after them.
-    fn read_listener(&mut self, key: usize, completion: &Completion) {
-        let Some((outpost, mut reader)) = self.relay.take_listener(key) else {
+    fn read_pipe(&mut self, key: usize, completion: &Completion) {
+        let Some(mut read) = self.relay.take_reader(key) else {
             // A wake for a pipe whose reading has ended.
             return;
         };
         let port = Arc::clone(&self.port);
-        let reading = reader.take(completion, &port, |body| {
-            // When verbatim.exe took the message in, before it is parsed
-            // (`docs/design/relay.md`, section 4.5).
-            let received = Received::now();
-            self.listener_message(outpost, received, decode_message(body)?);
-            Ok(())
+        let outpost = read.outpost;
+        let source = read.source;
+        let reading = read.pipe.take(completion, &port, |body| match source {
+            Source::Listener => {
+                // When verbatim.exe took the message in, before it is
+                // parsed (`docs/design/relay.md`, section 4.5).
+                let received = Received::now();
+                self.listener_message(outpost, received, decode_message(body)?);
+                Ok(())
+            }
+            Source::Outpost(pid) => self.outpost_frame(outpost, pid, body),
         });
-        match reading {
-            Reading::Waiting | Reading::Yielded => self.relay.put_listener(key, outpost, reader),
-            Reading::Ended(Ok(())) => {
+        match (reading, source) {
+            (Reading::Waiting | Reading::Yielded, _) => self.relay.put_reader(key, read),
+            (Reading::Ended(Ok(())), Source::Listener) => {
                 tracing::info!(%outpost, "the focus listener's pipe closed");
                 self.on_pipe_closed(outpost);
             }
-            Reading::Ended(Err(error)) => {
+            (Reading::Ended(Err(error)), Source::Listener) => {
                 tracing::warn!(%outpost, %error, "the focus listener's pipe ended in a fault");
                 self.on_pipe_closed(outpost);
             }
+            (Reading::Ended(Ok(())), Source::Outpost(_)) => self.on_pipe_closed(outpost),
+            (Reading::Ended(Err(error)), Source::Outpost(_)) => {
+                // A message too large, or not a message: the outpost is
+                // treated as failed, as when its pipe closes.
+                tracing::warn!(%outpost, %error, "an outpost's message could not be read");
+                self.on_pipe_closed(outpost);
+            }
         }
+    }
+
+    /// A frame read from the pipe of `outpost`, watching `pid`: a pong and
+    /// `TargetExited` are handled here, `Ready` is handled here and handed
+    /// on, and every other frame is handed on to the app whole, unparsed,
+    /// with when it was read (`docs/design/communication.md`, section
+    /// 6.2). Only the frame's kind is read, from its first bytes; a pong,
+    /// a few dozen bytes, is parsed for its count of abandoned workers.
+    fn outpost_frame(&mut self, outpost: OutpostId, pid: Pid, body: &[u8]) -> io::Result<()> {
+        let read_at_us = now_us();
+        match message_kind(body) {
+            Some("Pong") => {
+                let OutpostToSupervisor::Pong {
+                    parked_count,
+                    written_at_us,
+                    ..
+                } = decode_message(body)?
+                else {
+                    return Err(io::Error::other("a pong that is not a pong"));
+                };
+                if let Some(us) = hop_us(written_at_us, read_at_us) {
+                    tracing::trace!(target: "verbatim::stage", stage = "outpost's pipe to verbatim.exe", %outpost, us, "pong");
+                }
+                self.handle(OwnerEvent::Pong {
+                    outpost,
+                    abandoned: parked_count,
+                });
+            }
+            Some("TargetExited") => {
+                if let Some(pid) = self.pid_of(outpost) {
+                    self.target_exited(pid, "target exited");
+                }
+            }
+            Some("Ready") => {
+                self.hand_on(Frame::new(pid, outpost, body.to_vec(), read_at_us));
+                self.on_ready(outpost);
+            }
+            _ => self.hand_on(Frame::new(pid, outpost, body.to_vec(), read_at_us)),
+        }
+        Ok(())
+    }
+
+    /// Hands an outpost's frame on to the app. One the app no longer takes
+    /// is dropped: it is exiting.
+    fn hand_on(&self, frame: Frame) {
+        let _ = self.events_tx.send(OutpostMessage::Frame(frame));
     }
 
     /// A message read from the listener `outpost`'s pipe at `received`:
@@ -508,11 +607,6 @@ impl Owner {
                 outpost,
                 through,
             } => self.forwarding_ended(pid, outpost, through),
-            OwnerEvent::TargetExited(outpost) => {
-                if let Some(pid) = self.pid_of(outpost) {
-                    self.target_exited(pid, "target exited");
-                }
-            }
             OwnerEvent::MenuOrSwitchEnded { ended_at_ms } => {
                 let _ = self
                     .events_tx
@@ -531,7 +625,7 @@ impl Owner {
                     listener.last_pong_at = Instant::now();
                 }
             }
-            OwnerEvent::PipeClosed(outpost) => self.on_pipe_closed(outpost),
+            OwnerEvent::Unreadable(outpost) => self.on_pipe_closed(outpost),
             OwnerEvent::Launched { outpost, result } => self.on_launched(outpost, result),
             OwnerEvent::Retired(ending) => {
                 self.retiring = self.retiring.saturating_sub(1);
@@ -800,11 +894,11 @@ impl Owner {
     /// Launches a child on a helper thread. The helper makes the child's
     /// writer on the relay's port and, for an outpost, registers it and
     /// sends `Started` to the app; then it reports [`OwnerEvent::Launched`];
-    /// only then does it start an outpost's reader, and the relay reads the
-    /// listener's pipe only once it has the launch. So the app hears of an
-    /// incarnation before any of its messages, a query can reach the
-    /// outpost as soon as the app has heard, and the owner always learns of
-    /// the launch before the child's `Ready` or the end of its pipe.
+    /// the relay reads the child's pipe only once it has the launch. So the
+    /// app hears of an incarnation before any of its messages, a query can
+    /// reach the outpost as soon as the app has heard, and the owner always
+    /// learns of the launch before the child's `Ready` or the end of its
+    /// pipe.
     fn launch(&self, outpost: OutpostId, role: Role) {
         let ignored = self.ignored.list();
         let hooks_in = match role {
@@ -820,35 +914,14 @@ impl Owner {
         let spawned = thread::Builder::new()
             .name("verbatim-launch".to_owned())
             .spawn(move || {
-                match launch_child(
+                let result = launch_child(
                     &exe_path,
                     (options, &ignored, &hooks_in),
                     outpost,
                     role,
                     (&events_tx, &writers, &commands),
-                ) {
-                    Ok((launch, reader)) => {
-                        let _ = own_tx.send(OwnerEvent::Launched {
-                            outpost,
-                            result: Ok(launch),
-                        });
-                        if let Some((pid, from_child)) = reader
-                            && let Err(error) =
-                                start_reader(outpost, pid, from_child, &events_tx, &own_tx)
-                        {
-                            // No reader, no messages: end it as though its
-                            // pipe had closed.
-                            tracing::error!(%error, %outpost, "failed to start a reader");
-                            let _ = own_tx.send(OwnerEvent::PipeClosed(outpost));
-                        }
-                    }
-                    Err(error) => {
-                        let _ = own_tx.send(OwnerEvent::Launched {
-                            outpost,
-                            result: Err(error),
-                        });
-                    }
-                }
+                );
+                let _ = own_tx.send(OwnerEvent::Launched { outpost, result });
             });
         if let Err(error) = spawned {
             let _ = self.own_tx.send(OwnerEvent::Launched {
@@ -859,12 +932,13 @@ impl Owner {
     }
 
     fn on_launched(&mut self, outpost: OutpostId, result: io::Result<Launch>) {
-        // The listener's pipe to Core is read from now on, whoever ends up
-        // ending the listener, so its end is always seen.
+        // The child's pipe to Core is read from now on, whoever ends up
+        // ending the child, so its end is always seen.
         let mut unread = None;
         let result = result.map(|launch| {
-            if let Some(pipe) = launch.from_listener
-                && let Err(error) = self.relay.add_listener(outpost, pipe)
+            if let Err(error) = self
+                .relay
+                .add_reader(outpost, launch.source, launch.from_child)
             {
                 unread = Some(error);
             }
@@ -873,7 +947,7 @@ impl Owner {
         self.launched(outpost, result);
         if let Some(error) = unread {
             // No reading, no messages: end it as though its pipe had closed.
-            tracing::error!(%error, %outpost, "the focus listener's pipe cannot be read");
+            tracing::error!(%error, %outpost, "a child's pipe to Core cannot be read");
             self.on_pipe_closed(outpost);
         }
         // An idle round waiting for the launches asks the outposts once
@@ -1269,6 +1343,11 @@ impl Owner {
             return;
         }
         let now = Instant::now();
+        if let Some(progress) = self.events_tx.progress()
+            && let Some(stall) = self.reducer.note(progress, now)
+        {
+            self.events_tx.stalled(stall);
+        }
         self.ping_seq += 1;
         let ping = SupervisorToOutpost::Ping {
             seq: self.ping_seq,
@@ -1476,24 +1555,23 @@ pub(super) fn deliver(writer: &WriterHandle, held: HeldFact) {
     }
 }
 
-/// The launch helper's first half: launch the process and make its writer
-/// on the relay's port; for an outpost, register the writer and tell the
-/// app it started. Returns the launch, and for an outpost the pipe its
-/// reader will read.
+/// The launch helper's work: launch the process and make its writer on the
+/// relay's port; for an outpost, register the writer and tell the app it
+/// started. Returns the launch, with the pipe the relay will read.
 fn launch_child(
     exe_path: &std::path::Path,
     (options, ignored, hooks_in): (crate::OutpostOptions, &str, &str),
     outpost: OutpostId,
     role: Role,
     (events_tx, writers, commands): (&EventSink, &Writers, &CommandPipes),
-) -> io::Result<(Launch, Option<(Pid, OwnedHandle)>)> {
+) -> io::Result<Launch> {
     let (launched, pipes) = process::launch(exe_path, role, options, (ignored, hooks_in))?;
     tracing::info!(%outpost, process_id = %launched.process_id, ?role, "launched");
     // A failure from here drops the process's job, which kills it.
     let writer = commands.open(outpost, pipes.to_child)?;
-    let (from_listener, reader) = match role {
-        Role::Listener => (Some(pipes.from_child), None),
-        Role::Outpost(pid) => (None, Some((pid, pipes.from_child))),
+    let source = match role {
+        Role::Listener => Source::Listener,
+        Role::Outpost(pid) => Source::Outpost(pid),
     };
     if let Role::Outpost(pid) = role {
         writers
@@ -1505,101 +1583,12 @@ fn launch_child(
             target_pid: pid,
         });
     }
-    Ok((
-        Launch {
-            child: Child {
-                process: launched,
-                writer,
-            },
-            from_listener,
+    Ok(Launch {
+        child: Child {
+            process: launched,
+            writer,
         },
-        reader,
-    ))
-}
-
-/// The launch helper's second half, for an outpost: start its reader.
-fn start_reader(
-    outpost: OutpostId,
-    pid: Pid,
-    from_child: OwnedHandle,
-    events_tx: &EventSink,
-    own_tx: &Mailbox<OwnerEvent>,
-) -> io::Result<()> {
-    let events_tx = events_tx.clone();
-    let own_tx = own_tx.clone();
-    let from_child = BufReader::new(BlockingReader::new(from_child)?);
-    thread::Builder::new()
-        .name("verbatim-outpost-reader".to_owned())
-        .spawn(move || {
-            prioritize_role("verbatim-outpost-reader", READER_PRIORITY);
-            read_outpost(outpost, pid, from_child, &events_tx, &own_tx);
-        })?;
-    Ok(())
-}
-
-/// An outpost's reader: stamps every node id with the outpost's id, numbers
-/// the messages that carry node ids as the outpost does, forwards each
-/// message to the app with the position reached, reports `Ready` and pongs to
-/// the owner, and reports the pipe's end once everything has been forwarded.
-fn read_outpost(
-    outpost: OutpostId,
-    pid: Pid,
-    mut reader: BufReader<BlockingReader>,
-    events_tx: &EventSink,
-    own_tx: &Mailbox<OwnerEvent>,
-) {
-    let mut position = 0u64;
-    loop {
-        let mut message = match read_message::<_, OutpostToSupervisor>(&mut reader) {
-            Ok(Some(message)) => message,
-            Ok(None) => break,
-            // A message too large or not a message: the outpost is treated
-            // as failed, as when its pipe closes.
-            Err(error) => {
-                tracing::warn!(%outpost, %error, "an outpost's message could not be read");
-                break;
-            }
-        };
-        let read_at_us = now_us();
-        message.core_read(read_at_us);
-        // Node ids name the incarnation whose pipe they arrived on, never
-        // whatever the message body claims.
-        message.assign_outpost(outpost);
-        if message.carries_nodes() {
-            position += 1;
-        }
-        match message {
-            OutpostToSupervisor::Pong {
-                parked_count,
-                written_at_us,
-                ..
-            } => {
-                if let Some(us) = hop_us(written_at_us, read_at_us) {
-                    tracing::trace!(target: "verbatim::stage", stage = "outpost's pipe to verbatim.exe", %outpost, us, "pong");
-                }
-                let _ = own_tx.send(OwnerEvent::Pong {
-                    outpost,
-                    abandoned: parked_count,
-                });
-                continue;
-            }
-            OutpostToSupervisor::Ready { .. } => {
-                let _ = own_tx.send(OwnerEvent::Ready(outpost));
-            }
-            OutpostToSupervisor::TargetExited => {
-                let _ = own_tx.send(OwnerEvent::TargetExited(outpost));
-                continue;
-            }
-            _ => {}
-        }
-        if !events_tx.send(OutpostMessage::Event {
-            pid,
-            outpost,
-            position,
-            message: Box::new(message),
-        }) {
-            return; // The app is gone.
-        }
-    }
-    let _ = own_tx.send(OwnerEvent::PipeClosed(outpost));
+        from_child: pipes.from_child,
+        source,
+    })
 }

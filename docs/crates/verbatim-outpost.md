@@ -296,6 +296,10 @@ Public API:
   message is one `WriteFile` on a bare pipe, `encode_message` gives those
   bytes without writing them, `put_message` appends them to a buffer a
   sender writes from, and `decode_message` parses a frame's body.
+  `message_kind(body)` reads a frame's kind, the name of the message's
+  variant, from the body's first bytes without parsing the rest, as
+  serde's external tagging writes it (`{"Pong":...}`, `"TargetExited"`);
+  the relay reads it on every outpost frame.
 - `Arbitrator` — NVDA's per-window backend decision (`_isUIAWindowHelper`):
   `verdict(hwnd, &WindowClasses)` answers from the good class list, the
   Windows 11 shell rule (the root ancestor's class is a shell top-level
@@ -697,33 +701,63 @@ Public API:
   ended, through `OutpostMessage::ListenerReady`, and of each incarnation
   through
   `OutpostMessage`: `Started` before
-  any of its messages, `Event(pid, outpost_id, message)` for each message,
-  and `Ended` with a reason (exited, killed, retired, or target exited).
-  Every one is delivered through the `EventSink` given to `new`: a channel
-  of `OutpostMessage`s converts into one (the tests use that), and
-  `EventSink::new` takes a function, which the app uses to put the
-  messages on the reducer thread's one input channel, in line with its
-  keys and commands.
+  any of its messages, then its messages, and `Ended` with a reason
+  (exited, killed, retired, or target exited). Its messages are delivered
+  as the relay read them, `Frame`s, whole and unparsed; the app passes
+  every `OutpostMessage` through the `Frames` that `Supervisor::frames()`
+  makes, on the thread that takes them, and `Frames::arrived(message,
+  out)` appends what to handle now: the message itself, or for a frame
+  the `Event(pid, outpost_id, position, message)` it carries. `Frames`
+  parses each frame, stamps every node id with the outpost's id, records
+  when the relay read it, and numbers the messages that carry node ids
+  in pipe order, as the outposts' reader threads did; a frame larger
+  than `LARGE_FRAME_BYTES` (256 KiB) goes to a helper thread,
+  `verbatim-parse`, started on first use, whose result comes back
+  through the sink as `Parsed`, and that outpost's later frames and its
+  `Ended` wait behind it, so each outpost's order holds while the reducer
+  goes on with its other inputs (`docs/design/communication.md`, section
+  4.8). `Frames::parsing()` says whether a frame is with the helper; the
+  idle barrier waits for it. A frame that is not a message has its
+  outpost ended, as a pipe that fails does. Every message is delivered
+  through the `EventSink` given to `new`: a channel of `OutpostMessage`s
+  converts into one (the tests use that), and `EventSink::new` takes a
+  function, which the app uses to post the messages to the reducer
+  thread's port, in line with its keys and commands.
+  `EventSink::watched(progress, stalled)` lets the relay watch the thread
+  taking them: at each heartbeat it reads `progress`, the counts of a
+  `verbatim_process::port_queue` (`Progress`), and once that thread has
+  taken nothing for three heartbeats in a row while inputs waited it
+  reports a `ReducerStall` (how long, and how many waited) to `stalled`,
+  once per stall. Nothing is ended for it: the relay reads the outposts'
+  pongs itself, so a stalled reducer never makes an outpost look wedged
+  (section 6.8).
   - The lifecycle owner (`owner`) is one thread, `verbatim-relay`, that
     makes every lifecycle decision and owns the per-application records
     and the listener record. It is also the relay
     (`docs/design/communication.md`, section 6.2; the `relay` module): it
     waits only in `GetQueuedCompletionStatusEx` on one completion port,
     with a timeout that is the next heartbeat (3 seconds) or sweep (30
-    seconds), and is woken by a read of the listener's pipe completing, a
+    seconds), and is woken by a read of a child's pipe completing, a
     write to a child that pended completing, or its mailbox. It reads the
-    listener's pipe through a `transport::PortReader`, one read in flight,
-    and handles each frame in the pass that read it: a fact is parsed,
-    routed, and written to its outpost there and then, so a fact crosses
-    verbatim.exe with this one thread's wake-up. The outposts' reader
-    threads, launch helpers, retirements, hang checks and the app report
-    to it through the mailbox (`relay::Mailbox`, a channel whose sends
-    post one wake to the port unless one is already waiting); there is no
-    shared map lock. It never blocks: launching blocks, so the owner
-    records the application as starting and hands the launch to a helper
-    thread, which makes the child's writer, sends `Started`, starts an
-    outpost's reader, and reports back, a second fact meanwhile being
-    held, never a second launch; a retirement runs on a thread of its own
+    listener's pipe and every outpost's, each through a
+    `transport::PortReader`, one read in flight per pipe, and handles each
+    frame in the pass that read it: a listener's fact is parsed, routed,
+    and written to its outpost there and then, so a fact crosses
+    verbatim.exe with this one thread's wake-up; an outpost's frame is
+    read for its kind only (`message_kind`): a pong and `TargetExited` are
+    handled there, `Ready` is handled and handed on, and every other frame
+    is handed to the app whole as `OutpostMessage::Frame`, with when it
+    was read, and the pipe's read is armed again at once, so every pipe
+    drains however busy the reducer is (section 4.4). The pipe's end is
+    handled after every frame before it. Launch helpers, retirements,
+    hang checks and the app report to it through the mailbox
+    (`relay::Mailbox`, a channel whose sends post one wake to the port
+    unless one is already waiting); there is no shared map lock. It never
+    blocks: launching blocks, so the owner records the application as
+    starting and hands the launch to a helper thread, which makes the
+    child's writer, sends `Started`, and reports back, the relay reading
+    the child's pipe from then on, a second fact meanwhile being held,
+    never a second launch; a retirement runs on a thread of its own
     and reports how the child ended; and whether an application with
     eight abandoned workers is hung, which walks its windows, is checked
     on a thread of its own, the outpost being judged on its answer. At
@@ -745,12 +779,9 @@ Public API:
     everything queued before it and is never merged or dropped
     (`Outgoing::delivered`); a routed fact replaces any waiting fact for
     the same object and kind (or the oldest waiting fact makes room), and
-    anything else, a query above all, fails at once. Each outpost has a
-    reader thread that reads verbatim.exe's overlapped end of its message
-    pipe, blocking on each read (`transport::BlockingReader`), stamps
-    every node id with the outpost's id, forwards messages to the app, and
-    reports `Ready`, pongs, and the end of its pipe to the relay. Core's
-    thread count is one per outpost plus the relay.
+    anything else, a query above all, fails at once. The supervisor's
+    thread count is the relay, plus the helper parsing large frames once
+    one has come.
   - Facts that arrive while an outpost is starting are held in arrival
     order, a newer fact for the same object and kind replacing the older one
     and moving to the back (NVDA's limiter rule), and released in that order
@@ -772,7 +803,7 @@ Public API:
     is trusted to name the process that raised the fact or holds the
     foreground, which was observed moments before it is opened.
   - Crash: when an outpost's pipe closes, the owner ends it after the
-    reader has forwarded everything it wrote. If its application has
+    relay has handed on everything it wrote. If its application has
     exited, it ended with its target (`Ended`, target exited), is not
     replaced, and the application's process and crash history are let go.
     Otherwise it ended unexpectedly (`Ended`, exited), and it is replaced
@@ -792,7 +823,10 @@ Public API:
     too, except while its application's windows are reported hung
     (`IsHungAppWindow`), when a replacement would hang the same way (the
     pure `wedge_decision`). A kill is followed by the crash rules, an
-    application that has exited included.
+    application that has exited included. The pongs are read by the relay
+    itself, never through the reducer, so a reducer that has stalled ends
+    no outpost; it is reported as its own stall
+    (`EventSink::watched`).
   - Retirement: an outpost whose application has not held attention for two
     minutes, which is not Core's own, and in which the reducer holds no
     nodes, is ended (`Ended`, retired) by the sweep every 30 seconds (the
@@ -1479,10 +1513,10 @@ Implementation notes:
   remote operation where the focus's window allows one
   (`verbatim_uia_rops::controlled_selection`). The reducer
   announces both ([verbatim-core](verbatim-core.md)).
-- `OutpostMessage::Event` carries the target pid, the outpost id, the
-  message's position, and the boxed `OutpostToSupervisor` payload: the
-  replies grew the message enum well past the lifecycle notices, and boxing
-  keeps every channel send small. `Supervisor::send_nodes_held` queues a
+- `OutpostMessage::Event`, which `Frames` makes from a frame, carries the
+  target pid, the outpost id, the message's position, and the boxed
+  `OutpostToSupervisor` payload: the replies grew the message enum well
+  past the lifecycle notices, and boxing keeps every post small. `Supervisor::send_nodes_held` queues a
   `NodesHeld` list for one incarnation.
 
 ## Messages to Core
@@ -1542,7 +1576,8 @@ thread of its own wrote every message, woken for each.
 
 The supervisor's side already never waits: each child's writer queue
 fails or replaces a command when it is full (the `Supervisor` entry above),
-the relay and the reader threads forward to unbounded channels, and the
+the relay hands every frame on through the app's sink, which never
+waits, and the
 maps of writers are locked only to look one up, never across a push or a
 write. The focus listener writes the same way, each fact by the thread
 that produced it, and its backlog merges its facts by element and kind

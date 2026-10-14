@@ -184,9 +184,9 @@ fn invalid(message: &str) -> io::Error {
 }
 
 /// An overlapped pipe end read by a thread that blocks until each read
-/// completes, as a [`Read`]: what verbatim.exe's reader threads read a
-/// child's messages through while they exist. The end of the pipe, its
-/// writer having closed it, reads as the end of the stream.
+/// completes, as a [`Read`]: what a test's harness or a stand-in child
+/// reads a pipe through. The end of the pipe, its writer having closed
+/// it, reads as the end of the stream.
 pub struct BlockingReader {
     pipe: OwnedHandle,
     /// The event each read's completion signals.

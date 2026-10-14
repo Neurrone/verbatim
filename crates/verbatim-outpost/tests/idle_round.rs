@@ -16,8 +16,10 @@
 //! The stand-in outpost answers pings, says it is ready only when Core
 //! first sends it a `Cancel` of request 0, so the test decides when, and
 //! answers each idle query with a fault saying how many facts reached it
-//! since the query before, then the answer. The stand-in listener ends
-//! itself on round 1's query; on any later round's, it first sends a focus
+//! since the query before, then the answer. The stand-in listener closes
+//! its pipe to Core on round 1's query, which ends it as Core sees it,
+//! and exits when Core then shuts it down, so it is counted as shut down
+//! cleanly however soon Core looks; on any later round's, it first sends a focus
 //! fact for the application the test named by a queued focus whose
 //! observation time is that application's pid, if it named one, then the
 //! answer.
@@ -26,7 +28,10 @@ use std::io::{BufReader, Read as _};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-use crossbeam_channel::{Receiver, unbounded};
+use crossbeam_channel::unbounded;
+
+mod common;
+use common::Delivered;
 use verbatim_model::{OutpostId, Pid, TraceId};
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::protocol::{
@@ -69,9 +74,9 @@ fn stand_in(args: &[String]) -> ! {
     .expect("the inherited pipes");
     // The supervisor makes both ends overlapped; this stand-in blocks on
     // each read and write.
-    let (commands, mut messages) = (
+    let (commands, messages) = (
         BlockingReader::new(commands).expect("a reader"),
-        BlockingWriter::new(messages).expect("a writer"),
+        std::cell::RefCell::new(Some(BlockingWriter::new(messages).expect("a writer"))),
     );
     let listener = args.iter().any(|arg| arg == "--listener");
     let target_pid = if listener {
@@ -79,8 +84,11 @@ fn stand_in(args: &[String]) -> ! {
     } else {
         Pid(value(args, "--target-pid").parse().expect("a pid"))
     };
-    let mut send = |message: &OutpostToSupervisor| {
-        write_message(&mut messages, message).expect("a message is written");
+    // Nothing is sent once the pipe to Core is closed.
+    let send = |message: &OutpostToSupervisor| {
+        if let Some(messages) = messages.borrow_mut().as_mut() {
+            write_message(messages, message).expect("a message is written");
+        }
     };
     let ready = OutpostToSupervisor::Ready {
         outpost_pid: Pid(std::process::id()),
@@ -110,7 +118,9 @@ fn stand_in(args: &[String]) -> ! {
             SupervisorToOutpost::FocusQueued { observed_at_ms, .. } => {
                 fact_for = Some(Pid(u32::try_from(observed_at_ms).expect("a pid")));
             }
-            SupervisorToOutpost::IdleQuery { round: 1 } if listener => std::process::exit(0),
+            SupervisorToOutpost::IdleQuery { round: 1 } if listener => {
+                drop(messages.borrow_mut().take());
+            }
             SupervisorToOutpost::IdleQuery { round } => {
                 if let Some(pid) = fact_for.take() {
                     send(&OutpostToSupervisor::FocusFact {
@@ -142,7 +152,7 @@ fn stand_in(args: &[String]) -> ! {
 }
 
 /// The next message from the supervisor, which must come within [`WAIT`].
-fn next(events: &Receiver<OutpostMessage>) -> OutpostMessage {
+fn next(events: &Delivered) -> OutpostMessage {
     events
         .recv_timeout(WAIT)
         .unwrap_or_else(|error| panic!("the supervisor said nothing: {error}"))
@@ -171,7 +181,7 @@ fn end(mut application: Child) {
 
 /// The outpost the supervisor says it started for `target_pid`, which must
 /// be the next thing it says.
-fn started(events: &Receiver<OutpostMessage>, target_pid: Pid) -> OutpostId {
+fn started(events: &Delivered, target_pid: Pid) -> OutpostId {
     match next(events) {
         OutpostMessage::Started {
             outpost,
@@ -183,11 +193,7 @@ fn started(events: &Receiver<OutpostMessage>, target_pid: Pid) -> OutpostId {
 
 /// Asserts the next thing the supervisor says is `expected` from
 /// `outpost`.
-fn from_outpost(
-    events: &Receiver<OutpostMessage>,
-    outpost: OutpostId,
-    expected: &OutpostToSupervisor,
-) {
+fn from_outpost(events: &Delivered, outpost: OutpostId, expected: &OutpostToSupervisor) {
     match next(events) {
         OutpostMessage::Event {
             outpost: from,
@@ -200,7 +206,7 @@ fn from_outpost(
 
 /// Asserts the next thing the supervisor says is that it asked exactly
 /// `outposts` for round `round`.
-fn queried(events: &Receiver<OutpostMessage>, round: u64, outposts: &[OutpostId]) {
+fn queried(events: &Delivered, round: u64, outposts: &[OutpostId]) {
     match next(events) {
         OutpostMessage::IdleQueried {
             round: asked,
@@ -222,12 +228,7 @@ fn facts_before(facts: u32, round: u64) -> OutpostToSupervisor {
 
 /// Has `outpost`, a stand-in for `target_pid` waiting for its cue, say it
 /// is ready, which must be the next thing the supervisor says.
-fn make_ready(
-    supervisor: &Supervisor,
-    events: &Receiver<OutpostMessage>,
-    outpost: OutpostId,
-    target_pid: Pid,
-) {
+fn make_ready(supervisor: &Supervisor, events: &Delivered, outpost: OutpostId, target_pid: Pid) {
     supervisor
         .send_to_outpost(outpost, SupervisorToOutpost::Cancel { request_id: 0 })
         .expect("the stand-in's cue is queued");
@@ -254,13 +255,14 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it() {
         std::sync::Arc::default(),
     )
     .expect("the supervisor starts");
+    let events = Delivered::new(events, &supervisor);
     match next(&events) {
         OutpostMessage::ListenerReady { replacement: false } => {}
         other => panic!("the supervisor said {other:?} before the listener was ready"),
     }
 
-    // Round 1: the listener ends on the query, which counts as its answer;
-    // there is no outpost to ask. Its replacement starts after.
+    // Round 1: the listener's pipe ends on the query, which counts as its
+    // answer; there is no outpost to ask. Its replacement starts after.
     supervisor.query_idle(1);
     queried(&events, 1, &[]);
     match next(&events) {
@@ -314,7 +316,7 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it() {
             exited: 0,
             killed: 0,
         },
-        "both listeners and both outposts ended cleanly, the first listener with code 0 on its own"
+        "both listeners and both outposts ended cleanly, the first listener once its pipe had closed"
     );
     let rest: Vec<OutpostMessage> = events.try_iter().collect();
     assert!(

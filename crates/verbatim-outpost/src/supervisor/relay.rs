@@ -4,23 +4,22 @@
 //!
 //! The owner thread is the relay. It waits only on the port, for:
 //!
-//! - the listener's pipe, read a frame at a time with one overlapped read in
-//!   flight ([`PortReader`]), so the owner routes each fact in the pass that
-//!   read it, in the order the listener wrote them;
+//! - the listener's pipe and every outpost's, each read a frame at a time
+//!   with one overlapped read in flight ([`PortReader`]), so the owner
+//!   routes each of the listener's facts in the pass that read it, in the
+//!   order the listener wrote them, and hands each outpost's frame on to
+//!   the app in the pass that read it;
 //! - the completion of a write to a child's command pipe that pended: every
 //!   child's commands are written inline by the thread that sends them
 //!   ([`super::writer`]), and only a write the pipe could not take at once
 //!   comes back here, where the relay writes what waited behind it, so a
 //!   child that stops reading holds up only its own commands;
 //! - its mailbox ([`Mailbox`]), which carries everything other threads
-//!   report: launches, retirements, hang checks, the outposts' reader
-//!   threads, and the app.
+//!   report: launches, retirements, hang checks, and the app.
 //!
 //! An operation that completes at once is handled where it was started; only
 //! one that waits comes back through the port. Nothing here blocks, and
-//! nothing logs on the delivered path. An outpost's messages to Core are
-//! still read by a thread of their own, until the relay reads them too
-//! (`docs/design/communication.md`, section 11, step 7).
+//! nothing logs on the delivered path.
 
 #![forbid(unsafe_code)]
 
@@ -32,7 +31,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use verbatim_model::OutpostId;
+use verbatim_model::{OutpostId, Pid};
 use verbatim_process::overlapped::{Completion, Completions, Port};
 use verbatim_process::transport::PortReader;
 
@@ -54,7 +53,7 @@ pub(super) fn command_key(outpost: OutpostId) -> usize {
         .unwrap_or(usize::MAX - 1)
 }
 
-/// The key the listener `outpost`'s pipe to Core carries: odd.
+/// The key the child `outpost`'s pipe to Core carries: odd.
 pub(super) fn read_key(outpost: OutpostId) -> usize {
     command_key(outpost) + 1
 }
@@ -194,17 +193,34 @@ pub(super) enum Taken {
     Mailbox,
     /// A write to a child's command pipe, finished by the relay already.
     Write,
-    /// The listener's pipe, under this key: its read completed, or a wake
-    /// asks the relay to read it.
-    Listener(usize),
+    /// A child's pipe to Core, under this key: its read completed, or a
+    /// wake asks the relay to read it.
+    Read(usize),
+}
+
+/// Whose pipe to Core a reading is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Source {
+    /// The focus listener's.
+    Listener,
+    /// An outpost's, watching this application.
+    Outpost(Pid),
+}
+
+/// A child's pipe to Core, being read.
+pub(super) struct Reader {
+    /// The child's incarnation.
+    pub(super) outpost: OutpostId,
+    pub(super) source: Source,
+    pub(super) pipe: PortReader,
 }
 
 /// The relay's port and the pipes it serves. Owned by the owner thread.
 pub(super) struct Relay {
     port: Arc<Port>,
     commands: CommandPipes,
-    /// The listeners' pipes to Core, by key, each with its incarnation.
-    listeners: HashMap<usize, (OutpostId, PortReader)>,
+    /// The children's pipes to Core, by key.
+    readers: HashMap<usize, Reader>,
 }
 
 impl Relay {
@@ -221,7 +237,7 @@ impl Relay {
                 writers: Arc::default(),
             },
             port,
-            listeners: HashMap::new(),
+            readers: HashMap::new(),
         })
     }
 
@@ -235,7 +251,7 @@ impl Relay {
         &self.commands
     }
 
-    /// Reads `pipe`, the listener `outpost`'s pipe to Core, an overlapped
+    /// Reads `pipe`, the child `outpost`'s pipe to Core, an overlapped
     /// end, from the relay's next pass on: a wake carrying its key starts
     /// the reading after whatever the owner is doing now.
     ///
@@ -243,31 +259,43 @@ impl Relay {
     ///
     /// Returns the error of associating the pipe with the port, or of
     /// posting the wake.
-    pub(super) fn add_listener(&mut self, outpost: OutpostId, pipe: OwnedHandle) -> io::Result<()> {
+    pub(super) fn add_reader(
+        &mut self,
+        outpost: OutpostId,
+        source: Source,
+        pipe: OwnedHandle,
+    ) -> io::Result<()> {
         let key = read_key(outpost);
         let file = self.port.associate(pipe, key)?;
         // Nothing is in flight until the wake is taken, so a pipe whose
         // wake could not be posted is simply dropped.
         self.port.post(key)?;
-        self.listeners.insert(key, (outpost, PortReader::new(file)));
+        self.readers.insert(
+            key,
+            Reader {
+                outpost,
+                source,
+                pipe: PortReader::new(file),
+            },
+        );
         Ok(())
     }
 
-    /// Takes the listener's reader under `key` out to read it, if it is
-    /// still read: a wake can come for one that has ended.
-    pub(super) fn take_listener(&mut self, key: usize) -> Option<(OutpostId, PortReader)> {
-        self.listeners.remove(&key)
+    /// Takes the reader under `key` out to read it, if it is still read: a
+    /// wake can come for one that has ended.
+    pub(super) fn take_reader(&mut self, key: usize) -> Option<Reader> {
+        self.readers.remove(&key)
     }
 
-    /// Puts back a listener's reader taken out to be read, which goes on.
-    pub(super) fn put_listener(&mut self, key: usize, outpost: OutpostId, reader: PortReader) {
-        self.listeners.insert(key, (outpost, reader));
+    /// Puts back a reader taken out to be read, which goes on.
+    pub(super) fn put_reader(&mut self, key: usize, reader: Reader) {
+        self.readers.insert(key, reader);
     }
 
     /// Whether every pipe has finished: every writer written out or failed,
-    /// and every listener's pipe ended.
+    /// and every child's pipe to Core ended.
     pub(super) fn is_idle(&self) -> bool {
-        self.listeners.is_empty() && self.commands.all_finished()
+        self.readers.is_empty() && self.commands.all_finished()
     }
 
     /// Waits up to `timeout`, or for ever when `None`, for completions and
@@ -296,7 +324,7 @@ impl Relay {
             }
             Taken::Write
         } else {
-            Taken::Listener(completion.key)
+            Taken::Read(completion.key)
         }
     }
 }
@@ -442,7 +470,9 @@ mod tests {
         let mut relay = Relay::new().expect("a relay");
         let (core, listener) = pipe(Flow::Inbound, 0, End::Synchronous).expect("a pipe");
         let outpost = OutpostId(5);
-        relay.add_listener(outpost, core).expect("added");
+        relay
+            .add_reader(outpost, Source::Listener, core)
+            .expect("added");
         let mut listener = File::from(listener);
         for seq in [1, 2] {
             write_message(
@@ -463,13 +493,13 @@ mod tests {
             let count = relay.wait(&mut completions, Some(BOUND)).expect("waited");
             assert!(count > 0, "a completion within the bound");
             for completion in completions.iter() {
-                let Taken::Listener(key) = relay.take(&completion) else {
+                let Taken::Read(key) = relay.take(&completion) else {
                     panic!("only the listener's pipe is served");
                 };
-                let (read, mut reader) = relay.take_listener(key).expect("still read");
-                assert_eq!(read, outpost);
+                let mut read = relay.take_reader(key).expect("still read");
+                assert_eq!(read.outpost, outpost);
                 let port = Arc::clone(relay.port());
-                match reader.take(&completion, &port, |body| {
+                match read.pipe.take(&completion, &port, |body| {
                     let message: OutpostToSupervisor =
                         crate::protocol::decode_message(body).expect("a message");
                     if let OutpostToSupervisor::Pong { seq, .. } = message {
@@ -478,7 +508,7 @@ mod tests {
                     Ok(())
                 }) {
                     verbatim_process::transport::Reading::Ended(result) => ended = Some(result),
-                    _ => relay.put_listener(key, read, reader),
+                    _ => relay.put_reader(key, read),
                 }
             }
         }

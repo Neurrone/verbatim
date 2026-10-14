@@ -21,6 +21,7 @@
 //! Verbatim and the test agent check before starting.
 
 pub mod overlapped;
+pub mod port_queue;
 pub mod scheduling;
 pub mod session;
 pub mod transport;
