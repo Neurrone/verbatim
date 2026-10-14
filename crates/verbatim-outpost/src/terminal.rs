@@ -515,9 +515,6 @@ pub struct Terminal {
     memory: Option<Memory>,
     /// On-demand reading.
     pub reading: Reading,
-    /// Core's request, by its id and trace, whose read the terminal
-    /// disturbed: answered by the next read that settles.
-    pub owed: Option<(u64, verbatim_model::TraceId)>,
     /// Whether the terminal's `FindText` matches a row's padding, as the
     /// console host's does and Windows Terminal's does not
     /// ([`ScreenQuery::matches_padding`]), set by the worker from the
@@ -569,14 +566,14 @@ impl Terminal {
     /// NVDA takes a fresh snapshot of a terminal on focus
     /// (`docs/design/terminal-reading.md`, "Monitoring starts on focus"):
     /// the terminal then behaves the same whether the outpost kept it while
-    /// the focus was away or released it with its node. The reading and
-    /// the request owed are kept, for the focus's transition to answer, and
-    /// so is the caret last sent, which the focus forgets on its own
-    /// schedule, before the caret it asks for is read.
+    /// the focus was away or released it with its node. The reading is
+    /// kept, for the focus's transition to answer the request owed (which
+    /// the outpost keeps apart from the terminal), and so is the caret last
+    /// sent, which the focus forgets on its own schedule, before the caret
+    /// it asks for is read.
     pub fn focus_arrived(&mut self) {
         *self = Self {
             reading: self.reading,
-            owed: self.owed.take(),
             sent_caret: self.sent_caret.take(),
             ..Self::default()
         };

@@ -1628,7 +1628,10 @@ it covers whatever is in pipes and backlogs without counting it.
   first, the query going directly behind it, ahead of what arrived after
   the query, and waiting for no follow-up when it is reached again. It is then answered as soon as no
   caret key's watch is open and no terminal owes Core a read: checked after
-  every entry the worker in charge handles. Entries that arrive after the
+  every entry the worker in charge handles. The requests terminals owe are
+  kept under a lock of their own, never held across a call into the
+  application, so a worker abandoned in a terminal's read cannot keep its
+  replacement waiting there. Entries that arrive after the
   query are not waited for, nor are the follow-ups they queue or the
   carets they note, so a flood cannot hold the answer back. The
   answer goes through the ordinary queue, never merged, and no event is

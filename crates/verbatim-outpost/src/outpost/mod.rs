@@ -185,6 +185,13 @@ pub(crate) struct Context {
     /// Each focused terminal's anchor and memory, by node (milestone M4
     /// item 9).
     terminals: Mutex<HashMap<u64, crate::terminal::Terminal>>,
+    /// Core's request, by its id and trace, whose read a focused terminal
+    /// disturbed, by the terminal's node: answered by the terminal's next
+    /// read that settles. Kept apart from [`Context::terminals`], whose
+    /// lock a terminal read holds across its calls into the application,
+    /// under a lock never held across one, so the idle barrier's answer
+    /// never waits on the application (`worker::answer_idle`).
+    owed_reads: Mutex<HashMap<u64, (u64, TraceId)>>,
     /// How the worker reads the element that has the keyboard focus, for a
     /// focus-now query: a UIA focus event's element comes from the focus
     /// listener's read instead.
@@ -349,6 +356,12 @@ impl Context {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
+    fn owed_reads(&self) -> MutexGuard<'_, HashMap<u64, (u64, TraceId)>> {
+        self.owed_reads
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// How many of a change's newest lines a terminal read takes
     /// ([`SupervisorToOutpost::TerminalLines`]), which also bounds the
     /// output combined while it waits to be sent.
@@ -462,6 +475,7 @@ impl Context {
         self.patterns().clear();
         self.text_support().clear();
         self.terminals().clear();
+        self.owed_reads().clear();
         *self.caret_watch() = None;
         drop(objects);
         nodes.len()
@@ -787,6 +801,7 @@ impl Outpost {
             caret_read: Mutex::new(CaretRead::default()),
             fetches: Mutex::new(Fetches::default()),
             terminals: Mutex::new(HashMap::new()),
+            owed_reads: Mutex::new(HashMap::new()),
             focused_element,
             foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
             requested_events: acceptance::RequestedEvents::default(),

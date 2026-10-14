@@ -660,11 +660,13 @@ pub(super) fn forget(context: &Context, released: impl IntoIterator<Item = u64>)
     let mut uia = context.uia_anchors();
     let mut edit = context.edit_anchors();
     let mut terminals = context.terminals();
+    let mut owed = context.owed_reads();
     for node in released {
         patterns.remove(&node);
         support.remove(&node);
         uia.forget_node(node);
         edit.forget_node(node);
         terminals.remove(&node);
+        owed.remove(&node);
     }
 }

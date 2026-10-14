@@ -615,12 +615,10 @@ fn answer_idle(context: &Context) {
     if context.idle_query().is_none() {
         return;
     }
-    if context.caret_watch().is_some()
-        || context
-            .terminals()
-            .values()
-            .any(|terminal| terminal.owed.is_some())
-    {
+    // Neither lock is held across a call into the application, so a worker
+    // abandoned in a terminal's read, which holds the terminals' lock,
+    // cannot hold the answer back.
+    if context.caret_watch().is_some() || !context.owed_reads().is_empty() {
         return;
     }
     let answered = context.idle_query().take();
@@ -1480,7 +1478,7 @@ impl Worker<'_> {
             }
             let (reading, action) = terminal.reading.next(event);
             terminal.reading = reading;
-            let mut owed = terminal.owed.take();
+            let mut owed = self.context.owed_reads().remove(&node_id.number());
             // A request asked now takes the place of one owed.
             let superseded = request.and_then(|request| owed.replace(request));
             (action, owed, superseded)
@@ -1490,12 +1488,8 @@ impl Worker<'_> {
         }
         let mode = match action {
             Action::Nothing => {
-                if owed.is_some() {
-                    self.context
-                        .terminals()
-                        .entry(node_id.number())
-                        .or_default()
-                        .owed = owed;
+                if let Some(owed) = owed {
+                    self.context.owed_reads().insert(node_id.number(), owed);
                 }
                 return;
             }
@@ -1625,7 +1619,9 @@ impl Worker<'_> {
                 let mut terminals = self.context.terminals();
                 let terminal = terminals.entry(node_id.number()).or_default();
                 terminal.reading = terminal.reading.next(Event::ReplyUnsettled).0;
-                terminal.owed = owed;
+                if let Some(owed) = owed {
+                    self.context.owed_reads().insert(node_id.number(), owed);
+                }
             }
             // A report the terminal wrote to while it was read: the change
             // that disturbed it raises another.
@@ -3472,6 +3468,49 @@ impl Worker<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The idle barrier's answer never waits on the terminals' lock, which
+    /// a terminal's read holds across its calls into the application: a
+    /// worker abandoned in such a read keeps the lock, and the worker that
+    /// replaced it, waiting on that lock with no deadline, would never be
+    /// abandoned in turn. The test holds the lock as that read does.
+    #[test]
+    fn the_idle_answer_does_not_wait_on_the_terminals_lock() {
+        use std::io::BufReader;
+        use std::sync::mpsc;
+
+        use verbatim_process::overlapped::{End, Flow, pipe};
+        use verbatim_process::transport::{BlockingReader, EVENT_PIPE_BUFFER};
+
+        use crate::protocol::{SupervisorToOutpost, read_message};
+
+        let (ours, theirs) =
+            pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Overlapped).expect("a pipe");
+        let outpost = super::super::Outpost::new(theirs, std::process::id());
+        let (messages_tx, messages) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(BlockingReader::new(ours).expect("a reader"));
+            while let Ok(Some(message)) = read_message::<_, OutpostToSupervisor>(&mut reader) {
+                if messages_tx.send(message).is_err() {
+                    return;
+                }
+            }
+        });
+        let wait = Duration::from_secs(10);
+        assert!(matches!(
+            messages.recv_timeout(wait),
+            Ok(OutpostToSupervisor::Ready { .. })
+        ));
+        let read_in_progress = outpost.context.terminals();
+        outpost.handle_command(&SupervisorToOutpost::IdleQuery { round: 4 });
+        let answer = messages.recv_timeout(wait);
+        drop(read_in_progress);
+        assert_eq!(
+            answer.ok(),
+            Some(OutpostToSupervisor::IdleAnswer { round: 4 })
+        );
+        outpost.shutdown();
+    }
 
     #[test]
     fn a_returning_abandoned_worker_never_publishes_and_lowers_the_count() {
