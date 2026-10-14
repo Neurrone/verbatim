@@ -429,11 +429,14 @@ mod tests {
         // More than the pipe's 4 KiB buffer, so its write waits for a
         // reader that never comes.
         stuck
-            .push(Outgoing::NodesHeld(SupervisorToOutpost::NodesHeld {
-                nodes: (0..2_000).collect(),
-                anchors: Vec::new(),
-                acknowledged: 1,
-            }))
+            .push(Outgoing::Other(
+                SupervisorToOutpost::NodesHeld {
+                    nodes: (0..2_000).collect(),
+                    anchors: Vec::new(),
+                    acknowledged: 1,
+                },
+                Received::now(),
+            ))
             .expect("written, and pending");
         super::super::owner::deliver(&stuck, held(1, 10));
         super::super::owner::deliver(&other, held(2, 20));

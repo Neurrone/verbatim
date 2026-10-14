@@ -237,7 +237,7 @@ pub enum OutpostMessage {
         outpost: OutpostId,
         /// How many messages carrying node ids the outpost has sent up to and
         /// including this one: what the app acknowledges in
-        /// [`Supervisor::send_nodes_held`] once it has handled the message.
+        /// [`Supervisor::leave_nodes_held`] once it has handled the message.
         position: u64,
         /// The message, boxed so every channel send is small, not sized to
         /// the largest reply.
@@ -434,12 +434,15 @@ impl Supervisor {
         writer.push(writer::Outgoing::Other(command, writer::Received::now()))
     }
 
-    /// Tells one outpost incarnation which of its nodes and text anchors Core
-    /// still holds, and the position of the last of its messages the app has
-    /// handled. A newer list replaces one still waiting to be written, and
-    /// gets through even when the queue is full. Nothing happens if the
+    /// Leaves for one outpost incarnation the list of its nodes and text
+    /// anchors Core still holds, with the position of the last of its
+    /// messages the app has handled (`docs/design/communication.md`, step
+    /// 11). Nothing is written for it: the next command written to that
+    /// incarnation, a request from the app or the relay's ping within
+    /// three seconds, carries it after its own frame, in the same write. A
+    /// newer list replaces one not yet sent. Nothing happens if the
     /// incarnation has ended.
-    pub fn send_nodes_held(
+    pub fn leave_nodes_held(
         &self,
         outpost: OutpostId,
         nodes: Vec<u64>,
@@ -453,13 +456,11 @@ impl Supervisor {
             .get(&outpost)
             .cloned();
         if let Some(writer) = writer {
-            let _ = writer.push(writer::Outgoing::NodesHeld(
-                SupervisorToOutpost::NodesHeld {
-                    nodes,
-                    anchors,
-                    acknowledged,
-                },
-            ));
+            writer.leave_held(SupervisorToOutpost::NodesHeld {
+                nodes,
+                anchors,
+                acknowledged,
+            });
         }
     }
 

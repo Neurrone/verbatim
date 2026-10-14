@@ -11,9 +11,6 @@
 //! - a ping always gets through, past the bound, since a missed ping would
 //!   get a healthy outpost killed, and so does the shutdown message, the
 //!   last command a child is sent;
-//! - a list of the nodes Core holds replaces any older list still waiting,
-//!   and otherwise gets through past the bound, since only the newest list
-//!   matters and an outpost that never hears one keeps every node;
 //! - a routed fact replaces any older fact still waiting for the same object
 //!   and kind; if there is none, the oldest waiting fact is dropped to make
 //!   room, so the newest facts survive;
@@ -31,6 +28,16 @@
 //!   would move that fact behind the query;
 //! - anything else, a query above all, fails at once, so its asker gets an
 //!   outcome straight away instead of waiting behind a stuck outpost.
+//!
+//! The list of the nodes Core holds in an outpost is not a command of its
+//! own (`docs/design/communication.md`, step 11): the reducer leaves the
+//! latest list in the writer's slot ([`WriterHandle::leave_held`]), a newer
+//! one replacing a list not yet sent, and whichever write to the outpost
+//! comes next, a request from the reducer, a ping from the relay, or any
+//! other command but the shutdown message, takes it and carries it in the
+//! same write, after its own frame, so the command is handled first and the
+//! list never costs a write of its own. The relay pings every outpost every
+//! three seconds, so a list waits at most that long.
 
 #![forbid(unsafe_code)]
 
@@ -57,8 +64,6 @@ pub(super) enum Outgoing {
     Ping(SupervisorToOutpost),
     /// The shutdown message, [`SupervisorToOutpost::Shutdown`].
     Shutdown,
-    /// The nodes Core holds.
-    NodesHeld(SupervisorToOutpost),
     /// A routed fact, keyed by the object and kind it concerns (`None` for
     /// a notification, which nothing replaces), with when verbatim.exe read
     /// it from the listener.
@@ -107,7 +112,6 @@ impl Outgoing {
             Outgoing::Shutdown => &SupervisorToOutpost::Shutdown,
             Outgoing::Ping(command)
             | Outgoing::IdleQuery(command)
-            | Outgoing::NodesHeld(command)
             | Outgoing::Fact(_, command, _)
             | Outgoing::HandOver(command)
             | Outgoing::FocusRead(command, _)
@@ -142,7 +146,7 @@ impl Outgoing {
                 command.stamp_sent(now);
                 command
             }
-            Outgoing::NodesHeld(command) | Outgoing::IdleQuery(command) => command,
+            Outgoing::IdleQuery(command) => command,
         }
     }
 }
@@ -208,10 +212,14 @@ impl std::fmt::Display for QueueError {
     }
 }
 
-/// The waiting commands. Pure, so the overload policy is tested on its own.
+/// The waiting commands, and the slot for the held nodes' list. Pure, so
+/// the overload policy is tested on its own.
 #[derive(Debug, Default)]
 pub(super) struct Queue {
     items: VecDeque<Outgoing>,
+    /// The latest [`SupervisorToOutpost::NodesHeld`] not yet sent, which
+    /// the next command written carries after its own frame.
+    held: Option<SupervisorToOutpost>,
 }
 
 impl Queue {
@@ -223,10 +231,6 @@ impl Queue {
             | Outgoing::HandOver(_)
             | Outgoing::FocusRead(..)
             | Outgoing::IdleQuery(_) => {}
-            Outgoing::NodesHeld(_) => {
-                self.items
-                    .retain(|waiting| !matches!(waiting, Outgoing::NodesHeld(_)));
-            }
             Outgoing::Fact(ref key, ..) => {
                 // Never one queued before the idle barrier's query.
                 let after_query = self
@@ -288,8 +292,20 @@ impl Backlog for Queue {
         self.items.is_empty()
     }
 
+    /// Appends `item`'s frame, then the held nodes' list in the slot, if
+    /// any, which the item's write then carries; the shutdown message
+    /// carries none, since the outpost is ending.
     fn encode(&mut self, item: Outgoing, buffer: &mut Vec<u8>) -> io::Result<()> {
-        put_message(buffer, &item.relayed())
+        let carries = !matches!(item, Outgoing::Shutdown);
+        put_message(buffer, &item.relayed())?;
+        if carries && let Some(held) = self.held.take() {
+            let before = buffer.len();
+            if let Err(error) = put_message(buffer, &held) {
+                buffer.truncate(before);
+                tracing::warn!(%error, "the held nodes could not be encoded; they are dropped");
+            }
+        }
+        Ok(())
     }
 }
 
@@ -328,6 +344,13 @@ impl WriterHandle {
             SendError::Refused(refused) => refused,
             SendError::Closed => QueueError::Closed,
         })
+    }
+
+    /// Leaves `held`, a [`SupervisorToOutpost::NodesHeld`], in the slot,
+    /// replacing a list not yet sent: it writes nothing, and the next
+    /// command written carries it.
+    pub(super) fn leave_held(&self, held: SupervisorToOutpost) {
+        self.sender.with_backlog(|queue| queue.held = Some(held));
     }
 
     /// Closes the writer: nothing more is accepted, and the pipe is closed
@@ -410,30 +433,130 @@ mod tests {
         assert_eq!(seqs(&mut queue), vec![2, 3]);
     }
 
+    /// A held nodes' list acknowledging `acknowledged`.
+    fn held_list(acknowledged: u64) -> SupervisorToOutpost {
+        SupervisorToOutpost::NodesHeld {
+            nodes: vec![acknowledged],
+            anchors: Vec::new(),
+            acknowledged,
+        }
+    }
+
+    /// A writer on a pipe of its own, and the child's end, read with one
+    /// overlapped read at a time, so each read takes what one write
+    /// brought, and only that.
+    struct Child {
+        port: Port,
+        pipe: verbatim_process::overlapped::PortFile,
+        reading: verbatim_process::overlapped::PipeIo,
+    }
+
+    impl Child {
+        fn new() -> (WriterHandle, Self) {
+            use verbatim_process::overlapped::{End, Flow, PipeIo, pipe};
+            let (ours, theirs) = pipe(Flow::Inbound, 4096, End::Overlapped).expect("a pipe");
+            let writer = WriterHandle::on_port(theirs, Arc::new(Port::new().expect("a port")), 2)
+                .expect("a writer");
+            let port = Port::new().expect("a port");
+            let pipe = port.associate(ours, 5).expect("associated");
+            let mut child = Self {
+                port,
+                pipe,
+                reading: PipeIo::new(4096),
+            };
+            child.arm();
+            (writer, child)
+        }
+
+        /// Starts the next read, before anything is written.
+        fn arm(&mut self) {
+            assert!(matches!(
+                self.reading.read(&self.pipe),
+                verbatim_process::overlapped::Started::Pending
+            ));
+        }
+
+        /// Whether nothing has been written: every write is begun on the
+        /// thread that sends, and a write completes the read in flight
+        /// before it returns.
+        fn nothing_written(&self) -> bool {
+            let mut completions = verbatim_process::overlapped::Completions::with_capacity(4);
+            self.port
+                .wait(&mut completions, Some(std::time::Duration::ZERO))
+                .expect("waited")
+                == 0
+        }
+
+        /// What the next write brought, each frame named, and a read armed
+        /// for the one after.
+        fn one_write(&mut self) -> Vec<String> {
+            let mut completions = verbatim_process::overlapped::Completions::with_capacity(4);
+            assert_eq!(
+                self.port
+                    .wait(&mut completions, Some(std::time::Duration::from_secs(10)))
+                    .expect("waited"),
+                1
+            );
+            let completion = completions.iter().next().expect("one completion");
+            self.reading
+                .complete(&self.pipe, &completion)
+                .expect("read");
+            let mut data = self.reading.data();
+            let mut names = Vec::new();
+            while let Some(command) =
+                crate::protocol::read_message::<_, SupervisorToOutpost>(&mut data).expect("a frame")
+            {
+                names.push(match command {
+                    SupervisorToOutpost::Ping { seq, .. } => format!("ping {seq}"),
+                    SupervisorToOutpost::Query { request_id, .. } => {
+                        format!("query {request_id}")
+                    }
+                    SupervisorToOutpost::NodesHeld { acknowledged, .. } => {
+                        format!("held {acknowledged}")
+                    }
+                    other => format!("{other:?}"),
+                });
+            }
+            self.arm();
+            names
+        }
+    }
+
+    /// A list left in the slot is not written; the next request carries it
+    /// in its own write, after it; and the slot is then empty, so the write
+    /// after that carries nothing.
     #[test]
-    fn a_held_list_replaces_a_waiting_one_and_gets_through_a_full_queue() {
-        let held = |acknowledged| {
-            Outgoing::NodesHeld(SupervisorToOutpost::NodesHeld {
-                nodes: Vec::new(),
-                anchors: Vec::new(),
-                acknowledged,
-            })
-        };
-        let mut queue = Queue::default();
-        queue.push(held(1), 1).expect("room for one");
-        queue.push(held(2), 1).expect("replaces the waiting list");
-        queue.push(query(), 3).expect("room for a query");
-        queue.push(query(), 3).expect("room for another");
-        queue
-            .push(held(3), 2)
-            .expect("replaces it again and gets through the full queue");
-        let acknowledged: Vec<u64> = std::iter::from_fn(|| queue.pop())
-            .filter_map(|item| match item.command() {
-                SupervisorToOutpost::NodesHeld { acknowledged, .. } => Some(*acknowledged),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(acknowledged, vec![3]);
+    fn held_nodes_go_after_the_next_request_in_its_write_and_never_in_one_of_their_own() {
+        let (writer, mut child) = Child::new();
+        writer.leave_held(held_list(7));
+        assert!(child.nothing_written(), "the list is not written alone");
+        writer.push(query()).expect("written");
+        assert_eq!(child.one_write(), ["query 1", "held 7"]);
+        writer.push(query()).expect("written");
+        assert_eq!(child.one_write(), ["query 1"], "the list went once");
+    }
+
+    /// With no request, the relay's next ping carries the list, after it,
+    /// in the same write.
+    #[test]
+    fn held_nodes_go_with_the_next_ping_when_no_request_comes() {
+        let (writer, mut child) = Child::new();
+        writer.leave_held(held_list(4));
+        assert!(child.nothing_written(), "the list is not written alone");
+        writer.push(ping()).expect("written");
+        assert_eq!(child.one_write(), ["ping 1", "held 4"]);
+    }
+
+    /// A newer list replaces one not yet sent, and only the newer one
+    /// goes.
+    #[test]
+    fn a_newer_held_list_replaces_an_unsent_one() {
+        let (writer, mut child) = Child::new();
+        writer.leave_held(held_list(4));
+        writer.leave_held(held_list(9));
+        assert!(child.nothing_written(), "neither list is written alone");
+        writer.push(ping()).expect("written");
+        assert_eq!(child.one_write(), ["ping 1", "held 9"]);
     }
 
     /// A selection of `runtime_id` named `name`, as routed.

@@ -951,18 +951,6 @@ struct ReducerThread<'a> {
     barrier: idle::IdleBarrier<Sender<()>>,
 }
 
-/// How many messages from an outpost may be handled before the nodes held in
-/// it are sent again although they have not changed, so that it can release
-/// the nodes it reported meanwhile.
-const HELD_RESEND_INTERVAL: u64 = 256;
-
-/// How many messages from an outpost must be handled before changed held
-/// nodes are sent: they only let the outpost release what Core no longer
-/// holds, which may wait, and a terminal's output changes them with every
-/// message (its caret's anchor), so sending each change would cost a round
-/// trip to the outpost per message (`docs/design/wake-ups.md`, item 4).
-const HELD_BATCH: u64 = 32;
-
 impl ReducerThread<'_> {
     /// Handles one message from the supervisor.
     fn on_outpost_message(&mut self, message: OutpostMessage) {
@@ -1480,13 +1468,14 @@ impl ReducerThread<'_> {
     /// foreground change and then a focus, and held nodes sent after the
     /// first alone, with the answer's position as acknowledged, would have
     /// the outpost release the focus it reported in that same answer
-    /// before Core had taken it. The held nodes are also sent again every
-    /// [`HELD_RESEND_INTERVAL`] messages, so an outpost whose held nodes do
-    /// not change still releases what it reported meanwhile. The text anchors
-    /// the state holds in each outpost go with its nodes.
+    /// before Core had taken it. The text anchors the state holds in each
+    /// outpost go with its nodes.
     ///
-    /// Changed held nodes are sent once [`HELD_BATCH`] messages have been
-    /// handled since the last, not as each change happens.
+    /// The held nodes are not written as they change: they are left for
+    /// the outpost ([`live::Live::held_changed`] says when they changed,
+    /// the position of the last message handled included), and the next
+    /// command written to it, a request or the relay's ping within three
+    /// seconds, carries them (`docs/design/communication.md`, step 11).
     fn send_views(&mut self) {
         let held = self.state.held_nodes();
         let anchors = self.state.held_anchors();
@@ -1512,18 +1501,13 @@ impl ReducerThread<'_> {
                 .get(outpost)
                 .map(|anchors| anchors.iter().map(|anchor| anchor.0).collect())
                 .unwrap_or_default();
-            let (sent, sent_anchors, acknowledged) = &live.held_sent;
-            let changed = nodes != *sent || outpost_anchors != *sent_anchors;
-            if (changed && live.position >= acknowledged + HELD_BATCH)
-                || live.position >= acknowledged + HELD_RESEND_INTERVAL
-            {
-                self.context.supervisor.send_nodes_held(
+            if live.held_changed(&nodes, &outpost_anchors) {
+                self.context.supervisor.leave_nodes_held(
                     *outpost,
-                    nodes.iter().copied().collect(),
-                    outpost_anchors.iter().copied().collect(),
+                    nodes.into_iter().collect(),
+                    outpost_anchors.into_iter().collect(),
                     live.position,
                 );
-                live.held_sent = (nodes, outpost_anchors, live.position);
             }
         }
     }

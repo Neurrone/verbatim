@@ -38,6 +38,36 @@ fn the_screen_before_a_key_is_found_after_its_change_was_read() {
     assert_eq!(terminal.screen_at(150), None);
 }
 
+/// A terminal regaining the focus behaves the same whether the outpost kept
+/// what it read before the focus left or released it with its node: a key
+/// pressed as the focus arrived finds no screen from before, and the
+/// baseline read is what both remember.
+#[test]
+fn a_terminal_regaining_the_focus_is_the_same_whether_it_was_kept_or_released() {
+    let now = remembered(&["ready> make", "built", "ready>"], 2);
+    let mut kept = Terminal::default();
+    kept.remember_at(remembered(&["ready>"], 0), None, 100);
+    // The last read before the focus left.
+    kept.remember_at(remembered(&["ready> make"], 0), None, 200);
+    let mut released = Terminal::default();
+    for terminal in [&mut kept, &mut released] {
+        terminal.focus_arrived();
+        // The baseline read the focus makes, begun at 990, ended at 1,000.
+        let found = Found::Output(TerminalOutput::default(), now.clone());
+        terminal.note_read(990, &found);
+        terminal.remember_at(now.clone(), None, 1_000);
+    }
+    for pressed in [150, 500, 999, 1_001] {
+        assert_eq!(
+            kept.screen_at(pressed),
+            released.screen_at(pressed),
+            "a key pressed at {pressed}"
+        );
+    }
+    assert_eq!(kept.memory(), released.memory());
+    assert_eq!(kept.covers(989), released.covers(989));
+}
+
 #[test]
 fn a_change_observed_before_an_unsettled_read_is_still_read() {
     let mut terminal = Terminal::default();

@@ -25,9 +25,9 @@ pub(crate) struct Live {
     pub(crate) ready: bool,
     /// The position of the last of its messages handled here.
     pub(crate) position: u64,
-    /// The held nodes and text anchors last sent to it, and the position
-    /// acknowledged then.
-    pub(crate) held_sent: (BTreeSet<u64>, BTreeSet<u64>, u64),
+    /// The held nodes and text anchors last left for it, and the position
+    /// acknowledged then ([`Live::held_changed`]).
+    held_left: (BTreeSet<u64>, BTreeSet<u64>, u64),
     /// Whether its last query passed its deadline with no answer since:
     /// the application is not responding.
     stalled: bool,
@@ -36,6 +36,24 @@ pub(crate) struct Live {
     /// How many lines a terminal read takes, as last sent to it, `None`
     /// before the first.
     pub(crate) terminal_lines_sent: Option<u16>,
+}
+
+impl Live {
+    /// Whether `nodes` and `anchors`, the nodes and text anchors the state
+    /// holds in this outpost, with the position of its last message handled
+    /// here, differ from what was last left for it; if so, they are noted
+    /// as left. A position that moved on is a change: the outpost keeps
+    /// every node it reported until a list acknowledges the message, so
+    /// the list goes again even when the state holds the same nodes. When
+    /// nothing changed, nothing is left, and the outpost hears nothing.
+    pub(crate) fn held_changed(&mut self, nodes: &BTreeSet<u64>, anchors: &BTreeSet<u64>) -> bool {
+        let (left, left_anchors, acknowledged) = &self.held_left;
+        if left == nodes && left_anchors == anchors && *acknowledged == self.position {
+            return false;
+        }
+        self.held_left = (nodes.clone(), anchors.clone(), self.position);
+        true
+    }
 }
 
 /// The live outpost incarnations, by outpost id.
@@ -54,7 +72,7 @@ impl LiveOutposts {
                 application: None,
                 ready: false,
                 position: 0,
-                held_sent: (BTreeSet::new(), BTreeSet::new(), 0),
+                held_left: (BTreeSet::new(), BTreeSet::new(), 0),
                 stalled: false,
                 fetches_sent: None,
                 terminal_lines_sent: None,
@@ -252,5 +270,36 @@ mod tests {
         live.accept(OutpostId(2), 41);
         let (_, record) = live.iter_mut().next().expect("one live outpost");
         assert_eq!(record.position, 41);
+    }
+
+    /// The held nodes are left for an outpost only when they, its anchors,
+    /// or the position of its last message handled changed since they were
+    /// last left: nothing is sent when nothing changed.
+    #[test]
+    fn held_nodes_are_left_only_when_they_or_the_position_changed() {
+        let mut live = LiveOutposts::default();
+        live.started(OutpostId(2), Pid(7));
+        let nodes = |numbers: &[u64]| numbers.iter().copied().collect::<BTreeSet<u64>>();
+        let mut changes = Vec::new();
+        let mut step =
+            |live: &mut LiveOutposts, position: Option<u64>, held: &[u64], anchors: &[u64]| {
+                if let Some(position) = position {
+                    live.accept(OutpostId(2), position);
+                }
+                let (_, record) = live.iter_mut().next().expect("one live outpost");
+                changes.push(record.held_changed(&nodes(held), &nodes(anchors)));
+            };
+        step(&mut live, None, &[], &[]);
+        step(&mut live, Some(1), &[5], &[]);
+        step(&mut live, None, &[5], &[]);
+        step(&mut live, None, &[5], &[8]);
+        step(&mut live, None, &[5], &[8]);
+        step(&mut live, Some(2), &[5], &[8]);
+        step(&mut live, None, &[6], &[8]);
+        assert_eq!(
+            changes,
+            [false, true, false, true, false, true, true],
+            "nothing yet; a message; the same again; an anchor; the same              again; a message holding the same; another node"
+        );
     }
 }

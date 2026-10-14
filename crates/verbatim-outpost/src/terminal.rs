@@ -565,6 +565,23 @@ impl Terminal {
             .map(|(memory, _)| memory)
     }
 
+    /// Forgets what was read of the terminal before the focus arrived, as
+    /// NVDA takes a fresh snapshot of a terminal on focus
+    /// (`docs/design/terminal-reading.md`, "Monitoring starts on focus"):
+    /// the terminal then behaves the same whether the outpost kept it while
+    /// the focus was away or released it with its node. The reading and
+    /// the request owed are kept, for the focus's transition to answer, and
+    /// so is the caret last sent, which the focus forgets on its own
+    /// schedule, before the caret it asks for is read.
+    pub fn focus_arrived(&mut self) {
+        *self = Self {
+            reading: self.reading,
+            owed: self.owed.take(),
+            sent_caret: self.sent_caret.take(),
+            ..Self::default()
+        };
+    }
+
     /// Remembers `memory`, read just now, with `top` as its range.
     fn remember(&mut self, memory: Memory, top: Option<AgileReference<IUIAutomationTextRange>>) {
         self.remember_at(memory, top, crate::protocol::now_us() / 1_000);

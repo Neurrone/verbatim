@@ -1466,6 +1466,9 @@ impl Worker<'_> {
         let (action, owed, superseded) = {
             let mut terminals = self.context.terminals();
             let terminal = terminals.entry(node_id.number()).or_default();
+            if event == Event::Focused {
+                terminal.focus_arrived();
+            }
             let (reading, action) = terminal.reading.next(event);
             terminal.reading = reading;
             let mut owed = terminal.owed.take();

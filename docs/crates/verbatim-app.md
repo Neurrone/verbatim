@@ -129,10 +129,14 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
 - `Effect::CopyToClipboard`, which select-then-copy emits, goes to the
   clipboard thread like every copy.
 - The held anchors (`SrState::held_anchors`) go to each outpost with its
-  held nodes. A change of either sends the list again once `HELD_BATCH`
-  (32) of that outpost's messages have been handled since the last, not
-  at each change: the list only lets the outpost release what Core no
-  longer holds, and a terminal's output changes it with every message
+  held nodes. The list is never written on its own: when it, or the
+  position of the outpost's last message handled, changed
+  (`Live::held_changed`), the app leaves it in that outpost's writer
+  (`Supervisor::leave_nodes_held`), and the next command written there, a
+  request or the relay's ping within three seconds, carries it in the
+  same write, after its own frame (`docs/design/communication.md`, step
+  11). The list only lets the outpost release what Core no longer holds,
+  and a terminal's output changes it with every message
   (`docs/design/wake-ups.md`, item 4).
 
 Milestone M4's themes and earcons are wired here too (`phase6-design.md`,
@@ -242,9 +246,10 @@ knowing for review:
   supervisor the derived views (`send_views`) when they change: the
   application holding attention and the outposts in which the reducer holds
   nodes. It also tells each live outpost which of its nodes the reducer
-  holds (`send_nodes_held`), with the position of the last of that
-  outpost's messages it has handled, whenever that set changes and every
-  256 messages besides, so the outpost can release everything else
+  holds (`leave_nodes_held`, carried by the next command written to it),
+  with the position of the last of that outpost's messages it has
+  handled, whenever either changes, so the outpost can release everything
+  else
   ([verbatim-outpost](verbatim-outpost.md), "Held objects"). A focus-now
   answer is a foreground change and then a focus: held nodes sent after
   the first alone, with the answer's position as acknowledged, had the

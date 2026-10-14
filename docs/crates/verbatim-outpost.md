@@ -1217,18 +1217,22 @@ Implementation notes:
   sends `SupervisorToOutpost::NodesHeld` with the node numbers the reducer
   holds in that outpost, the text anchors it holds there (milestone M4),
   and the position of the last message it has
-  handled, whenever that set changes and also every 256 messages, so an
-  outpost whose held set stays the same still releases what it reported
-  meanwhile. The worker then releases every node not held that was
+  handled, whenever any of the three changes, so an outpost whose held set
+  stays the same still releases what it reported meanwhile. The list is
+  never written on its own (`docs/design/communication.md`, step 11): the
+  app leaves it in the writer's slot (`Supervisor::leave_nodes_held`), and
+  the next command written to that outpost, a request or the relay's ping
+  within three seconds, carries it after its own frame in the same
+  write. The worker then releases every node not held that was
   reported at or before the acknowledged position; a node reported later,
   or not yet reported, is kept, since Core may not have seen it. Only the
   worker in charge releases, and the released nodes leave both registries
   under the watch lock and the outbound sender's lock, and their objects are
   dropped after both are released, so a worker that replaces an abandoned
   one can never report a node that is about to vanish. A query
-  for a released node answers `Gone`. Core's writer replaces a waiting
-  list with a newer one and lets it past a full queue; the intake queue
-  likewise keeps only the newest and never limits it.
+  for a released node answers `Gone`. A newer list replaces one still in
+  the writer's slot; the intake queue likewise keeps only the newest and
+  never limits it.
 - What to read (milestone M4, `phase6-design.md`, "Themes: one model for
   verbosity, speech, and sounds"). `SupervisorToOutpost::Fetches` carries
   the details the active theme wants read for each node
@@ -1516,8 +1520,9 @@ Implementation notes:
 - `OutpostMessage::Event`, which `Frames` makes from a frame, carries the
   target pid, the outpost id, the message's position, and the boxed
   `OutpostToSupervisor` payload: the replies grew the message enum well
-  past the lifecycle notices, and boxing keeps every post small. `Supervisor::send_nodes_held` queues a
-  `NodesHeld` list for one incarnation.
+  past the lifecycle notices, and boxing keeps every post small. `Supervisor::leave_nodes_held` leaves a
+  `NodesHeld` list for one incarnation, which the next command written to
+  it carries.
 
 ## Messages to Core
 
@@ -1972,7 +1977,15 @@ finds it.
   following it, then catch up when a burst of output ends, rather than
   with every write of a held flood (`docs/design/wake-ups.md`). A terminal gaining
   the focus is read as a baseline, which speaks nothing, and reading is
-  live.
+  live. Before that read, `Terminal::focus_arrived` forgets what was
+  read of it before the focus left (its screens, the one kept from before
+  the last change included, and their times), keeping only the reading
+  and a request owed for the focus's transition to answer and the caret
+  last sent, which the focus forgets itself: as NVDA takes a fresh
+  snapshot on focus, the terminal then behaves the same whether the
+  outpost kept it while the focus was away or released it with its node.
+  Without it, a key pressed as the focus arrived found the screen from
+  before the focus left as the screen before the key.
 - Each read logs its cost at debug (`terminal screen timing`: the path,
   microseconds, calls, the shift, the head's rows, the rows counted,
   whether it had history above it and settled, and its top row), as does
