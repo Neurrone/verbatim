@@ -20,6 +20,7 @@
 //! The [`session`] module reads the calling process's own session, which
 //! Verbatim and the test agent check before starting.
 
+pub mod event;
 pub mod overlapped;
 pub mod port_queue;
 pub mod scheduling;

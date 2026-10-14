@@ -1916,7 +1916,6 @@ dependencies = [
 name = "verbatim-synth-host"
 version = "0.1.0"
 dependencies = [
- "crossbeam-channel",
  "tracing",
  "tracing-subscriber",
  "verbatim-audio",
@@ -1934,8 +1933,8 @@ dependencies = [
 name = "verbatim-synth-hosted"
 version = "0.1.0"
 dependencies = [
- "crossbeam-channel",
  "tracing",
+ "verbatim-model",
  "verbatim-process",
  "verbatim-speech",
  "workspace-hack",
@@ -1949,6 +1948,7 @@ dependencies = [
  "verbatim-audio",
  "verbatim-i18n",
  "verbatim-model",
+ "verbatim-process",
  "verbatim-speech",
  "windows",
  "windows-future",

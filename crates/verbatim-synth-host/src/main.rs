@@ -2,31 +2,22 @@
 //! (decision D18).
 //!
 //! Core launches it, contained in a kill-on-close job, as
-//! `--pipe-in <handle> --pipe-out <handle> --synth <id>`, and talks to it
-//! with the protocol in `verbatim_speech::hosting`. The host builds the
-//! named synthesizer's driver, sends `Ready` with its description (or
-//! `Unavailable` and exits), then serves requests one at a time until the
-//! command pipe closes. A reader thread watches the command pipe while an
-//! utterance is being spoken, so a `Cancel` reaches the driver at its next
-//! push of audio, or at its next `is_cancelled` check.
+//! `--pipe-in <handle> --pipe-out <handle> --synth <id>`, over two
+//! overlapped pipes, and talks to it with the protocol in
+//! `verbatim_speech::hosting`. The host builds the named synthesizer's
+//! driver and serves Core on its one thread ([`verbatim_synth_host::serve`])
+//! until the command pipe closes.
 //!
 //! The host renders nothing: it only synthesizes, and Core's mixer plays
 //! the audio, so recording, device recovery, and mixing stay in one place.
 
-use std::io::{BufReader, BufWriter, Write};
-use std::ops::ControlFlow;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Instant;
+use std::sync::Arc;
 
-use crossbeam_channel::unbounded;
-use verbatim_audio::PcmFormat;
-use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
-use verbatim_speech::hosting::{
-    FromHost, HostDescription, HostTiming, ToHost, now_us, read_to_host, synth_ids, write_from_host,
-};
-use verbatim_speech::{CancelWake, IndexMark, SynthDriver, SynthError, SynthSink};
+use verbatim_process::event::Event;
+use verbatim_speech::hosting::synth_ids;
+use verbatim_speech::{SynthDriver, SynthError};
+use verbatim_synth_host::{parse_args, serve};
 
 /// Writes a line to standard error, as `eprintln!` does, but ignores a
 /// failed write instead of panicking: a full disk or a closed pipe under
@@ -37,11 +28,6 @@ macro_rules! report_error {
         let _ = writeln!(std::io::stderr(), $($arg)*);
     }};
 }
-
-/// The priority of the command reader thread, which only moves each
-/// command on, for microseconds per wake (`docs/design/communication.md`,
-/// section 6.1).
-const READER_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 fn main() -> ExitCode {
     // Core redirects this process's output to a log file of its own.
@@ -54,262 +40,36 @@ fn main() -> ExitCode {
     };
     // SAFETY: Core passes the values of the pipe ends it created for this
     // process, which inherited them and uses them nowhere else;
-    // `inherited_pipes` checks that they are distinct open pipes, so a
-    // malformed command line fails here.
-    let pipes = unsafe { verbatim_process::inherited_pipes(pipe_in, pipe_out) };
-    let Ok((from_core, to_core)) = pipes.inspect_err(|error| report_error!("{error}")) else {
+    // `inherited_pipe_handles` checks that they are distinct open pipes, so
+    // a malformed command line fails here.
+    let pipes = unsafe { verbatim_process::inherited_pipe_handles(pipe_in, pipe_out) };
+    let Ok((commands, replies)) = pipes.inspect_err(|error| report_error!("{error}")) else {
         return ExitCode::from(2);
     };
-    let mut to_core = BufWriter::new(to_core);
 
-    // Logged before and after building the synthesizer, so a host that
-    // never becomes ready shows in its log where it stopped.
-    tracing::info!(%synth, "synthesizer host starting");
-    let building = std::time::Instant::now();
-    let mut driver = match build(&synth) {
-        Ok(driver) => driver,
-        Err(error) => {
-            tracing::error!(%synth, %error, "the synthesizer could not start");
-            let _ = write_from_host(&mut to_core, &FromHost::Unavailable(error.to_string()));
-            return ExitCode::FAILURE;
-        }
-    };
-    if write_from_host(&mut to_core, &FromHost::Ready(describe(driver.as_ref()))).is_err() {
-        return ExitCode::FAILURE;
-    }
-    tracing::info!(%synth, elapsed_ms = building.elapsed().as_millis(), "synthesizer host ready");
-
-    // The reader thread: cancels take effect at once, everything else is
-    // served in order on this thread.
-    let cancelled = Arc::new(HostCancel::default());
-    let (requests_tx, requests) = unbounded();
-    {
-        let cancelled = Arc::clone(&cancelled);
-        let mut from_core = BufReader::new(from_core);
-        std::thread::Builder::new()
-            .name("verbatim-host-commands".to_owned())
-            .spawn(move || {
-                prioritize_role("command reader", READER_PRIORITY);
-                loop {
-                    let request = match read_to_host(&mut from_core) {
-                        Ok(Some(request)) => (request, now_us()),
-                        // Core closed the command pipe: it is done with this host.
-                        Ok(None) => return,
-                        Err(error) => {
-                            tracing::error!(%error, "a command from Core could not be read");
-                            return;
-                        }
-                    };
-                    match request {
-                        (ToHost::Cancel(utterance), _) => cancelled.cancel(utterance.0),
-                        other => {
-                            if requests_tx.send(other).is_err() {
-                                return;
-                            }
-                        }
-                    }
-                }
-            })
-            .expect("spawn the host's command reader");
-    }
-
-    while let Ok((request, received_at_us)) = requests.recv() {
-        let reply = match request {
-            ToHost::Speak(sequence) => {
-                tracing::trace!(target: "verbatim::stage", trace = %sequence.trace_id, stage = "host request");
-                let mut sink = PipeSink {
-                    to_core: &mut to_core,
-                    utterance: sequence.utterance.0,
-                    trace_id: sequence.trace_id,
-                    cancelled: &cancelled,
-                    broken: false,
-                    audio: false,
-                    received_at_us,
-                    started: Instant::now(),
-                };
-                let result = driver.speak(&sequence, &mut sink);
-                cancelled.forget_wake();
-                if sink.broken {
-                    return ExitCode::FAILURE;
-                }
-                match result {
-                    Ok(()) => FromHost::Done,
-                    Err(error) => FromHost::Failed(error.to_string()),
-                }
-            }
-            ToHost::SetSetting { id, value } => FromHost::SettingApplied(
-                driver
-                    .set_setting(&id, value)
-                    .err()
-                    .map(|error| error.to_string()),
-            ),
-            // Handled by the reader thread.
-            ToHost::Cancel(_) => continue,
-        };
-        if write_from_host(&mut to_core, &reply).is_err() {
-            return ExitCode::FAILURE;
-        }
-    }
-    // Core closed the command pipe.
-    ExitCode::SUCCESS
+    serve(commands, replies, |command_event| {
+        // Logged before and after building the synthesizer, so a host that
+        // never becomes ready shows in its log where it stopped.
+        tracing::info!(%synth, "synthesizer host starting");
+        let building = std::time::Instant::now();
+        let driver = build(&synth, command_event)?;
+        tracing::info!(%synth, elapsed_ms = building.elapsed().as_millis(), "synthesizer host ready");
+        Ok(driver)
+    })
 }
 
-/// What the host's synthesizer is, for Core.
-fn describe(driver: &dyn SynthDriver) -> HostDescription {
-    HostDescription {
-        display_name: driver.display_name(),
-        places_marks: driver.places_marks(),
-        changes_pitch: driver.changes_pitch(),
-        settings: driver.supported_settings(),
-        values: driver
-            .supported_settings()
-            .iter()
-            .filter_map(|descriptor| {
-                let id = descriptor.id().clone();
-                driver.setting(&id).map(|value| (id, value))
-            })
-            .collect(),
-    }
-}
-
-/// Builds the driver of the named synthesizer.
-fn build(synth: &str) -> Result<Box<dyn SynthDriver>, SynthError> {
+/// Builds the driver of the named synthesizer. `OneCore`, which waits for
+/// its synthesizer, waits on the command event as well.
+fn build(synth: &str, command_event: &Arc<Event>) -> Result<Box<dyn SynthDriver>, SynthError> {
     match synth {
         synth_ids::ESPEAK => Ok(Box::new(verbatim_synth_espeak::EspeakSynth::new()?)),
-        synth_ids::ONECORE => Ok(Box::new(verbatim_synth_onecore::OneCoreSynth::new()?)),
+        synth_ids::ONECORE => Ok(Box::new(
+            verbatim_synth_onecore::OneCoreSynth::new()?.interrupted_by(Arc::clone(command_event)),
+        )),
         other => Err(SynthError::Unavailable(format!(
             "this host has no synthesizer named {other}"
         ))),
     }
-}
-
-/// The utterance Core last cancelled, and the waker the driver speaking
-/// registered ([`SynthSink::on_cancel`]), with its utterance: the command
-/// reader calls it as that utterance's cancel arrives, so a driver waiting
-/// for its synthesizer (`OneCore`) learns of it at once.
-#[derive(Default)]
-struct HostCancel {
-    last: AtomicU64,
-    wake: Mutex<Option<(u64, CancelWake)>>,
-}
-
-impl HostCancel {
-    /// Notes `utterance`'s cancel and wakes its driver, if it waits.
-    fn cancel(&self, utterance: u64) {
-        self.last.store(utterance, Ordering::Release);
-        let mut slot = self.wake.lock().unwrap_or_else(PoisonError::into_inner);
-        if slot
-            .as_ref()
-            .is_some_and(|(waiting, _)| *waiting == utterance)
-            && let Some((_, wake)) = slot.take()
-        {
-            drop(slot);
-            wake();
-        }
-    }
-
-    fn is_cancelled(&self, utterance: u64) -> bool {
-        self.last.load(Ordering::Acquire) == utterance
-    }
-
-    /// Registers `wake` for `utterance`, or calls it at once if that
-    /// utterance is already cancelled.
-    fn on_cancel(&self, utterance: u64, wake: CancelWake) {
-        let mut slot = self.wake.lock().unwrap_or_else(PoisonError::into_inner);
-        if self.is_cancelled(utterance) {
-            drop(slot);
-            wake();
-        } else {
-            *slot = Some((utterance, wake));
-        }
-    }
-
-    /// Drops the waker of an utterance whose speaking has ended.
-    fn forget_wake(&self) {
-        self.wake
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-    }
-}
-
-/// Sends the driver's output to Core.
-struct PipeSink<'a, W: Write> {
-    to_core: &'a mut W,
-    /// The utterance being spoken.
-    utterance: u64,
-    /// The utterance Core last cancelled, and the driver's waker.
-    cancelled: &'a HostCancel,
-    /// Core is gone: the pipe could not be written.
-    broken: bool,
-    /// The trace the utterance belongs to, and whether the driver has given
-    /// audio yet, for the stage log.
-    trace_id: verbatim_model::TraceId,
-    audio: bool,
-    /// When the request was read, on the shared clock, and when the driver
-    /// was started on it, for the first audio's timing.
-    received_at_us: u64,
-    started: Instant,
-}
-
-impl<W: Write> SynthSink for PipeSink<'_, W> {
-    fn push_pcm(&mut self, format: PcmFormat, samples: &[i16]) -> ControlFlow<()> {
-        if self.broken || self.cancelled.is_cancelled(self.utterance) {
-            return ControlFlow::Break(());
-        }
-        if !self.audio {
-            self.audio = true;
-            tracing::trace!(target: "verbatim::stage", trace = %self.trace_id, stage = "host audio");
-            let timing = HostTiming {
-                received_at_us: self.received_at_us,
-                first_chunk_us: u64::try_from(self.started.elapsed().as_micros())
-                    .unwrap_or(u64::MAX),
-                sent_at_us: now_us(),
-            };
-            if write_from_host(self.to_core, &FromHost::FirstAudio(timing)).is_err() {
-                self.broken = true;
-                return ControlFlow::Break(());
-            }
-        }
-        // Blocks while Core is behind: the pipe's small buffer is the
-        // backpressure that paces the synthesizer.
-        if write_from_host(self.to_core, &FromHost::Pcm(format, samples.to_vec())).is_err() {
-            self.broken = true;
-            return ControlFlow::Break(());
-        }
-        ControlFlow::Continue(())
-    }
-
-    fn index_reached(&mut self, mark: IndexMark) {
-        if !self.broken && write_from_host(self.to_core, &FromHost::Mark(mark)).is_err() {
-            self.broken = true;
-        }
-    }
-
-    fn is_cancelled(&self) -> bool {
-        self.broken || self.cancelled.is_cancelled(self.utterance)
-    }
-
-    fn on_cancel(&mut self, wake: CancelWake) {
-        self.cancelled.on_cancel(self.utterance, wake);
-    }
-}
-
-/// `--pipe-in <handle> --pipe-out <handle> --synth <id>`, in any order.
-fn parse_args(args: &[String]) -> Option<(usize, usize, String)> {
-    let mut pipe_in = None;
-    let mut pipe_out = None;
-    let mut synth = None;
-    let mut iter = args.iter().skip(1);
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--pipe-in" => pipe_in = iter.next()?.parse().ok(),
-            "--pipe-out" => pipe_out = iter.next()?.parse().ok(),
-            "--synth" => synth = iter.next().cloned(),
-            _ => return None,
-        }
-    }
-    Some((pipe_in?, pipe_out?, synth?))
 }
 
 fn init_tracing() {

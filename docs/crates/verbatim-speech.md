@@ -24,13 +24,21 @@ Public API:
   (OneCore) stop early; `synth_timing(timing)`, a default no-op, takes a
   `SynthTiming` from a driver that can tell the parts of its start apart
   (the request, its trip to the host, the host's first chunk, the trip
-  back to the driver's reader, and the reader's hand-off to the thread
-  speaking, each in microseconds), before its first audio; and
+  back to the driver, and the time from the driver reading the first
+  chunk to handling it, each in microseconds), before its first audio;
+  and
   `on_cancel(wake)`, a default no-op, registers a `CancelWake` to be
   called, from whichever thread cancels, when the utterance is cancelled,
   or at once if it is, for a driver that waits for its synthesizer and so
   has no push at which to see a cancel (the speech manager cancels the
   mixer first, then the job, whose waker it calls).
+- `CancelToken` — an utterance's cancellation
+  (`docs/design/communication.md`, section 7.3): a flag and the one waker
+  a driver registered. `cancel()` sets the flag and calls the waker once;
+  `is_cancelled()` reads the flag; `on_cancel(wake)` registers the waker,
+  or calls it at once if the token is already cancelled. The speech
+  manager keeps one per job and its sink answers `is_cancelled` and
+  `on_cancel` from it; a test's sink can do the same.
 - `SpeechSequence` — what a synthesizer is asked to speak: the utterance
   id, the trace id, an optional BCP 47 language, and `items`, a list of
   `SpeechItem::Text`, `SpeechItem::Mark`, `SpeechItem::Pitch` (an
@@ -195,19 +203,23 @@ Public API:
   runs any driver unchanged. `ToHost` is what Core sends: `Speak(sequence)`,
   `Cancel(utterance_id)`, and `SetSetting { id, value }`. `FromHost` is
   what a host sends: `Ready(HostDescription)` first, or `Unavailable(reason)`
-  before exiting; then, for each utterance, `FirstAudio(HostTiming)` just
-  before its first audio (when the host read the request and when it
-  wrote this, on the clock every process shares, `hosting::now_us()`, and
-  how long its synthesizer took to the first chunk), `Pcm(format,
-  samples)`, `Mark`, and `Done` or
-  `Failed(reason)` for each utterance, and `SettingApplied(refusal)` for
-  each setting. `HostDescription` carries the display name,
+  before exiting; then, for each utterance, every message naming it:
+  `FirstAudio(utterance, HostTiming)` just before its first audio (when
+  the host read the request and when it wrote this, on the clock every
+  process shares, `hosting::now_us()`, and how long its synthesizer took
+  to the first chunk), `Pcm(utterance, format, samples)`,
+  `Mark(utterance, mark)`, and `Done(utterance)` or
+  `Failed(utterance, reason)`; and `SettingApplied(refusal)` for each
+  setting. `FromHost::utterance()` names a message's utterance and
+  `ends_utterance()` says whether it is `Done` or `Failed`, which is how
+  Core drops a cancelled utterance's last frames. `HostDescription` carries the display name,
   `places_marks`, `changes_pitch`, the setting descriptors, and their
   current values.
-  `write_to_host` and `read_to_host` serve the Core-to-host direction,
-  `write_from_host` and `read_from_host` the other; each read returns
-  `None` at a clean end of stream (a broken pipe between frames counts as
-  one). `synth_ids` holds the ids of the hosted synthesizers, which
+  Each message is the body of one frame of the transport
+  (`verbatim_process::transport`, in a Windows crate, so not here):
+  `encode_to_host` and `decode_to_host` serve the Core-to-host direction,
+  `encode_from_host` and `decode_from_host` the other, and `encode_pcm`
+  encodes a `Pcm` body straight from a slice of samples. `synth_ids` holds the ids of the hosted synthesizers, which
   Core registers and the host builds by: `ESPEAK` (`espeak`) and
   `ONECORE` (`onecore`). The host process is
   [verbatim-synth-host](verbatim-synth-host.md),
@@ -341,18 +353,17 @@ when the job began plus the offset, limited to 0 to 100; after the job,
 however it ended, the pitch is put back. That can leave a short pause
 around the capital. A driver with neither has the pitch changes removed.
 
-Host framing (`hosting.rs`). Every message is one frame: a kind byte, a
-little-endian `u32` body length, and the body, written in a single write
-and flushed, so the peer never sees a frame split by another writer.
-Kind 0 is JSON (serde's encoding of the message enum; every `ToHost` and
-every `FromHost` except PCM). Kind 1 is PCM: the sample rate as a
-little-endian `u32`, the channel count as a little-endian `u16`, then the
-samples as little-endian `i16`, since a synthesizer streams far more audio
-than anything else and JSON would multiply its size. A reader rejects a
-length above 16 MB as `InvalidData` rather than allocating it, and
-rejects an unknown kind, a PCM body shorter than its six-byte header or
-with an odd sample byte count, and a PCM frame sent to a host. A stream
-that ends part-way through a frame is an `UnexpectedEof` error. `Cancel`
-names the utterance it cancels, so a cancel that crosses that utterance's
-`Done` on the pipe cannot cancel the next utterance. A unit test writes
-every message of both directions through a buffer and reads them back.
+Host message bodies (`hosting.rs`). Each message is one frame of the
+transport, whose `Content-Length` header and 32 MB limit are
+`verbatim_process::transport`'s. The body is JSON (serde's encoding of
+the message enum; every `ToHost` and every `FromHost` except PCM), or for
+PCM a zero byte, which no JSON text starts with, then the utterance as a
+little-endian `u64`, the sample rate as a little-endian `u32`, the
+channel count as a little-endian `u16`, then the samples as
+little-endian `i16`, since a synthesizer streams far more audio than
+anything else and JSON would multiply its size. A body that is neither,
+or a PCM body shorter than its fifteen-byte header or with an odd sample
+byte count, is `InvalidData`. `Cancel` names the utterance it cancels,
+so a cancel that crosses that utterance's `Done` on the pipe cannot
+cancel the next utterance. Unit tests encode and decode every message of
+both directions, and refuse a PCM body cut short.

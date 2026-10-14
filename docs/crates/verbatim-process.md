@@ -84,8 +84,23 @@ Public API:
   (`write`, or `write_with`, which puts the bytes in the slot's buffer
   and, when it puts none, writes nothing and is done at once) at a
   time, whose `OVERLAPPED` and buffer stay put, untouched
-  and not freed, while its operation is in flight. The relay floor's
-  benchmark (`verbatim-relay-floor`) and `transport` use it.
+  and not freed, while its operation is in flight. A slot runs its
+  operations on any `OverlappedFile`: a `PortFile`, whose operations that
+  wait finish through its port (`complete`), or an `EventFile`
+  (`EventFile::new(handle)`), whose operations set its event as they
+  finish, for a thread that waits on events rather than on a port; on
+  one of those, `poll` asks with a zero wait whether the operation has
+  finished, `wait` waits for it, and `cancel_read` cancels a read in
+  flight and waits for it to end (only a read is ever cancelled). The
+  relay floor's benchmark (`verbatim-relay-floor`) and `transport` use
+  it.
+- `event` (`docs/design/communication.md`, sections 7.3 and 7.4) —
+  `Event`, an unnamed manual-reset event (`new`, `set`, `reset`,
+  `is_set`), and `wait_any(events, timeout)`, which waits until any of
+  up to 64 events is set and returns the lowest one's index, or `None`
+  when the time runs out: what the synth thread waits on for its host's
+  next frame and its utterance's cancel together, and a synthesizer host
+  for its write to Core and Core's next command.
 - `port_queue` (`docs/design/communication.md`, sections 4.5 and 6.2) —
   how verbatim.exe's reducer takes its inputs: `port_queue()` gives a
   `Poster<T>`, cloned for every thread that posts, and a `PortQueue<T>`,
@@ -125,7 +140,7 @@ Public API:
   floor's benchmark calls them, since the same measurement found no gain
   that would pay for the energy. Timer resolution is not raised.
 - `transport` — the frames and senders of the pipes between verbatim.exe
-  and its outposts and listener (`docs/design/communication.md`, section
+  and its outposts, listener and synthesizer hosts (`docs/design/communication.md`, section
   4). A frame is `Content-Length: ` and the body's length in ten digits, a
   blank line, then the body, at most `MAX_FRAME_BYTES` (32 MB); the fixed
   width lets a frame be encoded in place. `put_frame(buffer, put_body)`
@@ -146,6 +161,21 @@ Public API:
   `BlockingWriter::new(pipe)` is the matching `Write`, for a child that
   writes one message at a time and has no port, such as the supervisor
   tests' stand-in children.
+  `EventReader::new(pipe, read_size)` reads an overlapped end associated
+  with no port, for a thread that waits on its `event()` with other
+  events: `take(frame)` hands `frame` the body of every whole frame read
+  so far, reading first, never waiting, and returns `Taken::Frames`, with
+  no read in flight, so a reader that handles each frame before taking
+  more reads no faster than it handles; `Taken::Waiting`, a read in
+  flight whose finish sets the event; or `Taken::Ended`, as for
+  `PortReader` below. It asks for `read_size` bytes while a frame's
+  length is unknown and for the whole rest of a frame once it is.
+  `EventWriter::new(pipe)` writes one write at a time: `start(put)`
+  writes the frames `put` appends with one `WriteFile`, answering
+  whether it completed at once; `poll()` and `finish()` ask, or wait,
+  for one in flight, and `write(put)` does both. A write once started is
+  never cancelled. These carry the synthesizer host's pipes, in both
+  processes.
   `PortReader::new(file)` reads an end associated with a `Port`, for the
   thread serving the port: `take(completion, port, frame)`, given its
   read's completion or a wake posted with its key, hands `frame` the body

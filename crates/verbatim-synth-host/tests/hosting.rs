@@ -32,10 +32,11 @@ use windows::Win32::System::Threading::{
 };
 
 /// The longest a cancelled utterance may take to end, from the sink asking
-/// to stop to `speak` returning: one round trip to the host, which ends its
-/// synthesis and answers. Measured at 0.06 to 0.6 ms on the development
-/// machine; the budget leaves room for a slower runner while staying well
-/// under what a listener would notice.
+/// to stop to `speak` returning: the cancel's write to the host, since the
+/// driver no longer waits for the host's answer. A round trip was measured
+/// at 0.06 to 0.6 ms on the development machine; the budget leaves room
+/// for a slower runner while staying well under what a listener would
+/// notice.
 const CANCEL_BUDGET: Duration = Duration::from_millis(20);
 
 /// The longest a killed host may take to exit; it only bounds a hang.

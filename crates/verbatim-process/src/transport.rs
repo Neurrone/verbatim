@@ -1,13 +1,16 @@
-//! The transport for the pipes between verbatim.exe and its outposts and
-//! listener (`docs/design/communication.md`, section 4): how a message is
-//! framed, how a thread reads an overlapped end, blocking
-//! ([`BlockingReader`]) or through a completion port ([`PortReader`]), and
-//! the [`Sender`] through which verbatim.exe writes a child's commands.
+//! The transport for the pipes between verbatim.exe and its outposts,
+//! listener and synthesizer hosts (`docs/design/communication.md`, section
+//! 4): how a message is framed, how a thread reads an overlapped end,
+//! blocking ([`BlockingReader`]), through a completion port
+//! ([`PortReader`]), or by waiting on its event with others
+//! ([`EventReader`], with [`EventWriter`] for its writes), and the
+//! [`Sender`] through which verbatim.exe writes a child's commands.
 //!
 //! A frame is a text header giving the body's length, as the Language
 //! Server Protocol's, then the body: `Content-Length: ` and the length in
-//! ten decimal digits, a blank line (`\r\n\r\n`), then that many bytes of
-//! JSON. The length has a fixed width so a frame can be encoded in place,
+//! ten decimal digits, a blank line (`\r\n\r\n`), then that many bytes:
+//! JSON, but for a synthesizer host's PCM, which is binary
+//! (`verbatim_speech::hosting`). The length has a fixed width so a frame can be encoded in place,
 //! its body after a header whose digits are filled in once the body's
 //! length is known; a reader takes any number of digits. A frame is written
 //! with one write and read whole: the reader takes the header, then asks
@@ -37,7 +40,10 @@ use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows::Win32::System::Pipes::PeekNamedPipe;
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 
-use crate::overlapped::{Completion, Completions, PipeIo, Port, PortFile, Started, win32_error};
+use crate::event::Event;
+use crate::overlapped::{
+    Completion, Completions, EventFile, PipeIo, Port, PortFile, Started, win32_error,
+};
 
 /// The largest frame body: a terminal's output can be megabytes; anything
 /// larger is a fault.
@@ -555,6 +561,265 @@ fn frame_bounds(bytes: &[u8]) -> io::Result<Option<(usize, usize)>> {
         }
         None if bytes.len() >= MAX_HEADER_BYTES => Err(invalid("a frame's header is too long")),
         None => Ok(None),
+    }
+}
+
+/// An overlapped end read by a thread that waits on its event together
+/// with other events ([`crate::event::wait_any`]), one read in flight, each
+/// frame's body handed out whole and in order: how the synth thread reads
+/// its host's frames, and a synthesizer host Core's commands
+/// (`docs/design/communication.md`, sections 7.3 and 7.4). As a
+/// [`PortReader`] does, a read asks for `read_size` bytes while the next
+/// frame's length is unknown and for the whole rest of a frame once it is
+/// known; the end of the pipe between frames ends the reading, and inside a
+/// frame it is an error.
+///
+/// It reads only when asked to and nothing whole is left:
+/// [`take`](Self::take) hands out the frames a read brought and starts no
+/// other read until it is called again, so a reader that handles each
+/// frame before it takes more reads no faster than it handles, which is
+/// what lets a small pipe pace its writer.
+pub struct EventReader {
+    file: EventFile,
+    slot: PipeIo,
+    read_size: usize,
+    /// Bytes read and not yet handed out: the start of a frame whose rest
+    /// has not arrived.
+    pending: Vec<u8>,
+}
+
+/// What became of an [`EventReader`] in a call to
+/// [`take`](EventReader::take).
+#[derive(Debug)]
+pub enum Taken {
+    /// Whole frames were handed out, and no read is in flight: the reader
+    /// is called again before its event is waited on.
+    Frames,
+    /// A read is in flight; the reader's event is set when it finishes.
+    Waiting,
+    /// The reading ended, with nothing in flight: `Ok` when the writer
+    /// closed its end between frames; the error when the pipe failed, ended
+    /// inside a frame, or brought something that is not a frame, or when
+    /// the caller refused a frame. The reader is not called again.
+    Ended(io::Result<()>),
+}
+
+impl EventReader {
+    /// Reads `pipe`, an end opened for overlapped I/O and associated with
+    /// no port, asking for `read_size` bytes while a frame's length is
+    /// unknown. Nothing is read until the first [`take`](Self::take).
+    ///
+    /// # Errors
+    ///
+    /// Returns the error if the event its reads signal cannot be created.
+    pub fn new(pipe: OwnedHandle, read_size: usize) -> io::Result<Self> {
+        Ok(Self {
+            file: EventFile::new(pipe)?,
+            slot: PipeIo::new(read_size),
+            read_size,
+            pending: Vec::new(),
+        })
+    }
+
+    /// The event the read in flight sets when it finishes.
+    #[must_use]
+    pub fn event(&self) -> &Arc<Event> {
+        self.file.event()
+    }
+
+    /// Hands `frame` the body of every whole frame the reads so far
+    /// brought, in order, reading first, never waiting, while a read in
+    /// flight has finished or a new one finishes at once and nothing whole
+    /// has come yet. A frame `frame` refuses ends the reading with its
+    /// error.
+    pub fn take(&mut self, mut frame: impl FnMut(&[u8]) -> io::Result<()>) -> Taken {
+        loop {
+            let done = if self.slot.in_flight() {
+                match self.slot.poll(&self.file) {
+                    None => return Taken::Waiting,
+                    Some(done) => done,
+                }
+            } else {
+                match self.slot.read_up_to(&self.file, self.wanted()) {
+                    Started::Pending => return Taken::Waiting,
+                    Started::Done(moved) => Ok(moved),
+                    Started::Failed(error) => Err(error),
+                }
+            };
+            match done {
+                Ok(0) => return Taken::Ended(self.end()),
+                Ok(_) => self.pending.extend_from_slice(self.slot.data()),
+                Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {
+                    return Taken::Ended(self.end());
+                }
+                Err(error) => return Taken::Ended(Err(error)),
+            }
+            match whole_frames(&self.pending, &mut frame) {
+                Ok(0) => {}
+                Ok(used) => {
+                    self.pending.drain(..used);
+                    if self.pending.is_empty() && self.pending.capacity() > self.read_size {
+                        // A large frame's memory, given back.
+                        self.pending = Vec::new();
+                    }
+                    return Taken::Frames;
+                }
+                Err(error) => return Taken::Ended(Err(error)),
+            }
+        }
+    }
+
+    /// How much the next read asks for: the rest of the frame begun, when
+    /// its length is known and more than `read_size`.
+    fn wanted(&self) -> usize {
+        match frame_bounds(&self.pending) {
+            Ok(Some((header, length))) => (header + length)
+                .saturating_sub(self.pending.len())
+                .max(self.read_size),
+            _ => self.read_size,
+        }
+    }
+
+    /// The writer closed its end: a clean end between frames, an error
+    /// inside one.
+    fn end(&self) -> io::Result<()> {
+        if self.pending.is_empty() {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "the pipe ended inside a frame",
+            ))
+        }
+    }
+}
+
+impl Drop for EventReader {
+    fn drop(&mut self) {
+        // A read loses nothing by being cancelled; waiting for it to end
+        // lets the slot's memory be freed.
+        self.slot.cancel_read(&self.file);
+    }
+}
+
+/// An overlapped end written one write at a time by a thread that waits
+/// for each write's completion, or on its event together with other
+/// events ([`crate::event::wait_any`]): a synthesizer host's paced writes
+/// to Core, and the synth thread's commands to its host
+/// (`docs/design/communication.md`, sections 4.3 and 7). A write once
+/// started is always finished: nothing here cancels one, and a writer
+/// dropped with a write in flight leaves its memory to the kernel rather
+/// than free it, as [`PipeIo`] does.
+pub struct EventWriter {
+    file: EventFile,
+    slot: PipeIo,
+    /// The length of the write in flight.
+    writing: usize,
+}
+
+impl EventWriter {
+    /// Writes `pipe`, an end opened for overlapped I/O and associated with
+    /// no port.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error if the event its writes signal cannot be created.
+    pub fn new(pipe: OwnedHandle) -> io::Result<Self> {
+        Ok(Self {
+            file: EventFile::new(pipe)?,
+            slot: PipeIo::new(0),
+            writing: 0,
+        })
+    }
+
+    /// The event the write in flight sets when it finishes.
+    #[must_use]
+    pub fn event(&self) -> &Arc<Event> {
+        self.file.event()
+    }
+
+    /// Whether a write is in flight.
+    #[must_use]
+    pub fn in_flight(&self) -> bool {
+        self.slot.in_flight()
+    }
+
+    /// Starts one write of the frames `put` appends ([`put_frame`]), with
+    /// one `WriteFile`: `true` when it completed at once, `false` when it
+    /// is in flight, to be finished by [`poll`](Self::poll) or
+    /// [`finish`](Self::finish).
+    ///
+    /// # Errors
+    ///
+    /// Returns `put`'s error, with nothing written, or the write's.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a write is in flight.
+    pub fn start(&mut self, put: impl FnOnce(&mut Vec<u8>) -> io::Result<()>) -> io::Result<bool> {
+        let mut length = 0;
+        let started = self.slot.write_with(&self.file, |buffer| {
+            put(buffer)?;
+            length = buffer.len();
+            Ok::<(), io::Error>(())
+        })?;
+        self.writing = length;
+        match started {
+            Started::Done(moved) => self.check(moved).map(|()| true),
+            Started::Pending => Ok(false),
+            Started::Failed(error) => Err(error),
+        }
+    }
+
+    /// Whether the write in flight has finished, with a zero wait: `None`
+    /// while it runs, and its outcome once it has.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no write is in flight.
+    pub fn poll(&mut self) -> Option<io::Result<()>> {
+        let done = self.slot.poll(&self.file)?;
+        Some(done.and_then(|moved| self.check(moved)))
+    }
+
+    /// Waits for the write in flight, if any, to finish.
+    ///
+    /// # Errors
+    ///
+    /// Returns the write's error.
+    pub fn finish(&mut self) -> io::Result<()> {
+        if !self.slot.in_flight() {
+            return Ok(());
+        }
+        let moved = self.slot.wait(&self.file)?;
+        self.check(moved)
+    }
+
+    /// Writes the frames `put` appends and waits until the write has
+    /// finished.
+    ///
+    /// # Errors
+    ///
+    /// As [`start`](Self::start) and [`finish`](Self::finish).
+    pub fn write(&mut self, put: impl FnOnce(&mut Vec<u8>) -> io::Result<()>) -> io::Result<()> {
+        if self.start(put)? {
+            Ok(())
+        } else {
+            self.finish()
+        }
+    }
+
+    /// A finished write moved every byte: a write to a byte-mode pipe that
+    /// waits finishes only once the pipe has taken all of it.
+    fn check(&self, moved: usize) -> io::Result<()> {
+        if moved == self.writing {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                format!("a write of {} bytes moved {moved}", self.writing),
+            ))
+        }
     }
 }
 
@@ -1532,5 +1797,88 @@ mod tests {
             io_thread.join().expect("the I/O thread"),
             "the shutdown returned with everything written"
         );
+    }
+
+    /// Takes from `reader` until it hands out frames or ends, waiting on
+    /// its event, at most ten seconds, while a read is in flight.
+    fn take_frames(reader: &mut EventReader) -> (Vec<Vec<u8>>, Option<io::Result<()>>) {
+        let mut frames = Vec::new();
+        loop {
+            match reader.take(|body| {
+                frames.push(body.to_vec());
+                Ok(())
+            }) {
+                Taken::Frames => return (frames, None),
+                Taken::Ended(ended) => return (frames, Some(ended)),
+                Taken::Waiting => assert_eq!(
+                    crate::event::wait_any(&[reader.event()], Some(Duration::from_secs(10)))
+                        .expect("waited"),
+                    Some(0),
+                    "a read finishes"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn an_event_reader_hands_out_frames_whole_and_reports_the_end_inside_one() {
+        let (ours, theirs) = pipe(Flow::Inbound, 4096, End::Synchronous).expect("a pipe");
+        let mut reader = EventReader::new(ours, 4096).expect("a reader");
+        let mut writer = File::from(theirs);
+        let mut stream = framed(b"first");
+        stream.extend(framed(b"second"));
+        let third = framed(b"third");
+        // The first frame and part of the second; then the rest of the
+        // second and part of the third, which the end cuts short.
+        writer.write_all(&stream[..40]).expect("written");
+        assert_eq!(take_frames(&mut reader).0, [b"first".to_vec()]);
+        writer.write_all(&stream[40..]).expect("written");
+        writer.write_all(&third[..10]).expect("written");
+        assert_eq!(take_frames(&mut reader).0, [b"second".to_vec()]);
+        drop(writer);
+        let (frames, ended) = take_frames(&mut reader);
+        assert_eq!(frames, Vec::<Vec<u8>>::new());
+        let error = ended.expect("ended").expect_err("cut short");
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn an_event_writer_finishes_a_write_larger_than_the_pipe_whole_while_another_event_is_set() {
+        let (ours, theirs) = pipe(Flow::Outbound, 4096, End::Overlapped).expect("a pipe");
+        let mut writer = EventWriter::new(ours).expect("a writer");
+        let mut reader = EventReader::new(theirs, 4096).expect("a reader");
+        let large = vec![7u8; 300_000];
+        let written = writer
+            .start(|buffer| {
+                put_frame(buffer, |body| {
+                    body.extend_from_slice(&large);
+                    Ok(())
+                })?;
+                put_frame(buffer, |body| {
+                    body.extend_from_slice(b"after");
+                    Ok(())
+                })
+            })
+            .expect("started");
+        assert!(!written, "a write larger than the pipe pends");
+        // Another event, as a host's command event, set while the write
+        // pends: the wait sees it, and the write goes on.
+        let command = Event::new().expect("an event");
+        command.set();
+        assert_eq!(
+            crate::event::wait_any(&[writer.event(), &command], None).expect("waited"),
+            Some(1)
+        );
+        assert!(writer.poll().is_none(), "the write is still in flight");
+        assert!(
+            take_frames(&mut reader).0 == [large],
+            "the large frame is read whole"
+        );
+        assert_eq!(take_frames(&mut reader).0, [b"after".to_vec()]);
+        writer.finish().expect("the write finished whole");
+        drop(writer);
+        let (frames, ended) = take_frames(&mut reader);
+        assert_eq!(frames, Vec::<Vec<u8>>::new());
+        assert!(ended.expect("ended").is_ok(), "a clean end between frames");
     }
 }

@@ -19,7 +19,8 @@
 use std::fmt::Write as _;
 use std::ops::ControlFlow;
 
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
+
 use tracing::{debug, info};
 use verbatim_audio::PcmFormat;
 use verbatim_speech::{
@@ -27,6 +28,7 @@ use verbatim_speech::{
     SynthError, SynthFactory, SynthId, SynthRegistry, SynthSink,
 };
 
+use verbatim_process::event::{Event, wait_any};
 use windows::Media::SpeechSynthesis::{SpeechAppendedSilence, SpeechSynthesizer, VoiceInformation};
 use windows::Storage::Streams::DataReader;
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
@@ -84,6 +86,10 @@ pub struct OneCoreSynth {
     /// The voice last given to the synthesizer, so it is set only when the
     /// selection changes.
     applied_voice: Option<String>,
+    /// An event set when the utterance being spoken may have been
+    /// cancelled, on which the driver asks its sink: a synthesizer host's
+    /// command event ([`OneCoreSynth::interrupted_by`]).
+    interrupt: Option<Arc<Event>>,
 }
 
 /// Initializes COM for this thread as MTA, tolerating a prior init in another
@@ -193,8 +199,20 @@ impl OneCoreSynth {
             pitch: 50,
             volume: 100,
             applied_voice: None,
+            interrupt: None,
         })
         .inspect(Self::minimize_appended_silence)
+    }
+
+    /// Has the driver, while it waits for `OneCore` to synthesize, also
+    /// wait on `interrupt` and ask its sink whether the utterance was
+    /// cancelled each time it is set: what a synthesizer host gives it, its
+    /// command event, so a `Cancel` read on the host's one thread stops the
+    /// wait (`docs/design/communication.md`, section 7.3).
+    #[must_use]
+    pub fn interrupted_by(mut self, interrupt: Arc<Event>) -> Self {
+        self.interrupt = Some(interrupt);
+        self
     }
 
     /// Asks the synthesizer for the least silence after each utterance, as
@@ -353,31 +371,24 @@ impl SynthDriver for OneCoreSynth {
         // Wait on this dedicated thread for the operation to complete, and
         // cancel it if the utterance is cancelled first: OneCore produces no
         // audio until it has synthesized the whole utterance, so there is no
-        // push at which the driver would otherwise hear of the cancel. The
-        // cancel's waker posts to the same channel as the completion, so one
-        // wait takes whichever comes first, and nothing wakes to look.
+        // push at which the driver would otherwise hear of the cancel.
+        let completed = Arc::new(event()?);
         let (outcome_tx, outcome) = mpsc::channel();
-        let completed_tx = outcome_tx.clone();
+        let signal = Arc::clone(&completed);
         operation
             .when(move |result| {
-                let _ = completed_tx.send(Some(result));
+                let _ = outcome_tx.send(result);
+                signal.set();
             })
             .map_err(|error| synthesis("wait for synthesis", &error))?;
-        sink.on_cancel(Box::new(move || {
-            let _ = outcome_tx.send(None);
-        }));
-        let stream = match outcome.recv() {
-            Ok(Some(result)) => result.map_err(|error| synthesis("finish synthesis", &error))?,
-            Ok(None) => {
-                let _ = operation.Cancel();
-                return Ok(());
-            }
-            Err(_) => {
-                return Err(SynthError::Synthesis(
-                    "synthesis ended without a result".to_owned(),
-                ));
-            }
-        };
+        if wait_for_synthesis(&completed, self.interrupt.as_deref(), sink)? == Waited::Cancelled {
+            let _ = operation.Cancel();
+            return Ok(());
+        }
+        let stream = outcome
+            .recv()
+            .map_err(|_| SynthError::Synthesis("synthesis ended without a result".to_owned()))?
+            .map_err(|error| synthesis("finish synthesis", &error))?;
         let marks = read_marks(&stream)?;
         let wav = read_stream(&stream)?;
         let (format, samples) = parse_wav(&wav)?;
@@ -400,6 +411,59 @@ impl SynthDriver for OneCoreSynth {
         let _ = push_frames(sink, format, &samples[pushed * channels..]);
         Ok(())
     }
+}
+
+/// How a wait for synthesis ended ([`wait_for_synthesis`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Waited {
+    /// The synthesis completed.
+    Completed,
+    /// The utterance was cancelled first.
+    Cancelled,
+}
+
+/// Waits until `completed` is set, which the synthesis's completion does,
+/// or until the utterance is cancelled, whichever comes first, with no
+/// timer and nothing waking to look (`docs/design/communication.md`,
+/// section 7.3). A cancel reaches the wait two ways: through the sink's
+/// waker ([`SynthSink::on_cancel`]), which sets an event of the wait's own,
+/// as a cancel on another thread does when the driver runs in Core; and,
+/// when `interrupt` is given, through that event, on which the wait asks
+/// the sink ([`SynthSink::is_cancelled`]) and waits again if it says no:
+/// a synthesizer host's command event, set when a command arrives, which
+/// the sink's question reads, on the host's one thread.
+///
+/// # Errors
+///
+/// Returns [`SynthError::Synthesis`] when the wait itself fails.
+pub fn wait_for_synthesis(
+    completed: &Event,
+    interrupt: Option<&Event>,
+    sink: &mut dyn SynthSink,
+) -> Result<Waited, SynthError> {
+    let cancelled = Arc::new(event()?);
+    let wake = Arc::clone(&cancelled);
+    sink.on_cancel(Box::new(move || wake.set()));
+    loop {
+        let signalled = match interrupt {
+            Some(interrupt) => wait_any(&[&cancelled, completed, interrupt], None),
+            None => wait_any(&[&cancelled, completed], None),
+        }
+        .map_err(|error| SynthError::Synthesis(format!("wait for synthesis: {error}")))?;
+        match signalled {
+            Some(0) => return Ok(Waited::Cancelled),
+            Some(1) => return Ok(Waited::Completed),
+            _ => {
+                if sink.is_cancelled() {
+                    return Ok(Waited::Cancelled);
+                }
+            }
+        }
+    }
+}
+
+fn event() -> Result<Event, SynthError> {
+    Event::new().map_err(|error| SynthError::Synthesis(format!("create an event: {error}")))
 }
 
 /// Pushes `samples` to the sink in chunks, so cancellation is seen between

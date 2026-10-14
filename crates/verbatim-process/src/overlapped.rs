@@ -28,7 +28,7 @@
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 use std::ptr::NonNull;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use windows::Wdk::Foundation::OBJECT_ATTRIBUTES;
@@ -36,17 +36,19 @@ use windows::Wdk::Storage::FileSystem::{
     FILE_CREATE, FILE_NON_DIRECTORY_FILE, FILE_SYNCHRONOUS_IO_NONALERT, NtOpenFile,
 };
 use windows::Win32::Foundation::{
-    ERROR_IO_PENDING, GENERIC_READ, HANDLE, INVALID_HANDLE_VALUE, NTSTATUS, UNICODE_STRING,
-    WAIT_TIMEOUT, WIN32_ERROR,
+    ERROR_IO_INCOMPLETE, ERROR_IO_PENDING, GENERIC_READ, HANDLE, INVALID_HANDLE_VALUE, NTSTATUS,
+    UNICODE_STRING, WAIT_TIMEOUT, WIN32_ERROR,
 };
 use windows::Win32::Storage::FileSystem::{
     FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
     FILE_WRITE_ATTRIBUTES, ReadFile, SYNCHRONIZE, SetFileCompletionNotificationModes, WriteFile,
 };
 use windows::Win32::System::IO::{
-    CreateIoCompletionPort, GetOverlappedResult, GetQueuedCompletionStatusEx, IO_STATUS_BLOCK,
-    OVERLAPPED, OVERLAPPED_ENTRY, PostQueuedCompletionStatus,
+    CancelIoEx, CreateIoCompletionPort, GetOverlappedResult, GetQueuedCompletionStatusEx,
+    IO_STATUS_BLOCK, OVERLAPPED, OVERLAPPED_ENTRY, PostQueuedCompletionStatus,
 };
+
+use crate::event::Event;
 
 /// `FILE_SKIP_COMPLETION_PORT_ON_SUCCESS` (`winbase.h`): an operation that
 /// completes at once queues no completion to the port.
@@ -414,9 +416,78 @@ impl PortFile {
     pub fn key(&self) -> usize {
         self.key
     }
+}
 
+/// A pipe end whose operations signal an [`Event`] as they finish, for a
+/// thread that waits on it together with other events
+/// ([`crate::event::wait_any`]) rather than on a port: the synth thread
+/// reading its host, and a synthesizer host reading Core's commands and
+/// writing its audio (`docs/design/communication.md`, section 7). The
+/// event is reset as each operation starts and set when it finishes, at
+/// once or later.
+#[derive(Debug)]
+pub struct EventFile {
+    file: OwnedHandle,
+    event: Arc<Event>,
+}
+
+impl EventFile {
+    /// `file`, an end opened for overlapped I/O and associated with no
+    /// port, with a new event of its own.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error if the event cannot be created.
+    pub fn new(file: OwnedHandle) -> io::Result<Self> {
+        Ok(Self {
+            file,
+            event: Arc::new(Event::new()?),
+        })
+    }
+
+    /// The event its operations signal.
+    #[must_use]
+    pub fn event(&self) -> &Arc<Event> {
+        &self.event
+    }
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for super::PortFile {}
+    impl Sealed for super::EventFile {}
+}
+
+/// A file a [`PipeIo`] can run operations on: a [`PortFile`], whose
+/// operations that wait finish through its port, or an [`EventFile`],
+/// whose operations signal its event.
+pub trait OverlappedFile: sealed::Sealed {
+    /// The file's handle.
+    #[doc(hidden)]
+    fn raw(&self) -> HANDLE;
+
+    /// The event an operation on it signals, or none.
+    #[doc(hidden)]
+    fn signals(&self) -> HANDLE;
+}
+
+impl OverlappedFile for PortFile {
     fn raw(&self) -> HANDLE {
         HANDLE(self.file.as_raw_handle())
+    }
+
+    fn signals(&self) -> HANDLE {
+        HANDLE::default()
+    }
+}
+
+impl OverlappedFile for EventFile {
+    fn raw(&self) -> HANDLE {
+        HANDLE(self.file.as_raw_handle())
+    }
+
+    fn signals(&self) -> HANDLE {
+        self.event.raw()
     }
 }
 
@@ -506,7 +577,7 @@ impl PipeIo {
     /// # Panics
     ///
     /// Panics if an operation is already in flight.
-    pub fn read(&mut self, file: &PortFile) -> Started {
+    pub fn read(&mut self, file: &impl OverlappedFile) -> Started {
         self.read_up_to(file, self.read_size)
     }
 
@@ -517,12 +588,15 @@ impl PipeIo {
     /// # Panics
     ///
     /// Panics if an operation is already in flight.
-    pub fn read_up_to(&mut self, file: &PortFile, size: usize) -> Started {
+    pub fn read_up_to(&mut self, file: &impl OverlappedFile, size: usize) -> Started {
         assert!(!self.in_flight, "one operation at a time");
         // SAFETY: nothing is in flight, so nothing but this slot uses the
         // operation's memory now.
         let operation = unsafe { self.operation.as_mut() };
-        operation.overlapped = OVERLAPPED::default();
+        operation.overlapped = OVERLAPPED {
+            hEvent: file.signals(),
+            ..OVERLAPPED::default()
+        };
         operation.filled = 0;
         // Only bytes the buffer has never held are zeroed.
         operation.buffer.resize(size, 0);
@@ -547,7 +621,7 @@ impl PipeIo {
     /// # Panics
     ///
     /// Panics if an operation is already in flight.
-    pub fn write(&mut self, file: &PortFile, bytes: &[u8]) -> Started {
+    pub fn write(&mut self, file: &impl OverlappedFile, bytes: &[u8]) -> Started {
         self.write_with(file, |buffer| {
             buffer.extend_from_slice(bytes);
             Ok::<(), std::convert::Infallible>(())
@@ -570,14 +644,17 @@ impl PipeIo {
     /// Panics if an operation is already in flight.
     pub fn write_with<E>(
         &mut self,
-        file: &PortFile,
+        file: &impl OverlappedFile,
         put: impl FnOnce(&mut Vec<u8>) -> Result<(), E>,
     ) -> Result<Started, E> {
         assert!(!self.in_flight, "one operation at a time");
         // SAFETY: nothing is in flight, so nothing but this slot uses the
         // operation's memory now.
         let operation = unsafe { self.operation.as_mut() };
-        operation.overlapped = OVERLAPPED::default();
+        operation.overlapped = OVERLAPPED {
+            hEvent: file.signals(),
+            ..OVERLAPPED::default()
+        };
         operation.filled = 0;
         operation.buffer.clear();
         put(&mut operation.buffer)?;
@@ -595,7 +672,7 @@ impl PipeIo {
 
     fn started(
         &mut self,
-        file: &PortFile,
+        file: &impl OverlappedFile,
         result: windows::core::Result<()>,
         read: bool,
     ) -> Started {
@@ -603,7 +680,7 @@ impl PipeIo {
         match result {
             // Completed at once, so no completion will come: the slot's
             // memory is free again, and the count is in the OVERLAPPED.
-            Ok(()) => match self.result(file, read) {
+            Ok(()) => match self.result(file.raw(), read) {
                 Ok(moved) => Started::Done(moved),
                 Err(error) => Started::Failed(error),
             },
@@ -635,17 +712,81 @@ impl PipeIo {
         // Its completion came through the port: the kernel is done with
         // the slot's memory.
         self.in_flight = false;
-        self.result(file, self.reading)
+        self.result(file.raw(), self.reading)
+    }
+
+    /// Whether the operation in flight on `file` has finished, with a zero
+    /// wait: `None` while it runs; how many bytes it moved, or its error,
+    /// once it has, after which nothing is in flight. A thread waiting on
+    /// `file`'s event calls it when the event is set.
+    ///
+    /// # Panics
+    ///
+    /// Panics if nothing is in flight.
+    pub fn poll(&mut self, file: &EventFile) -> Option<io::Result<usize>> {
+        assert!(self.in_flight, "an operation in flight");
+        match self.result(file.raw(), self.reading) {
+            Err(error) if error.raw_os_error() == Some(ERROR_IO_INCOMPLETE.0.cast_signed()) => None,
+            done => {
+                // Finished, well or not: the kernel is done with the
+                // slot's memory.
+                self.in_flight = false;
+                Some(done)
+            }
+        }
+    }
+
+    /// Waits for the operation in flight on `file` to finish, and returns
+    /// how many bytes it moved, or its error.
+    ///
+    /// # Errors
+    ///
+    /// Returns the operation's error.
+    ///
+    /// # Panics
+    ///
+    /// Panics if nothing is in flight.
+    pub fn wait(&mut self, file: &EventFile) -> io::Result<usize> {
+        loop {
+            if let Some(done) = self.poll(file) {
+                return done;
+            }
+            crate::event::wait_any(&[file.event()], None)?;
+        }
+    }
+
+    /// Cancels the read in flight on `file`, if one is, and waits until it
+    /// has ended, so the slot can be dropped. Only a read is ever
+    /// cancelled: it loses nothing the writer wrote, which stays in the
+    /// pipe. A write, once started, is always finished.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the operation in flight is a write.
+    pub fn cancel_read(&mut self, file: &EventFile) {
+        if !self.in_flight {
+            return;
+        }
+        assert!(self.reading, "only a read is ever cancelled");
+        // SAFETY: the read in flight was started on `file` with this
+        // OVERLAPPED, which stays put until the wait below sees it end.
+        let overlapped = unsafe { &raw const (*self.operation.as_ptr()).overlapped };
+        // SAFETY: as above; cancelling only asks the read to end.
+        let _ = unsafe { CancelIoEx(file.raw(), Some(overlapped)) };
+        // The read ends, cancelled or having completed first, and the
+        // event is set either way.
+        let _ = self.wait(file);
     }
 
     /// The finished operation's outcome, from its OVERLAPPED.
-    fn result(&mut self, file: &PortFile, read: bool) -> io::Result<usize> {
+    fn result(&mut self, file: HANDLE, read: bool) -> io::Result<usize> {
         let mut moved = 0u32;
-        // SAFETY: the operation has finished, so the OVERLAPPED is only this
-        // slot's and is only read.
+        // SAFETY: the operation has finished, or `poll` asks whether it
+        // has, so the OVERLAPPED is only read, by the call below, which
+        // reads what the kernel finished writing.
         let overlapped = unsafe { &raw const (*self.operation.as_ptr()).overlapped };
         // SAFETY: as above; `bwait` is false, so nothing waits.
-        let result = unsafe { GetOverlappedResult(file.raw(), overlapped, &raw mut moved, false) };
+        let result = unsafe { GetOverlappedResult(file, overlapped, &raw mut moved, false) };
         result.map_err(win32_error)?;
         let moved = moved as usize;
         if read {

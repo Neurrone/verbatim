@@ -11,8 +11,14 @@ this crate. The driver itself is unchanged by that move.
 
 Public API: `OneCoreSynth::new()`, `ONECORE_ID`, and `factory()` plus
 `register(registry)` conveniences, which build the driver in the calling
-process; nothing in Verbatim calls the two conveniences now. Everything
-else is the trait.
+process; nothing in Verbatim calls the two conveniences now.
+`OneCoreSynth::interrupted_by(event)` has the driver also wait on an
+event set when its utterance may have been cancelled, asking the sink
+each time: the synthesizer host gives it its command event.
+`wait_for_synthesis(completed, interrupt, sink)` is that wait, returning
+`Waited::Completed` or `Waited::Cancelled`; it is public so the host's
+tests can wait through it for a synthesis that never completes.
+Everything else is the trait.
 
 Implementation notes: voices are enumerated once, when the driver
 starts, into a `voice` Choice descriptor, and the synthesizer is given a
@@ -26,9 +32,13 @@ audibly jumps from 1.0x to 3.25x — the jump is the feature. Appended
 silence is set to its minimum at startup, as NVDA does, and the speech
 manager trims what is left. `speak` waits on the synthesis operation's
 completion (its thread is dedicated), or for the cancel, whichever comes
-first: the completion and the waker it registers with the sink
-(`SynthSink::on_cancel`) post to one channel, and on a cancel it cancels
-the operation:
+first, with no timer (`docs/design/communication.md`, section 7.3): it
+waits on events, one the completion sets, one the waker it registers
+with the sink (`SynthSink::on_cancel`) sets, and the interrupt event when
+it has one, on which it asks the sink's `is_cancelled` and waits again
+if the answer is no. In the synthesizer host that question reads the
+commands that have come, on the host's one thread. On a cancel it
+cancels the operation:
 OneCore produces no audio until it has synthesized the whole utterance,
 so there is no earlier push at which a cancel would be seen. The sequence
 is sent as SSML, its text escaped and each index mark a `<mark>` element

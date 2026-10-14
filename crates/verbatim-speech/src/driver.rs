@@ -14,7 +14,8 @@
 
 use std::fmt;
 use std::ops::ControlFlow;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 use verbatim_audio::{PcmFormat, Sound};
@@ -246,11 +247,12 @@ pub struct SynthTiming {
     pub to_host_us: u64,
     /// From the host taking the request to its synthesizer's first chunk.
     pub first_chunk_us: u64,
-    /// From the host beginning to write the first chunk to the driver's
-    /// reader thread having read it.
+    /// From the host beginning to write the first chunk to the driver
+    /// having read it from the pipe.
     pub return_us: u64,
-    /// From the driver's reader thread having read the first chunk to the
-    /// thread the driver speaks on taking it.
+    /// From the driver having read the first chunk to its handling it: the
+    /// frames read with it ahead of it, now that the thread the driver
+    /// speaks on reads the pipe itself.
     pub hand_off_us: u64,
 }
 
@@ -292,6 +294,60 @@ pub trait SynthSink {
 /// What a driver has called when its utterance is cancelled
 /// ([`SynthSink::on_cancel`]).
 pub type CancelWake = Box<dyn Fn() + Send + Sync>;
+
+/// An utterance's cancellation (`docs/design/communication.md`, section
+/// 7.3): a flag, and the waker the driver speaking it registered through
+/// [`SynthSink::on_cancel`], called once, from whichever thread cancels,
+/// as the flag is set, so a driver waiting for its synthesizer or its host
+/// learns of the cancel at once instead of by waking at intervals to look.
+/// A sink keeps one per utterance and answers
+/// [`is_cancelled`](SynthSink::is_cancelled) and
+/// [`on_cancel`](SynthSink::on_cancel) from it.
+#[derive(Default)]
+pub struct CancelToken {
+    cancelled: AtomicBool,
+    wake: Mutex<Option<CancelWake>>,
+}
+
+impl CancelToken {
+    /// A token not yet cancelled, with no waker.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Cancels, and calls the waker registered, if any, once. Never
+    /// blocks beyond the waker's own call, which must not block.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        let wake = self
+            .wake
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(wake) = wake {
+            wake();
+        }
+    }
+
+    /// Whether [`cancel`](Self::cancel) has been called.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    /// Registers `wake`, replacing any waker registered before, or calls
+    /// it at once if the token is already cancelled.
+    pub fn on_cancel(&self, wake: CancelWake) {
+        let mut slot = self.wake.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.is_cancelled() {
+            drop(slot);
+            wake();
+        } else {
+            *slot = Some(wake);
+        }
+    }
+}
 
 /// A speech synthesizer, whatever its origin: built-in, Wasm component, or
 /// a synthesizer host process (architecture section 6).

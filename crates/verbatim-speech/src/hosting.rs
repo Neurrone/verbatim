@@ -4,14 +4,20 @@
 //! It is the [`SynthDriver`](crate::SynthDriver) contract made into
 //! messages, so a host runs any driver unchanged: Core asks it to speak a
 //! [`SpeechSequence`] and the host streams back PCM, marks, and the outcome.
-//! Every message is framed by a kind byte and a length. Control messages
-//! are JSON; PCM is sent as raw little-endian samples, since a synthesizer
-//! streams far more of it than of anything else.
+//! Each message is one frame of the transport every pipe between Verbatim's
+//! processes uses (`docs/design/communication.md`, section 4.2), which
+//! lives in a Windows crate; this module gives each frame's body. Control
+//! messages are JSON; PCM is raw little-endian samples behind a short
+//! binary header, since a synthesizer streams far more of it than of
+//! anything else.
 //!
 //! Cancellation names the utterance it cancels, so a cancel that crosses
-//! the utterance's own ending on the pipe can never cancel the next one.
+//! the utterance's own ending on the pipe can never cancel the next one;
+//! and everything the host says about an utterance names it, so Core can
+//! ask for the next utterance right behind a cancel and drop the cancelled
+//! one's last frames as they come (section 7.2).
 
-use std::io::{self, Read, Write};
+use std::io;
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -25,10 +31,12 @@ use crate::settings::{SettingDescriptor, SettingId, SettingValue};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToHost {
     /// Speak this sequence; the host answers with PCM and marks, then
-    /// [`FromHost::Done`] or [`FromHost::Failed`].
+    /// [`FromHost::Done`] or [`FromHost::Failed`], each naming its
+    /// utterance.
     Speak(SpeechSequence),
     /// Stop speaking this utterance as soon as possible; it still ends with
-    /// [`FromHost::Done`].
+    /// [`FromHost::Done`]. A cancel of an utterance already ended does
+    /// nothing.
     Cancel(UtteranceId),
     /// Change one setting; the host answers with
     /// [`FromHost::SettingApplied`].
@@ -58,7 +66,11 @@ pub struct HostDescription {
     pub values: Vec<(SettingId, SettingValue)>,
 }
 
-/// A message from a synthesizer host to Core.
+/// A message from a synthesizer host to Core. Everything said about an
+/// utterance names it, so Core can tell a cancelled utterance's last
+/// frames, still on their way when the next utterance is asked for, from
+/// the next utterance's, and drop them unread
+/// (`docs/design/communication.md`, section 7.2).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FromHost {
     /// The synthesizer started; the first message a host sends.
@@ -68,18 +80,40 @@ pub enum FromHost {
     /// Sent just before an utterance's first audio: when the host took in
     /// its request and when it wrote this, and how long its synthesizer
     /// took to the first chunk, for the latency ledger.
-    FirstAudio(HostTiming),
-    /// Audio of the utterance being spoken.
-    Pcm(PcmFormat, Vec<i16>),
-    /// The audio sent so far reaches this mark.
-    Mark(IndexMark),
+    FirstAudio(UtteranceId, HostTiming),
+    /// Audio of an utterance.
+    Pcm(UtteranceId, PcmFormat, Vec<i16>),
+    /// The utterance's audio sent so far reaches this mark.
+    Mark(UtteranceId, IndexMark),
     /// The utterance's synthesis ended, completely or because it was
     /// cancelled.
-    Done,
+    Done(UtteranceId),
     /// The utterance's synthesis failed.
-    Failed(String),
+    Failed(UtteranceId, String),
     /// The answer to [`ToHost::SetSetting`]: `None`, or why it was refused.
     SettingApplied(Option<String>),
+}
+
+impl FromHost {
+    /// The utterance the message is about; `None` for `Ready`,
+    /// `Unavailable` and `SettingApplied`.
+    #[must_use]
+    pub fn utterance(&self) -> Option<UtteranceId> {
+        match self {
+            Self::FirstAudio(utterance, _)
+            | Self::Pcm(utterance, _, _)
+            | Self::Mark(utterance, _)
+            | Self::Done(utterance)
+            | Self::Failed(utterance, _) => Some(*utterance),
+            Self::Ready(_) | Self::Unavailable(_) | Self::SettingApplied(_) => None,
+        }
+    }
+
+    /// Whether the message ends its utterance: `Done` or `Failed`.
+    #[must_use]
+    pub fn ends_utterance(&self) -> bool {
+        matches!(self, Self::Done(_) | Self::Failed(..))
+    }
 }
 
 /// The host's stamps on an utterance's start ([`FromHost::FirstAudio`]):
@@ -113,17 +147,21 @@ pub fn now_us() -> u64 {
 #[derive(Serialize, Deserialize)]
 enum Control {
     Ready(HostDescription),
-    FirstAudio(HostTiming),
+    FirstAudio(UtteranceId, HostTiming),
     Unavailable(String),
-    Mark(IndexMark),
-    Done,
-    Failed(String),
+    Mark(UtteranceId, IndexMark),
+    Done(UtteranceId),
+    Failed(UtteranceId, String),
     SettingApplied(Option<String>),
 }
 
-/// Frame kinds.
-const JSON: u8 = 0;
-const PCM: u8 = 1;
+/// The first byte of a PCM body. No JSON text starts with it, so it tells
+/// PCM from every other message.
+const PCM: u8 = 0;
+
+/// The bytes of a PCM body before its samples: the kind, the utterance,
+/// the sample rate and the channel count.
+const PCM_HEADER: usize = 1 + 8 + 4 + 2;
 
 /// The ids of the synthesizers a synthesizer host can run, shared by Core,
 /// which asks for one by id, and the host, which builds it.
@@ -135,153 +173,104 @@ pub mod synth_ids {
     pub const ESPEAK: &str = "espeak";
 }
 
-/// The largest frame either side accepts: 16 MB, far beyond any message,
-/// so a corrupt length is caught rather than allocated.
-const MAX_FRAME: usize = 16 * 1024 * 1024;
-
-/// Writes one message to a host.
+/// Appends the body of a message to a host to `body`: its JSON.
 ///
 /// # Errors
 ///
-/// Returns the writer's error.
-pub fn write_to_host(writer: &mut impl Write, message: &ToHost) -> io::Result<()> {
-    write_json(writer, message)
+/// Returns the encoding's error.
+pub fn encode_to_host(message: &ToHost, body: &mut Vec<u8>) -> io::Result<()> {
+    serde_json::to_writer(body, message).map_err(io::Error::other)
 }
 
-/// Reads one message from Core, or `None` at the end of the stream.
+/// Reads a message to a host from its frame's body.
 ///
 /// # Errors
 ///
-/// Returns the reader's error, or [`io::ErrorKind::InvalidData`] for a
-/// malformed frame.
-pub fn read_to_host(reader: &mut impl Read) -> io::Result<Option<ToHost>> {
-    match read_frame(reader)? {
-        None => Ok(None),
-        Some((JSON, body)) => parse_json(&body).map(Some),
-        Some((kind, _)) => Err(invalid(&format!("unexpected frame kind {kind} from Core"))),
-    }
+/// Returns [`io::ErrorKind::InvalidData`] for a body that is not one.
+pub fn decode_to_host(body: &[u8]) -> io::Result<ToHost> {
+    parse_json(body)
 }
 
-/// Writes one message to Core.
+/// Appends the body of a message from a host to `body`: JSON, or for PCM,
+/// a zero byte, the utterance (a little-endian `u64`), the sample rate (a
+/// `u32`) and the channel count (a `u16`), then the samples as
+/// little-endian `i16`s.
 ///
 /// # Errors
 ///
-/// Returns the writer's error.
-pub fn write_from_host(writer: &mut impl Write, message: &FromHost) -> io::Result<()> {
+/// Returns the encoding's error.
+pub fn encode_from_host(message: &FromHost, body: &mut Vec<u8>) -> io::Result<()> {
     let control = match message {
-        FromHost::Pcm(format, samples) => {
-            let mut body = Vec::with_capacity(6 + samples.len() * 2);
-            body.extend_from_slice(&format.sample_rate.to_le_bytes());
-            body.extend_from_slice(&format.channels.to_le_bytes());
-            for sample in samples {
-                body.extend_from_slice(&sample.to_le_bytes());
-            }
-            return write_frame(writer, PCM, &body);
+        FromHost::Pcm(utterance, format, samples) => {
+            encode_pcm(*utterance, *format, samples, body);
+            return Ok(());
         }
         FromHost::Ready(description) => Control::Ready(description.clone()),
-        FromHost::FirstAudio(timing) => Control::FirstAudio(*timing),
+        FromHost::FirstAudio(utterance, timing) => Control::FirstAudio(*utterance, *timing),
         FromHost::Unavailable(reason) => Control::Unavailable(reason.clone()),
-        FromHost::Mark(mark) => Control::Mark(*mark),
-        FromHost::Done => Control::Done,
-        FromHost::Failed(reason) => Control::Failed(reason.clone()),
+        FromHost::Mark(utterance, mark) => Control::Mark(*utterance, *mark),
+        FromHost::Done(utterance) => Control::Done(*utterance),
+        FromHost::Failed(utterance, reason) => Control::Failed(*utterance, reason.clone()),
         FromHost::SettingApplied(refusal) => Control::SettingApplied(refusal.clone()),
     };
-    write_json(writer, &control)
+    serde_json::to_writer(body, &control).map_err(io::Error::other)
 }
 
-/// Reads one message from a host, or `None` at the end of the stream.
-///
-/// # Errors
-///
-/// Returns the reader's error, or [`io::ErrorKind::InvalidData`] for a
-/// malformed frame.
-pub fn read_from_host(reader: &mut impl Read) -> io::Result<Option<FromHost>> {
-    let Some((kind, body)) = read_frame(reader)? else {
-        return Ok(None);
-    };
-    match kind {
-        PCM => {
-            if body.len() < 6 || (body.len() - 6) % 2 != 0 {
-                return Err(invalid("malformed PCM frame"));
-            }
-            let format = PcmFormat {
-                sample_rate: u32::from_le_bytes([body[0], body[1], body[2], body[3]]),
-                channels: u16::from_le_bytes([body[4], body[5]]),
-            };
-            let samples = body[6..]
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|pair| i16::from_le_bytes(*pair))
-                .collect();
-            Ok(Some(FromHost::Pcm(format, samples)))
-        }
-        JSON => Ok(Some(match parse_json::<Control>(&body)? {
-            Control::Ready(description) => FromHost::Ready(description),
-            Control::FirstAudio(timing) => FromHost::FirstAudio(timing),
-            Control::Unavailable(reason) => FromHost::Unavailable(reason),
-            Control::Mark(mark) => FromHost::Mark(mark),
-            Control::Done => FromHost::Done,
-            Control::Failed(reason) => FromHost::Failed(reason),
-            Control::SettingApplied(refusal) => FromHost::SettingApplied(refusal),
-        })),
-        other => Err(invalid(&format!(
-            "unexpected frame kind {other} from a host"
-        ))),
+/// Appends the body of [`FromHost::Pcm`] for `utterance`'s `samples` to
+/// `body`, as [`encode_from_host`] does, without copying the samples into
+/// a message first.
+pub fn encode_pcm(utterance: UtteranceId, format: PcmFormat, samples: &[i16], body: &mut Vec<u8>) {
+    body.reserve(PCM_HEADER + samples.len() * 2);
+    body.push(PCM);
+    body.extend_from_slice(&utterance.0.to_le_bytes());
+    body.extend_from_slice(&format.sample_rate.to_le_bytes());
+    body.extend_from_slice(&format.channels.to_le_bytes());
+    for sample in samples {
+        body.extend_from_slice(&sample.to_le_bytes());
     }
 }
 
-fn write_json(writer: &mut impl Write, message: &impl Serialize) -> io::Result<()> {
-    let body = serde_json::to_vec(message).map_err(io::Error::other)?;
-    write_frame(writer, JSON, &body)
+/// Reads a message from a host from its frame's body.
+///
+/// # Errors
+///
+/// Returns [`io::ErrorKind::InvalidData`] for a body that is not one.
+pub fn decode_from_host(body: &[u8]) -> io::Result<FromHost> {
+    if body.first() == Some(&PCM) {
+        if body.len() < PCM_HEADER || !(body.len() - PCM_HEADER).is_multiple_of(2) {
+            return Err(invalid("malformed PCM frame"));
+        }
+        let (header, samples) = body.split_at(PCM_HEADER);
+        let (mut utterance, mut sample_rate, mut channels) = ([0u8; 8], [0u8; 4], [0u8; 2]);
+        utterance.copy_from_slice(&header[1..9]);
+        sample_rate.copy_from_slice(&header[9..13]);
+        channels.copy_from_slice(&header[13..15]);
+        let utterance = UtteranceId(u64::from_le_bytes(utterance));
+        let format = PcmFormat {
+            sample_rate: u32::from_le_bytes(sample_rate),
+            channels: u16::from_le_bytes(channels),
+        };
+        let samples = samples
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| i16::from_le_bytes(*pair))
+            .collect();
+        return Ok(FromHost::Pcm(utterance, format, samples));
+    }
+    Ok(match parse_json::<Control>(body)? {
+        Control::Ready(description) => FromHost::Ready(description),
+        Control::FirstAudio(utterance, timing) => FromHost::FirstAudio(utterance, timing),
+        Control::Unavailable(reason) => FromHost::Unavailable(reason),
+        Control::Mark(utterance, mark) => FromHost::Mark(utterance, mark),
+        Control::Done(utterance) => FromHost::Done(utterance),
+        Control::Failed(utterance, reason) => FromHost::Failed(utterance, reason),
+        Control::SettingApplied(refusal) => FromHost::SettingApplied(refusal),
+    })
 }
 
 fn parse_json<T: DeserializeOwned>(body: &[u8]) -> io::Result<T> {
     serde_json::from_slice(body).map_err(|error| invalid(&error.to_string()))
-}
-
-/// Writes a kind byte, a little-endian `u32` length, and the body, in one
-/// write so the peer never sees a frame split by another writer.
-fn write_frame(writer: &mut impl Write, kind: u8, body: &[u8]) -> io::Result<()> {
-    if body.len() > MAX_FRAME {
-        return Err(invalid("frame too large"));
-    }
-    let length = u32::try_from(body.len()).map_err(|_| invalid("frame too large"))?;
-    let mut frame = Vec::with_capacity(5 + body.len());
-    frame.push(kind);
-    frame.extend_from_slice(&length.to_le_bytes());
-    frame.extend_from_slice(body);
-    writer.write_all(&frame)?;
-    writer.flush()
-}
-
-/// Reads one frame, or `None` when the stream ends cleanly between frames.
-fn read_frame(reader: &mut impl Read) -> io::Result<Option<(u8, Vec<u8>)>> {
-    let mut header = [0u8; 5];
-    let mut read = 0;
-    while read < header.len() {
-        match reader.read(&mut header[read..]) {
-            Ok(0) if read == 0 => return Ok(None),
-            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
-            Ok(count) => read += count,
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-            // A closed anonymous pipe reports a broken pipe: the peer is gone.
-            Err(error) if read == 0 && error.kind() == io::ErrorKind::BrokenPipe => {
-                return Ok(None);
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    let length = usize::try_from(u32::from_le_bytes([
-        header[1], header[2], header[3], header[4],
-    ]))
-    .unwrap_or(usize::MAX);
-    if length > MAX_FRAME {
-        return Err(invalid("frame length out of range"));
-    }
-    let mut body = vec![0u8; length];
-    reader.read_exact(&mut body)?;
-    Ok(Some((header[0], body)))
 }
 
 fn invalid(detail: &str) -> io::Error {
@@ -296,7 +285,7 @@ mod tests {
     use crate::driver::SpeechItem;
 
     #[test]
-    fn every_message_survives_the_trip_through_a_pipe() {
+    fn every_message_survives_encoding_and_decoding() {
         let to_host = vec![
             ToHost::Speak(SpeechSequence {
                 utterance: UtteranceId(3),
@@ -322,42 +311,59 @@ mod tests {
                 values: vec![(SettingId::new("rate"), SettingValue::Number(50))],
             }),
             FromHost::Pcm(
+                UtteranceId(u64::MAX - 1),
                 PcmFormat {
                     sample_rate: 22_050,
                     channels: 1,
                 },
                 vec![1, -2, i16::MAX, i16::MIN],
             ),
-            FromHost::FirstAudio(HostTiming {
-                received_at_us: 1_000,
-                first_chunk_us: 2_500,
-                sent_at_us: 3_600,
-            }),
-            FromHost::Mark(IndexMark(1)),
-            FromHost::Done,
-            FromHost::Failed("no".to_owned()),
+            FromHost::FirstAudio(
+                UtteranceId(3),
+                HostTiming {
+                    received_at_us: 1_000,
+                    first_chunk_us: 2_500,
+                    sent_at_us: 3_600,
+                },
+            ),
+            FromHost::Mark(UtteranceId(3), IndexMark(1)),
+            FromHost::Done(UtteranceId(3)),
+            FromHost::Failed(UtteranceId(4), "no".to_owned()),
             FromHost::SettingApplied(Some("out of range".to_owned())),
             FromHost::Unavailable("missing".to_owned()),
         ];
 
-        let mut pipe = Vec::new();
         for message in &to_host {
-            write_to_host(&mut pipe, message).unwrap();
+            let mut body = Vec::new();
+            encode_to_host(message, &mut body).unwrap();
+            assert_eq!(&decode_to_host(&body).unwrap(), message);
         }
-        let mut reader = pipe.as_slice();
-        for message in &to_host {
-            assert_eq!(read_to_host(&mut reader).unwrap().as_ref(), Some(message));
+        for message in &from_host {
+            let mut body = Vec::new();
+            encode_from_host(message, &mut body).unwrap();
+            assert_eq!(&decode_from_host(&body).unwrap(), message);
         }
-        assert_eq!(read_to_host(&mut reader).unwrap(), None);
+    }
 
-        let mut pipe = Vec::new();
-        for message in &from_host {
-            write_from_host(&mut pipe, message).unwrap();
-        }
-        let mut reader = pipe.as_slice();
-        for message in &from_host {
-            assert_eq!(read_from_host(&mut reader).unwrap().as_ref(), Some(message));
-        }
-        assert_eq!(read_from_host(&mut reader).unwrap(), None);
+    #[test]
+    fn a_pcm_body_cut_short_is_refused() {
+        let mut body = Vec::new();
+        encode_from_host(
+            &FromHost::Pcm(
+                UtteranceId(1),
+                PcmFormat {
+                    sample_rate: 22_050,
+                    channels: 1,
+                },
+                vec![1, 2],
+            ),
+            &mut body,
+        )
+        .unwrap();
+        body.pop();
+        assert_eq!(
+            decode_from_host(&body).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
     }
 }

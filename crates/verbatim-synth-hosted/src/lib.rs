@@ -3,38 +3,55 @@
 //! [`SynthDriver`].
 //!
 //! Each `HostedSynth` owns one `verbatim-synth-host.exe`, launched contained
-//! in a kill-on-close job, and talks to it with the protocol in
-//! [`verbatim_speech::hosting`]. The host lives exactly as long as the
-//! driver: switching synthesizer drops the driver, which ends the process.
+//! in a kill-on-close job over two overlapped pipes, and talks to it with
+//! the protocol in [`verbatim_speech::hosting`], each message a frame of
+//! the transport ([`verbatim_process::transport`]). The host lives exactly
+//! as long as the driver: switching synthesizer drops the driver, which
+//! ends the process.
+//!
+//! The synth thread reads the host's pipe itself
+//! (`docs/design/communication.md`, sections 7.2 and 7.3). While it waits
+//! for the host it waits on the pipe's read and on its utterance's cancel
+//! together, so a cancel is written to the host at once. Having written
+//! it, the driver returns: it does not wait for the host to end the
+//! utterance. It remembers the utterance as draining, and whenever it next
+//! reads from the host, for the next utterance or for a setting's answer,
+//! it drops every frame of a draining utterance, its `Done` or `Failed`
+//! included, unread by anyone. So the next utterance's `Speak` goes right
+//! behind the `Cancel`, and the host reads both at its next chunk.
 //!
 //! Recovery. A host that exits, sends nothing for [`HANG_TIMEOUT`] while
-//! speaking, or answers out of turn, fails the request in flight and is
-//! ended; the next request starts a new host and gives it the settings the
-//! old one had. A synthesis error the host reports in turn fails only that
-//! utterance, and the host carries on.
+//! the driver waits for it, or answers out of turn, fails the request in
+//! flight and is ended; the next request starts a new host and gives it
+//! the settings the old one had. A synthesis error the host reports in
+//! turn fails only that utterance, and the host carries on. A host that
+//! dies while an utterance drains is found at the next request.
 //!
-//! Commands are written without a timeout: the host's reader thread drains
-//! its command pipe at all times, so a write waits only on a host that is
-//! frozen outright.
+//! Commands are written whole before the driver goes on: the host keeps a
+//! read of its command pipe in flight at all times, even while it waits
+//! to write audio, so a write waits only on a host that is frozen outright.
 //!
-//! Backpressure crosses the process boundary unchanged: PCM is read from
-//! the host only as fast as the sink accepts it, through a two-message
-//! channel and a small pipe buffer, so the host's synthesizer waits when
+//! Backpressure crosses the process boundary unchanged: the driver reads a
+//! frame only once the sink has taken the one before, and the pipe the
+//! host writes to has a small buffer, so the host's synthesizer waits when
 //! the audio device is behind.
 
 #![forbid(unsafe_code)]
 
-use std::fs::File;
-use std::io::{self, BufReader, BufWriter, Write};
+use std::collections::VecDeque;
+use std::io;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
-use crossbeam_channel::{Receiver, RecvTimeoutError, bounded, select};
 use tracing::warn;
-use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
-use verbatim_process::{ChildSpec, Contained};
+use verbatim_model::UtteranceId;
+use verbatim_process::event::{Event, wait_any};
+use verbatim_process::overlapped::{End, Flow, pipe};
+use verbatim_process::transport::{EventReader, EventWriter, Taken, put_frame};
+use verbatim_process::{ChildEnds, ChildSpec, Contained};
 use verbatim_speech::hosting::{
-    FromHost, HostDescription, HostTiming, ToHost, now_us, read_from_host, write_to_host,
+    FromHost, HostDescription, HostTiming, ToHost, decode_from_host, encode_to_host, now_us,
 };
 use verbatim_speech::{
     SettingDescriptor, SettingId, SettingValue, SpeechSequence, SynthDriver, SynthError,
@@ -46,14 +63,10 @@ use verbatim_speech::{
 /// than real time, so ten seconds without a message is never normal.
 pub const HANG_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The buffer asked for on the pipe the host writes PCM to: about 90 ms of
-/// 22 kHz mono, so the host cannot run far ahead of playback.
+/// The buffer of the pipe the host writes PCM to, and how much a read of
+/// it asks for while a frame's length is unknown: about 90 ms of 22 kHz
+/// mono each, so the host cannot run far ahead of playback.
 const PIPE_BUFFER: u32 = 4_096;
-
-/// The priority of the thread reading a host's replies, which only hands
-/// each one to the synth thread, for microseconds per wake
-/// (`docs/design/communication.md`, section 6.1).
-const READER_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// A synthesizer in a host process.
 pub struct HostedSynth {
@@ -65,20 +78,59 @@ pub struct HostedSynth {
 
 /// One running host process.
 struct Host {
+    commands: EventWriter,
+    replies: EventReader,
+    /// Messages read and not yet handled, in order.
+    read: VecDeque<Reply>,
+    /// Why the reading of the host's pipe ended, once it has.
+    ended: Option<String>,
+    /// Utterances cancelled whose `Done` or `Failed` has not been read:
+    /// every frame of theirs is dropped as it is read.
+    draining: VecDeque<UtteranceId>,
     /// Ends the process when dropped.
     contained: Contained,
-    commands: BufWriter<File>,
-    replies: Receiver<io::Result<Reply>>,
 }
 
-/// A message from the host, as the reader thread hands it to the synth
-/// thread.
+/// A message from the host.
 struct Reply {
     message: FromHost,
-    /// For [`FromHost::FirstAudio`], when the reader thread read the frame,
-    /// on the clock every process shares; `None` for the rest, which the
-    /// latency ledger does not time.
-    read_at_us: Option<u64>,
+    /// For [`FromHost::FirstAudio`], when the frame was read, on the clock
+    /// every process shares; 0 for the rest, which the latency ledger does
+    /// not time.
+    read_at_us: u64,
+}
+
+/// What a wait for the host brought.
+enum Next {
+    /// A message, not of a draining utterance.
+    Message(Reply),
+    /// The utterance's cancel woke the wait.
+    Cancelled,
+}
+
+/// Why a host can no longer be used.
+enum Lost {
+    /// Its pipe ended or failed: the process ended, or was ending.
+    Ended(String),
+    /// It sent nothing for [`HANG_TIMEOUT`] while the driver waited for it.
+    Hung,
+    /// It sent something out of turn.
+    OutOfTurn(String),
+}
+
+impl Lost {
+    /// The host hung or misbehaved, rather than ended.
+    fn misbehaved(&self) -> bool {
+        !matches!(self, Self::Ended(_))
+    }
+
+    fn error(&self) -> SynthError {
+        SynthError::Synthesis(match self {
+            Self::Ended(why) => format!("the synthesizer host ended: {why}"),
+            Self::Hung => format!("the synthesizer host sent nothing for {HANG_TIMEOUT:?}"),
+            Self::OutOfTurn(what) => format!("the synthesizer host sent {what} out of turn"),
+        })
+    }
 }
 
 impl HostedSynth {
@@ -112,16 +164,21 @@ impl HostedSynth {
     /// request; a setting it refuses (a voice since uninstalled) is only
     /// logged.
     fn host(&mut self) -> Result<&mut Host, SynthError> {
-        // Between requests a host sends nothing, so anything waiting from it
-        // is its end (the reader queues the pipe's end of stream when the
-        // process dies) or a message out of turn: either way it is replaced
-        // now, before the next request is lost to it. A host whose process
-        // has exited is replaced too, whether or not the reader has queued
-        // its end yet.
-        if self
+        // Between requests a host sends only the last frames of utterances
+        // that drain, so anything else already read from it is its end or
+        // a message out of turn: either way it is replaced now, before the
+        // next request is lost to it. A host whose process has exited is
+        // replaced too, whether or not its pipe's end has been read yet.
+        // One whose pipe ends only as the request is made fails the
+        // request before anything is relayed, which `speak` sends again.
+        if let Some(host) = &mut self.host
+            && let Err(lost) = host.between_requests()
+        {
+            self.lose_host(&lost.error());
+        } else if self
             .host
             .as_ref()
-            .is_some_and(|host| !host.replies.is_empty() || host.contained.has_exited())
+            .is_some_and(|host| host.contained.has_exited())
         {
             self.lose_host(&SynthError::Synthesis(
                 "the synthesizer host ended while idle".to_owned(),
@@ -156,100 +213,197 @@ impl Host {
         exe: &std::path::Path,
         synth: &SynthId,
     ) -> Result<(Self, HostDescription), SynthError> {
-        let synth_name = synth.0.clone();
-        let arguments = move |pipe_in: usize, pipe_out: usize| {
-            format!("--pipe-in {pipe_in} --pipe-out {pipe_out} --synth {synth_name}")
-        };
-        let (contained, pipes) = verbatim_process::launch(&ChildSpec {
-            exe,
-            arguments: &arguments,
-            log_stem: &format!("synth-{}", synth.0),
-            memory_cap: None,
-            from_child_buffer: PIPE_BUFFER,
-        })
-        .map_err(|error| {
+        let unavailable = |error: io::Error| {
             SynthError::Unavailable(format!(
                 "start the synthesizer host {}: {error}",
                 exe.display()
             ))
-        })?;
-        // Two messages of slack: the reader thread blocks once they are
-        // waiting, so the pipe fills and the host's writes wait.
-        let (reply_tx, replies) = bounded(2);
-        let mut from_host = BufReader::new(pipes.from_child);
-        std::thread::Builder::new()
-            .name(format!("verbatim-synth-host-{}", synth.0))
-            .spawn(move || {
-                prioritize_role("synthesizer host reader", READER_PRIORITY);
-                loop {
-                    let reply = match read_from_host(&mut from_host) {
-                        Ok(Some(message)) => Ok(Reply {
-                            // The first audio's receipt is stamped here, as
-                            // the frame is read, so the hand-off to the
-                            // synth thread is a stage of its own.
-                            read_at_us: matches!(message, FromHost::FirstAudio(_)).then(now_us),
-                            message,
-                        }),
-                        Ok(None) => Err(io::ErrorKind::UnexpectedEof.into()),
-                        Err(error) => Err(error),
-                    };
-                    let ended = reply.is_err();
-                    if reply_tx.send(reply).is_err() || ended {
-                        return;
-                    }
-                }
-            })
-            .map_err(|error| SynthError::Unavailable(format!("start the host reader: {error}")))?;
-        let host = Self {
-            contained,
-            commands: BufWriter::new(pipes.to_child),
-            replies,
         };
-        match host.receive() {
-            Ok(FromHost::Ready(description)) => Ok((host, description)),
-            Ok(FromHost::Unavailable(reason)) => Err(SynthError::Unavailable(reason)),
-            Ok(other) => Err(SynthError::Unavailable(format!(
-                "the synthesizer host began with {other:?}"
+        let (to_host, commands_end) =
+            pipe(Flow::Outbound, 0, End::Overlapped).map_err(unavailable)?;
+        let (from_host, messages_end) =
+            pipe(Flow::Inbound, PIPE_BUFFER, End::Overlapped).map_err(unavailable)?;
+        let synth_name = synth.0.clone();
+        let arguments = move |pipe_in: usize, pipe_out: usize| {
+            format!("--pipe-in {pipe_in} --pipe-out {pipe_out} --synth {synth_name}")
+        };
+        let contained = verbatim_process::launch_with_ends(
+            &ChildSpec {
+                exe,
+                arguments: &arguments,
+                log_stem: &format!("synth-{}", synth.0),
+                memory_cap: None,
+                from_child_buffer: PIPE_BUFFER,
+            },
+            ChildEnds {
+                commands: commands_end,
+                messages: messages_end,
+            },
+        )
+        .map_err(unavailable)?;
+        let mut host = Self {
+            commands: EventWriter::new(to_host).map_err(unavailable)?,
+            replies: EventReader::new(from_host, PIPE_BUFFER as usize).map_err(unavailable)?,
+            read: VecDeque::new(),
+            ended: None,
+            draining: VecDeque::new(),
+            contained,
+        };
+        match host.next(None) {
+            Ok(Next::Message(Reply {
+                message: FromHost::Ready(description),
+                ..
+            })) => Ok((host, description)),
+            Ok(Next::Message(Reply {
+                message: FromHost::Unavailable(reason),
+                ..
+            })) => Err(SynthError::Unavailable(reason)),
+            Ok(Next::Message(Reply { message, .. })) => Err(SynthError::Unavailable(format!(
+                "the synthesizer host began with {message:?}"
             ))),
-            Err(error) => Err(SynthError::Unavailable(error.to_string())),
+            Ok(Next::Cancelled) => unreachable!("no cancel is watched"),
+            Err(lost) => Err(SynthError::Unavailable(lost.error().to_string())),
         }
     }
 
-    /// Writes `message` to the host, returning the shared clock's stamp
-    /// taken as the write began.
-    fn send(&mut self, message: &ToHost) -> Result<u64, SynthError> {
-        write_stamped(&mut self.commands, message, now_us).map_err(|error| {
-            SynthError::Synthesis(format!("the synthesizer host is gone: {error}"))
+    /// Writes `message` to the host, whole, returning the shared clock's
+    /// stamp taken as the write began.
+    fn send(&mut self, message: &ToHost) -> Result<u64, Lost> {
+        let commands = &mut self.commands;
+        stamped(now_us, || {
+            commands.write(|buffer| put_frame(buffer, |body| encode_to_host(message, body)))
         })
+        .map_err(|error| Lost::Ended(error.to_string()))
     }
 
-    /// The host's next message, or an error if it ended or hung.
-    fn receive(&self) -> Result<FromHost, SynthError> {
-        match self.replies.recv_timeout(HANG_TIMEOUT) {
-            Ok(Ok(reply)) => Ok(reply.message),
-            Ok(Err(error)) => Err(SynthError::Synthesis(format!(
-                "the synthesizer host ended: {error}"
-            ))),
-            Err(RecvTimeoutError::Timeout) => Err(SynthError::Synthesis(format!(
-                "the synthesizer host sent nothing for {HANG_TIMEOUT:?}"
-            ))),
-            Err(RecvTimeoutError::Disconnected) => Err(SynthError::Synthesis(
-                "the synthesizer host ended".to_owned(),
-            )),
+    /// Cancels `utterance`, whose `Speak` was written, and notes it as
+    /// draining.
+    fn cancel(&mut self, utterance: UtteranceId) -> Result<(), Lost> {
+        self.send(&ToHost::Cancel(utterance))?;
+        self.draining.push_back(utterance);
+        Ok(())
+    }
+
+    /// Reads once without waiting, if the reading has not ended: whether a
+    /// read is now in flight with nothing more to hand out.
+    fn fill(&mut self) -> bool {
+        if self.ended.is_some() {
+            return false;
+        }
+        let Self { replies, read, .. } = self;
+        let taken = replies.take(|body| {
+            let message = decode_from_host(body)?;
+            let read_at_us = if matches!(message, FromHost::FirstAudio(..)) {
+                now_us()
+            } else {
+                0
+            };
+            read.push_back(Reply {
+                message,
+                read_at_us,
+            });
+            Ok(())
+        });
+        match taken {
+            Taken::Frames => false,
+            Taken::Waiting => true,
+            Taken::Ended(Ok(())) => {
+                self.ended = Some("its pipe closed".to_owned());
+                false
+            }
+            Taken::Ended(Err(error)) => {
+                self.ended = Some(error.to_string());
+                false
+            }
+        }
+    }
+
+    /// The next message read that is not of a draining utterance, dropping
+    /// those, waiting for one at most [`HANG_TIMEOUT`] at a time; or, when
+    /// `cancel` is given, its being set, the utterance's cancel.
+    fn next(&mut self, cancel: Option<&Event>) -> Result<Next, Lost> {
+        loop {
+            while let Some(reply) = self.read.pop_front() {
+                if let Some(utterance) = reply.message.utterance()
+                    && let Some(at) = self.draining.iter().position(|d| *d == utterance)
+                {
+                    if reply.message.ends_utterance() {
+                        self.draining.remove(at);
+                    }
+                    continue;
+                }
+                return Ok(Next::Message(reply));
+            }
+            if let Some(why) = &self.ended {
+                return Err(Lost::Ended(why.clone()));
+            }
+            if !self.fill() {
+                continue;
+            }
+            let signalled = match cancel {
+                Some(cancel) => wait_any(&[self.replies.event(), cancel], Some(HANG_TIMEOUT)),
+                None => wait_any(&[self.replies.event()], Some(HANG_TIMEOUT)),
+            };
+            match signalled {
+                Ok(Some(0)) => {}
+                Ok(Some(_)) => return Ok(Next::Cancelled),
+                Ok(None) => return Err(Lost::Hung),
+                Err(error) => return Err(Lost::Ended(error.to_string())),
+            }
+        }
+    }
+
+    /// Looks over what has been read from the host and not yet handled, as
+    /// a request is about to be made: only draining utterances' frames may
+    /// be among it, and those are dropped. Nothing more is read here: the
+    /// draining utterances' frames still in the pipe are read, and
+    /// dropped, by the request's own reads, which leaves a host blocked in
+    /// a paced write of a cancelled utterance waiting, at no cost, until
+    /// the next request.
+    fn between_requests(&mut self) -> Result<(), Lost> {
+        loop {
+            if let Some(reply) = self.read.front() {
+                let draining = reply
+                    .message
+                    .utterance()
+                    .and_then(|utterance| self.draining.iter().position(|d| *d == utterance));
+                let Some(at) = draining else {
+                    return Err(Lost::OutOfTurn(format!("{:?}", reply.message)));
+                };
+                if reply.message.ends_utterance() {
+                    self.draining.remove(at);
+                }
+                self.read.pop_front();
+                continue;
+            }
+            return match &self.ended {
+                Some(why) => Err(Lost::Ended(why.clone())),
+                None => Ok(()),
+            };
         }
     }
 
     fn set_setting(&mut self, id: &SettingId, value: SettingValue) -> Result<(), SynthError> {
-        self.send(&ToHost::SetSetting {
-            id: id.clone(),
-            value,
-        })?;
-        match self.receive()? {
-            FromHost::SettingApplied(None) => Ok(()),
-            FromHost::SettingApplied(Some(refusal)) => Err(SynthError::Setting(refusal)),
-            other => Err(SynthError::Synthesis(format!(
-                "the synthesizer host answered a setting with {other:?}"
+        let answer = self
+            .send(&ToHost::SetSetting {
+                id: id.clone(),
+                value,
+            })
+            .and_then(|_| self.next(None));
+        match answer {
+            Ok(Next::Message(Reply {
+                message: FromHost::SettingApplied(None),
+                ..
+            })) => Ok(()),
+            Ok(Next::Message(Reply {
+                message: FromHost::SettingApplied(Some(refusal)),
+                ..
+            })) => Err(SynthError::Setting(refusal)),
+            Ok(Next::Message(Reply { message, .. })) => Err(SynthError::Synthesis(format!(
+                "the synthesizer host answered a setting with {message:?}"
             ))),
+            Ok(Next::Cancelled) => unreachable!("no cancel is watched"),
+            Err(lost) => Err(lost.error()),
         }
     }
 }
@@ -314,14 +468,15 @@ impl SynthDriver for HostedSynth {
         // nothing was heard, so it is sent once more to a fresh host. An
         // utterance cut off part-way fails, and so does one whose host hung
         // or answered out of turn, which a second host would likely repeat.
-        let mut attempt = Attempt::default();
+        let mut relayed = false;
         for round in 0..2 {
             let host = self.host()?;
-            match speak_with(host, sequence, sink, &mut attempt) {
+            match speak_with(host, sequence, sink, &mut relayed) {
                 Ok(outcome) => return outcome,
-                Err(error) => {
+                Err(lost) => {
+                    let error = lost.error();
                     self.lose_host(&error);
-                    if attempt.relayed || attempt.misbehaved || round == 1 || sink.is_cancelled() {
+                    if relayed || lost.misbehaved() || round == 1 || sink.is_cancelled() {
                         return Err(error);
                     }
                 }
@@ -331,117 +486,84 @@ impl SynthDriver for HostedSynth {
     }
 }
 
-/// What happened while a host was asked to speak.
-#[derive(Default)]
-struct Attempt {
-    /// Some audio or a mark was passed to the sink.
-    relayed: bool,
-    /// The host hung or sent something out of turn, rather than ending.
-    misbehaved: bool,
-}
-
-/// Runs one utterance on `host`, relaying its audio and marks to `sink`.
-/// The outer error means the host is no longer usable; the inner result is
-/// the utterance's own outcome, which the host reported in turn.
-/// `attempt` records whether anything was relayed, and whether the host
-/// misbehaved rather than ended.
+/// Runs one utterance on `host`, relaying its audio and marks to `sink`,
+/// until the host ends it, or until it is cancelled, which is written to
+/// the host and returns at once. The outer error means the host is no
+/// longer usable; the inner result is the utterance's own outcome, which
+/// the host reported in turn. `relayed` records whether anything was
+/// passed to the sink.
 fn speak_with(
     host: &mut Host,
     sequence: &SpeechSequence,
     sink: &mut dyn SynthSink,
-    attempt: &mut Attempt,
-) -> Result<Result<(), SynthError>, SynthError> {
+    relayed: &mut bool,
+) -> Result<Result<(), SynthError>, Lost> {
+    let utterance = sequence.utterance;
     let asked_at_us = now_us();
     let sent_at_us = host.send(&ToHost::Speak(sequence.clone()))?;
-    let mut cancelled = false;
-    // The cancel wakes this wait itself (one slot, filled without
-    // blocking), so the host is told at once, even before it has sent any
-    // audio, and nothing wakes at intervals to look.
-    let (cancel_tx, cancel_rx) = bounded::<()>(1);
-    // Kept for the whole wait, so the channel never reads as closed when a
-    // sink drops the waker it was given.
-    let wake = cancel_tx.clone();
-    sink.on_cancel(Box::new(move || {
-        let _ = wake.try_send(());
-    }));
+    // The cancel sets this utterance's own event, which the wait below
+    // watches with the pipe, so the host is told at once, even before it
+    // has sent any audio, and nothing wakes at intervals to look. A waker
+    // of an earlier utterance, called late, sets that utterance's event.
+    // It is registered once the request is written.
+    let cancelled =
+        Arc::new(Event::new().map_err(|error| Lost::Ended(format!("create an event: {error}")))?);
+    let wake = Arc::clone(&cancelled);
+    sink.on_cancel(Box::new(move || wake.set()));
     loop {
         // Checked at each wake, which is the cancel's own or a reply's, so a
         // sink that keeps no waker is still heard at its next reply.
-        if !cancelled && sink.is_cancelled() {
-            cancelled = true;
-            host.send(&ToHost::Cancel(sequence.utterance))?;
+        if sink.is_cancelled() {
+            host.cancel(utterance)?;
+            return Ok(Ok(()));
         }
         let Reply {
-            message: reply,
+            message,
             read_at_us,
-        } = select! {
-            recv(host.replies) -> reply => match reply {
-                Ok(reply) => reply.map_err(|error| {
-                    SynthError::Synthesis(format!("the synthesizer host ended: {error}"))
-                })?,
-                Err(_) => {
-                    return Err(SynthError::Synthesis(
-                        "the synthesizer host ended".to_owned(),
-                    ));
-                }
-            },
-            // `cancel_tx` stays alive below, so this is only ever a cancel.
-            recv(cancel_rx) -> _ => continue,
-            default(HANG_TIMEOUT) => {
-                attempt.misbehaved = true;
-                return Err(SynthError::Synthesis(format!(
-                    "the synthesizer host sent nothing for {HANG_TIMEOUT:?}"
-                )));
-            }
+        } = match host.next(Some(&cancelled))? {
+            Next::Message(reply) => reply,
+            Next::Cancelled => continue,
         };
-        match reply {
-            FromHost::FirstAudio(timing) => {
+        if message.utterance() != Some(utterance) {
+            return Err(Lost::OutOfTurn(format!("{message:?}")));
+        }
+        match message {
+            FromHost::FirstAudio(_, timing) => {
                 let taken_at_us = now_us();
                 sink.synth_timing(split_synthesis(
                     &DriverStamps {
                         asked: asked_at_us,
                         sent: sent_at_us,
-                        read: read_at_us.unwrap_or(taken_at_us),
+                        read: read_at_us,
                         taken: taken_at_us,
                     },
                     timing,
                 ));
             }
-            FromHost::Pcm(format, samples) => {
-                attempt.relayed |= !cancelled;
-                if !cancelled && sink.push_pcm(format, &samples).is_break() {
-                    cancelled = true;
-                    host.send(&ToHost::Cancel(sequence.utterance))?;
+            FromHost::Pcm(_, format, samples) => {
+                *relayed = true;
+                if sink.push_pcm(format, &samples).is_break() {
+                    host.cancel(utterance)?;
+                    return Ok(Ok(()));
                 }
             }
-            FromHost::Mark(mark) => {
-                if !cancelled {
-                    attempt.relayed = true;
-                    sink.index_reached(mark);
-                }
+            FromHost::Mark(_, mark) => {
+                *relayed = true;
+                sink.index_reached(mark);
             }
-            FromHost::Done => return Ok(Ok(())),
-            FromHost::Failed(reason) => return Ok(Err(SynthError::Synthesis(reason))),
-            other => {
-                attempt.misbehaved = true;
-                return Err(SynthError::Synthesis(format!(
-                    "the synthesizer host sent {other:?} while speaking"
-                )));
-            }
+            FromHost::Done(_) => return Ok(Ok(())),
+            FromHost::Failed(_, reason) => return Ok(Err(SynthError::Synthesis(reason))),
+            other => return Err(Lost::OutOfTurn(format!("{other:?}"))),
         }
     }
 }
 
-/// Writes `message` to `writer`, returning `now`'s stamp taken just before
-/// the write begins, so the write's own time falls in the hop to the host
+/// Runs `write`, returning `now`'s stamp taken just before it begins, so
+/// the write's own time falls in the hop to the host
 /// (`docs/design/communication.md`, section 10.1).
-fn write_stamped(
-    writer: &mut impl Write,
-    message: &ToHost,
-    now: impl FnOnce() -> u64,
-) -> io::Result<u64> {
+fn stamped(now: impl FnOnce() -> u64, write: impl FnOnce() -> io::Result<()>) -> io::Result<u64> {
     let sent_at_us = now();
-    write_to_host(writer, message)?;
+    write()?;
     Ok(sent_at_us)
 }
 
@@ -452,9 +574,9 @@ struct DriverStamps {
     asked: u64,
     /// The `Speak` request's write began.
     sent: u64,
-    /// The reader thread read the host's first audio.
+    /// The synth thread read the host's first audio from the pipe.
     read: u64,
-    /// The synth thread took the first audio from the reader thread.
+    /// The synth thread handled the first audio.
     taken: u64,
 }
 
@@ -483,32 +605,20 @@ mod tests {
 
     use super::*;
 
-    /// A pipe whose every write takes 300 microseconds on its clock.
-    struct SlowPipe<'a>(&'a Cell<u64>);
-
-    impl Write for SlowPipe<'_> {
-        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            self.0.set(self.0.get() + 300);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
     /// The split of a start asked for at 900, whose request's write began
-    /// at 1,000 on a slow pipe and was read by the host at 1,450, and whose
-    /// first audio the host wrote at 5,500, the reader thread read at
-    /// 6,000, and the synth thread took at 6,050.
+    /// at 1,000 and took 300 microseconds, was read by the host at 1,450,
+    /// and whose first audio the host wrote at 5,500, the synth thread read
+    /// at 6,000, and handled at 6,050.
     fn split() -> SynthTiming {
         let clock = Cell::new(1_000);
-        let request = ToHost::SetSetting {
-            id: SettingId::new("rate"),
-            value: SettingValue::Number(50),
-        };
-        let sent = write_stamped(&mut SlowPipe(&clock), &request, || clock.get())
-            .expect("the pipe takes every write");
+        let sent = stamped(
+            || clock.get(),
+            || {
+                clock.set(clock.get() + 300);
+                Ok(())
+            },
+        )
+        .expect("the pipe takes every write");
         split_synthesis(
             &DriverStamps {
                 asked: 900,
@@ -535,12 +645,12 @@ mod tests {
     }
 
     #[test]
-    fn the_trip_back_runs_from_the_hosts_write_to_the_reader_threads_read() {
+    fn the_trip_back_runs_from_the_hosts_write_to_the_synth_threads_read() {
         assert_eq!(split().return_us, 500);
     }
 
     #[test]
-    fn the_hand_off_runs_from_the_reader_threads_read_to_the_synth_thread() {
+    fn the_hand_off_runs_from_the_synth_threads_read_to_its_handling() {
         assert_eq!(split().hand_off_us, 50);
     }
 }

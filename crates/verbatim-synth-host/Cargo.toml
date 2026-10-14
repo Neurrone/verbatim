@@ -7,7 +7,6 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
-crossbeam-channel.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 verbatim-audio.workspace = true
@@ -24,3 +23,9 @@ windows.workspace = true
 
 [lints]
 workspace = true
+
+# Runs itself as a stand-in synthesizer host, which its own `main`
+# recognizes.
+[[test]]
+name = "protocol"
+harness = false

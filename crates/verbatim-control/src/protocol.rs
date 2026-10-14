@@ -457,9 +457,11 @@ pub enum LatencyStageKind {
     /// driver's reader thread having read it: the encoding, the pipe, and
     /// the reader.
     HostReturn,
-    /// From the driver's reader thread having read the first chunk to the
-    /// synth thread taking it: the hand-off between the two threads of
-    /// verbatim.exe.
+    /// From the driver having read the first chunk from the host's pipe to
+    /// the synth thread handling it. Since communication step 9 the synth
+    /// thread reads the pipe itself, so this is only the frames read with
+    /// the chunk and handled first; the name is kept from when a reader
+    /// thread handed the chunk on.
     HostReaderToSynth,
     /// The synthesizer's leading silence, skipped before the mixer.
     LeadingSilence,

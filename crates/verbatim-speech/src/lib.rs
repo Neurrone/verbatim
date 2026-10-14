@@ -22,8 +22,8 @@ mod theme;
 mod trim;
 
 pub use driver::{
-    CancelWake, IndexMark, SoundCue, SpeechItem, SpeechSequence, SynthDriver, SynthError,
-    SynthSink, SynthTiming,
+    CancelToken, CancelWake, IndexMark, SoundCue, SpeechItem, SpeechSequence, SynthDriver,
+    SynthError, SynthSink, SynthTiming,
 };
 pub use events::SpeechEvents;
 pub use host::{PersistFn, SettingsHost};

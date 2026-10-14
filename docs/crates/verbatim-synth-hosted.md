@@ -6,7 +6,8 @@ Each `HostedSynth` owns one `verbatim-synth-host.exe`
 ([verbatim-synth-host](verbatim-synth-host.md)), launched contained
 through [verbatim-process](verbatim-process.md), and talks to it with the
 protocol in `verbatim_speech::hosting`
-([verbatim-speech](verbatim-speech.md)). A synthesizer that crashes,
+([verbatim-speech](verbatim-speech.md)), each message a frame of
+`verbatim_process::transport`. A synthesizer that crashes,
 hangs, or leaks then takes down only its host, and the next utterance
 starts a new one.
 
@@ -31,55 +32,65 @@ Public API:
   it is judged hung. A synthesizer produces audio many times faster than
   real time, so ten seconds of silence is never normal.
 
-Implementation notes, lifecycle. `start` launches the host with
-`--pipe-in <handle> --pipe-out <handle> --synth <id>`, no memory cap, a
-4096-byte buffer on the pipe the host writes to, and the log stem
-`synth-<id>`. A reader thread, named `verbatim-synth-host-<id>`, reads
-`FromHost` messages from the pipe and sends each into a channel; an end
-of stream or a read error is sent as an error and ends the thread. It
-stamps a `FirstAudio` message with the shared clock (`hosting::now_us`)
-as it reads the frame, and nothing else. The
-host lives exactly as long as its `HostedSynth`: switching synthesizer
-drops the driver, which drops the job handle and so ends the process.
+Implementation notes, lifecycle. `start` makes two overlapped pipes with
+`overlapped::pipe`, the one the host writes to with a 4096-byte buffer,
+and launches the host on them with `launch_with_ends`, with
+`--pipe-in <handle> --pipe-out <handle> --synth <id>`, no memory cap,
+and the log stem `synth-<id>`. The driver's ends are a
+`transport::EventWriter` for commands and a `transport::EventReader` for
+the host's messages; there is no reader thread
+(`docs/design/communication.md`, section 7). The host lives exactly as
+long as its `HostedSynth`: switching synthesizer drops the driver, which
+drops the job handle and so ends the process.
 
-Speaking. `speak` sends `Speak(sequence)` and then relays each message
-to the speech manager's sink: `Pcm` to `push_pcm`, `Mark` to
-`index_reached`, until `Done`, which returns success, or `Failed`, which
-returns `SynthError::Synthesis`. Any other message while speaking is an
-error.
+Reading. The synth thread reads the host's pipe itself, and only when it
+wants the next message and none is already read: a read asks for 4096
+bytes while a frame's length is unknown, and for the whole rest of a
+frame once it is known. Every message read that names a draining
+utterance (below) is dropped, its `Done` or `Failed` ending the
+draining. While it waits, the thread waits on the read's event, and
+while speaking on the utterance's cancel too, at most `HANG_TIMEOUT` at a
+time. A `FirstAudio` frame is stamped with the shared clock
+(`hosting::now_us`) as it is read.
+
+Speaking. `speak` writes `Speak(sequence)`, whole, and then relays each
+message of that utterance to the speech manager's sink: `Pcm` to
+`push_pcm`, `Mark` to `index_reached`, until `Done`, which returns
+success, or `Failed`, which returns `SynthError::Synthesis`. A message of
+any other utterance, or any other message, while speaking is out of
+turn.
 
 Timing. `speak` stamps the shared clock as it is asked, and again just
 before the `Speak` request's write begins. With the host's `FirstAudio`
-stamps, the reader thread's stamp on reading that frame, and a stamp as
-the synth thread takes it, it reports a `SynthTiming` to the sink: the
-request, the trip to the host, the host's first chunk, the trip back to
-the reader thread, and the reader's hand-off to the synth thread
-(`docs/design/communication.md`, section 10.1).
+stamps, the stamp on reading that frame, and a stamp as it is handled, it
+reports a `SynthTiming` to the sink: the request, the trip to the host,
+the host's first chunk, the trip back, and the time from reading the
+frame to handling it (`docs/design/communication.md`, section 10.1).
 
-Cancellation by utterance id. When `push_pcm` returns `Break`, or the
-sink reports the utterance cancelled while the driver waits for the host
-(the driver registers a waker with the sink, `SynthSink::on_cancel`, so
-the cancel itself ends its wait, even before the host has sent any audio,
-and it checks `is_cancelled` at each reply for a sink that keeps no
-waker; nothing wakes at intervals to look), the driver sends `Cancel(utterance)` naming the utterance being spoken and keeps
-reading until that utterance's `Done`, discarding any PCM and marks that
-were already in flight. Waiting for `Done` keeps the pipe in step, so the
-next `Speak` never reads the cancelled utterance's leftovers. The host
-ignores a cancel for any utterance but the one it is speaking, so a
+Cancellation (sections 7.2 and 7.3). Once the request is written, the
+driver registers a waker with the sink (`SynthSink::on_cancel`) that sets
+an event of this utterance's own, which its wait watches with the pipe,
+so the cancel itself ends the wait, even before the host has sent any
+audio; it also checks `is_cancelled` at each message, for a sink that
+keeps no waker. Nothing wakes at intervals to look. When the sink reports
+the utterance cancelled, or `push_pcm` returns `Break`, the driver writes
+`Cancel(utterance)`, notes the utterance as draining, and returns at once,
+without waiting for the host to end it. The next request, a `Speak` or a
+`SetSetting`, is then written right behind the `Cancel`, and its own
+reads drop the cancelled utterance's last frames and its `Done` as they
+come. The host ignores a cancel for an utterance already ended, so a
 cancel that crosses the utterance's own `Done` on the pipe cannot cancel
 the next one. A cancelled utterance returns success, as with any driver.
 
 Backpressure. The mixer's `Source::write` blocks while the speech
-manager's source is too far ahead of playback, so `push_pcm` blocks and
-the driver stops taking messages from its channel. The channel is bounded
-to two messages, so the reader thread blocks on its next send and stops
-reading the pipe. The pipe's 4096-byte buffer (about 90 ms of 22 kHz mono
-audio) then fills, and the host's next write blocks, which pauses the
-host's synthesizer inside its own `push_pcm`. Pacing therefore crosses
-the process boundary unchanged, and a cancel has little queued audio to
-discard. The hang timeout applies only while the driver waits on the
-channel, so time spent blocked in the sink is never counted against the
-host.
+manager's source is too far ahead of playback, so `push_pcm` blocks, and
+the driver reads the next frame only once it returns. The pipe's
+4096-byte buffer (about 90 ms of 22 kHz mono audio), with at most one
+read of the same size, then fills, and the host's next write pends, which
+pauses the host's synthesizer inside its own `push_pcm`. Pacing therefore
+crosses the process boundary unchanged, and a cancel has little queued
+audio to drop. The hang timeout applies only while the driver waits for
+the host, so time spent blocked in the sink is never counted against it.
 
 Recovery. A host that is no longer usable is ended: a closed pipe, a
 host that sent nothing for `HANG_TIMEOUT`, or a message out of turn. The
@@ -97,13 +108,13 @@ the ones the first host described, plus each later successful
 `set_setting`. The new host's own description is not used. Restarts log a warning under the
 `verbatim::speech` target.
 
-A host that died between requests is found before the next one. A host
-sends nothing while idle, so if a message is already waiting when
-`speak` or `set_setting` begins (the reader thread queues the pipe's end
-of stream when the process dies, and anything else would be out of
-turn), or its process has exited (`Contained::has_exited`), the host is
-ended and a new one started before the request is sent, rather than the
-request being lost to the dead host.
+A host that died between requests is found before the next one when it
+can be. Between requests a host sends only the last frames of draining
+utterances, so if anything else has already been read from it, or its
+pipe's end has, or its process has exited (`Contained::has_exited`), the
+host is ended and a new one started before the request is sent. Nothing
+more is read between requests: the draining frames still in the pipe are
+read by the next request's own reads.
 
 Ending a process is not immediate, so a request can still reach a host
 that is dying. `speak` therefore sends an utterance once more, to a fresh
@@ -116,16 +127,16 @@ sink reports the utterance cancelled, or a second time.
 `set_setting` is never resent.
 
 Settings. `set_setting` sends `SetSetting` and waits for
-`SettingApplied`. A refusal is returned as `SynthError::Setting` and
+`SettingApplied`, dropping a cancelled utterance's frames on the way. A refusal is returned as `SynthError::Setting` and
 keeps the host; success also updates the cached value that `setting`
 reads.
 
 Tests: the crate's own unit tests compute each stage of the
-`SynthTiming` split exactly from fixed stamps, with the request written
-through a pipe that advances a fake clock, so a stamp taken after the
-write fails them. It is otherwise tested against the real
-host executable in `crates/verbatim-synth-host/tests/hosting.rs` (see
-[verbatim-synth-host](verbatim-synth-host.md)), and end to end by the
+`SynthTiming` split exactly from fixed stamps, with the request's write
+advancing a fake clock, so a stamp taken after the write fails them. It is otherwise tested against the real
+host executable in `crates/verbatim-synth-host/tests/hosting.rs`, and
+against a scripted host in `crates/verbatim-synth-host/tests/protocol.rs`
+(see [verbatim-synth-host](verbatim-synth-host.md)), and end to end by the
 `synth_host_crash_recovery` scenario ([verbatim-e2e](verbatim-e2e.md)),
 which kills the host once the Verbatim menu's announcement has been
 heard and expects the next
