@@ -57,9 +57,10 @@ enum TimelineKind {
         /// The entry's heading.
         entry: String,
     },
-    /// The step's input is Verbatim's own, a control-plane request with no
-    /// key to press for NVDA, in compare mode: what it was.
-    VerbatimOnly(String),
+    /// An action of the harness's that changes what is in front, such as
+    /// launching a window or bringing one forward, in compare mode, where
+    /// it starts a step as an input does: what it was.
+    Action(String),
 }
 
 /// What one step of the timeline holds, for compare mode's report
@@ -74,8 +75,6 @@ pub(crate) struct StepEntries {
     /// The deliberate differences from NVDA declared for the step, each
     /// its parity file and entry heading.
     pub(crate) deviations: Vec<(String, String)>,
-    /// What made the step Verbatim's own, if anything did.
-    pub(crate) verbatim_only: Option<String>,
     /// The harness's remarks about the step.
     pub(crate) notes: Vec<String>,
 }
@@ -186,10 +185,11 @@ impl Timeline {
         });
     }
 
-    /// Records that the step under way is Verbatim's own, a control-plane
-    /// request with no key to press for NVDA, `what` saying which.
-    pub fn push_verbatim_only(&self, what: &str) {
-        self.push(TimelineKind::VerbatimOnly(what.to_owned()));
+    /// Records an action of the harness's that changes what is in front,
+    /// `what` saying which, as compare mode records it at the start of the
+    /// step the action begins.
+    pub fn push_action(&self, what: &str) {
+        self.push(TimelineKind::Action(what.to_owned()));
     }
 
     /// What the entries from the one numbered `from` to the newest hold,
@@ -206,7 +206,6 @@ impl Timeline {
                 TimelineKind::Deviation { file, entry } => {
                     step.deviations.push((file.clone(), entry.clone()));
                 }
-                TimelineKind::VerbatimOnly(what) => step.verbatim_only = Some(what.clone()),
                 kind => {
                     if let Some(input) = kind.input() {
                         step.inputs.push(input);
@@ -273,7 +272,7 @@ impl Timeline {
                 | TimelineKind::NvdaEvent(_)
                 | TimelineKind::Note(_)
                 | TimelineKind::Deviation { .. }
-                | TimelineKind::VerbatimOnly(_) => None,
+                | TimelineKind::Action(_) => None,
             })
             .collect()
     }
@@ -357,27 +356,30 @@ impl Timeline {
 }
 
 impl TimelineKind {
-    /// Whether this is something the scenario injected, which starts a
-    /// step.
+    /// Whether this is something the scenario injected, or an action that
+    /// changes what is in front, which starts a step.
     fn is_input(&self) -> bool {
-        matches!(self, Self::Gesture(_) | Self::Keys(_) | Self::Text(_))
+        matches!(
+            self,
+            Self::Gesture(_) | Self::Keys(_) | Self::Text(_) | Self::Action(_)
+        )
     }
 
-    /// What was injected, as the rendered timeline describes it; `None`
-    /// for speech.
+    /// What was injected or done, as the rendered timeline describes it;
+    /// `None` for speech.
     fn input(&self) -> Option<String> {
         match self {
             Self::Gesture(identifier) => Some(format!("gesture {identifier}")),
             Self::Keys(keys) => Some(format!("keys [{}]", keys.join(", "))),
             Self::Text(text) => Some(format!("text {text:?}")),
+            Self::Action(what) => Some(what.clone()),
             Self::Utterance(..)
             | Self::AudioStarted(_)
             | Self::Ended(..)
             | Self::Paused(_)
             | Self::NvdaEvent(_)
             | Self::Note(_)
-            | Self::Deviation { .. }
-            | Self::VerbatimOnly(_) => None,
+            | Self::Deviation { .. } => None,
         }
     }
 }
@@ -406,7 +408,6 @@ impl TimelineEntry {
             TimelineKind::Deviation { file, entry } => {
                 format!("declared deviation from NVDA: {file}, {entry:?}")
             }
-            TimelineKind::VerbatimOnly(what) => format!("Verbatim-only: {what}"),
             input => input.input().unwrap_or_default(),
         };
         format!("+{elapsed}ms {what}")

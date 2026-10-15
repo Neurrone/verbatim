@@ -5,34 +5,49 @@
 //!
 //! It is a research instrument, not a test: it asserts nothing, never runs
 //! in continuous integration, and passes unless the harness itself fails,
-//! such as a window that does not come to the front. [`ENV`] set to `1`
-//! selects it. The scenario's [`crate::Scenario`] then launches no
-//! Verbatim and reads NVDA's speech from the transcript add-on
-//! ([`crate::nvda`]), and its [`crate::SpeechCollector`] records each
-//! assertion's texts against the step under way instead of checking them.
-//! A step runs from one input to the next. Each assertion waits until NVDA
-//! has queued nothing for the quiet period ([`QUIET_ENV`]), so the
-//! scenario does not run ahead of NVDA. Before each input, and at the end,
-//! the collector waits the same way unless NVDA was found quiet and
-//! nothing has happened since, takes what NVDA said, and closes the step
-//! as a [`CompareStep`], judged by [`CompareStep::verdict`]. The registry
+//! such as a window that does not come to the front. [`ENV`] set to the
+//! name of the scenario being run selects it ([`selects`]); set to any
+//! other name, the scenario fails at once as a harness error, so a suite
+//! run with the variable left set cannot pass. The scenario's
+//! [`crate::Scenario`] then launches no Verbatim and reads NVDA's speech
+//! from the transcript add-on ([`crate::nvda`]), and its
+//! [`crate::SpeechCollector`] records each assertion's texts against the
+//! step under way instead of checking them.
+//!
+//! A step runs from one input, or one action of the harness's that changes
+//! what is in front, such as launching a window or bringing one forward,
+//! to the next. Each assertion waits until NVDA has queued nothing for the
+//! quiet period ([`QUIET_ENV`]), so the scenario does not run ahead of
+//! NVDA. Before each input or action, and at the end, the collector waits
+//! the same way unless NVDA was found quiet and nothing has happened
+//! since, takes what NVDA said, and closes the step as a [`CompareStep`],
+//! judged by [`CompareStep::verdict`]. A step whose speech the next input
+//! interrupts ([`crate::SpeechCollector::expect_started`],
+//! [`crate::SpeechCollector::expect_queued`]) is not waited for, since that
+//! input follows at once, as the second press of a key pressed twice does;
+//! it is compared together with the step after it, as one unit with both
+//! inputs and one verdict, since NVDA's speech for a rapid double press
+//! cannot be told apart press by press. The quiet period is never less
+//! than [`QUIET_FLOOR`], NVDA's multi-press timeout, so NVDA never takes
+//! the inputs of two distinct steps for a repeated press. The registry
 //! writes the steps as `compare.txt` in the run's artifacts
 //! ([`render_report`]) and prints it.
 //!
 //! A step a scenario declares deliberately different from NVDA
-//! ([`crate::Scenario::deviates_from_nvda`]) is judged as declared, and a
-//! step whose input is Verbatim's own, a control-plane request with no key
-//! to press for NVDA, as Verbatim-only; a gesture is pressed as keys, the
-//! Verbatim modifier as Insert, and compared like any other step. A sound
-//! Verbatim is expected to play is listed but not compared, since the
-//! add-on records no sounds.
+//! ([`crate::Scenario::deviates_from_nvda`]) is judged as declared; a
+//! gesture is pressed as keys, the Verbatim modifier as Insert, and
+//! compared like any other step. A sound Verbatim is expected to play,
+//! `sound:` and its name wherever it is in an utterance's text, is left out
+//! of the comparison and the rest of the utterance compared, since the
+//! add-on records no sounds; an utterance that is nothing but a sound is
+//! listed but not compared.
 //!
 //! A step is compared on normalized text ([`CompareStep::compared`]): each
-//! side's utterances joined with single spaces, cancels and empty entries
-//! dropped, and every run of white space one space. The add-on records
-//! NVDA's speech sequence parts, joined with double spaces, not where an
-//! utterance ends, so neither boundaries nor spacing are evidence of a
-//! difference in what is heard.
+//! side's utterances joined with single spaces, sounds, cancels and empty
+//! entries dropped, and every run of white space one space. The add-on
+//! records NVDA's speech sequence parts, joined with double spaces, not
+//! where an utterance ends, so neither boundaries nor spacing are evidence
+//! of a difference in what is heard.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -40,44 +55,98 @@ use std::time::Duration;
 
 use crate::timeline::{Said, StepEntries};
 
-/// Environment variable that, set to `1`, runs a scenario in compare mode.
+/// Environment variable that, set to a scenario's name, runs that scenario
+/// in compare mode ([`selects`]).
 pub const ENV: &str = "VERBATIM_E2E_COMPARE";
 
 /// Environment variable setting compare mode's quiet period in
-/// milliseconds; [`crate::nvda::DEFAULT_QUIET`] when unset.
+/// milliseconds; [`crate::nvda::DEFAULT_QUIET`] when unset, and never less
+/// than [`QUIET_FLOOR`].
 pub const QUIET_ENV: &str = "VERBATIM_E2E_QUIET_MS";
+
+/// The shortest quiet period: NVDA's multi-press timeout, 500 ms by
+/// default (`multiPressTimeout` in `nvda/source/config/configSpec.py`).
+/// NVDA counts a key pressed again within it as a repeat, so with a
+/// shorter quiet period the inputs of two distinct steps could reach NVDA
+/// as one double press.
+pub const QUIET_FLOOR: Duration = Duration::from_millis(500);
 
 /// The report's file name in the run's artifacts.
 pub const REPORT_FILE_NAME: &str = "compare.txt";
 
-/// Whether this run is in compare mode ([`ENV`] is `1`).
-#[must_use]
-pub fn enabled() -> bool {
-    std::env::var(ENV).is_ok_and(|value| value == "1")
+/// Whether a run of `scenario` is in compare mode, [`ENV`] being `setting`:
+/// `Ok(true)` when it names `scenario`, `Ok(false)` when it is unset or
+/// empty.
+///
+/// # Errors
+///
+/// Returns a harness error naming both when it names another scenario, as
+/// a variable left set after a comparison does in a suite run, which then
+/// fails rather than running anything unasked.
+pub fn selects(scenario: &str, setting: Option<&str>) -> Result<bool, String> {
+    match setting {
+        None | Some("") => Ok(false),
+        Some(name) if name == scenario => Ok(true),
+        Some(name) => Err(format!(
+            "harness error: {ENV} is {name:?}, which runs only the scenario {name:?} in compare mode, but this is {scenario:?}; unset {ENV} to run {scenario:?} against Verbatim"
+        )),
+    }
 }
 
-/// The quiet period [`QUIET_ENV`] sets, or the default.
+/// The quiet period a comparison waits for: what [`QUIET_ENV`] sets, or the
+/// default, raised to [`QUIET_FLOOR`] when it is shorter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QuietPeriod {
+    /// The period each step waits for.
+    pub period: Duration,
+    /// The period asked for, when it was shorter than [`QUIET_FLOOR`] and
+    /// so raised to it.
+    pub raised_from: Option<Duration>,
+}
+
+impl QuietPeriod {
+    /// `asked`, raised to [`QUIET_FLOOR`] when it is shorter.
+    #[must_use]
+    pub fn from_asked(asked: Duration) -> Self {
+        if asked < QUIET_FLOOR {
+            Self {
+                period: QUIET_FLOOR,
+                raised_from: Some(asked),
+            }
+        } else {
+            Self {
+                period: asked,
+                raised_from: None,
+            }
+        }
+    }
+}
+
+/// The quiet period [`QUIET_ENV`] sets, or the default, raised to
+/// [`QUIET_FLOOR`] when it is shorter.
 ///
 /// # Errors
 ///
 /// Returns an error naming the variable if it is set to anything but a
 /// number of milliseconds.
-pub fn quiet_period() -> Result<Duration, String> {
-    match std::env::var(QUIET_ENV) {
-        Err(_) => Ok(crate::nvda::DEFAULT_QUIET),
+pub fn quiet_period() -> Result<QuietPeriod, String> {
+    let asked = match std::env::var(QUIET_ENV) {
+        Err(_) => crate::nvda::DEFAULT_QUIET,
         Ok(value) => value
             .parse::<u64>()
             .map(Duration::from_millis)
-            .map_err(|_| format!("{QUIET_ENV} is {value:?}, not a number of milliseconds")),
-    }
+            .map_err(|_| format!("{QUIET_ENV} is {value:?}, not a number of milliseconds"))?,
+    };
+    Ok(QuietPeriod::from_asked(asked))
 }
 
 /// One step of a compared scenario: its input, what Verbatim is expected
 /// to say, what NVDA said, and what the scenario declared about it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompareStep {
-    /// What was injected, as the timeline describes it: `start` for what
-    /// comes before any input, or a note that the step had none.
+    /// What was injected or done, as the timeline describes it, the inputs
+    /// of a unit of several separated by semicolons: `start` for what comes
+    /// before any input, or a note that the step had none.
     pub input: String,
     /// The texts the scenario expects Verbatim to say, in order.
     pub expected: Vec<String>,
@@ -87,8 +156,6 @@ pub struct CompareStep {
     /// The parity entries the step is declared to differ by, each its file
     /// and heading.
     pub deviations: Vec<(String, String)>,
-    /// What makes the step Verbatim's own, if anything does.
-    pub verbatim_only: Option<String>,
     /// The harness's remarks, such as NVDA's speech not settling.
     pub notes: Vec<String>,
 }
@@ -104,8 +171,6 @@ pub enum Verdict {
     Declared(String),
     /// A difference was declared, but NVDA said the same: worth a look.
     DeclaredButAgrees(String),
-    /// The step's input is Verbatim's own, so nothing is compared.
-    VerbatimOnly,
 }
 
 impl Verdict {
@@ -117,19 +182,50 @@ impl Verdict {
             Self::Differs => "differs".to_owned(),
             Self::Declared(entry) => format!("declared deviation: {entry}"),
             Self::DeclaredButAgrees(entry) => format!("declared, but NVDA agrees: {entry}"),
-            Self::VerbatimOnly => "Verbatim-only".to_owned(),
         }
     }
 }
 
-/// What an expected text starts with when it is a sound Verbatim plays.
-const SOUND_PREFIX: &str = "sound: ";
+/// The word that starts a sound in an utterance's text, followed by the
+/// sound's name, one word: `sound: spelling-error`.
+const SOUND_WORD: &str = "sound:";
+
+/// The words of `text` with every sound, [`SOUND_WORD`] and the name after
+/// it, left out.
+fn without_sounds(text: &str) -> impl Iterator<Item = &str> {
+    let mut words = text.split_whitespace();
+    std::iter::from_fn(move || {
+        loop {
+            let word = words.next()?;
+            if word == SOUND_WORD {
+                let _name = words.next();
+            } else {
+                return Some(word);
+            }
+        }
+    })
+}
+
+/// Whether `text` holds a sound and nothing else.
+fn only_sounds(text: &str) -> bool {
+    text.split_whitespace().next() == Some(SOUND_WORD) && without_sounds(text).next().is_none()
+}
 
 impl CompareStep {
     /// The step from what the timeline holds for it, `step`, and the texts
     /// the scenario expected in it; `first` says whether it is the run's
-    /// first step, which is `start` when it has no input.
-    pub(crate) fn new(step: StepEntries, expected: Vec<String>, first: bool) -> Self {
+    /// first step, which is `start` when it has no input. `None` when the
+    /// step has nothing to report: no input, nothing expected or said, and
+    /// no declaration or note. A step with an input always has.
+    pub(crate) fn new(step: StepEntries, expected: Vec<String>, first: bool) -> Option<Self> {
+        if step.inputs.is_empty()
+            && expected.is_empty()
+            && step.said.is_empty()
+            && step.deviations.is_empty()
+            && step.notes.is_empty()
+        {
+            return None;
+        }
         let input = if !step.inputs.is_empty() {
             step.inputs.join("; ")
         } else if first {
@@ -137,52 +233,39 @@ impl CompareStep {
         } else {
             "no input since the step before".to_owned()
         };
-        Self {
+        Some(Self {
             input,
             expected,
             heard: step.said,
             deviations: step.deviations,
-            verbatim_only: step.verbatim_only,
             notes: step.notes,
-        }
-    }
-
-    /// Whether the step has anything to report.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.expected.is_empty()
-            && self.heard.is_empty()
-            && self.deviations.is_empty()
-            && self.verbatim_only.is_none()
-            && self.notes.is_empty()
+        })
     }
 
     /// The two strings the step is judged on, the expected texts' and
-    /// NVDA's speech's: each side's texts, sounds and NVDA's events such as
-    /// cancels left out, joined with single spaces, every run of white
-    /// space made one space, and trimmed, so an empty text adds nothing.
+    /// NVDA's speech's: each side's texts, with the sounds in the expected
+    /// ones and NVDA's events such as cancels left out, joined with single
+    /// spaces, every run of white space made one space, and trimmed, so an
+    /// empty text adds nothing.
     #[must_use]
     pub fn compared(&self) -> (String, String) {
-        let expected = self
+        let expected: Vec<&str> = self
             .expected
             .iter()
-            .map(String::as_str)
-            .filter(|text| !text.starts_with(SOUND_PREFIX));
+            .flat_map(|text| without_sounds(text))
+            .collect();
         let heard = self.heard.iter().filter_map(|said| match said {
             Said::Speech(text) => Some(text.as_str()),
             Said::Event(_) => None,
         });
-        (normalized(expected), normalized(heard))
+        (expected.join(" "), normalized(heard))
     }
 
-    /// The step's verdict: Verbatim-only when its input is Verbatim's own;
-    /// otherwise whether the two strings [`Self::compared`] gives are
-    /// equal, judged against the first declared deviation when there is
-    /// one.
+    /// The step's verdict: whether the two strings [`Self::compared`] gives
+    /// are equal, judged against the first declared deviation when there
+    /// is one.
     #[must_use]
     pub fn verdict(&self) -> Verdict {
-        if self.verbatim_only.is_some() {
-            return Verdict::VerbatimOnly;
-        }
         let (expected, heard) = self.compared();
         let same = expected == heard;
         match (self.deviations.first(), same) {
@@ -220,7 +303,7 @@ pub struct ReportHeader {
     /// pin can be checked against, `None` when it cannot be told.
     pub pin_matches: Option<bool>,
     /// The quiet period each step waited for.
-    pub quiet: Duration,
+    pub quiet: QuietPeriod,
 }
 
 /// The `nvda` submodule's pin under `root`, as `git describe --tags
@@ -280,8 +363,9 @@ fn pin_matches(commit: &str, tags: &[&str], nvda_version: &str) -> Option<bool> 
 
 /// The report: a header, one block per step (its input, Verbatim's
 /// expected texts, what NVDA said, the harness's notes, the two strings
-/// compared when the step differs, and the verdict), and a summary counting each verdict. Plain text, one fact to a line, so
-/// it reads well with a screen reader.
+/// compared when the step differs, and the verdict), and a summary
+/// counting each verdict. Plain text, one fact to a line, so it reads well
+/// with a screen reader.
 #[must_use]
 pub fn render_report(header: &ReportHeader, steps: &[CompareStep]) -> String {
     let mut out = String::new();
@@ -300,8 +384,16 @@ pub fn render_report(header: &ReportHeader, steps: &[CompareStep]) -> String {
             None => "Whether the pin is the installed build could not be told from NVDA's version.",
         }
     );
-    let _ = writeln!(out, "Quiet period: {} ms", header.quiet.as_millis());
-    let mut counts = [0_usize; 5];
+    let _ = writeln!(out, "Quiet period: {} ms", header.quiet.period.as_millis());
+    if let Some(asked) = header.quiet.raised_from {
+        let _ = writeln!(
+            out,
+            "Note: the quiet period asked for, {} ms, was raised to {} ms, NVDA's multi-press timeout, so that NVDA never takes the inputs of two steps for a repeated press.",
+            asked.as_millis(),
+            QUIET_FLOOR.as_millis()
+        );
+    }
+    let mut counts = [0_usize; 4];
     for (index, step) in steps.iter().enumerate() {
         let verdict = step.verdict();
         counts[match verdict {
@@ -309,18 +401,14 @@ pub fn render_report(header: &ReportHeader, steps: &[CompareStep]) -> String {
             Verdict::Differs => 1,
             Verdict::Declared(_) => 2,
             Verdict::DeclaredButAgrees(_) => 3,
-            Verdict::VerbatimOnly => 4,
         }] += 1;
         let _ = writeln!(out, "\nStep {}: {}", index + 1, step.input);
-        if let Some(what) = &step.verbatim_only {
-            let _ = writeln!(out, "Verbatim-only: {what}");
-        }
         out.push_str("Verbatim:\n");
         if step.expected.is_empty() {
             out.push_str("  (nothing)\n");
         }
         for text in &step.expected {
-            let note = if text.starts_with(SOUND_PREFIX) {
+            let note = if only_sounds(text) {
                 " (not compared)"
             } else {
                 ""
@@ -366,7 +454,6 @@ pub fn render_report(header: &ReportHeader, steps: &[CompareStep]) -> String {
         "differs",
         "declared deviation",
         "declared, but NVDA agrees",
-        "Verbatim-only",
     ]
     .iter()
     .zip(counts)
@@ -396,7 +483,6 @@ mod tests {
             expected: expected.iter().map(|text| (*text).to_owned()).collect(),
             heard: heard.to_vec(),
             deviations: Vec::new(),
-            verbatim_only: None,
             notes: Vec::new(),
         }
     }
@@ -424,12 +510,56 @@ mod tests {
             nvda_version: "alpha-58022,732d1ce2".to_owned(),
             pin: "732d1ce2f (release-2026.3beta3-44-g732d1ce2f)".to_owned(),
             pin_matches: Some(false),
-            quiet: Duration::from_secs(1),
+            quiet: QuietPeriod::from_asked(Duration::from_secs(1)),
         }
     }
 
     fn compared(expected: &str, heard: &str) -> (String, String) {
         (expected.to_owned(), heard.to_owned())
+    }
+
+    #[test]
+    fn the_variable_selects_only_the_scenario_it_names_and_fails_any_other() {
+        assert_eq!(selects("spelling_errors", None), Ok(false));
+        assert_eq!(selects("spelling_errors", Some("")), Ok(false));
+        assert_eq!(
+            selects("spelling_errors", Some("spelling_errors")),
+            Ok(true)
+        );
+        assert_eq!(
+            selects("notepad_review_cursor", Some("text_box_review_cursor")),
+            Err(
+                "harness error: VERBATIM_E2E_COMPARE is \"text_box_review_cursor\", which runs only the scenario \"text_box_review_cursor\" in compare mode, but this is \"notepad_review_cursor\"; unset VERBATIM_E2E_COMPARE to run \"notepad_review_cursor\" against Verbatim"
+                    .to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn a_quiet_period_below_nvda_s_multi_press_timeout_is_raised_to_it() {
+        assert_eq!(
+            QuietPeriod::from_asked(Duration::from_millis(200)),
+            QuietPeriod {
+                period: QUIET_FLOOR,
+                raised_from: Some(Duration::from_millis(200)),
+            }
+        );
+        assert_eq!(
+            QuietPeriod::from_asked(QUIET_FLOOR),
+            QuietPeriod {
+                period: QUIET_FLOOR,
+                raised_from: None,
+            }
+        );
+        let mut raised = header();
+        raised.quiet = QuietPeriod::from_asked(Duration::from_millis(200));
+        let report = render_report(&raised, &[]);
+        assert!(
+            report.contains(
+                "Quiet period: 500 ms\nNote: the quiet period asked for, 200 ms, was raised to 500 ms, NVDA's multi-press timeout, so that NVDA never takes the inputs of two steps for a repeated press.\n"
+            ),
+            "{report}"
+        );
     }
 
     #[test]
@@ -449,10 +579,58 @@ mod tests {
     }
 
     #[test]
+    fn a_step_with_an_input_is_reported_even_when_both_sides_are_silent() {
+        let entries = |inputs: &[&str]| StepEntries {
+            inputs: inputs.iter().map(|input| (*input).to_owned()).collect(),
+            ..StepEntries::default()
+        };
+        let silent = CompareStep::new(entries(&["keys [shift]"]), Vec::new(), false)
+            .expect("a step with an input is reported");
+        assert_eq!(silent.input, "keys [shift]");
+        assert_eq!(silent.verdict(), Verdict::Same);
+        assert_eq!(CompareStep::new(entries(&[]), Vec::new(), false), None);
+    }
+
+    #[test]
     fn sounds_and_nvda_s_cancels_are_left_out_of_the_comparison() {
         let sounded = step(&["sound: start", "x"], &[cancel(), speech("x")]);
         assert_eq!(sounded.compared(), compared("x", "x"));
         assert_eq!(sounded.verdict(), Verdict::Same);
+    }
+
+    #[test]
+    fn a_sound_inside_an_utterance_is_left_out_and_the_rest_of_it_compared() {
+        // spelling_errors's word with a spelling error, read by
+        // Control+Right Arrow, and its first line, whose error is mid-line.
+        let word = step(
+            &["sound: spelling-error spelling error h"],
+            &[cancel(), speech("spelling error  h")],
+        );
+        assert_eq!(
+            word.compared(),
+            compared("spelling error h", "spelling error h")
+        );
+        assert_eq!(word.verdict(), Verdict::Same);
+        let line = step(
+            &[
+                "sound: spelling-error spelling error Ths line has a sound: spelling-error spelling error tset .",
+            ],
+            &[speech(
+                "spelling error  Ths line has a  spelling error  tset .",
+            )],
+        );
+        assert_eq!(
+            line.compared(),
+            compared(
+                "spelling error Ths line has a spelling error tset .",
+                "spelling error Ths line has a spelling error tset ."
+            )
+        );
+        let report = render_report(&header(), &[word]);
+        assert!(
+            report.contains("Verbatim:\n  sound: spelling-error spelling error h\nNVDA:\n"),
+            "{report}"
+        );
     }
 
     #[test]
@@ -513,8 +691,7 @@ mod tests {
              \x20 same: 0\n\
              \x20 differs: 1\n\
              \x20 declared deviation: 0\n\
-             \x20 declared, but NVDA agrees: 0\n\
-             \x20 Verbatim-only: 0\n"
+             \x20 declared, but NVDA agrees: 0\n"
         );
     }
 
@@ -528,13 +705,6 @@ mod tests {
             declared(step(&["3"], &[speech("3")])).verdict(),
             Verdict::DeclaredButAgrees("Review cursor columns".to_owned())
         );
-    }
-
-    #[test]
-    fn a_verbatim_only_step_is_never_compared() {
-        let mut only = step(&["Verbatim", "Context menu"], &[]);
-        only.verbatim_only = Some("a control-plane request".to_owned());
-        assert_eq!(only.verdict(), Verdict::VerbatimOnly);
     }
 
     #[test]
@@ -566,11 +736,8 @@ mod tests {
         ));
         cut.notes
             .push("NVDA's speech did not settle within 15s".to_owned());
-        let mut menu = step(&[], &[]);
-        menu.input = "a control-plane request".to_owned();
-        menu.verbatim_only = Some("a control-plane request".to_owned());
         assert_eq!(
-            render_report(&header(), &[start, cut, menu]),
+            render_report(&header(), &[start, cut]),
             "Comparing text_box_review_cursor with NVDA\n\
              Date: 2026-10-15\n\
              NVDA: alpha-58022,732d1ce2\n\
@@ -596,20 +763,11 @@ mod tests {
              Note: NVDA's speech did not settle within 15s\n\
              Verdict: declared deviation: Review cursor columns\n\
              \n\
-             Step 3: a control-plane request\n\
-             Verbatim-only: a control-plane request\n\
-             Verbatim:\n\
-             \x20 (nothing)\n\
-             NVDA:\n\
-             \x20 (nothing)\n\
-             Verdict: Verbatim-only\n\
-             \n\
-             Summary of 3 steps:\n\
+             Summary of 2 steps:\n\
              \x20 same: 1\n\
              \x20 differs: 0\n\
              \x20 declared deviation: 1\n\
-             \x20 declared, but NVDA agrees: 0\n\
-             \x20 Verbatim-only: 1\n"
+             \x20 declared, but NVDA agrees: 0\n"
         );
     }
 }

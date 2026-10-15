@@ -342,8 +342,7 @@ pub struct ScenarioDef {
 /// ([`crate::compare`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Comparable {
-    /// It can: everything it does has an NVDA equivalent, or is a
-    /// control-plane step of Verbatim's own that the report marks as such.
+    /// It can: everything it does has an NVDA equivalent.
     Yes,
     /// It cannot, for the reason given, such as needing Verbatim's
     /// processes, its status, or its own dialogs; compare mode refuses it
@@ -1591,7 +1590,9 @@ pub fn startup_speech() -> [crate::speech::Expected; 1] {
 /// scenario is local-only and [`SKIP_LOCAL_ONLY_ENV`] is `1`, since such a
 /// run deselects it by name instead (a local-only scenario's name starts
 /// with [`LOCAL_ONLY_PREFIX`]); if the scenario is disabled
-/// ([`DISABLED`]), giving why; and if the scenario itself fails.
+/// ([`DISABLED`]), giving why; if [`compare::ENV`] names another scenario,
+/// as a harness error naming both ([`compare::selects`]); and if the
+/// scenario itself fails.
 pub fn run_named(name: &str) {
     let Some(def) = find(name) else {
         panic!(
@@ -1619,7 +1620,9 @@ pub fn run_named(name: &str) {
         "{} is not set: a live scenario needs a running agent (docs/tooling/e2e.md)",
         crate::ENDPOINT_ENV
     );
-    if compare::enabled() {
+    let comparing = compare::selects(name, std::env::var(compare::ENV).ok().as_deref())
+        .unwrap_or_else(|error| panic!("{error}"));
+    if comparing {
         run_compare(def);
     } else {
         run(def);
@@ -1633,7 +1636,7 @@ pub fn run_named(name: &str) {
 ///
 /// The order: refuse a scenario marked [`Comparable::No`], giving why;
 /// start from the minimized desktop with NVDA's transcript connected
-/// ([`Scenario::launch_with`]); hear the desktop as an ordinary step; run
+/// ([`Scenario::compare_with`]); hear the desktop as an ordinary step; run
 /// setup, the body, and the end of the speech; release any key still held;
 /// run the teardown; close everything the scenario opened; write the
 /// timeline, the report, the foreground record, and the summary; and
@@ -1662,13 +1665,14 @@ fn run_compare(def: &ScenarioDef) {
             )
         });
     }
-    let mut scenario = Scenario::launch_with(def.settings, def.document.map(|document| document()))
-        .unwrap_or_else(|error| {
-            panic!(
-                "scenario {:?}: starting against NVDA failed: {error}",
-                def.name
-            )
-        });
+    let mut scenario =
+        Scenario::compare_with(def.settings, def.document.map(|document| document()))
+            .unwrap_or_else(|error| {
+                panic!(
+                    "scenario {:?}: starting against NVDA failed: {error}",
+                    def.name
+                )
+            });
     let mut foreground = vec![format!("before setup: {}", scenario.foreground_report())];
     let mut problems: Vec<String> = Vec::new();
 
@@ -2245,39 +2249,127 @@ mod tests {
         assert_eq!(skips(local, Some("1")), Ok(true));
     }
 
-    /// The scenario names in the `scenario_tests!` blocks of the suite's
-    /// test binary, `tests/e2e.rs`, read as text: every identifier after
-    /// each block's reason, up to the block's end.
-    /// Every `(file, entry)` a scenario's `deviates_from_nvda` call names,
-    /// read from the sources under `src/scenarios`: the call's two string
-    /// literals, however rustfmt breaks its line.
+    /// The `(file, entry)` each `deviates_from_nvda` call in `source`
+    /// names, in order, or the call's text when it does not name them as
+    /// two string literals: every occurrence of the method's name followed
+    /// by an opening parenthesis outside a comment line, in either form,
+    /// `scenario.deviates_from_nvda("file", "entry")` or
+    /// `Scenario::deviates_from_nvda(scenario, "file", "entry")`, however
+    /// rustfmt breaks its lines, and with any character in the literals,
+    /// parentheses and escaped quotes included. It does not catch a call
+    /// made through another name, such as a wrapper function or a
+    /// function pointer, and refuses, rather than reads, a call whose file
+    /// or entry is a constant or a variable.
+    fn deviation_calls(source: &str) -> Vec<Result<(String, String), String>> {
+        const CALL: &str = "deviates_from_nvda(";
+        let mut calls = Vec::new();
+        for (at, _) in source.match_indices(CALL) {
+            let line_start = source[..at].rfind('\n').map_or(0, |index| index + 1);
+            if source[line_start..at].trim_start().starts_with("//") {
+                continue;
+            }
+            let mut literals = Vec::new();
+            let mut chars = source[at + CALL.len()..].chars();
+            let mut refused = None;
+            while literals.len() < 2 {
+                match chars.next() {
+                    Some('"') => {
+                        let mut literal = String::new();
+                        loop {
+                            match chars.next() {
+                                Some('\\') => literal.extend(chars.next()),
+                                Some('"') | None => break,
+                                Some(c) => literal.push(c),
+                            }
+                        }
+                        literals.push(literal);
+                    }
+                    Some(')') | None => {
+                        refused = Some(source[at..].lines().next().unwrap_or("").to_owned());
+                        break;
+                    }
+                    // The receiver of the function-call form, commas and
+                    // white space.
+                    Some(_) => {}
+                }
+            }
+            calls.push(match (refused, literals.as_slice()) {
+                (None, [file, entry]) => Ok((file.clone(), entry.clone())),
+                (refused, _) => Err(refused.unwrap_or_default()),
+            });
+        }
+        calls
+    }
+
+    /// Every `(source, file, entry)` a scenario's `deviates_from_nvda` call
+    /// names ([`deviation_calls`]), read from every Rust source under
+    /// `src/scenarios`, in its subfolders too.
     fn declared_deviations() -> Vec<(String, String, String)> {
-        let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src")
-            .join("scenarios");
+        let mut folders = vec![
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src")
+                .join("scenarios"),
+        ];
         let mut declared = Vec::new();
-        for entry in std::fs::read_dir(&folder).expect("the scenarios folder is readable") {
-            let path = entry.expect("lists the scenarios").path();
-            let source = std::fs::read_to_string(&path).expect("reads a scenario's source");
-            for call in source.split(".deviates_from_nvda(").skip(1) {
-                let (arguments, _) = call.split_once(')').expect("the call is closed");
-                let literals: Vec<&str> = arguments.split('"').skip(1).step_by(2).collect();
-                let [file, heading] = literals.as_slice() else {
-                    panic!(
-                        "{}: deviates_from_nvda names a file and an entry as two string literals: {arguments}",
-                        path.display()
-                    );
-                };
-                declared.push((
-                    path.display().to_string(),
-                    (*file).to_owned(),
-                    (*heading).to_owned(),
-                ));
+        while let Some(folder) = folders.pop() {
+            for entry in std::fs::read_dir(&folder).expect("the scenarios folder is readable") {
+                let path = entry.expect("lists the scenarios").path();
+                if path.is_dir() {
+                    folders.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|extension| extension != "rs") {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).expect("reads a scenario's source");
+                for call in deviation_calls(&source) {
+                    let (file, entry) = call.unwrap_or_else(|text| {
+                        panic!(
+                            "{}: deviates_from_nvda names a file and an entry as two string literals: {text}",
+                            path.display()
+                        )
+                    });
+                    declared.push((path.display().to_string(), file, entry));
+                }
             }
         }
         declared
     }
 
+    #[test]
+    fn a_deviation_is_read_from_either_call_form_with_any_text_in_its_literals() {
+        let source = r#"
+            scenario.deviates_from_nvda("docs/parity/review.md", "Review cursor columns");
+            Scenario::deviates_from_nvda(
+                scenario,
+                "docs/parity/terminals.md",
+                "New terminal output (\"blank\")",
+            );
+            // scenario.deviates_from_nvda(FILE, ENTRY) in a comment is not a call.
+            scenario.deviates_from_nvda(FILE, "Review cursor columns");
+        "#;
+        assert_eq!(
+            deviation_calls(source),
+            vec![
+                Ok((
+                    "docs/parity/review.md".to_owned(),
+                    "Review cursor columns".to_owned()
+                )),
+                Ok((
+                    "docs/parity/terminals.md".to_owned(),
+                    "New terminal output (\"blank\")".to_owned()
+                )),
+                Err(r#"deviates_from_nvda(FILE, "Review cursor columns");"#.to_owned()),
+            ]
+        );
+    }
+
+    /// Every deviation a scenario declares names a `###` heading of a file
+    /// of the parity ledger: each call under `src/scenarios`, in either
+    /// form, as [`deviation_calls`] reads them. It does not catch a call
+    /// made through another name, such as a wrapper function or a function
+    /// pointer, and fails on one whose file or entry is not a string
+    /// literal written in the call.
     #[test]
     fn every_declared_deviation_names_an_entry_of_the_parity_ledger() {
         let declared = declared_deviations();
@@ -2306,6 +2398,9 @@ mod tests {
         }
     }
 
+    /// The scenario names in the `scenario_tests!` blocks of the suite's
+    /// test binary, `tests/e2e.rs`, read as text: every identifier after
+    /// each block's reason, up to the block's end.
     fn names_in_the_test_binary() -> Vec<String> {
         let source = include_str!("../tests/e2e.rs");
         let mut names = Vec::new();

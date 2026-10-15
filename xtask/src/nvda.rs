@@ -578,8 +578,9 @@ fn parse_compare_args(args: &[String]) -> io::Result<CompareOptions> {
 }
 
 /// Runs `compare`: checks the scenario can be compared and the agent is
-/// reachable, runs the scenario's test in compare mode, and prints its
-/// report.
+/// reachable, deletes the report an earlier run left, runs the scenario's
+/// test in compare mode, and prints the report when the run wrote one;
+/// otherwise only the error.
 fn compare(args: &[String]) -> io::Result<()> {
     let options = parse_compare_args(args)?;
     let def = verbatim_e2e::registry::find(&options.scenario)
@@ -593,6 +594,9 @@ fn compare(args: &[String]) -> io::Result<()> {
     // The agent presses the keys and finds NVDA's session, as for a
     // capture.
     AgentClient::connect(options.agent.as_str())?;
+    let report = artifacts::scenario_dir(&artifacts::artifacts_root(), def.name)
+        .join(compare_mode::REPORT_FILE_NAME);
+    remove_earlier_report(&report)?;
     let mut command = Command::new(env!("CARGO"));
     command
         .args([
@@ -608,7 +612,7 @@ fn compare(args: &[String]) -> io::Result<()> {
             "--test-threads=1",
         ])
         .env(verbatim_e2e::ENDPOINT_ENV, &options.agent)
-        .env(compare_mode::ENV, "1")
+        .env(compare_mode::ENV, def.name)
         .current_dir(workspace_root());
     if let Some(quiet_ms) = options.quiet_ms {
         command.env(compare_mode::QUIET_ENV, quiet_ms.to_string());
@@ -618,11 +622,8 @@ fn compare(args: &[String]) -> io::Result<()> {
         def.name
     );
     let status = command.status()?;
-    let report = artifacts::scenario_dir(&artifacts::artifacts_root(), def.name)
-        .join(compare_mode::REPORT_FILE_NAME);
-    match fs::read_to_string(&report) {
-        Ok(text) => println!("\n{}:\n{text}", report.display()),
-        Err(error) => eprintln!("xtask nvda: could not read {}: {error}", report.display()),
+    if let Ok(text) = fs::read_to_string(&report) {
+        println!("\n{}:\n{text}", report.display());
     }
     if status.success() {
         Ok(())
@@ -631,6 +632,19 @@ fn compare(args: &[String]) -> io::Result<()> {
             "the comparison of {} stopped on a harness error ({status})",
             def.name
         )))
+    }
+}
+
+/// Deletes `report`, a comparison's report an earlier run left, if there
+/// is one, so it is never printed as this run's.
+fn remove_earlier_report(report: &Path) -> io::Result<()> {
+    match fs::remove_file(report) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(io::Error::other(format!(
+            "could not delete the earlier report {}: {error}",
+            report.display()
+        ))),
     }
 }
 
@@ -926,6 +940,18 @@ fn describe(event: &TranscriptEvent) -> Entry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_earlier_report_is_deleted_and_none_is_no_error() {
+        let folder = std::env::temp_dir().join(format!("xtask-compare-{}", std::process::id()));
+        fs::create_dir_all(&folder).expect("creates the folder");
+        let report = folder.join(compare_mode::REPORT_FILE_NAME);
+        fs::write(&report, "an earlier run's report").expect("writes the report");
+        remove_earlier_report(&report).expect("deletes it");
+        assert!(!report.exists());
+        remove_earlier_report(&report).expect("none to delete is no error");
+        fs::remove_dir(&folder).expect("removes the folder");
+    }
 
     #[test]
     fn an_entry_reads_the_same_as_a_line_and_as_json() {

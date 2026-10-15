@@ -442,6 +442,12 @@ impl RequestSink for NvdaRequests {
             Request::AwaitIdle { timeout_ms, .. } => {
                 let timeout = Duration::from_millis(timeout_ms);
                 let mut shared = self.shared.lock().unwrap_or_else(PoisonError::into_inner);
+                if let Some(pending) = &shared.idle {
+                    return Err(io::Error::other(format!(
+                        "AwaitIdle {} is still waiting for NVDA's speech to settle, so another cannot be sent",
+                        pending.to
+                    )));
+                }
                 shared.idle = Some(PendingIdle {
                     to,
                     wait: QuietWait::starting_at(Instant::now(), self.quiet, timeout),
@@ -736,6 +742,25 @@ mod tests {
                 "note NVDA's speech did not settle within 1.5s".to_owned(),
                 reply(id)
             ]
+        );
+    }
+
+    #[test]
+    fn a_second_await_idle_while_one_is_waiting_is_an_error() {
+        let (_poller, _frames, mut requests) = scripted(Vec::new(), false, Timeline::new());
+        let await_idle = Request::AwaitIdle {
+            after_input: None,
+            timeout_ms: 15_000,
+        };
+        let first = requests.send(await_idle.clone()).expect("sends");
+        let error = requests
+            .send(await_idle)
+            .expect_err("a second is refused while the first waits");
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "AwaitIdle {first} is still waiting for NVDA's speech to settle, so another cannot be sent"
+            )
         );
     }
 

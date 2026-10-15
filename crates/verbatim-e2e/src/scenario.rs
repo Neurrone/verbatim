@@ -250,7 +250,7 @@ struct NvdaRun {
     /// Its version, as the transcript add-on's `Hello` gives it.
     version: String,
     /// The quiet period each step waits for.
-    quiet: Duration,
+    quiet: crate::compare::QuietPeriod,
 }
 
 impl Scenario {
@@ -284,28 +284,49 @@ impl Scenario {
     /// The first speech subscription receives the speech Verbatim queued
     /// before it, so its startup speech is asserted like any other.
     ///
-    /// In compare mode ([`crate::compare`]) it does the same up to opening
-    /// `document`, building and staging included, since scenarios start
-    /// `mockapp` and the portable Windows Terminal from the stage; it then
-    /// connects to NVDA's transcript add-on in the agent's session, before
-    /// minimizing, so NVDA's announcement of the desktop is heard, and
-    /// minimizes as above. It launches no Verbatim and records no video.
-    ///
     /// # Errors
     ///
     /// Returns an error if the endpoint is unset, building or staging
     /// fails, the agent cannot be reached, the desktop cannot be brought to
     /// its starting state, an earlier run's leftovers cannot be cleaned up,
-    /// the recording cannot start, or Verbatim does not become ready; in
-    /// compare mode, if the run is remote, or NVDA's transcript add-on
-    /// cannot be reached in the agent's session.
+    /// the recording cannot start, or Verbatim does not become ready.
+    pub fn launch_with(
+        configure: Option<fn(&mut Settings)>,
+        document: Option<Document>,
+    ) -> io::Result<Self> {
+        Self::start(configure, document, false)
+    }
+
+    /// [`Scenario::launch_with`] in compare mode ([`crate::compare`]): the
+    /// same up to opening `document`, building and staging included, since
+    /// scenarios start `mockapp` and the portable Windows Terminal from the
+    /// stage; it then connects to NVDA's transcript add-on in the agent's
+    /// session, before minimizing, so NVDA's announcement of the desktop is
+    /// heard, and minimizes as that does. It launches no Verbatim and
+    /// records no video.
+    ///
+    /// # Errors
+    ///
+    /// As [`Scenario::launch_with`], before Verbatim's launch; and if the
+    /// run is remote, or NVDA's transcript add-on cannot be reached in the
+    /// agent's session.
+    pub fn compare_with(
+        configure: Option<fn(&mut Settings)>,
+        document: Option<Document>,
+    ) -> io::Result<Self> {
+        Self::start(configure, document, true)
+    }
+
+    /// [`Scenario::launch_with`], or in compare mode, when `comparing`,
+    /// [`Scenario::compare_with`].
     #[expect(
         clippy::too_many_lines,
         reason = "the launch's steps in order, each one's failure cleaned up where it happens"
     )]
-    pub fn launch_with(
+    fn start(
         configure: Option<fn(&mut Settings)>,
         document: Option<Document>,
+        comparing: bool,
     ) -> io::Result<Self> {
         let agent_addr =
             endpoint().ok_or_else(|| io::Error::other(format!("{ENDPOINT_ENV} is not set")))?;
@@ -332,7 +353,6 @@ impl Scenario {
 
         let verbatim_exe = verbatim_exe_path();
         let remote = is_remote();
-        let comparing = crate::compare::enabled();
         if comparing && remote {
             return Err(io::Error::other(format!(
                 "compare mode runs on this machine, where NVDA's transcript add-on is read on 127.0.0.1; unset {REMOTE_ENV}"
@@ -540,7 +560,7 @@ impl Scenario {
     /// In compare mode, NVDA's version, as the transcript add-on's `Hello`
     /// gives it, and the quiet period each step waits for.
     #[must_use]
-    pub fn nvda_run(&self) -> Option<(&str, Duration)> {
+    pub fn nvda_run(&self) -> Option<(&str, crate::compare::QuietPeriod)> {
         self.nvda
             .as_ref()
             .map(|run| (run.version.as_str(), run.quiet))
@@ -554,6 +574,25 @@ impl Scenario {
     /// a scenario names is a heading in its file.
     pub fn deviates_from_nvda(&self, file: &str, entry: &str) {
         self.timeline.push_deviation(file, entry);
+    }
+
+    /// In compare mode, closes the step under way, as an input does, and
+    /// starts one whose input is `action`, an action of the harness's that
+    /// changes what is in front, such as launching a window or bringing
+    /// one forward, recorded on the timeline: so what NVDA says about the
+    /// window is not counted with the step before. A normal run is
+    /// unchanged by it.
+    ///
+    /// # Panics
+    ///
+    /// Panics, in compare mode, as
+    /// [`SpeechCollector::require_all_asserted`] does.
+    pub(crate) fn begin_action(&mut self, action: &str) {
+        if self.is_comparing() {
+            self.speech
+                .require_all_asserted(&format!("before {action}"));
+            self.timeline.push_action(action);
+        }
     }
 
     /// Verbatim's process id, or, in compare mode, an error saying there is
@@ -910,6 +949,7 @@ impl Scenario {
     ///
     /// Returns an error if the request fails or a window stays open.
     pub fn close_windows_titled(&mut self, title: &str) -> io::Result<()> {
+        self.begin_action(&format!("close the windows titled {title:?}"));
         match self.agent.close_windows(title, CLOSE_TIMEOUT)? {
             0 => Ok(()),
             remaining => Err(io::Error::other(format!(
@@ -1041,6 +1081,7 @@ impl Scenario {
         owner_exits: bool,
         ready: Option<&str>,
     ) -> io::Result<WindowInfo> {
+        self.begin_action(&launch_action(command, title));
         let launch = self.agent.launch_minimized(command, args)?;
         self.bring_forward(launch, title, owner_exits, ready)
     }
@@ -1123,6 +1164,7 @@ impl Scenario {
         title: &str,
         ready: Option<&str>,
     ) -> io::Result<WindowInfo> {
+        self.begin_action(&launch_action(command, title));
         let launch = self.agent.launch_minimized(command, args)?;
         let launched = launch.pid;
         let window = self.bring_forward(launch, title, true, ready)?;
@@ -1164,6 +1206,7 @@ impl Scenario {
         title: &str,
         ready: Option<&str>,
     ) -> io::Result<WindowInfo> {
+        self.begin_action(&launch_action(command, title));
         let launch = self.agent.launch_console(command, args, title)?;
         self.bring_forward(launch, title, true, ready)
     }
@@ -1191,6 +1234,7 @@ impl Scenario {
     /// Returns an error if a request fails, no window is titled with
     /// `marker`, or it does not take the foreground in time.
     pub fn bring_window_forward(&mut self, marker: &str) -> io::Result<()> {
+        self.begin_action(&format!("bring forward the window titled {marker:?}"));
         let marker = marker.to_owned();
         let desktop = self.agent.foreground_info()?;
         let window = desktop
@@ -1288,6 +1332,9 @@ impl Scenario {
         for file in files {
             self.agent.write_file(&format!(r"{folder}\{file}"), b"")?;
         }
+        self.begin_action(&format!(
+            "open the folder {marker:?} in File Explorer, brought forward"
+        ));
         let launch = self
             .agent
             .launch_without_foreground_right("explorer.exe", std::slice::from_ref(&folder))?;
@@ -1445,6 +1492,7 @@ impl Scenario {
     /// Returns an error if the agent cannot start it or it does not exit
     /// within the window timeout.
     pub fn run_handing_off(&mut self, command: &str, args: &[String]) -> io::Result<()> {
+        self.begin_action(&format!("run {command} {}", args.join(" ")));
         let launch = self.agent.launch_process(command, args, None, &[], None)?;
         match self.agent.wait_for_exit(launch.pid, WINDOW_TIMEOUT)? {
             ProcessState::Exited { .. } => Ok(()),
@@ -1546,6 +1594,11 @@ impl Scenario {
     pub fn focus_by_automation_id(&mut self, automation_id: &str) -> io::Result<u32> {
         self.speech
             .require_all_asserted(&format!("before focusing {automation_id:?}"));
+        if self.is_comparing() {
+            self.timeline.push_action(&format!(
+                "focus the element with the automation id {automation_id:?}"
+            ));
+        }
         self.agent.focus_by_automation_id(automation_id)
     }
 
@@ -2444,6 +2497,13 @@ fn close_documents(agent: &mut AgentClient, opened: &[Launched]) -> io::Result<(
     Ok(())
 }
 
+/// How compare mode's timeline names launching `command`, its window titled
+/// with `title` brought forward.
+fn launch_action(command: &str, title: &str) -> String {
+    let program = command.rsplit(['\\', '/']).next().unwrap_or(command);
+    format!("launch {program}, its window titled {title:?} brought forward")
+}
+
 /// The keys a gesture's plus-joined `keys` press for NVDA in compare mode:
 /// the same keys, with the Verbatim modifier pressed as Insert.
 fn nvda_keys(keys: &str) -> String {
@@ -2466,6 +2526,12 @@ fn no_verbatim(what: &str) -> io::Error {
 /// mode ([`crate::compare`]).
 fn connect_nvda(agent: &mut AgentClient) -> io::Result<(SpeechCollector, Timeline, NvdaRun)> {
     let quiet = crate::compare::quiet_period().map_err(io::Error::other)?;
+    if let Some(asked) = quiet.raised_from {
+        println!(
+            "compare mode: the quiet period asked for, {asked:?}, is raised to {:?}, NVDA's multi-press timeout",
+            quiet.period
+        );
+    }
     let session = agent.session_info()?.session_id;
     let port = crate::nvda::session_port(session)?;
     let (transcript, hello) = crate::nvda::Transcript::connect(port).map_err(|error| {
@@ -2480,10 +2546,17 @@ fn connect_nvda(agent: &mut AgentClient) -> io::Result<(SpeechCollector, Timelin
         .unwrap_or("(unknown version)")
         .to_owned();
     let timeline = Timeline::new();
-    let (source, sink) =
-        crate::nvda::speech_source(Box::new(transcript), hello_unix_ms, timeline.clone(), quiet)?;
+    let (source, sink) = crate::nvda::speech_source(
+        Box::new(transcript),
+        hello_unix_ms,
+        timeline.clone(),
+        quiet.period,
+    )?;
     let speech = SpeechCollector::comparing(source, sink, timeline.clone())?;
-    println!("compare mode: NVDA {version} in session {session}, quiet period {quiet:?}");
+    println!(
+        "compare mode: NVDA {version} in session {session}, quiet period {:?}",
+        quiet.period
+    );
     Ok((speech, timeline, NvdaRun { version, quiet }))
 }
 

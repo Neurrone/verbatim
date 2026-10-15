@@ -603,6 +603,9 @@ pub(crate) fn expect_prompt_read(
             .subscribe_events()
             .expect("subscribes to Verbatim's events")
     });
+    // The go file makes the shell write its first prompt: in compare mode
+    // a step of its own, apart from the window's announcement.
+    scenario.begin_action("let the shell write its first prompt");
     scenario
         .write_agent_file(&format!(r"{directory}\{GO_FILE}"), b"")
         .expect("writes the go file");

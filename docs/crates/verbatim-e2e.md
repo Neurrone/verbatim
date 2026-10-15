@@ -187,9 +187,15 @@ Verbatim, asserts nothing, and writes a report setting what the scenario
 expects Verbatim to say beside what NVDA said, step by step
 (`docs/nvda-transcript.md`, "Comparing a scenario", says how to run it).
 It is a research instrument, not a test, and never runs in CI.
-`compare::ENV`, `VERBATIM_E2E_COMPARE=1`, selects it, and
+`compare::ENV`, `VERBATIM_E2E_COMPARE`, set to a scenario's name, selects
+it for that scenario only: `registry::run_named` asks `compare::selects`,
+and a scenario run while the variable names another fails at once as a
+harness error naming both, so a suite run with it left set cannot pass.
 `compare::QUIET_ENV`, `VERBATIM_E2E_QUIET_MS`, sets the quiet period
-(`nvda::DEFAULT_QUIET`, one second, by default).
+(`nvda::DEFAULT_QUIET`, one second, by default), raised to
+`compare::QUIET_FLOOR`, 500 ms, NVDA's multi-press timeout, when it is
+shorter (`compare::QuietPeriod`, which the report's header notes), so the
+inputs of two steps are never a repeated press for NVDA.
 
 - The NVDA source and sink. `nvda::Transcript` is the add-on's client,
   shared with `cargo xtask nvda capture`: `session_port`, `connect` with
@@ -209,29 +215,49 @@ It is a research instrument, not a test, and never runs in CI.
   for the quiet period since the request or since its last entry,
   whichever is later (`nvda::QuietWait`), or at the request's timeout,
   with a note on the timeline that NVDA's speech did not settle: the
-  capture's settling rule applied as the harness's barrier.
-- The collector (`SpeechCollector::compare_mode`). The assertions on
-  speech record their texts against the step under way, send
-  `AwaitIdle` and read everything until its answer, so the scenario's
-  next action, input or not, does not run ahead of NVDA, and mark how
-  many entries the timeline held then; `expect_started` and
-  `expect_queued` return placeholders, the assertions on endings, pauses
-  and resumes return at once, and `ending_of` answers `None`.
-  `require_all_asserted`, before every input, and `expect_nothing_more`
-  close the step: they wait for `AwaitIdle` in the same way unless the
-  timeline holds no entry since that mark, so an input right after an
-  assertion does not wait twice, and record a `compare::CompareStep` from
-  the timeline's entries since the step before (`Timeline::step_since`)
-  and the texts expected. `take_until`, `take_until_idle` and
-  `take_all_queued` cannot keep their promises without Verbatim and fail
-  as a harness error. `take_comparison` hands the steps to the registry.
-- The scenario. `Scenario::launch_with` does everything up to opening
-  the document as usual, building and staging included, since scenarios
-  start `mockapp` and the portable Windows Terminal from the stage, then
-  connects to the transcript in the agent's session, before minimizing,
-  so NVDA's announcement of the desktop is heard; it launches no Verbatim
-  and records no video, and refuses a remote run. `is_comparing` says
-  which mode a run is in. `send_gesture` presses every keyboard gesture
+  capture's settling rule applied as the harness's barrier. A second
+  `AwaitIdle` sent while one waits is an error.
+- The collector (`SpeechCollector::compare_mode`). `expect`,
+  `expect_sequence` and `expect_within` record their texts against the
+  step under way, send `AwaitIdle` and read everything until its answer,
+  so the scenario's next action, input or not, does not run ahead of
+  NVDA, and mark how many entries the timeline held then.
+  `expect_started` and `expect_queued` record their texts and return
+  placeholders without waiting, since they assert speech the next input
+  interrupts, which follows at once, as the second press of a double
+  press does; the assertions on endings, pauses and resumes return at
+  once, and `ending_of` answers `None`. `require_all_asserted`, before
+  every input and every action that changes what is in front, and
+  `expect_nothing_more` close the step: they wait for `AwaitIdle` in the
+  same way unless the timeline holds no entry since that mark, which
+  rules out an input or an action since, each putting an entry on the
+  timeline as it starts its step, so an input right after an assertion
+  does not wait twice; and record a `compare::CompareStep` from the
+  timeline's entries since the step before (`Timeline::step_since`) and
+  the texts expected. A step that recorded speech the next input
+  interrupts is closed without waiting or recording, with a note: it
+  stays open, and its texts and what NVDA queued are recorded with the
+  next step's, as one unit whose input names both inputs, since NVDA's
+  speech for a rapid double press cannot be told apart press by press.
+  `take_until`, `take_until_idle` and `take_all_queued` cannot keep their
+  promises without Verbatim and fail as a harness error.
+  `take_comparison` hands the steps to the registry.
+- The scenario. `Scenario::compare_with` does what `Scenario::launch_with`
+  does up to opening the document, building and staging included, since
+  scenarios start `mockapp` and the portable Windows Terminal from the
+  stage, then connects to the transcript in the agent's session, before
+  minimizing, so NVDA's announcement of the desktop is heard; it launches
+  no Verbatim and records no video, and refuses a remote run.
+  `is_comparing` says which mode a run is in. Each action that changes
+  what is in front (`launch_titled`, `launch_titled_once`,
+  `launch_owning_window`, `launch_console`, `bring_window_forward`,
+  `bring_document_forward`, `open_folder`, `open_settings_page`,
+  `run_handing_off`, `close_windows_titled`, `focus_by_automation_id`,
+  and `terminal::expect_prompt_read`'s writing of the file that lets the
+  shell show its first prompt) calls `Scenario::begin_action`, which in
+  compare mode closes the step under way and starts one with the action
+  as its input (`Timeline::push_action`), as a keystroke does; a normal
+  run is unchanged by it. `send_gesture` presses every keyboard gesture
   as keys, the Verbatim modifier as Insert (`kb:verbatim+v` as
   `insert+v`, `kb:numpad8` as `numpad8`), and whatever NVDA does with
   them is what the step records. What needs Verbatim itself (`status`,
@@ -247,8 +273,12 @@ It is a research instrument, not a test, and never runs in CI.
   `file` records, such as `"docs/parity/review.md"` and
   `"Review cursor columns"`. In a normal run it is a timeline note only. A
   unit test (`every_declared_deviation_names_an_entry_of_the_parity_ledger`)
-  reads every call under `src/scenarios` and checks the entry is a `###`
-  heading of that file.
+  reads every call in every source under `src/scenarios`, its subfolders
+  included, in the method form and in the function-call form
+  (`Scenario::deviates_from_nvda(scenario, file, entry)`), and checks the
+  entry is a `###` heading of that file. It fails on a call whose file or
+  entry is not a string literal, and does not see a call made through
+  another name, such as a wrapper.
 - `ScenarioDef::comparable`. `Comparable::Yes`, or `Comparable::No` with
   why: the scenarios that end Verbatim's processes, read its status, take
   speech until a line or until idle, or drive Verbatim's own menu and
@@ -266,21 +296,24 @@ It is a research instrument, not a test, and never runs in CI.
   NVDA's version from the `Hello`, the `nvda` submodule's pin
   (`compare::submodule_pin`), whether the pin is the installed build,
   told from the commit an alpha's version ends with or a release's tag,
-  and the quiet period. Each step gives its input, "Verbatim:" and the
-  texts expected one per line, a sound marked "not compared", "NVDA:" and
-  what it said one per line, "cancel" where it cancelled, any declared
-  deviation and note, on a step that differs the two strings compared
-  ("Verbatim compared:" and "NVDA compared:"), and one verdict
-  (`CompareStep::verdict`). A step is judged on `CompareStep::compared`,
-  each side's texts with sounds, cancels and empty entries dropped,
-  joined with single spaces, and every run of white space made one
-  space, since the add-on records NVDA's speech sequence parts rather
-  than utterance boundaries, so boundaries and spacing are not evidence
-  of a difference. The verdict is "same" when the two strings are equal;
-  "differs"; "declared deviation: <entry>"; "declared, but NVDA agrees:
-  <entry>", worth a look; or "Verbatim-only", for a control-plane step
-  with no key at all, never for a gesture. A summary counts each
-  verdict.
+  and the quiet period, with a note when it was raised to the floor. Each
+  step gives its input, "Verbatim:" and the texts expected one per line,
+  an utterance that is nothing but a sound marked "not compared",
+  "NVDA:" and what it said one per line, "cancel" where it cancelled, any
+  declared deviation and note, on a step that differs the two strings
+  compared ("Verbatim compared:" and "NVDA compared:"), and one verdict
+  (`CompareStep::verdict`). A step with an input is always reported,
+  even with nothing said on either side (`CompareStep::new` gives `None`
+  only for a step with no input and nothing in it). A step is judged on
+  `CompareStep::compared`: on the expected side every sound, `sound:` and
+  its name, is taken out wherever it is in an utterance and the rest
+  kept, NVDA's cancels and empty entries are dropped, each side is joined
+  with single spaces, and every run of white space made one space, since
+  the add-on records NVDA's speech sequence parts rather than utterance
+  boundaries, so boundaries and spacing are not evidence of a difference.
+  The verdict is "same" when the two strings are equal; "differs";
+  "declared deviation: <entry>"; or "declared, but NVDA agrees:
+  <entry>", worth a look. A summary counts each verdict.
 
 ## Input
 

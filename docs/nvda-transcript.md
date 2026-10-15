@@ -202,40 +202,71 @@ To run it:
    `target\debug\verbatim-agent.exe --bind-address 127.0.0.1 --port 44001`.
 3. Run `cargo xtask nvda compare text_box_review_cursor`, for example.
    `--agent <address>` names another agent, and `--quiet-ms <ms>` sets
-   the quiet period, by default 1000.
+   the quiet period, by default 1000 and never less than 500.
 
-The command checks the agent is reachable, then runs
-`cargo test -p verbatim-e2e --test e2e -- --ignored --exact <scenario>
---test-threads=1` with `VERBATIM_E2E_ENDPOINT` set to the agent,
-`VERBATIM_E2E_COMPARE=1`, and `VERBATIM_E2E_QUIET_MS` when given. Those
-variables with the usual `cargo test` command do the same.
+The command checks the agent is reachable, deletes the report an earlier
+run left, then runs `cargo test -p verbatim-e2e --test e2e -- --ignored
+--exact <scenario> --test-threads=1` with `VERBATIM_E2E_ENDPOINT` set to
+the agent, `VERBATIM_E2E_COMPARE` set to the scenario's name, and
+`VERBATIM_E2E_QUIET_MS` when given, and prints the report if the run
+wrote one. Those variables with the usual `cargo test` command do the
+same. `VERBATIM_E2E_COMPARE` selects compare mode only for the scenario
+it names: any other scenario run while it is set fails at once as a
+harness error naming both, so a suite run with the variable left set
+fails rather than passing without comparing or testing anything.
 
-A step runs from one input, a key, typed text, or a gesture, to the next.
-Every speech assertion waits until NVDA has queued nothing for the quiet
-period, the capture's settling rule, so what the scenario does after it,
-such as writing a file a shell waits for, does not run ahead of NVDA.
-Before each input, and at the end, the harness waits the same way,
-unless NVDA was already found quiet and nothing has happened since, and
-takes what NVDA said in the step. A gesture is pressed as keys, the
-Verbatim modifier as Insert, NVDA's modifier: `kb:verbatim+v` as
-`insert+v`, and `kb:numpad8` as `numpad8`. Whatever NVDA does with them
-is what the step records. The report starts with the scenario's
-name, the date, NVDA's version, the `nvda` submodule's pin, and the
-quiet period; it says "pin differs from the installed build" when the
-commit the NVDA version names is not the pin, since the expectations
-come from captures and the ported code from the pin. Then, for each
-step: its input; "Verbatim:" and the texts the scenario expects, one per
-line, with a sound marked "not compared", since the add-on records no
-sounds; "NVDA:" and what NVDA queued, one per line, with "cancel" where it
-cancelled speech; on a step that differs, the two strings compared,
-"Verbatim compared:" and "NVDA compared:"; and one verdict.
+A step runs from one input, a key, typed text, or a gesture, or one
+action of the harness's that changes what is in front, such as launching
+a window, bringing one forward, opening a folder, focusing an element, or
+writing the file that lets a terminal's shell show its first prompt, to
+the next. A terminal scenario's start therefore comes as three steps: the
+desktop, the window, and the prompt. Every speech assertion waits until
+NVDA has queued nothing for the quiet period, the capture's settling
+rule, so what the scenario does after it, such as writing a file a shell
+waits for, does not run ahead of NVDA. Before each input or action, and
+at the end, the harness waits the same way, unless NVDA was already found
+quiet and nothing has happened since, and takes what NVDA said in the
+step.
 
-A step is judged on normalized text: on each side, sounds, cancels and
-empty entries are dropped, the utterances are joined with single spaces,
-and every run of white space becomes one space, since the add-on records
-NVDA's speech sequence parts, joined with double spaces, rather than
-where an utterance ends, so neither boundaries nor spacing are evidence
-of a difference in what is heard. The verdicts are:
+Two things keep the waiting from changing what NVDA hears. First, an
+assertion that speech has started, or has been queued, for the next
+input to interrupt does not wait, since that input is meant to follow at
+once: the second press of Verbatim+F10, for example, must come within
+NVDA's multi-press timeout, 500 ms, for NVDA to copy rather than select
+again. The check before that next input does not wait either, and the
+two steps are compared as one unit: the report shows both inputs,
+separated by a semicolon, with one verdict and a note, since NVDA's
+speech for a rapid double press cannot be told apart press by press.
+Second, the quiet period is never less than that multi-press timeout: a
+`--quiet-ms` below 500 is raised to 500, and the report's header says so,
+so the inputs of two separate steps always reach NVDA more than the
+timeout apart and are never taken for a repeated press.
+
+A gesture is pressed as keys, the Verbatim modifier as Insert, NVDA's
+modifier: `kb:verbatim+v` as `insert+v`, and `kb:numpad8` as `numpad8`.
+Whatever NVDA does with them is what the step records. The report starts
+with the scenario's name, the date, NVDA's version, the `nvda`
+submodule's pin, and the quiet period; it says "pin differs from the
+installed build" when the commit the NVDA version names is not the pin,
+since the expectations come from captures and the ported code from the
+pin. Then, for each step: its input; "Verbatim:" and the texts the
+scenario expects, one per line, with an utterance that is nothing but a
+sound marked "not compared", since the add-on records no sounds; "NVDA:"
+and what NVDA queued, one per line, with "cancel" where it cancelled
+speech; any declared deviation and note; on a step that differs, the two
+strings compared, "Verbatim compared:" and "NVDA compared:"; and one
+verdict. A step with an input is always reported, even when neither side
+said anything.
+
+A step is judged on normalized text: on the Verbatim side each sound,
+`sound:` and its name, is taken out wherever it is in an utterance, such
+as the spelling-error sound before "spelling error h", and the rest of
+the utterance kept; on each side, cancels and empty entries are dropped,
+the utterances are joined with single spaces, and every run of white
+space becomes one space, since the add-on records NVDA's speech sequence
+parts, joined with double spaces, rather than where an utterance ends, so
+neither boundaries nor spacing are evidence of a difference in what is
+heard. The verdicts are:
 
 - "same": the two normalized strings are equal.
 - "differs": they differ, and the scenario declares no
@@ -246,12 +277,10 @@ of a difference in what is heard. The verdicts are:
 - "declared, but NVDA agrees: <entry>": the scenario declares a
   difference, but NVDA said the same; worth a look, since the difference
   may have gone, or the declaration may be on the wrong step.
-- "Verbatim-only": the step's input is a request to Verbatim's control
-  plane with no key at all, so nothing is pressed for NVDA and nothing
-  is compared. A gesture is never Verbatim-only: `kb:verbatim+f9`, for
-  example, is pressed as `insert+f9`, and its step is judged like any
-  other, "same" when NVDA's command says what Verbatim's does and
-  "differs" otherwise.
+
+A gesture with the Verbatim modifier is judged like any other step:
+`kb:verbatim+f9`, for example, is pressed as `insert+f9`, "same" when
+NVDA's command says what Verbatim's does and "differs" otherwise.
 
 A summary at the end counts each verdict.
 

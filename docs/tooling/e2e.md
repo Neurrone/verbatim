@@ -730,8 +730,10 @@ breaks the run itself before it matters for the video (see
 
 A scenario can also run against NVDA instead of Verbatim, asserting
 nothing, to see what it expects beside what NVDA says, step by step:
-`cargo xtask nvda compare <scenario>`, or `VERBATIM_E2E_COMPARE=1` with
-the usual `cargo test` command. [The NVDA transcript
+`cargo xtask nvda compare <scenario>`, or `VERBATIM_E2E_COMPARE` set to
+the scenario's name with the usual `cargo test` command. Left set, the
+variable fails every other scenario at once as a harness error, so unset
+it before any other run. [The NVDA transcript
 guide](../nvda-transcript.md), "Comparing a scenario", says how, and
 which scenarios cannot be compared.
 
