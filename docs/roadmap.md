@@ -209,6 +209,11 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   smaller ones (the MSAA caret in UIA windows, the staging windows' focus,
   live reads of the focus's property events, NVDA's Windows Forms and UWP
   combo box rules, the controlled selection's route).
+- The OneCore synthesizer host once failed to become ready within 10
+  seconds on GitHub's runner, where it is otherwise ready in about a
+  second. Its start is logged step by step (3baec60): if it recurs,
+  investigate from that log, which shows the step where it stopped;
+  otherwise drop this item when M4.1 closes.
 
 Exit: a week of Dickson's daily use without a crash or a stall, and the
 full suite ten times clean.
@@ -674,3 +679,8 @@ Tiers, gated by the capabilities each module needs:
   recordings from the audio tee (D16); that is the whole of CI. The VM
   harness is the interactive loop. `.github/workflows/vm-smoke.yml`, which
   probed nested virtualization on larger runners, is to be retired.
+- **Housekeeping**: Cargo warns that `proc-macro-error2` 2.0.1, which
+  `i18n-embed-fl` depends on, will be rejected by a future Rust
+  (`cargo report future-incompatibilities`: it re-exports the private
+  `proc_macro` crate, E0365); move off it before the pinned toolchain
+  reaches a Rust that rejects it.

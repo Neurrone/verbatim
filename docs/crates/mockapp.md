@@ -429,6 +429,17 @@ to have the focus, tells the outpost under test which (below). Since
 `terminal.rs`, `caret_watch.rs`, and `shutdown.rs` ran isolated, and
 `cargo xtask ci` put the others' mockapp windows on the interactive
 desktop, where they disturbed end-to-end runs.
+
+The experiments behind the harness's exit: the arbitration test binary
+hung at exit in 1 run in 40 before UIA's first-time setup was fixed and
+in 1 in 100 after; waiting 12 seconds after every provider had gone still
+left 2 hangs in 100 runs; six threads each connecting to a mockapp of its
+own hung 1 in 40 against 0 in 40 for one thread, too few runs to tell
+whether concurrent connections corrupt the list; and `CoUninitialize`
+does not end UIA's own CoreMessaging thread. NVDA exits the same way after
+releasing its UIA client, so it is exposed too. verbatim-uia's `first_use`
+test exits normally without this, because it never connects to a
+provider, so the list stays empty.
 The outpost those tests run
 (`tests/common/outpost.rs`) reads arbitration's time from the test,
 which stands still unless the test moves it on (`pass_time`), so a

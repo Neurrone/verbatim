@@ -4,6 +4,11 @@ How to get a fresh clone building: the submodules, CMake and wxWidgets, cargo-ha
 
 ## First-time setup
 
+Rust is pinned to 1.99.0, with rustfmt and clippy, in `rust-toolchain.toml`
+(20e2d11), because Rust 1.98 and 1.99 each failed CI with clippy lints they
+added, so moving to a newer Rust is a deliberate change, made together with
+the fixes CI then asks for.
+
 eSpeak NG, Verbatim's default synthesizer, is built from source that
 lives in a git submodule, so a fresh clone must fetch it before anything
 builds:

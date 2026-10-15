@@ -239,3 +239,9 @@ again: it creates a named event through the agent and passes its name in
 `VERBATIM_READY_EVENT`, and Verbatim sets the event once it is ready. A
 hand-rolled script can do the same, or check `Status` before it starts,
 rather than pausing for a fixed time.
+
+**Speech frames that Verbatim wrote never reach the suite.** If it recurs,
+read the agent log's `control tunnel closed` line first: this flake was
+seen once and never explained, and that line gives each direction's byte
+total and why it ended, telling a closed pipe from a stop and from an
+error.

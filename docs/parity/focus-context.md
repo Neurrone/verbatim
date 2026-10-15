@@ -116,3 +116,8 @@ Core before the list item's focus is still spoken as the focus,
 "Program Manager", as Verbatim has not ported NVDA's class rule for
 foreground events; the harness expects NVDA's speech there
 (`close_settings_to_desktop`).
+
+When the desktop takes focus, as when windows are minimized, Verbatim
+announces the desktop's nameless window of class `WorkerW` as "pane";
+NVDA's File Explorer app module ignores that window's focus events.
+**not yet**: it belongs to the app-module porting track's Tier A.

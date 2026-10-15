@@ -16,16 +16,16 @@
 //! so there is no proper shutdown on our side that avoids it; what corrupts
 //! the list is not yet known. It happened in about 1 to 3 percent of runs
 //! of the arbitration tests, and failed CI on GitHub's runner. Verbatim's
-//! own processes are not affected, because outposts and the listener are
-//! killed with their job and never run that code (`docs/architecture.md`,
-//! "Process lifetime"); these test binaries are the only processes that
-//! use UIA as a client and exit normally. The evidence is in
-//! `docs/archive/handoff-2026-09-02.md` ("Open: a process that has used UIA as a
-//! client").
+//! own processes are not affected, because outposts and the listener end
+//! themselves with `TerminateProcess` once they have shut down, and never
+//! run that code (`docs/architecture.md`, section 1, "Process and thread
+//! model"); these test binaries are the only processes that use UIA as a
+//! client and exit normally. The experiments' figures are in
+//! `docs/crates/mockapp.md`.
 //!
 //! So, once the results are printed and flushed, the runner ends its own
-//! process with `TerminateProcess`, which ends it as the job ends an
-//! outpost, without process-detach code. This is a workaround for that UIA
+//! process with `TerminateProcess`, as outposts and the listener end
+//! themselves, without process-detach code. This is a workaround for that UIA
 //! fault, not cleanup: it skips every DLL's detach code, which these tests
 //! do not need, since nothing they leave behind is flushed at exit. Remove
 //! it if the fault is fixed or found to be ours.

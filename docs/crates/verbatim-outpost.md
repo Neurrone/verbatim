@@ -1769,7 +1769,7 @@ its other desktop-wide handlers, writes what waits, waits for every write
 in flight as the outpost does, and gives back the apartment; it makes no call into an application, so nothing else can
 be in progress. Both then end the process with `TerminateProcess` and
 exit code 0 rather than returning from `main`, so no DLL's process-detach
-code runs (`docs/architecture.md`, "Process lifetime").
+code runs (`docs/architecture.md`, section 1, "Process and thread model").
 
 The time limit, `SHUTDOWN_LIMIT`, is 21 seconds. Over the end-to-end
 suite on the development machine (2026-10-08, 436 shutdowns), a clean
