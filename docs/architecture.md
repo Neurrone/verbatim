@@ -1111,8 +1111,9 @@ otherwise.
   was deferred on 2026-10-06: M4 is built and verified on x64 only, and
   the ARM64 verification is not yet scheduled to a milestone.
 - **R4 — Eloquence complications.** DLL architecture or licensing issues.
-  Mitigation: native host is already arch-flexible; PoC scoped to its own
-  milestone (M6), off the critical path.
+  Mitigation: native host is already arch-flexible; the PoC has its own
+  milestone (M6), so a complication delays only Eloquence, not the host,
+  and browse mode (M7) does not wait on it.
 - **R5 — UIAccess signing.** Signing requirements could block reading
   elevated UIs during development. Mitigation: develop with test-signing in
   the VM; production signing tracked as release infra.
