@@ -19,11 +19,12 @@
 //! transcripts that can be compared line by line. With `--json`, every
 //! step and entry is printed as one JSON object per line instead, for a
 //! script comparing transcripts, since spoken text can hold a line break.
+//! The add-on's client itself is `verbatim_e2e::nvda`, shared with the
+//! end-to-end harness.
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, BufRead, BufReader, Write};
-use std::net::TcpStream;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::mpsc::{self, Receiver};
@@ -35,19 +36,15 @@ use verbatim_agent::protocol::{WindowCondition, WindowInfo};
 use verbatim_control::client::Client as ControlClient;
 use verbatim_control::protocol::{Frame, Request};
 use verbatim_e2e::agent_client::AgentClient;
+use verbatim_e2e::nvda::{
+    POLL_INTERVAL, QuietWait, Settling, Transcript, TranscriptEvent, session_port,
+};
 use verbatim_model::UtteranceEnding;
 
 /// The add-on's source directory, relative to the workspace root.
 const SOURCE_DIR: &str = "nvda-addon/src";
 /// The committed package, relative to the workspace root.
 const PACKAGE: &str = "nvda-addon/verbatimTranscript.nvda-addon";
-/// The add-on listens on this port plus its Windows session id.
-const PORT_BASE: u16 = 44100;
-/// The add-on protocol version this client speaks.
-const PROTOCOL_VERSION: u64 = 1;
-/// How often `capture` polls for new entries. NVDA's own system tests poll
-/// no faster than every 10 ms so as not to starve NVDA's core.
-const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// The image `--front` takes to mean whichever program's window has the
 /// title given.
 const ANY_IMAGE: &str = "*";
@@ -378,59 +375,6 @@ fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
     Ok(options)
 }
 
-/// A connection to the add-on, past its `Hello`.
-struct Transcript {
-    stream: TcpStream,
-    reader: BufReader<TcpStream>,
-    next_id: u64,
-}
-
-impl Transcript {
-    fn connect(port: u16) -> io::Result<(Self, Value)> {
-        let stream = TcpStream::connect(("127.0.0.1", port)).map_err(|error| {
-            io::Error::other(format!(
-                "no NVDA transcript add-on on port {port} ({error}); is NVDA running in the \
-                 agent's session with the add-on installed?"
-            ))
-        })?;
-        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-        let reader = BufReader::new(stream.try_clone()?);
-        let mut transcript = Self {
-            stream,
-            reader,
-            next_id: 1,
-        };
-        let hello =
-            transcript.request(&json!({"Hello": {"protocol_version": PROTOCOL_VERSION}}))?;
-        Ok((transcript, hello["Hello"].clone()))
-    }
-
-    fn request(&mut self, request: &Value) -> io::Result<Value> {
-        let id = self.next_id;
-        self.next_id += 1;
-        let mut line = json!({"id": id, "request": request}).to_string();
-        line.push('\n');
-        self.stream.write_all(line.as_bytes())?;
-        let mut reply = String::new();
-        if self.reader.read_line(&mut reply)? == 0 {
-            return Err(io::Error::other("the add-on closed the connection"));
-        }
-        let frame: Value = serde_json::from_str(&reply).map_err(io::Error::other)?;
-        if let Some(message) = frame["Error"]["message"].as_str() {
-            return Err(io::Error::other(format!("the add-on refused: {message}")));
-        }
-        Ok(frame["Reply"]["payload"].clone())
-    }
-
-    fn entries_after(&mut self, seq: u64) -> io::Result<Vec<Value>> {
-        let payload = self.request(&json!({"Read": {"after": seq}}))?;
-        Ok(payload["Entries"]["entries"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default())
-    }
-}
-
 /// Where `capture` reads speech from.
 enum Source {
     /// NVDA's transcript add-on: the connection, the last sequence number
@@ -451,9 +395,7 @@ enum Source {
 impl Source {
     fn nvda(agent: &mut AgentClient) -> io::Result<Self> {
         let session_id = agent.session_info()?.session_id;
-        let port = u16::try_from(u32::from(PORT_BASE) + session_id)
-            .map_err(|_| io::Error::other(format!("session id {session_id} is out of range")))?;
-        let (transcript, hello) = Transcript::connect(port)?;
+        let (transcript, hello) = Transcript::connect(session_port(session_id)?)?;
         let started = Instant::now();
         println!(
             "NVDA {} in session {}",
@@ -512,8 +454,8 @@ impl Source {
                 Ok(entries
                     .into_iter()
                     .map(|entry| {
-                        *last_seq = entry["seq"].as_u64().unwrap_or(*last_seq);
-                        (entry["ms"].as_i64().unwrap_or(0), describe(&entry["event"]))
+                        *last_seq = entry.seq.unwrap_or(*last_seq);
+                        (entry.ms, describe(&entry.event))
                     })
                     .collect())
             }
@@ -617,25 +559,24 @@ fn capture(args: &[String]) -> io::Result<()> {
             } else {
                 println!("> {}", step.label());
             }
-            let mut last_activity = Instant::now();
-            let deadline = last_activity + options.timeout;
+            let mut wait = QuietWait::starting_at(Instant::now(), options.quiet, options.timeout);
             loop {
                 thread::sleep(POLL_INTERVAL);
                 let entries = source.poll()?;
                 if !entries.is_empty() {
-                    last_activity = Instant::now();
+                    wait.activity(Instant::now());
                 }
                 for (ms, entry) in entries {
                     print(index, Some(ms - sent_ms), &entry);
                 }
-                let now = Instant::now();
-                if now.duration_since(last_activity) >= options.quiet {
-                    break;
-                }
-                if now >= deadline {
-                    let note = format!("speech did not settle within {:?}", options.timeout);
-                    print(index, None, &Entry::Note(note));
-                    break;
+                match wait.settling(Instant::now()) {
+                    Settling::Waiting => {}
+                    Settling::Settled => break,
+                    Settling::TimedOut => {
+                        let note = format!("speech did not settle within {:?}", options.timeout);
+                        print(index, None, &Entry::Note(note));
+                        break;
+                    }
                 }
             }
         }
@@ -859,14 +800,13 @@ impl Entry {
 
 /// The entry for one of the add-on's events: the speech text with its
 /// priority, or another event, such as a cancellation, by its name.
-fn describe(event: &Value) -> Entry {
-    if let Some(speech) = event.get("Speech") {
-        Entry::Speech {
-            tag: speech["priority"].as_str().unwrap_or("?").to_owned(),
-            text: speech["text"].as_str().unwrap_or("").to_owned(),
-        }
-    } else {
-        Entry::Event(event.as_str().unwrap_or("?").to_lowercase())
+fn describe(event: &TranscriptEvent) -> Entry {
+    match event {
+        TranscriptEvent::Speech { priority, text } => Entry::Speech {
+            tag: priority.clone(),
+            text: text.clone(),
+        },
+        TranscriptEvent::Other(name) => Entry::Event(name.clone()),
     }
 }
 
@@ -876,14 +816,16 @@ mod tests {
 
     #[test]
     fn an_entry_reads_the_same_as_a_line_and_as_json() {
-        let speech = describe(&json!({"Speech": {"priority": "normal", "text": "a\nb"}}));
+        let speech = describe(&TranscriptEvent::from_json(
+            &json!({"Speech": {"priority": "normal", "text": "a\nb"}}),
+        ));
         assert_eq!(speech.line(), "[normal] a\nb");
         assert_eq!(
             speech.to_json(3, Some(-5)),
             json!({"kind": "speech", "tag": "normal", "text": "a\nb", "step": 3, "ms": -5})
         );
         assert_eq!(
-            describe(&json!("CANCEL")),
+            describe(&TranscriptEvent::from_json(&json!("CANCEL"))),
             Entry::Event("cancel".to_owned())
         );
         assert_eq!(

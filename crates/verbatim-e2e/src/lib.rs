@@ -48,6 +48,7 @@
 pub mod agent_client;
 pub mod artifacts;
 pub mod latency;
+pub mod nvda;
 pub mod recording;
 pub mod registry;
 pub mod scenario;
