@@ -572,7 +572,8 @@ Verbatim's processor users in every one of these.
    in both builds before and after, the largest share of a key's way to
    its speech queued. No stamp separates the router from the reducer's
    wait. The hook thread also readies the speech queue on about every key
-   (94 to 117 times per 8 seconds), which step 10 removes.
+   (94 to 117 times per 8 seconds), which communication step 10 would
+   have removed; that step is not adopted (Dickson, 2026-10-15).
 8. The listener's UIA focus read before the fact is sent (latency,
    measured): P50 11 to 13 ms, up to 72 ms in debug and 365 ms in release
    for a File Explorer focus, inside the listener stage. A stamp at the

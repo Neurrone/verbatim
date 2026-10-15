@@ -286,10 +286,8 @@ in the dated section named with each item.
   2026-10-12).
 - `CoCancelCall` for MSAA calls, a recommendation in the phase 6 design's
   "Time limits that hold".
-- Communication step 10, the speech manager without its queue thread, is
-  revisited only if the speech or audio path shows a noticeable delay;
-  step 8, review keys straight to the reducer, is reconsidered when the
-  command set is settled (Dickson, 2026-10-14).
+- Communication step 8, review keys straight to the reducer, is
+  reconsidered when the command set is settled (Dickson, 2026-10-14).
 - For a later milestone (Dickson, 2026-10-10): Verbatim echoes a typed
   character from its keyboard hook, before the application handles the
   key, where NVDA echoes from the application's typed-character event; a
