@@ -1,5 +1,5 @@
 //! `verbatim-relay-floor`: the platform floor's benchmark for Verbatim's
-//! pipes and verbatim.exe's relay (`docs/design/relay.md`, section 6;
+//! pipes and verbatim.exe's relay (`docs/archive/relay.md`, section 6;
 //! `docs/design/communication.md`, section 11, step 2), run by `cargo
 //! xtask relay-floor`.
 //!
@@ -20,7 +20,7 @@
 //!   pipe, the floor for one hop.
 //! - F2: sender to receiver through a relay that is one thread reading
 //!   synchronously and writing at once, the floor for any third process.
-//! - F3: the same through a relay built as `relay.md` section 4.1 designs
+//! - F3: the same through a relay built as `docs/archive/relay.md` section 4.1 designs
 //!   verbatim.exe's: one thread on a completion port, its own ends
 //!   overlapped, the children's synchronous.
 //! - F4: the same through a relay built as verbatim.exe's was before stage

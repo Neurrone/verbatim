@@ -293,7 +293,9 @@ deepest path, sixty-two levels, 1,139 (`instruction_limit.rs`,
 `reads_and_paths_execute_exactly`).
 
 With the listener judging a repeat and testing acceptance before it reads
-a focus, in NVDA's order (stage A step 6's revision, 2026-10-11;
+a focus, in NVDA's order (a revision of the listener judging and reading
+each UIA focus from the event's own element, 2026-10-11;
+`docs/roadmap-done.md`, "M4, completed so far";
 `docs/design/focus-pipeline.md`, sections 16.2 and 16.3), every UIA focus
 costs one call more before its read, the nearest window of a windowless
 element (`NormalizeElementBuildCache`), and every focus after the first
@@ -387,7 +389,9 @@ less than one of the slow application's calls after the query.
 Removed on 2026-10-11 with the test (`docs/roadmap-done.md`, "M4, completed so far";
 `docs/design/focus-pipeline.md`, sections 5 and 9): the outpost handles
 events in the order they arrive, as NVDA does, so this wait can return
-until a UIA focus is judged as it arrives (stage A step 6), and an MSAA
+until a UIA focus is judged as it arrives (the listener judging and
+reading each UIA focus from the event's own element, `docs/roadmap-done.md`,
+"M4, completed so far"), and an MSAA
 focus waits behind the events queued before it as NVDA's does.
 
 ### A focus change, UIA, cold

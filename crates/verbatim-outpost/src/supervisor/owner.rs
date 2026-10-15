@@ -467,7 +467,7 @@ impl Owner {
             .take_bodies(completion, &port, |body| match source {
                 Source::Listener => {
                     // When verbatim.exe took the message in, before it is
-                    // parsed (`docs/design/relay.md`, section 4.5).
+                    // parsed (`docs/design/communication.md`, section 10.1).
                     let received = Received::now();
                     self.listener_message(outpost, received, decode_message(body.bytes())?);
                     Ok(())
@@ -1143,7 +1143,7 @@ impl Owner {
         };
         for mut held in record.held.take() {
             // The time it was held for the outpost's start, reported apart
-            // from the relay's own (`docs/design/relay.md`, section 7).
+            // from the relay's own (`docs/design/communication.md`, section 10.1).
             held.timing.core_held_us = held.received.elapsed_us();
             deliver(&writer, held);
         }

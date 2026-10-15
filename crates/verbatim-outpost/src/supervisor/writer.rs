@@ -156,7 +156,7 @@ impl Outgoing {
 
 /// When verbatim.exe took in something it relays to an outpost: a
 /// listener's fact as its read completed, or a request as it was queued
-/// (`docs/design/relay.md`, section 4.5). Read on two clocks: the monotonic
+/// (`docs/archive/relay.md`, section 4.5). Read on two clocks: the monotonic
 /// one, for verbatim.exe's own duration, and the wall clock the other
 /// processes' stamps share, for the spans across processes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

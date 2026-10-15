@@ -1,6 +1,6 @@
 //! How Verbatim's processes and its latency-critical threads ask to be
 //! scheduled, under whatever power plan the machine has (Dickson's decision
-//! of 2026-10-08, `docs/roadmap.md`; `docs/design/relay.md`, section 4.4).
+//! of 2026-10-08, `docs/roadmap.md`; `docs/design/communication.md`, section 6.1).
 //!
 //! - The threads that only move messages as an event crosses processes run
 //!   at a raised priority ([`prioritize_current_thread`]), so a thread made
