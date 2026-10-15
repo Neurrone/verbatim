@@ -5,7 +5,8 @@
 /.env
 /dumps/
 /packer_cache/
-/.claude/
+/.claude/worktrees/
+/.claude/settings.local.json
 
 # Python bytecode from checking the NVDA add-on outside NVDA
 __pycache__/
