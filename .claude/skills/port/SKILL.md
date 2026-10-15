@@ -21,7 +21,7 @@ A session runs the scope from research through design, judge, implementation, re
 
 ## Operating principles
 
-A narrow request remains narrow. Do not expand a specific behavior into a general rewrite unless that is necessary to implement it correctly, because a widened scope is what made past sessions run for days.
+The scope is Dickson's to set, and the session delivers it as given: a narrow request is not expanded into a general rewrite unless that is necessary to implement it correctly, and a scope that names several items (a roadmap group, such as the focus pipeline with its evidence pass) is not narrowed to one of them. Past sessions ran for days when a scope grew on its own, not when a wide scope was set on purpose. If a scope cannot be delivered coherently in one session, say so when confirming it and propose the split; do not decide it alone.
 
 The requested scope defines what success means. The steps that reach it are chosen for safety: each leaves the repository coherent and tested.
 
@@ -49,7 +49,7 @@ Read parity entries and sections of `docs/nvda/` and `docs/design/` with `python
 
 ## Confirm the scope
 
-Before anything else, write down what the scope means in concrete terms: the behavior that will exist at the end, which applications and backends it covers, what is heard or asserted that is not heard or asserted today, and what is deliberately out. Where the request leaves this open, say what reading was taken and why, and ask Dickson before design begins. Scope that is only understood implicitly is how past sessions grew from one item into a whole milestone and ran for days.
+Before anything else, write down what the scope means in concrete terms: every item it names (when it names a roadmap group, each of the group's items, in the roadmap's order), the behavior that will exist at the end, which applications and backends it covers, what is heard or asserted that is not heard or asserted today, and what is deliberately out. Where the request leaves this open, say what reading was taken and why, and ask Dickson before design begins. Scope that is only understood implicitly is how past sessions grew from one item into a whole milestone and ran for days.
 
 ## Phase 1: Establish the current state and order the work
 

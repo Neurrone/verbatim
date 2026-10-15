@@ -37,8 +37,11 @@ M4 ends when the items below land; the rest of the open work found
 during M4 is scheduled in the milestones that follow.
 
 What has landed is in [Completed milestones](roadmap-done.md), "M4,
-completed so far". The open work follows, its items listed in the order they
-are done (Dickson, 2026-10-10 and 2026-10-13). Each item is one change,
+completed so far". The open work follows in three groups, each one session (Dickson,
+2026-10-15): the focus pipeline with its File Explorer evidence pass,
+the terminal redesign with the key-holding question, and the audio
+step; within a group, the items are in the order they are done
+(Dickson, 2026-10-10 and 2026-10-13). Each item is one change,
 checked with `cargo xtask ci` and its related scenarios ten times, with the
 full suite where every scenario is affected. A change in what is heard goes
 to Dickson first; while he is away, it follows NVDA where NVDA is clear,
@@ -81,10 +84,6 @@ The design of record is [the focus pipeline](design/focus-pipeline.md)
   Dickson before changing the judgement's order, which ports NVDA's
   focus handler (design section 18).
 
-### Evidence and proposals, not building
-
-Placed before the terminal redesign, whose typing decisions need them.
-
 - A fresh File Explorer evidence pass on the new pipeline: NVDA
   captures and Verbatim logs with raw event timings, ten runs locally, ten
   in the VM and on GitHub. Dickson then decides what Explorer should say,
@@ -98,14 +97,6 @@ Placed before the terminal redesign, whose typing decisions need them.
   "pane" where NVDA says "Items View list" (2 of 29 openings on
   2026-10-12), from a UIA focus on the items view's DirectUIHWND element
   that neither NVDA nor a bare UIA client received.
-- A throwaway prototype of holding keys, as NVDA holds a key with
-  a script while it reads the caret, measured, with a written analysis;
-  holding keys is Dickson's decision. Its first case is `notepad_say_all`,
-  a known failure, unchanged as its test (Dickson, 2026-10-11): a caret key
-  pressed within about 2 ms of say-all's caret move reaches the
-  application first and the wrong character is spoken. It also measures
-  what holding a key costs and how often a key's effect is misjudged, the
-  baseline the work order of 2026-10-10 asked for.
 
 ### The terminal redesign
 
@@ -143,6 +134,15 @@ its measurements, with the corrections of
 - An unsettled terminal read with nothing queued behind it is never
   retried; and `conhost_leave_flood` once never heard "blank" for an empty
   new console window, its first read giving nothing within 15 seconds.
+
+- A throwaway prototype of holding keys, as NVDA holds a key with
+  a script while it reads the caret, measured, with a written analysis;
+  holding keys is Dickson's decision. Its first case is `notepad_say_all`,
+  a known failure, unchanged as its test (Dickson, 2026-10-11): a caret key
+  pressed within about 2 ms of say-all's caret move reaches the
+  application first and the wrong character is spoken. It also measures
+  what holding a key costs and how often a key's effect is misjudged, the
+  baseline the work order of 2026-10-10 asked for.
 
 ### The audio step
 
