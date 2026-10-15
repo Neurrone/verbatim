@@ -37,32 +37,32 @@ M4 ends when the items below land; the rest of the open work found
 during M4 is scheduled in the milestones that follow.
 
 What has landed is in [Completed milestones](roadmap-done.md), "M4,
-completed so far". The open work follows in its order (Dickson, 2026-10-10
-and 2026-10-13). Each item is one change, checked with `cargo xtask ci`
-and its related scenarios ten times, with the full suite where every
-scenario is affected. A change in what is heard goes to Dickson first;
-while he is away, it follows NVDA where NVDA is clear, recorded as
-provisional.
+completed so far". The open work follows, its items listed in the order they
+are done (Dickson, 2026-10-10 and 2026-10-13). Each item is one change,
+checked with `cargo xtask ci` and its related scenarios ten times, with the
+full suite where every scenario is affected. A change in what is heard goes
+to Dickson first; while he is away, it follows NVDA where NVDA is clear,
+recorded as provisional.
 
-### Stage A, the focus pipeline: remaining steps
+### The focus pipeline
 
 The design of record is [the focus pipeline](design/focus-pipeline.md)
-(option (b), section 12, built as of 8fe59b1b).
+(section 12, the design adopted and built as of 8fe59b1b).
 
-- Step 8, two reserved spare outposts (Dickson, 2026-10-10; next in the
+- Two reserved spare outposts (Dickson, 2026-10-10; next in the
   order, before the terminal redesign, 2026-10-13): one is given to an
   application as its first event arrives, a new one is started whenever
   fewer than two remain, and an outpost once given never returns to the
   spares. Starting an outpost took about 40 ms (debug) before its first
   event, paid by every new File Explorer folder window; the spares remove
   the relay's tail over 20 ms for facts held for a starting outpost. The
-  focus-pipeline design's section 2.4 describes how a spare learns its
-  focus under option (c), which is rejected; under option (b), the plan
-  of record, the spares have no design yet, so the step begins by
-  writing one into that record (how the listener's focus fact reaches a
-  spare, what a spare registers before it is given, and what starting
-  one costs) and getting Dickson's decisions before implementation.
-- Step 7, the UIA probe asks once (focus-pipeline design, section 8):
+  focus-pipeline design describes the spares only under an alternative
+  it rejected (section 2.4), so under the adopted design they have no
+  design yet: the item begins by writing one into that record (how the
+  listener's focus fact reaches a spare, what a spare registers before
+  it is given, and what starting one costs) and getting Dickson's
+  decisions before implementation.
+- The UIA probe asks once (focus-pipeline design, section 8):
   after a "no" that took over a second, `probe`
   (`crates/verbatim-uia/src/probe.rs`) still waits for the window to answer
   a message and asks again; `UiaHasServerSideProvider` took 3 seconds on a
@@ -81,11 +81,11 @@ The design of record is [the focus pipeline](design/focus-pipeline.md)
   Dickson before changing the judgement's order, which ports NVDA's
   focus handler (design section 18).
 
-### Stage C, evidence and proposals, not building
+### Evidence and proposals, not building
 
 Placed before the terminal redesign, whose typing decisions need them.
 
-- Step 7, a fresh File Explorer evidence pass on the new pipeline: NVDA
+- A fresh File Explorer evidence pass on the new pipeline: NVDA
   captures and Verbatim logs with raw event timings, ten runs locally, ten
   in the VM and on GitHub. Dickson then decides what Explorer should say,
   and whether announcing a window only once it is shown (edd0352) stays.
@@ -93,19 +93,19 @@ Placed before the terminal redesign, whose typing decisions need them.
   that fails `explorer_folder_window` on GitHub (run 37974580973); the
   early foreground event; a file-list focus once 10 seconds late; the
   "e2e-stage - File Explorer" window of unknown origin; a 3-second wait
-  behind an MSAA focus; the 3-second probe window of stage A step 7,
-  checked against fixed recordings; and the folder window announced with
+  behind an MSAA focus; the 3-second probe window of the UIA probe item
+  above, checked against fixed recordings; and the folder window announced with
   "pane" where NVDA says "Items View list" (2 of 29 openings on
   2026-10-12), from a UIA focus on the items view's DirectUIHWND element
   that neither NVDA nor a bare UIA client received.
-- Step 8, a throwaway prototype of holding keys, as NVDA holds a key with
+- A throwaway prototype of holding keys, as NVDA holds a key with
   a script while it reads the caret, measured, with a written analysis;
   holding keys is Dickson's decision. Its first case is `notepad_say_all`,
   a known failure, unchanged as its test (Dickson, 2026-10-11): a caret key
   pressed within about 2 ms of say-all's caret move reaches the
   application first and the wrong character is spoken. It also measures
   what holding a key costs and how often a key's effect is misjudged, the
-  baseline the 2026-10-10 sequence's step 1 asked for.
+  baseline the work order of 2026-10-10 asked for.
 
 ### The terminal redesign
 
@@ -144,28 +144,29 @@ its measurements, with the corrections of
   retried; and `conhost_leave_flood` once never heard "blank" for an empty
   new console window, its first read giving nothing within 15 seconds.
 
-### Phase 6 remainder
+### The audio step
 
-Decided by Dickson during phase 6 and not yet built. The reasoning is in
+Decided by Dickson and not yet built. The reasoning is in
 [the phase 6 design](design/phase6-design.md), in the dated section named
 with the item.
 
-- Communication step 12's audio step ([communication](design/communication.md),
-  step 12; "Audio start-up latency and scheduling", 2026-10-08): the audio
-  stream stays awake after speech, writing silence, for a configurable
-  period, 30 seconds by default as in NVDA, and cancelling keeps Stop and
-  Reset; the engine period trial; and the earcon re-mix, where speech that
-  starts while an earcon plays is mixed into audio not yet played,
-  re-mixing what was already handed to the device, so an indication's
-  sound and its speech start together and cancelling an utterance cancels
-  both. The latency ledger stops counting the tail of earlier speech as
-  "mixer and device". Each is measured with the device stages of the
-  communication design's section 10.1.
+- The audio step of the communication design
+  ([communication](design/communication.md), section 11; "Audio start-up
+  latency and scheduling", 2026-10-08): the audio stream stays awake after
+  speech, writing silence, for a configurable period, 30 seconds by default
+  as in NVDA, and cancelling keeps Stop and Reset; the engine period trial;
+  and the earcon re-mix, where speech that starts while an earcon plays is
+  mixed into audio not yet played, re-mixing what was already handed to the
+  device, so an indication's sound and its speech start together and
+  cancelling an utterance cancels both. The latency ledger stops counting
+  the tail of earlier speech as "mixer and device". Each is measured with
+  the device stages of the communication design's section 10.1.
 
 ### Deferred
 
-- Communication step 8, review keys straight to the reducer, is
-  reconsidered when the command set is settled (Dickson, 2026-10-14).
+- Review keys straight to the reducer
+  ([communication](design/communication.md), section 11) is reconsidered
+  when the command set is settled (Dickson, 2026-10-14).
 - For a later milestone (Dickson, 2026-10-10): Verbatim echoes a typed
   character from its keyboard hook, before the application handles the
   key, where NVDA echoes from the application's typed-character event; a
@@ -183,9 +184,10 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   and make section 17's fifty-run check.
 - Verbatim's own outpost once left a fact in its intake for 6.37 seconds
   (2026-10-11); reproduce it with the intake and menu logs of f9d067d.
-- Stage A step 5's open question ("MSAA events in each outpost's own
-  hook"): an event raised between a ready outpost's end and the listener
-  resuming is lost; a recommendation is recorded there.
+- MSAA events lost while the listener resumes
+  ([the phase 6 design](design/phase6-design.md), "MSAA events in each
+  outpost's own hook"): an event raised between a ready outpost's end and
+  the listener resuming is lost; a recommendation is recorded there.
 - An audit of every end-to-end scenario for timing races (2026-10-11),
   each race fixed by waiting for evidence, not a longer bound; and the
   agent's bring-forward, which always takes its slowest path (once 1.4
@@ -266,7 +268,7 @@ deviation where Dickson chose one, checked with compare mode.
 
 ## M4.3 — Settings and indications
 
-These are the decided phase 6 designs that daily use needs; the reasoning
+These are decided designs that daily use needs; the reasoning
 is in [the phase 6 design](design/phase6-design.md), in the dated section
 named with each item.
 
