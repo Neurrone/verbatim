@@ -3,7 +3,7 @@
 Status: the decision log of phase 6, 2026-10-06 to 2026-10-11; its decisions have since moved into the roadmap and the crate guides where they landed; kept for the record.
 
 It covers the three phase 6 steps in the handoff
-(`docs/archive/handoff-2026-09-02.md`, "Phase 6") in the agreed order, then
+(the handoff plan of 2026-09-02, "Phase 6"; deleted on 2026-10-15 and kept in git history) in the agreed order, then
 milestone M4, each section ending with the questions answered before its
 work started.
 

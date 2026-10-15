@@ -416,8 +416,8 @@ shutdown code, which walks a corrupt list in its telemetry of provider
 connections. Releasing every UIA object first does not prevent it. A
 process that ends itself with `TerminateProcess` never runs that code,
 and by then nothing is left for it to do. The evidence and what is still
-unknown are recorded in the handoff of 2026-09-02 ("Open: a process that
-has used UIA as a client").
+unknown are recorded in `docs/crates/mockapp.md` beside the harness's exit
+and in the comment of `crates/mockapp/tests/common/harness.rs`.
 
 Core and each outpost (and the synth host) communicate over private
 parent-child channels created at spawn via handle inheritance — no named
