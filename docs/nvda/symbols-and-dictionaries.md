@@ -31,6 +31,42 @@ case-sensitive. Files live per user config as `*.dic` under
 (`dictFormatUpgrade.py` migrates old layouts). The GUI editor is
 under NVDA's Speech menu; entries apply immediately.
 
+A fourth layer, the **built-in** dictionary, ships with NVDA as
+`source/builtin.dic` and is registered in
+`speechDictHandler/definitions.py` `_addSpeechDictionaries` as
+`DictionaryType.BUILTIN` with `mandatory=True`. A mandatory dictionary
+is always enabled (`speechDictHandler/types.py`, the `enabled`
+property) and is not user visible (the `userVisible` property), so the
+settings panel's dictionary list leaves it out and it cannot be turned
+off or edited. It is the same for every language and synthesizer, and
+it is registered last, so `speechDictHandler.processText` applies it
+after the temporary, voice and default dictionaries. Its three entries
+are case-sensitive regular expressions, each replaced by a single
+space:
+
+- `(?=[A-Z])(?<=[a-z])`, "Break up words that use a capital letter to
+  denote another word": a space before a capital that follows a
+  lowercase letter, so "camelCase" becomes "camel Case".
+- `(?=[A-Z][a-z])(?<=[A-Z])`, "Break away a word starting with a
+  capital from a fully uppercase word": "NVDAObjects" becomes "NVDA
+  Objects".
+- `(?=\d)(?<=[^\W\d])`, "Break on word-to-digit boundaries": a space
+  wherever a digit follows a word character that is not a digit, so
+  "issue123" becomes "issue 123", "e2e" becomes "e 2e", and "mv94i5hr"
+  becomes "mv 94i 5hr". Only letter-to-digit is split; a letter after
+  a digit, and a run of digits, are left alone.
+
+Because the layer runs inside `speech.speech.processText`, it reaches
+every text item of every speech sequence: names, messages, say-all,
+and caret and review text. Spelling is unaffected in practice, since
+it passes one character at a time. The digit rule dates from commit
+de7022dd8 (2006-10-03), whose message says it "breaks up words that end
+in numbers, at least viavoice does funny things with the pronunciation
+if this isn't done". The rules moved into the distributed default
+dictionary on 2007-12-15 (2e3005086), became `builtin.dic` on
+2008-11-11 (4cb09bf46), and were rewritten for speed on 2026-08-12
+(9fc2ccf4e, #20433) with the same output.
+
 Design points worth noting: matching is sequential over *all* entries
 of all three dictionaries on every utterance (users with thousands of
 entries pay for it), replacements are plain text (a replacement is

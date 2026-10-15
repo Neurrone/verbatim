@@ -277,6 +277,20 @@ locale in the Fluent files, with NVDA's English symbol names (its
 corrected ones included) for the common punctuation and symbols and the
 phonetic alphabet; there are no CLDR emoji names yet.
 
+### Letter-to-digit splitting
+
+NVDA: its mandatory built-in speech dictionary inserts a space wherever
+a digit follows a letter, in everything it speaks, so "issue123" is
+spoken "issue 123" and "e2e" as "e 2e"
+([Symbols, dictionaries, and character processing](../nvda/symbols-and-dictionaries.md),
+the built-in layer under "Speech dictionaries").
+Verbatim: **not yet (unscheduled)**. Verbatim speaks the text as
+written. Open question, Dickson's (2026-10-15): the rule dates from
+2006 and a pronunciation problem in ViaVoice, and whether current
+synthesizers (eSpeak NG, OneCore) still need it is not known, so it is
+not built until that is checked with them. Until then, compare mode
+shows a difference on any spoken name with a digit after a letter.
+
 ### Automatic language switching
 
 NVDA: strip-or-pass of language
