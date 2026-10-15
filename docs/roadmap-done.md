@@ -462,3 +462,144 @@ track guest scheduling rather than code (recorded above); no reducer path
 emits a pre-flattened utterance string (D12) — every spoken announcement,
 including navigation edge messages, reaches the pipeline as semantic
 spans.
+
+## M4, completed so far
+
+M4 is not complete; its open work is in [the roadmap](roadmap.md). Each
+line below is an M4 item that has landed, with the commit or date that
+landed it.
+
+### Opening work
+
+- UIA remote operations for the focus ancestor walk (D15): 389e8838 and
+  88a901f9, 2026-10-06.
+- The latency stage ledger: verbatim.exe's own stages 67df10ee
+  (2026-10-11); the listener's, the outpost's and the synthesizer host's
+  hops a48099ea and cd0c2308 (2026-10-13).
+- eSpeak NG as the built-in default synthesizer, built from the
+  `third_party/espeak-ng` submodule and run in the synthesizer host:
+  1494088e, 2026-10-04.
+- The attention model replacing the foreground gate (D14): the outpost
+  redesign, d488315a (2026-10-01), marked landed in 0a14a84e
+  (2026-10-05); the File Explorer and Settings scenarios that waited on
+  it, 0c3ac72b (2026-10-06).
+
+### The phase 6 sequence of 2026-10-10
+
+- Step 2, a second Verbatim replaces the running one as NVDA does:
+  0033e932 and a40d3212, 2026-10-10.
+- Step 3, NVDA's event filtering in the outposts: eb72303f, 6a105348 and
+  82ccb5fc, 2026-10-10.
+- Step 4, cheaper reads: 9ef92159, 102a5d3f, 8d5f848c, e3cb1cba and
+  40fec683, 2026-10-10 ([phase 6 design](design/phase6-design.md),
+  "Cheaper reads in the outposts").
+- Steps 5 and 6 were taken as stage A steps 4 and 6, below.
+
+### Stage A, the focus pipeline
+
+- Step 1, time limits that hold: 523ee6fb, de5c72fb and 7c3fcc1e, done in
+  1063480e, 2026-10-11 ([phase 6 design](design/phase6-design.md), "Time
+  limits that hold").
+- Step 2, Core's inputs in arrival order, NVDA's duplicate rule, and
+  background speech dropped across a foreground change: 15cae8a8, done in
+  b05985d3, 2026-10-11.
+- Step 3, console windows as one application: ece62cdf and cfd78030, done
+  in 7a958891, 2026-10-11.
+- Step 4, arrival order in the outposts with NVDA's MSAA limiter:
+  36c14789, done in d9a270b3, 2026-10-11.
+- Step 5, MSAA focus, foreground and menu events in each outpost's own
+  hook: 217a8c8b, done in ff18b855, 2026-10-11.
+- Step 6, the listener judges and reads each UIA focus from the event's
+  own element: a4fcbcf1 (2026-10-11), with its revisions
+  ([focus pipeline](design/focus-pipeline.md), sections 16 and 18) to
+  8fe59b1b (2026-10-12), among them NVDA's focus handler ported in its
+  order (ffacb9b5), NVDA's base cache request (d2c97f8d), and the three
+  Windows Terminal scenarios enabled again (ca551366).
+- Following the focus with one UIA event handler group
+  ([focus pipeline](design/focus-pipeline.md), section 17): 152f09a9,
+  2026-10-11.
+- The audits' items 1 to 7, 2026-10-12: local fixes ef6cd605;
+  notifications d2117d4b; the focus's own events 953ba15e; speech
+  validity cad5a7a3; the MSAA duplicate test 006883a5; comments corrected
+  32133bbe; UIA menu openings, selections and notifications through the
+  reading threads b772abd8, b370a7a5 and 0eaf540e.
+- Step 9, the relay: replaced by the communication migration, below.
+- Step 10, the harness's idle barrier through every child: communication
+  step 6a, 10f01254, 2026-10-14.
+- Step 11, measure again, full suite, push: the measurements of
+  communication step 12, 743b377a, pushed on 2026-10-14.
+
+### The communication migration
+
+Steps of [the communication design](design/communication.md), section 11.
+
+- Step 1, the baseline, JSON's cost and the evaluation of mio: 14ad5ab5
+  and d34ebc2c (2026-10-11), 544e138f and 8511cd19 (2026-10-13).
+- Step 2, the platform floor and the speech-path scenario: 29833e1d and
+  e7e3181b, 2026-10-13.
+- Step 3, the scheduling policy as decision 14 redefines it: 720f6692,
+  2026-10-13 (the first policy reverted in 1651ab0a).
+- Step 4, the transport: 5648582c and 6577680f, 2026-10-13.
+- Step 5, the relay on its port: 0f59a8b9, 2026-10-13.
+- Step 6, inline writes in the children: 2037e627, 2026-10-14.
+- Step 6a, the idle barrier: 10f01254, 2026-10-14.
+- Step 7, the relay reads the outposts' pipes: f6e58829, 2026-10-14.
+- Step 9, the host protocol: fe5fa4eb, 2026-10-14 (the signalled cancel
+  in 3ebb7be0, 2026-10-13).
+- Step 11, the outpost's per-event costs: c65b6e95, 2026-10-14.
+- Step 12's measurements: 743b377a, 2026-10-14.
+- Step 8 not adopted and step 10 deferred: 8e56ca32, 2026-10-14.
+
+### Stage B
+
+- The control-flood scenarios follow NVDA: 9cf42844, 2026-10-11.
+- Shift's pause compared with NVDA's, no change: 31304c78, 2026-10-11
+  ([parity](parity.md), "When speech is cut off").
+- The wrong parity entries on UIA focus and the limiter corrected:
+  31304c78, 2026-10-11.
+- Toasts checked from code and the difference recorded: 31304c78,
+  2026-10-11 ([parity](parity.md), "Toasts").
+
+### Decisions settled and built
+
+- Scheduling, `THREAD_PRIORITY_HIGHEST` for the threads that only move
+  messages and no power-throttling opt-out: 720f6692, 2026-10-13.
+- verbatim.exe's relay within 1 to 2 ms, events still routed through it
+  (2026-10-10 and 2026-10-11): its own ledger stage 67df10ee, met by the
+  communication migration.
+- The focus pipeline's option (b), with no MSAA fallback while the
+  listener's UIA focus is stalled (2026-10-10): stage A step 6.
+- Control+Tab follows NVDA, 8be2223's rule removed (2026-10-10): stage A
+  step 6.
+- Every event for a console window goes to the console host's outpost,
+  with the client process as identity (2026-10-10): ece62cdf, 2026-10-11.
+- A foreground event for a window read through UI Automation is dropped
+  and the window announced from the focus's ancestry
+  ([focus pipeline](design/focus-pipeline.md), section 16.4): a17676f6 and
+  a0cc6cd0, 2026-10-11.
+- A reading thread ends with its application's outpost: ad4145e5,
+  2026-10-11; a UIA focus's acceptance tested in the listener: 5cf82985,
+  2026-10-11.
+- The suite switches windows by bringing them forward, never with
+  Alt+Tab (2026-10-10): f7556c8c, 2026-10-10.
+- The console host's scroll events cannot count a flood of identical
+  lines: question closed, 2026-10-11.
+
+### Fixes
+
+- Core picking between events and commands at random: 15cae8a8,
+  2026-10-11.
+- Windows Terminal's terminal announced twice: ca551366, 2026-10-12
+  ([focus pipeline](design/focus-pipeline.md), section 16.9).
+- An unsettled terminal read marking earlier changes covered: 29790d46,
+  2026-10-11.
+- The recording check failing clean runs: 91bb844a, 2026-10-11.
+- The flight recorder save timing out (os error 10060): ebb9d1a0,
+  2026-10-11.
+- Truncated screen recordings: bae57d1a and 4c89d367, 2026-10-10.
+- A console's text area read without the console rule on the focus-now
+  path: cfd78030, 2026-10-11.
+- Full dumps of every outpost crash and a per-run crash count: f0dab2fd,
+  2026-10-11.
+- The mixer's idle wait no longer wakes once a second: 451523d0,
+  2026-10-13.

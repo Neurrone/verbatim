@@ -10,22 +10,12 @@ rather than being milestones themselves.
 M0 (foundations), M1 (self-voicing prototype), M2 (test harness and
 VM), and M3 (desktop usability core) are complete. Their full scope
 and exit-criteria evidence are archived in
-[Completed milestones](roadmap-done.md). The next milestone is M4.
+[Completed milestones](roadmap-done.md). M4 is in progress; the
+parts of it that have landed are listed there too, under "M4, completed
+so far".
 
 ## M4 — Text, editing, and terminals
 
-- Opening work, before the text features (decided 2026-09-02): the
-  latency stage ledger and UIA remote operations for the focus ancestor
-  walk (D15), eSpeak NG as the built-in reference synthesizer (moved
-  forward again on 2026-10-04 into the speech-delivery work, as the
-  default synthesizer in the synth host of D18), and the attention
-  model replacing the foreground gate (D14). The last two have landed.
-  eSpeak NG is built from the vendored source in the `third_party/espeak-ng`
-  submodule, runs in the synthesizer host, and is the default
-  synthesizer, and every end-to-end run speaks through it. The attention
-  model was implemented in the outpost redesign of 2026-10-01, which also
-  removed the foreground process-id gate; what remains is testing it on
-  the deferred Explorer and Settings scenarios, which waited on it.
 - TextPattern support in the model; caret tracking, typed-character echo,
   word/line/character navigation; say-all with index-mark continuation.
 - Text runs carry formatting attributes as utterance spans (spelling and
@@ -43,47 +33,172 @@ and exit-criteria evidence are archived in
 Exit: Notepad editing and Terminal sessions are solid; terminal flood E2E
 shows bounded latency and no hang.
 
+What has landed is in [Completed milestones](roadmap-done.md), "M4,
+completed so far". The open work follows in its order (Dickson, 2026-10-10
+and 2026-10-13). Each item is one change, checked with `cargo xtask ci`
+and its related scenarios ten times, with the full suite where every
+scenario is affected. A change in what is heard goes to Dickson first;
+while he is away, it follows NVDA where NVDA is clear, recorded as
+provisional.
+
+### Stage A, the focus pipeline: remaining steps
+
+The design of record is [the focus pipeline](design/focus-pipeline.md)
+(option (b), section 12, built as of 8fe59b1b).
+
+- Step 8, two reserved spare outposts (Dickson, 2026-10-10; next in the
+  order, before the terminal redesign, 2026-10-13): one is given to an
+  application as its first event arrives, a new one is started whenever
+  fewer than two remain, and an outpost once given never returns to the
+  spares. Starting an outpost took about 40 ms (debug) before its first
+  event, paid by every new File Explorer folder window; the spares remove
+  the relay's tail over 20 ms for facts held for a starting outpost. How a
+  spare learns its focus is the focus-pipeline design's section 2.4.
+- Step 7, the UIA probe asks once (focus-pipeline design, section 8):
+  after a "no" that took over a second, `probe`
+  (`crates/verbatim-uia/src/probe.rs`) still waits for the window to answer
+  a message and asks again; `UiaHasServerSideProvider` took 3 seconds on a
+  new File Explorer window (2026-10-10). Probing in the background is not
+  adopted (Dickson, 2026-10-10), since NVDA asks synchronously. One ask is
+  a possible audible change (the design's section 10, item 11).
+- The UIA focus change's call count with remote operations (found on
+  2026-10-15, correcting [the operation ledger](performance.md)): steady
+  state takes 4 calls (the nearest window, `CompareElements`,
+  `CurrentHasKeyboardFocus`, and the `Execute`) against a target of 2, and
+  cold takes 3 calls plus the outpost's probe against a target of 2; the
+  ledger's entries "A focus change, UIA, steady state" and "A focus
+  change, UIA, cold" name which calls are over. Investigate whether the
+  nearest-window and comparison calls can be folded into the remote
+  operation or answered from the event's cache, and bring the result to
+  Dickson before changing the judgement's order, which ports NVDA's
+  focus handler (design section 18).
+
+### The terminal redesign
+
+Built from [terminal reading](design/terminal-reading.md) (approved, its
+open questions 1 to 12 answered as recommended) in its small steps, after
+its measurements, with the corrections of
+[its review](design/terminal-reading-review.md).
+
+- The redesign: one read per change as the unit, every other call only a
+  hint, an original line diff, and each extra beyond NVDA's model decided
+  separately. It removes ecf191c, restores a scenario with an interactive
+  shell for output written just after a terminal takes the focus (with an
+  NVDA capture), and restores the console host's real password prompt. It
+  includes a test bounding the diff's work on a 9,000-line overflow and a
+  2,000-line flood, asserting exact counts. Lists a program redraws in two
+  writes are decided here, with a scenario that controls when each piece
+  is written (Dickson, 2026-10-10).
+- The review's corrections: key attribution uses each read's own start
+  and end times, carried in the outpost's message on a monotonic clock
+  shared with the key's press time, not Core's receipt time; the
+  whole-document fallback gets its own alignment bound; and the NVDA
+  details the review lists.
+- Provisional, awaiting Dickson (2026-10-11): if measurement 5 confirms
+  the console host raises no text change while a full history scrolls
+  whole lines, follow NVDA, which has the same gap; a flood of identical
+  lines cannot be counted whenever the history is full, documented as a
+  limitation.
+- Bug fix: the caret read with a terminal's text is stamped with the
+  change event's time, not the read's, so Core can take a caret already
+  showing a key's effect as the caret before it (a likely cause of
+  `conhost_typing` step 5 failing).
+- Bug fix: Windows Terminal faults on a `FindText` that finds nothing
+  (an access violation on its UI thread, seen as `RPC_E_SERVERFAULT`); the
+  redesign drops `FindText` (the design's corrections of 2026-10-11).
+- An unsettled terminal read with nothing queued behind it is never
+  retried; and `conhost_leave_flood` once never heard "blank" for an empty
+  new console window, its first read giving nothing within 15 seconds.
+
+### Stage B, needing no decision
+
+- A Settings search suggestions scenario with an NVDA capture. It also
+  covers selecting inside a list the focus controls, which has no
+  scenario and was not checked live after the cheaper reads of 2026-10-10.
+- Toasts ([parity](parity.md), "Toasts"): Verbatim reads them only
+  through an MSAA alert, NVDA through UIA's window-opened event. Capture a
+  Windows 11 toast live with NVDA and with Verbatim; if Verbatim is silent,
+  follow NVDA (a `Windows.UI.Core.CoreWindow` whose automation id contains
+  `ToastView`, from a desktop-wide window-opened subscription in the
+  listener), then adopt NVDA's rule dropping MSAA alert and show events
+  from native UIA windows.
+- Medium integrity on GitHub's runner (Dickson, 2026-10-10): the e2e job
+  tries running Verbatim and the test applications at medium integrity, as
+  users run them, after measuring that it behaves with the runner's UAC
+  disabled. The runner is elevated today (`runneradmin`), which is what
+  puts "Administrator: " in console titles.
+- The `*_control_flood` scenarios' exception to the exact assertions of
+  [the testing standard](testing.md) awaits Dickson's review (provisional,
+  2026-10-11): the speech before Control is asserted by its first and last
+  lines and its endings, since the burst split depends on timing; the
+  alternative is an assertion on every utterance that does not depend on
+  the split, if one can be found.
+
+### Stage C, evidence and proposals, not building
+
+- Step 7, a fresh File Explorer evidence pass on the new pipeline: NVDA
+  captures and Verbatim logs with raw event timings, ten runs locally, ten
+  in the VM and on GitHub. Dickson then decides what Explorer should say,
+  and whether announcing a window only once it is shown (edd0352) stays.
+  The open Explorer items it covers: the "Working on it..." placeholder
+  that fails `explorer_folder_window` on GitHub (run 37974580973); the
+  early foreground event; a file-list focus once 10 seconds late; the
+  "e2e-stage - File Explorer" window of unknown origin; a 3-second wait
+  behind an MSAA focus; the 3-second probe window of stage A step 7,
+  checked against fixed recordings; and the folder window announced with
+  "pane" where NVDA says "Items View list" (2 of 29 openings on
+  2026-10-12), from a UIA focus on the items view's DirectUIHWND element
+  that neither NVDA nor a bare UIA client received.
+- Step 8, a throwaway prototype of holding keys, as NVDA holds a key with
+  a script while it reads the caret, measured, with a written analysis;
+  holding keys is Dickson's decision. Its first case is `notepad_say_all`,
+  a known failure, unchanged as its test (Dickson, 2026-10-11): a caret key
+  pressed within about 2 ms of say-all's caret move reaches the
+  application first and the wrong character is spoken. It also measures
+  what holding a key costs and how often a key's effect is misjudged, the
+  baseline the 2026-10-10 sequence's step 1 asked for.
+- An elevated console window is named "Administrator: <title>" or just
+  "<title>" depending on when it is first read (`conhost_raised_flood` on
+  GitHub's elevated runner, run 38031529579). Capture what NVDA says for
+  an elevated console window, which needs an elevation prompt Dickson
+  approves, then make Verbatim read one name consistently.
+
 ### Phase 6 remainder
 
 Decided by Dickson during phase 6 and not yet built; each is part of M4's
-completion. The reasoning and measurements are in `docs/design/phase6-design.md`,
+completion. The reasoning is in [the phase 6 design](design/phase6-design.md),
 in the dated section named with each item.
 
-- Audio (2026-10-08, "Audio start-up latency and scheduling"): the audio
+- Communication step 12's audio step ([communication](design/communication.md),
+  step 12; "Audio start-up latency and scheduling", 2026-10-08): the audio
   stream stays awake after speech, writing silence, for a configurable
-  period, 30 seconds by default as in NVDA; cancelling keeps Stop and
-  Reset. Speech that starts while an earcon plays is mixed into audio
-  not yet played, re-mixing what was already handed to the device, so an
-  indication's sound and its speech start together and cancelling an
-  utterance cancels both. The latency ledger stops counting the tail of
-  earlier speech as "mixer and device".
-- Scheduling: done, as measured and decided on 2026-10-13 (communication
-  step 3, 720f669), which replaced the 2026-10-08 plan: the threads that
-  only move messages, the keyboard hook among them, run at
-  `THREAD_PRIORITY_HIGHEST`; every other thread keeps normal priority and
-  the audio thread its MMCSS registration; no process or thread opts out
-  of power throttling, which measured no gain.
-- Status cues (2026-10-08, "Status cues settled"): every indication in
+  period, 30 seconds by default as in NVDA, and cancelling keeps Stop and
+  Reset; the engine period trial; and the earcon re-mix, where speech that
+  starts while an earcon plays is mixed into audio not yet played,
+  re-mixing what was already handed to the device, so an indication's
+  sound and its speech start together and cancelling an utterance cancels
+  both. The latency ledger stops counting the tail of earlier speech as
+  "mixer and device". Each is measured with the device stages of the
+  communication design's section 10.1.
+- Status cues ("Status cues settled", 2026-10-08): every indication in
   the theme's Events group (start and exit, error, application not
   responding, browse and focus mode, suggestions opened and closed,
   progress) plays through key presses; indications in every other group
-  are content and are cut off. This is built-in behavior defined by the
+  are content and are cut off. This is built-in behaviour defined by the
   group, not a setting.
-- Sound-only announcements (2026-10-08, "The review cursor in a
-  terminal", the paragraph "Further"): an announcement a theme reports by
-  sound alone is a first-class announcement, queued, timed, measured and
-  cancelled exactly like a spoken one; the start-up sound becomes one.
-- Memory growth (2026-10-08, "Memory growth tracking"): a scenario of
-  about 25 seconds in every suite, ten iterations of opening a Windows
-  Forms text box window, editing and reviewing in it, closing it, and
-  Tabbing through the settings dialog. After two warm-up iterations, the
-  counts Verbatim reports through the control plane (held nodes, text
-  anchors, outposts, queued speech, cache sizes, a new status addition)
-  return to exactly the same values after every iteration, and each
-  process's private memory may grow from iteration 3 to 10 by no more
-  than a small bound, enforced locally and recorded on GitHub.
-- The settings package (2026-10-08, "NVDA's settings in Verbatim"): the
-  missing settings for behavior Verbatim already has (capital pitch
+- Sound-only announcements ("The review cursor in a terminal", the
+  paragraph "Further", 2026-10-08): an announcement a theme reports by
+  sound alone is queued, timed, measured and cancelled exactly like a
+  spoken one; the start-up sound becomes one.
+- Memory growth ("Memory growth tracking", 2026-10-08): a scenario of
+  about 25 seconds in every suite, ten iterations of a Windows Forms text
+  box window opened, edited, reviewed and closed, and the settings dialog
+  Tabbed through. After two warm-up iterations, the counts Verbatim
+  reports through the control plane return to exactly the same values
+  after every iteration, and each process's private memory grows from
+  iteration 3 to 10 by no more than a small bound.
+- The settings package ("NVDA's settings in Verbatim", 2026-10-08): the
+  missing settings for behaviour Verbatim already has (capital pitch
   change, OneCore's pause after punctuation, the audio output device,
   sounds' volume following the voice, the audio device awake time,
   handling keys from other applications, the multiple key press timeout,
@@ -95,433 +210,26 @@ in the dated section named with each item.
   the spelling-error sound while typing). The review cursor follows focus
   and the caret by default, each with NVDA's setting to turn it off.
   Spoken progress comes every 10 percent, as NVDA's does.
-- The review cursor on objects that no longer exist (2026-10-08, the
-  section of that name): review commands read live from the application
-  rather than from Core's cached line or the node's snapshot; a Gone
-  answer for the navigator's node re-seeds the navigator from the focus
-  and announces it, or says "No navigator object" when the dead node is
-  the focus itself; and the outpost reports held MSAA nodes it forgets
-  when their window is destroyed. Also an end-to-end test in both
-  terminals that a reviewed line stays on its text while new output is
-  written below it without filling the history (2026-10-08, "Revised").
-- A behavior-based MSAA audit (2026-10-08, afternoon decisions): live NVDA
-  captures against a matrix of standard controls, compared exactly with
-  Verbatim.
-- Response-time budgets (2026-10-08, afternoon decisions; reaffirmed in
-  the coherence review of 2026-10-09): enforced by default in local
-  runs; on GitHub's runners an explicit setting turns enforcement off and
-  the numbers are recorded. Today the suite records them and asserts
-  none.
-The work queue (Dickson, 2026-10-10, for a long absence; this replaces
-the order of the numbered steps below where they differ). Each item is one
-change: `cargo xtask ci`, its related scenarios ten times, the full suite
-where every scenario is affected, and a push only after the full suite
-passes locally. The designs of record are `docs/design/focus-pipeline.md`
-(option (b), decision list in its section 15, approved) and
-`docs/design/terminal-reading.md` (approved, with open questions 1 to 12
-answered as recommended).
+- The review cursor on objects that no longer exist (the section of that
+  name, 2026-10-08): review commands read live from the application
+  rather than from Core's cache; a Gone answer for the navigator's node
+  re-seeds it from the focus, or says "No navigator object" when the dead
+  node is the focus; the outpost reports held MSAA nodes it forgets with
+  their window; and an end-to-end test in both terminals that a reviewed
+  line stays on its text as new output is written below it ("Revised").
+- A behaviour-based MSAA audit (the afternoon decisions of 2026-10-08):
+  live NVDA captures against a matrix of standard controls, compared
+  exactly with Verbatim.
+- Response-time budgets (the afternoon decisions of 2026-10-08,
+  reaffirmed 2026-10-09): enforced by default in local runs, recorded but
+  not enforced on GitHub's runners; today the suite records them and
+  asserts none. A failure when verbatim.exe's relay takes over 2 ms comes
+  with them.
+- A foreground UIA progress bar that is not the focus is reported, as
+  NVDA does (Dickson, 2026-10-10, as a separate fix); background progress
+  bars stay silent, with no setting.
 
-Stage A, the focus pipeline, option (b) and the focus fixes:
-
-1. Time limits that hold: UIA's transaction and connection timeouts at 5
-   seconds, set once per process; `Uia::within` retired; watchdogs on every
-   thread others wait on; multi-call searches given a deadline of their own
-   or made one remote operation. Done (2026-10-11, full suite 90 of 90;
-   `docs/design/phase6-design.md`, "Time limits that hold"): `CoCancelCall` for MSAA
-   calls is left as a recommendation there.
-2. Core: one input channel in arrival order; NVDA's duplicate-focus rule;
-   background speech dropped across a foreground change. Done (2026-10-11,
-   `docs/design/phase6-design.md`, "Core's inputs in arrival order, the duplicate rule,
-   and background speech"): every scenario's steps passed in the full suite
-   and in nine further runs of twelve related scenarios; the four failures
-   came after the steps, three recordings shorter than the capture and one
-   flight recorder save that timed out, and are investigated separately.
-3. Console windows: every event to the console host's outpost, with the
-   client process as identity; the console special cases removed. Done
-   (2026-10-11, `docs/design/phase6-design.md`, "Console windows as one
-   application"): `cargo xtask ci` passes; the first live run failed every
-   `conhost_` scenario (the window never announced), fixed by keeping an
-   early foreground event for the next focus (provisional, below);
-   `conhost_typing`, `conhost_two_windows`, `conhost_commands` and
-   `conhost_leave_flood` then passed once each. Then every `conhost_`
-   scenario and `settings_system_page` passed, and the full suite 90 of
-   90; a repeat failed once after an outpost crash in UI Automation, whose
-   replacement read the console's text area without the console rule,
-   now applied on the focus-now path too. With that, `cargo xtask ci`
-   passes and `conhost_leave_flood` passed ten of ten, `conhost_typing`,
-   `conhost_two_windows` and `conhost_commands` once each.
-4. Arrival order in the outposts: 42d9caa and ce53dbc removed; NVDA's MSAA
-   focus collapsing (consecutive runs, up to four) and limits by the
-   event's own thread, for MSAA only; `msaa_focus_waiting` removed.
-   Done (2026-10-11): `cargo xtask ci` and the mockapp tests pass; ten
-   runs each of fourteen related scenarios (the menu, Settings, System
-   Information, Explorer and theme ones, with the Windows Terminal tab,
-   console, Notepad and second-application ones) and
-   the full suite passed every scenario's steps, the only failures being
-   the old recording check, fixed on main since.
-   Every UIA focus of a batch is now handled, as the design's section 5.1
-   says. Until step 5, an MSAA focus still comes from the listener while
-   other MSAA events come from the outpost's own hook, so a change raised
-   just before a focus can reach the outpost after it and be judged
-   against the new focus; and until step 6, a focus waits behind what
-   arrived before it, as File Explorer's first focus did before 42d9caa.
-5. MSAA focus, foreground and menu events in each outpost's own hook,
-   with the listener's "forwarding ended" hand-over and duplicates matched
-   by counting. Built (2026-10-11, `docs/design/phase6-design.md`, "MSAA events in
-   each outpost's own hook"): `cargo xtask ci` and every mockapp test
-   pass; `conhost_typing`, `conhost_two_windows`,
-   `menu_and_settings_dialog` and `explorer_folder_window` passed once
-   each, and the console host's own hook was seen taking its console
-   windows' foreground and focus events. Done (2026-10-11): every
-   `conhost_` scenario and `settings_system_page` passed once but
-   `conhost_marker_list` (the unsettled-read bug below, not this step's);
-   ten runs each of twelve related scenarios passed but one run of
-   `conhost_leave_flood` (an outpost crash inside UI Automation, below);
-   the full suite passed 90 of 90.
-   The five kinds of
-   section 12.4 moved (focus, foreground, menu-popup start, alert,
-   tooltip); every MSAA fact carries the thread that raised it, so the
-   window's thread no longer stands in. The listener stops by the time an
-   event was raised, not when it arrives, so a late event raised before
-   the hook went in is not lost. One question is recorded there with a
-   recommendation: an event raised in the moments between a ready
-   outpost's end and the listener resuming is lost.
-6. The listener judges and reads each UIA focus from the event's own
-   element, on a thread per application, with the marker wait; the outpost
-   finds its own element afterwards; the moved-on rules, name-and-position
-   lookups and `GetFocusedElement` on the focus path removed; Control+Tab
-   follows NVDA (8be2223's rule goes); D13 amended. Written (2026-10-11,
-   `docs/design/phase6-design.md`, "The listener reads each UIA focus"). Built: `cargo
-   xtask ci` passes, every mockapp test with it, the UIA focus cost pins
-   and the path program's instruction counts measured and set; its
-   scenarios are still to run. Three questions are recorded there with recommendations: the
-   acceptance test left in the outpost, the reading threads ended when
-   idle rather than when their application exits, and whether
-   `windows_terminal_tabs` hears the tab left in every run.
-   Revised from NVDA captures (2026-10-11 and 12, design section 16):
-   the desktop's announcement, the console's title, the tab switcher held
-   with Control, and Windows Terminal's double "terminal" (section 16.8:
-   the listener's focus handler on its group's client in NVDA's order,
-   NVDA's plain keyboard focus read, and a focus with no window above it
-   dropped). Decided by Dickson (2026-10-12): the listener keeps NVDA's
-   base cache request (d2c97f8).
-   Windows Terminal's terminal announced twice no longer happens with one
-   screen reader running (design section 16.9, rechecked with NVDA
-   alpha-58022 on 2026-10-12): `windows_terminal_two_windows`,
-   `windows_terminal_leave_flood`, and `windows_terminal_tabs`, disabled
-   earlier that day for it, are enabled again, and the allowance for a
-   repeated "terminal" is withdrawn, after 135 runs of the Windows
-   Terminal scenarios with none repeated, 54 of them of those three with
-   no allowance (Dickson asked for the evidence, 2026-10-12). Decision
-   D15 stays (Dickson, 2026-10-12). The listener's judgement is now a port
-   of NVDA's focus handler in its order (design section 18), and two
-   route-level audits, of NVDA's MSAA path and core focus processing and of
-   its other UIA event handlers, are in the scratchpad, to be folded into
-   the parity work.
-   From the audits, the secure desktop and the lock screen (NVDA's
-   `processDesktopSwitchWinEvent` and its locked-screen checks, both in
-   NVDA's core) wait for UIAccess support, without which Verbatim cannot
-   read the secure desktop (Dickson, 2026-10-12).
-   The audits' items, to be fixed in this order (Dickson, 2026-10-12;
-   the reports are `audit-msaa-and-gainfocus.md` and
-   `audit-uia-other-handlers.md` in the scratchpad, by NVDA step):
-   1. Local fixes: the hung-window test on the event's own window, not
-      its root; a null MSAA window taken as the desktop window; NVDA's
-      `EXCEL7` child-object drop; the window checks for a foreground fact.
-   2. Notifications: NVDA's coalescing key (element, kind, processing,
-      activity id, not the text); every notification of a terminal
-      control or the console's text area ignored, as NVDA's overlays
-      ignore them.
-   3. The focus's own events: help text, ControllerFor, and item status
-      followed, as NVDA's local group follows them.
-   4. Speech validity: NVDA's `isMenuItemOfCurrentFocus` clause.
-   5. The MSAA duplicate test against the last focus's resolved child.
-   6. Every code comment the audits found wrong about NVDA, corrected.
-   7. UIA menu openings, selections, and notifications through the
-      listener's reading threads: NVDA's nearest window, native check,
-      and, for a menu, its plain keyboard focus read and ancestors (done,
-      2026-10-12; NVDA's Voice Access app module, which lets every
-      notification through, is for the app-module track).
-   Items 8 to 11 are deferred (Dickson, 2026-10-12): no capture has shown
-   a speech difference from 8 or 9, and 10 and 11 add what is missing;
-   they come back after the roadmap's queue.
-   8. One duplicate test and one acceptance test per focus, where NVDA
-      makes them; Core's extra node-id duplicate rule and its second
-      acceptance test narrowed to what NVDA does.
-   9. The window switch: foreground events in the focus run, newest
-      first, as NVDA's `pumpAll` takes them; run boundaries as NVDA's.
-   10. The events NVDA registers desktop-wide that Verbatim lacks, each
-      from an NVDA capture: live regions, selection added and removed,
-      progress values, window opened (toasts), layout invalidated
-      (suggestion counts), system alerts, drag and drop.
-   11. The smaller ones: the MSAA caret in UIA windows, the staging
-      windows' focus, live reads of the focus's property events, NVDA's
-      Windows Forms and UWP combo box rules, and the controlled
-      selection's route compared with NVDA's.
-7. The UIA probe asks once (`docs/design/focus-pipeline.md`, section 8).
-   Not built: after a "no" that took over a second, the probe still waits
-   for the window to answer a message and asks again.
-8. Two reserved spare outposts. Not built; next in the order under step 9.
-9. verbatim.exe's relay: fewer hand-offs, its own stage in the latency
-   ledger, and the platform's floor measured under Balanced. Replaced by
-   the communication design's migration (`docs/design/communication.md`
-   section 11, steps 1 to 12), which includes step 10 below as its step
-   6a, every step judged on wake-ups and CPU as well as latency (the
-   design's section 18; `docs/design/wake-ups.md`). Order (Dickson,
-   2026-10-13): this migration and then step 8, each merged into main,
-   before the terminal redesign. Done: steps 1, 2, 4 to 7, 9 and 11 are
-   built, and step 12's measurements are recorded (743b377a); step 3's
-   priority policy was reverted (1651ab0) and replaced by decision 14's
-   measurement; the migration's step 8 is not adopted and its step 10
-   stays deferred (Dickson, 2026-10-14). What remains is step 12's audio step: the awake
-   period, the engine period trial, and the earcon re-mix.
-10. The harness's idle barrier covers outposts' and the listener's work in
-    flight. Done as the communication migration's step 6a (2026-10-14,
-    `docs/design/communication.md` section 6.7 and step 6a of section 11):
-    `AwaitIdle` is answered after an in-band round through the listener
-    and every outpost, and the reducer's channel length is no longer
-    counted.
-11. Measure again (debug and release), full suite, push.
-
-Order from 2026-10-11 (Dickson): the outpost's UIA crash fix first; then
-step 6's revisions (`docs/design/focus-pipeline.md` section 16) and their
-verification; the terminal redesign's measurements whenever the desktop is
-free; then stage A step 9 (the relay), before the terminal redesign, since
-the relay's latency affects Windows Terminal's timings, built from
-`docs/design/relay.md` with its two decisions approved (the budget read as
-verbatim.exe's own stage within 1 to 2 ms and its hop no worse than the
-platform floor, every exception attributed by trace, measured once on
-bare metal too; and the 2026-10-08 priority and power-throttling decision
-built with it); then stage A step 8 (spare outposts), which removes the
-relay tail over 20 ms, facts held for a starting outpost; then the
-terminal redesign, which removes `FindText` (it makes Windows Terminal
-fault on a miss, `docs/design/phase6-design.md`); then stage A steps 7, 10 and 11.
-
-Then step 9, the terminal redesign, built from `docs/design/terminal-reading.md`
-in its small steps, after its measurements; it includes a test bounding
-the diff's work on a 9,000-line overflow and a 2,000-line flood.
-
-Stage B, needing no decision: the control-flood scenarios follow NVDA
-(Control cancels what is queued; output read after it is spoken, and the
-scenarios wait on evidence instead of the race; done, pending live runs:
-Control is pressed once the flood's last line is queued, and the lines
-written after it are spoken); a Settings search
-suggestions scenario with an NVDA capture; toasts, adopting NVDA's rule if
-UIA delivers them; Shift's pause compared with NVDA's; the missing "blank"
-in `conhost_leave_flood`; the wrong `docs/parity.md` entries the audit
-found; medium integrity tried on GitHub's runner.
-
-Corrections to `docs/design/terminal-reading.md` from its review, folded
-in when step 9 is built: key attribution uses each read's own start and end
-times, carried in the outpost's message on a monotonic clock shared with
-the key's press time (not Core's receipt time; Core's arrival order from
-step A2 already puts a key ahead of anything showing its effect); the
-whole-document fallback gets its own alignment bound; the work-bound test
-asserts exact counts; the NVDA details the review lists. A bug found in
-today's code, for step 9: the caret read with a terminal's text is stamped
-with the change event's time, not the read's, so Core can take a caret
-already showing a key's effect as the caret before it (a likely cause of
-`conhost_typing` step 5 failing). The console host's scroll events cannot
-count a flood of identical lines (their count mixes buffer and view
-scrolls, PowerShell's output raises none, Windows Terminal raises none):
-stage C's question is closed.
-
-Two harness defects found on 2026-10-11, both fixed (the full suite
-passed 90 of 90 with the fixes, 2026-10-11):
-
-- The recording check failed clean runs. It required the video to last
-  as long as the capture ran, from the first frame to sending `q`, but on
-  `q` ffmpeg's threaded scheduler stops without draining: it reads its
-  standard input only once per stats period, and drops the frames still
-  queued between the `gdigrab` input and the encoder, so the video loses
-  a random tail of a few frames to about a second. That tail is the
-  desktop after Verbatim has quit and the teardown has run. The check now
-  requires that the capture log's final frame count equals the video's
-  frames, with its `time=` within one frame of the last frame's, and that
-  the video reaches the moment the scenario's body ended.
-- "could not save the flight recorder ... (os error 10060)": every
-  control-plane tunnel read with the speech collector's 2-second poll
-  interval, so a reply on the primary connection, such as `DumpRecorder`,
-  that took over 2 seconds failed the scenario. Tunnels now read replies
-  with a 30-second hang deadline, the agent's own, and only connections
-  subscribed to speech or events switch to the poll interval. Verbatim
-  now logs, at debug level, how long a flight-recorder dump took.
-
-Stage C, evidence and proposals, not building: step 7's File Explorer
-evidence pass with written recommendations; step 8 as a throwaway
-prototype of holding keys, measured, with a written analysis (holding keys
-is Dickson's decision); whether the console host's scroll events can count
-a flood of identical lines that overflows its history.
-
-Left for Dickson's return: an NVDA capture of an elevated console window
-(needs an elevation prompt), and the decisions of steps 7 and 8.
-
-Decisions while Dickson is away: a change in what is heard that nothing
-above decides follows NVDA where NVDA's behaviour is clear, recorded as
-"provisional, awaiting Dickson" in the list below; otherwise the question
-is recorded with a recommendation and that item is set aside for the next.
-
-Provisional decisions awaiting Dickson:
-
-- An exception to `docs/testing.md`'s exact assertions for the
-  `*_control_flood` scenarios (2026-10-11): how Verbatim splits a flood
-  into bursts depends on timing, so the speech before Control is asserted
-  by its first and last lines and by its endings (heard in full, then cut
-  off), and the utterances between are not read. Everything after Control
-  is asserted exactly. The alternative is an assertion on every utterance
-  that does not depend on the burst split, if one can be found.
-- Terminal redesign, from its review (`docs/design/terminal-reading-review.md`,
-  2026-10-11): if measurement 5 confirms the console host raises no text
-  change while a full history scrolls whole lines (it raises one only when
-  its cursor moves), follow NVDA, which has the same gap, and accept it
-  rather than add another signal; and a flood of identical lines cannot be
-  counted whenever the history is full, not only when it overflows, which is
-  documented as a limitation.
-- The console window's own UIA focus is always dropped, before any read,
-  as NVDA's `consoleUIAWindow` refuses it (2026-10-11, stage A step 3):
-  before, it was reported when the focused element read answered the
-  console window itself. No scenario shows that case.
-- A foreground event whose window is not yet in front is kept and
-  reported just before the next focus inside that window, if the window
-  is in front by then, as NVDA runs a foreground event for a focus
-  entering a new top-level window (`eventHandler.doPreGainFocus`)
-  (2026-10-11, stage A step 3): before, it was dropped. A console
-  window's foreground event comes before the window is in front and none
-  follows, and 54f9a26's report for consoles had hidden that. It applies
-  to every application, which phase 6's "A foreground event before its
-  window is in front" left for Dickson; this is its second choice.
-  Superseded on the step 6 branch by section 16.4 of the focus-pipeline
-  design (approved by Dickson, 2026-10-11): such an event is dropped, as
-  is every foreground event for a window read through UI Automation, and
-  the window is announced from the focus's ancestry.
-- Three details of NVDA's MSAA limiter that the focus-pipeline design
-  does not name, followed in stage A step 4 (2026-10-11), each heard
-  only in a burst of events: a menu opening no longer takes one of a
-  batch's 4 focus places, since NVDA keeps its newest menu event apart
-  from both limits; a focus event on the object already focused counts
-  among the 4 like any other, as NVDA's do, where it had been kept
-  always; and the focused object's other events count toward their
-  thread's 10 while still always kept, as NVDA counts them, where they
-  had not counted.
-
-For a later milestone (Dickson, 2026-10-10): Verbatim echoes a typed
-character from its keyboard hook, before the application handles the key,
-where NVDA echoes from the application's typed-character event; a letter
-typed within about 40 ms of Tab is not echoed (measured: 0 of 100 when
-sent with Tab, 100 of 100 once the application had moved focus).
-
-Phase 6's remaining work is done in the order below, one step at a time,
-each one change checked with `cargo xtask ci` and the related scenarios
-(Dickson, 2026-10-10). It follows an audit of phase 6's commits, which
-found most regressions came from patches over three root causes: Verbatim
-learns of a key after the application has acted on it; a UIA focus is
-judged when the outpost's worker reaches it, not when it arrives; and a
-terminal is read in several calls that need rules about which to trust.
-Agents make no behaviour decisions: every change in what is heard goes to
-Dickson first.
-
-1. Baseline measurements of the code at 5cd388c, from the `measure-timing`
-   branch (timestamps only, not merged): the focus path from the listener
-   to the outpost's check, including a new outpost's start-up; the key
-   path from the hook to the outpost; what holding a key would cost; and
-   how often a key's effect is misjudged after the fact. The delay from
-   the listener to the outpost should be no more than a few milliseconds.
-2. A second Verbatim does what NVDA does: asks the running one to quit,
-   waits 5 seconds, then ends it and starts (replacing 9c7ba9a and
-   4405c84, which never end it). Done (0033e93), and checked live on
-   2026-10-10: a running instance that exits was replaced in 1.4 seconds,
-   and a suspended one was ended after 5 seconds, its outposts and focus
-   listener ending with it. The rest (Dickson, 2026-10-10) is done
-   (a40d321): when the running one cannot be ended, or does not
-   exit once ended, NVDA's message box, worded for Verbatim ("Couldn't
-   end the running Verbatim, abandoning start."), and no start; never
-   shown when the running one was ended. A running instance being
-   replaced, told so through a named event the new one sets before its
-   `WM_QUIT`, plays no exit sound and stops at once, unlike NVDA, which
-   plays its exit sound to the end; it took 1.08 of the 1.4 seconds
-   measured. Every other quit still plays it. Checked live: a
-   replacement now takes 0.33 seconds, the old instance exiting 59 ms
-   after it is asked. The message box was not triggered live, since that
-   needs an instance the new one may not end, such as an elevated one.
-3. NVDA's event filtering in the outposts, before any call into the
-   application: its acceptance test, its order of checks for MSAA events,
-   and the same test for UIA events (approved 2026-10-10). Done
-   (eb72303, 6a10534, 82ccb5f): the ten related scenarios passed, and
-   `explorer_folder_window`, `second_application_and_verbatim_menu`,
-   `menu_and_settings_dialog` and `settings_system_page` passed ten runs
-   each. The two-window scenarios no longer use Alt+Tab; see the item on
-   switching windows below.
-4. Cheaper reads: only the property that changed; a selection read in
-   full only when it will be spoken; the controlled selection in one
-   remote operation; smaller UIA cache requests for text and caret
-   events; no outpost started for a background notification (approved
-   2026-10-10). Measure again after steps 3 and 4, from then on in both
-   debug and release builds (Dickson, 2026-10-10). Done (9ef9215 to
-   12d5ea4; `docs/design/phase6-design.md`, "Cheaper reads in the outposts"): the 14
-   related scenarios passed, seven of them ten runs each, and the full
-   suite passed 90 of 90 locally. The measurement after step 4 is still to
-   be made. Selecting inside a list the focus controls, such as Settings'
-   search suggestions, has no scenario and was not checked live.
-   Measured after step 3 (debug and release): the filter drops about 280
-   background events per File Explorer run, but focus waits are unchanged,
-   since the time is Explorer answering the focus's own reads (one UIA
-   focus took 795 ms over 5 calls). A 3-second wait behind an MSAA focus
-   in File Explorer recurs in both builds. Found after step 4:
-   `UiaHasServerSideProvider` (`verbatim-uia` `probe.rs`) takes 3.0 to
-   3.08 seconds on a new File Explorer window that answers a plain
-   message at once, then reports no provider. NVDA makes the same call
-   (`UIAHandler/__init__.py` 1279), cancelled only once its core has been
-   unresponsive for about 10 seconds. Awaiting Dickson: probe each new
-   window in the background and remember its answer, recognise known
-   classes as NVDA's good and bad class lists do, or both (recommended).
-5. Done after step 6 (reordered 2026-10-10: in arrival order a focus would
-   wait behind every queued event, including a 3-second
-   `UiaHasServerSideProvider` probe of a new File Explorer window; judging
-   the focus on arrival first removes that). Events handled in arrival
-   order, removing the focus-first reordering
-   (42d9caa, ce53dbc).
-6. A UIA focus judged as it arrives at the outpost, ahead of its queue,
-   with the one read that finds the focused element; then the rules for
-   a focus that moved on (2818fd4, 5076b5a) are removed. The rule that
-   Control+Tab announces only the tab it selects (8be2223) stays.
-   Then reserved outposts (Dickson, 2026-10-10): two spare outposts are
-   kept started and initialized, and one is given to an application as
-   its first event arrives; whenever fewer than two spares remain, a new
-   one is started. An outpost that has been given to an application is
-   never returned to the spares: however it ends, it stays ended, so its
-   cleanup is complete. Measured in a debug build, starting an outpost
-   took about 40 ms before its first event was handled, and every new
-   File Explorer folder window, in a process of its own, paid it.
-7. A fresh File Explorer evidence pass on the new pipeline: NVDA captures
-   and Verbatim logs with raw event timings, ten runs locally, ten in the
-   VM and on GitHub. Dickson then decides what Explorer should say, and
-   whether announcing a window only once it is shown (edd0352) stays.
-   Open Explorer items: the "Working on it..." placeholder that fails
-   `explorer_folder_window` on GitHub (run 37974580973); the early
-   foreground event; a file-list focus once 10 seconds late; and the
-   "e2e-stage - File Explorer" window of unknown origin.
-8. Whether keys are held, as NVDA holds a key with a script while it reads
-   the caret, decided by Dickson from step 1's numbers.
-9. Terminal reading redesigned from first principles, at least as good as
-   NVDA and willing to replace all of today's logic: one read per change
-   as the unit, every other call only a hint, an original line diff, and
-   each extra beyond NVDA's model decided separately. It removes ecf191c,
-   restores a scenario with an interactive shell for output written just
-   after a terminal takes the focus (with an NVDA capture), and restores
-   the console host's real password prompt.
-
-Decided by Dickson on 2026-10-10 for this work: drop background events
-before any read; background progress bars stay silent with no setting; a
-foreground UIA progress bar that is not the focus is reported, as NVDA
-does, as a separate fix; selection announcements in a focused list stay
-as they are; acquisition is skipped for events outside the focus chain;
-a control's ControllerFor is read per event, as NVDA does; the event
-limit counts by the event's own thread; NVDA's short foreground deferral
-is not added; and Verbatim's own events (the console host's updates, text
-selection changes in edit controls, UIA text changes from any text focus,
-window-wide subscriptions) are kept as listed differences.
-
-Other open items, taken after the steps above unless they fold into one:
+### Other open items
 
 - A test that UIA text fields are read by parts (coherence review,
   2026-10-09).
@@ -532,252 +240,60 @@ Other open items, taken after the steps above unless they fold into one:
   Core's `editing.rs` has a case that cannot occur.
 - Core speaks state changes such as "selected" for a focus that has
   expired.
-- Core picks between the outpost's events and its commands at random, so
-  a typed character's echo and the output after it can come in either
-  order. Fixed in stage A, step 2 (one channel).
-- A Windows Terminal terminal was once announced twice: a second UIA focus
-  event for the same terminal, about 110 ms after the first, was not taken
-  as a duplicate. The cause is not known; reproduce it with logging.
-- mockapp's `uia_event_registrations_cost_exactly` failed once.
-- Outpost crashes (2026-10-11, stage A step 3): a console host's outpost
-  crashed once in `conhost_leave_flood` with an access violation inside
-  UI Automation's own event delivery (`SavedEvent::OnMessage`,
-  `ProtobufHelper::GetCacheResponse`, a null element in an event's cached
-  response; `docs/design/phase6-design.md`, "Console windows as one application"). Keep
-  a full dump of every outpost crash, so the event that carried it can be
-  found, since a minidump holds no heap; and count outpost crashes across
-  runs, in the suite's summary, so how often it happens is known. It
-  happened again in step 5's runs, in the same scenario, as a fail-fast in
-  `EventRecord::CallbackAdapter::GetCacheRequest` under the same
-  `SavedEvent::OnMessage`: twice in about twenty runs of
-  `conhost_leave_flood`. Suspected, not proven: a saved event delivered
-  for a handler group already removed, since every move of a
-  focus-following registration removes all handlers and adds the group
-  again while the console host floods text events. Full dumps and the
-  per-run crash count are in (f0dab2f). The first full dump (2026-10-11,
-  run 8 of 20) confirms the mechanism: the saved event's record was
-  destroyed by an earlier move, and UIA fails fast instead of dropping it;
-  no move was in progress. An isolated experiment found a related state, a
-  text area registration hearing nothing after a removed subtree
-  registration. The fix, following the focus as NVDA does, is
-  `docs/design/focus-pipeline.md` section 17 (approved 2026-10-11), first
-  in the work order. Section 17 is built (152f09a), but the crash came
-  again on 2026-10-12, in one run of every scenario on the step 6 branch:
-  `conhost_leave_flood`'s console host outpost failed fast (0xC0000409)
-  about four seconds after its last logged work, its replacement read the
-  console, and the scenario heard "terminal" for "ready>". Its full dump
-  was kept outside the repository; there is no debugger on the
-  development machine to read it, so whether it is the same saved event
-  is not yet known. Section 17's fifty-run check is still to be made.
-- Windows Terminal faults on our `FindText` (2026-10-11): when the search
-  finds nothing, Windows Terminal (1.24 to 1.26 and main, unreported
-  upstream) returns a range wrapping no range, and the next call on it is
-  an access violation on its UI thread, which COM turns into
-  `RPC_E_SERVERFAULT`; our code had taken that for a "throw". Six faults
-  since 2026-10-07, all in staged copies; three more in the installed
-  terminal on 2026-10-07 and 2026-10-08, one likely the same and two
-  inside UI Automation, not investigated (no dumps kept then). Removed by
-  the terminal redesign, which drops `FindText`
-  (`docs/design/terminal-reading.md`, corrections of 2026-10-11).
-- File Explorer's folder window is sometimes announced with "pane" where
-  NVDA says "Items View list" (`explorer_folder_window`, 2 of 29 openings
-  on 2026-10-12, and twice more in that day's scenario runs): the
-  listener receives a UIA focus on the items view's DirectUIHWND window
-  element, read as an unnamed pane before its native provider is ready.
-  In 20 openings with NVDA running, neither NVDA nor a bare UIA client
-  received such an event, and in 20 with Verbatim running, neither did a
-  bare client nor Verbatim's listener. Not yet explained.
-- A terminal read that comes back unsettled still marks every change
-  observed before it began as covered, so a change queued behind it is
-  skipped and, when the program has finished writing, the rest of its
-  output is never read (`conhost_marker_list`, 2026-10-09 and
-  2026-10-11). Fix: only a settled read sets the time that marks changes
-  covered. Built (2026-10-11): `cargo xtask ci` passes, with a unit test
-  that a change observed before an unsettled read is not covered; it
-  awaits live runs of `conhost_marker_list` and the other terminal
-  scenarios. An unsettled read with nothing queued behind it is still
-  never retried; that belongs to step 9.
+- The outpost crash inside UI Automation's saved-event delivery
+  ([the phase 6 design](design/phase6-design.md), "Console windows as one
+  application"): section 17 of the focus-pipeline design is built
+  (152f09a), but `conhost_leave_flood`'s console host outpost failed fast
+  again on 2026-10-12. Read its full dump, kept outside the repository,
+  and make section 17's fifty-run check.
 - Verbatim's own outpost once left a fact in its intake for 6.37 seconds
-  (2026-10-11): its worker logged nothing from 18:22:28.52 to 18:22:34.90,
-  and the menu window's SHOW event reached the outpost only at 34.896.
-  The cause is not known. Debug-level logs now record each entry pushed
-  into the outpost's intake and each batch it plans, and the GUI logs
-  when it starts popping the Verbatim menu and how long the popup was
-  held; reproduce it with them.
-- `settings_system_page` once heard "Keyboard switched to English
-  (Singapore) US keyboard", then "English (United States)" 4 ms later
-  (2026-10-11): two UIA notifications from Windows' input switcher
-  (`Windows.Shell.InputSwitch.SwitchNotification`) as Settings opened;
-  three reruns passed. What switches the layout, and whether NVDA speaks
-  these notifications, is not established.
-- `settings_system_page` once heard "Windows isn't activated"; the
-  settings package above says 14 settings but names 13.
-- `verbatim-gui`'s rlib is 375 MB.
-- Communication stays routed through verbatim.exe (Dickson, 2026-10-11),
-  unless the communication design's measurements show the route through
-  verbatim.exe costing more than a couple of milliseconds; then direct
-  listener-to-outpost pipes, brokered by verbatim.exe as Chromium's browser
-  process brokers its children's, are reconsidered with those numbers. The
-  message types move to a platform-neutral crate after that migration
-  (`docs/design/communication.md`, decision 13, approved).
-- `notepad_say_all` fails, a known failure from a race in Verbatim
-  (2026-10-11), exposed when the harness stopped waiting about 15 ms (a
-  1 ms socket timeout rounded to the timer tick) before each injected key
-  (bb1a5d7). During say-all, Core asks the outpost to move the caret to
-  each piece as it starts playing; a key pressed within about 2 ms goes
-  straight to the application and is applied before that caret move, so
-  the caret is left where say-all put it, not where the key moved it, and
-  the key's caret read speaks the wrong character ("M" for "o"). NVDA
-  cannot race here: a caret key in a text field is a script, held from
-  the application and queued on its main thread behind say-all's caret
-  move (`inputCore.py` 641 to 646, `speech/sayAll.py` 330 to 376,
-  `editableText.py` 181 to 188), and keys after a held one are held too
-  (#2953). Holding keys (stage C, step 8) would fix it; this race is the
-  first case the key-holding prototype must fix, with `notepad_say_all`
-  unchanged as its test (Dickson, 2026-10-11).
-- An audit of every end-to-end scenario for timing races (2026-10-11):
-  any step that passes only if something happens within a time the test
-  does not control, such as `*_leave_flood`'s window switch racing a
-  320 ms line (fixed by design on its branch) and `*_control_flood`'s
-  key racing a playing line, which also carries the loosened assertion
-  listed above. Each race is fixed by making the test wait for evidence,
-  not by a longer bound. Separately, the agent's bring-forward always
-  takes its slowest path (minimize, wait, restore, set the foreground),
-  once taking 1.4 s; its cause is open, with per-step timing now logged.
-- Scheduled for later (Dickson, 2026-10-11), found by the communication
-  design (`docs/design/communication.md`): the mixer retries opening a
-  failed audio device after a fixed second, its idle wait doubling as the
-  check for a reopen request (`crates/verbatim-audio/src/mixer.rs` 59 to
-  65), a timed retry to be replaced by waiting for evidence such as a
-  device notification; and the keyboard hook drops a gesture when the
-  router's 64-slot channel is full (`crates/verbatim-input-windows/src/lib.rs`
-  469 to 470), which must never lose a key.
-- The suite switches windows only by bringing a window it opened,
-  found by its title marker, to the front, as NVDA's system tests do with
-  `SetForegroundWindow`; every Alt+Tab switch is replaced and
-  `Scenario::switch_with_alt_tab` removed (Dickson, 2026-10-10). Its check
-  of the window behind the foreground in z-order did not predict Alt+Tab's
-  most-recently-used order, and a measurement run's Alt+Tab activated the
-  owner's own Windows Terminal. This replaces coherence decision 8's
-  Alt+Tab in the two-window scenarios. Done (f7556c8):
-  `conhost_two_windows` and `windows_terminal_two_windows` passed ten
-  runs each with their expectations unchanged, since nothing is playing
-  when they switch. The open item about Alt+Tab's "Task Switching"
-  window staying in front no longer applies.
-- Confirmed by Dickson (2026-10-10): the shell's staging windows stay
-  ignored for focus and foreground (NVDA moves its focus to them and says
-  nothing; nothing is heard differently); the 250 ms foreground hold stays
-  removed; the leave-during-a-flood scenarios keep the direct switch and
-  no longer test Alt's cancelling of flood speech, which other scenarios
-  cover; and lists a program redraws in two writes are decided in step 9,
-  whose scenario controls when each piece is written.
-- After step 6 (Dickson, 2026-10-10): the harness's idle barrier
-  (`Request::AwaitIdle`) answers only once every outpost's work in flight
-  is done, events not yet published and caret watches included; the
-  measurement runs heard speech arrive after it. Done as stage A step 10,
-  communication step 6a (2026-10-14).
-- An elevated console window is named "Administrator: <title>" or just
-  "<title>" depending on when it is first read: on GitHub's elevated
-  runner, run 38031529579, `conhost_raised_flood` heard the prefix while
-  25 other console scenarios did not. Capture what NVDA says for an
-  elevated console window (needs an elevation prompt Dickson approves),
-  then make Verbatim read one name consistently. Since stage A step 3, one
-  outpost reads the window once; which of the two names that read gives
-  is still to be checked.
-- Decided by Dickson (2026-10-10, later):
-  - Control+Tab follows NVDA: 8be2223's rule goes; the tab being left is
-    announced and its speech cut once focus moves on.
-  - Every event for a console window goes to the console host's outpost,
-    with the client process (for example PowerShell) as the application's
-    identity, as NVDA's app module does; the console special cases (3f4dbb4,
-    54f9a26's foreign-window report for consoles, the worker's and judge's
-    console rules) then go. Five recurrences traced to the split.
-  - GitHub's e2e job tries running Verbatim and the test applications at
-    medium integrity, as users run them, after measuring that it behaves
-    with the runner's UAC disabled. The runner is elevated today
-    (`runneradmin`), which is what puts "Administrator: " in console
-    titles.
-  - The background UIA probe is not adopted: NVDA asks synchronously, and
-    a window that takes 3 seconds would still make its own events wait.
-    The 3-second window (its class unreadable when logged) is to be checked
-    against fixed recordings first.
-  - Step 6 is to be redone from a design Dickson approves: judging a UIA
-    focus from the event's own element as NVDA does (not by
-    `GetFocusedElement`, which took 9,990 ms in a measured File Explorer
-    run); arrival order with no focus lane, for UIA and MSAA; NVDA's
-    duplicate rule in Core. An audit of event processing against NVDA
-    (scratchpad, `event-processing-audit.md`) feeds it.
-- The focus pipeline (Dickson, 2026-10-10; design in the scratchpad,
-  `focus-pipeline-design.md`): option (b) is the plan. The listener
-  judges each UIA focus from the event's own element (live
-  HasKeyboardFocus) and reads it in one remote operation, on one thread
-  per application, with real time limits, and sends the result through
-  the supervisor; the outpost finds its own element afterwards, off the
-  focus path. Rejected: each outpost subscribing to its own application's
-  focus (option c), because its standby spare discards other applications'
-  events; and registering focus in a window-scoped event handler group
-  (b2), which no documentation or NVDA supports and which, checked live,
-  delivered no focus events from Notepad or File Explorer and missed
-  Windows Terminal's second window. A UIA element cannot be passed to
-  another process (tested: E_FAIL on unmarshaling).
-- One hung Win32 window that UIA proxies held up UIA event delivery for
-  every other application in the same process for 14.8 seconds, and UIA's
-  timeouts did not bound it; NVDA has the same exposure. The cause is UIA's
-  own focus tracking in any process holding a focus registration, not the
-  WinEvent mapping (clearing it changed nothing). Measured: only the
-  listener's UIA delivery stalls; its WinEvent hooks and every outpost
-  carry on. Decided (Dickson, 2026-10-10): do as NVDA does, with no MSAA
-  fallback while the listener's UIA focus is stalled, since announcing
-  from MSAA instead would behave differently and confuse; option (b) keeps
-  the stall to the listener's UIA focus.
-- verbatim.exe must never be a large source of latency: at most 1 to 2 ms
-  for relaying a message (Dickson, 2026-10-10). Measured, the supervisor's
-  relay from the listener to an outpost took a median of 0.05 to 0.15 ms
-  but 36 ms at the 90th percentile and 146 ms at worst; the cause is being
-  found (scratchpad, `supervisor-latency.md`). Events keep passing through
-  verbatim.exe: the fix is a fast supervisor, not another route. The
-  latency ledger is to record verbatim.exe's own time as a stage of its
-  own, in both directions, with the fix. A warning over 2 ms, and failing a
-  scenario over it, are deferred to the response-time budgets above.
-- Screen recordings were truncated in every run: ffmpeg was killed rather
-  than told to stop, losing the last 1 to 2 seconds. Fixed (bae57d1,
-  4c89d36): ffmpeg is stopped with "q", Verbatim starts after the first
-  frame, every frame keeps its capture time, and a scenario fails if its
-  recording does not decode cleanly or is shorter than the capture. All 90
-  scenarios' recordings passed the check.
-- `conhost_leave_flood` once heard the window and "terminal" but never
-  "blank", though the recording shows the new console window empty: the
-  terminal's first read gave nothing within 15 seconds. For step 9.
-- Help balloons and toasts (Dickson, 2026-10-10): step 3 leaves them
-  outside NVDA's rule that drops MSAA alert and show events from windows
-  that use UIA. Check how Verbatim reads toasts; if it also gets them
-  through UIA, adopt NVDA's rule, the expected outcome; if only through
-  MSAA, keep the difference and record it in `docs/parity.md`. Checked
-  from code (2026-10-11): only through MSAA, the alert from a window whose
-  parent is `ToastChildWindowClass`; Verbatim subscribes to no UIA
-  window-opened or tooltip-opened event, NVDA's toast path since Windows
-  10. The difference is recorded in `docs/parity.md`, "Toasts". Question,
-  with a recommendation: whether Windows 11's toasts raise that MSAA
-  alert at all. Recommended: capture a toast live with NVDA and with
-  Verbatim; if Verbatim is silent, follow NVDA, speaking a
-  `Windows.UI.Core.CoreWindow` whose automation id contains `ToastView`
-  on UIA's window-opened event (a desktop-wide subscription in the focus
-  listener, ignoring the same toast again within a second), and then
-  adopt NVDA's rule dropping MSAA alert and show events from native UIA
-  windows. Set aside until that capture.
-- To investigate, then bring to Dickson: after Shift pauses speech, NVDA's
-  next key cancels speech, clearing the pause, where Verbatim reports a
-  resume; whether anything is heard differently. Done from code
-  (2026-10-11): nothing is heard differently, except that NVDA can stay
-  paused when a second Shift comes before its main thread applied the
-  first, a timing artefact not worth copying; recorded in
-  `docs/parity.md`, "When speech is cut off". No change.
+  (2026-10-11); reproduce it with the intake and menu logs of f9d067d.
+- An audit of every end-to-end scenario for timing races (2026-10-11),
+  each race fixed by waiting for evidence, not a longer bound; and the
+  agent's bring-forward, which always takes its slowest path (once 1.4
+  seconds), its cause open.
+- Scheduled for later (Dickson, 2026-10-11, from the communication
+  design): the mixer's retry after a failed audio device open is a timed
+  deadline, to be replaced by waiting for evidence such as a device
+  notification; and the keyboard hook drops a gesture when the router's
+  channel is full (`try_send` in `crates/verbatim-input-windows/src/lib.rs`),
+  which must never lose a key.
+- The messages exchanged with the outposts and the listener move into a
+  platform-neutral crate as plain serde types, now that the communication
+  migration is built (the communication design's decision 13, approved).
+- Stage A step 5's open question ("MSAA events in each outpost's own
+  hook"): an event raised between a ready outpost's end and the listener
+  resuming is lost; a recommendation is recorded there.
+- Provisional decisions built while Dickson was away, awaiting his
+  confirmation: the console window's own UIA focus always dropped before
+  any read, as NVDA's `consoleUIAWindow` refuses it (stage A step 3); and
+  three details of NVDA's MSAA limiter followed in stage A step 4, each
+  heard only in a burst of events.
 
-To resume: read this list, then `docs/design/phase6-design.md`'s dated sections from
-2026-10-09 on. `docs/tooling.md` covers building in parallel worktrees,
-the single end-to-end test binary, and capturing NVDA. Run changed
-scenarios ten times each, and the full suite once after a change every
-scenario sees.
+### Deferred
+
+- The audits' items 8 to 11 (deferred by Dickson, 2026-10-12, until after
+  the queue): one duplicate test and one acceptance test per focus, as
+  NVDA makes them; foreground events in the focus run as NVDA's `pumpAll`
+  takes them; the events NVDA registers desktop-wide that Verbatim lacks
+  (live regions, selection added and removed, progress values, window
+  opened, layout invalidated, system alerts, drag and drop); and the
+  smaller ones (the MSAA caret in UIA windows, the staging windows' focus,
+  live reads of the focus's property events, NVDA's Windows Forms and UWP
+  combo box rules, the controlled selection's route).
+- The secure desktop and the lock screen wait for UIAccess support,
+  without which Verbatim cannot read the secure desktop (Dickson,
+  2026-10-12).
+- `CoCancelCall` for MSAA calls, a recommendation in the phase 6 design's
+  "Time limits that hold".
+- Communication step 10, the speech manager without its queue thread, is
+  revisited only if the speech or audio path shows a noticeable delay;
+  step 8, review keys straight to the reducer, is reconsidered when the
+  command set is settled (Dickson, 2026-10-14).
+- For a later milestone (Dickson, 2026-10-10): Verbatim echoes a typed
+  character from its keyboard hook, before the application handles the
+  key, where NVDA echoes from the application's typed-character event; a
+  letter typed within about 40 ms of Tab is not echoed.
 
 ## M5 — Extensions v1
 
