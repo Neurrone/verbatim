@@ -112,7 +112,7 @@ which is reported separately. The stages, in milliseconds:
   it is the callback's own local work until the fact is queued.
 - Listener queue: from the listener's handling ending (or, for a
   timeline without that stamp, its observing the event) to the write of
-  the fact to verbatim.exe's pipe beginning: since 2026-10-14 the thread
+  the fact to verbatim.exe's pipe beginning: the thread
   that produced the fact writes it at once unless a write is in flight,
   so this is the wait behind a write in flight, if any, and the I/O
   thread's wake to finish it.
@@ -147,7 +147,7 @@ which is reported separately. The stages, in milliseconds:
   messages, after the caret wait for a caret key, with how many it made
   when it made any (`docs/performance.md` says what counts).
 - Outpost outbound: from the outpost's worker publishing the event or
-  reply to its write beginning: since 2026-10-14 the worker writes it at
+  reply to its write beginning: the worker writes it at
   once unless a write is in flight, so this is the wait behind a write in
   flight, if any, and the I/O thread's wake to finish it.
 - Outpost's pipe to verbatim.exe: from the write beginning to verbatim.exe's reader having read and parsed the message: the
