@@ -588,9 +588,13 @@ pub(crate) fn expect_prompt_read(
         panic!("a terminal scenario's setup opens a terminal window");
     };
     scenario.speech().expect(announcement);
-    let mut events = scenario
-        .subscribe_events()
-        .expect("subscribes to Verbatim's events");
+    // In compare mode NVDA offers no events, and its quiet period, waited
+    // for before the next input, is the only evidence there is.
+    let mut events = (!scenario.is_comparing()).then(|| {
+        scenario
+            .subscribe_events()
+            .expect("subscribes to Verbatim's events")
+    });
     scenario
         .write_agent_file(&format!(r"{directory}\{GO_FILE}"), b"")
         .expect("writes the go file");
@@ -598,8 +602,10 @@ pub(crate) fn expect_prompt_read(
         .wait_for_agent_file(&format!(r"{directory}\{READY_FILE}"), READY_TIMEOUT)
         .expect("the shell shows its first prompt");
     scenario.speech().expect(&[PROMPT]);
-    wait_for_caret_on(&mut events, PROMPT, STEP_TIMEOUT)
-        .expect("Core receives the caret on the prompt");
+    if let Some(events) = &mut events {
+        wait_for_caret_on(events, PROMPT, STEP_TIMEOUT)
+            .expect("Core receives the caret on the prompt");
+    }
     let shell = scenario
         .wait_for_agent_file(&format!(r"{directory}\{SHELL_PID_FILE}"), READY_TIMEOUT)
         .expect("the shell writes its process id");

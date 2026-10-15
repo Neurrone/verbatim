@@ -41,6 +41,14 @@
 //! hundred milliseconds and once took 1.4 seconds; read on that thread,
 //! a frame that arrived meanwhile was recorded only once the request was
 //! answered, so the timeline put it late, after the step it preceded.
+//!
+//! In compare mode ([`crate::compare`]), the collector reads NVDA's speech
+//! through the same kind of source and sink ([`crate::nvda`]) and asserts
+//! nothing: each assertion records its expected texts against the step
+//! under way and returns at once, and the check before each input, and the
+//! one at the end, close the step instead, once `AwaitIdle`, which NVDA's
+//! sink answers when NVDA has been quiet for the quiet period, has been
+//! answered. [`SpeechCollector::compare_mode`] says more.
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fmt::Write as _;
@@ -54,6 +62,7 @@ use verbatim_control::client::{self as control, Client as ControlClient, ok_or_e
 use verbatim_control::protocol::{Frame, Request};
 use verbatim_model::{TraceId, UtteranceEnding, UtteranceId};
 
+use crate::compare::CompareStep;
 use crate::timeline::Timeline;
 
 /// How long an assertion waits for each expected utterance to be queued,
@@ -71,14 +80,16 @@ const IDLE_ANSWER_MARGIN: Duration = Duration::from_secs(4);
 /// Where a [`SpeechCollector`]'s reader thread reads frames from: the
 /// reading half of the live, subscribed control connection, or a scripted
 /// sequence in this module's unit tests. A read blocks until a frame
-/// arrives or the connection ends, which is an error.
-trait FrameSource: Send {
+/// arrives or the connection ends, which is an error. In compare mode it
+/// is NVDA's transcript ([`crate::nvda`]).
+pub(crate) trait FrameSource: Send {
     fn next_frame(&mut self) -> io::Result<Frame>;
 }
 
 /// Where a [`SpeechCollector`] sends its one request, `AwaitIdle`: the
-/// writing half of the same connection, or the scripted sequence.
-trait RequestSink: Send {
+/// writing half of the same connection, the scripted sequence, or, in
+/// compare mode, NVDA's transcript.
+pub(crate) trait RequestSink: Send {
     fn send(&mut self, request: Request) -> io::Result<u64>;
     /// Ends the connection, so a read pending on the reader thread
     /// returns at once with an error.
@@ -290,6 +301,17 @@ pub struct SpeechCollector {
     /// Utterances collected in collect-only mode and not yet taken, oldest
     /// first.
     collected: Vec<Heard>,
+    /// Compare mode's record, when the scenario runs against NVDA
+    /// ([`Self::compare_mode`]).
+    compare: Option<Comparison>,
+}
+
+/// Compare mode's record: the steps closed so far, the texts expected in
+/// the step under way, and the timeline entry that step begins at.
+struct Comparison {
+    steps: Vec<CompareStep>,
+    expected: Vec<String>,
+    from: usize,
 }
 
 impl SpeechCollector {
@@ -312,6 +334,23 @@ impl SpeechCollector {
         control.set_read_timeout(None)?;
         let (sender, receiver) = control.split()?;
         Self::from_source(Box::new(receiver), Box::new(sender), timeline, STEP_TIMEOUT)
+    }
+
+    /// A collector in compare mode ([`Self::compare_mode`]) reading NVDA's
+    /// speech from `source` and sending on `sink`, which [`crate::nvda`]
+    /// makes from the transcript, pushing every utterance to `timeline`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the reader thread cannot be started.
+    pub(crate) fn comparing(
+        source: Box<dyn FrameSource>,
+        sink: Box<dyn RequestSink>,
+        timeline: Timeline,
+    ) -> io::Result<Self> {
+        let mut collector = Self::from_source(source, sink, timeline, STEP_TIMEOUT)?;
+        collector.compare_mode();
+        Ok(collector)
     }
 
     /// A collector reading `source` on a thread it starts, and sending on
@@ -347,6 +386,7 @@ impl SpeechCollector {
             pauses: VecDeque::new(),
             collect_only: false,
             collected: Vec::new(),
+            compare: None,
         })
     }
 
@@ -564,6 +604,9 @@ impl SpeechCollector {
     }
 
     fn expect_sequence_within(&mut self, expected: &[Expected], timeout: Duration) {
+        if self.record_expected(expected.iter().map(|want| want.text.as_str())) {
+            return;
+        }
         let mut actual: Vec<Utterance> = Vec::new();
         for (index, want) in expected.iter().enumerate() {
             let deadline = Instant::now() + timeout;
@@ -614,6 +657,12 @@ impl SpeechCollector {
     /// Panics if the next utterance is anything else, if it ends without
     /// having played, or if it does not start within [`STEP_TIMEOUT`].
     pub fn expect_started(&mut self, text: &str) -> Heard {
+        if self.record_expected([text]) {
+            return Heard {
+                text: text.to_owned(),
+                utterance: COMPARED,
+            };
+        }
         let deadline = Instant::now() + self.step_timeout;
         let expected = [heard(text)];
         let Some(got) = self.next_utterance(deadline) else {
@@ -664,6 +713,15 @@ impl SpeechCollector {
     ///
     /// As [`expect`](Self::expect), apart from the endings.
     pub fn expect_queued(&mut self, texts: &[&str]) -> Vec<Heard> {
+        if self.record_expected(texts.iter().copied()) {
+            return texts
+                .iter()
+                .map(|text| Heard {
+                    text: (*text).to_owned(),
+                    utterance: COMPARED,
+                })
+                .collect();
+        }
         let expected: Vec<Expected> = texts.iter().map(|text| heard(text)).collect();
         let mut actual: Vec<Utterance> = Vec::new();
         for (index, want) in expected.iter().enumerate() {
@@ -698,6 +756,9 @@ impl SpeechCollector {
     ///
     /// Panics if it ended otherwise, or had not ended in time.
     pub fn expect_ended(&mut self, heard: &Heard, ending: Ending) {
+        if self.compare.is_some() {
+            return;
+        }
         let deadline = Instant::now() + self.step_timeout;
         let ended = self.ending_by(heard.utterance, deadline);
         let ok = matches!(
@@ -734,6 +795,9 @@ impl SpeechCollector {
     ///
     /// Panics if `heard` had been heard in full.
     pub fn require_not_completed(&mut self, heard: &Heard, when: &str) {
+        if self.compare.is_some() {
+            return;
+        }
         self.read_arrived();
         if matches!(
             self.endings.get(&heard.utterance),
@@ -773,6 +837,9 @@ impl SpeechCollector {
     }
 
     fn expect_pause(&mut self, paused: bool) {
+        if self.compare.is_some() {
+            return;
+        }
         let what = |paused: bool| if paused { "paused" } else { "resumed" };
         let deadline = Instant::now() + self.step_timeout;
         loop {
@@ -809,6 +876,7 @@ impl SpeechCollector {
     /// Panics if `until` is not queued, or a gap between utterances is
     /// longer than `timeout`.
     pub fn take_until(&mut self, until: &str, timeout: Duration) -> Vec<Heard> {
+        self.refuse_in_compare_mode("take_until");
         let mut taken = Vec::new();
         loop {
             let deadline = Instant::now() + timeout;
@@ -832,6 +900,9 @@ impl SpeechCollector {
     /// How `heard` ended, waiting up to `timeout` for it to end; `None`
     /// when it had not.
     pub fn ending_of(&mut self, heard: &Heard, timeout: Duration) -> Option<UtteranceEnding> {
+        if self.compare.is_some() {
+            return None;
+        }
         self.ending_by(heard.utterance, Instant::now() + timeout)
     }
 
@@ -847,6 +918,10 @@ impl SpeechCollector {
     /// Panics, naming the unexpected utterances, if anything was queued
     /// that no assertion matched, or if Verbatim does not become idle.
     pub fn expect_nothing_more(&mut self, after_input: Option<u64>) {
+        if self.compare.is_some() {
+            self.close_step();
+            return;
+        }
         self.await_idle(after_input);
         if self.collect_only {
             // Collected, never failed on: the timeline keeps every
@@ -883,6 +958,7 @@ impl SpeechCollector {
     ///
     /// Panics if Verbatim does not become idle.
     pub fn take_until_idle(&mut self, after_input: Option<u64>) -> Vec<Heard> {
+        self.refuse_in_compare_mode("take_until_idle");
         self.await_idle(after_input);
         let taken: Vec<Heard> = self
             .pending
@@ -907,6 +983,7 @@ impl SpeechCollector {
     ///
     /// Panics if Verbatim does not become idle or the connection fails.
     pub fn take_all_queued(&mut self, after_input: Option<u64>) -> Vec<Heard> {
+        self.refuse_in_compare_mode("take_all_queued");
         let mut taken = std::mem::take(&mut self.collected);
         self.await_idle(after_input);
         self.read_arrived();
@@ -925,6 +1002,106 @@ impl SpeechCollector {
     /// an input or at its end. Only the registry's `measure` group sets it.
     pub fn collect_only(&mut self) {
         self.collect_only = true;
+    }
+
+    /// From now on this scenario runs against NVDA and asserts nothing
+    /// ([`crate::compare`]). [`expect`](Self::expect),
+    /// [`expect_sequence`](Self::expect_sequence),
+    /// [`expect_within`](Self::expect_within),
+    /// [`expect_started`](Self::expect_started) and
+    /// [`expect_queued`](Self::expect_queued) record their texts against
+    /// the step under way and return at once, the last two with
+    /// placeholders. The assertions on endings, pauses and resumes return
+    /// at once, and [`ending_of`](Self::ending_of) answers `None`.
+    /// [`require_all_asserted`](Self::require_all_asserted), before every
+    /// input, and [`expect_nothing_more`](Self::expect_nothing_more) close
+    /// the step: they wait for `AwaitIdle`'s answer, which NVDA's sink
+    /// gives once NVDA has queued nothing for the quiet period, and record
+    /// the step as a [`CompareStep`] from what the timeline holds since the
+    /// step before and the texts expected. [`take_until`](Self::take_until),
+    /// [`take_until_idle`](Self::take_until_idle) and
+    /// [`take_all_queued`](Self::take_all_queued) cannot keep their
+    /// promises without Verbatim, and fail as a harness error.
+    pub fn compare_mode(&mut self) {
+        self.compare = Some(Comparison {
+            steps: Vec::new(),
+            expected: Vec::new(),
+            from: 0,
+        });
+    }
+
+    /// Whether the collector is in compare mode.
+    #[must_use]
+    pub fn is_comparing(&self) -> bool {
+        self.compare.is_some()
+    }
+
+    /// Every step compare mode has recorded, the one under way included
+    /// when anything is recorded for it, closed without waiting: for the
+    /// report, once the scenario has ended, passed or failed. Empty
+    /// outside compare mode.
+    pub fn take_comparison(&mut self) -> Vec<CompareStep> {
+        // Whatever has reached the harness, without failing on a
+        // connection that has gone: the run may have failed for that.
+        while let Ok(Ok(frame)) = self.frames.try_recv() {
+            self.absorb(frame);
+        }
+        self.record_step();
+        self.compare
+            .as_mut()
+            .map(|comparison| std::mem::take(&mut comparison.steps))
+            .unwrap_or_default()
+    }
+
+    /// In compare mode, records `texts` as expected in the step under way
+    /// and returns `true`; otherwise returns `false`.
+    fn record_expected<'a>(&mut self, texts: impl IntoIterator<Item = &'a str>) -> bool {
+        let Some(comparison) = &mut self.compare else {
+            return false;
+        };
+        comparison
+            .expected
+            .extend(texts.into_iter().map(str::to_owned));
+        true
+    }
+
+    /// Closes compare mode's step under way: waits for NVDA to be quiet
+    /// (`AwaitIdle`), reads what has arrived, and records the step.
+    fn close_step(&mut self) {
+        self.await_idle(None);
+        self.read_arrived();
+        self.pending.clear();
+        self.pauses.clear();
+        self.record_step();
+    }
+
+    /// Records compare mode's step under way from the timeline's entries
+    /// since the step before and the texts expected, unless it has nothing
+    /// at all to report.
+    fn record_step(&mut self) {
+        let Some(comparison) = &mut self.compare else {
+            return;
+        };
+        let (entries, next) = self.timeline.step_since(comparison.from);
+        let step = CompareStep::new(
+            entries,
+            std::mem::take(&mut comparison.expected),
+            comparison.from == 0,
+        );
+        comparison.from = next;
+        if !step.is_empty() {
+            comparison.steps.push(step);
+        }
+    }
+
+    /// Fails as a harness error in compare mode, naming `method`, which
+    /// needs Verbatim's own speech to keep its promise.
+    fn refuse_in_compare_mode(&self, method: &str) {
+        if self.compare.is_some() {
+            self.fail(&format!(
+                "harness error: SpeechCollector::{method} needs Verbatim's speech and has no NVDA equivalent, so this scenario cannot be compared"
+            ));
+        }
     }
 
     /// Asks Verbatim, on this connection, to answer once it has handled
@@ -969,6 +1146,10 @@ impl SpeechCollector {
     ///
     /// Panics, naming the unmatched utterances, if there are any.
     pub fn require_all_asserted(&mut self, when: &str) {
+        if self.compare.is_some() {
+            self.close_step();
+            return;
+        }
         self.read_arrived();
         // A pause or resume no step asserted is left behind here, on the
         // timeline: every Shift pressed with another key pauses speech,
@@ -1032,6 +1213,11 @@ impl Drop for SpeechCollector {
         }
     }
 }
+
+/// The utterance a compare-mode assertion's placeholder [`Heard`] names,
+/// which no frame carries: Verbatim's pipeline and NVDA's transcript count
+/// their ids up from 1, and sounds count down from the top.
+const COMPARED: UtteranceId = UtteranceId(0);
 
 /// The error a read gets once the reader thread has stopped.
 fn reader_stopped() -> io::Error {
@@ -1567,5 +1753,70 @@ mod tests {
         assert!(failed.report(&timeline, Ok(&[])).contains(
             "the failing step's trace: none, since the step heard nothing that carries a trace ID"
         ));
+    }
+
+    #[test]
+    fn compare_mode_records_each_step_s_expectations_beside_what_was_said() {
+        use crate::compare::Verdict;
+        use crate::timeline::Said;
+
+        let timeline = Timeline::new();
+        let (mut speech, mut script) = scripted(timeline.clone());
+        speech.compare_mode();
+        // Before any input: the desktop, said the same.
+        script.feed(vec![
+            queued(1, "Desktop list"),
+            ended(1, UtteranceEnding::Completed),
+        ]);
+        speech.expect(&["Desktop list"]);
+        speech.require_all_asserted("before the keys");
+        // A step declared different, whose assertions on speech cut off
+        // record their texts and return without waiting.
+        timeline.push_keys(&["numpad2"]);
+        timeline.push_deviation("docs/parity/review.md", "Review cursor columns");
+        script.feed(vec![queued(2, "A"), ended(2, UtteranceEnding::Completed)]);
+        let playing = speech.expect_started("3");
+        speech.expect_ended(&playing, Ending::Cancelled);
+        speech.expect_paused();
+        speech.require_all_asserted("before the gesture");
+        // A step of Verbatim's own, then the end, where NVDA said nothing.
+        timeline.push_gesture("kb:verbatim+v");
+        timeline.push_verbatim_only("gesture kb:verbatim+v");
+        speech.expect(&["Verbatim", "Context menu"]);
+        speech.expect_nothing_more(None);
+        let steps = speech.take_comparison();
+
+        let verdicts: Vec<(&str, Verdict)> = steps
+            .iter()
+            .map(|step| (step.input.as_str(), step.verdict()))
+            .collect();
+        assert_eq!(
+            verdicts,
+            [
+                ("start", Verdict::Same),
+                (
+                    "keys [numpad2]",
+                    Verdict::Declared("Review cursor columns".to_owned())
+                ),
+                ("gesture kb:verbatim+v", Verdict::VerbatimOnly),
+            ]
+        );
+        assert_eq!(steps[1].expected, ["3"]);
+        assert_eq!(steps[1].heard, [Said::Speech("A".to_owned())]);
+        assert_eq!(steps[2].expected, ["Verbatim", "Context menu"]);
+        assert_eq!(steps[2].heard, []);
+    }
+
+    #[test]
+    fn compare_mode_refuses_what_needs_verbatim_s_own_speech() {
+        let (mut speech, _script) = scripted(Timeline::new());
+        speech.compare_mode();
+        let message = fails(move || {
+            speech.take_until("flood line 100", SHORT);
+        });
+        assert_eq!(
+            message,
+            "harness error: SpeechCollector::take_until needs Verbatim's speech and has no NVDA equivalent, so this scenario cannot be compared"
+        );
     }
 }

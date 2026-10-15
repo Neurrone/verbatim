@@ -27,6 +27,14 @@
 //! window events, processes on their handles, files on folder changes, and
 //! speech on the speech connection, each with a timeout that bounds only a
 //! hang.
+//!
+//! In compare mode ([`crate::compare`]) a scenario runs against NVDA
+//! instead: no Verbatim is launched, its speech is NVDA's, read from the
+//! transcript add-on ([`crate::nvda`]), and what needs Verbatim itself, such
+//! as its status or its processes, is an error. A gesture with the
+//! Verbatim modifier is not pressed and makes its step Verbatim's own; any
+//! other keyboard gesture is pressed as keys, which NVDA's desktop layout
+//! binds as Verbatim's does.
 
 use std::fmt::Write as _;
 use std::fs;
@@ -198,12 +206,15 @@ struct Launched {
 pub struct Scenario {
     _lock: MutexGuard<'static, ()>,
     agent: AgentClient,
-    verbatim_pid: u32,
+    /// Verbatim's process id; `None` in compare mode, which launches no
+    /// Verbatim.
+    verbatim_pid: Option<u32>,
     /// The processes Verbatim was told to ignore entirely: the owner's own
     /// Windows Terminal and its console hosts. No outpost may be started
     /// for one ([`Scenario::collect_run_artifacts`]).
     ignored: Vec<u32>,
-    control: ControlClient,
+    /// The command connection to Verbatim; `None` in compare mode.
+    control: Option<ControlClient>,
     speech: SpeechCollector,
     timeline: Timeline,
     launched: Vec<Launched>,
@@ -230,6 +241,17 @@ pub struct Scenario {
     /// order it pressed them, released at the latest by
     /// [`Scenario::release_held_keys`].
     held: Vec<String>,
+    /// The NVDA the scenario runs against in compare mode; `None` when it
+    /// runs against Verbatim.
+    nvda: Option<NvdaRun>,
+}
+
+/// The NVDA a compare-mode scenario runs against.
+struct NvdaRun {
+    /// Its version, as the transcript add-on's `Hello` gives it.
+    version: String,
+    /// The quiet period each step waits for.
+    quiet: Duration,
 }
 
 impl Scenario {
@@ -263,12 +285,21 @@ impl Scenario {
     /// The first speech subscription receives the speech Verbatim queued
     /// before it, so its startup speech is asserted like any other.
     ///
+    /// In compare mode ([`crate::compare`]) it does the same up to opening
+    /// `document`, building and staging included, since scenarios start
+    /// `mockapp` and the portable Windows Terminal from the stage; it then
+    /// connects to NVDA's transcript add-on in the agent's session, before
+    /// minimizing, so NVDA's announcement of the desktop is heard, and
+    /// minimizes as above. It launches no Verbatim and records no video.
+    ///
     /// # Errors
     ///
     /// Returns an error if the endpoint is unset, building or staging
     /// fails, the agent cannot be reached, the desktop cannot be brought to
     /// its starting state, an earlier run's leftovers cannot be cleaned up,
-    /// the recording cannot start, or Verbatim does not become ready.
+    /// the recording cannot start, or Verbatim does not become ready; in
+    /// compare mode, if the run is remote, or NVDA's transcript add-on
+    /// cannot be reached in the agent's session.
     #[expect(
         clippy::too_many_lines,
         reason = "the launch's steps in order, each one's failure cleaned up where it happens"
@@ -302,6 +333,12 @@ impl Scenario {
 
         let verbatim_exe = verbatim_exe_path();
         let remote = is_remote();
+        let comparing = crate::compare::enabled();
+        if comparing && remote {
+            return Err(io::Error::other(format!(
+                "compare mode runs on this machine, where NVDA's transcript add-on is read on 127.0.0.1; unset {REMOTE_ENV}"
+            )));
+        }
         if !remote && std::env::var_os(VERBATIM_EXE_ENV).is_none() {
             build_default_source_binaries()?;
         }
@@ -350,10 +387,49 @@ impl Scenario {
         if let Some(document) = document {
             opened.push(open_document(&mut agent, &run_dir, &document)?);
         }
+        let nvda = if comparing {
+            match connect_nvda(&mut agent) {
+                Ok(connected) => Some(connected),
+                Err(error) => {
+                    close_documents(&mut agent, &opened)?;
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
         let (minimized, desktop_in_front, desktop) = agent.minimize_all(MINIMIZE_TIMEOUT)?;
         if let Some(failure) = minimize_failure(minimized, desktop_in_front, &desktop) {
             close_documents(&mut agent, &opened)?;
             return Err(io::Error::other(failure));
+        }
+        if let Some((speech, timeline, nvda)) = nvda {
+            if crate::recording::enabled() {
+                println!("compare mode records no video");
+            }
+            return Ok(Self {
+                _lock: lock,
+                agent,
+                verbatim_pid: None,
+                ignored: Vec::new(),
+                control: None,
+                speech,
+                timeline,
+                launched: opened,
+                folders: Vec::new(),
+                files: Vec::new(),
+                stderr_log_path: String::new(),
+                run_dir,
+                recording: None,
+                last_input: None,
+                expected_exits: Vec::new(),
+                dumps_before: None,
+                dumps_collected: Vec::new(),
+                cleaned_up: false,
+                quit: false,
+                held: Vec::new(),
+                nvda: Some(nvda),
+            });
         }
         let dumps_before = crash_dumps(&mut agent);
 
@@ -433,9 +509,9 @@ impl Scenario {
         Ok(Self {
             _lock: lock,
             agent,
-            verbatim_pid,
+            verbatim_pid: Some(verbatim_pid),
             ignored,
-            control,
+            control: Some(control),
             speech,
             timeline,
             launched: opened,
@@ -451,7 +527,46 @@ impl Scenario {
             cleaned_up: false,
             quit: false,
             held: Vec::new(),
+            nvda: None,
         })
+    }
+
+    /// Whether the scenario runs against NVDA, in compare mode
+    /// ([`crate::compare`]).
+    #[must_use]
+    pub fn is_comparing(&self) -> bool {
+        self.nvda.is_some()
+    }
+
+    /// In compare mode, NVDA's version, as the transcript add-on's `Hello`
+    /// gives it, and the quiet period each step waits for.
+    #[must_use]
+    pub fn nvda_run(&self) -> Option<(&str, Duration)> {
+        self.nvda
+            .as_ref()
+            .map(|run| (run.version.as_str(), run.quiet))
+    }
+
+    /// Declares that the step under way, begun by the last input,
+    /// deliberately differs from NVDA, as the parity ledger's entry headed
+    /// `entry` in `file` (such as `docs/parity/review.md`) records: a note
+    /// on the timeline, which compare mode judges the step against
+    /// ([`crate::compare::Verdict`]). A unit test checks that every entry
+    /// a scenario names is a heading in its file.
+    pub fn deviates_from_nvda(&self, file: &str, entry: &str) {
+        self.timeline.push_deviation(file, entry);
+    }
+
+    /// Verbatim's process id, or, in compare mode, an error saying there is
+    /// no Verbatim to `what`.
+    fn pid(&self, what: &str) -> io::Result<u32> {
+        self.verbatim_pid.ok_or_else(|| no_verbatim(what))
+    }
+
+    /// The command connection to Verbatim, or, in compare mode, an error
+    /// saying there is no Verbatim to `what`.
+    fn control_client(&mut self, what: &str) -> io::Result<&mut ControlClient> {
+        self.control.as_mut().ok_or_else(|| no_verbatim(what))
     }
 
     /// Opens one more connection to Verbatim's control plane, subscribed to
@@ -468,6 +583,9 @@ impl Scenario {
     /// be opened, the subscription is refused, or the read timeout cannot
     /// be set.
     pub fn subscribe_events(&mut self) -> io::Result<ControlClient> {
+        if self.is_comparing() {
+            return Err(no_verbatim("subscribe to the events of (subscribe_events)"));
+        }
         let agent_addr =
             endpoint().ok_or_else(|| io::Error::other(format!("{ENDPOINT_ENV} is not set")))?;
         let mut events =
@@ -479,8 +597,14 @@ impl Scenario {
 
     /// The primary control-plane connection: status, gestures, latency,
     /// tree dumps, and quit.
+    ///
+    /// # Panics
+    ///
+    /// Panics in compare mode, which has no Verbatim.
     pub fn control(&mut self) -> &mut ControlClient {
-        &mut self.control
+        self.control
+            .as_mut()
+            .expect("compare mode has no connection to Verbatim")
     }
 
     /// Verbatim's status: its synthesizer, its outposts, and whether it is
@@ -490,7 +614,8 @@ impl Scenario {
     ///
     /// Returns an error if the request fails or is answered otherwise.
     pub fn status(&mut self) -> io::Result<StatusInfo> {
-        match ok_or_error(self.control.request(Request::Status)?)? {
+        let control = self.control_client("ask for its status (status)")?;
+        match ok_or_error(control.request(Request::Status)?)? {
             Frame::Reply {
                 payload: ReplyPayload::Status(status),
                 ..
@@ -513,18 +638,30 @@ impl Scenario {
     }
 
     /// Verbatim's process id.
+    ///
+    /// # Panics
+    ///
+    /// Panics in compare mode, which launches no Verbatim.
     #[must_use]
     pub fn verbatim_pid(&self) -> u32 {
         self.verbatim_pid
+            .expect("compare mode launches no Verbatim")
     }
 
     /// Routes a gesture identifier through Verbatim's gesture router, as if
     /// the keys had been pressed (`Request::SendGesture`), once every
     /// utterance heard so far has been asserted.
     ///
+    /// In compare mode a keyboard gesture with the Verbatim modifier, such
+    /// as `kb:verbatim+v`, presses nothing and makes the step Verbatim's
+    /// own, and any other keyboard gesture, such as `kb:numpad8`, is
+    /// pressed through the agent as [`Scenario::send_keys`] presses keys,
+    /// since NVDA's desktop layout binds the same plain keys.
+    ///
     /// # Errors
     ///
-    /// Returns an error if the request fails.
+    /// Returns an error if the request fails, or, in compare mode, if the
+    /// gesture is not a keyboard gesture.
     ///
     /// # Panics
     ///
@@ -533,9 +670,30 @@ impl Scenario {
         self.speech
             .require_all_asserted(&format!("before the gesture {identifier}"));
         self.timeline.push_gesture(identifier);
-        ok_or_error(self.control.request(Request::SendGesture {
+        if self.is_comparing() {
+            return self.press_gesture_for_nvda(identifier);
+        }
+        let control = self.control_client("send a gesture to")?;
+        ok_or_error(control.request(Request::SendGesture {
             identifier: identifier.to_owned(),
         })?)?;
+        Ok(())
+    }
+
+    /// [`Scenario::send_gesture`] in compare mode, once the gesture is on
+    /// the timeline.
+    fn press_gesture_for_nvda(&mut self, identifier: &str) -> io::Result<()> {
+        let keys = identifier.strip_prefix("kb:").ok_or_else(|| {
+            io::Error::other(format!(
+                "compare mode presses keyboard gestures only, not {identifier}"
+            ))
+        })?;
+        if keys.split('+').any(|key| key == "verbatim") {
+            self.timeline
+                .push_verbatim_only(&format!("gesture {identifier}"));
+            return Ok(());
+        }
+        self.last_input = Some(self.agent.send_keys(&[keys.to_owned()])?);
         Ok(())
     }
 
@@ -743,7 +901,8 @@ impl Scenario {
         self.speech
             .require_all_asserted(&format!("before Verbatim injects the keys {keys:?}"));
         self.timeline.push_keys(keys);
-        ok_or_error(self.control.request(Request::SendKeys {
+        let control = self.control_client("inject keys from (send_keys_from_verbatim)")?;
+        ok_or_error(control.request(Request::SendKeys {
             keys: keys.iter().map(|key| (*key).to_owned()).collect(),
         })?)?;
         Ok(())
@@ -1437,7 +1596,8 @@ impl Scenario {
     ///
     /// Returns an error if the request fails.
     pub fn verbatim_children(&mut self) -> io::Result<Vec<ProcessInfo>> {
-        self.agent.child_processes(self.verbatim_pid)
+        let pid = self.pid("list the processes of (verbatim_children)")?;
+        self.agent.child_processes(pid)
     }
 
     /// Ends one of Verbatim's own processes, which the scenario then
@@ -1448,6 +1608,7 @@ impl Scenario {
     /// Returns an error if the process cannot be ended or does not exit
     /// within `timeout`.
     pub fn end_verbatim_process(&mut self, pid: u32, timeout: Duration) -> io::Result<()> {
+        self.pid("end a process of (end_verbatim_process)")?;
         self.expected_exits.push(pid);
         self.agent.kill_process(pid)?;
         match self.agent.wait_for_exit(pid, timeout)? {
@@ -1468,10 +1629,10 @@ impl Scenario {
     /// Returns an error if the request fails.
     pub fn unexpected_exits(&mut self) -> io::Result<Vec<ProcessExit>> {
         let expected = self.expected_exits.clone();
-        let verbatim = self.verbatim_pid;
+        let verbatim = self.pid("read the process exits of")?;
         Ok(self
             .agent
-            .job_exits(self.verbatim_pid)?
+            .job_exits(verbatim)?
             .into_iter()
             .filter(|exit| {
                 exit.pid != verbatim
@@ -1489,26 +1650,25 @@ impl Scenario {
     /// Returns an error if the request fails, Verbatim does not exit within
     /// the timeout, or it exits with any other code.
     pub fn quit_verbatim(&mut self) -> io::Result<()> {
+        let pid = self.pid("quit")?;
         self.quit = true;
         // The reply races Verbatim's own teardown: the connection can close
         // before it is written. The exit code, read below, is the
         // authority on whether the quit worked.
-        match self.control.request(Request::Quit) {
+        match self.control_client("quit")?.request(Request::Quit) {
             Ok(frame) => {
                 ok_or_error(frame)?;
             }
             Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {}
             Err(error) => return Err(error),
         }
-        match self.agent.wait_for_exit(self.verbatim_pid, QUIT_TIMEOUT)? {
+        match self.agent.wait_for_exit(pid, QUIT_TIMEOUT)? {
             ProcessState::Exited { exit_code: Some(0) } => Ok(()),
             ProcessState::Exited { exit_code } => Err(io::Error::other(format!(
-                "Verbatim (pid {}) exited with {exit_code:?} after Quit",
-                self.verbatim_pid
+                "Verbatim (pid {pid}) exited with {exit_code:?} after Quit"
             ))),
             ProcessState::Running => Err(io::Error::other(format!(
-                "Verbatim (pid {}) is still running {QUIT_TIMEOUT:?} after Quit",
-                self.verbatim_pid
+                "Verbatim (pid {pid}) is still running {QUIT_TIMEOUT:?} after Quit"
             ))),
         }
     }
@@ -1528,10 +1688,9 @@ impl Scenario {
     /// Returns an error if the job's processes cannot be read, or some are
     /// still running once [`JOB_EMPTY_TIMEOUT`] has passed.
     pub fn outposts_shut_down_cleanly(&mut self) -> io::Result<Vec<String>> {
-        let exits = self
-            .agent
-            .wait_for_job_empty(self.verbatim_pid, JOB_EMPTY_TIMEOUT)?;
-        let verbatim_exited_at = exits.iter().position(|exit| exit.pid == self.verbatim_pid);
+        let pid = self.pid("check the outposts of")?;
+        let exits = self.agent.wait_for_job_empty(pid, JOB_EMPTY_TIMEOUT)?;
+        let verbatim_exited_at = exits.iter().position(|exit| exit.pid == pid);
         let mut problems = Vec::new();
         let mut outposts = 0;
         for (index, exit) in exits.iter().enumerate() {
@@ -1595,7 +1754,7 @@ impl Scenario {
     ///
     /// Returns an error if the request fails.
     pub fn latency_snapshot(&mut self, last_n: u32) -> io::Result<Vec<LatencyRecord>> {
-        crate::latency::fetch(&mut self.control, last_n)
+        crate::latency::fetch(self.control_client("fetch the latency of")?, last_n)
     }
 
     /// Saves Core's focus, its ancestors, and the navigator object into
@@ -1605,7 +1764,8 @@ impl Scenario {
     ///
     /// Returns an error if the request fails or the file cannot be written.
     pub fn collect_focus(&mut self, dir: &Path) -> io::Result<()> {
-        let report = match ok_or_error(self.control.request(Request::DumpFocus)?)? {
+        let control = self.control_client("save the focus of")?;
+        let report = match ok_or_error(control.request(Request::DumpFocus)?)? {
             Frame::Reply {
                 payload: ReplyPayload::Focus(report),
                 ..
@@ -1649,7 +1809,8 @@ impl Scenario {
     /// Returns an error if the dump cannot be made, read, or written.
     pub fn collect_flight_recorder(&mut self, dir: &Path) -> io::Result<()> {
         fs::create_dir_all(dir)?;
-        let path = match ok_or_error(self.control.request(Request::DumpRecorder)?)? {
+        let control = self.control_client("dump the flight recorder of")?;
+        let path = match ok_or_error(control.request(Request::DumpRecorder)?)? {
             Frame::Reply {
                 payload: ReplyPayload::DumpRecorder { path },
                 ..
@@ -1670,7 +1831,8 @@ impl Scenario {
     /// crash dumps of Verbatim's processes written during the run. Returns
     /// every artifact that could not be collected, every crash dump, and
     /// every outpost started for a process Verbatim was told to ignore, its
-    /// log named for that process, each a failure of the run.
+    /// log named for that process, each a failure of the run. In compare
+    /// mode, which has no Verbatim, only the timeline.
     pub fn collect_run_artifacts(&mut self, dir: &Path) -> Vec<String> {
         let mut problems = Vec::new();
         if let Err(error) = fs::create_dir_all(dir) {
@@ -1678,6 +1840,9 @@ impl Scenario {
         }
         if let Err(error) = fs::write(dir.join(TIMELINE_FILE_NAME), self.timeline.render()) {
             problems.push(format!("could not write the timeline: {error}"));
+        }
+        if self.is_comparing() {
+            return problems;
         }
         if let Err(error) = fs::write(dir.join(LATENCY_FILE_NAME), self.latency_csv()) {
             problems.push(format!("could not write the latency report: {error}"));
@@ -1724,7 +1889,11 @@ impl Scenario {
     /// Fetches every outpost and listener log this Verbatim launch wrote,
     /// from `logs\<Verbatim's pid>` next to its executable.
     fn collect_outpost_logs(&mut self, dir: &Path) -> Vec<String> {
-        let logs_dir = format!(r"{}\logs\{}", self.run_dir, self.verbatim_pid);
+        let pid = match self.pid("collect the logs of") {
+            Ok(pid) => pid,
+            Err(error) => return vec![error.to_string()],
+        };
+        let logs_dir = format!(r"{}\logs\{pid}", self.run_dir);
         let names = match self.agent.list_files(&logs_dir) {
             Ok(names) => names,
             Err(error) => return vec![format!("could not list {logs_dir}: {error}")],
@@ -1802,7 +1971,8 @@ impl Scenario {
     ///
     /// Returns an error if the job's exits cannot be read.
     pub fn outpost_crashes(&mut self, dir: &Path) -> io::Result<Vec<OutpostCrash>> {
-        let exits = self.agent.job_exits(self.verbatim_pid)?;
+        let pid = self.pid("read the outpost crashes of")?;
+        let exits = self.agent.job_exits(pid)?;
         Ok(exits
             .into_iter()
             .filter(|exit| {
@@ -1970,16 +2140,15 @@ impl Drop for Scenario {
     /// is stopped as [`Recording::stop`] stops it, so its file is complete.
     /// Anything that will not close is printed; the run has already failed.
     fn drop(&mut self) {
-        if !self.quit {
-            let _ = self.control.request(Request::Quit);
-            match self.agent.wait_for_exit(self.verbatim_pid, QUIT_TIMEOUT) {
+        if !self.quit
+            && let (Some(pid), Some(control)) = (self.verbatim_pid, self.control.as_mut())
+        {
+            let _ = control.request(Request::Quit);
+            match self.agent.wait_for_exit(pid, QUIT_TIMEOUT) {
                 Ok(ProcessState::Exited { .. }) => {}
                 _ => {
-                    if let Err(error) = self.agent.kill_process(self.verbatim_pid) {
-                        eprintln!(
-                            "could not end Verbatim (pid {}): {error}",
-                            self.verbatim_pid
-                        );
+                    if let Err(error) = self.agent.kill_process(pid) {
+                        eprintln!("could not end Verbatim (pid {pid}): {error}");
                     }
                 }
             }
@@ -2278,6 +2447,40 @@ fn close_documents(agent: &mut AgentClient, opened: &[Launched]) -> io::Result<(
         agent.delete_file(document)?;
     }
     Ok(())
+}
+
+/// The error compare mode gives for what needs Verbatim: there is no
+/// Verbatim to `what`.
+fn no_verbatim(what: &str) -> io::Error {
+    io::Error::other(format!(
+        "compare mode runs against NVDA, so there is no Verbatim to {what}"
+    ))
+}
+
+/// Connects to NVDA's transcript add-on in the agent's session and builds
+/// a compare-mode speech collector on it, with its timeline, for compare
+/// mode ([`crate::compare`]).
+fn connect_nvda(agent: &mut AgentClient) -> io::Result<(SpeechCollector, Timeline, NvdaRun)> {
+    let quiet = crate::compare::quiet_period().map_err(io::Error::other)?;
+    let session = agent.session_info()?.session_id;
+    let port = crate::nvda::session_port(session)?;
+    let (transcript, hello) = crate::nvda::Transcript::connect(port).map_err(|error| {
+        io::Error::other(format!(
+            "compare mode reads NVDA's speech from its transcript add-on (docs/nvda-transcript.md), \
+             so NVDA with the add-on must be running in the agent's session, session {session}: {error}"
+        ))
+    })?;
+    let hello_unix_ms = crate::timeline::unix_ms();
+    let version = hello["nvda_version"]
+        .as_str()
+        .unwrap_or("(unknown version)")
+        .to_owned();
+    let timeline = Timeline::new();
+    let (source, sink) =
+        crate::nvda::speech_source(Box::new(transcript), hello_unix_ms, timeline.clone(), quiet)?;
+    let speech = SpeechCollector::comparing(source, sink, timeline.clone())?;
+    println!("compare mode: NVDA {version} in session {session}, quiet period {quiet:?}");
+    Ok((speech, timeline, NvdaRun { version, quiet }))
 }
 
 /// Connects to a just-launched, ready Verbatim: the command connection,

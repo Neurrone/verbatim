@@ -313,6 +313,16 @@ fn utc_stamp(time: std::time::SystemTime) -> String {
     )
 }
 
+/// The date of `time` in UTC, `2026-10-15`, for compare mode's report.
+pub(crate) fn utc_date(time: std::time::SystemTime) -> String {
+    let seconds = time
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let (year, month, day) = civil_from_days(i64::try_from(seconds / 86_400).unwrap_or(0));
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
 /// The proleptic Gregorian date `days` after 1970-01-01, by Howard
 /// Hinnant's `civil_from_days` algorithm.
 fn civil_from_days(days: i64) -> (i64, u32, u32) {

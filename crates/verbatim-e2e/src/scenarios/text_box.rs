@@ -104,8 +104,14 @@ pub(crate) fn announcement(name: &str, box_name: &str, line: &str) -> Vec<String
 
 /// Pastes the clipboard at the caret with Control+V, which says nothing,
 /// and waits for the evidence that the text changed: the text box's change
-/// of value as Core receives it.
+/// of value as Core receives it. In compare mode NVDA offers no events, and
+/// its quiet period, waited for before the next input, is the only
+/// evidence there is.
 pub(crate) fn paste(scenario: &mut Scenario) {
+    if scenario.is_comparing() {
+        scenario.send_keys(&["control+v"]).expect("sends control+v");
+        return;
+    }
     let mut events = scenario
         .subscribe_events()
         .expect("subscribes to Verbatim's events");

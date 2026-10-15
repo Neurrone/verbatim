@@ -42,6 +42,52 @@ enum TimelineKind {
     Ended(String, UtteranceEnding),
     /// Speech was paused, `true`, or resumed, `false`.
     Paused(bool),
+    /// An event NVDA's transcript recorded other than speech, such as a
+    /// cancel, by its name, in compare mode ([`crate::compare`]).
+    NvdaEvent(String),
+    /// A remark of the harness's own about the step, such as NVDA's speech
+    /// not settling.
+    Note(String),
+    /// The step deliberately differs from NVDA, as the parity entry with
+    /// this heading in this file of `docs/parity` records
+    /// ([`crate::Scenario::deviates_from_nvda`]).
+    Deviation {
+        /// The parity ledger's file, such as `docs/parity/review.md`.
+        file: String,
+        /// The entry's heading.
+        entry: String,
+    },
+    /// The step's input is Verbatim's own, with nothing to press for NVDA,
+    /// in compare mode: what it was, such as `gesture kb:verbatim+v`.
+    VerbatimOnly(String),
+}
+
+/// What one step of the timeline holds, for compare mode's report
+/// ([`Timeline::step_since`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct StepEntries {
+    /// What was injected, as the rendered timeline describes it, each
+    /// input of the step in order; empty when nothing was.
+    pub(crate) inputs: Vec<String>,
+    /// What was said, speech and NVDA's other events, in order.
+    pub(crate) said: Vec<Said>,
+    /// The deliberate differences from NVDA declared for the step, each
+    /// its parity file and entry heading.
+    pub(crate) deviations: Vec<(String, String)>,
+    /// What made the step Verbatim's own, if anything did.
+    pub(crate) verbatim_only: Option<String>,
+    /// The harness's remarks about the step.
+    pub(crate) notes: Vec<String>,
+}
+
+/// One thing a screen reader said in a step: an utterance's text, or an
+/// event other than speech, such as NVDA's cancel.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Said {
+    /// An utterance's full text.
+    Speech(String),
+    /// Another event, by its name.
+    Event(String),
 }
 
 /// One [`TimelineKind`] paired with the [`Instant`] it was recorded at,
@@ -120,6 +166,57 @@ impl Timeline {
         self.push(TimelineKind::Paused(paused));
     }
 
+    /// Records an event NVDA's transcript recorded other than speech, such
+    /// as a cancel, by its name.
+    pub fn push_nvda_event(&self, name: &str) {
+        self.push(TimelineKind::NvdaEvent(name.to_owned()));
+    }
+
+    /// Records a remark of the harness's own about the step under way.
+    pub fn push_note(&self, note: &str) {
+        self.push(TimelineKind::Note(note.to_owned()));
+    }
+
+    /// Records that the step under way deliberately differs from NVDA, as
+    /// the entry headed `entry` in the parity file `file` records.
+    pub fn push_deviation(&self, file: &str, entry: &str) {
+        self.push(TimelineKind::Deviation {
+            file: file.to_owned(),
+            entry: entry.to_owned(),
+        });
+    }
+
+    /// Records that the step under way is Verbatim's own, `what` saying
+    /// why, such as `gesture kb:verbatim+v`.
+    pub fn push_verbatim_only(&self, what: &str) {
+        self.push(TimelineKind::VerbatimOnly(what.to_owned()));
+    }
+
+    /// What the entries from the one numbered `from` to the newest hold,
+    /// and the number the next call starts from: one step of compare
+    /// mode's report.
+    pub(crate) fn step_since(&self, from: usize) -> (StepEntries, usize) {
+        let entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut step = StepEntries::default();
+        for entry in entries.get(from..).unwrap_or_default() {
+            match &entry.kind {
+                TimelineKind::Utterance(text, _) => step.said.push(Said::Speech(text.clone())),
+                TimelineKind::NvdaEvent(name) => step.said.push(Said::Event(name.clone())),
+                TimelineKind::Note(note) => step.notes.push(note.clone()),
+                TimelineKind::Deviation { file, entry } => {
+                    step.deviations.push((file.clone(), entry.clone()));
+                }
+                TimelineKind::VerbatimOnly(what) => step.verbatim_only = Some(what.clone()),
+                kind => {
+                    if let Some(input) = kind.input() {
+                        step.inputs.push(input);
+                    }
+                }
+            }
+        }
+        (step, entries.len())
+    }
+
     fn push(&self, kind: TimelineKind) {
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
         entries.push(TimelineEntry {
@@ -163,7 +260,11 @@ impl Timeline {
                 | TimelineKind::Text(_)
                 | TimelineKind::AudioStarted(_)
                 | TimelineKind::Ended(..)
-                | TimelineKind::Paused(_) => None,
+                | TimelineKind::Paused(_)
+                | TimelineKind::NvdaEvent(_)
+                | TimelineKind::Note(_)
+                | TimelineKind::Deviation { .. }
+                | TimelineKind::VerbatimOnly(_) => None,
             })
             .collect()
     }
@@ -260,7 +361,14 @@ impl TimelineKind {
             Self::Gesture(identifier) => Some(format!("gesture {identifier}")),
             Self::Keys(keys) => Some(format!("keys [{}]", keys.join(", "))),
             Self::Text(text) => Some(format!("text {text:?}")),
-            Self::Utterance(..) | Self::AudioStarted(_) | Self::Ended(..) | Self::Paused(_) => None,
+            Self::Utterance(..)
+            | Self::AudioStarted(_)
+            | Self::Ended(..)
+            | Self::Paused(_)
+            | Self::NvdaEvent(_)
+            | Self::Note(_)
+            | Self::Deviation { .. }
+            | Self::VerbatimOnly(_) => None,
         }
     }
 }
@@ -284,6 +392,12 @@ impl TimelineEntry {
             }
             TimelineKind::Paused(true) => "speech paused".to_owned(),
             TimelineKind::Paused(false) => "speech resumed".to_owned(),
+            TimelineKind::NvdaEvent(name) => format!("nvda {name}"),
+            TimelineKind::Note(note) => format!("note: {note}"),
+            TimelineKind::Deviation { file, entry } => {
+                format!("declared deviation from NVDA: {file}, {entry:?}")
+            }
+            TimelineKind::VerbatimOnly(what) => format!("Verbatim-only: {what}"),
             input => input.input().unwrap_or_default(),
         };
         format!("+{elapsed}ms {what}")

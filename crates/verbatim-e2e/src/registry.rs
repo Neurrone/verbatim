@@ -125,6 +125,12 @@
 //! that runs anyway with the variable set, so a skip is never reported as
 //! a pass. The skip comes from that setting alone, never from detecting
 //! the machine.
+//!
+//! In compare mode ([`crate::compare`]) [`run_named`] runs a scenario
+//! against NVDA instead, with [`run_compare`]'s order, and writes its
+//! report. A scenario that needs Verbatim itself, such as one that ends
+//! Verbatim's processes or drives Verbatim's own settings dialog, is marked
+//! [`Comparable::No`] with why, and compare mode refuses it.
 
 use std::io::{self, Write as _};
 use std::panic::{self, AssertUnwindSafe};
@@ -133,6 +139,7 @@ use std::sync::{Mutex, PoisonError};
 use verbatim_config::Settings;
 
 use crate::artifacts::{self, OutpostCrash, ScenarioSummary};
+use crate::compare::{self, ReportHeader};
 use crate::scenario::{Document, Scenario};
 use crate::scenarios::{
     demo_notepad_editing, demo_review_cursor, demo_say_all, demo_settings_dialog_keys,
@@ -310,6 +317,9 @@ pub struct ScenarioDef {
     /// before Verbatim starts ([`crate::scenario::Document`]); `None` for
     /// most.
     pub document: Option<fn() -> Document>,
+    /// Whether the scenario can run against NVDA in compare mode
+    /// ([`crate::compare`]), and why not when it cannot.
+    pub comparable: Comparable,
     /// Declares and creates whatever state `body` needs beyond
     /// `Scenario::launch` itself.
     ///
@@ -328,6 +338,19 @@ pub struct ScenarioDef {
     pub teardown: fn(&mut Scenario, ScenarioState),
 }
 
+/// Whether a scenario can run against NVDA in compare mode
+/// ([`crate::compare`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Comparable {
+    /// It can: everything it does has an NVDA equivalent, or is a step of
+    /// Verbatim's own that the report marks as such.
+    Yes,
+    /// It cannot, for the reason given, such as needing Verbatim's
+    /// processes, its status, or its own dialogs; compare mode refuses it
+    /// with the reason.
+    No(&'static str),
+}
+
 /// Every registered scenario, in a fixed, stable order (also the order
 /// [`select`] preserves and `--list` prints in).
 pub const SCENARIOS: &[ScenarioDef] = &[
@@ -337,6 +360,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No(
+            "it drives Verbatim's own menu or settings dialog, which do not exist without Verbatim",
+        ),
         setup: menu_and_settings_dialog::setup,
         body: menu_and_settings_dialog::body,
         teardown: menu_and_settings_dialog::teardown,
@@ -347,6 +373,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No("it reads Verbatim's status and opens Verbatim's own menu"),
         setup: second_application_and_verbatim_menu::setup,
         body: second_application_and_verbatim_menu::body,
         teardown: second_application_and_verbatim_menu::teardown,
@@ -357,6 +384,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No(
+            "it takes speech until Verbatim is idle (take_until_idle) and drives Verbatim's own settings dialog",
+        ),
         setup: rapid_tabbing_in_settings::setup,
         body: rapid_tabbing_in_settings::body,
         teardown: rapid_tabbing_in_settings::teardown,
@@ -367,6 +397,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No(
+            "it drives Verbatim's own menu or settings dialog, which do not exist without Verbatim",
+        ),
         setup: object_navigation_in_settings::setup,
         body: object_navigation_in_settings::body,
         teardown: object_navigation_in_settings::teardown,
@@ -377,6 +410,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No(
+            "it reads Verbatim's status and drives Verbatim's own settings dialog",
+        ),
         setup: switch_to_onecore::setup,
         body: switch_to_onecore::body,
         teardown: switch_to_onecore::teardown,
@@ -387,6 +423,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No("it ends Verbatim's synthesizer host"),
         setup: synth_host_crash_recovery::setup,
         body: synth_host_crash_recovery::body,
         teardown: synth_host_crash_recovery::teardown,
@@ -397,6 +434,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No("it ends one of Verbatim's outposts"),
         setup: outpost_crash_recovery::setup,
         body: outpost_crash_recovery::body,
         teardown: outpost_crash_recovery::teardown,
@@ -407,6 +445,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: lock_key_announcements::setup,
         body: lock_key_announcements::body,
         teardown: lock_key_announcements::teardown,
@@ -417,6 +456,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: explorer_folder_window::setup,
         body: explorer_folder_window::body,
         teardown: explorer_folder_window::teardown,
@@ -427,6 +467,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No(
+            "it drives Verbatim's own menu or settings dialog, which do not exist without Verbatim",
+        ),
         setup: settings_dialog_keys::setup,
         body: settings_dialog_keys::body,
         teardown: settings_dialog_keys::teardown,
@@ -437,6 +480,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: settings_system_page::setup,
         body: settings_system_page::body,
         teardown: settings_system_page::teardown,
@@ -447,6 +491,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: true,
         document: Some(editing::document),
+        comparable: Comparable::Yes,
         setup: editing::notepad_setup,
         body: editing::notepad_body,
         teardown: editing::teardown,
@@ -457,6 +502,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: editing::text_box_setup,
         body: editing::text_box_body,
         teardown: editing::teardown,
@@ -467,6 +513,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: true,
         document: Some(review_cursor::document),
+        comparable: Comparable::Yes,
         setup: review_cursor::notepad_setup,
         body: review_cursor::notepad_body,
         teardown: review_cursor::teardown,
@@ -477,6 +524,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: review_cursor::text_box_setup,
         body: review_cursor::text_box_body,
         teardown: review_cursor::teardown,
@@ -487,6 +535,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: true,
         document: Some(notepad_say_all::document),
+        comparable: Comparable::Yes,
         setup: notepad_say_all::setup,
         body: notepad_say_all::body,
         teardown: notepad_say_all::teardown,
@@ -497,6 +546,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: true,
         document: Some(word_selection::document),
+        comparable: Comparable::Yes,
         setup: word_selection::notepad_setup,
         body: word_selection::notepad_body,
         teardown: word_selection::teardown,
@@ -507,6 +557,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: word_selection::text_box_setup,
         body: word_selection::text_box_body,
         teardown: word_selection::teardown,
@@ -517,6 +568,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: true,
         document: Some(typed_words::document),
+        comparable: Comparable::Yes,
         setup: typed_words::notepad_setup,
         body: typed_words::notepad_body,
         teardown: typed_words::teardown,
@@ -527,6 +579,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: typed_words::text_box_setup,
         body: typed_words::text_box_body,
         teardown: typed_words::teardown,
@@ -537,6 +590,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: true,
         document: Some(review_words::document),
+        comparable: Comparable::Yes,
         setup: review_words::notepad_setup,
         body: review_words::notepad_body,
         teardown: review_words::teardown,
@@ -547,6 +601,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: review_words::text_box_setup,
         body: review_words::text_box_body,
         teardown: review_words::teardown,
@@ -557,6 +612,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: text_box_say_all::setup,
         body: text_box_say_all::body,
         teardown: text_box_say_all::teardown,
@@ -567,6 +623,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: spelling_errors::setup,
         body: spelling_errors::body,
         teardown: spelling_errors::teardown,
@@ -581,6 +638,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: true,
         document: Some(notepad_spelling_errors::document),
+        comparable: Comparable::Yes,
         setup: notepad_spelling_errors::setup,
         body: notepad_spelling_errors::body,
         teardown: notepad_spelling_errors::teardown,
@@ -591,6 +649,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No(
+            "it drives Verbatim's own menu or settings dialog, which do not exist without Verbatim",
+        ),
         setup: theme_panel::setup,
         body: theme_panel::body,
         teardown: theme_panel::teardown,
@@ -601,6 +662,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No(
+            "it drives Verbatim's own menu or settings dialog, which do not exist without Verbatim",
+        ),
         setup: terminal_settings_page::setup,
         body: terminal_settings_page::body,
         teardown: terminal_settings_page::teardown,
@@ -611,6 +675,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_commands::setup_windows_terminal,
         body: terminal_commands::body_windows_terminal,
         teardown: terminal_commands::teardown,
@@ -621,6 +686,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_commands::setup_console_host,
         body: terminal_commands::body_console_host,
         teardown: terminal_commands::teardown,
@@ -631,6 +697,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: Some(terminal_commands::speak_passwords),
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_commands::setup_spoken_password_windows_terminal,
         body: terminal_commands::body_spoken_password_windows_terminal,
         teardown: terminal_commands::teardown,
@@ -641,6 +708,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: Some(terminal_commands::speak_passwords),
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_commands::setup_spoken_password_console_host,
         body: terminal_commands::body_spoken_password_console_host,
         teardown: terminal_commands::teardown,
@@ -651,6 +719,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_flood::setup_windows_terminal,
         body: terminal_flood::body_windows_terminal,
         teardown: terminal_flood::teardown,
@@ -661,6 +730,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_flood::setup_console_host,
         body: terminal_flood::body_console_host,
         teardown: terminal_flood::teardown,
@@ -671,6 +741,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No(
+            "it takes the flood's speech up to its last line (take_until), which needs Verbatim's speech",
+        ),
         setup: terminal_key_timing::setup_control_windows_terminal,
         body: terminal_key_timing::body_control_windows_terminal,
         teardown: terminal_key_timing::teardown,
@@ -681,6 +754,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No(
+            "it takes the flood's speech up to its last line (take_until), which needs Verbatim's speech",
+        ),
         setup: terminal_key_timing::setup_control_console_host,
         body: terminal_key_timing::body_control_console_host,
         teardown: terminal_key_timing::teardown,
@@ -691,6 +767,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_key_timing::setup_shift_windows_terminal,
         body: terminal_key_timing::body_shift_windows_terminal,
         teardown: terminal_key_timing::teardown,
@@ -701,6 +778,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_key_timing::setup_shift_console_host,
         body: terminal_key_timing::body_shift_console_host,
         teardown: terminal_key_timing::teardown,
@@ -711,6 +789,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_key_timing::setup_line_key_windows_terminal,
         body: terminal_key_timing::body_line_key_windows_terminal,
         teardown: terminal_key_timing::teardown,
@@ -721,6 +800,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_key_timing::setup_line_key_console_host,
         body: terminal_key_timing::body_line_key_console_host,
         teardown: terminal_key_timing::teardown,
@@ -731,6 +811,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_key_timing::setup_up_typing_windows_terminal,
         body: terminal_key_timing::body_up_typing_windows_terminal,
         teardown: terminal_key_timing::teardown,
@@ -741,6 +822,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_key_timing::setup_up_typing_console_host,
         body: terminal_key_timing::body_up_typing_console_host,
         teardown: terminal_key_timing::teardown,
@@ -751,6 +833,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_flood_kinds::setup_same_windows_terminal,
         body: terminal_flood_kinds::body_same_windows_terminal,
         teardown: terminal_flood_kinds::teardown,
@@ -761,6 +844,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_flood_kinds::setup_same_console_host,
         body: terminal_flood_kinds::body_same_console_host,
         teardown: terminal_flood_kinds::teardown,
@@ -771,6 +855,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: Some(terminal_flood_kinds::raised_limits),
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_flood_kinds::setup_raised_windows_terminal,
         body: terminal_flood_kinds::body_raised_windows_terminal,
         teardown: terminal_flood_kinds::teardown,
@@ -781,6 +866,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: Some(terminal_flood_kinds::raised_limits),
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_flood_kinds::setup_raised_console_host,
         body: terminal_flood_kinds::body_raised_console_host,
         teardown: terminal_flood_kinds::teardown,
@@ -791,6 +877,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: Some(terminal_flood_kinds::lowered_limits),
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_flood_kinds::setup_redraw_windows_terminal,
         body: terminal_flood_kinds::body_redraw_windows_terminal,
         teardown: terminal_flood_kinds::teardown,
@@ -801,6 +888,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: Some(terminal_flood_kinds::lowered_limits),
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_flood_kinds::setup_redraw_console_host,
         body: terminal_flood_kinds::body_redraw_console_host,
         teardown: terminal_flood_kinds::teardown,
@@ -811,6 +899,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_windows::setup_leave_windows_terminal,
         body: terminal_windows::body_leave_windows_terminal,
         teardown: terminal_windows::teardown,
@@ -821,6 +910,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_windows::setup_leave_console_host,
         body: terminal_windows::body_leave_console_host,
         teardown: terminal_windows::teardown,
@@ -831,6 +921,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_windows::setup_close_tab,
         body: terminal_windows::body_close_tab,
         teardown: terminal_windows::teardown,
@@ -841,6 +932,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_flood::setup_wrapped_console_host,
         body: terminal_flood::body_wrapped_console_host,
         teardown: terminal_flood::teardown,
@@ -851,6 +943,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_overflow::setup_windows_terminal,
         body: terminal_overflow::body_history_windows_terminal,
         teardown: terminal_overflow::teardown,
@@ -861,6 +954,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_overflow::setup_console_host,
         body: terminal_overflow::body_history_console_host,
         teardown: terminal_overflow::teardown,
@@ -871,6 +965,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_overflow::setup_windows_terminal,
         body: terminal_overflow::body_history_during_group_windows_terminal,
         teardown: terminal_overflow::teardown,
@@ -881,6 +976,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_overflow::setup_console_host,
         body: terminal_overflow::body_history_during_group_console_host,
         teardown: terminal_overflow::teardown,
@@ -891,6 +987,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_overflow::setup_windows_terminal,
         body: terminal_overflow::body_overflow_windows_terminal,
         teardown: terminal_overflow::teardown,
@@ -901,6 +998,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_overflow::setup_console_host,
         body: terminal_overflow::body_overflow_console_host,
         teardown: terminal_overflow::teardown,
@@ -911,6 +1009,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_overflow::setup_windows_terminal,
         body: terminal_overflow::body_overflow_during_group_windows_terminal,
         teardown: terminal_overflow::teardown,
@@ -921,6 +1020,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_overflow::setup_console_host,
         body: terminal_overflow::body_overflow_during_group_console_host,
         teardown: terminal_overflow::teardown,
@@ -931,6 +1031,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_editing::setup_windows_terminal,
         body: terminal_editing::body_windows_terminal,
         teardown: terminal_editing::teardown,
@@ -941,6 +1042,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_editing::setup_console_host,
         body: terminal_editing::body_console_host,
         teardown: terminal_editing::teardown,
@@ -951,6 +1053,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_review_grid::setup_windows_terminal,
         body: terminal_review_grid::body_windows_terminal,
         teardown: terminal_review_grid::teardown,
@@ -961,6 +1064,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_review_grid::setup_console_host,
         body: terminal_review_grid::body_console_host,
         teardown: terminal_review_grid::teardown,
@@ -971,6 +1075,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_progress::setup_windows_terminal,
         body: terminal_progress::body_windows_terminal,
         teardown: terminal_progress::teardown,
@@ -981,6 +1086,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_progress::setup_console_host,
         body: terminal_progress::body_console_host,
         teardown: terminal_progress::teardown,
@@ -991,6 +1097,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_typing::setup_windows_terminal,
         body: terminal_typing::body_windows_terminal,
         teardown: terminal_typing::teardown,
@@ -1001,6 +1108,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_typing::setup_console_host,
         body: terminal_typing::body_console_host,
         teardown: terminal_typing::teardown,
@@ -1011,6 +1119,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_screens::setup_windows_terminal,
         body: terminal_screens::body_long_lines_windows_terminal,
         teardown: terminal_screens::teardown,
@@ -1021,6 +1130,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_screens::setup_console_host,
         body: terminal_screens::body_long_lines_console_host,
         teardown: terminal_screens::teardown,
@@ -1031,6 +1141,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_screens::setup_windows_terminal,
         body: terminal_screens::body_full_screen_windows_terminal,
         teardown: terminal_screens::teardown,
@@ -1041,6 +1152,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_screens::setup_console_host,
         body: terminal_screens::body_full_screen_console_host,
         teardown: terminal_screens::teardown,
@@ -1051,6 +1163,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_lists::setup_windows_terminal,
         body: terminal_lists::body_marker_windows_terminal,
         teardown: terminal_lists::teardown,
@@ -1061,6 +1174,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_lists::setup_console_host,
         body: terminal_lists::body_marker_console_host,
         teardown: terminal_lists::teardown,
@@ -1071,6 +1185,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_lists::setup_windows_terminal,
         body: terminal_lists::body_redrawn_windows_terminal,
         teardown: terminal_lists::teardown,
@@ -1081,6 +1196,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_lists::setup_console_host,
         body: terminal_lists::body_redrawn_console_host,
         teardown: terminal_lists::teardown,
@@ -1091,6 +1207,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_pager::setup_windows_terminal,
         body: terminal_pager::body_windows_terminal,
         teardown: terminal_pager::teardown,
@@ -1101,6 +1218,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_pager::setup_console_host,
         body: terminal_pager::body_console_host,
         teardown: terminal_pager::teardown,
@@ -1111,6 +1229,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_review_output::setup_windows_terminal,
         body: terminal_review_output::body_windows_terminal,
         teardown: terminal_review_output::teardown,
@@ -1121,6 +1240,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_review_output::setup_console_host,
         body: terminal_review_output::body_console_host,
         teardown: terminal_review_output::teardown,
@@ -1131,6 +1251,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_footer::setup_windows_terminal,
         body: terminal_footer::body_windows_terminal,
         teardown: terminal_footer::teardown,
@@ -1141,6 +1262,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_footer::setup_console_host,
         body: terminal_footer::body_console_host,
         teardown: terminal_footer::teardown,
@@ -1151,6 +1273,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_footer::setup_overflow_console_host,
         body: terminal_footer::body_overflow_console_host,
         teardown: terminal_footer::teardown,
@@ -1161,6 +1284,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_short_output::setup_windows_terminal,
         body: terminal_short_output::body_windows_terminal,
         teardown: terminal_short_output::teardown,
@@ -1171,6 +1295,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_short_output::setup_console_host,
         body: terminal_short_output::body_console_host,
         teardown: terminal_short_output::teardown,
@@ -1181,6 +1306,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_windows::setup_windows_terminal,
         body: terminal_windows::body_two_windows_terminal,
         teardown: terminal_windows::teardown,
@@ -1191,6 +1317,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_windows::setup_console_host,
         body: terminal_windows::body_two_console_host,
         teardown: terminal_windows::teardown,
@@ -1201,6 +1328,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: terminal_windows::setup_tabs,
         body: terminal_windows::body_tabs,
         teardown: terminal_windows::teardown,
@@ -1211,6 +1339,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: object_navigation_over_uia::setup,
         body: object_navigation_over_uia::body,
         teardown: object_navigation_over_uia::teardown,
@@ -1221,6 +1350,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::Yes,
         setup: system_information_tree::setup,
         body: system_information_tree::body,
         teardown: system_information_tree::teardown,
@@ -1231,6 +1361,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: Some(demo_notepad_editing::document),
+        comparable: Comparable::No("it is a demonstration, recorded by cargo xtask demo"),
         setup: demo_notepad_editing::setup,
         body: demo_notepad_editing::body,
         teardown: demo_notepad_editing::teardown,
@@ -1241,6 +1372,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: Some(demo_review_cursor::document),
+        comparable: Comparable::No("it is a demonstration, recorded by cargo xtask demo"),
         setup: demo_review_cursor::setup,
         body: demo_review_cursor::body,
         teardown: demo_review_cursor::teardown,
@@ -1251,6 +1383,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: Some(notepad_say_all::document),
+        comparable: Comparable::No("it is a demonstration, recorded by cargo xtask demo"),
         setup: demo_say_all::setup,
         body: demo_say_all::body,
         teardown: demo_say_all::teardown,
@@ -1261,6 +1394,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No("it is a demonstration, recorded by cargo xtask demo"),
         setup: demo_terminal_session::setup,
         body: demo_terminal_session::body,
         teardown: demo_terminal_session::teardown,
@@ -1271,6 +1405,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No("it is a demonstration, recorded by cargo xtask demo"),
         setup: demo_settings_dialog_keys::setup,
         body: demo_settings_dialog_keys::body,
         teardown: demo_settings_dialog_keys::teardown,
@@ -1281,6 +1416,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No("it is a measurement workload of Verbatim's latency"),
         setup: measure::setup_focus_windows_terminal,
         body: measure::body_focus_windows_terminal,
         teardown: measure::teardown,
@@ -1291,6 +1427,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No("it is a measurement workload of Verbatim's latency"),
         setup: measure::setup_focus_tabs,
         body: measure::body_focus_tabs,
         teardown: measure::teardown,
@@ -1301,6 +1438,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No("it is a measurement workload of Verbatim's latency"),
         setup: measure::setup_focus_explorer,
         body: measure::body_focus_explorer,
         teardown: measure::teardown,
@@ -1311,6 +1449,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No("it is a measurement workload of Verbatim's latency"),
         setup: measure::setup_focus_text_box,
         body: measure::body_focus_text_box,
         teardown: measure::teardown,
@@ -1321,6 +1460,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No("it is a measurement workload of Verbatim's latency"),
         setup: crate::scenarios::no_setup,
         body: measure::body_focus_new_application,
         teardown: measure::teardown,
@@ -1331,6 +1471,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No("it is a measurement workload of Verbatim's latency"),
         setup: measure::setup_keys_text_box,
         body: measure::body_keys_text_box,
         teardown: measure::teardown,
@@ -1341,6 +1482,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No("it is a measurement workload of Verbatim's latency"),
         setup: measure::setup_keys_console_host,
         body: measure::body_keys_console_host,
         teardown: measure::teardown,
@@ -1351,6 +1493,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No("it is a measurement workload of Verbatim's latency"),
         setup: measure::setup_keys_windows_terminal,
         body: measure::body_keys_windows_terminal,
         teardown: measure::teardown,
@@ -1361,6 +1504,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
+        comparable: Comparable::No("it is a measurement workload of Verbatim's latency"),
         setup: measure::setup_speech_real,
         body: measure::body_speech_real,
         teardown: measure::teardown,
@@ -1475,7 +1619,148 @@ pub fn run_named(name: &str) {
         "{} is not set: a live scenario needs a running agent (docs/tooling/e2e.md)",
         crate::ENDPOINT_ENV
     );
-    run(def);
+    if compare::enabled() {
+        run_compare(def);
+    } else {
+        run(def);
+    }
+}
+
+/// Runs one scenario in compare mode ([`crate::compare`]): against NVDA,
+/// asserting nothing, and writing what the scenario expects Verbatim to
+/// say beside what NVDA said as `compare.txt` in the run's artifacts, and
+/// printing it.
+///
+/// The order: refuse a scenario marked [`Comparable::No`], giving why;
+/// start from the minimized desktop with NVDA's transcript connected
+/// ([`Scenario::launch_with`]); hear the desktop as an ordinary step; run
+/// setup, the body, and the end of the speech; release any key still held;
+/// run the teardown; close everything the scenario opened; write the
+/// timeline, the report, the foreground record, and the summary; and
+/// archive the run. None of the checks on Verbatim after the body runs,
+/// since there is no Verbatim. It passes unless the harness itself fails,
+/// such as a window that does not come to the front, a method that needs
+/// Verbatim, or the transcript lost; never on what was said.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one run in order, as `run` is, each step's problems collected"
+)]
+fn run_compare(def: &ScenarioDef) {
+    if let Comparable::No(why) = def.comparable {
+        panic!(
+            "scenario {:?} cannot be compared with NVDA: {why}",
+            def.name
+        );
+    }
+    let dir = artifacts::scenario_dir(&artifacts::artifacts_root(), def.name);
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).unwrap_or_else(|error| {
+            panic!(
+                "scenario {:?}: could not clear the previous run's artifacts in {}: {error}",
+                def.name,
+                dir.display()
+            )
+        });
+    }
+    let mut scenario = Scenario::launch_with(def.settings, def.document.map(|document| document()))
+        .unwrap_or_else(|error| {
+            panic!(
+                "scenario {:?}: starting against NVDA failed: {error}",
+                def.name
+            )
+        });
+    let mut foreground = vec![format!("before setup: {}", scenario.foreground_report())];
+    let mut problems: Vec<String> = Vec::new();
+
+    let mut state = None;
+    let body_outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        crate::scenarios::expect_desktop(&mut scenario);
+        let mut created = (def.setup)(&mut scenario)
+            .unwrap_or_else(|error| panic!("scenario {:?}: setup failed: {error}", def.name));
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            (def.body)(&mut scenario, &mut created);
+            scenario.expect_nothing_more();
+        }));
+        state = Some(created);
+        if let Err(payload) = result {
+            panic::resume_unwind(payload);
+        }
+    }));
+    problems.extend(scenario.release_held_keys());
+    let steps = scenario.speech().take_comparison();
+    let teardown_outcome = state.map(|state| {
+        panic::catch_unwind(AssertUnwindSafe(|| (def.teardown)(&mut scenario, state)))
+    });
+    if let Some(Err(payload)) = &teardown_outcome {
+        problems.push(format!(
+            "teardown failed: {}",
+            panic_message(payload.as_ref())
+        ));
+    }
+    problems.extend(scenario.clean_up());
+    problems.extend(scenario.collect_run_artifacts(&dir));
+    let (nvda_version, quiet) = scenario
+        .nvda_run()
+        .map(|(version, quiet)| (version.to_owned(), quiet))
+        .expect("compare mode runs against NVDA");
+    let (pin, pin_matches) =
+        compare::submodule_pin(&crate::scenario::workspace_root(), &nvda_version);
+    let header = ReportHeader {
+        scenario: def.name.to_owned(),
+        date: artifacts::utc_date(std::time::SystemTime::now()),
+        nvda_version,
+        pin,
+        pin_matches,
+        quiet,
+    };
+    let report = compare::render_report(&header, &steps);
+    if let Err(error) = std::fs::write(dir.join(compare::REPORT_FILE_NAME), &report) {
+        problems.push(format!("could not write the comparison: {error}"));
+    }
+    // Written to the handle itself, past the test harness's capture, so
+    // the report shows for a run that passes.
+    let _ = io::stdout().write_all(format!("{report}\n").as_bytes());
+    foreground.push(format!("after cleanup: {}", scenario.foreground_report()));
+    drop(scenario);
+    if let Err(error) = write_foreground(&dir, &foreground) {
+        problems.push(format!("could not write the foreground record: {error}"));
+    }
+
+    let passed = body_outcome.is_ok() && problems.is_empty();
+    if let Err(error) = ScenarioSummary::new(def.name, passed, None).write(&dir) {
+        problems.push(format!("could not write the run summary: {error}"));
+    }
+    if let Err(error) = artifacts::archive_run(&artifacts::artifacts_root(), def.name, &dir, passed)
+    {
+        problems.push(format!("could not archive the run's artifacts: {error}"));
+    }
+    println!(
+        "scenario {:?} compared with NVDA: {}",
+        def.name,
+        if body_outcome.is_ok() && problems.is_empty() {
+            "done"
+        } else {
+            "harness error"
+        }
+    );
+    let problems = problems.join("\n");
+    if let Err(payload) = body_outcome {
+        panic!(
+            "scenario {:?}: the comparison stopped on a harness error: {}{}",
+            def.name,
+            panic_message(payload.as_ref()),
+            if problems.is_empty() {
+                String::new()
+            } else {
+                format!("\nalso:\n{problems}")
+            }
+        );
+    }
+    assert!(
+        problems.is_empty(),
+        "scenario {:?}'s comparison failed after its body:\n{problems}",
+        def.name
+    );
 }
 
 /// Runs one scenario end to end and fails it, after collecting everything,
@@ -1768,6 +2053,7 @@ mod tests {
                 settings: None,
                 local_only: false,
                 document: None,
+                comparable: Comparable::Yes,
                 setup: no_setup,
                 body: no_body,
                 teardown: no_teardown,
@@ -1778,6 +2064,7 @@ mod tests {
                 settings: None,
                 local_only: false,
                 document: None,
+                comparable: Comparable::Yes,
                 setup: no_setup,
                 body: no_body,
                 teardown: no_teardown,
@@ -1788,6 +2075,7 @@ mod tests {
                 settings: None,
                 local_only: false,
                 document: None,
+                comparable: Comparable::Yes,
                 setup: no_setup,
                 body: no_body,
                 teardown: no_teardown,

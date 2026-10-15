@@ -177,20 +177,28 @@ pub(crate) fn heard_flood(scenario: &mut Scenario, run: u32) {
 /// script finishing is no evidence that the terminal has shown all of its
 /// output, and output it shows after reporting is turned back on is new
 /// output, rightly spoken. The subscription is read as events arrive, since
-/// one left unread through a flood falls behind and is disconnected.
-pub(crate) fn watch_for_prompt(scenario: &mut Scenario) -> std::thread::JoinHandle<()> {
+/// one left unread through a flood falls behind and is disconnected. In
+/// compare mode NVDA offers no events, so nothing is watched, and NVDA's
+/// quiet period, waited for before the next input, is the only evidence
+/// there is.
+pub(crate) fn watch_for_prompt(scenario: &mut Scenario) -> Option<std::thread::JoinHandle<()>> {
+    if scenario.is_comparing() {
+        return None;
+    }
     let mut events = scenario
         .subscribe_events()
         .expect("subscribes to Verbatim's events");
-    std::thread::spawn(move || {
+    Some(std::thread::spawn(move || {
         terminal::wait_for_caret_on(&mut events, PROMPT, FLOOD_STEP)
             .expect("the terminal shows the prompt after the flood");
-    })
+    }))
 }
 
-/// Waits for [`watch_for_prompt`]'s evidence.
-pub(crate) fn wait_for_prompt(watch: std::thread::JoinHandle<()>) {
-    if let Err(panic) = watch.join() {
+/// Waits for [`watch_for_prompt`]'s evidence, when it watches.
+pub(crate) fn wait_for_prompt(watch: Option<std::thread::JoinHandle<()>>) {
+    if let Some(watch) = watch
+        && let Err(panic) = watch.join()
+    {
         std::panic::resume_unwind(panic);
     }
 }
