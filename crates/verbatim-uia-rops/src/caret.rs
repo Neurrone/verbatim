@@ -1201,13 +1201,13 @@ fn spoken_text(formats: Option<FormatSpan>, line: &UnitRead, unit: Option<&UnitR
 }
 
 /// A position in a program: a range register and the endpoint's number.
-type ProgramEnd = (Reg<kind::TextRange>, Reg<kind::Int>);
+pub(crate) type ProgramEnd = (Reg<kind::TextRange>, Reg<kind::Int>);
 
 /// Emits the selection's changes from the old ends to the new selection,
 /// read only when `moved`: two arrays, whether each change is a selection,
 /// and its text. The new selection is `selection` when `has_selection`,
 /// else collapsed at `point`.
-fn emit_changes(
+pub(crate) fn emit_changes(
     b: &mut Builder,
     c: &Constants,
     (has_selection, selection, point): (
@@ -1288,7 +1288,7 @@ fn emit_changes(
 }
 
 /// The changes [`emit_changes`] found.
-fn read_changes(
+pub(crate) fn read_changes(
     outcome: &Outcome,
     selected: Reg<kind::Array>,
     texts: Reg<kind::Array>,
@@ -1334,7 +1334,7 @@ pub(crate) fn emit_caret(
 /// [`emit_caret`], its registers among the program's results when
 /// `results`, and only the program's own otherwise (a caret read again to
 /// compare, [`CaretQuery::recheck`]).
-fn emit_caret_with(
+pub(crate) fn emit_caret_with(
     b: &mut Builder,
     c: &Constants,
     (element, pattern): (Reg<kind::Element>, Reg<kind::TextPattern>),
@@ -1740,7 +1740,7 @@ fn classic_formats(
 
 /// The selection's changes from `old` to `new`, the classic way, as
 /// [`emit_changes`] emits them.
-fn classic_changes(
+pub(crate) fn classic_changes(
     (old_start, old_end): (RangeEnd<'_>, RangeEnd<'_>),
     (new_start, new_end): (RangeEnd<'_>, RangeEnd<'_>),
     max_text: i32,

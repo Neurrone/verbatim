@@ -1047,6 +1047,31 @@ start to its end).
   each end).
 - Target: 1, met.
 
+### The review copy's selection, UIA
+
+The first press of the review copy (Verbatim+F10, `TextOp::Select`),
+answered with how the selection changed so that Core speaks it as a
+selecting key's: mockapp's caret collapsed at the start, "alpha" selected
+from the start of the line to a position five characters on, which the
+program finds by the text before it.
+
+- Minimum: 1 UIA call: one program reads the selection, selects
+  (`ITextRangeProvider::Select` is an instruction of the remote operations
+  bytecode, `TextRangeSelect`), reads the selection again, and compares
+  the two and reads the text of each change inside the provider.
+- Today: 1 remotely (4 before 2026-10-15: the selection read before by
+  two classic calls, the selection as a program of its own, and the read
+  after as a caret read's program); classically 22 (30 before).
+- Target: 1, met.
+
+In a Win32 edit control the same request is 6 window messages, as before:
+the selection (`EM_GETSEL`), the select (`EM_SETSEL` and
+`EM_SCROLLCARET`), the selection again, and the change's text
+(`WM_GETTEXTLENGTH` and `WM_GETTEXT`); each is a message of its own, so 6
+is also the minimum. Pinned by `crates/mockapp/tests/call_counts.rs`
+(`uia_text_requests_cost_exactly`, "UIA review copy select", both ways;
+`caret_moves_cost_exactly`, "Edit control review copy select").
+
 ### Wall-clock gain
 
 Measured on 2026-10-07 on this machine (x64), release build, against

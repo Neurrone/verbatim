@@ -603,7 +603,13 @@ Every point is returned (`FoundPoint`) so the caller can remember it.
   moving the caret), ordered by comparing them, and the text between them
   read up to a limit or selected. A selection the provider refuses is
   caught inside the program (`try_catch`), answered as not selected, as
-  the classic `Select` failure is.
+  the classic `Select` failure is. `RangeAction::SelectReporting` also
+  reads the selection before selecting, with the caret read's
+  instructions, and again after, and answers how it changed
+  (`RangeAnswer::changes`) by the caret read's rule, with the same
+  instructions (`emit_changes`), all in the one program: the review
+  copy's first press, one round trip (`docs/performance.md`, "The review
+  copy's selection, UIA").
 - `text_location` (`LocationQuery`, `LocationAnswer`): the character at
   the point and its bounding rectangles, the first rectangle's left and
   top. The program returns them as an array of doubles (verified against
@@ -612,8 +618,8 @@ Every point is returned (`FoundPoint`) so the caller can remember it.
 Against mockapp (`crates/mockapp/tests/text.rs`), the two implementations
 of each agree: a line at the caret, the next line, the end of the text,
 every line ahead with the end found, a word from a point found by its
-text, a range read in either order, a selection made and read back, and
-locations.
+text, a range read in either order, a selection made and read back, a
+selection made with its change reported, and locations.
 
 ## Layer 3: an object-navigation step
 

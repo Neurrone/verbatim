@@ -38,10 +38,10 @@ use verbatim_uia::text::Endpoint;
 use verbatim_uia::{Node, NodeIdRegistry, Shape, Uia};
 use verbatim_uia_rops::{
     Attributes, CaretAnswer, CaretQuery, FormatSpan, LocationQuery, Movement, Position,
-    RangeAction, RangeEnd, RangeQuery, RunAttributes, TextAttribute, TextFrom, TextTarget,
-    UnitsAnswer, UnitsQuery, caret_read_classic, caret_read_remote, text_location_classic,
-    text_location_remote, text_range_classic, text_range_remote, text_units_classic,
-    text_units_remote,
+    RangeAction, RangeAnswer, RangeEnd, RangeQuery, RunAttributes, TextAttribute, TextFrom,
+    TextTarget, UnitsAnswer, UnitsQuery, caret_read_classic, caret_read_remote,
+    text_location_classic, text_location_remote, text_range_classic, text_range_remote,
+    text_units_classic, text_units_remote,
 };
 use windows::Win32::Foundation::{HWND, WPARAM};
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, TextUnit_Line, TextUnit_Word};
@@ -706,8 +706,8 @@ fn units_summary(answer: &UnitsAnswer) -> UnitsSummary {
 
 /// The text protocol's other reads agree remotely and classically: units
 /// after a movement, read ahead, and from a position some text after a held
-/// one; the text between two points and selecting it; and a point's place
-/// on the screen.
+/// one; the text between two points, selecting it, and selecting it with
+/// the selection's change reported; and a point's place on the screen.
 #[expect(
     clippy::too_many_lines,
     reason = "each read checked in turn against one running mockapp"
@@ -851,6 +851,39 @@ fn remote_and_classic_text_reads_agree() {
         ),
         ("alpha ".to_owned(), false)
     );
+
+    // Selecting with the change reported, from a caret at the start, each
+    // way from the same selection: the change is the text selected.
+    let report = |select: fn(&RangeQuery<'_>) -> Result<RangeAnswer, verbatim_uia_rops::Error>| {
+        let collapse = RangeQuery {
+            target,
+            start: TextFrom::Start,
+            end: None,
+            action: RangeAction::Select,
+        };
+        assert!(
+            text_range_remote(&collapse)
+                .expect("the caret moves")
+                .selected
+        );
+        let answer = select(&RangeQuery {
+            target,
+            start: TextFrom::Start,
+            end: Some(after),
+            action: RangeAction::SelectReporting(1024),
+        })
+        .expect("the selection is made");
+        assert!(answer.selected);
+        answer
+            .changes
+            .expect("the changes")
+            .into_iter()
+            .map(|change| (change.selected, String::from_utf16_lossy(&change.text)))
+            .collect::<Vec<_>>()
+    };
+    let expected = vec![(true, "alpha ".to_owned())];
+    assert_eq!(report(text_range_remote), expected);
+    assert_eq!(report(text_range_classic), expected);
 
     // A point's place: mockapp draws each character 8 pixels wide.
     for (at, expected) in [(TextFrom::Start, (100.0, 200.0)), (after, (148.0, 200.0))] {

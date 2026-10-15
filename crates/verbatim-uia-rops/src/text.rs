@@ -21,7 +21,9 @@ use verbatim_uia::text::{Endpoint, Language, TextPatternExt, TextRangeExt, caret
 
 use crate::builder::{Builder, Reg, kind};
 use crate::caret::{
-    CaretRegisters, Constants, emit_caret, endpoint_number, gone_or_timed_out, string_of,
+    CaretRegisters, Constants, ProgramEnd, RangeEnd, SelectionTextChange, classic_changes,
+    emit_caret, emit_caret_with, emit_changes, endpoint_number, gone_or_timed_out, read_changes,
+    string_of,
 };
 use crate::error::Error;
 use crate::focus::Path;
@@ -185,6 +187,12 @@ pub enum RangeAction {
     Text(i32),
     /// Selects it, which also puts the caret there.
     Select,
+    /// Selects it, as [`Select`](Self::Select) does, and answers how the
+    /// selection changed ([`RangeAnswer::changes`]): the selection read
+    /// before selecting compared with the one read after, by the caret
+    /// read's rule ([`crate::CaretAnswer::changes`]), each change's text
+    /// read up to this many UTF-16 code units.
+    SelectReporting(i32),
 }
 
 /// What [`text_range`] is asked.
@@ -210,8 +218,13 @@ pub struct RangeAnswer {
     pub end: FoundPoint,
     /// The text read, for [`RangeAction::Text`].
     pub text: Vec<u16>,
-    /// Whether the selection was made, for [`RangeAction::Select`].
+    /// Whether the selection was made, for [`RangeAction::Select`] and
+    /// [`RangeAction::SelectReporting`].
     pub selected: bool,
+    /// For [`RangeAction::SelectReporting`] when the selection was made,
+    /// how it changed: text newly selected or no longer selected, empty
+    /// stretches left out. `None` otherwise.
+    pub changes: Option<Vec<SelectionTextChange>>,
 }
 
 /// The signature both range implementations share.
@@ -301,6 +314,8 @@ struct Program<'t> {
     target: TextTarget<'t>,
     c: Constants,
     element: Option<Reg<kind::Element>>,
+    /// The text pattern the caret was read through, once it was.
+    pattern: Option<Reg<kind::TextPattern>>,
     caret: Option<CaretRegisters>,
 }
 
@@ -316,6 +331,7 @@ impl<'t> Program<'t> {
                 max_text: b.int(max_text),
             },
             element: None,
+            pattern: None,
             caret: None,
         }
     }
@@ -343,6 +359,7 @@ impl<'t> Program<'t> {
             (element, pattern),
             self.target.pattern2.is_some(),
         );
+        self.pattern = Some(pattern);
         self.caret = Some(caret);
         caret
     }
@@ -725,12 +742,16 @@ pub fn text_units_remote(query: &UnitsQuery<'_>) -> Result<UnitsAnswer, Error> {
 ///
 /// Any [`Error`] from running the program.
 pub fn text_range_remote(query: &RangeQuery<'_>) -> Result<RangeAnswer, Error> {
-    let max_text = match query.action {
-        RangeAction::Text(max) => max,
-        RangeAction::Select => 0,
+    let (max_text, reporting) = match query.action {
+        RangeAction::Text(max) => (max, None),
+        RangeAction::Select => (0, None),
+        RangeAction::SelectReporting(max) => (0, Some(max)),
     };
     let mut b = Builder::new();
     let mut p = Program::new(&mut b, query.target, max_text);
+    // The selection before, read first, so that points naming the caret or
+    // the selection share the read.
+    let before = reporting.map(|_| p.caret(&mut b));
     let start = p.point(&mut b, query.start);
     let start = b.add_to_results(start);
     let end = match query.end {
@@ -767,7 +788,7 @@ pub fn text_range_remote(query: &RangeQuery<'_>) -> Result<RangeAnswer, Error> {
             let read = b.text_range_get_text(range, c.max_text);
             b.set(text, read);
         }
-        RangeAction::Select => b.try_catch(
+        RangeAction::Select | RangeAction::SelectReporting(_) => b.try_catch(
             |b| {
                 b.text_range_select(range);
                 let yes = b.bool(true);
@@ -776,6 +797,16 @@ pub fn text_range_remote(query: &RangeQuery<'_>) -> Result<RangeAnswer, Error> {
             |_, _| {},
         ),
     }
+    let changes = match (reporting, before, p.element, p.pattern) {
+        (Some(max), Some(before), Some(element), Some(pattern)) => Some(emit_selection_change(
+            &mut b,
+            c,
+            before,
+            (element, pattern, query.target.pattern2.is_some()),
+            (selected, max),
+        )),
+        _ => None,
+    };
     let outcome = b.finish().execute()?;
     let start = found(&outcome, start)?;
     let end = if query.end.is_some() {
@@ -788,7 +819,48 @@ pub fn text_range_remote(query: &RangeQuery<'_>) -> Result<RangeAnswer, Error> {
         end,
         text: string_of(&outcome, text)?.encode_utf16().collect(),
         selected: outcome.get(selected)?,
+        changes: match changes {
+            Some((flags, texts)) if outcome.get(selected)? => {
+                Some(read_changes(&outcome, flags, texts)?)
+            }
+            _ => None,
+        },
     })
+}
+
+/// Emits how the selection changed from `before`, when `selected`: the
+/// selection read again and compared with it, each change's text read up
+/// to `max` UTF-16 code units ([`emit_changes`]).
+fn emit_selection_change(
+    b: &mut Builder,
+    c: &Constants,
+    before: CaretRegisters,
+    (element, pattern, pattern2): (Reg<kind::Element>, Reg<kind::TextPattern>, bool),
+    (selected, max): (Reg<kind::Bool>, i32),
+) -> (Reg<kind::Array>, Reg<kind::Array>) {
+    // The ends before: the selection's, else the caret twice.
+    let old = b.new_null().assume::<kind::TextRange>();
+    let old_end = b.new_int(0);
+    b.if_else(
+        before.has_selection,
+        |b| {
+            b.set(old, before.selection);
+            b.set(old_end, c.end);
+        },
+        |b| {
+            b.set(old, before.caret);
+            b.set(old_end, c.start);
+        },
+    );
+    let old: (ProgramEnd, ProgramEnd) = ((old, c.start), (old, old_end));
+    let after = emit_caret_with(b, c, (element, pattern), pattern2, false);
+    emit_changes(
+        b,
+        c,
+        (after.has_selection, after.selection, after.caret),
+        old,
+        (selected, max),
+    )
 }
 
 /// A point's place on the screen in one round trip.
@@ -1095,6 +1167,14 @@ fn classic_languages(units: &mut [UnitText], whole: bool) -> Result<(), Error> {
 /// [`Error::Uia`] when a call fails.
 pub fn text_range_classic(query: &RangeQuery<'_>) -> Result<RangeAnswer, Error> {
     let mut caret = None;
+    let reporting = match query.action {
+        RangeAction::SelectReporting(max) => {
+            caret = Some(classic_caret(query.target)?);
+            Some(max)
+        }
+        RangeAction::Text(_) | RangeAction::Select => None,
+    };
+    let before = caret.as_ref().map(ends_of);
     let start = classic_point(query.target, query.start, &mut caret)?;
     let end = match query.end {
         Some(end) => classic_point(query.target, end, &mut caret)?,
@@ -1113,14 +1193,50 @@ pub fn text_range_classic(query: &RangeQuery<'_>) -> Result<RangeAnswer, Error> 
     range.move_endpoint_to(Endpoint::End, &second.range, second.endpoint)?;
     let (text, selected) = match query.action {
         RangeAction::Text(max) => (range.text(max)?, false),
-        RangeAction::Select => (Vec::new(), range.select().is_ok()),
+        RangeAction::Select | RangeAction::SelectReporting(_) => {
+            (Vec::new(), range.select().is_ok())
+        }
+    };
+    let changes = match (reporting, before) {
+        (Some(max), Some((old, old_end))) if selected => {
+            let (new, new_end) = ends_of(&classic_caret(query.target)?);
+            let ends = |range, end| {
+                (
+                    RangeEnd {
+                        range,
+                        endpoint: Endpoint::Start,
+                    },
+                    RangeEnd {
+                        range,
+                        endpoint: end,
+                    },
+                )
+            };
+            Some(classic_changes(
+                ends(&old, old_end),
+                ends(&new, new_end),
+                max,
+            )?)
+        }
+        _ => None,
     };
     Ok(RangeAnswer {
         start,
         end,
         text,
         selected,
+        changes,
     })
+}
+
+/// The selection a caret read found, as a range and the end of it where
+/// the selection ends, its start being the range's start: the selection,
+/// or the caret twice when nothing is selected.
+fn ends_of(state: &CaretState) -> (IUIAutomationTextRange, Endpoint) {
+    match &state.selection {
+        Some(selection) => (selection.clone(), Endpoint::End),
+        None => (state.caret.range.clone(), Endpoint::Start),
+    }
 }
 
 /// A point's place on the screen the classic way.

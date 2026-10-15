@@ -206,6 +206,9 @@ pub enum RangeAction {
     Text(usize),
     /// Selects it.
     Select,
+    /// Selects it, and reads how the selection changed
+    /// ([`RangeRead::changes`]).
+    SelectReporting,
 }
 
 /// The answer of [`TextSource::range`].
@@ -216,8 +219,13 @@ pub struct RangeRead<P> {
     pub end: P,
     /// The text read, for [`RangeAction::Text`].
     pub text: Vec<u16>,
-    /// Whether the selection was made, for [`RangeAction::Select`].
+    /// Whether the selection was made, for [`RangeAction::Select`] and
+    /// [`RangeAction::SelectReporting`].
     pub selected: bool,
+    /// For [`RangeAction::SelectReporting`] when the selection was made, how
+    /// it changed from the selection read just before (each change selected
+    /// or not, and its UTF-16 text), by [`selection_changes`]'s rule.
+    pub changes: Option<Vec<(bool, Vec<u16>)>>,
 }
 
 /// Why a source could not answer.
@@ -1943,13 +1951,33 @@ fn select<S: TextSource>(
 /// Selects between two points, answering how the selection changed: the
 /// selection read before selecting, then compared with the one read after,
 /// by the rule a caret key's reply follows ([`selection_changes`]), so Core
-/// speaks a selection it made as it speaks one a key made.
+/// speaks a selection it made as it speaks one a key made. A source that
+/// can does all of it at once ([`RangeAction::SelectReporting`], one round
+/// trip through UIA); the others read, select, and read again.
 fn select_text<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     start: TextPoint,
     end: TextPoint,
 ) -> TextResult<TextReply> {
+    if let Some(reply) = range_at_once(
+        source,
+        anchors,
+        (start, Some(end)),
+        RangeAction::SelectReporting,
+    )? {
+        return Ok(match reply {
+            Ok(read) if read.selected => TextReply::Selected(
+                read.changes
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|(selected, text)| change_of(selected, &text))
+                    .collect(),
+            ),
+            Ok(_) => TextReply::Unsupported,
+            Err(reply) => reply,
+        });
+    }
     let before = source.caret()?;
     let previous = before
         .selection
@@ -1958,25 +1986,10 @@ fn select_text<S: TextSource>(
         TextReply::Done => {}
         other => return Ok(other),
     }
-    let request = CaretRequest {
-        since: None,
-        previous: Some(&previous),
-        unit: None,
-        formats: None,
-        recheck: false,
-    };
-    let (state, changes) = match source.caret_read(&request)? {
-        Some(read) => (read.state, read.changes),
-        None => (source.caret()?, None),
-    };
-    let changes = match changes {
-        Some(changes) => changes
-            .into_iter()
-            .filter_map(|(selected, text)| change_of(selected, &text))
-            .collect(),
-        None => selection_changes(source, &previous, &state)?,
-    };
-    Ok(TextReply::Selected(changes))
+    let state = source.caret()?;
+    Ok(TextReply::Selected(selection_changes(
+        source, &previous, &state,
+    )?))
 }
 
 /// The screen position of a point.

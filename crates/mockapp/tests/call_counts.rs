@@ -2846,7 +2846,83 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         0,
         expected.1,
     );
+
+    // The review copy's first press: "alpha" selected from a collapsed
+    // caret, the selection read before and after and compared.
+    common::apply(&mut app, hwnd, "caret doc 0");
+    let (reply, cost) = measure_text(
+        hwnd,
+        &mut source,
+        &mut anchors,
+        &TextOp::Select {
+            start: TextPoint::At(at),
+            end: TextPoint::At(TextPosition {
+                anchor: collapsed.line.start,
+                offset: 5,
+            }),
+        },
+    );
+    assert_eq!(selected_texts(&reply), [(true, "alpha", 5)]);
+    // The end found by the text before it (a `MoveEndpointByUnit` and a
+    // `GetText`), the selection read before and after (the second with
+    // `TextPattern2`'s caret, text now being selected), the select, and
+    // the change's ends compared and its text read. Before 2026-10-15 the
+    // read before was classic and the read after a caret read of its own:
+    // 4 calls remotely, 30 classically.
+    let expected: (CallCounts, &[(&str, u32)]) = if remote {
+        (
+            calls(1, 0, 0),
+            &[
+                ("ProviderOptions", 2),
+                ("GetPatternProvider", 2),
+                ("GetPropertyValue", 1),
+                ("HostRawElementProvider", 1),
+                ("Navigate", 1),
+                ("ITextProvider::GetSelection", 2),
+                ("GetCaretRange", 1),
+                ("Clone", 5),
+                ("CompareEndpoints", 7),
+                ("GetText", 2),
+                ("MoveEndpointByUnit", 1),
+                ("MoveEndpointByRange", 6),
+                ("ITextRangeProvider::Select", 1),
+            ],
+        )
+    } else {
+        (
+            calls(22, 0, 0),
+            &[
+                ("ITextProvider::GetSelection", 2),
+                ("GetCaretRange", 1),
+                ("Clone", 3),
+                ("CompareEndpoints", 7),
+                ("GetText", 2),
+                ("MoveEndpointByUnit", 1),
+                ("MoveEndpointByRange", 5),
+                ("ITextRangeProvider::Select", 1),
+            ],
+        )
+    };
+    ratchet.check(
+        &format!("UIA review copy select, {way}"),
+        &cost,
+        expected.0,
+        0,
+        expected.1,
+    );
     app.quit();
+}
+
+/// The changes a [`TextReply::Selected`] holds, as (selected, text,
+/// characters).
+fn selected_texts(reply: &TextReply) -> Vec<(bool, &str, u32)> {
+    let TextReply::Selected(changes) = reply else {
+        panic!("a selection's changes, not {reply:?}");
+    };
+    changes
+        .iter()
+        .map(|change| (change.selected, change.text.as_str(), change.characters))
+        .collect()
 }
 
 fn uia_text_requests_cost_exactly() {
@@ -3251,6 +3327,33 @@ fn caret_moves_cost_exactly() {
         0,
         &[],
     );
+
+    // The review copy's first press: "alpha" selected from a collapsed
+    // caret, the selection read before and after and compared.
+    let mut store = Anchors::new(Arc::default());
+    let mut anchors = store.node(1);
+    common::apply(&mut app, hwnd, "caret doc 0");
+    let (report, _) = caret_report(&mut source, &mut anchors, &mut || 0, false).expect("the caret");
+    let at = |offset| {
+        TextPoint::At(TextPosition {
+            anchor: report.line.start,
+            offset,
+        })
+    };
+    let _ = verbatim_ia2::calls::take();
+    let reply = perform(
+        &mut source,
+        &mut anchors,
+        &TextOp::Select {
+            start: at(0),
+            end: at(5),
+        },
+    );
+    let measured = verbatim_ia2::calls::take();
+    assert_eq!(selected_texts(&reply), [(true, "alpha", 5)]);
+    // `EM_GETSEL`, `EM_SETSEL` and `EM_SCROLLCARET`, `EM_GETSEL` again,
+    // and the change's text (`WM_GETTEXTLENGTH`, `WM_GETTEXT`).
+    ratchet.check_calls("Edit control review copy select", measured, calls(0, 0, 6));
     app.quit();
 
     ratchet.finish();

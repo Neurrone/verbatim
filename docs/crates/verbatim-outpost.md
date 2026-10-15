@@ -1490,11 +1490,10 @@ asks the application for its current focus with a single focus-now query.
     read, reads up to its count of units in one request, each the unit
     after the one before, stopping once 32 K UTF-16 code units are read,
     and marks the last chunk as the text's last when no unit follows it.
-  - Through UIA, every request but the caret watch and `Select` is also
-    one round trip where the window's provider runs remote operations
-    (`Select` is the selection read before it, by classic calls, then the
-    selection and the read after it, one round trip each), with the same
-    choice, fallback, logging, and marking as the caret read: a point
+  - Through UIA, every request but the caret watch is also one round
+    trip where the window's provider runs remote operations (`Select`'s
+    read before, selection, and read after included, in one program), with
+    the same choice, fallback, logging, and marking as the caret read: a point
     named as the protocol names it (`PointFrom`: the caret, a selection's
     end, an end of the text, a kept position, or a position some text after
     a kept one, which is found inside the provider by matching that text)

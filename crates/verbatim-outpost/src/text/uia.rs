@@ -749,6 +749,9 @@ impl TextSource for UiaText {
                 verbatim_uia_rops::RangeAction::Text(i32::try_from(max).unwrap_or(i32::MAX))
             }
             RangeAction::Select => verbatim_uia_rops::RangeAction::Select,
+            RangeAction::SelectReporting => verbatim_uia_rops::RangeAction::SelectReporting(
+                i32::try_from(MAX_RANGE_UNITS).unwrap_or(i32::MAX),
+            ),
         };
         let run = |start: TextFrom<'_>, end: Option<TextFrom<'_>>| {
             verbatim_uia_rops::text_range(
@@ -772,6 +775,12 @@ impl TextSource for UiaText {
             end: UiaPos::found(&answer.end)?,
             text: answer.text,
             selected: answer.selected,
+            changes: answer.changes.map(|changes| {
+                changes
+                    .into_iter()
+                    .map(|change| (change.selected, change.text))
+                    .collect()
+            }),
         }))
     }
 
