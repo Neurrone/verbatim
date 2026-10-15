@@ -36,7 +36,7 @@ pub struct WindowHandle(pub u64);
 /// Facts about the window an event concerns, read by its outpost with local
 /// calls when the event is observed. The reducer classifies every event
 /// against its attention record with these (decision D14 as amended by the
-/// outpost redesign; `docs/parity.md`, "Event acceptance").
+/// outpost redesign; `docs/parity/focus-events.md`, "Event acceptance").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WindowFacts {
     /// The event's top-level window.
@@ -87,7 +87,7 @@ pub enum PropertyChange {
     Description(Option<String>),
     /// An editable field's `ControllerFor` relation changed: `true` when
     /// it now names elements, a list of suggestions having appeared, and
-    /// `false` when it names none, the list gone (`docs/parity.md`,
+    /// `false` when it names none, the list gone (`docs/parity/changes-and-selection.md`,
     /// "Suggestions appearing and going away").
     Suggestions(bool),
 }
@@ -104,7 +104,7 @@ pub enum NormalizedEvent {
         /// system's foreground window, and `node` is that window. Following
         /// NVDA, a foreground change is a focus on the window; the reducer
         /// always accepts it and ignores it when focus is already inside
-        /// that window (`docs/parity.md`, "Window announcement on switching
+        /// that window (`docs/parity/focus-context.md`, "Window announcement on switching
         /// applications").
         #[serde(default)]
         foreground: bool,
@@ -258,7 +258,7 @@ pub enum NormalizedEvent {
     /// target (UIA's active text position changed event). Core speaks
     /// nothing for it until it has a browse mode, which moves its own caret
     /// there, as NVDA's does; outside browse mode NVDA does nothing with it
-    /// either (`docs/parity.md`).
+    /// either (`docs/parity/backends.md`, "The active text position").
     ActiveTextPositionChanged {
         /// The node whose text it is.
         node_id: NodeId,
@@ -448,7 +448,7 @@ pub enum Input {
         /// observed — the same stamp the outpost put on the wire. The
         /// latency record reads it, and so does the reducer, to drop a focus
         /// observed before the focus it already applied
-        /// (`docs/parity.md`, "Stale focus events").
+        /// (`docs/parity/focus-events.md`, "Stale focus events").
         #[serde(default)]
         observed_at_ms: u64,
         /// The application the event came from: information about its
@@ -557,7 +557,7 @@ pub enum Input {
     /// Control+C, Control+D, or Control+Break, was passed to the focused
     /// application. A terminal forgets the typing it holds, which it never
     /// showed (a password perhaps), as NVDA forgets its queued characters
-    /// (`docs/parity.md`, "Text, documents, terminals"). These keys type no
+    /// (`docs/parity/terminals.md`, "New terminal output"). These keys type no
     /// text, so they never arrive as [`Input::CharacterTyped`].
     ClearingKey {
         /// Trace ID minted when the key was observed.

@@ -9,7 +9,7 @@
 //! shorter than 10 characters. The review cursor in a terminal moves by
 //! cell, and a cell past the end of a row's text is blank. Moving to
 //! another line keeps the column, Verbatim's deliberate difference from
-//! NVDA (`docs/parity.md`, "Review cursor columns").
+//! NVDA (`docs/parity/review.md`, "Review cursor columns").
 //!
 //! What it asserts, each step heard in full before the next:
 //!

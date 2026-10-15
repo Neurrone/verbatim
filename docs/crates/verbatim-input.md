@@ -119,7 +119,7 @@ Public API:
   `Frame::InputHandled`).
 
 Implementation notes, `DecisionMachine::on_key` (the intricate one;
-`docs/parity.md`'s input section is the behavioural record for these
+`docs/parity/input.md` is the behavioural record for these
 rules):
 
 - A Verbatim-modifier key-down is always swallowed, so caps lock never

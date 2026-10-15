@@ -184,7 +184,7 @@ fn a_focus_reports_the_states_read_when_it_is_handled() {
 /// together, newest first, and announces the item with the tree as its new
 /// ancestor; the outpost may read the tree's event before the item's
 /// reaches it, so it asks the tree's `accFocus` and reports the item it
-/// names (`docs/parity.md`, "A control's own focus with a focused child").
+/// names (`docs/parity/windows-and-processes.md`, "A control's own focus with a focused child").
 /// The tree's event is handed to the outpost alone, as when it is read
 /// before the item's arrives, and the item's then reports nothing more.
 /// Both events are raised before the outpost is made, so its own hook,

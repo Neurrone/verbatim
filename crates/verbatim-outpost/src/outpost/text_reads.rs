@@ -14,7 +14,7 @@
 //! a provider that fails the request, is kept only until the node is next
 //! reported as the focus, which NVDA reads as a new object, or raises a
 //! caret or text event, which only an element with text does
-//! (`docs/parity.md`, "A text pattern missing at the focus").
+//! (`docs/parity/text.md`, "A text pattern missing at the focus").
 
 #![forbid(unsafe_code)]
 

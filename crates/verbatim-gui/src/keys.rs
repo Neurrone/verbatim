@@ -10,7 +10,7 @@
 //! - Enter or numpad Enter on a focused button activates that button, so
 //!   Enter on Cancel cancels and Enter on Apply applies. This differs from
 //!   NVDA, whose settings dialogs send every Enter to OK
-//!   (`docs/parity.md`).
+//!   (`docs/parity/system.md`, "Enter in the settings dialog").
 //! - Enter on the synthesizer's name opens the Select Synthesizer dialog,
 //!   as its Change button does.
 //! - Enter anywhere else activates OK.

@@ -79,7 +79,7 @@ Three findings from the 2026-10-01 reading were not in the audit:
    a Windows-specific GPL crate and may port NVDA's intake code directly.
    Behavior destined for the reducer (the window rules, name-change
    speech, the entered-menu rule, event acceptance) is platform-neutral
-   and must be written into `docs/parity.md` from NVDA's behavior first,
+   and must be written into `docs/parity/readme.md` from NVDA's behavior first,
    then implemented from that description, never translated from NVDA
    source (the provenance rule in `CLAUDE.md`). The NVDA file references
    in this document establish behavior; they are not a licence to port
@@ -401,7 +401,7 @@ The supervisor stays inside Core.
   record and is not read by the reducer.
 - The exclusion of windows from entered containers. A named window is
   announced on entry, as in NVDA, and the documented divergence in
-  `docs/parity.md` goes.
+  `docs/parity/focus-context.md` goes.
 - Most of the pending-fetch record: replies carry their query kind, so
   the reducer keeps only the latest navigation's request id.
 - The foreground pid gate, which moves here as the attention model.
@@ -640,7 +640,7 @@ Each step is independently reviewable, verified as the working agreements
 require, and committed separately. The harness repairs land before step
 1, so live verification is available throughout.
 
-1. Reducer and model. Write the new behavior into `docs/parity.md`
+1. Reducer and model. Write the new behavior into `docs/parity/readme.md`
    first. Then: node ids carry their outpost id; versions and the
    timestamp check removed; the NVDA window rules; name-change speech;
    the entered-menu rule; outpost-ended handling and the silent re-read;

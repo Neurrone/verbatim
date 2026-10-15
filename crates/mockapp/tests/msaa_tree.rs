@@ -334,7 +334,7 @@ fn msaa_client_reads_a_lists_selected_child() {
 /// A live object seen again at its address is the node already issued:
 /// oleacc hands the outpost a new wrapper for every request, so each
 /// sighting after the first is matched by address, comparing a fresh read of the kept
-/// object's role and identity with the new one's (`docs/parity.md`, "Held
+/// object's role and identity with the new one's (`docs/parity/focus-events.md`, "Held
 /// objects"). A renamed object stays the same node; another object is a
 /// different one.
 fn msaa_sightings_of_one_live_object_are_one_node() {

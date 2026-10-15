@@ -204,7 +204,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // its question, as NVDA reads a dialog's own text on entering it, and
     // then its focused button. The settings dialog, disabled as the
     // confirmation opens while the focus is still on Remove, says nothing,
-    // as NVDA says nothing (`docs/parity.md`, "A top-level window's state
+    // as NVDA says nothing (`docs/parity/focus-announcement.md`, "A top-level window's state
     // change").
     for control in [
         "Report as: combo box speech collapsed Alt+r",

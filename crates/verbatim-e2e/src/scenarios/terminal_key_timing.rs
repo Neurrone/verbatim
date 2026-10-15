@@ -5,7 +5,7 @@
 //! described in the `terminal` module.
 //!
 //! - `*_control_flood`: Control while a flood is being spoken, as in NVDA
-//!   (`docs/parity.md`, "New terminal output"). `gated.ps1` writes "flood
+//!   (`docs/parity/terminals.md`, "New terminal output"). `gated.ps1` writes "flood
 //!   line 1" to "flood line 100" and waits for the file `more` before it
 //!   writes lines 101 to 103. Which bursts Verbatim reads the hundred
 //!   lines in depends on timing, so their speech is not asserted line by
@@ -35,7 +35,8 @@
 //!   is read once, with both in it, and spoken as the change: "echo onex";
 //!   then Enter runs it, answered "onex" and the prompt. NVDA, captured
 //!   live, says "x" as it is typed and then the line, "echo onex"; the
-//!   character's own echo is the difference (`docs/parity.md`).
+//!   character's own echo is the difference
+//!   (`docs/parity/terminals.md`, "New terminal output").
 
 use std::io;
 

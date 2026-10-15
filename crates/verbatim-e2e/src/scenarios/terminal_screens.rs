@@ -3,7 +3,7 @@
 //! `windows_terminal_full_screen` and `conhost_full_screen`, each its own
 //! code (`docs/testing.md`). The shared setup is described in the
 //! `terminal` module. The expected speech is what NVDA said for the same
-//! keys, captured live on 2026-10-09, where the two agree (`docs/parity.md`,
+//! keys, captured live on 2026-10-09, where the two agree (`docs/parity/terminals.md`,
 //! "New terminal output").
 //!
 //! Long lines: `long.ps1` prints one line of forty numbered words, far

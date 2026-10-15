@@ -532,7 +532,7 @@ fn language(value: Option<&Value>) -> Option<String> {
 
 /// Emits the correction of `moved`, the count a backward move returned, to
 /// a negative count: some providers answer a backward move with a positive
-/// one, which NVDA corrects (`docs/parity.md`, "Text range moves"), and the
+/// one, which NVDA corrects (`docs/parity/speech-audio.md`, "Text range moves"), and the
 /// classic reads correct too (`verbatim_uia::text::signed_move`).
 pub(crate) fn emit_backward_count(b: &mut Builder, moved: Reg<kind::Int>) {
     let zero = b.int(0);

@@ -72,8 +72,8 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
         "alpha beta gamma",
     );
     // Control+Home at the top moves nothing, so it says nothing, a
-    // deliberate difference from NVDA (`docs/parity.md`, "Text, documents,
-    // terminals"): Right Arrow, pressed next, is the first key heard.
+    // deliberate difference from NVDA (`docs/parity/text.md`,
+    // "TextInfo-equivalent layer"): Right Arrow, pressed next, is the first key heard.
     scenario
         .send_keys(&["control+home"])
         .expect("sends control+home");
@@ -118,8 +118,8 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     super::expect_notepad_in_front(scenario, NAME, "alpha beta gamma");
     // Control+Home at the top moves nothing, so it says nothing, a
-    // deliberate difference from NVDA (`docs/parity.md`, "Text, documents,
-    // terminals"): Right Arrow, pressed next, is the first key heard.
+    // deliberate difference from NVDA (`docs/parity/text.md`,
+    // "TextInfo-equivalent layer"): Right Arrow, pressed next, is the first key heard.
     scenario
         .send_keys(&["control+home"])
         .expect("sends control+home");

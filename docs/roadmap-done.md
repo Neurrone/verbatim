@@ -554,11 +554,11 @@ Steps of [the communication design](design/communication.md), section 11.
 
 - The control-flood scenarios follow NVDA: 9cf42844, 2026-10-11.
 - Shift's pause compared with NVDA's, no change: 31304c78, 2026-10-11
-  ([parity](parity.md), "When speech is cut off").
+  ([parity](parity/focus-events.md), "When speech is cut off, and cancellation of expired focus speech").
 - The wrong parity entries on UIA focus and the limiter corrected:
   31304c78, 2026-10-11.
 - Toasts checked from code and the difference recorded: 31304c78,
-  2026-10-11 ([parity](parity.md), "Toasts").
+  2026-10-11 ([parity](parity/alerts.md), "Toasts").
 
 ### Decisions settled and built
 

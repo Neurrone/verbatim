@@ -137,7 +137,7 @@ fn a_description_change_on_the_focus_is_spoken() {
 /// A modal dialog's owner disabled as the dialog opens says nothing: a
 /// state change on the foreground window the focus is in, an ancestor the
 /// outpost knows at its own address, the window's client area, is not
-/// spoken, as NVDA, checked live, never speaks it (`docs/parity.md`, "A
+/// spoken, as NVDA, checked live, never speaks it (`docs/parity/focus-announcement.md`, "A
 /// top-level window's state change"). The window is the foreground as
 /// the focus enters it, and is disabled while the focus is still on its
 /// Remove button; the description change on the button after it is the
@@ -366,7 +366,8 @@ fn a_change_before_a_focus_into_a_menu_is_cut_off() {
 /// does not speak it: NVDA meets an event's object again only at an
 /// address an earlier object was created for, which such an ancestor never
 /// had, and its speech gate asks whether the object is the very ancestor it
-/// holds, never whether it is like it (`docs/parity.md`). The focused
+/// holds, never whether it is like it (`docs/parity/focus-announcement.md`,
+/// "Focus announcement content and property order"). The focused
 /// list item's list becomes unavailable and is not even reported, as the
 /// description change on the focus after it is the next thing the outpost
 /// says. mockapp hands out one object per node, so no change of identity on

@@ -356,7 +356,7 @@ pub struct CaretReport {
 /// What Core asks the outpost to do after it has passed a caret key to the
 /// application: watch for evidence of what the key did, then report the
 /// caret (`docs/nvda/editable-text-and-terminals.md`, the wait for
-/// evidence; `docs/parity.md`, "Text, documents, terminals").
+/// evidence; `docs/parity/text.md`, "TextInfo-equivalent layer").
 ///
 /// The outpost reads the caret once when the request arrives, and again
 /// whenever the application reports something about the node: a caret

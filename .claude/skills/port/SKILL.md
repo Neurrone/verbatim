@@ -34,7 +34,7 @@ Write every brief from `references/brief.md`, and point it at the "Standing rule
 - `CLAUDE.md` contains repository-wide rules and authoritative reading paths.
 - `docs/architecture.md` contains architectural decisions and invariants.
 - `docs/roadmap.md` defines milestone scope and exit criteria.
-- `docs/parity.md` records which NVDA behaviors Verbatim intends to match and their verification status.
+- `docs/parity/readme.md` and the files it indexes record which NVDA behaviors Verbatim intends to match and their verification status.
 - `docs/nvda/` records how NVDA actually behaves and implements nontrivial features, cited against the pinned NVDA source.
 - `docs/design/` contains detailed Verbatim designs where a behavior requires nontrivial architectural decisions.
 - `docs/crates/` explains implemented crate responsibilities and public APIs.
@@ -106,7 +106,7 @@ If implementation shows the agreed specification is wrong, stop the loop, return
 
 Brief implementation subagents in dependency order. Fix root causes rather than adding a mechanism for each failure, because the outpost code once became a pile of independent mechanisms each added for one live failure and had to be redesigned.
 
-Ported code in the Windows-tier (GPL) crates cites, in a comment, the NVDA source path and function it comes from; platform-neutral crates cite `docs/parity.md` or `docs/nvda/` sections instead, per `CLAUDE.md`. Writing the citation forces the implementer to trace the logic rather than approximate it; a port of libinjection found that demanding source-line citations was what exposed omitted logic.
+Ported code in the Windows-tier (GPL) crates cites, in a comment, the NVDA source path and function it comes from; platform-neutral crates cite `docs/parity/` entries, as `docs/parity/readme.md` says, or `docs/nvda/` sections instead, per `CLAUDE.md`. Writing the citation forces the implementer to trace the logic rather than approximate it; a port of libinjection found that demanding source-line citations was what exposed omitted logic.
 
 ## Phase 8: Verify progressively
 

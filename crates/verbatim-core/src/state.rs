@@ -46,12 +46,12 @@ pub(crate) struct FocusContext {
     pub(crate) last_selection: Option<NodeId>,
     /// False once the outpost that issued these node ids has ended. The
     /// copied data stays, so a replacement outpost's report of the same
-    /// focus can be taken silently (`docs/parity.md`, "Recovery after an
+    /// focus can be taken silently (`docs/parity/focus-events.md`, "Recovery after an
     /// outpost is replaced"), but the ids name nothing any more.
     pub(crate) alive: bool,
     /// The focused node reported itself focused when it became the focus,
     /// so a later state set without the focused state means the focus has
-    /// left it before the next focus event arrived (`docs/parity.md`,
+    /// left it before the next focus event arrived (`docs/parity/changes-and-selection.md`,
     /// "State changes after the focus has left").
     #[serde(default)]
     pub(crate) reported_focused: bool,
@@ -435,7 +435,7 @@ pub struct SrState {
     /// How many focuses the reducer has taken as the focus, the silent
     /// re-read of a replacement outpost's report included: what NVDA's
     /// last queued focus follows, so the host can tell the focus listener
-    /// when a focus it did not accept was queued (`docs/parity.md`,
+    /// when a focus it did not accept was queued (`docs/parity/focus-events.md`,
     /// "Duplicate focus suppression").
     #[serde(default)]
     pub(crate) focuses_queued: u64,

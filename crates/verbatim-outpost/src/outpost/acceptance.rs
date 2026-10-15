@@ -1,7 +1,7 @@
 //! NVDA's test for accepting an event before anything is read of it,
 //! ported rule by rule from `shouldAcceptEvent` (`source/eventHandler.py`):
 //! an event from a window unrelated to the foreground window is dropped
-//! before any call into the application (`docs/parity.md`, "Event
+//! before any call into the application (`docs/parity/focus-events.md`, "Event
 //! acceptance in the outpost"). The outpost's worker makes it for every
 //! event but a UIA focus, which the focus listener's reading thread tests
 //! with it before reading the focus (`crate::focus_read`).
@@ -70,7 +70,7 @@ impl EventName {
     /// worker handles outside the test: an object destroyed, which NVDA
     /// handles in its event callback, and Verbatim's own kinds, the caret and
     /// text selection of edit controls, the console host's updates and
-    /// caret, and a top-level window shown (`docs/parity.md`, "Event
+    /// caret, and a top-level window shown (`docs/parity/focus-events.md`, "Event
     /// acceptance in the outpost").
     pub(crate) fn of_win_event(kind: WinEventKind) -> Option<Self> {
         Some(match kind {

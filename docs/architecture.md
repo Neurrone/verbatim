@@ -219,7 +219,7 @@ screen reader in both rendered and source form.
   classes, and configured progress bars are accepted from anywhere as
   background. Background events never move focus or the navigator, are
   spoken at Queued priority, and sit under a per-source flood cap (not
-  implemented yet; `docs/parity.md` lists it). So that
+  implemented yet; `docs/parity/focus-events.md`, "Event acceptance" lists it). So that
   processes which never held focus can still be heard, the focus listener
   additionally hooks `EVENT_SYSTEM_ALERT` and a desktop-wide UIA
   notification registration and forwards them as facts that spawn an

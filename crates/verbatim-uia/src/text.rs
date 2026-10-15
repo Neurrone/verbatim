@@ -460,7 +460,7 @@ impl TextRangeExt for IUIAutomationTextRange {
 
 /// How far a move asked to go `count_by` units went, signed as the move
 /// was asked: some providers answer a backward move with a positive count,
-/// which NVDA corrects (`docs/parity.md`, "Text range moves"), and so does
+/// which NVDA corrects (`docs/parity/speech-audio.md`, "Text range moves"), and so does
 /// this.
 #[must_use]
 pub fn signed_move(count_by: i32, moved: i32) -> i32 {

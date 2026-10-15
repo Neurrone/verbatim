@@ -69,7 +69,7 @@ releases Alt. Notepad has no outpost yet.
    about 130 ms more; measured again on 2026-10-09 over dozens of
    switches, launches and restores, the system's foreground event arrived
    only once Notepad's window was the foreground window, and the early
-   ones were raised by applications themselves (`docs/parity.md`, "Stale
+   ones were raised by applications themselves (`docs/parity/focus-events.md`, "Stale
    focus events").
 3. **The listener captures facts, without calling anyone.** The listener
    process is the only receiver of focus events (D13, amended 2026-10-05;
@@ -310,7 +310,7 @@ Not yet, or known limitations:
   one `verbatim::latency` line per announcement.
 - The per-source cap on background events, tooltip and notification-bar
   windows, and background progress bars are not implemented
-  ([parity ledger](parity.md), "Event acceptance").
+  ([parity ledger](parity/focus-events.md), "Event acceptance").
 
 ## 2. The life of a command keystroke: Verbatim+numpad6
 
@@ -458,7 +458,7 @@ the mixer does: completed when its last frame has played, cancelled when
 its source is cancelled, failed when synthesis fails, its host dies, or
 the device comes back in another format.
 
-When speech is cut off (`docs/parity.md`, "When speech is cut off"):
+When speech is cut off (`docs/parity/focus-events.md`, "When speech is cut off, and cancellation of expired focus speech"):
 
 - **A key press.** Every key-down except the volume keys cancels
   everything (`SpeechControl::cancel_through`, with the press's key

@@ -45,7 +45,7 @@ each one.
    by-hand recipes are in `docs/roadmap-done.md`: an Explorer folder
    window, a Settings-app toggle, and Start-menu search results. Then run
    the same keys against Verbatim, compare, and either fix Verbatim or
-   record the difference in `docs/parity.md` as intentional.
+   record the difference in `docs/parity/readme.md` as intentional.
 2. Automate each of the three as an end-to-end scenario with assertions
    written by hand from the transcript. These are the live test of the
    attention model on real applications, which the handoff names as the
@@ -1250,7 +1250,7 @@ Four kinds of check, and videos:
 - **NVDA comparison**: where NVDA has the behavior, the scenario's keys are
   captured with the transcript tool first, and the scenario's assertions
   are written from the capture; a deliberate difference is recorded in
-  `docs/parity.md`.
+  `docs/parity/readme.md`.
 - **Videos**: `cargo xtask demo <scenario>` records a scenario, so every
   video is also a passing test. Videos showing the settings dialog are
   re-recorded after the GUI port.
@@ -1455,7 +1455,7 @@ lands on column 10, reading the cell there or "blank".
    today, `start_menu_search`, and it asserts only that the search box is
    announced; navigating the results, Explorer, and Settings have none.
    Then run the same keys against Verbatim;
-   fix differences in Verbatim, or record them in `docs/parity.md` when
+   fix differences in Verbatim, or record them in `docs/parity/readme.md` when
    they are intentional.
 2. Automate them as end-to-end scenarios in the default suite (extending
    `start_menu_search` to the results), with assertions written by hand
@@ -1548,7 +1548,7 @@ calls marked `unsafe` only because the bindings are generated. In order:
    so Enter on Cancel cancels (decided 2026-10-06). NVDA's settings
    dialogs send every Enter to OK, even on Cancel
    (`gui/settingsDialogs.py`, `_enterActivatesOk_ctrlSActivatesApply`),
-   so this is recorded in `docs/parity.md` as an intentional difference.
+   so this is recorded in `docs/parity/system.md`, "Enter in the settings dialog" as an intentional difference.
 4. Remove wxDragon, bindgen, and the libclang plumbing; update the crate
    guide, the tooling guide, CLAUDE.md's libclang note, and D4's wording.
 5. Verify: the existing GUI scenarios, a new scenario for item 7, and the
@@ -1580,7 +1580,7 @@ In this order, since later parts build on earlier ones:
    Enter.
 5. **The review cursor**: NVDA's review commands and key layout, with
    one intentional difference (decided 2026-10-06, recorded in
-   `docs/parity.md`): moving to the next or previous line keeps the
+   `docs/parity/review.md`, "Review cursor columns"): moving to the next or previous line keeps the
    column, where NVDA moves to the start of the line
    (`globalCommands.py`, `script_review_nextLine`). This makes columns of
    a text table, or the map of a text-based game, readable line by line.
@@ -1698,7 +1698,7 @@ the design left them open (2026-10-07):
   change per stretch, as NVDA does; not cheap, so left out.
 - Where NVDA's default and the default theme differ: NVDA reports
   spelling errors by speech alone by default; the default theme also
-  plays the error sound. Recorded in `docs/parity.md` for a decision.
+  plays the error sound. Recorded in `docs/parity/speech-audio.md`, "Sonification" for a decision.
 
 Choices the run made for item 9, terminals, where the design left them
 open:
@@ -1771,7 +1771,7 @@ remote operation, the Terminal page, the demonstrations) are merged:
 1. NVDA comparison captures for every M4 feature, taken with `cargo
    xtask nvda capture` (working material, not kept in the repository),
    compared with what Verbatim says for the same steps, each difference
-   either fixed or recorded in `docs/parity.md` as intended, and turned
+   either fixed or recorded in `docs/parity/readme.md` as intended, and turned
    into end-to-end and unit tests that pin the behavior down. This is
    how Verbatim is shown to behave correctly, so it comes first: editing in
    Notepad (caret by character, word, and line; selection; typed echo;
@@ -1797,7 +1797,7 @@ remote operation, the Terminal page, the demonstrations) are merged:
 ## Outcome (2026-10-07)
 
 What the run delivered, step by step, with the decisions taken along the
-way. The code, its crate guides, `docs/parity.md`, and
+way. The code, its crate guides, `docs/parity/readme.md`, and
 `docs/performance.md` hold the details; this records what was decided and
 why.
 
@@ -1892,7 +1892,7 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
      space, punctuation-only words, selections across lines, and each
      control type: UIA and MSAA, edit controls, terminals, lists, trees,
      dialogs), and every difference is fixed with a test or recorded in
-     `docs/parity.md`.
+     `docs/parity/readme.md`.
   2. What text attributes terminals expose: every UIA text attribute
      and annotation that Windows Terminal and the console host report
      (fonts, colors foreground and background, bold, italic, underline
@@ -2058,8 +2058,8 @@ A failed `explorer_folder_window` run showed three faults, queued for one fix:
 
 Fixed on 2026-10-07, each with mockapp and Core tests and not yet run against Explorer itself:
 
-- The outpost reads, in the focus's remote operation, whether the element a runtime id's node stands for still has the keyboard focus, and gives the id a new node when it does not or cannot be read (`docs/parity.md`, "Duplicate focus suppression"). A held element that is gone fails a whole program before it runs, so the program is run once more without it.
-- NVDA's focus event carries only its base cache; its states, value, and details are fetched when the focus is handled. The outpost now takes those from the focused element it reads when it handles the focus, at no extra call (`docs/parity.md`, "How an outpost turns events into focus reports").
+- The outpost reads, in the focus's remote operation, whether the element a runtime id's node stands for still has the keyboard focus, and gives the id a new node when it does not or cannot be read (`docs/parity/focus-events.md`, "Duplicate focus suppression"). A held element that is gone fails a whole program before it runs, so the program is run once more without it.
+- NVDA's focus event carries only its base cache; its states, value, and details are fetched when the focus is handled. The outpost now takes those from the focused element it reads when it handles the focus, at no extra call (`docs/parity/backends.md`, "How an outpost turns events into focus reports").
 - A focus change now goes before the events of other objects queued ahead of it, in the batch and in the batch in progress (`docs/crates/verbatim-outpost.md`, the queue). Reproduced in mockapp with every provider call answered 20 ms late: the focus waited about 610 ms behind ten selections before, and about 0.1 ms after (`docs/performance.md`, "A focus behind other objects' events").
 
 ## Terminal decisions (2026-10-07, after the measurements)
@@ -2100,7 +2100,7 @@ Decisions (Dickson, 2026-10-07):
 
 ## MSAA audit against NVDA (2026-10-07)
 
-A read-only audit compared Verbatim's MSAA handling with NVDA's. The tree view focus race (Verbatim announcing a tree view before its item, because the item's focus event is still on its way) is fixed by asking a child-0 focus's accFocus and reporting the focused child, NVDA's outcome reached deterministically. The rest form an MSAA work package, each matched to NVDA with a test meeting docs/testing.md, unless docs/parity.md records a deliberate difference, which is then brought to Dickson:
+A read-only audit compared Verbatim's MSAA handling with NVDA's. The tree view focus race (Verbatim announcing a tree view before its item, because the item's focus event is still on its way) is fixed by asking a child-0 focus's accFocus and reporting the focused child, NVDA's outcome reached deterministically. The rest form an MSAA work package, each matched to NVDA with a test meeting docs/testing.md, unless docs/parity/readme.md records a deliberate difference, which is then brought to Dickson:
 
 - Windows Forms tree views get none of the SysTreeView32 handling (class names are compared raw, not normalized as NVDA does): no position, flat navigation, no expanded count.
 - Progress bars: NVDA beeps on value changes of any progress bar in the foreground; Verbatim never emits its progress indication.
@@ -2151,13 +2151,13 @@ Outcome of the terminal package (2026-10-08):
 
 - The screen is read and diffed as decided: one remote program per read (the visible screen, its top two rows as the anchor, how far the text scrolled, the rows that went by unread up to the flood policy's limit, and the caret), a pure diff (`terminal::screen`), and on-demand reading as a pure state machine (`terminal::reading`), each with unit tests, and mockapp tests of the read's exact costs and of each on-demand transition through a real outpost. The anchor is found at a range kept for it while nothing was discarded, otherwise by `FindText`, padded in the console host, whose `FindText` matches padding; neither terminal's `FindText` can search across a line break (measured).
 - The flood's intermittent "flood line 31". The hypothesis was refuted by the outpost's timeline: the outpost read all 2,001 lines within 1.5 seconds, and Core's group ended early because the first line's mark was reached before the second line had arrived. Groups now end at closing marks. conhost_flood and windows_terminal_flood each passed ten runs in a row.
-- In the console host, UIA's text changes stopped reaching the outpost in the middle of a 12,000-line write in 2 of 14 runs, after a few reads of about 0.12 seconds, while the console host kept writing and raising its other `WinEvents`; why is not known. The console's own update `WinEvents` are now its terminal's text changes as well, merged per window, and a change observed before the last read began is covered by it (a deliberate difference from NVDA, recorded in `docs/parity.md`). conhost_scrollback_overflow then passed ten runs in a row.
+- In the console host, UIA's text changes stopped reaching the outpost in the middle of a 12,000-line write in 2 of 14 runs, after a few reads of about 0.12 seconds, while the console host kept writing and raising its other `WinEvents`; why is not known. The console's own update `WinEvents` are now its terminal's text changes as well, merged per window, and a change observed before the last read began is covered by it (a deliberate difference from NVDA, recorded in `docs/parity/terminals.md`, "New terminal output"). conhost_scrollback_overflow then passed ten runs in a row.
 - Windows Terminal takes a write of 12,000 lines whole before its first text change reaches a client in most runs, so the single write has no one correct spoken form; `windows_terminal_scrollback_overflow` writes the burst's first 30 lines on their own and the rest while their group plays (the reasons and NVDA's capture are in the scenario's module).
 - The NVDA study's risks: the password leak (a rewrite echoes held typing only when what it gained is the typing), Control+C, Control+D, Control+Break and Escape forgetting held typing (they type no text, so they come as `Input::ClearingKey`), a typed space at a line's end and typing over ghost text (echoed by the caret's move), typing above a status line (the caret's line is the changed line), mid-line edits after `cls`, typing past the right margin, a rewrite read half done ("51%", not "oading 51%"), and the console host's keyboard layout (its own thread, from its `WinEvents`, NVDA's issue 10113). A key press letting lines through is fixed by `SpeechCancelled`'s time. Resizing and a scrollback full of identical lines whose history is full are not fixed: the first needs a live check of how each terminal reflows its rows, and the second cannot be counted from text alone.
 - What a key did: Backspace and Control+Backspace speak the text removed, from evidence, so the classic edit control's Control+Backspace, which inserts DEL, says nothing; any other key that types no text (`CaretMotion::Other`) speaks text it removed at the caret, a new line, or by where the caret landed. A caret key's answer read after a later key was pressed is not spoken for it, and a terminal's line redrawn by a caret key is the key's own, not output.
 - Done since (2026-10-09): NVDA captures for the typing scenarios, the selection-list scripts ("Selection lists in a terminal" below), the full-screen alternate screen and the long-line scenarios, each with NVDA captured first.
 - Done since (2026-10-09): the review cursor after new output and the flood above a redrawing footer, each with NVDA captured first.
-- Done since (2026-10-09): tabs and two windows of each terminal, with NVDA captured again first (`conhost_two_windows`, `windows_terminal_two_windows`, `windows_terminal_tabs`; the tab difference is in `docs/parity.md`).
+- Done since (2026-10-09): tabs and two windows of each terminal, with NVDA captured again first (`conhost_two_windows`, `windows_terminal_two_windows`, `windows_terminal_tabs`; the tab difference is in `docs/parity/terminals.md`, "New terminal output").
 
 ### Selection lists in a terminal (Dickson, 2026-10-09)
 
@@ -2169,7 +2169,7 @@ Escape at its end stands, judged from the terminal's memory alone.
 
 When Up or Down Arrow makes a program rewrite other lines and the caret is
 not on a changed line, Verbatim speaks the line that gained the marker,
-a deliberate difference from NVDA recorded in `docs/parity.md`. Reading a
+a deliberate difference from NVDA recorded in `docs/parity/terminals.md`, "New terminal output". Reading a
 redraw half done is a bug under any rule: the console host's marker
 script said "> banana" three times, its watch answered by the caret
 moving to the line the marker was leaving, before the program had written
@@ -2366,7 +2366,7 @@ To be confirmed:
   `SetForeground` began waiting for the foreground); NVDA leaves a
   console's title out of its terminal as Verbatim does. The one
   difference left, NVDA saying "list" and the tab as Control+Tab moves the
-  focus through it, is recorded as deliberate in `docs/parity.md` rather
+  focus through it, is recorded as deliberate in `docs/parity/terminals.md`, "New terminal output" rather
   than matched: it is a race between Windows Terminal moving the focus on
   and the reader judging the focus event, which NVDA wins by judging it on
   its event thread; matching it would mean judging focus events in
@@ -2405,7 +2405,7 @@ to be confirmed):
   line that gained the marker as output ("> banana"), not NVDA's "blank":
   matching it would take reversing two deliberate differences, a key
   that does not move the caret being silent and a rewritten line being
-  spoken from the word that changed. Recorded in `docs/parity.md`.
+  spoken from the word that changed. Recorded in `docs/parity/terminals.md`, "New terminal output".
 - The two-marker scenarios are deleted. With line keys answered by the
   caret's line and the rest spoken as output, they tested the marker
   scenario's answer and the redrawn scenario's output together, and the
@@ -2565,7 +2565,7 @@ A read-only audit found these, ranked by how likely a user of the language is to
 3. The terminal's changed-word rule (already recorded).
 4. Typing echo with Windows' built-in text-service keyboards outside Chinese, Japanese and Korean (Vietnamese Telex and VNI, Indic Phonetic) echoes the raw keys, not the composed text.
 5. The plain Win32 edit control's word unit is white-space only.
-6. Language runs are flattened to one language per line, caret speech carries none, and the language never reaches the synthesizer: OneCore's SSML always uses the current voice's language. Automatic language switching is recorded as "not yet" in docs/parity.md.
+6. Language runs are flattened to one language per line, caret speech carries none, and the language never reaches the synthesizer: OneCore's SSML always uses the current voice's language. Automatic language switching is recorded as "not yet" in `docs/parity/speech-audio.md`, "Automatic language switching".
 7. Left-to-right and right-to-left marks in names and values (Explorer's dates, the clock) are not stripped, and are read as silent characters.
 8. Say-all's sentence ends know only ". ! ?": add Chinese and Japanese full-width marks, Hindi danda, Arabic and Urdu marks, Armenian, Ethiopic, and closing marks such as » „“ 」.
 9. Typed-word echo ends a word at combining marks (virama, Thai tone marks, ZWNJ): word characters are letters, marks and numbers.
@@ -2592,9 +2592,9 @@ Units for caret moves (Dickson, 2026-10-08): every key goes through the same pat
 The guard, stated by text positions rather than by lines (2026-10-08): a removal is spoken when the removed text was adjacent to the caret before the key and the caret afterwards sits where the removed text began. This covers Backspace at the start of a line, which removes the line break and joins two lines (spoken as the line break, as NVDA names it), and Delete at the end of one, while still excluding a selection list's marker moving between lines. The text compared is the caret's line together with the lines next to it, in the control's own offsets, so a join or split is seen whole. Win32 edit and rich edit controls (read through their window messages, with the caret's location-change and the value-change events as evidence) use the same rule as UIA text and terminals.
 
 
-Outcome of the work package (2026-10-08), each recorded in `docs/parity.md` and tested in mockapp against real comctl32 controls where one was needed: class names are normalized for every MSAA class rule, so Windows Forms tree views get the tree view handling; progress bars are indicated off the focus; group boxes are context; report view items are named by their columns; tree view check states come from state images; help balloons are spoken from their show events; description changes, and state changes on the focus's ancestors, are spoken; tree items outside a tree view control keep a value that is no number; and the missing roles and states are mapped. The call counts listed above are cut and pinned (`docs/performance.md`). Verbatim's speaking of MSAA selections and a focused list's selected child is a recorded deliberate difference, left for Dickson. Still open: a focused list view group header, which needs an end-to-end scenario to test against, NVDA's repeated `accFocus`, the caret's show event, focus events separated by other events in a batch, and alert-role objects. Application-specific support (IME candidate lists, Scintilla, Qt) is deferred until extensions.
+Outcome of the work package (2026-10-08), each recorded in `docs/parity/readme.md` and tested in mockapp against real comctl32 controls where one was needed: class names are normalized for every MSAA class rule, so Windows Forms tree views get the tree view handling; progress bars are indicated off the focus; group boxes are context; report view items are named by their columns; tree view check states come from state images; help balloons are spoken from their show events; description changes, and state changes on the focus's ancestors, are spoken; tree items outside a tree view control keep a value that is no number; and the missing roles and states are mapped. The call counts listed above are cut and pinned (`docs/performance.md`). Verbatim's speaking of MSAA selections and a focused list's selected child is a recorded deliberate difference, left for Dickson. Still open: a focused list view group header, which needs an end-to-end scenario to test against, NVDA's repeated `accFocus`, the caret's show event, focus events separated by other events in a batch, and alert-role objects. Application-specific support (IME candidate lists, Scintilla, Qt) is deferred until extensions.
 
-MSAA selections (Dickson, 2026-10-08): Verbatim keeps speaking MSAA selection changes and a focused list's selected item ("Fruits list Apple" where NVDA says "Fruits list"), the deliberate difference recorded in docs/parity.md since M3.
+MSAA selections (Dickson, 2026-10-08): Verbatim keeps speaking MSAA selection changes and a focused list's selected item ("Fruits list Apple" where NVDA says "Fruits list"), the deliberate difference recorded in `docs/parity/changes-and-selection.md`, "Selection announcements" since M3.
 
 Start-up speech and budgets (Dickson, 2026-10-08): Verbatim drops its spoken start message and keeps the start sound, as NVDA speaks none, so the first speech is always the foreground's announcement (whether the message was cut off depended on how fast an outpost started). Enforcing response-time budgets is deferred; the harness keeps recording the latency distribution per kind of step.
 
@@ -2615,7 +2615,7 @@ Fixes, each with exact tests (reducer, mockapp and end to end in both terminals 
 - Review commands read live from the application, as NVDA's do: the current unit re-reads at the review position, and flat review and report object re-read the node first (a new fetch of the node itself). This also fixes a stored line going stale in a live terminal whose line was rewritten.
 - A Gone answer for the navigator's node re-seeds the navigator from the focus and announces it; if the dead node is the focus itself, the navigator is cleared and "No navigator object" is said (NVDA's wording).
 - The outpost reports held MSAA nodes it forgets when their window is destroyed, as direct evidence of a death.
-- Verbatim has no "review follows focus" setting where NVDA has one (on by default); recorded in docs/parity.md for the owner (in "Navigator follows focus; review follows navigator", since 2026-10-09; the setting is part of the settings package).
+- Verbatim has no "review follows focus" setting where NVDA has one (on by default); recorded in `docs/parity/review.md` for the owner (in "Navigator follows focus; review follows navigator", since 2026-10-09; the setting is part of the settings package).
 
 ## Audio start-up latency and scheduling (2026-10-08)
 
@@ -2711,10 +2711,10 @@ Both come from a watch for a key that did nothing staying open for whatever chan
 Outcome of the follow-up to "Live caret event checks" above, and of three loose ends in the outposts and the settings dialog.
 
 A failed text read at Notepad's launch. The outpost logs of that run were lost with the build directory, and later launches with a debug Verbatim (eleven by hand, with and without a late activation, and the Notepad scenarios) all read correctly, so the cause is reasoned from the code, the run's speech, and earlier findings, not seen:
-- The focus read took 1.0 seconds, exactly `FOCUS_READ_WAIT`, the connection timeout the outpost sets for its read of the focused element. With a short timeout, UIA answers the focused element read of a Windows 11 Notepad that is still starting with its own stand-in for the window, a nameless edit read through the window proxy, instead of the "Text editor" document (`docs/parity.md`, the 2026-10-02 entry on reading Notepad's focused element). Notepad's text area is a window of its own, so the stand-in has the document's runtime id (`[42, <window>]`): the outpost took it as the focus's element. The stand-in has no text pattern, so the caret report after the focus answered `NoText`, and its value, read live, is all of the document's text, which Core spoke as the focus's value. That answer was kept for the node's life, so every caret key in the window answered at once and said nothing.
+- The focus read took 1.0 seconds, exactly `FOCUS_READ_WAIT`, the connection timeout the outpost sets for its read of the focused element. With a short timeout, UIA answers the focused element read of a Windows 11 Notepad that is still starting with its own stand-in for the window, a nameless edit read through the window proxy, instead of the "Text editor" document (`docs/parity/backends.md`, "Dual-stack MSAA+UIA with per-window arbitration"). Notepad's text area is a window of its own, so the stand-in has the document's runtime id (`[42, <window>]`): the outpost took it as the focus's element. The stand-in has no text pattern, so the caret report after the focus answered `NoText`, and its value, read live, is all of the document's text, which Core spoke as the focus's value. That answer was kept for the node's life, so every caret key in the window answered at once and said nothing.
 - The latency line of that announcement, which has no listener stage, is not evidence of the path the focus took: the focus and its caret report share a trace, and the ledger keeps the stages of the last message received for a trace, the caret report's. Every Notepad launch shows the same line (found in the end-to-end runs of 2026-10-08, whose outposts logged a direct read). That is left as it is and reported.
 - A UIA provider that fails the pattern request reaches the client exactly as one with no pattern (mockapp's new `refuse-text` shows it: the fetch answers no pattern, not an error), so a provider that is not ready answers "no text pattern" too.
-- Speaking the value of a focus that has no text pattern is what NVDA does (`docs/parity.md`, "A text pattern missing at the focus"); what was wrong is keeping the answer, and keeping the stand-in as the node's element.
+- Speaking the value of a focus that has no text pattern is what NVDA does (`docs/parity/text.md`, "A text pattern missing at the focus"); what was wrong is keeping the answer, and keeping the stand-in as the node's element.
 - Fixed: an answer of no text pattern is kept only until the node is next reported as the focus, or raises a caret or text event, which only an element with text does, and the element that raised that event then becomes the node's, so a stand-in kept for it is replaced by the document's own element; a caret key's watch on such a node stays open for that event instead of being answered at once, so the first key after the provider is ready is spoken; a fetch that fails with an error is not kept at all. A focus whose text cannot be read now sends nothing rather than `NoText`, so Core never speaks a document's value for a read that failed, and a focus reported from its event alone has its caret and text events followed, and its caret reported, once its element is found. Test: mockapp's `a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event`.
 
 The focus announcement 1.0 and 3.1 seconds after its event. In the run above, the second went to the focused element read waiting out its one-second timeout on Notepad, which was still starting. In the other run the reads answered, the slowest being Notepad's own: the focused element read may take up to a second and the ancestors up to two (`ENRICHMENT_BUDGET`), so 3.1 seconds is Notepad answering slowly while it starts, not time spent in Verbatim; the outpost logs that would split it were lost, and none of the later launches was slow (the focus read took 17 milliseconds in the Notepad scenarios). One thing is changed where Verbatim was stricter than NVDA: when the focused element read names another element of the application, NVDA still accepts a UIA focus event whose own element has the keyboard focus, read live, and the outpost held such a focus back and read again up to three times. For an element that is a window of its own, as Notepad's text area is, the outpost now reads that window's element and reports the focus at once when it is the event's element and has the keyboard focus. Test: mockapp's `a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_in`. A windowless element is still held back and looked for again up to three times; replacing those reads with waiting for the application's next focus event is left open.
@@ -2723,7 +2723,7 @@ The focus announcement 1.0 and 3.1 seconds after its event. In the run above, th
 
 An application whose outposts crashed repeatedly. After the third crash within a minute the supervisor stops replacing its outpost until the next foreground change to it; the app, told of the crash, had marked the application's focus as wanted, and nothing ever answered, so the idle barrier held for ever. The supervisor now sends `OutpostMessage::NotWatched` after that crash and for every request to start an outpost meanwhile, and the app drops the wanted focus. Test: `an_application_whose_outposts_crashed_repeatedly_is_reported_not_watched` in `crates/verbatim-outpost/tests/target_gone.rs`.
 
-The settings dialog during a synthesizer switch. NVDA's switch blocks its GUI thread, so OK and Cancel cannot be pressed during one (`docs/parity.md`, "Settings dialog during a synthesizer switch", with NVDA's source lines). Verbatim's does not block, and OK saved whichever synthesizer was active at that moment. Now a commit during a switch saves the active synthesizer at once and the new one once it has started, and a revert waits for the switch and restores the previous synthesizer's values only if it failed, so they never reach the new one. Tests: `a_commit_during_a_switch_saves_the_synth_the_switch_started` and `a_revert_during_a_switch_that_fails_restores_the_committed_values` in `verbatim-speech`.
+The settings dialog during a synthesizer switch. NVDA's switch blocks its GUI thread, so OK and Cancel cannot be pressed during one (`docs/parity/speech-audio.md`, "Settings dialog during a synthesizer switch", with NVDA's source lines). Verbatim's does not block, and OK saved whichever synthesizer was active at that moment. Now a commit during a switch saves the active synthesizer at once and the new one once it has started, and a revert waits for the switch and restores the previous synthesizer's values only if it failed, so they never reach the new one. Tests: `a_commit_during_a_switch_saves_the_synth_the_switch_started` and `a_revert_during_a_switch_that_fails_restores_the_committed_values` in `verbatim-speech`.
 
 The end-to-end runs of these fixes. All seven related scenarios passed, but the Notepad ones only after two harness failures, both fixed:
 - `notepad_editing` once failed in its launch with its own document's Notepad window left restored after the taskbar's Minimize All. No artifacts were kept from a launch failure; the likeliest cause, not seen, is that Minimize All skips a window the taskbar has not taken in yet, and the document is opened moments before. The agent now sends Minimize All and waits for the taskbar to handle it, logs at info each window still restored then (class, image, title, and its process's age), and minimizes it directly.
@@ -2761,10 +2761,10 @@ Outcome for System Information (2026-10-09): msinfo32's restore was never refuse
 
 ## Coherence review decisions (Dickson, 2026-10-09)
 
-A read-only review of phase 6 against the dated decisions, docs/parity.md and docs/testing.md found drift; Dickson decided, each as recommended:
+A read-only review of phase 6 against the dated decisions, `docs/parity/readme.md` and docs/testing.md found drift; Dickson decided, each as recommended:
 
 1. Blank lines at the start of a burst: the exception (`burst_written`, e07438d) is removed and its cause fixed in the outpost, where rows not yet written to are dropped from a screen read and come back as inserted blank lines when a footer is drawn below them. The 2026-10-07 rule stands: every line counts, blank ones included.
-2. Delete speaks what it leaves at the caret, as NVDA does and as the code and docs/parity.md already have it. The 2026-10-08 "what a key did" decision listed Delete among the keys that speak the text removed by mistake; that list no longer includes Delete.
+2. Delete speaks what it leaves at the caret, as NVDA does and as the code and `docs/parity/text.md` already have it. The 2026-10-08 "what a key did" decision listed Delete among the keys that speak the text removed by mistake; that list no longer includes Delete.
 3. "Lines spoken in full" may exceed the terminal's history, as decided on 2026-10-07; the cap of 100 is raised above the history size, the 10 MB bound protecting memory.
 4. Control+Tab announces the tab ("list", the tab's name, "1 of 2") as NVDA does; the recorded difference is withdrawn.
 5. Kept as deliberate differences: Escape forgetting typing not yet echoed, and closing a full-screen program speaking only what followed it. Fixed: a new tab's extra "blank", which NVDA does not say (reversed by Dickson the same day: a new tab says "blank", "Decisions on terminal openings, Shift, and Up with typing" below).
@@ -2781,7 +2781,7 @@ Live trials in programs already installed (git log's pager, less, vim, tig, Micr
 - The marker rule, the line-key watch's judgement of a finished redraw (`terminal::keys`), output held while a line key's watch is open, and the kept earlier screens are removed.
 - When the caret moves to another line, that line is spoken, as in a text field. Screen changes are spoken at once as output, through the screen diff.
 - The screen diff recognises a full-screen program scrolling (on the alternate screen as on the main one), so a pager's line move speaks the new line, not every row.
-- docs/parity.md records the selection lists as matching NVDA.
+- `docs/parity/terminals.md` records the selection lists as matching NVDA.
 
 Verbatim also sets Windows' screen reader flag while it runs and clears it when it exits, as NVDA does (`nvda.pyw` 285 and 286, 308 and 309), so programs that change their behaviour for a screen reader, such as PowerShell's PSReadLine, behave the same under both.
 
@@ -2828,7 +2828,7 @@ Decision 8 of the coherence review. `conhost_two_windows` and `windows_terminal_
 
 NVDA, captured live with two console windows and with two Windows Terminal windows, three switches each: "<title> window", then "terminal" with the caret's line in the console host, and "<title> terminal" in Windows Terminal, whose line NVDA left out in two of the three switches; nothing for the switcher itself. Verbatim says the same, the line always, as decided on 2026-10-09 for a terminal taking the focus.
 
-The first runs found Verbatim saying "pane" before the window: Explorer's Alt+Tab staging window (`ForegroundStaging`), topmost and nameless, took the focus on the way. NVDA's File Explorer app module ignores focus on that window and two other shell transition windows (`appModules/explorer.py` lines 443 to 449); the outpost now drops a focus or foreground fact on them too (`docs/parity.md`, "The shell's staging windows").
+The first runs found Verbatim saying "pane" before the window: Explorer's Alt+Tab staging window (`ForegroundStaging`), topmost and nameless, took the focus on the way. NVDA's File Explorer app module ignores focus on that window and two other shell transition windows (`appModules/explorer.py` lines 443 to 449); the outpost now drops a focus or foreground fact on them too (`docs/parity/windows-and-processes.md`, "The shell's staging windows").
 
 ## Control+Tab announces the tab (2026-10-09)
 
@@ -2863,9 +2863,9 @@ Made while carrying out the coherence review's fixes, each recorded in its secti
 
 Decided on the decisions to confirm recorded while writing the dropped end-to-end tests and removing a new tab's extra "blank"; carried out on 2026-10-10:
 
-1. A new, empty terminal window or tab says "blank" for the empty line its caret is on, in Windows Terminal as in the console host, as an empty line says everywhere else. NVDA's silence in a new Windows Terminal window or tab is NVDA not recognising the terminal's focus: a bug, not something to copy. This reverses the part of the coherence review's decision 5 that fixed a new tab's extra "blank". The outpost no longer sends `NoText` before the caret of a Windows Terminal whose screen is all blank (4dba189), and the split between a scenario's first window, which said "blank", and its second window and tab, which said no line (132bf09), goes with it; `windows_terminal_two_windows`, `windows_terminal_leave_flood`, `windows_terminal_tabs` and `windows_terminal_close_tab` expect "blank" for the second window and tab again, and `docs/parity.md` records the difference from NVDA as deliberate.
+1. A new, empty terminal window or tab says "blank" for the empty line its caret is on, in Windows Terminal as in the console host, as an empty line says everywhere else. NVDA's silence in a new Windows Terminal window or tab is NVDA not recognising the terminal's focus: a bug, not something to copy. This reverses the part of the coherence review's decision 5 that fixed a new tab's extra "blank". The outpost no longer sends `NoText` before the caret of a Windows Terminal whose screen is all blank (4dba189), and the split between a scenario's first window, which said "blank", and its second window and tab, which said no line (132bf09), goes with it; `windows_terminal_two_windows`, `windows_terminal_leave_flood`, `windows_terminal_tabs` and `windows_terminal_close_tab` expect "blank" for the second window and tab again, and `docs/parity/terminals.md`, "New terminal output" records the difference from NVDA as deliberate.
 2. Pausing and resuming speech is reported as an event. The speech pipeline reports each pause and resume once the mixer has it (`SpeechEvents::speech_paused`, called on the queue thread for Shift's toggle and for a cancel that ends a pause), and the control plane sends it to speech subscribers as `Frame::SpeechPaused`. `conhost_shift_flood` and `windows_terminal_shift_flood` wait for the pause after the first Shift and the resume after the second and assert both, A pause or resume no step asserted is left behind at the next input, recorded on the timeline (to be confirmed): Shift pressed with another key, such as Shift+Tab, Control+Shift+Tab or a capital typed, pauses speech and the key after it resumes it, as NVDA does, and asserting that pair everywhere would add it to every scenario that presses such a key, though it is not speech.
-3. Up Arrow and a character typed before the recalled line is read, heard only as the line's change ("echo onex") without the character's own echo, stays Verbatim's behaviour, since it does not occur in normal use. `docs/parity.md` keeps it as a deliberate difference.
+3. Up Arrow and a character typed before the recalled line is read, heard only as the line's change ("echo onex") without the character's own echo, stays Verbatim's behaviour, since it does not occur in normal use. `docs/parity/terminals.md`, "New terminal output" keeps it as a deliberate difference.
 
 ## A foreground event before its window is in front (2026-10-10)
 
@@ -2890,7 +2890,7 @@ Dickson decided that announcing the tab Control+Tab leaves, said "not selected" 
 
 Why it was announced. On Control+Tab, Windows Terminal raises a UIA focus event on the tab already selected, the one being left, and then on the next tab, before it moves the focus to that tab's terminal; on Control+Shift+Tab it raises one on the tab moved to only. Since "Control+Tab announces the tab" the outpost reports a UIA focus that has moved on since its event as the event said, and handles every UIA focus of a batch in turn, so the tab left was reported, its states read once the selection had moved. Measured in one run with a debug line on each moved-on focus: Control+Shift+Tab's tab, event selected, still selected when handled; Control+Tab's tab left, event selected, no longer selected when handled; Control+Tab's tab moved to, event not yet selected, selected when handled.
 
-What was done: a UIA focus that has moved on since its event, whose event said it was selected and which is no longer selected when the outpost handles it, is dropped, as an item the selection left together with the focus. The tab moved to is still reported. Test: mockapp's `a_focus_that_moved_on_and_lost_its_selection_is_dropped`, which fails without the rule. `windows_terminal_tabs` no longer expects the tab left; `docs/parity.md` records it as a deliberate difference from NVDA, which queues the tab left and culls it.
+What was done: a UIA focus that has moved on since its event, whose event said it was selected and which is no longer selected when the outpost handles it, is dropped, as an item the selection left together with the focus. The tab moved to is still reported. Test: mockapp's `a_focus_that_moved_on_and_lost_its_selection_is_dropped`, which fails without the rule. `windows_terminal_tabs` no longer expects the tab left; `docs/parity/terminals.md`, "New terminal output" records it as a deliberate difference from NVDA, which queues the tab left and culls it.
 
 ## The wrapped Escape read before its request (2026-10-10)
 
@@ -3080,7 +3080,7 @@ The outpost.
 
 Removed: the outpost's read of the focused element for a focus event (`live_focus_element`, `own_element_focused`, and the selection event's read, `element_from_selection`); the moved-on rules (a focus reported as its event said, the gone element, the container holding the new focus, and 8be2223's rule for an item that lost its selection); the moved focus's searches (`element_of_moved_focus`, `holds_element`) and `Uia::element_by_name_and_position`; `reissue_unless_focused` and the held element's own focus read, now the listener's evidence; the outpost's console window rule, now the listener's; `DeliveredFact::UiaFocus` and `listener::uia_focus_fact`. The focus-now query after a restart still reads the focused element, as the design keeps it.
 
-What a user hears. As the design decided: a UIA focus whose element lost the keyboard focus before the listener read it is dropped (item 1); Windows Terminal's Control+Tab announces the tab left, then culls it once the next tab's focus is applied, as NVDA does (item 2, which withdraws 8be2223's rule); "tab control" is no longer said before "list", since the tab's ancestors are its own element's (item 3); and a change raised just after a focus is heard after it (decision 1). `windows_terminal_tabs` expects "list", the tab left and the tab moved to (both cut off), the terminal, and the line on Control+Tab, and "list", the tab (cut off), the terminal, and the line on Control+Shift+Tab. `docs/parity.md` is updated.
+What a user hears. As the design decided: a UIA focus whose element lost the keyboard focus before the listener read it is dropped (item 1); Windows Terminal's Control+Tab announces the tab left, then culls it once the next tab's focus is applied, as NVDA does (item 2, which withdraws 8be2223's rule); "tab control" is no longer said before "list", since the tab's ancestors are its own element's (item 3); and a change raised just after a focus is heard after it (decision 1). `windows_terminal_tabs` expects "list", the tab left and the tab moved to (both cut off), the terminal, and the line on Control+Tab, and "list", the tab (cut off), the terminal, and the line on Control+Shift+Tab. `docs/parity/terminals.md`, "New terminal output" is updated.
 
 Departures from the design's wording, each with its reason, none changing what is heard:
 

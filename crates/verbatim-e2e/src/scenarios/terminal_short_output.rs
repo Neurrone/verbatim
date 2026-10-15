@@ -7,7 +7,7 @@
 //! of its own. Both are spoken, exactly and in order, and then the prompt:
 //! a line of one or two characters is output like any other, never taken
 //! for the echo of typing (NVDA drops such lines; Verbatim does not,
-//! `docs/parity.md`).
+//! `docs/parity/terminals.md`, "New terminal output").
 
 use std::io;
 

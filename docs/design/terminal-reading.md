@@ -37,7 +37,7 @@ The base design proposed here keeps Verbatim's decided behaviour but changes wha
 - Long lines are spoken whole, however long. Dickson, 2026-10-07 (the 4 KB cut removed; 10 MB bound on waiting output; a single line larger than that is cut on a grapheme boundary and Verbatim says so).
 - Lines made only of symbols are spoken as they are; punctuation processing (M8) decides later. Dickson, 2026-10-08.
 - Inline prediction ghost text is spoken. Dickson, 2026-10-07.
-- Very short output ("y", "ok") is spoken, not taken for typing echo. Recorded as a deliberate difference in `docs/parity.md` ("New terminal output") and asserted by `*_short_output`; no dated decision by Dickson was found (open question 11). NVDA drops a one-character change (`behaviors.py` 491 to 495) and a single line shorter than the current word plus one or than three characters (559 to 566).
+- Very short output ("y", "ok") is spoken, not taken for typing echo. Recorded as a deliberate difference in `docs/parity/terminals.md`, "New terminal output" and asserted by `*_short_output`; no dated decision by Dickson was found (open question 11). NVDA drops a one-character change (`behaviors.py` 491 to 495) and a single line shorter than the current word plus one or than three characters (559 to 566).
 - Output is spoken in one language for the terminal unless the terminal reports a language per line. Dickson, 2026-10-07.
 - Every notification of Windows Terminal's control and of the console host's text area is ignored, whatever its activity id, so nothing is spoken twice. NVDA (`NVDAObjects/UIA/winConsoleUIA.py` 474 to 476 for the default diffing overlay; 431 to 440 for the console host); Dickson, 2026-10-06 (diffing chosen, notifications not used).
 - Output from anything but the focused terminal is not spoken. NVDA (only the focused terminal is monitored, `behaviors.py` 519 to 525; the notification overlay checks the focus's app, `winConsoleUIA.py` 502 to 503).
@@ -48,7 +48,7 @@ The base design proposed here keeps Verbatim's decided behaviour but changes wha
 
 - Each typed character is echoed when the terminal shows it, by the typing echo settings. NVDA (`behaviors.py` 572 to 593: queued, dispatched at the next text change).
 - With "speak passwords" off (the default), typing the terminal does not show is never spoken. NVDA (`behaviors.py` 579 to 587; configSpec `terminals.speakPasswords`, `config/configSpec.py` 317; user guide 4312 to 4316); Dickson, 2026-10-06 ("Verbatim must follow NVDA", with an end-to-end password test).
-- A password is never spoken because something else on the line changed: a clock ticking on the prompt's line, or a prompt that shows asterisks. Dickson, 2026-10-08 (the test list in "Terminal reading by diffing the screen" includes "a clock in a footer ticking during a password (no leak)" and "one echoing asterisks"). NVDA leaks in both cases: it dispatches its queued characters on any text change (`behaviors.py` 591 to 593), captured in `nv-con-alt.txt` (each "x" typed into a script that reads keys without showing them is spoken as "x") and recorded in `docs/parity.md` ("At a password prompt NVDA echoed each typed character").
+- A password is never spoken because something else on the line changed: a clock ticking on the prompt's line, or a prompt that shows asterisks. Dickson, 2026-10-08 (the test list in "Terminal reading by diffing the screen" includes "a clock in a footer ticking during a password (no leak)" and "one echoing asterisks"). NVDA leaks in both cases: it dispatches its queued characters on any text change (`behaviors.py` 591 to 593), captured in `nv-con-alt.txt` (each "x" typed into a script that reads keys without showing them is spoken as "x") and recorded in `docs/parity/terminals.md` ("At a password prompt NVDA echoed each typed character").
 - Typed text is not spoken a second time as output. Proposed as a requirement; Verbatim already does it. NVDA fails it when its diff gathers several typed characters into one insertion: `nv-con-floods.txt` line 25 and `nv-wt-floods.txt` line 24 ("dot flood dot ps 1" after the characters were each echoed).
 - A space typed at the end of a line is echoed when typed, although the terminal's padding hides it. Dickson, 2026-10-07 (scheduled item 3).
 - Typing past the right margin is echoed, not spoken as a new line. Dickson, 2026-10-08 (test list).
@@ -59,7 +59,7 @@ The base design proposed here keeps Verbatim's decided behaviour but changes wha
 
 ### Backspace, Delete, Escape and other editing keys
 
-- Backspace and Control+Backspace speak the text they removed. NVDA speaks the character or word before the caret, read before the key is sent (`editableText.py` 293 to 321); Dickson, 2026-10-08 ("What a key did to the text": the removed text, from evidence, in any language). Captured: both say "o" and "tw" after `echo one two` (`docs/parity.md`).
+- Backspace and Control+Backspace speak the text they removed. NVDA speaks the character or word before the caret, read before the key is sent (`editableText.py` 293 to 321); Dickson, 2026-10-08 ("What a key did to the text": the removed text, from evidence, in any language). Captured: both say "o" and "tw" after `echo one two` (`docs/parity/terminals.md`).
 - Delete speaks what it leaves at the caret. NVDA (`editableText.py` 329 to 342); Dickson, 2026-10-09 (coherence decision 2).
 - Escape clearing a line, Control+W and Control+U speak what they removed. Dickson, 2026-10-08 ("What a key did to the text"). NVDA is silent for Escape: it has no script for it in a terminal (`editableText.py` 388 to 412 lists the bound keys), captured in `nv-con-floods2.txt` lines 130 to 131 and 154 to 155.
 - Escape on a typed line that wrapped onto a second row says the whole text removed. Agent, never put to Dickson on its own (audit chain A, a58a7fc); NVDA is silent. Open question 5.
@@ -70,7 +70,7 @@ The base design proposed here keeps Verbatim's decided behaviour but changes wha
 
 - Left and Right Arrow say the character, Home and End the character at the caret, Control with Left or Right the word, Up and Down the line, by NVDA's unit table. NVDA (`editableText.py` 388 to 412); Dickson, 2026-10-08 ("Units for caret moves": a small fixed table for the standard Windows editing keys).
 - Up and Down Arrow in a terminal work as in a text field: when the caret moves to another line, that line is spoken; whatever the program redraws elsewhere is spoken at once as output. Dickson, 2026-10-09 ("Terminal line keys as NVDA has them"). NVDA (`editableText.py` 181 to 192; terminals do not use caret events, `behaviors.py` 527 to 530).
-- A key that does not move the caret is silent. Dickson, 2026-10-08 (afternoon decisions, deliberate difference). NVDA speaks the caret's line after its 100 ms wait, three times longer in Windows Terminal (`editableText.py` 86 to 88; `winConsoleUIA.py` 374 to 376 and 470): captured as ":" after each pager key in `nv-con-pager.txt` lines 59 to 77, and "blank" for each key of a list redrawn below the caret (`docs/parity.md`).
+- A key that does not move the caret is silent. Dickson, 2026-10-08 (afternoon decisions, deliberate difference). NVDA speaks the caret's line after its 100 ms wait, three times longer in Windows Terminal (`editableText.py` 86 to 88; `winConsoleUIA.py` 374 to 376 and 470): captured as ":" after each pager key in `nv-con-pager.txt` lines 59 to 77, and "blank" for each key of a list redrawn below the caret (`docs/parity/terminals.md`).
 - A line change caused by a line key is not spoken twice (as the key's answer and again as output). Proposed as a requirement; Verbatim does it today (`key_owns_line`). NVDA fails it: `nv-con-floods2.txt` lines 126 to 129, Up Arrow said "ready greater dot hundred dot ps 1" and then "dot hundred dot ps 1".
 - A line change on the caret's line from a key that did not move the caret is spoken as output, not dropped. Agent, to be confirmed (2026-10-09, `key_owns_line`, PSReadLine's menu).
 - No fixed wait: a caret key never blocks anything else of the application, and its answer comes whenever the evidence comes. Dickson, 2026-10-08 (afternoon decisions: "the outpost never blocks waiting for a caret move").
@@ -81,7 +81,7 @@ The base design proposed here keeps Verbatim's decided behaviour but changes wha
 - A pager moving one line speaks the line that came onto the screen, not every row. Dickson, 2026-10-09. NVDA says the same line, after ":" (`nv-con-pager.txt` lines 59 to 74).
 - Closing a full-screen program speaks only what followed it, not the main screen again. Dickson, 2026-10-09 (coherence decision 5, kept as a deliberate difference). NVDA speaks the main screen again, or a fragment of it: `nv-con-pager.txt` line 81, `nv-con-alt.txt` near its end ("eady greater dot altscreen dot ps 1").
 - The alternate screen is detected from the text itself (no history above the screen), verified live in both terminals. Dickson, 2026-10-07.
-- Selection lists drawn by a program: the line the caret moves to is spoken (NVDA's behaviour); a list redrawn with the caret below it speaks the line that gained the marker as output, from the word that changed. Dickson, 2026-10-09 for the first; the second is recorded in `docs/parity.md` as a difference following from two deliberate differences, built by an agent and to be confirmed.
+- Selection lists drawn by a program: the line the caret moves to is spoken (NVDA's behaviour); a list redrawn with the caret below it speaks the line that gained the marker as output, from the word that changed. Dickson, 2026-10-09 for the first; the second is recorded in `docs/parity/terminals.md` as a difference following from two deliberate differences, built by an agent and to be confirmed.
 
 ### Floods
 
@@ -158,16 +158,16 @@ The base design proposed here keeps Verbatim's decided behaviour but changes wha
 ### Known weaknesses, with evidence
 
 - Cost of reading the whole buffer on every change. Measured 2026-10-06 (docs/design/phase6-design.md, "Terminal output: notifications or diffing"): after 5,000 lines in a 120-column Windows Terminal the document was 610,244 characters, 86 percent padding, 6 ms to read before any diff; NVDA repeats that per change. NVDA's own fixes were coalescing in C++ (#14888) and trimming blank rows on older consoles (#14689, `winConsoleUIA.py` 114 to 123).
-- Lines went missing in floods in NVDA alpha-57645, though the whole buffer is read: `nv-wt-floods.txt` lines 27 onward, the first flood's speech starts at "flood line 152" and jumps to 444 and 648; `nv-con-floods.txt` lines 28 to 36, lines 1 to 5, then 28 to 33, then 56 to 58; `docs/parity.md` records 690 of 10,000 lines queued in Windows Terminal in an earlier transcript; and a 30-row alternate screen opened in one write lost rows 16 to 19 and 25 (`nv-con-alt.txt`). The cause was NVDA's pumped line reporting (#20177 and #20649), which spoke a burst's lines one per core cycle, at most 100, and dropped those waiting when speech was cancelled; NVDA reverted it (#20898, in the pinned source). NVDA alpha-58022 queues every new line: replayed on 2026-10-12, each 2,000-line flood queued all 2,000 lines and the alternate screen all 29 rows. No longer a weakness of NVDA's; the cost of reading the whole buffer above remains.
+- Lines went missing in floods in NVDA alpha-57645, though the whole buffer is read: `nv-wt-floods.txt` lines 27 onward, the first flood's speech starts at "flood line 152" and jumps to 444 and 648; `nv-con-floods.txt` lines 28 to 36, lines 1 to 5, then 28 to 33, then 56 to 58; `docs/parity/terminals.md` records 690 of 10,000 lines queued in Windows Terminal in an earlier transcript; and a 30-row alternate screen opened in one write lost rows 16 to 19 and 25 (`nv-con-alt.txt`). The cause was NVDA's pumped line reporting (#20177 and #20649), which spoke a burst's lines one per core cycle, at most 100, and dropped those waiting when speech was cancelled; NVDA reverted it (#20898, in the pinned source). NVDA alpha-58022 queues every new line: replayed on 2026-10-12, each 2,000-line flood queued all 2,000 lines and the alternate screen all 29 rows. No longer a weakness of NVDA's; the cost of reading the whole buffer above remains.
 - Fragments from the character diff. `nv-con-alt.txt`, last lines: "eady greater dot altscreen dot ps 1" on closing the alternate screen, the "r" of "ready" matched elsewhere. The user guide warns DMP reading "may be choppy or inconsistent" (4333 to 4335).
 - Typed text spoken twice: `nv-con-floods.txt` 25, `nv-wt-floods.txt` 24 and 251; a recalled line spoken twice, `nv-con-floods2.txt` 128 to 129.
-- Passwords spoken whenever the screen changes for another reason: `behaviors.py` 591 to 593; `nv-con-alt.txt` ("x" spoken for keys a script reads without showing); `docs/parity.md` (clock prompt, asterisk prompt).
-- Short output dropped as probably typed: `behaviors.py` 491 to 495 and 559 to 566 ("y", "ok", and status-line changes of one or two characters such as vim's ruler, `docs/parity.md`).
+- Passwords spoken whenever the screen changes for another reason: `behaviors.py` 591 to 593; `nv-con-alt.txt` ("x" spoken for keys a script reads without showing); `docs/parity/terminals.md` (clock prompt, asterisk prompt).
+- Short output dropped as probably typed: `behaviors.py` 491 to 495 and 559 to 566 ("y", "ok", and status-line changes of one or two characters such as vim's ruler, `docs/parity/terminals.md`).
 - Output scrolled off between reads. For screen-bounded consoles this lost lines and made reading choppy (#12974), which is why those use Difflib. For FORMATTED consoles and Windows Terminal it is not a problem until the history overflows, because the whole buffer is read.
 - Repeated identical screens. When the history is full and every line is the same, the buffer's text is identical before and after a flood, so the diff finds nothing (inferred from the algorithm; not captured). With history not full, NVDA spoke every line of a 2,000-line identical flood (`terminal_flood_kinds.rs` module docs).
 - The legacy console's 30 ms sleep before every read (`winConsole.py` 23; `behaviors.py` 479 to 484), a fixed wait.
 - Caret polling: 10 ms sleeps up to 100 to 300 ms, then the unit spoken even when nothing moved (":" in `nv-con-pager.txt` 59 to 77, at about 110 ms). The poll holds NVDA's main thread, so events wait behind it.
-- No flood control: every line is queued until a key; in the console host NVDA was still speaking a flood after its window closed (`docs/parity.md`, transcripts of 2026-10-07). NVDA tried a 100-line cap and reverted it because a newer batch cancelled the older one and users lost output (#20177, #20649, reverted in #20898; `docs/nvda/editable-text-and-terminals.md` 207 to 217).
+- No flood control: every line is queued until a key; in the console host NVDA was still speaking a flood after its window closed (`docs/parity/terminals.md`, transcripts of 2026-10-07). NVDA tried a 100-line cap and reverted it because a newer batch cancelled the older one and users lost output (#20177, #20649, reverted in #20898; `docs/nvda/editable-text-and-terminals.md` 207 to 217).
 - A strength worth keeping: monitoring starts with a baseline read at focus, so output written just after the focus is spoken (`nv-con-edit.txt` 4 to 6).
 
 ## 3. The base design
@@ -205,7 +205,7 @@ The outpost trims padding (trailing `White_Space`, as decided 2026-10-06) and sp
 
 ### The diff
 
-A pure function, original code in a platform-neutral crate (proposed: a module of `verbatim-text`, which already provides the word segmentation and grapheme boundaries it needs; open question 12), written from `docs/parity.md` and this document:
+A pure function, original code in a platform-neutral crate (proposed: a module of `verbatim-text`, which already provides the word segmentation and grapheme boundaries it needs; open question 12), written from `docs/parity/terminals.md` and this document:
 
 - Inputs: the old screen's lines (memory) and the snapshot's lines.
 - Alignment: a line diff (longest common subsequence of lines, with common prefix and suffix trimmed first so the usual case, nothing changed above the old last line, is linear). Only the part of the snapshot the old screen can overlap is aligned, the snapshot's first lines up to the old screen's length plus one screen; everything after the last aligned old line is appended output. When two alignments tie (identical lines), the one that keeps lines at their position wins, since the read started at the old screen's top.
@@ -243,7 +243,7 @@ Root cause 1 of the audit: Verbatim hears of a key in the outpost later than the
 - A fact from a read that ended before the key's press time is not the key's. A fact from a read that ended after it may be. Facts are matched by content: typed characters against what the caret's line gained (as today), Backspace, Control+Backspace, Escape, Control+W and Control+U against what it lost next to the caret (the guard of 2026-10-08: the removed text was adjacent to the caret and the caret now sits where it began), line keys and the landing rule against the caret's move. A read ending after the press that does not show the effect answers nothing; the next one may.
 - The caret before a key is the newest caret report from a read that ended before the press. A report of that kind arriving after the key (it was in the pipe) replaces it. Nothing else is kept: no fixed-size history.
 - A change on the caret's line and a caret move in the same read are judged together: when the caret moved to another line, the line is the key's answer and its change is not output; when it did not move, the change is output. That replaces `key_owns_line`. A caret event that answers first carries the line's text; a later read's change to that line, equal to what was just spoken as the answer, is not spoken again.
-- A watch ends at the next key or a focus change. The ten-second bound on a watch is a fixed timeout (`docs/parity.md`); proposed to drop it (open question 10).
+- A watch ends at the next key or a focus change. The ten-second bound on a watch is a fixed timeout (`docs/parity/text.md`, "TextInfo-equivalent layer"); proposed to drop it (open question 10).
 
 The same mechanism serves text fields; this document covers terminals only, but the change in Core should be made once.
 
@@ -386,7 +386,7 @@ Two different things go by this name.
 
 ### Extra 14: short output not taken for typing
 
-- Recorded in `docs/parity.md`; NVDA drops it. Verbatim's typing matching makes NVDA's heuristic unnecessary.
+- Recorded in `docs/parity/terminals.md`, "New terminal output"; NVDA drops it. Verbatim's typing matching makes NVDA's heuristic unnecessary.
 - Recommendation: keep, and confirm with Dickson (open question 11).
 
 ### Extra 15: the caret while output is held (decided 2026-10-14)
@@ -423,14 +423,14 @@ Core: `key_owns_line` replaced by the per-read rule; terminal keys answered from
 
 Tests: `terminal/tests.rs` (950 lines) and Core's `tests/terminal.rs` are rewritten around snapshots; the screen diff's table of cases is kept and extended (identical lines with and without a position hint, a footer with a moving view, a wrapped line losing its tail).
 
-Documentation: `docs/crates/verbatim-outpost.md` and `verbatim-core.md` "Terminals", `verbatim-uia-rops.md` layer 3, `docs/parity.md` "New terminal output", and the crate file for the crate that gains the diff.
+Documentation: `docs/crates/verbatim-outpost.md` and `verbatim-core.md` "Terminals", `verbatim-uia-rops.md` layer 3, `docs/parity/terminals.md` "New terminal output", and the crate file for the crate that gains the diff.
 
 ### Scenario expectations
 
 The design keeps the decided speech, so most scenarios should pass unchanged. Checked against the captures and the scenario module docs:
 
 - Unchanged: `*_commands`, `*_spoken_password`, `*_editing`, `*_short_output`, `*_progress`, `*_flood`, `conhost_wrapped_flood`, `*_same_flood`, `*_raised_flood`, `*_redraw_limit`, `*_footer_flood`, `conhost_footer_overflow`, `*_history_flood` and its during-group twin, `*_scrollback_overflow` and its twin, `*_control_flood`, `*_shift_flood`, `*_line_key_flood`, `*_up_typing`, `*_long_lines`, `*_full_screen`, `*_pager`, `*_marker_list`, `*_redrawn_list`, `*_review_grid`, `*_review_output`, `*_two_windows`, `windows_terminal_tabs`, `windows_terminal_close_tab`, `*_leave_flood`.
-- `*_typing` step 5 (the wrapped Escape): unchanged if Dickson keeps the rule; otherwise silence, as NVDA (`docs/parity.md`, captured 2026-10-09).
+- `*_typing` step 5 (the wrapped Escape): unchanged if Dickson keeps the rule; otherwise silence, as NVDA (`docs/parity/terminals.md`, "New terminal output", captured 2026-10-09).
 - Should become stable rather than flaky: `conhost_typing` step 5 (failed about one run in four before ecf191c; the new attribution does not depend on which read the outpost had before the request); the echo-before-output order in `conhost_typing` and `conhost_flood` (time-ordered intake).
 - Scripts shaped around today's timing, to revisit once the base is in: `conhost_footer_overflow`'s line-at-a-time start (a399b4e) and `windows_terminal_scrollback_overflow`'s split write (8de2f28). Whether a single 12,000-line write is read before or after it leaves the history still depends on when the terminal raises its first event, so both may still need their split; this is a measurement, not a guess.
 - New: output written just after a Windows Terminal terminal takes the focus (roadmap), which needs one interactive shell again; an identical-line flood that overflows the history, asserting the documented limitation; a blank line printed onto an empty screen counted in a flood (extra 7).
@@ -441,7 +441,7 @@ Each step is verifiable on its own before the next.
 
 1. Measurements 1 to 5. Verify: numbers written into docs/design/phase6-design.md; Dickson decides open questions 1 to 3 from them.
 2. Time-ordered intake in Core's reducer. Verify: a reducer unit test with both channels loaded; `conhost_typing` and `conhost_flood` ten runs each.
-3. The pure line diff in the platform-neutral crate, written from this document and `docs/parity.md`, with the existing table of cases ported as test data and new cases. Not wired. Verify: `cargo xtask ci`, including the neutral-crate dependency check.
+3. The pure line diff in the platform-neutral crate, written from this document and `docs/parity/terminals.md`, with the existing table of cases ported as test data and new cases. Not wired. Verify: `cargo xtask ci`, including the neutral-crate dependency check.
 4. The new read program in `verbatim-uia-rops`, both paths, with mockapp tests of exact call counts and of a scripted terminal that writes between calls. Not wired. Verify: mockapp.
 5. Switch the outpost to the new read and diff; delete the trust rules, the anchor search and `Owed`. Key attribution unchanged for now. Verify: the flood, footer, overflow, full-screen, pager and list scenarios in both terminals, ten runs of each flood.
 6. Caret-line facts with read times; Core attributes terminal keys; remove the terminal watch, `keys.rs`, `screen_at` and `key_owns_line`. Verify: typing, editing, lists, key-timing and up-typing scenarios, ten runs of `conhost_typing`.

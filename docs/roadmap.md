@@ -115,7 +115,7 @@ its measurements, with the corrections of
 - A Settings search suggestions scenario with an NVDA capture. It also
   covers selecting inside a list the focus controls, which has no
   scenario and was not checked live after the cheaper reads of 2026-10-10.
-- Toasts ([parity](parity.md), "Toasts"): Verbatim reads them only
+- Toasts ([parity](parity/alerts.md), "Toasts"): Verbatim reads them only
   through an MSAA alert, NVDA through UIA's window-opened event. Capture a
   Windows 11 toast live with NVDA and with Verbatim; if Verbatim is silent,
   follow NVDA (a `Windows.UI.Core.CoreWindow` whose automation id contains

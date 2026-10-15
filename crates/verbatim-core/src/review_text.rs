@@ -6,7 +6,7 @@
 //! word within the line, and reading the current unit, need no round
 //! trip; moving to another line, page, or the document's ends reads the
 //! line there. Columns follow the design's one intentional difference from
-//! NVDA (`docs/parity.md`, "Review cursor columns"): moving to the next or
+//! NVDA (`docs/parity/review.md`, "Review cursor columns"): moving to the next or
 //! previous line keeps the column. In a terminal the column is a cell
 //! column, so moving down from column 10 always lands on column 10, a
 //! blank cell past the end of a shorter line; elsewhere it is counted in

@@ -9,7 +9,7 @@
 //! The document is a small text table whose second column starts at column
 //! 8 on every row long enough to have one. Moving down the table keeps the
 //! review cursor's column, Verbatim's one deliberate difference from NVDA
-//! here (`docs/parity.md`, "Review cursor columns"): a shorter row puts it
+//! here (`docs/parity/review.md`, "Review cursor columns"): a shorter row puts it
 //! on its last character, and the next longer row returns it to column 8.
 //!
 //! The review commands are the desktop layout's numpad keys, sent as

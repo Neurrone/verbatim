@@ -118,7 +118,7 @@ Public API:
   persists that too, so the saved configuration is the switch's outcome;
   a `revert` then restores nothing until the switch ends, and only if it
   fails, since a synthesizer that starts has its own saved values and the
-  previous one's must not reach it (`docs/parity.md`, "Settings dialog
+  previous one's must not reach it (`docs/parity/speech-audio.md`, "Settings dialog
   during a synthesizer switch").
 - `SpeechEvents` — the observability seam, one call per milestone of each
   utterance: `utterance_queued` (with its rendered text), `audio_started`
@@ -273,7 +273,7 @@ further audio for an utterance it has ended, so a driver still running
 gets `Break` on its next push even if its flag was not yet seen. Utterances
 registered after the cancellation are unaffected.
 
-When speech is cut off (`docs/parity.md`, "When speech is cut off, and
+When speech is cut off (`docs/parity/focus-events.md`, "When speech is cut off, and
 cancellation of expired focus speech"). Besides an `Interrupt` utterance,
 three things end speech early, all carried to the queue thread as events:
 

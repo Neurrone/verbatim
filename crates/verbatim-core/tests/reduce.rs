@@ -625,9 +625,10 @@ fn states_changed_with_children(
 
 /// An ancestor's state change spoken just before the focus moves into
 /// another top-level window is cut off by that move, as NVDA's foreground
-/// change cancels speech (`docs/parity.md`, "When speech is cut off"):
-/// the outpost reports the change ahead of the focus change it was
-/// observed before, so this is the outcome however the two were batched.
+/// change cancels speech (`docs/parity/focus-events.md`, "When speech is
+/// cut off, and cancellation of expired focus speech"): the outpost
+/// reports the change ahead of the focus change it was observed before, so
+/// this is the outcome however the two were batched.
 #[test]
 fn an_ancestors_change_before_a_focus_in_another_window_is_cut_off() {
     let source = Pid(1);
@@ -923,7 +924,7 @@ fn a_description_change_on_the_focus_is_spoken() {
 /// A field's suggestions appearing play the suggestions-opened indication
 /// only while the field is the focus; their going away, or a change of
 /// another node, plays the suggestions-closed one
-/// (`docs/parity.md`, "Suggestions appearing and going away").
+/// (`docs/parity/changes-and-selection.md`, "Suggestions appearing and going away").
 #[test]
 fn suggestions_opening_on_the_focus_and_closing_play_their_indications() {
     let source = Pid(1);
@@ -1643,7 +1644,7 @@ fn an_unnamed_tree_ancestor_is_still_announced() {
 #[test]
 fn a_tree_view_taking_the_focus_on_its_item_is_spoken_as_the_items_ancestor() {
     // A Win32 tree view taking the focus is reported by its focused item,
-    // with the tree as its ancestor (`docs/parity.md`, "A control's own
+    // with the tree as its ancestor (`docs/parity/windows-and-processes.md`, "A control's own
     // focus with a focused child"): NVDA says the tree's name and role,
     // without its shortcut, and then the item.
     let state = SrState::new();
@@ -3310,7 +3311,7 @@ fn entering_menus_is_silent_and_only_the_item_is_announced() {
 /// A container entered outside a menu in the same focus change is cut off
 /// as the menu is entered, as NVDA cancels in the menu's place among the
 /// entered containers: Windows 11 Notepad's File menu queues its popup
-/// window and cancels it (`docs/parity.md`, "Entered menus").
+/// window and cancels it (`docs/parity/changes-and-selection.md`, "Entered menus").
 #[test]
 fn a_container_entered_before_a_menu_is_cut_off_by_it() {
     let popup = node(1, Role::Window, Some("Popup"), None, StateSet::new());
@@ -5127,7 +5128,7 @@ fn explorer_item(
 /// "Inner" in a new list, its states read before Explorer selected it, then
 /// Explorer selects it, then reports the same focus again. The outpost gives
 /// Inner a new node, since the element Explorer gave Inner's runtime id to
-/// before, delta.txt, is gone (`docs/parity.md`, "Duplicate focus
+/// before, delta.txt, is gone (`docs/parity/focus-events.md`, "Duplicate focus
 /// suppression"), so Inner is announced, without its list, which reads the
 /// same as the one left in the same window; the selection that follows
 /// says only "selected"; the repeated focus is silent.

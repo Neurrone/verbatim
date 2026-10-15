@@ -6,7 +6,7 @@ interactively to decide what Verbatim should say and to write Verbatim's
 own end-to-end assertions by hand. Verbatim's tests never compare against
 a transcript, and NVDA never runs in continuous integration. Where Verbatim
 deliberately differs from NVDA, record the difference in
-[the parity ledger](parity.md).
+[the parity ledger](parity/readme.md).
 
 There are two parts:
 

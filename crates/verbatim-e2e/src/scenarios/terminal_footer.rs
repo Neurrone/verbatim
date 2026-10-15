@@ -37,7 +37,7 @@
 //! 98 to 100 and "status: done" in the console host, and lines 2 to 100
 //! and "done" in Windows Terminal, leaving lines out as that build did;
 //! NVDA alpha-58022 speaks every new line and is still to be captured on
-//! this script (`docs/parity.md`, "New terminal output").
+//! this script (`docs/parity/terminals.md`, "New terminal output").
 
 use std::io;
 use std::time::Duration;

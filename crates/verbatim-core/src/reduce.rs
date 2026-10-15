@@ -7,8 +7,8 @@
 //! captured sequence of inputs into a deterministic regression test (see
 //! [`crate::replay`]).
 //!
-//! The behavior is specified in `docs/parity.md` under "Focus and
-//! announcements", written from the NVDA behavior documented in
+//! The behavior is specified in the focus and announcement files of
+//! `docs/parity/` (listed in `docs/parity/readme.md`), written from the NVDA behavior documented in
 //! `docs/nvda/events.md`.
 
 use std::sync::Arc;
@@ -27,7 +27,7 @@ use crate::state::{
 use crate::{editing, review, review_text, say_all, terminal, text};
 
 /// The activity id of the shell's window-snap results notification, the one
-/// UIA notification spoken from any application (`docs/parity.md`, "Event
+/// UIA notification spoken from any application (`docs/parity/focus-events.md`, "Event
 /// acceptance"); the supervisor starts an outpost for no other notification.
 pub const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyResults";
 
@@ -130,7 +130,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     }
 }
 
-/// How an event relates to the attention record (`docs/parity.md`, "Event
+/// How an event relates to the attention record (`docs/parity/focus-events.md`, "Event
 /// acceptance").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Acceptance {
@@ -175,7 +175,7 @@ fn classify(
         // foreground change that moved the foreground away from its window
         // (D14, amended 2026-10-05). With no window facts, the application
         // decides. This is a second test, after the read, which NVDA does
-        // not make; it tests once, before reading (`docs/parity.md`, "Event
+        // not make; it tests once, before reading (`docs/parity/focus-events.md`, "Event
         // acceptance in the outpost").
         NormalizedEvent::FocusChanged { .. } => {
             let attended = match window {
@@ -235,7 +235,7 @@ fn classify(
 /// one window can hold several applications (a Settings page's content
 /// inside `ApplicationFrameHost`'s frame), and a foreground change is ordered
 /// by when its window became the foreground, after the content's own focus
-/// may have been observed (`docs/parity.md`, "Stale focus events").
+/// may have been observed (`docs/parity/focus-events.md`, "Stale focus events").
 fn is_stale_focus(
     state: &SrState,
     outpost: OutpostId,
@@ -252,7 +252,7 @@ fn is_stale_focus(
 }
 
 /// Core's duplicate-focus rule (`docs/design/focus-pipeline.md`, section
-/// 4.2; `docs/parity.md`, "Duplicate focus suppression"): a focus whose
+/// 4.2; `docs/parity/focus-events.md`, "Duplicate focus suppression"): a focus whose
 /// element is the same as the last focus Core queued, while that element
 /// still has the keyboard focus, is dropped before anything else judges
 /// it, so it neither moves attention nor orders later focus events. NVDA
@@ -626,8 +626,8 @@ struct FocusReport<'a> {
     selected_child: Option<&'a NodeSnapshot>,
 }
 
-/// Handles an accepted focus change (`docs/parity.md`, "Focus and
-/// announcements"):
+/// Handles an accepted focus change (`docs/parity/focus-announcement.md`,
+/// "Focus announcement content and property order"):
 ///
 /// - A foreground change moves attention to its application and window, and
 ///   is otherwise ignored when focus is already in that window, compared by
@@ -648,7 +648,7 @@ struct FocusReport<'a> {
 ///   navigator follows focus. When the focus's top-level window changed,
 ///   speech is cut off first, and the window, its outermost ancestor, is
 ///   one of the entered containers, spoken by the same rule as the others
-///   whether or not a foreground report came for it (`docs/parity.md`,
+///   whether or not a foreground report came for it (`docs/parity/focus-context.md`,
 ///   "Window announcement on switching applications"). When the outpost
 ///   could not read the ancestors in time, no container is announced and
 ///   the previous focus's chain is kept for the next comparison, so the
@@ -868,7 +868,7 @@ fn focus_speech(
         // Entering a menu bar, menu, or menu item cuts speech and says
         // nothing, in its place among the entered containers, outermost
         // first: speech for a container entered outside the menu is cut
-        // too (`docs/parity.md`, "Entered menus").
+        // too (`docs/parity/changes-and-selection.md`, "Entered menus").
         if is_menu(container) {
             effects.push(Effect::StopSpeech);
             continue;
@@ -1940,7 +1940,7 @@ fn reduce_ancestor_states_changed(
 /// An editable field's suggestions appeared (`open`) or went away: the
 /// focus's opening plays the suggestions-opened indication, and any other
 /// change the suggestions-closed one, the focus test applying only to an
-/// opening (`docs/parity.md`, "Suggestions appearing and going away").
+/// opening (`docs/parity/changes-and-selection.md`, "Suggestions appearing and going away").
 fn reduce_suggestions(state: &SrState, node_id: NodeId, open: bool) -> Vec<Effect> {
     if open && state.focus_matches(node_id) {
         vec![Effect::PlayEarcon(Earcon::SuggestionsOpened)]
@@ -2148,7 +2148,8 @@ fn entered_ancestors<'a>(
 /// Whitespace-only names and descriptions count as absent. Everything else
 /// speaks on entry whether named or not: dialogs, toolbars, and an unnamed
 /// tree, which announces as a bare "tree view", the same as NVDA. The
-/// behavior is recorded under focus-ancestry context in `docs/parity.md`.
+/// behavior is recorded in `docs/parity/focus-context.md`, "Focus-ancestry
+/// context".
 fn is_presentable_container(node: &NodeSnapshot) -> bool {
     let named = has_text(node.name.as_deref());
     let described = has_text(node.details.description.as_deref());

@@ -9,7 +9,7 @@
 //! of Verbatim's keyboard behaviour be exercised by ordinary unit tests with
 //! scripted key streams and scripted time.
 //!
-//! `docs/parity.md` (the input section) is the behavioural record: which of
+//! `docs/parity/input.md` is the behavioural record: which of
 //! these rules exist for parity with other screen readers, and which
 //! behaviours Verbatim has decided not to have. [`DecisionMachine`] carries
 //! the summary of both.
@@ -109,7 +109,7 @@ pub struct EmittedGesture {
     /// count: a held key is one press for repeat purposes, so every
     /// auto-repeated emission carries the same count as the genuine press
     /// that started the hold. NVDA counts auto-repeat as presses; this is a
-    /// deliberate difference (`docs/parity.md`, "Script repeat counting").
+    /// deliberate difference (`docs/parity/input.md`, "Script repeat counting").
     /// Any key other than a modifier that completes no bound gesture ends
     /// the streak, as in NVDA.
     pub repeat: u8,
@@ -356,7 +356,7 @@ impl LoneModifier {
 ///   deliberate difference from NVDA, which counts it. A key other than a
 ///   modifier that completes no bound gesture ends the streak, as in NVDA.
 ///
-/// `docs/parity.md` (the input section) records which of these match other
+/// `docs/parity/input.md` records which of these match other
 /// screen readers and how far that has been verified.
 ///
 /// # Behaviours Verbatim deliberately does not have

@@ -196,8 +196,8 @@ impl CaretBefore<'_> {
 
 /// The caret of `node` as a key pressed at `pressed_at_ms` found it: the
 /// newest of Core's timed caret reports observed before the key was
-/// pressed, as the outpost picks its own baseline (`docs/parity.md`, "Text,
-/// documents, terminals", caret-key reporting). A report observed in the
+/// pressed, as the outpost picks its own baseline (`docs/parity/text.md`,
+/// "TextInfo-equivalent layer", caret-key reporting). A report observed in the
 /// same millisecond as the key, or later, may already show what the key
 /// did, so it is never the caret before the key. With no time for the key, or no timed report,
 /// the caret Core has now stands in; with timed reports but none from
@@ -354,7 +354,7 @@ pub(crate) fn caret_reply(
 ) -> Vec<Effect> {
     // A watch that ended without evidence (`TextReply::WatchEnded`), or a
     // reply without it, says nothing: a key that did not move the caret is
-    // silent (`docs/parity.md`, "Text, documents, terminals").
+    // silent (`docs/parity/text.md`, "TextInfo-equivalent layer").
     let TextReply::Caret(reply) = reply else {
         return Vec::new();
     };
@@ -1126,7 +1126,7 @@ pub(crate) fn later_key(state: &mut SrState, at_ms: u64) {
 /// Control+C, Control+D, Control+Break): in a terminal, the typing held,
 /// never shown, is forgotten, as NVDA forgets its queued characters on
 /// Enter, Tab, Control+C, Control+D, and Control+Break
-/// (`docs/parity.md`, "Text, documents, terminals"); Escape clears a line
+/// (`docs/parity/terminals.md`, "New terminal output"); Escape clears a line
 /// too.
 pub(crate) fn clearing_key(state: &mut SrState) {
     let terminal = state

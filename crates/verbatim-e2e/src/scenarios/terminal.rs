@@ -44,9 +44,10 @@
 //! con` then clears it, so it is not on screen when the shell's process
 //! id is written either (a read-only diagnosis of the `conhost_` runs on
 //! 2026-10-11). Spoken as new output, the notice is what NVDA speaks too
-//! (`docs/parity.md`). So every shell, in both terminals, runs with
-//! `-NonInteractive` ([`shell_command`]), which prints no notice. No
-//! scenario needs more of the interactive host than its prompt, which
+//! (`docs/parity/terminals.md`, "New terminal output"). So every shell,
+//! in both terminals, runs with `-NonInteractive` ([`shell_command`]),
+//! which prints no notice. No scenario needs more of the interactive host
+//! than its prompt, which
 //! `-NoExit` keeps; the password prompt is a script's own
 //! ([`super::terminal_commands`]), and the footer scripts read keys with
 //! `[Console]::ReadKey`, which a shell that is not interactive still

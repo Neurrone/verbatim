@@ -446,7 +446,7 @@ fn run(
 
     // The start sound, and the initial outpost target (the focus listener
     // only reports foreground changes after this point). No start message
-    // is spoken, as NVDA speaks none (`docs/parity.md`, "Starting"): the
+    // is spoken, as NVDA speaks none (`docs/parity/system.md`, "Starting"): the
     // first speech is the foreground's announcement.
     manager.play_earcon(Earcon::Start);
     // Ask the foreground application for its current focus: its outpost is
@@ -488,7 +488,7 @@ fn run(
     // each is asked to shut down and killed through its job only if it
     // has not exited in time. Job objects still kill anything left when
     // the process exits. An instance being replaced plays no exit sound
-    // and stops at once, unlike NVDA (Dickson, 2026-10-10; `docs/parity.md`,
+    // and stops at once, unlike NVDA (Dickson, 2026-10-10; `docs/parity/system.md`,
     // "Replacing a running instance").
     drop(hook);
     let shutdown = {

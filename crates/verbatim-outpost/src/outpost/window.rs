@@ -158,7 +158,7 @@ fn window_is_topmost(window: HWND) -> bool {
 }
 
 /// Facts about `handle`'s window for the reducer's attention classification
-/// (`docs/parity.md`, "Event acceptance"): its top-level window, the top of
+/// (`docs/parity/focus-events.md`, "Event acceptance"): its top-level window, the top of
 /// its owner chain, whether it or its top-level window is topmost, and, for a
 /// `Windows.UI.Core` window only, whether it is the input thread's active
 /// window or inside it — NVDA's test for UWP windows — and whether it is in
@@ -220,7 +220,7 @@ pub(super) fn desktop_window() -> isize {
 /// 449, issues 5116 and 8137): NVDA still makes such a window its focus
 /// and runs its foreground event, which cuts speech, and only the
 /// announcement is skipped. The outposts and the focus listener drop the
-/// focus on them altogether, so speech is not cut there (`docs/parity.md`,
+/// focus on them altogether, so speech is not cut there (`docs/parity/windows-and-processes.md`,
 /// "The shell's staging windows"): on Alt+Tab, Explorer's
 /// `ForegroundStaging` window takes the focus with no name, and was said
 /// as "pane" before the window switched to.

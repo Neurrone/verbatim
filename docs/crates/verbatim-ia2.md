@@ -163,7 +163,7 @@ Public API:
   focus on any other object's own child id 0 is redirected to the child
   `accFocus` names by id when that child has the focused state, which is
   how a tree view or tab control raising focus on itself and then on its
-  item announces the item, as NVDA does (`docs/parity.md`, "A control's
+  item announces the item, as NVDA does (`docs/parity/windows-and-processes.md`, "A control's
   own focus with a focused child"); the
   `accFocus` VARIANT is parsed in one shared place, `read_acc_focus`, which
   `focused_snapshot` also uses, so the child-id and child-object forms are
@@ -221,7 +221,7 @@ Public API:
   `selected_child`, and `activate` (`accDoDefaultAction`, MSAA's only
   activation primitive, answering the `accDefaultAction` name read first). Every snapshot is minted through `node_for`,
   which matches a new sighting against the kept nodes in NVDA's
-  comparison order (`docs/parity.md`, "Held objects"): the same COM
+  comparison order (`docs/parity/focus-events.md`, "Held objects"): the same COM
   object (by its canonical `IUnknown`, confirmed against the kept object)
   with the same child id in the same window and the same role, else, for
   an object acquired at its address, a kept node acquired at the same
@@ -253,7 +253,7 @@ Public API:
   sighting, and the address is what recognizes an object again. An
   object reached through `accParent` with no address of its own (a
   windowless ancestor) has neither, so an event naming it is never
-  matched to it, as NVDA never matches it (`docs/parity.md`). Two seams
+  matched to it, as NVDA never matches it (`docs/parity/focus-announcement.md`, "Focus announcement content and property order"). Two seams
   mirror NVDA where plain MSAA navigation would mislead. A `SysTreeView32`
   item's navigation and ancestor chain route through the tree control's
   own `TVM_GETNEXTITEM` relations (with the accid-to-htreeitem mapping

@@ -42,7 +42,7 @@
 //! keyboard focus, in the same round trip as the new focus: when it does
 //! not, or cannot be read at all, the element behind the id is not the one
 //! the node stood for, and the outpost has [`NodeIdRegistry::reissue`] give
-//! the id a new node (`docs/parity.md`, "Duplicate focus suppression").
+//! the id a new node (`docs/parity/focus-events.md`, "Duplicate focus suppression").
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};

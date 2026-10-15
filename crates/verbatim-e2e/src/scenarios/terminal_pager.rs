@@ -20,7 +20,8 @@
 //! NVDA, captured live on 2026-10-09 with this script in both terminals,
 //! says the same lines, each after the prompt, ":", the caret's line it
 //! speaks once its wait for the caret to move times out; Verbatim keeps a
-//! key that does not move the caret silent (`docs/parity.md`).
+//! key that does not move the caret silent
+//! (`docs/parity/terminals.md`, "New terminal output").
 
 use std::io;
 use std::time::Duration;

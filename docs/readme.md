@@ -16,7 +16,7 @@ project's invented vocabulary. If Windows APIs are unfamiliar,
 with its first three files before the architecture doc's backend
 sections.
 
-**Working on NVDA parity.** [The parity ledger](parity.md) is the
+**Working on NVDA parity.** [The parity ledger](parity/readme.md) is the
 per-behavior checklist and its statuses are the definition of done;
 each entry links the relevant file in [docs/nvda](nvda/readme.md),
 which documents how NVDA implements things, cited against the pinned
@@ -49,7 +49,7 @@ NVDA says, to decide what Verbatim should say.
 - [Walkthroughs](walkthroughs.md) — the life of a focus change, a
   command keystroke, an utterance, a query, recovery from failures, and
   an E2E run, across process and crate boundaries.
-- [Parity ledger](parity.md) — every NVDA-parity claim and its
+- [Parity ledger](parity/readme.md) — every NVDA-parity claim and its
   verification status.
 - [docs/nvda](nvda/readme.md) — how NVDA implements its nontrivial
   features, source-cited; NVDA-only content by rule.

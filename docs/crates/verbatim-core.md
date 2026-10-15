@@ -103,7 +103,7 @@ Public API:
 
 Implementation notes, `reduce`:
 
-- When speech is cut off (`docs/parity.md`, "When speech is cut off, and
+- When speech is cut off (`docs/parity/focus-events.md`, "When speech is cut off, and
   cancellation of expired focus speech"): focus, value, state, selection,
   object navigation, review, report-object, and activation speech is
   `Queued`, as NVDA queues it,
@@ -209,7 +209,7 @@ Implementation notes, `reduce`:
   section 16.4); there is no separate rule for an unannounced foreground
   window.
 - Event acceptance (decision D14 as amended by the outpost redesign;
-  `docs/parity.md`, "Event acceptance"): the state keeps an attention
+  `docs/parity/focus-events.md`, "Event acceptance"): the state keeps an attention
   record, the application and window facts of the most recent foreground
   change, standing in for the system's foreground window. Every event is
   classified against it before anything else. A
@@ -236,7 +236,7 @@ Implementation notes, `reduce`:
   Events from elsewhere are dropped, except background kinds, which are spoken
   queued and never move focus or the navigator. With no attention yet,
   everything is accepted.
-- Windows follow NVDA (`docs/parity.md`, "Window announcement on switching
+- Windows follow NVDA (`docs/parity/focus-context.md`, "Window announcement on switching
   applications"): a foreground change is a focus on the window, ignored
   when its top-level window handle equals the current focus's, which covers
   both a window that is already the focus and focus already inside it.
@@ -251,7 +251,7 @@ Implementation notes, `reduce`:
   selection of an ancestor is such a state change); a name change speaks only on the focused node, where the new name
   alone is spoken, queued. Order within an outpost comes from its queue;
   across outposts, a focus observed before the focus already applied is
-  dropped as stale (`observed_at_ms`, `docs/parity.md` "Stale focus
+  dropped as stale (`observed_at_ms`, `docs/parity/focus-events.md` "Stale focus
   events"), and `latest_focus_observed_at` lets the shell skip a fake
   focus after a menu closes when a later focus has been applied. The negated-state rules match NVDA's: negated checked for
   check boxes and radio buttons, and negated pressed ("not pressed") for a
@@ -367,13 +367,13 @@ Implementation notes, `reduce`:
   reported itself focused when it became the focus
   (`FocusContext::reported_focused`) and whose new state set no longer
   includes focused has lost the focus before the next focus event
-  arrived: its states are kept but nothing is spoken (`docs/parity.md`,
+  arrived: its states are kept but nothing is spoken (`docs/parity/changes-and-selection.md`,
   "State changes after the focus has left"). When the change makes the
   focus expanded and the event carries a `child_count`, which the outpost
   reads only for a Win32 tree view item, "52 items" (`Phrase::Items`)
   follows as an utterance of its own (`docs/nvda/speech.md`, "How many
   items an expanded tree view item holds").
-- Outpost replacement (`docs/parity.md`, "Recovery after an outpost is
+- Outpost replacement (`docs/parity/focus-events.md`, "Recovery after an outpost is
   replaced"): node ids carry the outpost incarnation that issued them, so an
   id from a replaced outpost never names a node in its successor. On
   `Input::OutpostEnded` the focus keeps its copied data but is marked dead,
@@ -428,7 +428,7 @@ answers once the evidence comes, and a watch that ends without it is
 answered `TextReply::WatchEnded`, for which Core says nothing, as it
 says nothing for a reply with `moved` false. A key that moves nothing,
 such as Home at a line's start, is silent, where NVDA speaks the unit
-after its 100 ms wait (`docs/parity.md`). The caret, the Delete text, the selection,
+after its 100 ms wait (`docs/parity/text.md`, "TextInfo-equivalent layer"). The caret, the Delete text, the selection,
 and what Backspace deletes all come from the caret as the key found it:
 Core keeps the focus's last 8 caret reports (`CARET_HISTORY`, held
 inline in the state) with the time each was observed, a caret event's
@@ -563,7 +563,7 @@ of the break, outside a terminal, whose row has no break; previous
 and next word cross lines, landing on the next line's first word or the
 previous line's last; a word of one character is spoken by its name, as
 the caret's word is; a unit the text does not have says "Not supported in
-this document". The column difference from NVDA (`docs/parity.md`, "Review
+this document". The column difference from NVDA (`docs/parity/review.md`, "Review
 cursor columns"): moving to another line keeps the column, a cell column in
 a terminal (where a column past a row's text is a blank cell and the cursor
 can move across a padded row's blank cells) and a remembered character

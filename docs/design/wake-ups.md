@@ -1164,7 +1164,7 @@ editing, commands, pager or flood in its name, `menu_and_settings_dialog`
 and `system_information_tree`) were run once, and 36 passed.
 `conhost_up_typing` failed, and failed again in three more runs: Up Arrow
 and "x" pressed at once are now spoken "x", "echo onex" instead of
-"echo onex" (`docs/parity.md` keeps Verbatim's single reading, Dickson,
+"echo onex" (`docs/parity/terminals.md`, "New terminal output" keeps Verbatim's single reading, Dickson,
 2026-10-09). It passed twice on the same build without the change, and
 three times with value changes left hooked. The caret key's answering
 read now finds the cursor still before the "x" the shell had just

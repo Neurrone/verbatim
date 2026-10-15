@@ -21,7 +21,7 @@
 //!   order they came in. NVDA's global group also takes live regions, selection
 //!   added and removed, range values, windows and tool tips opened, system
 //!   alerts, layout invalidation, drag and drop, and the active text
-//!   position, which Verbatim does not yet subscribe to (`docs/parity.md`,
+//!   position, which Verbatim does not yet subscribe to (`docs/parity/backends.md`,
 //!   "UIA event registration").
 //!
 //! The listener's callbacks, its writer, and its registration threads never

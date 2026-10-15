@@ -103,7 +103,7 @@ impl SettingsHost {
     /// synthesizer when it started, and a commit or revert asked for during
     /// the switch is carried out for the synthesizer now active. NVDA's
     /// switch blocks its GUI, so its settings dialog can never be closed
-    /// during one (`docs/parity.md`, "Settings dialog during a synthesizer
+    /// during one (`docs/parity/speech-audio.md`, "Settings dialog during a synthesizer
     /// switch"); this host's switch does not block, so a commit made
     /// meanwhile must still save what the switch ended with.
     fn switch_ended(&self, outcome: Result<DriverState, SynthError>) -> Result<(), SynthError> {

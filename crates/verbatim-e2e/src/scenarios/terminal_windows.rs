@@ -32,7 +32,8 @@
 //! Verbatim says "blank" before the prompt, for the empty line the caret
 //! is on, as every new terminal window or tab does in both terminals:
 //! NVDA's silence there is NVDA not recognising the terminal's focus, a
-//! bug not copied (Dickson, 2026-10-09, `docs/parity.md`).
+//! bug not copied (Dickson, 2026-10-09,
+//! `docs/parity/terminals.md`, "New terminal output").
 //!
 //! Switching tabs holds Control, as a person does through Windows
 //! Terminal's tab switcher, and releases it once the tab is chosen
@@ -50,7 +51,7 @@
 //! 2"). Verbatim is expected to say the same: the focus listener reads
 //! each tab's focus from the event's own element, so the tab's ancestors
 //! are its own (`docs/design/focus-pipeline.md`, section 12;
-//! `docs/parity.md`).
+//! `docs/parity/terminals.md`, "New terminal output").
 //! Typing after a switch is echoed and its output spoken as in any
 //! terminal.
 //!

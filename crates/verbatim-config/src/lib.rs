@@ -34,7 +34,7 @@ pub mod themes;
 
 /// Which keys act as the Verbatim modifier (NVDA's `NVDAModifierKeys`). The
 /// default adds Caps Lock to NVDA's two Insert keys, a deliberate
-/// difference (`docs/parity.md`, "NVDA-modifier semantics").
+/// difference (`docs/parity/input.md`, "NVDA-modifier semantics").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 #[expect(

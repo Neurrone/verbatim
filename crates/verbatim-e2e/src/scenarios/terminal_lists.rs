@@ -22,7 +22,8 @@
 //! speaks the caret's line once its wait for the caret to move times out,
 //! and drops the marker's change as output, a single character inserted on
 //! one line; Verbatim keeps a key that does not move the caret silent and
-//! speaks a rewritten line from the word that changed (`docs/parity.md`).
+//! speaks a rewritten line from the word that changed
+//! (`docs/parity/terminals.md`, "New terminal output").
 
 use std::io;
 

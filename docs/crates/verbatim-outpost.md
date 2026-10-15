@@ -358,7 +358,7 @@ Public API:
     output (`docs/design/wake-ups.md`, item 15). Both
     are on the focused element only, since the reducer acts on no other
     element's changes (NVDA's scope also names the focus's ancestors, but
-    UIA delivers no ancestor's event to it; `docs/parity.md`, "UIA event
+    UIA delivers no ancestor's event to it; `docs/parity/backends.md`, "UIA event
     registration"). The parts are shaped: a property change's element
     arrives as a `verbatim_uia::Cached<PropertyEvent>`, everything a name,
     value, or state set is read from and no detail; a caret, text, or
@@ -426,7 +426,7 @@ Public API:
     finishes each before the next. Before any call into the application
     for an entry, it tests the event by NVDA's acceptance test against the
     foreground window (`outpost::acceptance`, since 2026-10-10;
-    `docs/parity.md`, "Event acceptance in the outpost"): `accepts_event`,
+    `docs/parity/focus-events.md`, "Event acceptance in the outpost"): `accepts_event`,
     a pure function of the event's name, its window, the window queries
     (`WindowQueries`, local calls in `SystemWindows`), and the events
     application support asked for (`RequestedEvents`, empty), and drops
@@ -520,7 +520,7 @@ Public API:
   change on that window's
   own object, when the window was the foreground as the focus entered it,
   is not spoken as an ancestor's, as NVDA's foreground object takes its
-  place (`docs/parity.md`, "A top-level window's state change"), and
+  place (`docs/parity/focus-announcement.md`, "A top-level window's state change"), and
   mockapp's windows, on desktops where none takes the foreground, are made
   the foreground this way. `Outpost::settle` waits until the worker has
   handled everything queued, follow-ups included, the focus-following
@@ -920,7 +920,7 @@ Implementation notes:
   2026-10-09, Windows raises the foreground event once the change is
   made, and the events that come before are stale or raised early by the
   application itself, such as File Explorer's as it creates its window,
-  which the system's own event follows (`docs/parity.md`, "Stale focus
+  which the system's own event follows (`docs/parity/focus-events.md`, "Stale focus
   events"). The intake held such a batch for up to 250 ms, checking every
   10 ms, until then. The batch limits keep a foreground fact as one of
   its thread's other events as well as one of the focus events, as NVDA's
@@ -1007,7 +1007,7 @@ Implementation notes:
   the frame's own snapshot, read as a foreground window is read, as its
   only ancestor, so the reducer says "Verbatim" and then "Context menu",
   as NVDA names the foreground window a menu opens from
-  (`docs/parity.md`).
+  (`docs/parity/focus-announcement.md`, "Focus announcement content and property order").
 - `verbatim-gui`'s `force_foreground` (see that crate's section) injects a
   bare `VK_CONTROL` tap before attempting `SetForegroundWindow`: a gesture
   that arrived via the control plane (no physical input, as every E2E test
@@ -1401,7 +1401,7 @@ Implementation notes:
     reported, or when it is `CARET_WATCH_BOUND` (10 seconds) old, which
     only frees it: the intake wakes the idle worker then (`Item::Wake`,
     `Intake::wake_at`), and nothing is spoken. So a key that moves nothing
-    is silent (`docs/parity.md`, "Text, documents, terminals"), and a key
+    is silent (`docs/parity/text.md`, "TextInfo-equivalent layer"), and a key
     whose application reports nothing when it moves the caret is silent
     too. Through UIA each check is the whole caret read above, one round
     trip remotely, so the check that finds the evidence is the answer, with
@@ -1486,7 +1486,7 @@ Implementation notes:
   next reported, and never the value, which for a document is all of its
   text. A focused terminal's caret is reported as any other's, so a new
   terminal window or tab says "blank" for its empty line, in Windows
-  Terminal as in the console host (`docs/parity.md`). The worker then
+  Terminal as in the console host (`docs/parity/terminals.md`, "New terminal output"). The worker then
   follows its caret:
   the focus-following UIA subscription, given the focus with its extended
   group when the focus has text, its caret, text, and active text

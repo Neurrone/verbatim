@@ -470,7 +470,7 @@ window, `WindowFromAccessibleObject`).
 
 - Minimum: 19 MSAA calls. Acquiring the focused object from the event's
   address (1), asking its `accFocus` whether a focused child of it should
-  be reported instead (1, `docs/parity.md`, "A control's own focus with a
+  be reported instead (1, `docs/parity/windows-and-processes.md`, "A control's own focus with a
   focused child"), and reading it (7), then one ancestor hop (10) that
   reads the first ancestor and recognizes it as the previous focus's
   container.
@@ -668,7 +668,7 @@ A state change on the focus while another application's window is in
 front, and the same change with the focus's window in front
 (`msaa_state_change_costs_exactly`). The outpost tests each event by
 NVDA's acceptance test against the foreground window before anything else
-(`docs/parity.md`, "Event acceptance in the outpost").
+(`docs/parity/focus-events.md`, "Event acceptance in the outpost").
 
 - Before the event filtering work (2026-10-10): the change was acquired,
   its window probed when its verdict had run out, and read in full, then
@@ -1344,7 +1344,7 @@ operations on or off.
 
 The outpost's focus-following property subscription is registered on the
 focus alone, where it was registered on the focus and on each ancestor
-the focus reported (`docs/parity.md`, "UIA event registration"). The
+the focus reported (`docs/parity/backends.md`, "UIA event registration"). The
 reducer acted only on the focus's own changes, so the ancestors' events
 were read and sent for nothing. NVDA's scope, the focus with its
 ancestors, was measured too: UIA delivers no ancestor's event to it,
@@ -1615,7 +1615,7 @@ those reads, so their counts are unchanged.
   and page, known to be the whole buffer, are refused; left for a
   decision. Some providers also return a positive count for a backward
   move, which NVDA corrects; Verbatim corrects it too since 2026-10-07,
-  on both paths (`docs/parity.md`, "Text range moves"), at no call and,
+  on both paths (`docs/parity/speech-audio.md`, "Text range moves"), at no call and,
   in a remote program, two instructions where the count's sign is used.
 - Not used yet, each a feature of its own rather than a fault in what
   Verbatim reads: `FindAttribute` (finding the next spelling error in one

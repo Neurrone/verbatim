@@ -508,7 +508,7 @@ impl FocusCandidate {
 /// NVDA handles both together and tries the newest first, so it announces
 /// the child, with the control as its new ancestor. The outpost can read
 /// the control before the child's event reaches it, so it asks the control
-/// directly and reaches NVDA's result by another route (`docs/parity.md`,
+/// directly and reaches NVDA's result by another route (`docs/parity/windows-and-processes.md`,
 /// "A control's own focus with a focused child").
 ///
 /// The child-object (`VT_DISPATCH`) form of `accFocus` deliberately does not
@@ -1820,7 +1820,7 @@ fn position_of(
 }
 
 /// The node for an object just read for `key`, matched against the kept
-/// nodes in NVDA's comparison order for MSAA objects (`docs/parity.md`,
+/// nodes in NVDA's comparison order for MSAA objects (`docs/parity/focus-events.md`,
 /// "Held objects"): a kept node that is the same COM object with the same
 /// child id in the same window is that node; otherwise, if the object was
 /// acquired at `key` (`at_address`), a kept node acquired at the same address

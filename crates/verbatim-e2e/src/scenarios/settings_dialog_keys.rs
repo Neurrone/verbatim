@@ -5,7 +5,8 @@
 //! Control+Tab and Control+Shift+Tab change category from any control,
 //! the Speech page's own controls included, since one key hook on the
 //! dialog sees every key. NVDA's own settings dialogs send every Enter to
-//! OK; Verbatim's difference is recorded in `docs/parity.md`.
+//! OK; Verbatim's difference is recorded in `docs/parity/system.md`,
+//! "Enter in the settings dialog".
 //!
 //! The walk: open the Speech settings, change the rate, Tab to Cancel and
 //! press Enter, reopen, and hear the rate unchanged; change it again, Tab

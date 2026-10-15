@@ -776,7 +776,7 @@ fn describe(item: &Item) -> String {
 /// for one it does not test: a notification and an active text position,
 /// which NVDA's handlers for them never test (`UIAHandler/__init__.py`
 /// 1063 and 1158). A caret and a text change go through NVDA's automation
-/// event handler, which tests them as any other (`docs/parity.md`, "Event
+/// event handler, which tests them as any other (`docs/parity/focus-events.md`, "Event
 /// acceptance in the outpost").
 fn uia_event_name(kind: &UiaKind) -> Option<EventName> {
     match kind {
@@ -1698,7 +1698,7 @@ impl Worker<'_> {
     /// but UIA delivers no ancestor's event to such a registration: one on
     /// the Windows 11 taskbar clock's child with that scope did not hear the
     /// clock's own name change each minute, which one on the clock and one
-    /// on the taskbar's subtree did (`docs/parity.md`, "UIA event
+    /// on the taskbar's subtree did (`docs/parity/backends.md`, "UIA event
     /// registration"). A move to the node and group already followed is not
     /// asked of the subscription, so it makes no call; one to the same
     /// element under another node makes none either, as the subscription
@@ -2380,7 +2380,7 @@ impl Worker<'_> {
     /// foreground object, for the foreground window's client area, which
     /// takes the address's place in the table and is held as the
     /// foreground, so an event on that window resolves to the foreground
-    /// object, never to the ancestor (`docs/parity.md`, "A top-level
+    /// object, never to the ancestor (`docs/parity/focus-announcement.md`, "A top-level
     /// window's state change"). A top-level window that is not the
     /// foreground, such as a popup menu's, keeps its ancestor.
     fn is_foreground_window(&self, node: NodeId, foreground: Option<isize>) -> bool {
@@ -3021,7 +3021,7 @@ impl Worker<'_> {
         // the child (`verbatim_ia2::acquire::focus_candidate`): NVDA reports
         // the child once when the two events fall in one of its pumps,
         // trying them newest first; when the child's comes in a later pump,
-        // NVDA reports the control and then the child (`docs/parity.md`,
+        // NVDA reports the control and then the child (`docs/parity/windows-and-processes.md`,
         // "A control's own focus with a focused child").
         if self
             .context

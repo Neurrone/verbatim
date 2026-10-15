@@ -4,7 +4,7 @@
 //! `demo_review_cursor` demonstration shows beyond `notepad_review_cursor`,
 //! on the same table. Numpad 5 reads the current word; going back up the
 //! table with numpad 7 keeps the column, as going down does (Verbatim's
-//! deliberate difference from NVDA, `docs/parity.md`, "Review cursor
+//! deliberate difference from NVDA, `docs/parity/review.md`, "Review cursor
 //! columns"); numpad 5 pressed twice spells the word; numpad 2 pressed
 //! twice describes the character ("Alfa") and three times gives its code
 //! ("65"). It holds for Windows 11 Notepad (UIA) and an edit control

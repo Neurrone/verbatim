@@ -1,4 +1,4 @@
-//! Key names, following NVDA's vocabulary (`docs/parity.md`, "Spoken
+//! Key names, following NVDA's vocabulary (`docs/parity/readme.md`, "Spoken
 //! vocabulary and key layouts"), each mapped to its virtual-key code as
 //! Microsoft's Virtual-Key Codes reference documents it.
 //!

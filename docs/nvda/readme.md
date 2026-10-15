@@ -11,7 +11,7 @@ Rules for this folder:
 - **NVDA only.** These files describe NVDA's behavior and implementation,
   not Verbatim's. Comparisons, divergence decisions, and Verbatim status
   live in [Architecture](../architecture.md) (decisions of record) and
-  [Parity ledger](../parity.md) (the per-behavior ledger).
+  [Parity ledger](../parity/readme.md) (the per-behavior ledger).
 - **Cited.** Every nontrivial claim names the NVDA source file (and
   function or class) it comes from, as a path relative to the `nvda/`
   submodule. If a claim is uncited, treat it as a summary of the cited

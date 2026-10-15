@@ -3,7 +3,7 @@
 //! When one of them reaches the operating system (pressed on its own, or
 //! Caps Lock passed through by a double tap of the Verbatim key), its new
 //! state is announced ("caps lock on"), as NVDA announces it
-//! (`docs/parity.md`, "Toggle key announcements").
+//! (`docs/parity/review.md`, "Toggle key announcements").
 
 use verbatim_model::GestureId;
 
