@@ -20,10 +20,14 @@ tables ([Braille](braille.md)).
 
 ## Speech dictionaries
 
-`speechDictHandler` maintains three layered dictionaries, each a list
-of pattern/replacement entries applied in order: **default** (always
-active), **voice** (per synthesizer voice), and **temporary** (this
-session only, never saved). Entry types (`speechDictHandler/types.py`
+`speechDictHandler` maintains three user-level layered dictionaries,
+each a list of pattern/replacement entries applied in order:
+**default**, **voice** (per synthesizer voice), and **temporary** (this
+session only, never saved). The default and voice dictionaries are
+enabled by the `speech.speechDictionaries` setting, whose default lists
+both (`config/configSpec.py`; `speechDictHandler/types.py`, the
+`enabled` property); the built-in dictionary below is mandatory and
+ignores that setting. Entry types (`speechDictHandler/types.py`
 `EntryType`): `ANYWHERE` (plain substring), `WORD` (whole-word match)
 and `REGEXP` (Python regex with group references), each optionally
 case-sensitive. Files live per user config as `*.dic` under
