@@ -39,6 +39,28 @@ install, language change, or crash recovery;
 [Main loop and watchdog](main-loop-and-watchdog.md)) relaunch with
 the same arguments minus the crash-relevant ones.
 
+What a start says: NVDA plays its start sound and speaks no start
+message. "NVDA started" goes to braille only, and "Loading NVDA. Please
+wait..." is spoken only when start-up has taken more than five seconds;
+then it queues the initial focus (`core.py`).
+
+Windows' screen reader flag (`SPI_SETSCREENREADER`): NVDA sets it as it
+starts and clears it as it exits, saving it in the user's profile and
+telling every window (`nvda.pyw` lines 285 and 286, and 308 and 309;
+`winUser.setSystemScreenReaderFlag`, `winUser.py` lines 460 and 461),
+unless started with `--no-sr-flag` (`argsParsing.py` lines 179 to 185)
+or on a secure desktop (`nvda.pyw` line 267). A crash or a process ended
+from outside leaves it set.
+
+Replacing a running instance: NVDA finds the running NVDA's window,
+posts it `WM_QUIT`, waits four seconds for its process to exit, and ends
+it with `TerminateProcess` if it has not (`nvda.pyw` lines 110 to 137),
+waiting two seconds more for it to exit. When ending it fails, NVDA
+shows a message box, "Couldn't terminate existing NVDA process,
+abandoning start" followed by the exception, and does not start
+(`nvda.pyw` lines 157 to 166). The NVDA being replaced plays its exit
+sound to the end.
+
 ## Updates
 
 `source/updateCheck.py`: a periodic HTTPS check against NV Access's

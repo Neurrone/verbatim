@@ -777,7 +777,7 @@ fn describe(item: &Item) -> String {
 /// which NVDA's handlers for them never test (`UIAHandler/__init__.py`
 /// 1063 and 1158). A caret and a text change go through NVDA's automation
 /// event handler, which tests them as any other (`docs/parity/focus-events.md`, "Event
-/// acceptance in the outpost").
+/// acceptance").
 fn uia_event_name(kind: &UiaKind) -> Option<EventName> {
     match kind {
         UiaKind::Property(id) if *id == UIA_NamePropertyId.0 => Some(EventName::NameChange),

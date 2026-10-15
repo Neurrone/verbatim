@@ -426,7 +426,7 @@ Public API:
     finishes each before the next. Before any call into the application
     for an entry, it tests the event by NVDA's acceptance test against the
     foreground window (`outpost::acceptance`, since 2026-10-10;
-    `docs/parity/focus-events.md`, "Event acceptance in the outpost"): `accepts_event`,
+    `docs/parity/focus-events.md`, "Event acceptance"): `accepts_event`,
     a pure function of the event's name, its window, the window queries
     (`WindowQueries`, local calls in `SystemWindows`), and the events
     application support asked for (`RequestedEvents`, empty), and drops

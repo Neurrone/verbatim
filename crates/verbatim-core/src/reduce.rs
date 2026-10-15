@@ -176,7 +176,7 @@ fn classify(
         // (D14, amended 2026-10-05). With no window facts, the application
         // decides. This is a second test, after the read, which NVDA does
         // not make; it tests once, before reading (`docs/parity/focus-events.md`, "Event
-        // acceptance in the outpost").
+        // acceptance").
         NormalizedEvent::FocusChanged { .. } => {
             let attended = match window {
                 Some(event) => event_window_is_foreground(event),

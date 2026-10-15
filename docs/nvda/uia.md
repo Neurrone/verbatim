@@ -41,6 +41,24 @@ read: `shouldAllowUIAFocusEvent` asks `currentHasKeyboardFocus` rather
 than the cached value (commit `3ca80a5fa`, #20764), because with the
 richer cache a stale cached "has focus" let intermediate focus events
 through (a container announced before the focused item in WeChat).
+That read is the duplicate test: a UIA focus event is a repeat, and
+dropped before anything else about it is judged, when its element
+compares equal (`CompareElements`, by runtime id) to the last focus NVDA
+queued, from any application, and that element still reports
+`HasKeyboardFocus` when read live; a comparison or read that fails lets
+the event through. The last queued focus (`lastQueuedFocusObject`) is
+set only for a focus NVDA queues, is replaced by every focus it queues,
+MSAA's and a foreground change's included, and is compared only while
+it is a UIA object. NVDA has no duplicate test across backends. Other
+UIA events take the acceptance test in this order: whether the event is
+the focus's, then the window's UIA test, then `shouldAcceptEvent` with
+the nearest window (`getNearestWindowHandle`). The automation event
+handler tests a text control's caret and text changes like any other
+event; the notification and active-text-position handlers do not test
+theirs, and the app module default drops a notification whose element
+has no window. NVDA tells UIA's MSAA proxy not to raise, from
+`WinEvent`s, the UIA events it subscribes to (`ignoreWinEventsMap`,
+issue 7345); focus changes keep their mapping.
 Tree walking and searches elsewhere in the UIA code build
 purpose-specific cache requests. This is the
 pattern NVDA relies on for latency; property access outside a cache is
@@ -132,6 +150,15 @@ treats a window through UIA or leaves it to MSAA/IA2:
    [Office through COM](office-com.md)), and Excel `EXCEL7` prefers the object model
    whenever in-process injection succeeded.
 
+The verdict is cached for 500 ms. `UiaHasServerSideProvider` reports no
+provider when the window does not answer in time (three seconds for
+Windows 11 Notepad's text control while Notepad was starting, measured
+on 2026-10-03), and NVDA takes that as the answer, reading the focus
+through MSAA ("edit") until it moves. NVDA leaves UIA's own provider
+timeout at its default of two seconds, after which reading a starting
+Notepad's focused element returns UIA's stand-in for the window, a
+nameless edit.
+
 The user-facing knobs for this referee live in the `[UIA]` config
 section (advanced settings): `enabled` (the master switch),
 `allowInMSWord` (the four-way above), `useInMSExcelWhenAvailable`,
@@ -197,4 +224,22 @@ activity ID, notification kind, and display string — the modern app
 announcement channel. Text is served by `UIATextInfo`
 (`source/UIAHandler/utils.py` and `NVDAObjects/UIA`), a *range-based*
 (not offsets-based) TextInfo built on the Text pattern
-([TextInfo](text-infos.md)).
+([TextInfo](text-infos.md)). The text pattern is fetched live and kept
+for the object's life, and every focus event makes a new object
+(`_get_UIATextPattern` and `_get_TextInfo`,
+`NVDAObjects/UIA/__init__.py` lines 1766 to 1772 and 1802 to 1804). An
+object without a text pattern has no navigable text, so its value is
+spoken in place of its line (`_get__hasNavigableText`,
+`NVDAObjects/__init__.py` lines 1590 to 1603; `getObjectSpeech`,
+`speech/speech.py` lines 870 to 917). UIA reports a provider that fails
+the pattern request exactly as one with no pattern. When an object has a
+pattern but its text cannot be read at all, the read raises and nothing
+more of the focus is spoken.
+
+A selection container's selection is read through `SelectionPattern2`
+where the provider has it: its `ItemCount` drives the rule that leaves
+"selected" unsaid on a focused selectable item that is the only one
+selected, and Excel's first and last selected cells come from it. A
+provider without the pattern, or a selection container that raises
+(Qt) or is null (Outlook's attachment list), counts as no selection,
+without cutting the focus's speech short.

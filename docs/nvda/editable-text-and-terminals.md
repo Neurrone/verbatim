@@ -215,3 +215,84 @@ A cap existed briefly: #20177 truncated a batch to its last
 rest from a generator cancelled when speech was cancelled; #20649
 made it configurable. Commit `0e48954c8` (#20898) reverted both,
 because users could not read the skipped output.
+
+### Terminal details at the pinned source
+
+- The console host's text is read on UIA's text changes alone
+  (`UIAHandler/__init__.py` 145 to 147 and 674 to 679).
+- The diff speaks only what was inserted (`diffHandler.py` 36 to 48:
+  `DiffMatchPatch.diff` keeps only the `+` pieces and drops white-space
+  ones), so lines only deleted, and a line that only lost text or
+  gained white space, say nothing.
+- Windows Terminal's notifications and the console host's are blocked by
+  the overlays (`winConsoleUIA.py` 431 to 440 and 474 to 476).
+- Every new line is queued (`behaviors.py` 455 to 466), and the monitor
+  thread diffs on every change (`behaviors.py` 468 to 505).
+- The probably-typed drop covers a change of one or two characters on
+  one line (`behaviors.py` 491 to 495 and 559 to 566), so a short
+  status-line change, such as vim's ruler, or a counter of one or two
+  digits, is not spoken.
+- Typed characters are queued and dispatched on the terminal's next text
+  change of any kind (`behaviors.py` 591 to 593 and 615 to 619), so a
+  character typed at a prompt that shows nothing is spoken when anything
+  else on the line changes, such as a ticking clock or Escape clearing
+  the line. The queue is forgotten on Enter, Tab, Control+C, Control+D,
+  and Control+Pause (`behaviors.py` 595 to 613).
+- The console host's keys are translated with the console host's own
+  keyboard layout, its thread learned from the console window's
+  `WinEvents` (`IAccessibleHandler/internalWinEventHandler.py` 151 to 153
+  and 266 to 273, `NVDAObjects/UIA/winConsoleUIA.py` 378 to 388, issue
+  10113).
+- A terminal's caret events are not used (`NVDAObjects/behaviors.py`
+  527 to 530): after a caret key the caret's line is read at the first
+  change of the caret's position, or at the end of the wait
+  (`editableText.py` 70 to 163 and 181 to 192, the line spoken by 165 to
+  178). A key outside the caret keys says nothing.
+- A focused terminal's caret line is read on focus, "blank" for an empty
+  one (`speech/speech.py` 898 to 917 and 1929 to 1933).
+
+### What NVDA says in terminals, captured live
+
+Captured on 2026-10-09 with alpha-57645 in the console host and Windows
+Terminal, and replayed on 2026-10-12 with alpha-58022, the build the
+pinned source is, which says the same apart from timing:
+
+- Every character typed is echoed, including a space at a line's end
+  and characters past the right margin, and each key a script reads
+  without showing it ("space"); a password typed at a prompt that
+  shows asterisks is echoed character by character.
+- At a prompt that shows nothing typed and rewrites its line on each
+  key (a ticking clock), the typed characters are spoken ("a", "b",
+  "c") and the line's count is not; Escape after characters typed at a
+  prompt that showed nothing speaks them before the line's new text.
+- Escape after `echo hi`, or after inline prediction showed `git
+  status`, is silent.
+- The prompt `ready>` is "ready greater"; Left Arrow says "o" and then
+  "Oscar", the delayed character description.
+- Opening the alternate screen speaks all thirty rows in Windows
+  Terminal but only the last six in the console host; closing it speaks
+  the whole main screen again.
+- Switching to another terminal window says the window's title and
+  "window", then the terminal and the caret's line as one utterance. In
+  Windows Terminal a new window or tab with nothing written yet said no
+  line in 17 of 19 captures, NVDA not recognising the terminal's focus;
+  in the console host it said "blank" in all 14. Returning to a tab or
+  window said the prompt in some captures and nothing in others.
+- Up Arrow and a character typed at once: the character as typed, then
+  the recalled line with it ("x", "echo onex").
+- Control+Tab or Control+Shift+Tab in Windows Terminal queues "list",
+  the tab (on Control+Tab the tab left first), then "<title> terminal".
+  A single Control+Shift+Tab with Control released at once gives speech
+  that varies with timing. With Control held through the tab switcher:
+  "Tab switcher grouping", "list", the tab moved to ("<title> 1 of 2"),
+  and on releasing Control the tab's terminal and its line.
+- A list redrawn by a program with the caret left below it: "blank" for
+  each key, and the marker's move dropped as probably typed.
+- A pager's line move: the prompt, ":", at the end of the wait, then the
+  new line.
+- A flood of 10,000 numbered lines (2026-10-07, an earlier build): in
+  Windows Terminal 690 lines queued in 53 runs from line 323 onward,
+  all held until a key; in the console host the reading slowed the
+  output itself, and the flood was still being spoken after the window
+  closed. alpha-57645 left lines out of floods; alpha-58022 speaks every
+  new line.

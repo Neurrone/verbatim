@@ -69,6 +69,18 @@ Three details of how the filter is applied matter for parity:
   from elements without a window. Toast notifications reach the user
   through the `alert` event instead, which the filter accepts when
   the window's parent has the class `ToastChildWindowClass`.
+  That MSAA path does not carry Windows 10 and later toasts: NVDA drops
+  every WinEvent, alert and show included, from a window that is
+  native UIA (the `isUIAWindow` check in `winEventToNVDAEvent`,
+  `IAccessibleHandler/__init__.py`), and speaks an MSAA alert only for
+  an object whose role is alert. Since Windows 10 a toast is a
+  `Windows.UI.Core.CoreWindow` whose automation id contains
+  `ToastView`, spoken on UIA's window-opened event (`Toast_win10` in
+  `NVDAObjects/UIA/__init__.py`, with the `Notification` behavior), a
+  repeat of the same toast within a second ignored; Windows 8's
+  `ToastContentHost` tooltip is spoken on UIA's tooltip-opened event.
+  A help balloon's `tooltips_class32` window is a standard Win32
+  control, not native UIA, so its show event is unaffected.
 
 ## Execution and the handler chain
 
@@ -153,7 +165,27 @@ window is spoken only through the two ordinary focus paths.
   description: an unnamed or whitespace-named `WINDOW` has the layout
   presentation type (`_get_presentationType` in
   `source/NVDAObjects/__init__.py`), and layout objects are not
-  presentable focus ancestors.
+  presentable focus ancestors. A window read through MSAA is reached as
+  its client area, which reads as a pane, a role that is otherwise
+  layout; NVDA presents the client area of a window with a system menu
+  (the `WS_SYSMENU` style) all the same, whatever its name, and since a
+  pane's role is silent on focus it is spoken by its title alone. A
+  window read through UI Automation is presented only when UI
+  Automation counts its element both a control and content.
+- Every MSAA event for a window NVDA reads through UI Automation is
+  dropped, a foreground event included, so such windows, the console
+  host's and Windows Terminal's among them, are announced only from the
+  focus's ancestry. Foreground events for the Program Manager and the
+  taskbar windows are dropped by their window classes (`Progman` and
+  `Shell_TrayWnd`, `IAccessibleHandler/internalWinEventHandler.py` 165
+  to 166), so the desktop is announced as "Desktop list" and its focused
+  icon, never as "Program Manager": Program Manager's client area, a
+  pane with no system menu, is not a presentable ancestor.
+- File Explorer's app module speaks a tab of its tab list (automation id
+  "TabListView") when the tab's element-selected event comes with no
+  second one pending (`appModules/explorer.py`,
+  `event_UIA_elementSelected`, NVDA #14388), so opening a folder window
+  sometimes adds "<folder> tab selected 1 of 1" after the first item.
 
 `event_foreground`, run from `doPreGainFocus` whenever the top of the
 ancestry changes (a focus difference level of 0 or 1), only cancels
@@ -216,12 +248,30 @@ test against `api.getFocusObject` in the base `event_stateChange`; the
 generic winevent path in `IAccessibleHandler` hands an event for the
 object NVDA last queued as the focus to that same focus object.)
 
+The same order decides an ancestor's state change observed just before
+a focus change: `orderedWinEventLimiter`'s `flushEvents` keeps one heap
+ordered by arrival, so the change is judged against the focus it was
+observed under and spoken (`event_stateChange`, reason CHANGE). A focus
+change within a window does not cancel that speech: only speech spoken
+for the focus carries the `FocusLossCancellableSpeechCommand` that
+`doPreGainFocus`'s `removeCancelledSpeechCommands` culls
+(`eventHandler._getFocusLossCancellableSpeechCommand` returns none for
+any other reason), and `event_gainFocus` cancels nothing. A focus change
+into another top-level window, or into a menu, cancels it through the
+handlers below, so NVDA says "unavailable" and then the new focus within
+a window, and effectively nothing of it otherwise.
+
 Two default handlers also *cancel* in-flight speech:
 `event_focusEntered` cancels speech and returns without announcing
 when the entered container is a menu bar, popup menu, or menu item,
 and `event_foreground` cancels speech before the new window is
 announced (both in `source/NVDAObjects/__init__.py`) — a large part of
 why window switches and menu openings cut stale speech off crisply.
+NVDA cancels as it reaches the menu among the entered ancestors,
+outermost first, so a container entered outside the menu in the same
+focus change is cut off too: in Windows 11 Notepad, Alt+F queues
+"Popup window" for the menu's popup and cancels it at the menu, so it
+is not heard (NVDA alpha-58022).
 
 ### Selection in a list the focus controls
 
@@ -239,6 +289,15 @@ ancestors. The focus itself stays where it was, in the search box, so
 typing goes on there. A selection that is not inside a controlled
 element is handled as any other selection. (`event_selection` on the
 base `NVDAObject`, with the ControllerFor read in the UIA object.)
+
+When the ControllerFor relation of a focused editable field or search
+field changes, NVDA plays its suggestions-opened sound if the field is
+the focus and now names elements, and its suggestions-closed sound
+otherwise (`EditableTextWithSuggestions.event_controllerForChange`,
+`NVDAObjects/behaviors.py` 231 to 236). Its editable-text condition
+asks for navigable text or a text selection; the property is in its
+local, focus-following event group. A suggestion list's item status is
+handled only in app modules.
 
 ## Object presentation settings
 

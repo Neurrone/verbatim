@@ -4,429 +4,387 @@ How focus events are accepted, deduplicated, and ordered: duplicate and stale fo
 
 ### Duplicate focus suppression
 
-Duplicate focus suppression (same control announced once when two
-paths report it). NVDA: each backend's own duplicate test, the MSAA
-one by event address and the UIA one by `CompareElements` while the
-last focus keeps the keyboard focus; NVDA has no test across backends,
-and none for a foreground or menu focus, and the "already the focus"
-early return this entry once named is not in NVDA's code. Core's rule
-below is Verbatim's own (roadmap, the audits' items). Since 2026-10-02 Verbatim compares
-the node id too, not its states, name, or ancestors, which a second
-report can read mid-change (Notepad's edit control settling, File
-Explorer's title being filled in), and keeps the newer reading. Since
-2026-10-03 the selected item inside a list is not compared either (it
-had made a repeated focus with another selected item announce the whole
-focus again); a new selected item is announced by its selection event.
-Verbatim: **matched (unverified)** ([verbatim-core](../crates/verbatim-core.md),
-M3 noise suppression). Unchanged by the outpost redesign: only Core
-sees focus across applications, so this stays in the reducer.
-NVDA compares UIA elements by runtime id (`compareElements`), and treats
-a UIA focus event as a duplicate only when the element compares equal to
-the last focus and that last focus still reports `HasKeyboardFocus`
-when read live; a read that fails lets the event through. A runtime id
-is unique only among live elements, and File Explorer reuses them:
-going back from a subfolder (found 2026-10-07), the parent folder's item
-"Inner" took the runtime id of the subfolder's item delta.txt, destroyed
-with its list, so the outpost reported Inner under delta.txt's node and
-Core stayed silent. Since 2026-10-07 Verbatim does NVDA's check before
-it reports a UIA focus whose runtime id already names a node: whether
-the element it stood for still has the keyboard focus, read live, in
-the same remote operation that reads the focus's ancestors (or with one
-call of its own when it reads classically), and when it does not, or
-cannot be read, the runtime id gets a new node, so Core announces the
-focus. Since stage A step 6 (awaiting its first build) the focus
-listener's thread for the application makes the read, on the element
-it read for the focus before when the new event has the same runtime
-id, and the outpost issues the new node on its evidence. **matched since 2026-10-07**; mockapp's
-`focus_reports` tests and Core's
-`a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows`
-check it. NVDA makes the comparison against the last focus it queued,
-from any application, before it judges anything else about the event,
-so a duplicate is never queued. Since 2026-10-11 Core does the same
-(`docs/design/focus-pipeline.md`, section 4.2): a focus on the node of
-the live focus it holds, which is the last focus it queued, is dropped
-before the stale and foreground checks, so it no longer moves attention
-or counts as the newest focus a later-arriving focus from another
-application is judged stale against; its newer reading is still kept.
-The evidence of "still focused" is the live read above, made since
-stage A step 6 by the listener from the event's own element for every
-UIA focus whose runtime id is that of the focus the listener read
-before, so a node id Core compares stands for an element that still has
-the keyboard focus. **matched since 2026-10-11** (Core's
-`a_duplicate_focus_does_not_make_a_later_focus_stale` and
-`the_same_focus_after_another_applications_focus_is_announced`).
-Since stage A step 6's revision (`docs/design/focus-pipeline.md`,
-section 16.3, approved by Dickson on 2026-10-11) the focus listener also
-makes NVDA's check itself, in NVDA's order, before it reads anything of
-the event's sender: one last accepted focus is shared by all its
-reading threads, as NVDA keeps one for the whole program, and an event
-whose sender `CompareElements` equates with it, while that element's
-`HasKeyboardFocus` reads true, is dropped; a comparison or a read that
-fails lets the event through. A repeat then costs those two calls, where
-it was read in full and dropped by Core. Core's rule stays for the
-focuses the listener does not judge: MSAA's, and the answers to a
-focus-now query. The last focus is recorded only once a focus has passed
-the acceptance test against the foreground window, which the listener
-makes next, and has been read, as NVDA records only a focus it queues
-(mockapp's
-`a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read`).
-NVDA's last queued focus is replaced by every focus it queues, MSAA's
-and a foreground change's included, and its UIA handler compares with
-it only while it is a UIA object. Until 2026-10-12 the listener's last
-accepted focus was replaced only by the UIA focuses it accepted itself,
-so after Verbatim's own context menu (MSAA) and Escape, Notepad's
-editor, which had kept the keyboard focus, was dropped as a repeat and
-never announced (`notepad_editing`, once in a run of every scenario).
-Since then Core tells the listener each focus it queues, by the event's
-trace and observation time (`SupervisorToOutpost::FocusQueued`), and
-the listener's last accepted focus stops counting once Core has queued
-a newer, other focus. **matched since 2026-10-12** (mockapp's
-`a_focus_is_no_repeat_once_another_focus_was_queued`).
+NVDA: each backend has its own duplicate test, the MSAA one by event
+address and the UIA one by `CompareElements` while the last focus NVDA
+queued still has the keyboard focus, read live; it has no test across
+backends, and none for a foreground or menu focus
+([Event handling](../nvda/events.md),
+[The UIA client](../nvda/uia.md)).
+
+Verbatim: **matched (verified)**, with one rule of its own.
+
+- Core drops a focus on the node of the live focus it holds, which is
+  the last focus it queued, before the stale and foreground checks, so it
+  neither moves attention nor counts as the newest focus a later focus
+  from another application is judged stale against; its newer reading is
+  kept (`docs/design/focus-pipeline.md`, section 4.2). Core compares the
+  node id only, not the states, name, or ancestors, which a second report
+  can read mid-change (Notepad's edit control settling, File Explorer's
+  title being filled in), and not the selected item inside a list; a new
+  selected item is announced by its selection event. This rule across
+  backends is Verbatim's own, kept in the reducer because only Core sees
+  focus across applications
+  ([verbatim-core](../crates/verbatim-core.md), M3 noise suppression).
+  It covers the focuses the listener does not judge: MSAA's, and the
+  answers to a focus-now query. Core's
+  `a_duplicate_focus_does_not_make_a_later_focus_stale` and
+  `the_same_focus_after_another_applications_focus_is_announced` pin it.
+- The focus listener makes NVDA's UIA test itself, in NVDA's order,
+  before it reads anything of the event's sender
+  (`docs/design/focus-pipeline.md`, section 16.3): one last accepted
+  focus is shared by all its reading threads, as NVDA keeps one for the
+  whole program, and an event whose sender `CompareElements` equates with
+  it, while that element's `HasKeyboardFocus` reads true, is dropped; a
+  comparison or read that fails lets the event through. A repeat costs
+  those two calls. The last focus is recorded only once a focus has
+  passed the acceptance test against the foreground window and has been
+  read, as NVDA records only a focus it queues, and it stops counting
+  once Core has queued a newer, other focus, which Core tells the
+  listener by the event's trace and observation time
+  (`SupervisorToOutpost::FocusQueued`). Mockapp's
+  `a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read`
+  and `a_focus_is_no_repeat_once_another_focus_was_queued` pin it.
+- A runtime id is unique only among live elements, and File Explorer
+  reuses them: going back from a subfolder, an item of the parent folder
+  can take the runtime id of the subfolder's item, destroyed with its
+  list. Before a UIA focus whose runtime id already names a node is
+  reported, the focus listener's thread for the application reads live
+  whether the element the id stood for still has the keyboard focus, as
+  NVDA checks it, on the element it read for the earlier focus; when it
+  does not, or cannot be read, the outpost gives the runtime id a new
+  node, so Core announces the focus. Mockapp's `focus_reports` tests and
+  Core's
+  `a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows`
+  pin it.
 
 ### Stale focus events
 
-NVDA has no timestamp arbitration; it relies on
-queue-time freshness plus cancellable speech
-([Event handling](../nvda/events.md), [Speech](../nvda/speech.md)), and its
-one queue handles every application's events in the order observed.
-Verbatim: snapshot versions are gone, and order within an application
-comes from its outpost's single queue and worker, as in NVDA. Across
-outposts, events can arrive out of the order they were observed in.
-Since 2026-10-11 Core takes the outposts' messages and its keys and
-commands from one channel, in the order they reached it, as NVDA queues
-keys with events (`docs/design/focus-pipeline.md`, section 4.1); it had
-picked at random between two channels, so a typed character's echo and
-the output after it could come in either order. Arrival order, not
-observation time, orders them, as in NVDA. Across outposts, then,
-since 2026-10-02 the reducer drops a focus event from one outpost
-observed before the newest focus it applied from another (found live:
-a late focus from Notepad, then from Verbatim's closed menu, broke
-`notepad_and_verbatim_menu`). A UIA focus fact whose element is not the
-focused element is dropped when the focus is in another application
-by then, and otherwise reported from the fact with its window: its
-own, or for a windowless element the keyboard focus window the
-listener found in the element's process when it captured the event,
-standing in for the nearest window NVDA walks up to (exact when the
-event is current; for a late event in an application with several
-windows it can be another of them); only with neither is it judged by
-its application. Since 2026-10-03 a focus read on request
-(at startup, after an outpost is replaced, or after a menu closes)
-carries the time its read began, so it is ordered with the events as
-NVDA's queue orders the focus it reads; it had carried no time, so it
-was never judged stale and did not count as the newest focus. Since
-2026-10-05 a foreground change is ordered by the time its window was
-confirmed as the system's foreground window, not when Windows raised
-the event: Windows raises it before the change completes, and the old
-foreground window's focus events in between (found live: the desktop's
-list, about 130 ms after Notepad's foreground event, which made
-`notepad_and_verbatim_menu` miss "Notepad" in every full-suite run)
-were newer and made the change stale. NVDA judges a foreground event
-against the foreground window when it processes it, which orders it at
-the same point. A focus in the same top-level window as the newest
-focus is never stale, since one window can hold several applications
-(a Settings page's content inside ApplicationFrameHost's frame) whose
-own focus may be observed before the frame's foreground is confirmed.
-The latency timeline still starts when a foreground event was first
-observed. A focus
-with no window facts is taken to be in the attended window, since only
-that let it be accepted, so a later foreground report for that window
-does not replace the control as the focus (NVDA always knows the
-focus's window). **matched (unverified)**; the
-`rapid_tabbing_in_settings` and `notepad_and_verbatim_menu` scenarios
-cover it.
+NVDA has no timestamp arbitration; it relies on queue-time freshness
+plus cancellable speech, its one queue handles every application's
+events, and its keys, in the order observed, and it judges a foreground
+event against the foreground window when it processes it
+([Event handling](../nvda/events.md), [Speech](../nvda/speech.md)).
+
+Verbatim: **matched (unverified)**; the `rapid_tabbing_in_settings` and
+`notepad_and_verbatim_menu` scenarios cover it.
+
+- Order within an application comes from its outpost's single queue and
+  worker. Core takes the outposts' messages and its keys and commands
+  from one channel, in the order they reached it
+  (`docs/design/focus-pipeline.md`, section 4.1). Arrival order, not
+  observation time, orders them.
+- Across outposts, events can arrive out of the order they were observed
+  in, so the reducer drops a focus event from one outpost observed before
+  the newest focus it applied from another.
+- A UIA focus fact whose element is not the focused element is dropped
+  when the focus is in another application by then, and otherwise
+  reported from the fact with its window: its own, or for a windowless
+  element the keyboard focus window the listener found in the element's
+  process when it captured the event, standing in for the nearest window
+  NVDA walks up to (exact when the event is current; for a late event in
+  an application with several windows it can be another of them); only
+  with neither is it judged by its application.
+- A focus read on request (at startup, after an outpost is replaced, or
+  after a menu closes) carries the time its read began, so it is ordered
+  with the events as NVDA's queue orders the focus it reads.
+- A foreground change is ordered by the time its window was confirmed as
+  the system's foreground window, not when Windows raised the event:
+  Windows raises it before the change completes, and the old foreground
+  window's focus events in between would otherwise be newer and make the
+  change stale. This orders it where NVDA's processing does. The latency
+  timeline still starts when the foreground event was first observed.
+- A focus in the same top-level window as the newest focus is never
+  stale, since one window can hold several applications (a Settings
+  page's content inside ApplicationFrameHost's frame) whose own focus may
+  be observed before the frame's foreground is confirmed.
+- A focus with no window facts is taken to be in the attended window,
+  since only that let it be accepted, so a later foreground report for
+  that window does not replace the control as the focus; NVDA always
+  knows the focus's window.
 
 ### Event acceptance
 
-NVDA: every event except UIA notifications must
-come from a window related to the system's foreground window: a
-descendant of it, sharing its root owner, a topmost window or one
-whose root is topmost, or, for `Windows.UI.Core` windows, a
-descendant of the input thread's active window. Allowlisted tooltip
-and notification-bar windows, toast alerts, and (as an option)
-background progress bars are accepted from anywhere. UIA
-notifications are spoken only from the focus's application, with
-per-application opt-ins such as the shell's window-snap results
-([Event handling](../nvda/events.md), "Acceptance filtering"). Verbatim
-(D14, amended by the outpost redesign): the reducer keeps an attention
-record, the application and top-level window of the most recent
-foreground change, standing in for the system's foreground window
-NVDA compares against. A foreground fact is always accepted and
-moves attention; its outpost has already dropped it if the window
-was no longer the system's foreground when the outpost handled it.
-The outpost handles a batch that holds a foreground fact at once and
-drops the fact when its window is not the foreground window then, as
-NVDA's `processForegroundWinEvent` drops it once its deferral of at most
-two core cycles (issue 3831) has passed. It does not wait for the window
-to come in front: measured live on 2026-10-09, the system's foreground
-event reached an out-of-context hook only once `GetForegroundWindow`
-named its window, after a restore, `SetForegroundWindow`, Alt+Tab, or a
-launch, for console windows, File Explorer, Notepad, msinfo32, Windows
-Terminal, a Windows Forms window and Verbatim's menu and dialogs. The
-events that came before were stale (the Alt+Tab switcher's staging
-windows, already passed), raised by the application itself (File
-Explorer raises one as it creates its folder window, 140 to 400 ms
-before the window is in front, and the system raises its own once it
-is), or Core's hidden frame's, 14 ms early once, which the outpost drops
-whatever the foreground. In the outposts of ten scenarios, the 250 ms
-hold this replaced waited only for File Explorer's early event and for
-the hidden frame. A foreground window that is in front but not yet
-shown is reported once it is shown, its name read then, or just before
-a focus inside it that comes first: NVDA reads the name as it speaks,
-later than its event, and Verbatim, reading it as it reports it, read
-File Explorer's "File Explorer" where NVDA read the folder's title
-(deliberately different in timing since 2026-10-09, to say the same
-name; `docs/design/phase6-design.md`, "File Explorer opened without the foreground
-right"). A focus event is
-attended only when its window was in the system's foreground window
-when its outpost read it, topmost, or a `Windows.UI.Core` window under
-the input thread's active window, as NVDA tests it against the real
-foreground window (since 2026-10-05: a desktop focus read after Notepad
-took the foreground reached Core before Notepad's report and was
-spoken). Every other event is classified against the record from window
-facts its outpost attached: top-level window, root owner, topmost,
-for `Windows.UI.Core` windows whether the window is under the
-input thread's active window, and whether the window is in the
-system's foreground window when the outpost read the event (NVDA's
-live test: its top-level window is the foreground window, or its root
-owner is the foreground window or that window's root owner). Such an
-event is attended. Windows can raise a window's foreground event while
-its foreground lock keeps another window in front, and raises none
-when the window is given the foreground later (found live), so a
-focus in the system's foreground window that is unrelated to the
-attention window moves attention, as NVDA takes the foreground from
-the focus's ancestry. Nothing else moves attention, so a topmost
-popup menu that takes focus without becoming the foreground leaves
-attention where it was, and focus returning from it is still
-attended. Accepted from anywhere as background: toast
-alerts and the shell's window-snap results, which are always queued,
-as NVDA's Explorer module queues them; other UIA notifications only
-from the focus's application, as NVDA drops notifications from any
-other (since 2026-10-03; Verbatim had judged them by the attended
-application, which differs in Settings, where ApplicationFrameHost
-holds attention and the focus is in SystemSettings). Accepted background events
-never move focus or the navigator and are spoken queued. NVDA handles
-events in one queue, so a background event queued before a foreground
-change has its speech cancelled by that change; since 2026-10-11 Core
-drops a background event observed before the newest foreground change
-it applied but reaching it afterwards, from another outpost
-(`docs/design/focus-pipeline.md`, section 7). **matched since
-2026-10-11** (Core's
-`a_toast_observed_before_a_foreground_change_is_dropped`).
-**matched (unverified)** for these. A help balloon, shown in a
-standard tooltip window (`tooltips_class32`), is spoken from any
-application as NVDA speaks it by default (the listener hooks the show
-event desktop-wide and forwards only a tooltip window's), and an
-ordinary tooltip is not, as NVDA's tooltip reporting is off by default:
-**matched since 2026-10-07** (`msaa_events` mockapp test, scripted;
-the end-to-end scenario is still to be written). The setting that
-turns tooltips on is **not yet**. Background progress bars and a
-per-source cap on background events are **not yet**. The other window
-classes NVDA accepts show events from belong to one application or
-input method (Internet Explorer's notification bar, a chat
-application's tray alert, IME candidate windows) and are deferred with
-application support.
+NVDA: every event except UIA notifications must come from a window
+related to the system's foreground window at the moment NVDA processes
+it: a descendant of it, sharing its root owner, a topmost window or one
+whose root is topmost, or, for `Windows.UI.Core` windows, a descendant
+of the input thread's active window. Allowlisted tooltip and
+notification-bar windows, toast alerts, and, as an option, background
+progress bars are accepted from anywhere. UIA notifications are spoken
+only from the focus's application, with per-application opt-ins such as
+the shell's window-snap results. The test (`shouldAcceptEvent`) is made
+per event as NVDA processes it, before it creates the event's object,
+so a background window's event costs no call into its application, and
+not in the event callback, which lost the focus events of applications
+starting up (issue 4001). A foreground event is held for at most two
+core cycles until its window is the foreground (issue 3831), then
+dropped if it is not ([Event handling](../nvda/events.md), "Acceptance
+filtering" and "Foreground windows"; [MSAA and winevent
+handling](../nvda/msaa.md), "Pump-time processing"; [The UIA
+client](../nvda/uia.md)).
+
+Verbatim: **partial**. The tests below match NVDA; the background
+cases listed last are not implemented.
+
+- Where the test is made: each outpost's worker makes NVDA's test, rule
+  by rule in NVDA's order, as it handles each entry, with local calls
+  only, before any call into the application, for MSAA name,
+  description, state, value and selection changes, focus, foreground and
+  popup menu facts, and alerts (`docs/design/phase6-design.md`, "Event
+  filtering in the outposts"). Show facts pass by their class, which the
+  focus listener's hook already tested, as NVDA's show rule depends on
+  the class alone. Core's own test stays. Outside the test, as in NVDA's
+  callback: an object destroyed, and Verbatim's own events, the caret
+  and text selection of edit controls, the console host's updates, and a
+  top-level window shown.
+- MSAA, after acceptance and in NVDA's order: an event is dropped when
+  its own window is no window, has a ghost window standing in for it, or
+  belongs to an application the system reports hung, then when its
+  window is UIA's, and only then is its object acquired. The intake's
+  hung test on the top-level window, for the batch limits, stays.
+- UIA, in NVDA's order: whether the event is the focus's, then its
+  window's UIA test, then acceptance with the event's window, the
+  focus's recorded window for the focus's own events, or, for a
+  windowless element not found, its application's focus window as the
+  listener captured it, where NVDA walks to the nearest window. Property
+  changes, selections, and a text control's caret and text changes are
+  tested, as NVDA's automation event handler tests them; a windowless
+  selection is tested with its nearest window, found by the focus
+  listener's reading thread (`FocusReader::check_fact`). Notifications
+  (spoken only from the focus's application, which Core judges) and the
+  active text position are not tested, as in NVDA, but a notification
+  whose sender has no window above it is dropped, as NVDA's app module
+  default drops it, the shell's window-snap results excepted, as File
+  Explorer's app module lets them through.
+- The UIA focus is tested by the focus listener, in NVDA's order
+  (`docs/design/focus-pipeline.md`, sections 16.2 and 16.3): after the
+  repeat check and before the focus is read, against the element's own
+  window or its nearest ancestor's (`getNearestWindowHandle`, one call);
+  a focus that fails is dropped and never becomes the last focus
+  accepted, as NVDA's `lastQueuedFocusObject` is set only for a focus it
+  queues (mockapp's
+  `a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is`).
+  A UIA menu opening is judged by the focus listener as a focus on the
+  menu, with the checks of NVDA's focus handler but the duplicate test,
+  NVDA's keyboard focus read included, and a drop while a focus is
+  pending.
+- UIA's MSAA proxy is told never to raise, from `WinEvent`s, the UIA
+  events Verbatim subscribes to, as NVDA's `ignoreWinEventsMap` tells it
+  (issue 7345); focus changes keep their mapping.
+- Each registration's cache request differs from NVDA's twelve base
+  properties: the listener's and the focus property changes' carry what
+  a node is spoken or its states are read from, and a text focus's caret
+  and text events only their process, window, and class name, from which
+  nothing is spoken; a difference in the provider's work only.
+- Attention (D14, amended by the outpost redesign): the reducer keeps an
+  attention record, the application and top-level window of the most
+  recent foreground change, standing in for the system's foreground
+  window NVDA compares against. A foreground fact is always accepted and
+  moves attention. The outpost handles a batch that holds a foreground
+  fact at once and drops the fact when its window is not the foreground
+  window then, as NVDA's `processForegroundWinEvent` drops it once its
+  deferral has passed. It does not wait for the window to come in front:
+  the system's foreground event reaches an out-of-context hook only once
+  `GetForegroundWindow` names its window, after a restore,
+  `SetForegroundWindow`, Alt+Tab, or a launch (measured for console
+  windows, File Explorer, Notepad, msinfo32, Windows Terminal, a Windows
+  Forms window and Verbatim's menu and dialogs). The foreground events
+  that come before it are stale (the Alt+Tab switcher's staging windows,
+  already passed), raised by the application itself (File Explorer
+  raises one as it creates its folder window, 140 to 400 ms before the
+  window is in front, and the system raises its own once it is), or
+  those of Core's hidden frame, which the outpost drops whatever the
+  foreground.
+- A foreground window that is in front but not yet shown is reported
+  once it is shown, its name read then, or just before a focus inside it
+  that comes first. This differs in timing, deliberately, to say the
+  same name: NVDA reads the name as it speaks, later than its event,
+  where Verbatim reads it as it reports it, and so would read File
+  Explorer's "File Explorer" where NVDA reads the folder's title
+  (`docs/design/phase6-design.md`, "File Explorer opened without the
+  foreground right").
+- A focus event is attended only when its window was in the system's
+  foreground window when its outpost read it, topmost, or a
+  `Windows.UI.Core` window under the input thread's active window, as
+  NVDA tests it against the real foreground window. Every other event is
+  classified against the attention record from window facts its outpost
+  attached: top-level window, root owner, topmost, for `Windows.UI.Core`
+  windows whether the window is under the input thread's active window,
+  and whether the window is in the system's foreground window when the
+  outpost read the event (NVDA's live test: its top-level window is the
+  foreground window, or its root owner is the foreground window or that
+  window's root owner). Such an event is attended. Windows can raise a
+  window's foreground event while its foreground lock keeps another
+  window in front, and raises none when the window is given the
+  foreground later, so a focus in the system's foreground window that is
+  unrelated to the attention window moves attention, as NVDA takes the
+  foreground from the focus's ancestry. Nothing else moves attention, so
+  a topmost popup menu that takes focus without becoming the foreground
+  leaves attention where it was, and focus returning from it is still
+  attended.
+- Background events accepted from anywhere: toast alerts and the shell's
+  window-snap results, which are always queued, as NVDA's Explorer
+  module queues them, and other UIA notifications only from the focus's
+  application, as NVDA drops notifications from any other. Accepted
+  background events never move focus or the navigator and are spoken
+  queued. Core drops a background event observed before the newest
+  foreground change it applied but reaching it afterwards, from another
+  outpost, as NVDA's one queue has its speech cancelled by that change
+  (`docs/design/focus-pipeline.md`, section 7; Core's
+  `a_toast_observed_before_a_foreground_change_is_dropped`).
+- A help balloon, shown in a standard tooltip window
+  (`tooltips_class32`), is spoken from any application as NVDA speaks it
+  by default (the listener hooks the show event desktop-wide and
+  forwards only a tooltip window's), and an ordinary tooltip is not, as
+  NVDA's tooltip reporting is off by default (the `msaa_events` mockapp
+  test, scripted; no end-to-end scenario yet).
+- Not implemented: the setting that turns tooltips on (not yet, M4, the
+  settings package in the roadmap) and a per-source cap on background
+  events (not yet, unscheduled). The opt-ins application support asks
+  for (`requestEvents`) have a table that nothing fills yet. NVDA's rule
+  for windowless Chromium documents is not ported, as Verbatim has no
+  Chromium support. The other window classes NVDA accepts show events
+  from belong to one application or input method (Internet Explorer's
+  notification bar, a chat application's tray alert, IME candidate
+  windows) and are deferred with application support.
+- Background progress bars are not offered, so they stay silent, as
+  NVDA's are by default (Dickson, 2026-10-10).
 
 ### Recovery after an outpost is replaced
 
-NVDA has no equivalent: it
-is one process, and after an application crash it re-queries the
-real focus ([Focus and the navigator](../nvda/focus-and-navigator.md)).
-Verbatim (**different (D9, D13)**): when an outpost ends, the reducer
-keeps the focus's copied data but treats its node ids as dead, and
-clears the navigator if it belonged to that outpost. If the
-application holds attention, a replacement starts at once and is
+NVDA has no equivalent: it is one process, and after an application
+crash it re-queries the real focus
+([Focus and the navigator](../nvda/focus-and-navigator.md)).
+
+Verbatim: **different (D9, D13)**; no test pins it yet. When an outpost
+ends, the reducer keeps the focus's copied data but treats its node ids
+as dead, and clears the navigator if it belonged to that outpost. If
+the application holds attention, a replacement starts at once and is
 asked for its current focus; when the reply arrives, it is compared
-with the kept copy (role, name, value, states, and the ancestors'
-names and roles), and if all match, the new node ids are taken
-silently, otherwise the focus is announced as usual. The same
-question is asked after the focus listener is replaced.
-**unverified**.
+with the kept copy (role, name, value, states, and the ancestors' names
+and roles), and if all match, the new node ids are taken silently,
+otherwise the focus is announced as usual. The same question is asked
+after the focus listener is replaced.
 
 ### Held objects
 
-NVDA: an object lives as long as something refers to
-it, and an MSAA event, which names its object only by window, object
-id, and child id, is directed to the existing focus object when the
-two compare equal ([Event handling](../nvda/events.md)). The comparison
-requires equal child ids; the same COM object is equal; two
-`IAccessible2` objects in the same window compare by unique id;
-otherwise differing event addresses are unequal, and the MSAA
-identity strings, location, role, and name must all match.
-Verbatim: each outpost keeps its nodes, with the live UIA element or
-MSAA object behind each where it has one (a UIA node reported from a
-listener fact carries only cached properties), for every node Core
-still holds, plus every node reported after the last message Core has
-acknowledged, and releases the rest; a query for a released node
-answers "gone". Navigation, activation, and ancestor reads of an MSAA
-node use the object that was announced. A new MSAA sighting is the
-same node when it is the same COM object with the same child id in the
-same window, or when it was acquired at the same address as the node
-and a fresh read of the node's kept object gives the same role and the
-same identity string (both absent counts as the same); a failed role
-read is an unknown role, as for NVDA, so a kept object that no longer
-answers stops matching. An object reached through `accParent` that is
-one of a window's own standard objects has the address its identity
-string names (`DecomposeHwndIdentityString`), and is matched as one
-acquired there, so a window keeps one node whatever its title says, as
-NVDA, re-reading the old object live, finds the two equal. Any other
-object reached through `accParent`, or as a child object, has
-no address of its own (other objects in its window share the one
-Verbatim would make up), so it is matched only as the same COM object.
-`IAccessible2` unique ids are not read yet, and location and name are
-not compared when matching a sighting. A window's MSAA nodes are
-dropped when the window is destroyed; UIA nodes are not, since a
-runtime id has no documented structure naming its window, so a UIA
-node Core still holds after its window closed (the navigator left
-there) matches a new element given the same runtime id after the
-window handle value is reused, as an NVDA object compared by runtime
-id would. Positional child ids in simple
-list controls remain a known limitation that NVDA shares.
-**different (unverified)**: NVDA releases an object when nothing
-refers to it, Verbatim when Core reports it no longer holds the node.
+NVDA: an object lives as long as something refers to it, and an MSAA
+event, which names its object only by window, object id, and child id,
+is directed to the existing focus object when the two compare equal
+([Event handling](../nvda/events.md)). The comparison requires equal
+child ids; the same COM object is equal; two `IAccessible2` objects in
+the same window compare by unique id; otherwise differing event
+addresses are unequal, and the MSAA identity strings, location, role,
+and name must all match.
+
+Verbatim: **different**, by the outposts' node lifetime
+([Architecture](../architecture.md), D9, and
+[verbatim-outpost](../crates/verbatim-outpost.md)); no test pins it as
+a whole. NVDA releases an object when nothing refers to it, Verbatim
+when Core reports it no longer holds the node.
+
+- Each outpost keeps its nodes, with the live UIA element or MSAA object
+  behind each where it has one (a UIA node reported from a listener fact
+  carries only cached properties), for every node Core still holds, plus
+  every node reported after the last message Core has acknowledged, and
+  releases the rest; a query for a released node answers "gone".
+  Navigation, activation, and ancestor reads of an MSAA node use the
+  object that was announced.
+- A new MSAA sighting is the same node when it is the same COM object
+  with the same child id in the same window, or when it was acquired at
+  the same address as the node and a fresh read of the node's kept
+  object gives the same role and the same identity string (both absent
+  counts as the same); a failed role read is an unknown role, as for
+  NVDA, so a kept object that no longer answers stops matching.
+- An object reached through `accParent` that is one of a window's own
+  standard objects has the address its identity string names
+  (`DecomposeHwndIdentityString`), and is matched as one acquired there,
+  so a window keeps one node whatever its title says, as NVDA, re-reading
+  the old object live, finds the two equal. Any other object reached
+  through `accParent`, or as a child object, has no address of its own
+  (other objects in its window share the one Verbatim would make up), so
+  it is matched only as the same COM object.
+- `IAccessible2` unique ids are not read yet, and location and name are
+  not compared when matching a sighting.
+- A window's MSAA nodes are dropped when the window is destroyed; UIA
+  nodes are not, since a runtime id has no documented structure naming
+  its window, so a UIA node Core still holds after its window closed
+  (the navigator left there) matches a new element given the same
+  runtime id after the window handle value is reused, as an NVDA object
+  compared by runtime id would.
+- Positional child ids in simple list controls remain a known
+  limitation that NVDA shares.
 
 ### When speech is cut off, and cancellation of expired focus speech
 
-When speech is cut off, and cancellation of expired focus speech
-(focus left before speaking). NVDA: focus speech is queued, never
-interrupting; every key-down cancels speech before its gesture runs,
-bound or not, modifiers and typed characters included, except the
-volume keys and the unknown key `0xFF`; Shift alone pauses and resumes,
-its auto-repeat ignored; speaking while paused cancels first, and a
-cancel ends the pause ([Keyboard input](../nvda/input.md), "What a key
-press does to speech"). A foreground change, which NVDA infers whenever
-the top of the focus ancestry changes, cancels speech, named window or
-not, and so does entering a menu bar, menu, or menu item. On each focus
-change, speech for a focus no longer current is culled
-(`FocusLossCancellableSpeechCommand`, which keeps speech for the
-focus, its ancestors, the foreground object, an object that never had
-the focus, and a menu item when the focus has moved to a popup menu;
+When speech is cut off, and cancellation of expired focus speech (focus
+left before speaking). NVDA: focus speech is queued, never interrupting;
+every key-down cancels speech before its gesture runs, bound or not,
+modifiers and typed characters included, except the volume keys and the
+unknown key `0xFF`; Shift alone pauses and resumes, its auto-repeat
+ignored; speaking while paused cancels first, and a cancel ends the
+pause ([Keyboard input](../nvda/input.md), "What a key press does to
+speech"). A foreground change, which NVDA infers whenever the top of
+the focus ancestry changes, cancels speech, named window or not, and so
+does entering a menu bar, menu, or menu item. On each focus change,
+speech for a focus no longer current is culled
+(`FocusLossCancellableSpeechCommand`, which keeps speech for the focus,
+its ancestors, the foreground object, an object that never had the
+focus, and a menu item when the focus has moved to a popup menu;
 [Speech](../nvda/speech.md), "Expired focus speech", and
-[Event handling](../nvda/events.md)). Verbatim: **matched (unverified)**
-since 2026-10-04: focus, value, state, selection, navigation, and
-review speech is queued; the keyboard hook cancels, or pauses and
-resumes, on the key-down before the gesture is sent, with NVDA's
-exceptions, and a gesture injected through the control plane cancels
-too, while the keys Verbatim injects for itself (the Control tap that
-unlocks the foreground) leave speech alone, as NVDA ignores its own; a foreground report or a focus in another top-level window cancels,
-as does entering a menu; each focus announcement carries what it is
-about, entered containers are their own utterances, and on every focus
-change the speech manager stops what it has handed on when any of that
-has expired, and judges waiting focus speech when its turn comes, as
-NVDA does. A selection in a list the focus
-controls still interrupts, as NVDA cancels for it, and notifications
-keep their processing hint. Reducer, input, and speech pipeline tests
-cover the rules, and the end-to-end scenarios pass with them, but no
-scenario asserts where live speech is cut off yet.
-**Different:**
+[Event handling](../nvda/events.md)).
+
+Verbatim: **matched (unverified)**. Reducer, input, and speech pipeline
+tests cover the rules, and the end-to-end scenarios pass with them, but
+no scenario asserts where live speech is cut off. Focus, value, state,
+selection, navigation, and review speech is queued; the keyboard hook
+cancels, or pauses and resumes, on the key-down before the gesture is
+sent, with NVDA's exceptions, and a gesture injected through the control
+plane cancels too, while the keys Verbatim injects for itself (the
+Control tap that unlocks the foreground) leave speech alone, as NVDA
+ignores its own; a foreground report or a focus in another top-level
+window cancels, as does entering a menu; each focus announcement carries
+what it is about, entered containers are their own utterances, and on
+every focus change the speech manager stops what it has handed on when
+any of that has expired, and judges waiting focus speech when its turn
+comes, as NVDA does. A selection in a list the focus controls still
+interrupts, as NVDA cancels for it, and notifications keep their
+processing hint. NVDA's settings "Speech interrupt for typed
+characters" and "Speech interrupt for Enter" (both on by default) are
+implemented in the keyboard decision machine, stored in
+`settings.toml`'s keyboard section and applied to the running hook,
+with NVDA's rules for what counts as a typed character
+([Keyboard input](../nvda/input.md)).
+
+- The clause for a menu item whose focus has moved to a popup menu above
+  it (NVDA issues 12624 and 14550, MSAA only) is matched against the
+  focus the user just left only: Core names that item in
+  `FocusNow::menu_item_of_focus`, where NVDA tests the object of every
+  utterance still waiting. Speech for an older focus has already been
+  dropped by the focus change that left it.
+- Shift's pause: Verbatim toggles the pause on the speech queue thread,
+  in order with cancels, and a cancel or speech arriving while paused
+  ends the pause, as NVDA's does ([Keyboard input](../nvda/input.md)),
+  reported on the control plane as a resume. Heard the same in every
+  case checked: Shift and then a command key (the key cancels the paused
+  speech, and what it causes is spoken); Shift and then a typed
+  character with speech interrupt for typed characters on (the same)
+  and off (Shift does not pause, and the character does not cancel, in
+  both); Shift alone twice (paused, then resumed where it was).
+
+Differences, in plain words:
+
 - Audio cannot be taken out of the middle of the mixer's buffer, so
   when anything handed to the synthesizer or the mixer has expired,
   everything handed on is stopped; NVDA stops up to the newest expired
   utterance and keeps what was handed on after it.
-- The clause for a menu item whose focus has moved to a popup menu
-  above it (NVDA issues 12624 and 14550, MSAA only) is **matched since
-  2026-10-12**, against the focus the user just left only: Core names
-  that item in `FocusNow::menu_item_of_focus`, where NVDA tests the
-  object of every utterance still waiting. Speech for an older focus
-  has already been dropped by the focus change that left it.
 - The foreground node the check uses is the window most recently
   reported as the foreground; NVDA asks for the real foreground object
   on every focus change that changes the top of the ancestry, so a
   focus that reaches another window without a foreground report leaves
   Verbatim's foreground node on the old window until one arrives.
-- NVDA's settings "Speech interrupt for typed characters" and "Speech
-  interrupt for Enter" (both on by default) are **implemented since
-  2026-10-06** in the keyboard decision machine and stored in
-  `settings.toml`'s keyboard section, with NVDA's rules for what counts
-  as a typed character ([Keyboard input](../nvda/input.md)), and wired from
-  the settings into the running hook since 2026-10-06. NVDA's advanced setting
-  to turn the culling of expired focus speech off is not offered.
-- Shift's pause, compared from code on 2026-10-11. NVDA decides at the
-  key whether Shift pauses or resumes, from whether speech is paused
-  then (`keyboardHandler.py` 736 to 737), and applies it later on its
-  main thread (`inputCore.py` 607 to 612); a cancel stops the synth's
-  player, which ends its pause, and clears the paused state
-  (`speech/speech.py`, `cancelSpeech`), and speaking while paused
-  cancels first. Verbatim toggles the pause on the speech queue thread,
-  in order with cancels, and a cancel or speech arriving while paused
-  ends the pause the same way, reported on the control plane as a
-  resume. Heard the same in every case checked: Shift and then a
-  command key (the key cancels the paused speech, and what it causes is
-  spoken); Shift and then a typed character with speech interrupt for
-  typed characters on (the same) and off (Shift does not pause, and the
-  character does not cancel, in both); Shift alone twice (paused, then
-  resumed where it was). **Different only in a race:** a second Shift
-  pressed before NVDA's main thread has applied the first pause pauses
-  again, so speech stays paused, where Verbatim always resumes.
-
-### Event acceptance in the outpost
-
-NVDA: `shouldAcceptEvent` is made
-per event as NVDA processes it, against the foreground window of that
-moment, before it creates the event's object, so a background window's
-event costs no call into its application; not in the event callback,
-since that lost the focus events of applications starting up (issue
-4001). Verbatim (since 2026-10-10): each outpost's worker makes the same
-test, rule by rule in NVDA's order, as it handles each entry, with local
-calls only, before any call into the application: for MSAA name,
-description, state, value and selection changes, focus, foreground and
-popup menu facts, and alerts. Show facts pass by their class, which the
-focus listener's hook already tested, as NVDA's show rule depends on
-the class alone. Core's own test stays. The opt-ins application support
-asks for (`requestEvents`) have a table that nothing fills yet; the
-option to accept background progress bars is not offered, so they stay
-silent, as NVDA's are by default (Dickson, 2026-10-10); NVDA's rule for
-windowless Chromium documents is not ported, as Verbatim has no Chromium
-support. Outside the test, as before: an object destroyed (NVDA handles
-it in its callback), and Verbatim's own events, the caret and text
-selection of edit controls, the console host's updates, and a top-level
-window shown (`docs/design/phase6-design.md`, "Event filtering in the outposts").
-After acceptance, in NVDA's order (`winEventToNVDAEvent`), an MSAA
-event is dropped when its own window is no window, has a ghost window
-standing in for it, or belongs to an application the system reports
-hung, then when its window is UIA's, and only then is its object
-acquired: before, the window's UIA test, which can probe it, came
-first, and no check was made on the event's own window. The intake's
-hung test on the top-level window, for the batch limits, stays.
-UIA events take the same test in NVDA's order: whether the event is the
-focus's, then its window's UIA test, then acceptance with the event's
-window, the focus's recorded window for the focus's own events, or, for
-a windowless element not found, its application's focus window as the
-listener captured it, where NVDA walks to the nearest window. Tested so:
-property changes, selections,
-and, since 2026-10-12, a text control's caret and text changes, which
-NVDA's automation event handler tests as any other event; a
-notification and an active text position are not, as NVDA's handlers
-for them do not test them. A UIA menu opening is judged by the focus
-listener as a focus on the menu since 2026-10-12, in NVDA's order: the
-checks of NVDA's focus handler but the duplicate test, NVDA's keyboard
-focus read included, and a drop while a focus is pending. Before, the
-outpost reported it from its event's cache with no ancestors and no
-keyboard focus read, so in Windows 11 Notepad's File menu every focus
-after it lost its ancestry and Escape back to the menu bar said the
-window's title again, which NVDA does not.
-The UIA focus is tested by the focus listener instead, since stage A
-step 6's revision (Dickson, 2026-10-11; `docs/design/focus-pipeline.md`,
-sections 16.2 and 16.3), in NVDA's order: after the repeat check and
-before the focus is read, against the element's own window or its
-nearest ancestor's (`getNearestWindowHandle`, one call), with the same
-port of `shouldAcceptEvent`; a focus that fails is dropped and never
-becomes the last focus accepted, as NVDA's `lastQueuedFocusObject` is
-set only for a focus it queues (mockapp's
-`a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is`). Not tested, as in NVDA: notifications (spoken only from the
-focus's application, which Core judges) and the active text position;
-but since 2026-10-12 a notification whose sender has no window above it
-is dropped, as NVDA's app module default drops it (the shell's window
-snap results excepted, as File Explorer's app module lets them
-through), and a windowless selection is tested with its nearest window,
-both found by the focus listener's reading thread
-(`FocusReader::check_fact`); a text focus's caret and text changes are
-tested, as NVDA's automation event handler tests them. UIA's MSAA
-proxy is told never to raise, from `WinEvent`s, the UIA events Verbatim
-subscribes to, as NVDA's `ignoreWinEventsMap` tells it (issue 7345);
-focus changes keep their mapping, as in NVDA.
-**matched (unverified)**. Each registration's cache request differs
-from NVDA's twelve base properties: the listener's and the focus
-property changes' carry what a node is spoken or its states are read
-from, a text focus's caret and text events only their process, window,
-and class name (since 2026-10-10), from which nothing is spoken; a
-difference in the provider's work only.
+- NVDA's advanced setting to turn the culling of expired focus speech
+  off is not offered (not yet, M4, the settings package in the roadmap).
+- Only in a race: a second Shift pressed before NVDA's main thread has
+  applied the first pause pauses again, so speech stays paused, where
+  Verbatim always resumes.

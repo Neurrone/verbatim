@@ -46,6 +46,10 @@ thread alongside the core pump ([Main loop and watchdog](main-loop-and-watchdog.
   on top; a profile-aware warning system tells the user when they are
   editing a profile rather than the base configuration
   ([Configuration and profiles](config-and-profiles.md)).
+- Enter anywhere in a settings dialog activates OK, even on Cancel or
+  Apply, since the dialog's key hook sees it first
+  (`gui/settingsDialogs.py`, `_enterActivatesOk_ctrlSActivatesApply`);
+  Control+S applies.
 
 ## Driver settings: GUI from descriptors
 

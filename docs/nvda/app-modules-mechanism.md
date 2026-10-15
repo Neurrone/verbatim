@@ -24,6 +24,24 @@ An app module is a Python class bound to a *process*
 - Every NVDAObject carries `appModule`
   (`getAppModuleForNVDAObject`), so all per-object machinery can
   consult it.
+- A console window is the exception to binding by the window's owner.
+  Windows names the console's client (such as `powershell.exe`) as the
+  owner of a console window by `GetWindowThreadProcessId`, while the
+  window, its UIA provider, and its text area are the console host's.
+  NVDA gives the window and its text area the client's app module
+  (`UIA._get_processID`, `NVDAObjects/UIA/__init__.py` 2336 to 2346;
+  `getAppModuleForNVDAObject`, `appModuleHandler.py` 227 to 238), and
+  learns the console host's real thread from the console's WinEvents
+  (`consoleWindowsToThreadIDs`,
+  `IAccessibleHandler/internalWinEventHandler.py` 266 to 273), falling
+  back to the window's own thread.
+
+The File Explorer app module leaves unsaid a focus on the nameless
+windows that only stage a switch on Alt+Tab, Task View, and the
+Windows+X menu (`ForegroundStaging`, `LauncherTipWnd`,
+`ApplicationManager_DesktopShellWindow`; `appModules/explorer.py` lines
+443 to 449). It does so after NVDA has made the window its focus and
+run its foreground event, so speech is still cut there.
 
 What an app module can hook, in rough order of importance:
 

@@ -85,7 +85,13 @@ For a keyboard gesture the effect is decided by
   turned off, Enter leaves speech alone, so the user can submit a line
   without cutting off what is being read.
 - Shift (left, right, or generic) pauses speech, or resumes it when
-  speech is paused.
+  speech is paused. Which of the two is decided at the key, from
+  whether speech is paused then (`keyboardHandler.py` 736 to 737), and
+  applied later on the main thread (`inputCore.py` 607 to 612), so a
+  second Shift pressed before the first pause is applied pauses again.
+  A cancel stops the synthesizer's player, which ends its pause, and
+  clears the paused state (`speech/speech.py`, `cancelSpeech`), and
+  speaking while paused cancels first.
 - Every other key cancels speech.
 
 Both settings are on by default, so by default every key except the

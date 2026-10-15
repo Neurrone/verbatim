@@ -60,6 +60,12 @@ current focus object's own events bypass all filtering
 - `shouldAcceptEvent` (foreground gating; [Event handling](events.md)) is applied here,
   *not* in the callback (doing it early broke app-launch focus, [#4001](https://github.com/nvaccess/nvda/issues/4001)).
   Show/hide events on the caret bypass it and become caret events.
+  An accepted event then goes through `winEventToNVDAEvent`, which drops
+  it, in this order, when its own window is no window, has a ghost
+  window standing in for it, or belongs to an application the system
+  reports hung, then when the window is UIA's, and only after those
+  checks acquires the event's object. So an event from a background
+  window costs no call into its application.
 - Focus and foreground winevents are batched, and only the *most recent
   processable one* is turned into an NVDA gainFocus (walk backward until
   one succeeds — `processFocusWinEvent` / `processForegroundWinEvent`).
@@ -94,6 +100,31 @@ are real even when its MSAA says nothing), and per-control overlays
 (SysListView32, SysTreeView32, toolbar, …) replace navigation with
 control-specific window messages where MSAA lies. The IA2 layer on top
 of these objects is [IA2 usage](ia2.md).
+
+An event's object is met again only through `liveNVDAObjectTable`,
+keyed by the address an object was created for or its identity string
+names (`IAccessibleHandler.winEventToNVDAEvent`); each new instance with
+that address replaces the last one (`IAccessible.__init__`, at the end).
+The base `event_stateChange` speaks for an ancestor only when the
+event's object is the very ancestor instance
+(`any(self is obj for obj in api.getFocusAncestors())`), by Python
+identity, not by equality of window, role, name, and location (that
+comparison redirects only an event on the focus). Two consequences:
+
+- A windowless ancestor reached through `accParent`, with no identity
+  string and no `IAccessible2` unique id, has no address, so its state
+  change is never spoken.
+- When the focus enters a top-level window that is the foreground,
+  `doPreGainFocus` first sets the focus and its ancestors
+  (`api.setFocusObject`, whose walk creates the window's ancestor
+  instance), then, the focus difference level being 1 or less, creates
+  the foreground object (`objectInForeground`, for the foreground
+  window's `OBJID_CLIENT`), which takes the table's entry for that
+  address. An event on that window then resolves to the foreground
+  object, which is not among the ancestors, and is silent: a modal
+  dialog disabling its owner says nothing. A top-level window that was
+  not the foreground as the focus entered it, as a popup menu's never
+  is, keeps its ancestor instance, and its state change is spoken.
 
 ## Interaction points to remember
 

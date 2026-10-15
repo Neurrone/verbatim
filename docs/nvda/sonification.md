@@ -44,7 +44,9 @@ and the inventory below marks each.
   (or the words "spelling error", per the `reportSpellingErrors2`
   speech/sound flags) at the exact position the invalid-spelling run
   starts and ends (`speech.getFormatFieldSpeech`;
-  [Document formatting reporting](document-formatting.md)).
+  [Document formatting reporting](document-formatting.md)). By default
+  the report is speech alone: `reportSpellingErrors2` defaults to 1, the
+  speech flag (`config/configSpec.py`).
 - **Spelling errors, after typing a word** — immediate, and the case
   the question always asks about
   (`NVDAObjects/behaviors.py`, `EditableTextBase.event_typedCharacter`

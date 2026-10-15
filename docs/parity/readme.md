@@ -17,8 +17,19 @@ Statuses:
 - **different (Dn)** — deliberately divergent, recorded in
   [Architecture](../architecture.md) decision Dn or noted inline in
   [the crate guides](../crates/readme.md).
+- **partial** — implemented for some of the cases the entry names, and
+  the entry lists which; each case's own state is given in plain words.
+- **different** — divergent, with no decision number, and the entry
+  names the design record or dated decision that chose it.
 - **not yet (Mn)** — not implemented; scheduled milestone in
-  parentheses.
+  parentheses, or **not yet (unscheduled)** when the roadmap names none.
+- **not planned** — not implemented and not intended to be, with the
+  reason in the entry.
+
+Every entry carries exactly one of these statuses in bold, for the
+entry as a whole. A case that differs inside an entry whose behavior
+otherwise matches is described in plain words after the status, with
+the decision that chose it.
 
 Keep entries short; move discussion into the linked docs. When a
 review confirms an entry, upgrade its status and note how it was
@@ -68,15 +79,16 @@ focus-listener process plus per-app outposts.
 ### Extensions
 
 NVDA: unrestricted Python add-ons
-([App modules mechanism](../nvda/app-modules-mechanism.md)). Verbatim: **not yet (M5)**,
-and **different (D6)** by design — sandboxed Wasm components.
+([App modules mechanism](../nvda/app-modules-mechanism.md)). Verbatim:
+**different (D6)** by design — sandboxed Wasm components, not yet built
+(M5).
 
 ### Injection
 
 NVDA: universal lazy DLL injection
-([Process injection](../nvda/process-injection.md)). Verbatim: **not yet (M6)**, and
+([Process injection](../nvda/process-injection.md)). Verbatim:
 **different (D2)**: injection only ever accelerates, never required
-for correctness.
+for correctness; not yet built (M6).
 
 ### Display model
 
@@ -96,16 +108,15 @@ words and binds the same keys wherever it implements the same command
 (E2E scenarios assert the wording; the gesture tables live in
 [verbatim-input](../crates/verbatim-input.md)). Only the English catalogue
 is shared vocabulary; Verbatim's other-language resources are written
-fresh, never taken from NVDA's translations. **Different, deliberately**
+fresh, never taken from NVDA's translations. The laptop layout has the
+numpad bindings too, as NVDA binds them for every layout. Different
 (Dickson, 2026-10-03): Caps Lock is a Verbatim key by default, with the
 two Insert keys, where NVDA's default modifiers are the Insert keys
-alone; and Verbatim's menu is on Verbatim+V, not NVDA+N. The laptop
-layout has the numpad bindings too, as NVDA binds them for every layout
-(since 2026-10-03; they had been desktop only).
+alone; and Verbatim's menu is on Verbatim+V, not NVDA+N.
 
 ### NVDA's global commands Verbatim has not built
 
-**not yet**. Among them
+**not yet (unscheduled)**. Among them
 are the settings ring (NVDA+Control+arrows), speech modes, the title
 (NVDA+T), the status bar (NVDA+End), read window
 (NVDA+B), sleep mode, quit (NVDA+Q), pass the next key through

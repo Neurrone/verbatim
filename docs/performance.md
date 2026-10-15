@@ -668,7 +668,7 @@ A state change on the focus while another application's window is in
 front, and the same change with the focus's window in front
 (`msaa_state_change_costs_exactly`). The outpost tests each event by
 NVDA's acceptance test against the foreground window before anything else
-(`docs/parity/focus-events.md`, "Event acceptance in the outpost").
+(`docs/parity/focus-events.md`, "Event acceptance").
 
 - Before the event filtering work (2026-10-10): the change was acquired,
   its window probed when its verdict had run out, and read in full, then
