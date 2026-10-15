@@ -376,7 +376,7 @@ private:
     std::int64_t indication_;
 };
 
-// The Theme page (phase6-design.md, "The settings dialog"): the theme list,
+// The Theme page (docs/design/phase6-design.md, "The settings dialog"): the theme list,
 // its description, the settings that go with it, the indications tree with
 // a find field, the selected indication's controls, and the theme buttons.
 // Rust holds the state (crates/verbatim-gui/src/theme_panel.rs); after every
@@ -822,7 +822,7 @@ private:
     wxSlider* slider_;
 };
 
-// The Terminal page (phase6-design.md, "M4: text, editing, and terminals",
+// The Terminal page (docs/design/phase6-design.md, "M4: text, editing, and terminals",
 // Questions): "Report new output", the two line limits as sliders, and
 // speaking passwords typed in terminals, top to bottom, which is also the
 // tab order. Rust holds the state (crates/verbatim-gui/src/terminal_panel.rs),

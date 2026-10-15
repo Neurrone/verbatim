@@ -1,6 +1,6 @@
 //! Typing a terminal does not show plainly, as `windows_terminal_typing`
 //! in Windows Terminal and `conhost_typing` in the console host
-//! (`phase6-design.md`, "Terminal risks found by studying NVDA" and "What
+//! (`docs/design/phase6-design.md`, "Terminal risks found by studying NVDA" and "What
 //! a key did to the text"). The shared setup is described in the
 //! `terminal` module.
 //!

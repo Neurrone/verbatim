@@ -338,7 +338,7 @@ equal.
 `terminal_screen_remote` and `terminal_screen_classic` share one
 signature (`TerminalScreenFn`), and `terminal_screen(uia, query,
 remote)` chooses between them as `focus_ancestry` does, answering with a
-`Path` (milestone M4 item 9; `phase6-design.md`, "Terminal reading by
+`Path` (milestone M4 item 9; `docs/design/phase6-design.md`, "Terminal reading by
 diffing the screen"). A `ScreenQuery` names the element and its text
 pattern, the screen's top two rows as last read (`ScreenAnchor`: their
 text as the provider gave it, a range at the start of the top row, the
@@ -425,7 +425,7 @@ round trip remotely (`docs/performance.md`, "A terminal output line").
 `caret_read_remote` and `caret_read_classic` share one signature
 (`CaretReadFn`), and `caret_read(query, remote)` chooses between them as
 `focus_ancestry` does, answering with a `Path` (milestone M4 items 3 and
-7; `phase6-design.md`, "Caret responsiveness"). One difference: a run
+7; `docs/design/phase6-design.md`, "Caret responsiveness"). One difference: a run
 that failed because the provider's process has gone or did not answer in
 time (`UIA_E_ELEMENTNOTAVAILABLE`, `UIA_E_TIMEOUT`) is returned as the
 error without running the classic reads, which would meet the same

@@ -12,7 +12,7 @@
 //! prompt off the bottom, the earlier line written there, then the prompt
 //! on the last row again. Q closes the alternate screen and prints
 //! "closed". The text scrolls through rows that stay put, so the screen
-//! diff finds how far from the text (`phase6-design.md`, "Terminal line
+//! diff finds how far from the text (`docs/design/phase6-design.md`, "Terminal line
 //! keys as NVDA has them"), and each move speaks only the line it brought
 //! onto the screen. The caret stays after the prompt, so the keys
 //! themselves say nothing.

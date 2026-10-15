@@ -972,7 +972,7 @@ Terminal process the agent did not launch appears while it runs.
 **The Verbatim under test never reads your Windows Terminal.** A stray
 UIA focus fact from the owner's Windows Terminal used to start an outpost
 for it, which then called into it, and that Windows Terminal crashed once
-inside UI Automation while it was read (`phase6-design.md`, "Windows
+inside UI Automation while it was read (`docs/design/phase6-design.md`, "Windows
 Terminal crash of 2026-10-08"). So the agent launches Verbatim with
 `ignore_foreign_terminals` (`AgentClient::launch_verbatim`): it lists
 every `WindowsTerminal.exe` process outside the agent's own jobs, and the
@@ -987,7 +987,7 @@ jobs, so it is read as usual. Every scenario fails if Verbatim's log
 folder holds an outpost log named for one of those processes. Nothing
 else sets the variable, so a Verbatim you start yourself ignores
 nothing. What still reaches your Windows Terminal is UI Automation's own
-work for any desktop-wide client: see `phase6-design.md`, "Ignoring the
+work for any desktop-wide client: see `docs/design/phase6-design.md`, "Ignoring the
 owner's Windows Terminal".
 CI's `e2e` job runs `cargo xtask windows-terminal` as a step of its own
 before the suite, so GitHub's runner tests the same release, not the
@@ -1516,7 +1516,7 @@ restored and inactive and is brought forward as msinfo32's is. It is not
 opened minimized: a folder window the shell opens minimized takes the
 foreground while minimized, and once restored its file list has no
 keyboard focus, so arrow keys say nothing in NVDA or Verbatim (measured
-2026-10-09; `phase6-design.md`, "File Explorer opened without the
+2026-10-09; `docs/design/phase6-design.md`, "File Explorer opened without the
 foreground right"). A Settings page (`Scenario::open_settings_page`) opens
 minimized and inactive and is brought forward like the harness's own
 windows. Run a scenario that sends keys first, such as
@@ -1563,7 +1563,7 @@ minimize requested and observed, the restore, and
 148 switches in 50 runs of `conhost_leave_flood` on 2026-10-11 the whole
 switch took 150 to 282 milliseconds, and once 1.4 seconds; a scenario
 that switches while speech plays must give the switch that long.
-`phase6-design.md`, "Test isolation and the foreground lock (2026-10-08)",
+`docs/design/phase6-design.md`, "Test isolation and the foreground lock (2026-10-08)",
 has the evidence.
 
 **Windows 11 Notepad restores tabs from its previous session.** Notepad

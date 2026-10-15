@@ -1,4 +1,4 @@
-//! The settings dialog's Theme page (`phase6-design.md`, "The settings
+//! The settings dialog's Theme page (`docs/design/phase6-design.md`, "The settings
 //! dialog"): its model, pure apart from the theme files and the
 //! [`ThemeHost`] it makes changes live through.
 //!

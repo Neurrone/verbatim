@@ -15,7 +15,7 @@
 //!   as its Change button does.
 //! - Enter anywhere else activates OK.
 //! - Space on the Theme page's sound choice plays the sound it shows
-//!   (`phase6-design.md`, "The settings dialog").
+//!   (`docs/design/phase6-design.md`, "The settings dialog").
 //! - Every other key is left to the focused control.
 
 /// A key the router distinguishes.

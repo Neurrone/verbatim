@@ -925,14 +925,14 @@ Implementation notes:
   10 ms, until then. The batch limits keep a foreground fact as one of
   its thread's other events as well as one of the focus events, as NVDA's
   limiter does, so the focus events an application raises after it do
-  not crowd the system's event out (`phase6-design.md`, "A foreground
+  not crowd the system's event out (`docs/design/phase6-design.md`, "A foreground
   event before its window is in front"). A foreground window not yet
   shown waits for its show
   event (`WinEventKind::WindowShown`, the outpost's own process-scoped
   hook, never dropped by the limiter) and is reported then, its name read
   then, or just before a focus inside it that comes first; a newer
   foreground change replaces it (`Tracking::unshown_foreground`;
-  `phase6-design.md`, "File Explorer opened without the foreground
+  `docs/design/phase6-design.md`, "File Explorer opened without the foreground
   right"). Otherwise a foreground fact is reported at once,
   stamped with the time its window was confirmed as the foreground, after
   its name is read, rather than the time Windows raised the event,
@@ -1260,7 +1260,7 @@ Implementation notes:
   for a released node answers `Gone`. A newer list replaces one still in
   the writer's slot; the intake queue likewise keeps only the newest and
   never limits it.
-- What to read (milestone M4, `phase6-design.md`, "Themes: one model for
+- What to read (milestone M4, `docs/design/phase6-design.md`, "Themes: one model for
   verbosity, speech, and sounds"). `SupervisorToOutpost::Fetches` carries
   the details the active theme wants read for each node
   (`SrState::fetches`); the app sends it to each outpost as it starts and
@@ -1675,7 +1675,7 @@ it covers whatever is in pipes and backlogs without counting it.
 Outposts and the listener are UI Automation clients of every application
 Verbatim reads, and killing a client in the middle of a call or a remote
 operation into an application is the leading suspect in a Windows Terminal
-crash inside `UIAutomationCore.dll` (`phase6-design.md`, "Windows Terminal
+crash inside `UIAutomationCore.dll` (`docs/design/phase6-design.md`, "Windows Terminal
 crash of 2026-10-08"); it also happened to every application whenever
 Verbatim exited, since ending a child used to mean closing its job. So
 every way a child ends goes through a clean shutdown, and the kill is
@@ -1775,7 +1775,7 @@ listener as above.
 
 The `terminal` module (public, so mockapp's tests drive it as the worker
 does) finds a focused terminal's new output by diffing its screen
-(`phase6-design.md`, "Terminal reading by diffing the screen"). Terminal
+(`docs/design/phase6-design.md`, "Terminal reading by diffing the screen"). Terminal
 behavior is generic, keyed by the control, never the window's title: a
 UIA element of class `TermControl` (Windows Terminal) or `WPFTermControl`
 (the terminal embedded in Visual Studio), or a focus in a
@@ -1940,7 +1940,7 @@ finds it.
   1") took itself for the main screen back and lost the skipped count.
 
 - A line key (Up or Down Arrow) in a terminal is watched as in a text
-  field (Dickson, 2026-10-09, `phase6-design.md`, "Terminal line keys as
+  field (Dickson, 2026-10-09, `docs/design/phase6-design.md`, "Terminal line keys as
   NVDA has them"): the caret moving is the evidence, and the answer is
   the caret's line. What the key made the program redraw elsewhere on
   the screen is spoken at once as output, through the screen diff. The
@@ -1961,7 +1961,7 @@ finds it.
   read, from the console's own update events, before the key's request
   reached the outpost (`Terminal::screen_at`); otherwise the key is
   judged by the caret alone.
-- On-demand reading (`terminal::reading`, `phase6-design.md`, "Terminal
+- On-demand reading (`terminal::reading`, `docs/design/phase6-design.md`, "Terminal
   decisions"), a pure transition function the worker drives. Live, the
   default, a text change of the focused terminal (`Text_TextChanged`) is
   read at once and its output sent as `NormalizedEvent::TerminalOutput`,

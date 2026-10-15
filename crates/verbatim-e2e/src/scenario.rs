@@ -1119,7 +1119,7 @@ impl Scenario {
     /// inactive and is brought forward. It is not opened minimized: a
     /// folder window the shell opens minimized takes the foreground while
     /// minimized, and once restored its file list has no keyboard focus,
-    /// in NVDA as in Verbatim (`phase6-design.md`, "File Explorer opened
+    /// in NVDA as in Verbatim (`docs/design/phase6-design.md`, "File Explorer opened
     /// without the foreground right"). The window is closed by its title
     /// at cleanup; `explorer.exe` is the shell, so its process stays.
     /// Returns the folder's name, which is the window's title.

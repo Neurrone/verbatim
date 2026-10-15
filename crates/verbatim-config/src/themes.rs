@@ -1,4 +1,4 @@
-//! Theme files (`phase6-design.md`, "Themes and configuration profiles"
+//! Theme files (`docs/design/phase6-design.md`, "Themes and configuration profiles"
 //! and "Packaging").
 //!
 //! A theme is a directory in the user's themes folder, named by the

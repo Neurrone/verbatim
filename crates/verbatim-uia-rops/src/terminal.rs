@@ -1,4 +1,4 @@
-//! A terminal's screen (`phase6-design.md`, "Terminal reading by diffing
+//! A terminal's screen (`docs/design/phase6-design.md`, "Terminal reading by diffing
 //! the screen"): the text now on screen, read in one call, and where the
 //! screen's top row as last read is now, so the caller can tell how far the
 //! text scrolled since. A remote program reads it in one round trip, and a

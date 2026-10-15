@@ -20,7 +20,7 @@
 //! frame, cancelled by [`Source::cancel_all`], or failed by
 //! [`Source::fail`] or by the device changing format under it.
 //!
-//! Sounds (`phase6-design.md`, "Earcons"). A source also mixes sounds over
+//! Sounds (`docs/design/phase6-design.md`, "Earcons"). A source also mixes sounds over
 //! its own audio, each a *voice*: one placed in an utterance
 //! ([`Source::sound`]) starts when the source's audio reaches its place
 //! and plays on over what follows, and one played at once

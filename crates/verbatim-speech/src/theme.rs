@@ -1,6 +1,6 @@
 //! The presentation stage (decision D12): the pipeline boundary where a
 //! [`Presenter`] flattens a structured [`Utterance`] into a flat
-//! [`SpeechSequence`], as the active theme says (`phase6-design.md`,
+//! [`SpeechSequence`], as the active theme says (`docs/design/phase6-design.md`,
 //! "Themes: one model for verbosity, speech, and sounds").
 //!
 //! The reducer composes announcements from semantic spans, never display

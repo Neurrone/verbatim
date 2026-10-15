@@ -679,7 +679,7 @@ verified.
   later than its event, and Verbatim, reading it as it reports it, read
   File Explorer's "File Explorer" where NVDA read the folder's title
   (deliberately different in timing since 2026-10-09, to say the same
-  name; `phase6-design.md`, "File Explorer opened without the foreground
+  name; `docs/design/phase6-design.md`, "File Explorer opened without the foreground
   right"). A focus event is
   attended only when its window was in the system's foreground window
   when its outpost read it, topmost, or a `Windows.UI.Core` window under
@@ -1007,7 +1007,7 @@ verified.
   support. Outside the test, as before: an object destroyed (NVDA handles
   it in its callback), and Verbatim's own events, the caret and text
   selection of edit controls, the console host's updates, and a top-level
-  window shown (`phase6-design.md`, "Event filtering in the outposts").
+  window shown (`docs/design/phase6-design.md`, "Event filtering in the outposts").
   After acceptance, in NVDA's order (`winEventToNVDAEvent`), an MSAA
   event is dropped when its own window is no window, has a ghost window
   standing in for it, or belongs to an application the system reports
@@ -1402,7 +1402,7 @@ verified.
   line rather than the character there (**different**, a follow-up).
 - Review cursor columns. NVDA moves the review cursor to the start of the
   next or previous line. Verbatim: **different, deliberately** (decided
-  2026-10-06, `phase6-design.md`, M4 item 5): moving to another line,
+  2026-10-06, `docs/design/phase6-design.md`, M4 item 5): moving to another line,
   page, or by line from a word keeps the column, so columns of a text table
   or the map of a text-based game read line by line. In a terminal the
   column is a cell column: wide characters (Chinese, Japanese, Korean) take
@@ -1942,7 +1942,7 @@ verified.
 - Which text attributes are fetched. NVDA: every attribute its settings
   ask for, on every read, whatever the control supports ([Document
   formatting reporting](nvda/document-formatting.md), "UIA providers").
-  Verbatim: **different**, by design (`phase6-design.md`, "Terminal
+  Verbatim: **different**, by design (`docs/design/phase6-design.md`, "Terminal
   decisions"): the attributes the theme's indications ask for, among
   those the focused control supports, learned from the control itself.
   An attribute a line answers "not supported" for, while its support is
@@ -2087,7 +2087,7 @@ verified.
   the text removed at the caret is spoken, in any language, and nothing
   when nothing was removed (the classic edit control's Control+Backspace
   inserts a DEL character, where NVDA would speak the word it expected to
-  go). **Different (since 2026-10-08, `phase6-design.md`, "What a key did
+  go). **Different (since 2026-10-08, `docs/design/phase6-design.md`, "What a key did
   to the text"):** a key outside NVDA's caret keys that types no text
   (bash's Control+A, Control+E, Alt+B, Alt+F, Control+W, Control+K, and
   Escape clearing a line) is spoken by its evidence: text it removed at
@@ -2205,7 +2205,7 @@ verified.
   key cancels speech; a one-character change dropped as probably typed.
   Verbatim: **implemented since 2026-10-06** (M4 item 9); since
   2026-10-08 each read diffs the screen with the screen last read
-  (`phase6-design.md`, "Terminal reading by diffing the screen";
+  (`docs/design/phase6-design.md`, "Terminal reading by diffing the screen";
   `docs/crates/verbatim-outpost.md`, "Terminals"), where NVDA diffs the
   whole document: as NVDA's diff speaks only what was inserted
   (`diffHandler.py` 36 to 48, `DiffMatchPatch.diff` keeping only `+`
@@ -2226,7 +2226,7 @@ verified.
   the key is never spoken after it, while output read after the key is
   spoken, as in NVDA (Dickson, 2026-10-10; the `*_control_flood`
   scenarios). **Different:** the backlog is capped
-  ("30 and 30", `phase6-design.md`, "The flood policy, reconsidered"):
+  ("30 and 30", `docs/design/phase6-design.md`, "The flood policy, reconsidered"):
   with more than "Lines spoken in full" (30) lines waiting once a
   group's last line has been heard, the older ones become "skipped N
   lines" ("skipped lines" when the count is lost, "skipped more than N
@@ -2364,7 +2364,7 @@ verified.
   change once, both in it, and says "echo onex" without the character's
   own echo (**different, deliberately**: kept as Verbatim's behaviour by
   Dickson on 2026-10-09, since it does not occur in normal use,
-  `phase6-design.md`).
+  `docs/design/phase6-design.md`).
   Typing and
   its output after a switch are echoed and spoken as in any terminal
   (matched). An earlier report that Verbatim left the window's title out
@@ -2417,7 +2417,7 @@ verified.
 
   Up and Down Arrow in a terminal, a selection list a program draws
   among them: **matched since 2026-10-09** (Dickson, 2026-10-09,
-  `phase6-design.md`, "Terminal line keys as NVDA has them", reversing
+  `docs/design/phase6-design.md`, "Terminal line keys as NVDA has them", reversing
   the earlier deliberate difference). NVDA reads the caret's line at the
   first change of the caret's position after the key, or, finding none
   within its wait, at the end of it (`source/editableText.py`, lines 70
@@ -2654,7 +2654,7 @@ verified.
   Terminal's notifications are in the Advanced panel, behind its warning,
   and NVDA's "Report dynamic content changes", which Verbatim+5 matches,
   is in Object Presentation. Verbatim: **different** by decision
-  (`phase6-design.md`, "M4: text, editing, and terminals", Questions): a
+  (`docs/design/phase6-design.md`, "M4: text, editing, and terminals", Questions): a
   Terminal page in the settings dialog, after Theme, with "Report new
   output", the flood policy's two limits ("Lines spoken in full" and
   "Last lines to speak", 1 to 10,000, sliders, more than either

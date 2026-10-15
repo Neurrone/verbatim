@@ -139,7 +139,7 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   and a terminal's output changes it with every message
   (`docs/design/wake-ups.md`, item 4).
 
-Milestone M4's themes and earcons are wired here too (`phase6-design.md`,
+Milestone M4's themes and earcons are wired here too (`docs/design/phase6-design.md`,
 "Earcons"):
 
 - `themes` loads the theme the configuration names

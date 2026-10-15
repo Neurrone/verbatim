@@ -139,7 +139,7 @@ Public API:
   the mixer's audio thread, so every implementation must be cheap and
   non-blocking.
 - `Presenter` and `ThemePresenter` — the presentation stage (decision
-  D12, `phase6-design.md` "Themes: one model for verbosity, speech, and
+  D12, `docs/design/phase6-design.md` "Themes: one model for verbosity, speech, and
   sounds"): a presenter flattens each structured utterance to the
   `SpeechSequence` handed to the synthesizer, with `flatten(utterance,
   id)`, on the queue thread when the utterance is accepted.

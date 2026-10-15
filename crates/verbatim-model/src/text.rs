@@ -1,6 +1,6 @@
 //! The text protocol (milestone M4): how an outpost sends text to Core and
 //! how Core asks an outpost to read text, wait for the caret, select, or
-//! move the caret (`phase6-design.md`, "M4: text, editing, and terminals"
+//! move the caret (`docs/design/phase6-design.md`, "M4: text, editing, and terminals"
 //! and "Internationalization in the text model").
 //!
 //! The rules the types follow:
@@ -544,7 +544,7 @@ pub enum TextOp {
     /// Read several units ahead (say-all): answered [`TextReply::Chunks`],
     /// or as [`TextOp::Read`] is when the first unit cannot be read.
     ReadAhead(TextReadAhead),
-    /// A focused terminal's on-demand reading (`phase6-design.md`,
+    /// A focused terminal's on-demand reading (`docs/design/phase6-design.md`,
     /// "Terminal decisions"): Core's output queue is full, so the outpost
     /// only notes that the terminal's text changed from now on, without
     /// reading it. Answered [`TextReply::Done`].
@@ -702,7 +702,7 @@ pub enum CaretMotion {
     /// Any other key passed to the application that types no text (bash's
     /// Control+A and Control+E, Alt+B and Alt+F, Control+W): what it did is
     /// judged by its evidence, text removed at the caret or where the caret
-    /// landed (`phase6-design.md`, "What a key did to the text").
+    /// landed (`docs/design/phase6-design.md`, "What a key did to the text").
     Other,
 }
 

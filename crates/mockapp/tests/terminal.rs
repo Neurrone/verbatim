@@ -1,4 +1,4 @@
-//! A terminal's new output (milestone M4 item 9; `phase6-design.md`,
+//! A terminal's new output (milestone M4 item 9; `docs/design/phase6-design.md`,
 //! "Terminal reading by diffing the screen") against mockapp's UIA text
 //! provider, whose `set-text` command rewrites a node's text the way a
 //! terminal's buffer changes (lines written at the end, the oldest lines

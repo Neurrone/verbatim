@@ -205,7 +205,7 @@ dialog has no check list box; one added later needs its own accessible,
 and must not notify on toggle itself, since wxWidgets 3.3.2 and later
 already do.
 
-The Theme page (milestone M4, `phase6-design.md`, "The settings dialog").
+The Theme page (milestone M4, `docs/design/phase6-design.md`, "The settings dialog").
 From top to bottom, which is also the tab order: "Theme", a combo box of
 the installed themes, the built-in default first (moving through it
 applies each theme at once); "Description", a read-only multi-line field
@@ -253,7 +253,7 @@ category, not a profile, since profiles are not activated until M8. A
 failed file operation is reported in a message box with
 `verbatim-config`'s error text, which is English.
 
-The Terminal page (milestone M4, `phase6-design.md`, "M4: text, editing,
+The Terminal page (milestone M4, `docs/design/phase6-design.md`, "M4: text, editing,
 and terminals", Questions). From top to bottom, which is also the tab
 order: "Report new output", a check box; "Lines spoken in full" and "Last
 lines to speak", sliders from 1 to 10,000 (`MAX_TERMINAL_LINES`) that move by

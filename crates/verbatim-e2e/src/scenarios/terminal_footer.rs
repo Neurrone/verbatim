@@ -1,5 +1,5 @@
 //! A flood above a footer that redraws during and after it
-//! (`phase6-design.md`, "Floods and the screen diff"), as
+//! (`docs/design/phase6-design.md`, "Floods and the screen diff"), as
 //! `windows_terminal_footer_flood` in Windows Terminal and
 //! `conhost_footer_flood` in the console host. The shared setup is
 //! described in the `terminal` module.

@@ -1,5 +1,7 @@
 # Terminal reading in Verbatim: a design from first principles
 
+Status: adopted (approved, its open questions 1 to 12 answered as recommended); not yet built as a whole: the roadmap's terminal redesign builds it after the spare outposts, with the corrections of its review, `docs/design/terminal-reading-review.md`.
+
 Written 2026-10-10 for Dickson. Read-only research: nothing in the repository was edited, built or run. The design covers Windows Terminal and the console host (conhost), both read through UI Automation (UIA).
 
 ## How to read this document
@@ -7,8 +9,8 @@ Written 2026-10-10 for Dickson. Read-only research: nothing in the repository wa
 Each requirement and rule carries its source:
 
 - "NVDA" with a file and line under `nvda/source`, or a capture file in the scratchpad (`nv-con-*.txt` for the console host, `nv-wt-*.txt` for Windows Terminal, all NVDA alpha-57645 captured 2026-10-09). Every one but `nv-wt-tabs1.txt` and `nv-wt-tabs2.txt`, whose second window did not come forward in the replay, was replayed on 2026-10-12 with NVDA alpha-58022, the build the pinned source is: the speech is the same but for new output, which alpha-58022 speaks line for line, every line, where alpha-57645 left lines out ("Known weaknesses" below); the other differences are timing and the machine's state (a git log, a folder's files).
-- "Dickson, date" for a decision recorded in `phase6-design.md` as Dickson's. These are requirements. Where this design argues to revisit one, it says so and the point is repeated in the open questions.
-- "Agent, to be confirmed" for behaviour an agent built and `phase6-design.md` records as not yet confirmed.
+- "Dickson, date" for a decision recorded in `docs/design/phase6-design.md` as Dickson's. These are requirements. Where this design argues to revisit one, it says so and the point is repeated in the open questions.
+- "Agent, to be confirmed" for behaviour an agent built and `docs/design/phase6-design.md` records as not yet confirmed.
 - "Proposed" for anything new in this document.
 
 "Uncertain" marks a claim this study could not check. "Measure" marks a fact the design depends on that has to be measured live before the code is written.
@@ -25,7 +27,7 @@ The base design proposed here keeps Verbatim's decided behaviour but changes wha
 
 ### Output
 
-- New output is spoken line by line, queued in order, one utterance per line; newer output never cancels older output still waiting. Sources: NVDA (`NVDAObjects/behaviors.py` 455 to 466 and 496 to 502, every line queued); Dickson, 2026-10-06 ("newer output never cancels older output", phase6-design.md, "The flood policy, reconsidered").
+- New output is spoken line by line, queued in order, one utterance per line; newer output never cancels older output still waiting. Sources: NVDA (`NVDAObjects/behaviors.py` 455 to 466 and 496 to 502, every line queued); Dickson, 2026-10-06 ("newer output never cancels older output", docs/design/phase6-design.md, "The flood policy, reconsidered").
 - Blank lines are not spoken. NVDA (`diffHandler.py` 45 to 47 and 73 to 75); Dickson, 2026-10-06 ("blank lines are dropped").
 - Only inserted text is spoken; lines that were only deleted, or a line that only lost text, say nothing. NVDA (`diffHandler.py` 39 to 41, only "+" pieces); Dickson, 2026-10-08 ("what was inserted is spoken, never what was only deleted (NVDA's rule)").
 - A line rewritten in place speaks from the start of the word that changed, using Unicode word rules with ICU dictionaries and whole graphemes, so it works in Chinese, Japanese and Thai. Dickson, 2026-10-08 (changed-word rule, and the language audit decision). NVDA differs: its character diff speaks the inserted characters only.
@@ -90,7 +92,7 @@ The base design proposed here keeps Verbatim's decided behaviour but changes wha
 - A key (anything but Shift) cuts speech off and drops the output still waiting, and nothing read before the key is spoken after it. NVDA (`inputCore.py` 583 to 603, the cancel queued with the key; `keyboardHandler.py` 729 to 737); Dickson, 2026-10-07 ("A cancel tells the outpost to move its anchor to the end without speaking, as NVDA drops what is pending").
 - Shift pauses and resumes speech; a paused queue does not drain. NVDA (`keyboardHandler.py` 736 to 737); Dickson, 2026-10-07.
 - Reading is on demand while Core's queue is full: the outpost only notes changes until Core asks. Dickson, 2026-10-07 ("Reading terminal output on demand"), with no minimum interval between reads.
-- A flood never hangs Verbatim; Verbatim commands are answered during it. Dickson, M4 exit criteria (phase6-design.md, "Scope from the roadmap").
+- A flood never hangs Verbatim; Verbatim commands are answered during it. Dickson, M4 exit criteria (docs/design/phase6-design.md, "Scope from the roadmap").
 
 ### New windows and tabs
 
@@ -155,7 +157,7 @@ The base design proposed here keeps Verbatim's decided behaviour but changes wha
 
 ### Known weaknesses, with evidence
 
-- Cost of reading the whole buffer on every change. Measured 2026-10-06 (phase6-design.md, "Terminal output: notifications or diffing"): after 5,000 lines in a 120-column Windows Terminal the document was 610,244 characters, 86 percent padding, 6 ms to read before any diff; NVDA repeats that per change. NVDA's own fixes were coalescing in C++ (#14888) and trimming blank rows on older consoles (#14689, `winConsoleUIA.py` 114 to 123).
+- Cost of reading the whole buffer on every change. Measured 2026-10-06 (docs/design/phase6-design.md, "Terminal output: notifications or diffing"): after 5,000 lines in a 120-column Windows Terminal the document was 610,244 characters, 86 percent padding, 6 ms to read before any diff; NVDA repeats that per change. NVDA's own fixes were coalescing in C++ (#14888) and trimming blank rows on older consoles (#14689, `winConsoleUIA.py` 114 to 123).
 - Lines went missing in floods in NVDA alpha-57645, though the whole buffer is read: `nv-wt-floods.txt` lines 27 onward, the first flood's speech starts at "flood line 152" and jumps to 444 and 648; `nv-con-floods.txt` lines 28 to 36, lines 1 to 5, then 28 to 33, then 56 to 58; `docs/parity.md` records 690 of 10,000 lines queued in Windows Terminal in an earlier transcript; and a 30-row alternate screen opened in one write lost rows 16 to 19 and 25 (`nv-con-alt.txt`). The cause was NVDA's pumped line reporting (#20177 and #20649), which spoke a burst's lines one per core cycle, at most 100, and dropped those waiting when speech was cancelled; NVDA reverted it (#20898, in the pinned source). NVDA alpha-58022 queues every new line: replayed on 2026-10-12, each 2,000-line flood queued all 2,000 lines and the alternate screen all 29 rows. No longer a weakness of NVDA's; the cost of reading the whole buffer above remains.
 - Fragments from the character diff. `nv-con-alt.txt`, last lines: "eady greater dot altscreen dot ps 1" on closing the alternate screen, the "r" of "ready" matched elsewhere. The user guide warns DMP reading "may be choppy or inconsistent" (4333 to 4335).
 - Typed text spoken twice: `nv-con-floods.txt` 25, `nv-wt-floods.txt` 24 and 251; a recalled line spoken twice, `nv-con-floods2.txt` 128 to 129.
@@ -179,7 +181,7 @@ The base design proposed here keeps Verbatim's decided behaviour but changes wha
 
 The terminal's UIA provider answers each text range method from one locked snapshot of its buffer: in Microsoft's terminal source, `UiaTextRangeBase::GetText` takes the console lock for the duration of the call. Uncertain: believed from that source, not checked in this repository; measurement 1 in section 5 confirms it in both terminals.
 
-Calls are not atomic with each other: the terminal can write between any two of them, including inside one remote operation, which runs each instruction as its own provider call. Ranges are also row coordinates: once the history is full, a kept range stays on its row while the text moves up beneath it (measured 2026-10-06, phase6-design.md, "What the first live runs found").
+Calls are not atomic with each other: the terminal can write between any two of them, including inside one remote operation, which runs each instruction as its own provider call. Ranges are also row coordinates: once the history is full, a kept range stays on its row while the text moves up beneath it (measured 2026-10-06, docs/design/phase6-design.md, "What the first live runs found").
 
 So the unit is one `GetText` call. The base design's rule, proposed:
 
@@ -199,7 +201,7 @@ One remote operation (classic fallback behind the same entry point), proposed:
 
 When step 1's kept range fails (the alternate screen; NVDA notes the console host returns `E_FAIL` comparing ranges across buffers, `winConsoleUIA.py` 416 to 429; Windows Terminal is uncertain, measure 4), the same read starts from the visible range instead. No retry loop: that is a different read, chosen by the error.
 
-The outpost trims padding (trailing `White_Space`, as decided 2026-10-06) and splits the snapshot into lines. Both terminals give a wrapped line whole in the text (measured, phase6-design.md, "Selection lists in a terminal", the wrapped Escape), so these are logical lines, and no row arithmetic is needed for the diff.
+The outpost trims padding (trailing `White_Space`, as decided 2026-10-06) and splits the snapshot into lines. Both terminals give a wrapped line whole in the text (measured, docs/design/phase6-design.md, "Selection lists in a terminal", the wrapped Escape), so these are logical lines, and no row arithmetic is needed for the diff.
 
 ### The diff
 
@@ -300,7 +302,7 @@ Two different things go by this name.
 - Gain: a flood above a fixed footer speaks the flood and the footer only when it changes; a footer redrawn unchanged says nothing (asserted by `*_footer_flood`, Dickson's "Ok" to the script on 2026-10-09).
 - Cost in the base: none. The line diff aligns the footer with itself (in place) while the region's lines scroll above it; inserted lines are the flood. Today it takes `keep_footer`, `footer_below` (a399b4e, agent, to be confirmed) and `last_line_now`.
 - Split reads: the console host's moving view is a problem today only because the read's end is taken before the text. With the end at the document's end, or one screen below the visible end, the footer is in the snapshot even when the view moves (measure 2).
-- Failure modes: a footer that changes on every read during a flood is spoken as each read finds it, the same as NVDA's behaviour and as today ("a footer changed during a flood is heard, or not, as the reads happen to find it", phase6-design.md 2026-10-09).
+- Failure modes: a footer that changes on every read during a flood is spoken as each read finds it, the same as NVDA's behaviour and as today ("a footer changed during a flood is heard, or not, as the reads happen to find it", docs/design/phase6-design.md 2026-10-09).
 - NVDA: whole-buffer diff, footer matched by character; captured in `*_footer_flood`'s module (lines 35 to 38 of that doc comment).
 - Recommendation: adopt, as a consequence of the base, and delete the footer-specific rules.
 
@@ -339,7 +341,7 @@ Two different things go by this name.
 - Gain: Backspace, Control+Backspace, Escape, Control+W and Control+U say what they removed (Dickson, 2026-10-08). The wrapped case: Escape on `echo` plus 108 "a"s and "xyz" across two rows says the whole command, not "ready>" (agent, a58a7fc; NVDA silent).
 - Cost in the base: none extra. The diff works on logical lines, so a wrapped line's loss is one line's loss; Core matches it against the pending key. Today it needs `terminal::keys::wrapped_removal`, the terminal's previous screen and `screen_at` (ecf191c, which Dickson objected to on 2026-10-10), and the outpost's eight caret reports per node.
 - Split reads: none; the loss is between two snapshots.
-- Failure modes: a program that redraws the line in pieces (cut short, then the rest drawn again on the next row) gives a read showing a removal that is not final; the guard (the caret where the removed text began, on the same line) rejects most of these, and the next read's gain cancels nothing already spoken. Uncertain: whether a piecewise redraw of a wrapped line can pass the guard; the console host's write of Escape was measured as one clear 10 ms after the key (phase6-design.md, 2026-10-10).
+- Failure modes: a program that redraws the line in pieces (cut short, then the rest drawn again on the next row) gives a read showing a removal that is not final; the guard (the caret where the removed text began, on the same line) rejects most of these, and the next read's gain cancels nothing already spoken. Uncertain: whether a piecewise redraw of a wrapped line can pass the guard; the console host's write of Escape was measured as one clear 10 ms after the key (docs/design/phase6-design.md, 2026-10-10).
 - NVDA: Backspace speaks what was before the caret; Escape is silent.
 - Recommendation: adopt Backspace and the rest as decided; for the wrapped Escape, keep it, since it costs nothing once lines are logical, but put it to Dickson (open question 5).
 - Holding keys: with keys held, Backspace's text is read before the key; the facts are still needed for Escape and the bash keys unless every key passed to a terminal is held.
@@ -437,7 +439,7 @@ The design keeps the decided speech, so most scenarios should pass unchanged. Ch
 
 Each step is verifiable on its own before the next.
 
-1. Measurements 1 to 5. Verify: numbers written into phase6-design.md; Dickson decides open questions 1 to 3 from them.
+1. Measurements 1 to 5. Verify: numbers written into docs/design/phase6-design.md; Dickson decides open questions 1 to 3 from them.
 2. Time-ordered intake in Core's reducer. Verify: a reducer unit test with both channels loaded; `conhost_typing` and `conhost_flood` ten runs each.
 3. The pure line diff in the platform-neutral crate, written from this document and `docs/parity.md`, with the existing table of cases ported as test data and new cases. Not wired. Verify: `cargo xtask ci`, including the neutral-crate dependency check.
 4. The new read program in `verbatim-uia-rops`, both paths, with mockapp tests of exact call counts and of a scripted terminal that writes between calls. Not wired. Verify: mockapp.
@@ -465,6 +467,6 @@ Each step is verifiable on its own before the next.
 
 ## Corrections (2026-10-11)
 
-- `FindText` is removed in any case, not only if the measurements favour the snapshot: in Windows Terminal (1.24 to 1.26 and main) a search that finds nothing returns a range object wrapping no range, and the next call on it faults on the terminal's UI thread (`phase6-design.md`, the Windows Terminal crash analysis, and `docs/roadmap.md`).
+- `FindText` is removed in any case, not only if the measurements favour the snapshot: in Windows Terminal (1.24 to 1.26 and main) a search that finds nothing returns a range object wrapping no range, and the next call on it faults on the terminal's UI thread (`docs/design/phase6-design.md`, the Windows Terminal crash analysis, and `docs/roadmap.md`).
 - The kept start must not follow the user's view. Step 1 keeps the start of the visible range, but when the user has scrolled the view up (Windows Terminal's or the console host's scroll bar), the visible range lies in the history, and every later snapshot would run from there to the document's end: correct, since the end is the document's and not the view's, so new output is still read, but as large as the distance scrolled, on every change. The start is instead taken from the document's end: the document range's end moved back by the screen's height in lines (one move, no text copied), so it is the top of the screen the program writes to, wherever the user's view is. The first read after a focus starts there too. Measurement 3 includes a read with the view scrolled to the top of a full history.
 - The diff needs no special library. NVDA uses a compiled diff-match-patch (`fast_diff_match_patch`, `diffHandler.py` 7 and 25 to 51) because its diff is by character and in Python; the design's diff is by line, written in Rust in `verbatim-text`, comparing whole lines before any word is examined, with the bounding test on a 9,000-line overflow and a 2,000-line flood the roadmap already names.

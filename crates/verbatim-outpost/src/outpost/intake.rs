@@ -68,7 +68,7 @@
 //!   whose window is not in front when its batch is handled is stale or
 //!   raised early by the application itself, and the worker drops it, as
 //!   NVDA's `processForegroundWinEvent` does (measured live;
-//!   `phase6-design.md`, "Foreground events against the foreground
+//!   `docs/design/phase6-design.md`, "Foreground events against the foreground
 //!   window").
 //!
 //! Intake callbacks only push and return: they never call into the

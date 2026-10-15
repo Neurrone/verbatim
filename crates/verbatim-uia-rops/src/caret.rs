@@ -1,5 +1,5 @@
 //! The caret read for a caret report (milestone M4 items 3 and 7;
-//! `phase6-design.md`, "Caret responsiveness"): the caret and the
+//! `docs/design/phase6-design.md`, "Caret responsiveness"): the caret and the
 //! selection, whether they moved from where they were known to be, the
 //! caret's line and the caret's place in it, another unit at the caret
 //! (a word, a paragraph), and the formatting of the text to be spoken,

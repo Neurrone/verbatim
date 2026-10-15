@@ -20,7 +20,7 @@
 //! killed with their job and never run that code (`docs/architecture.md`,
 //! "Process lifetime"); these test binaries are the only processes that
 //! use UIA as a client and exit normally. The evidence is in
-//! `handoff-2026-09-02.md` ("Open: a process that has used UIA as a
+//! `docs/archive/handoff-2026-09-02.md` ("Open: a process that has used UIA as a
 //! client").
 //!
 //! So, once the results are printed and flushed, the runner ends its own

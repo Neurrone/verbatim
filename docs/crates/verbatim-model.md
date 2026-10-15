@@ -197,7 +197,7 @@ Public API:
 
 How an outpost sends text to Core, and how Core asks an outpost to read
 text, wait for the caret, select, or move the caret
-(`phase6-design.md`, "M4: text, editing, and terminals" and
+(`docs/design/phase6-design.md`, "M4: text, editing, and terminals" and
 "Internationalization in the text model"). The types are in `text.rs`;
 everything is serde-serializable like the rest of the model, so it travels
 the Core-outpost pipe and the flight recorder unchanged. This section is
@@ -402,7 +402,7 @@ older one, whose answer Core then drops. The operations (`TextOp`):
 - `Location(point)`: the point's screen position, answered `Location { x,
   y }` in pixels, or `Unsupported`.
 - `TerminalHold`, `TerminalRead { hold }`, and `TerminalCancel`: a focused
-  terminal's on-demand reading (`phase6-design.md`, "Terminal decisions").
+  terminal's on-demand reading (`docs/design/phase6-design.md`, "Terminal decisions").
   Hold: Core's output queue is full, so the outpost only notes changes
   (answer `Done`). Read: what is new now, read only when the text changed
   since the last read, then holding or reading each change at once again
@@ -464,7 +464,7 @@ to show it.
 
 ## Themes (milestone M4)
 
-One model for verbosity, speech, and sounds (`phase6-design.md`,
+One model for verbosity, speech, and sounds (`docs/design/phase6-design.md`,
 "Themes: one model for verbosity, speech, and sounds"). The types are in
 `theme.rs`; files and settings are `verbatim-config`'s, and presenting
 with a theme is `verbatim-speech`'s.

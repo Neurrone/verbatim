@@ -11,7 +11,7 @@
 //! same way.
 //!
 //! The top-level `sounds` folder (the built-in default theme's sounds,
-//! `phase6-design.md`, "Packaging") is copied next to the executables in the
+//! `docs/design/phase6-design.md`, "Packaging") is copied next to the executables in the
 //! cargo target directory, where Verbatim looks for it beside itself and
 //! where the end-to-end staging and the VM deploy copy it from, as eSpeak
 //! NG's data is.

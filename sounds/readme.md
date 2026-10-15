@@ -1,7 +1,7 @@
 # Sounds
 
 The sounds of Verbatim's built-in default theme, shared by every platform
-and installed beside the program (`phase6-design.md`, "Earcons"). The
+and installed beside the program (`docs/design/phase6-design.md`, "Earcons"). The
 platform-neutral code only loads files from this directory, so every
 build uses the same sounds. A theme names a sound by its file name; a
 user theme that does not carry a sound of that name uses the one here.

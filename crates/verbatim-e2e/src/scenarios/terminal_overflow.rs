@@ -2,7 +2,7 @@
 //! heard, within the terminal's history and past it, in Windows Terminal
 //! and the console host, each its own code (`docs/testing.md`). These are
 //! the acceptance tests of the terminal reading package
-//! (`phase6-design.md`, "Terminal decisions" and "Terminal reading by
+//! (`docs/design/phase6-design.md`, "Terminal decisions" and "Terminal reading by
 //! diffing the screen"): when Core reaches the end of a group it asks, and
 //! the outpost reads up to the end, so one read gives the count and the
 //! newest lines; when the anchor's line has left a full history, Verbatim

@@ -1,5 +1,5 @@
 //! Commands, their output, typed echo, and a password prompt in a terminal
-//! (milestone M4 item 9; `phase6-design.md`, "Terminal end-to-end
+//! (milestone M4 item 9; `docs/design/phase6-design.md`, "Terminal end-to-end
 //! scenarios"): `windows_terminal_commands` in Windows Terminal and
 //! `conhost_commands` in the console host, and
 //! `windows_terminal_spoken_password` and `conhost_spoken_password` with the

@@ -1,4 +1,4 @@
-//! The screen diff (`phase6-design.md`, "Terminal reading by diffing the
+//! The screen diff (`docs/design/phase6-design.md`, "Terminal reading by diffing the
 //! screen"): a pure function from the screen as last seen and the screen
 //! now, as lines without their padding, to what is new.
 //!

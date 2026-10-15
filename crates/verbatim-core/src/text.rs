@@ -4,7 +4,7 @@
 //! spoken segments for characters, words, lines, and spelling.
 //!
 //! Offsets are byte offsets into the UTF-8 text an outpost sent; Core never
-//! does arithmetic on provider positions (`phase6-design.md`,
+//! does arithmetic on provider positions (`docs/design/phase6-design.md`,
 //! "Internationalization in the text model"). Segmentation is
 //! `verbatim-text`'s.
 

@@ -26,7 +26,9 @@ submodule commit.
 [the roadmap](roadmap.md) (completed milestones are archived in
 [roadmap-done.md](roadmap-done.md)); the crate you are changing has a
 guide in [docs/crates](crates/readme.md) that must be kept current;
-the NVDA reference for the behavior is in [docs/nvda](nvda/readme.md).
+the NVDA reference for the behavior is in [docs/nvda](nvda/readme.md);
+the [design records](design/) hold the detailed designs behind the work
+and the decision log of phase 6.
 
 **Running and debugging things.** [The tooling guide](tooling.md)
 covers `verbatim-inspect`, `mockapp`, the end-to-end suite, and the
@@ -67,6 +69,29 @@ NVDA says, to decide what Verbatim should say.
   attribute and annotation in Windows Terminal, the console host, and
   Windows 11 Notepad: what each reports, whether it varies, and what
   reading each costs, for choosing which attributes Verbatim fetches.
+- [Design records](design/) — the detailed designs and audits behind
+  the work, each opening with its status:
+  - [communication.md](design/communication.md) — every pipe and thread
+    from an event or a key to sound; adopted and built, but for its
+    audio step.
+  - [focus-pipeline.md](design/focus-pipeline.md) — how events reach
+    Verbatim, aligned with NVDA; adopted, stage A step 6 built.
+  - [uia-shapes.md](design/uia-shapes.md) — every cached UIA read
+    declared with its request; adopted and built.
+  - [terminal-reading.md](design/terminal-reading.md) — terminal
+    reading; adopted, not yet built.
+  - [terminal-reading-review.md](design/terminal-reading-review.md) —
+    the review of the terminal design; corrections pending its build.
+  - [outpost-redesign.md](design/outpost-redesign.md) — the outposts,
+    listener, and supervisor; adopted and built.
+  - [phase6-design.md](design/phase6-design.md) — phase 6's decision
+    log; kept for the record.
+  - [relay.md](design/relay.md) and
+    [latency-audit.md](design/latency-audit.md) — superseded by the
+    communication design; kept for the record.
+  - [wake-ups.md](design/wake-ups.md) and
+    [safety-audit-2026-10-06.md](design/safety-audit-2026-10-06.md) —
+    audit logs: every thread's wake-ups, and the unsafe code.
 - [The NVDA transcript](nvda-transcript.md) — the NVDA add-on and
   `cargo xtask nvda capture`, for recording what NVDA says in a scenario.
 - [Glossary](glossary.md) — Verbatim's invented vocabulary, each term

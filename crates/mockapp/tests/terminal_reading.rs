@@ -1,4 +1,4 @@
-//! A focused terminal's on-demand reading (`phase6-design.md`, "Terminal
+//! A focused terminal's on-demand reading (`docs/design/phase6-design.md`, "Terminal
 //! decisions") through a real outpost's worker, against mockapp's UIA text
 //! provider presenting a Windows Terminal control (UIA class
 //! `TermControl`): each transition of `verbatim_outpost::terminal::reading`

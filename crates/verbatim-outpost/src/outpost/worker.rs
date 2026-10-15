@@ -166,7 +166,7 @@ impl Watch {
 
     /// Wakes the watchdog to judge again whether the user has moved on from
     /// the worker's window: a foreground fact reached the outpost, which
-    /// Windows raises once the change is made (`phase6-design.md`,
+    /// Windows raises once the change is made (`docs/design/phase6-design.md`,
     /// "Foreground events against the foreground window"). The alarm's event
     /// stays set until the watchdog takes it, so the wake is never lost.
     pub(super) fn foreground_changed(&self) {
@@ -2880,14 +2880,14 @@ impl Worker<'_> {
     /// `GetForegroundWindow` named its window, and the events that did not
     /// were stale or raised early by the application itself, as File
     /// Explorer raises one as it creates its window and the system's own
-    /// follows once the window is in front (`phase6-design.md`,
+    /// follows once the window is in front (`docs/design/phase6-design.md`,
     /// "Foreground events against the foreground window").
     ///
     /// A window that is the foreground window but not yet shown is reported
     /// once it is shown, its name read then, rather than at once: File
     /// Explorer raises the foreground event of a folder window it opens in
     /// front before showing it, and a window's title is the one it is shown
-    /// with (`phase6-design.md`, "File Explorer opened without the
+    /// with (`docs/design/phase6-design.md`, "File Explorer opened without the
     /// foreground right"). Its show event brings it
     /// ([`window_shown`](Self::window_shown)); a focus inside it that comes
     /// first has it reported just before

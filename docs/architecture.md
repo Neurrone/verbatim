@@ -132,7 +132,7 @@ screen reader in both rendered and source form.
   flattens spans to text through a theme. The default theme matches
   NVDA's defaults: everything is spoken as NVDA speaks it, and sounds play
   where NVDA plays them by default, plus Verbatim's own cues and the error
-  sound for a spelling error (decided 2026-10-07; `phase6-design.md`,
+  sound for a spelling error (decided 2026-10-07; `docs/design/phase6-design.md`,
   "Themes: one model for verbosity, speech, and sounds"). Rationale: earcons and voice styling for roles
   and formatting (roadmap M11, in the Emacspeak audio-formatting tradition)
   become a theme swap rather than a pipeline rewrite, and dictionary and
@@ -404,7 +404,7 @@ that has not exited within the time limit, 21 seconds, longer than UIA's
 own call timeouts, is killed through its job, and the kill is logged with
 the reason (`docs/crates/verbatim-outpost.md`, "Shutting down"). Killing a
 UIA client in the middle of a call is the leading suspect in a crash of a
-Windows Terminal it was reading (`phase6-design.md`, "Windows Terminal
+Windows Terminal it was reading (`docs/design/phase6-design.md`, "Windows Terminal
 crash of 2026-10-08"). The job's kill-on-close stays the guarantee for a
 Core that dies.
 

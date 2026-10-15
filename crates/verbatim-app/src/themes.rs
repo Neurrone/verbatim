@@ -1,4 +1,4 @@
-//! The theme in use (`phase6-design.md`, "Themes: one model for verbosity,
+//! The theme in use (`docs/design/phase6-design.md`, "Themes: one model for verbosity,
 //! speech, and sounds"): loading the one the configuration names and making
 //! a theme active, which the speech pipeline presents with and the reducer
 //! fetches for.

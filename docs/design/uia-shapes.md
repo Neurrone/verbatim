@@ -1,5 +1,7 @@
 # UIA shapes: every cached read declared with the request that fills it
 
+Status: adopted; built as of 6ab23765 (2026-10-13), all five steps of section 9.
+
 Proposed 2026-10-13, at Dickson's request after items 12 and 13 of
 `docs/design/wake-ups.md`. He asked whether every read of a UI Automation
 element can declare exactly the properties it uses, so that the cache

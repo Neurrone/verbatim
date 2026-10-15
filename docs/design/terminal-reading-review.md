@@ -1,5 +1,7 @@
 # Review of docs/design/terminal-reading.md before step 9
 
+Status: review of `docs/design/terminal-reading.md`, 2026-10-11; the roadmap lists its corrections, folded in when the terminal redesign is built.
+
 Reviewed 2026-10-11 against main at 1063480 (step A1 merged), `nvda/source`, and Microsoft's terminal source at github.com/microsoft/terminal main, commit 7d06b26f (fetched today into the scratchpad's `ms-terminal` folder, reference only). Nothing was built or run. The installed builds are conhost.exe 10.0.26100.1 and Windows Terminal 1.24.12741.0. Which commit of Microsoft's source each build contains is not known, so every claim below about Microsoft's code is "verified in main's source, unverified in the installed build" unless it says otherwise.
 
 ## 1. The atomic-read claim

@@ -236,7 +236,7 @@ pub enum NormalizedEvent {
     /// The text of a node changed (UIA's text changed event, an edit
     /// control's change notification). Characters typed into a terminal
     /// wait for this before they are spoken, so a password prompt that
-    /// shows nothing speaks nothing (`phase6-design.md`, M4 item 4).
+    /// shows nothing speaks nothing (`docs/design/phase6-design.md`, M4 item 4).
     TextChanged {
         /// The node whose text changed.
         node_id: NodeId,
@@ -688,7 +688,7 @@ pub enum ReviewCommand {
 /// An event Verbatim indicates at once, outside the speech queue, named
 /// semantically so the active theme decides how it is reported: a sound
 /// played immediately on its own mixer source, words spoken, both, or
-/// nothing (`phase6-design.md`, "Earcons"). Each is an indication of the
+/// nothing (`docs/design/phase6-design.md`, "Earcons"). Each is an indication of the
 /// catalogue's Events category ([`crate::Indication::of_earcon`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]

@@ -197,7 +197,7 @@ pub struct SpeechConfig {
 }
 
 /// The theme in use and the settings that go with it, the `[theme]`
-/// section of `settings.toml` (`phase6-design.md`, "Themes and
+/// section of `settings.toml` (`docs/design/phase6-design.md`, "Themes and
 /// configuration profiles"): the id of a theme in the `themes` folder, or
 /// `default` for the built-in default theme, plus the sound volume and the
 /// say-all and learning checkboxes, which are ordinary settings.

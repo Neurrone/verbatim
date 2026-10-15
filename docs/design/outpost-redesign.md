@@ -1,11 +1,14 @@
 # Outpost redesign, 2026-10-01
 
+Status: adopted; built as of d488315a (2026-10-01), verified live, and phase 3 closed on 2026-10-03; later changes are recorded in the crate guides and `docs/design/communication.md`.
+
 This is the agreed design and implementation plan for the outposts, the
 focus listener, the supervisor, the app's handling of outpost traffic, and
 the reducer changes that follow from them. It was worked out with Dickson
 on 2026-10-01 while reading the reducer and outpost code in phase 1 of
-`handoff-2026-09-02.md`, then reviewed adversarially against
-`audit-2026-09-02.md`, the five additional findings in the handoff, the
+`docs/archive/handoff-2026-09-02.md`, then reviewed adversarially against
+the repository audit of 2026-09-02 (removed from the tree; git history
+keeps it), the five additional findings in the handoff, the
 handoff's hot-path notes, and decisions D13 to D15.
 
 It replaces the contents of the handoff's old phase 4 (review and

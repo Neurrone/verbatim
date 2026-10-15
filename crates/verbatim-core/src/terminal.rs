@@ -1,4 +1,4 @@
-//! Terminal output (milestone M4 item 9; `phase6-design.md`, "Terminal
+//! Terminal output (milestone M4 item 9; `docs/design/phase6-design.md`, "Terminal
 //! output: notifications or diffing" and "The flood policy, reconsidered").
 //!
 //! The focused terminal's outpost diffs its text and sends what is new as
@@ -38,7 +38,7 @@
 //! - Anything that cuts speech off (a key, a focus change, an interrupting
 //!   utterance) drops the output still waiting, as a key press does in
 //!   NVDA. "Report new output" off (Verbatim+5) speaks no output at all.
-//! - On-demand reading (`phase6-design.md`, "Terminal decisions"): once as
+//! - On-demand reading (`docs/design/phase6-design.md`, "Terminal decisions"): once as
 //!   many lines wait as a group speaks, the outpost is told to hold
 //!   ([`TextOp::TerminalHold`]), and only notes that the terminal changed.
 //!   When the group's last line is handed to speech, Core asks for what is

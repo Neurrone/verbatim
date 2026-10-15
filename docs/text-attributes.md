@@ -6,7 +6,7 @@ Notepad: what each application reports, whether the value varies within
 the text, and what reading each attribute costs, in calls and in time,
 inside the caret's one remote operation and on the classic path. It is
 the material for choosing which attributes Verbatim fetches
-(`phase6-design.md`, "Decisions and work scheduled on 2026-10-07", item
+(`docs/design/phase6-design.md`, "Decisions and work scheduled on 2026-10-07", item
 2). Nothing Verbatim fetches was changed by it: what is fetched stays
 driven by the theme's indications, and an indication set to off is never
 fetched.
@@ -223,7 +223,7 @@ ForegroundColor. Reported by these applications and not read:
 
 ## What Verbatim fetches now
 
-Decided by Dickson on 2026-10-07 (`phase6-design.md`, "Terminal
+Decided by Dickson on 2026-10-07 (`docs/design/phase6-design.md`, "Terminal
 decisions"), and in place since: what is read is generic, never chosen
 by application. Verbatim reads the attributes the theme's indications
 ask for, among those the focused text control supports, and never

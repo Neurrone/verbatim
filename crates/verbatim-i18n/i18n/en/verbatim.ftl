@@ -30,7 +30,7 @@ button-apply = &Apply
 speech-synthesizer-group = Synthesizer
 speech-change-synth = C&hange...
 
-## The Theme settings page (phase6-design.md, "The settings dialog"). The
+## The Theme settings page (docs/design/phase6-design.md, "The settings dialog"). The
 ## dialog's own Categories and Apply take C and A, so the page avoids them.
 
 settings-category-theme = Theme
@@ -83,7 +83,7 @@ theme-remove-question = Remove the theme { $name }? This cannot be undone.
 theme-error-title = Theme
 theme-in-use = The configuration uses { $name }, so it cannot be removed.
 
-## The Terminal settings page (phase6-design.md, "M4: text, editing, and
+## The Terminal settings page (docs/design/phase6-design.md, "M4: text, editing, and
 ## terminals", Questions). The dialog's own Categories and Apply take C and A.
 
 settings-category-terminal = Terminal
@@ -260,7 +260,7 @@ toggle-scroll-lock = scroll lock
 toggle-state-on = { $key } on
 toggle-state-off = { $key } off
 
-## Themes (phase6-design.md, "Themes: one model for verbosity, speech, and
+## Themes (docs/design/phase6-design.md, "Themes: one model for verbosity, speech, and
 ## sounds"): the indication catalogue's categories and entries as the theme
 ## panel lists them, how each is reported, the words for formatting and
 ## events, and the problems found loading a theme.

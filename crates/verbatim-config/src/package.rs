@@ -1,4 +1,4 @@
-//! Theme packages: a theme's directory zipped (`phase6-design.md`,
+//! Theme packages: a theme's directory zipped (`docs/design/phase6-design.md`,
 //! "Packaging"). Only the files a theme is made of are read or written:
 //! plain file names, no directories, within fixed limits, so a package can
 //! neither write outside the theme's directory nor fill the disk.

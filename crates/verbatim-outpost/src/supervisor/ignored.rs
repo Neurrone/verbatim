@@ -1,6 +1,6 @@
 //! Processes Verbatim was told to ignore entirely: the end-to-end harness
 //! names the owner's own Windows Terminal, which must never be read while a
-//! test runs on the owner's desktop (`phase6-design.md`, "Windows Terminal
+//! test runs on the owner's desktop (`docs/design/phase6-design.md`, "Windows Terminal
 //! crash of 2026-10-08"). Each is held open from the moment it is named, so
 //! its pid names that process and no other for as long as Verbatim runs,
 //! and a process that later reuses the pid of one that exited is never

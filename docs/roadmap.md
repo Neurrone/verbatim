@@ -46,7 +46,7 @@ shows bounded latency and no hang.
 ### Phase 6 remainder
 
 Decided by Dickson during phase 6 and not yet built; each is part of M4's
-completion. The reasoning and measurements are in `phase6-design.md`,
+completion. The reasoning and measurements are in `docs/design/phase6-design.md`,
 in the dated section named with each item.
 
 - Audio (2026-10-08, "Audio start-up latency and scheduling"): the audio
@@ -127,18 +127,18 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    seconds, set once per process; `Uia::within` retired; watchdogs on every
    thread others wait on; multi-call searches given a deadline of their own
    or made one remote operation. Done (2026-10-11, full suite 90 of 90;
-   `phase6-design.md`, "Time limits that hold"): `CoCancelCall` for MSAA
+   `docs/design/phase6-design.md`, "Time limits that hold"): `CoCancelCall` for MSAA
    calls is left as a recommendation there.
 2. Core: one input channel in arrival order; NVDA's duplicate-focus rule;
    background speech dropped across a foreground change. Done (2026-10-11,
-   `phase6-design.md`, "Core's inputs in arrival order, the duplicate rule,
+   `docs/design/phase6-design.md`, "Core's inputs in arrival order, the duplicate rule,
    and background speech"): every scenario's steps passed in the full suite
    and in nine further runs of twelve related scenarios; the four failures
    came after the steps, three recordings shorter than the capture and one
    flight recorder save that timed out, and are investigated separately.
 3. Console windows: every event to the console host's outpost, with the
    client process as identity; the console special cases removed. Done
-   (2026-10-11, `phase6-design.md`, "Console windows as one
+   (2026-10-11, `docs/design/phase6-design.md`, "Console windows as one
    application"): `cargo xtask ci` passes; the first live run failed every
    `conhost_` scenario (the window never announced), fixed by keeping an
    early foreground event for the next focus (provisional, below);
@@ -167,7 +167,7 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    arrived before it, as File Explorer's first focus did before 42d9caa.
 5. MSAA focus, foreground and menu events in each outpost's own hook,
    with the listener's "forwarding ended" hand-over and duplicates matched
-   by counting. Built (2026-10-11, `phase6-design.md`, "MSAA events in
+   by counting. Built (2026-10-11, `docs/design/phase6-design.md`, "MSAA events in
    each outpost's own hook"): `cargo xtask ci` and every mockapp test
    pass; `conhost_typing`, `conhost_two_windows`,
    `menu_and_settings_dialog` and `explorer_folder_window` passed once
@@ -191,7 +191,7 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
    finds its own element afterwards; the moved-on rules, name-and-position
    lookups and `GetFocusedElement` on the focus path removed; Control+Tab
    follows NVDA (8be2223's rule goes); D13 amended. Written (2026-10-11,
-   `phase6-design.md`, "The listener reads each UIA focus"). Built: `cargo
+   `docs/design/phase6-design.md`, "The listener reads each UIA focus"). Built: `cargo
    xtask ci` passes, every mockapp test with it, the UIA focus cost pins
    and the path program's instruction counts measured and set; its
    scenarios are still to run. Three questions are recorded there with recommendations: the
@@ -295,7 +295,7 @@ bare metal too; and the 2026-10-08 priority and power-throttling decision
 built with it); then stage A step 8 (spare outposts), which removes the
 relay tail over 20 ms, facts held for a starting outpost; then the
 terminal redesign, which removes `FindText` (it makes Windows Terminal
-fault on a miss, `phase6-design.md`); then stage A steps 7, 10 and 11.
+fault on a miss, `docs/design/phase6-design.md`); then stage A steps 7, 10 and 11.
 
 Then step 9, the terminal redesign, built from `docs/design/terminal-reading.md`
 in its small steps, after its measurements; it includes a test bounding
@@ -457,7 +457,7 @@ Dickson first.
    events; no outpost started for a background notification (approved
    2026-10-10). Measure again after steps 3 and 4, from then on in both
    debug and release builds (Dickson, 2026-10-10). Done (9ef9215 to
-   12d5ea4; `phase6-design.md`, "Cheaper reads in the outposts"): the 14
+   12d5ea4; `docs/design/phase6-design.md`, "Cheaper reads in the outposts"): the 14
    related scenarios passed, seven of them ten runs each, and the full
    suite passed 90 of 90 locally. The measurement after step 4 is still to
    be made. Selecting inside a list the focus controls, such as Settings'
@@ -543,7 +543,7 @@ Other open items, taken after the steps above unless they fold into one:
   crashed once in `conhost_leave_flood` with an access violation inside
   UI Automation's own event delivery (`SavedEvent::OnMessage`,
   `ProtobufHelper::GetCacheResponse`, a null element in an event's cached
-  response; `phase6-design.md`, "Console windows as one application"). Keep
+  response; `docs/design/phase6-design.md`, "Console windows as one application"). Keep
   a full dump of every outpost crash, so the event that carried it can be
   found, since a minidump holds no heap; and count outpost crashes across
   runs, in the suite's summary, so how often it happens is known. It
@@ -773,7 +773,7 @@ Other open items, taken after the steps above unless they fold into one:
   first, a timing artefact not worth copying; recorded in
   `docs/parity.md`, "When speech is cut off". No change.
 
-To resume: read this list, then `phase6-design.md`'s dated sections from
+To resume: read this list, then `docs/design/phase6-design.md`'s dated sections from
 2026-10-09 on. `docs/tooling.md` covers building in parallel worktrees,
 the single end-to-end test binary, and capturing NVDA. Run changed
 scenarios ten times each, and the full suite once after a change every
@@ -886,7 +886,7 @@ Exit: Eloquence speaks through Verbatim under sandbox; latency test green.
   symbol levels in place, decide how terminal output's symbol-only lines
   (vim's "~" rows, box-drawing rules) are spoken: M4 speaks them as they
   are, and they should then follow the user's symbol level, as NVDA's
-  are silent at its default level (`phase6-design.md`, "Terminal risks found by
+  are silent at its default level (`docs/design/phase6-design.md`, "Terminal risks found by
   studying NVDA").
 - Configuration profiles (manual and triggered); localized UI shipped in at
   least two languages as proof.

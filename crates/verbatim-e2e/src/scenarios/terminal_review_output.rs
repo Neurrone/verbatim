@@ -1,5 +1,5 @@
 //! The review cursor while new output is written in a terminal
-//! (`phase6-design.md`, "The review cursor in a terminal"), as
+//! (`docs/design/phase6-design.md`, "The review cursor in a terminal"), as
 //! `windows_terminal_review_output` in Windows Terminal and
 //! `conhost_review_output` in the console host. The shared setup is
 //! described in the `terminal` module.

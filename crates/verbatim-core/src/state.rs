@@ -97,7 +97,7 @@ impl Navigator {
 
 /// A unit of text the outpost sent, shared so the state's clone, which the
 /// flight recorder takes at each checkpoint, copies a pointer and not the
-/// text (`phase6-design.md`, "Core's state").
+/// text (`docs/design/phase6-design.md`, "Core's state").
 pub(crate) type SharedChunk = Arc<TextChunk>;
 
 /// How the review cursor reviews the navigator object's text.
@@ -127,7 +127,7 @@ pub(crate) enum ReviewText {
 }
 
 /// The review cursor in a text: the line it is on, its byte offset into
-/// that line's text, and its column (`phase6-design.md`, M4 item 5). In a
+/// that line's text, and its column (`docs/design/phase6-design.md`, M4 item 5). In a
 /// terminal the column is a cell column, exact, and may lie past the end
 /// of the line's text, where the cell is blank; elsewhere it is the
 /// grapheme column the cursor would like to be at, remembered across
@@ -605,7 +605,7 @@ impl SrState {
     }
 
     /// The details to fetch, as the active theme decides: a detail whose
-    /// indication is off is not fetched (`phase6-design.md`, "Themes: one
+    /// indication is off is not fetched (`docs/design/phase6-design.md`, "Themes: one
     /// model for verbosity, speech, and sounds"). Like
     /// [`held_nodes`](Self::held_nodes), this is a view the shell sends
     /// out: every outpost is given it, and leaves out what is not wanted

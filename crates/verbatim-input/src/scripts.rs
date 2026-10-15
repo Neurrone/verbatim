@@ -1,7 +1,7 @@
 //! The script vocabulary and binding tables: M3's object navigation and
 //! review (`docs/roadmap-done.md`'s M3 object-navigation bullet,
 //! transcribed exactly), and M4's review, say-all, select-then-copy, and
-//! typing commands (`phase6-design.md`, "The autonomous run", M4 item 5,
+//! typing commands (`docs/design/phase6-design.md`, "The autonomous run", M4 item 5,
 //! with NVDA's desktop and laptop keys), plus the caret keys the hook
 //! observes on their way to the application ([`caret_bindings`]).
 //!

@@ -1,7 +1,7 @@
 # verbatim-text
 
 Platform-neutral text segmentation for the text model of milestone M4
-(`phase6-design.md`, "Internationalization in the text model"). Original
+(`docs/design/phase6-design.md`, "Internationalization in the text model"). Original
 code over ICU4X's segmenters, jieba, and `unicode-width`; it never touches a
 Windows API, and `cargo xtask ci` checks that it does not.
 

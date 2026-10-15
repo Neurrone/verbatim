@@ -1,5 +1,5 @@
 //! Keys pressed while a terminal's output is being spoken, or at once
-//! after another key (`phase6-design.md`, "Test design decisions", the
+//! after another key (`docs/design/phase6-design.md`, "Test design decisions", the
 //! floods; the coherence review of 2026-10-09), each scenario in both
 //! terminals as its own code (`docs/testing.md`). The shared setup is
 //! described in the `terminal` module.

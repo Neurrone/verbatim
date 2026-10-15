@@ -1,4 +1,4 @@
-//! The setup the terminal scenarios share (`phase6-design.md`, "Terminal
+//! The setup the terminal scenarios share (`docs/design/phase6-design.md`, "Terminal
 //! end-to-end scenarios"), so their results depend neither on the user's
 //! own terminals and settings nor on timing.
 //!

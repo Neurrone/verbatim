@@ -1,12 +1,11 @@
 # Phase 6 design, proposed 2026-10-06
 
-A proposal for discussion with Dickson before an autonomous run. It covers
-the three phase 6 steps in the handoff (`handoff-2026-09-02.md`, "Phase 6")
-in the agreed order, then milestone M4. Each section ends with the
-questions that need an answer before the work starts. Nothing here is
-decided until Dickson agrees to it; once agreed, the decisions move into
-`docs/architecture.md`, `docs/roadmap.md`, and the crate guides as the work
-lands, and this file is retired like the handoff.
+Status: the decision log of phase 6, 2026-10-06 to 2026-10-11; its decisions have since moved into the roadmap and the crate guides where they landed; kept for the record.
+
+It covers the three phase 6 steps in the handoff
+(`docs/archive/handoff-2026-09-02.md`, "Phase 6") in the agreed order, then
+milestone M4, each section ending with the questions answered before its
+work started.
 
 Decisions already made on 2026-10-06:
 
@@ -1832,7 +1831,7 @@ why.
 - The UIA and MSAA clients read through safe wrappers; every crate without
   unsafe code forbids it; `undocumented_unsafe_blocks` and
   `multiple_unsafe_ops_per_block` are on. The audit
-  (`safety-audit-2026-10-06.md`) found 1 high, 3 medium, and 26 low
+  (`docs/design/safety-audit-2026-10-06.md`) found 1 high, 3 medium, and 26 low
   issues; all are fixed except two lows declined with reasons there.
 - Verbatim survives output it cannot write (a full disk under redirected
   output), which had aborted it.

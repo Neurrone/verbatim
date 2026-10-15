@@ -207,7 +207,7 @@ pub fn minimize_all(timeout: Duration) -> (bool, bool, ForegroundInfo) {
 /// The answer is read straight after `SetForegroundWindow`: a window
 /// restored from minimized and set as the foreground is the foreground
 /// window when the call returns (measured live over 37 such calls on
-/// 2026-10-09, `phase6-design.md`, "Foreground events against the
+/// 2026-10-09, `docs/design/phase6-design.md`, "Foreground events against the
 /// foreground window"). The wait for it on window events, added when a
 /// restored inactive window was set as the foreground without being
 /// minimized first, is gone.

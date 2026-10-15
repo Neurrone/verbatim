@@ -34,7 +34,7 @@ Public API:
   active theme wants fetched, as the last `Input::Fetches` set them
   (everything until then), which the shell gives every outpost so that a
   detail whose indication is off, such as descriptions, is never fetched
-  (`phase6-design.md`, "Themes: one model for verbosity, speech, and
+  (`docs/design/phase6-design.md`, "Themes: one model for verbosity, speech, and
   sounds"). It is the one place the reducer consults the theme; how
   everything else is presented is the speech pipeline's. `settings()`
   returns the reader settings as the reducer has them, toggle keys
@@ -388,7 +388,7 @@ Implementation notes, `reduce`:
 
 ## Text (milestone M4)
 
-The reducer's side of M4 items 1 and 3 to 6 (`phase6-design.md`, "The
+The reducer's side of M4 items 1 and 3 to 6 (`docs/design/phase6-design.md`, "The
 autonomous run"), over the text protocol in `verbatim-model`. Pure helpers
 over received text are in `text.rs` (a line without its break, grapheme
 clusters, columns in characters or cells, words by the text's language
@@ -397,7 +397,7 @@ lines, and spelling); caret keys and typing echo in `editing.rs`; the
 review cursor over text in `review_text.rs`; say-all in `say_all.rs`.
 
 What the state keeps, within the bounds of "Core's state" in
-`phase6-design.md`: the focus's caret (`CaretContext`: its line, with the
+`docs/design/phase6-design.md`: the focus's caret (`CaretContext`: its line, with the
 caret at the line's offset, and the selection), the review cursor's
 position (`ReviewText`: unknown, flat, a line and a position on it, at
 the caret it follows, or a point whose line has not been read), the caret key whose evidence is watched for,
@@ -463,7 +463,7 @@ then speaks, queued:
 - Control with Up or Down Arrow: the provider's paragraph, or the line when
   the provider has no paragraphs.
 - Backspace and Control+Backspace: what the key removed, from evidence
-  (`phase6-design.md`, "What a key did to the text"): the caret's line as
+  (`docs/design/phase6-design.md`, "What a key did to the text"): the caret's line as
   the key found it compared with the line the reply read, text that ended
   at the caret before the key and is gone, with the caret now where it
   began (`editing::removal`; in a terminal the row reads as spaces up to a
@@ -633,7 +633,7 @@ the cursor where reading got to.
 
 ## Terminals (milestone M4 item 9)
 
-The reducer's side of terminal output (`terminal.rs`; `phase6-design.md`,
+The reducer's side of terminal output (`terminal.rs`; `docs/design/phase6-design.md`,
 "The flood policy, reconsidered", "Terminal decisions", and "Terminal
 reading by diffing the screen"). The focused terminal's outpost diffs its
 screen and sends what is new as `NormalizedEvent::TerminalOutput`

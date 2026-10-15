@@ -1,6 +1,8 @@
 # Unsafe code safety audit
 
-Phase 6, step 2b (phase6-design.md, "Unsafe code", item 3). Reviewed read-only at main c9114cb on 2026-10-06. The scope is every `unsafe` block, `unsafe fn`, `unsafe impl`, and `unsafe extern` in `crates/` (excluding `nvda/` and `third_party/`), plus the C++ in `crates/verbatim-gui/cpp` and the cxx bridge. The review was split into four parts by crate, each reviewed against all seven categories in the brief. A consolidating pass then re-checked every high and medium finding against the code and the API documentation. Parts A to D follow the summary unchanged, except for the corrections recorded below.
+Status: audit log, 2026-10-06; its Status section records which findings are fixed, and by which commits.
+
+Phase 6, step 2b (docs/design/phase6-design.md, "Unsafe code", item 3). Reviewed read-only at main c9114cb on 2026-10-06. The scope is every `unsafe` block, `unsafe fn`, `unsafe impl`, and `unsafe extern` in `crates/` (excluding `nvda/` and `third_party/`), plus the C++ in `crates/verbatim-gui/cpp` and the cxx bridge. The review was split into four parts by crate, each reviewed against all seven categories in the brief. A consolidating pass then re-checked every high and medium finding against the code and the API documentation. Parts A to D follow the summary unchanged, except for the corrections recorded below.
 
 ## Status
 

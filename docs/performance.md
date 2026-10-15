@@ -996,7 +996,7 @@ The measurements above were taken before that change, with a piece a
 line.
 
 A batch of twenty lines, classically, after the text range audit of
-2026-10-07 (`phase6-design.md`, item 14 of the work scheduled that day),
+2026-10-07 (`docs/design/phase6-design.md`, item 14 of the work scheduled that day),
 pinned against mockapp's text replaced by forty-five short lines
 (`uia_say_all_batches_cost_exactly`):
 
@@ -1203,7 +1203,7 @@ The console host:
   answers a read at a time.
 - Verbatim, which does both, 2.9 to 3.7 seconds: about twice the time
   with no screen reader. The outpost reads continuously, since every text
-  change that arrives during a read causes one more (`phase6-design.md`:
+  change that arrives during a read causes one more (`docs/design/phase6-design.md`:
   coalesced, with no fixed delay): about 2,800 tail reads per flood,
   median 0.6 milliseconds, busy for 40 to 60 percent of the flood. In the
   first flood, which fills an empty scrollback, the caret also moves on
@@ -1289,7 +1289,7 @@ the screen read never does: it moves by many rows in one call.
 ## Newer UIA features
 
 What adopting the UIA features newer than Verbatim's first UIA code
-changed (`phase6-design.md`, item 13 of the work scheduled on
+changed (`docs/design/phase6-design.md`, item 13 of the work scheduled on
 2026-10-07). Each was measured on 2026-10-07 on this machine (x64),
 release build, against mockapp in its own process, before and after the
 change, with another engineer's build running; the counts are pinned by
@@ -1559,7 +1559,7 @@ remote operations on or off.
 ## The text range audit
 
 What auditing Verbatim's text range code against Microsoft's guidance
-changed (`phase6-design.md`, item 14 of the work scheduled on 2026-10-07):
+changed (`docs/design/phase6-design.md`, item 14 of the work scheduled on 2026-10-07):
 "Using IUIAutomationTextRange", "Understanding Performance Issues When
 Using the Text and TextRange Control Patterns", and the reference pages of
 `ITextRangeProvider` and `IUIAutomationTextRange`. Each change is pinned by
@@ -1628,7 +1628,7 @@ those reads, so their counts are unchanged.
 UIA stops a remote operation that executes too many instructions, with
 the status `InstructionLimitExceeded` (2). The limit is not published;
 NVDA's local emulator of remote operations assumes 10,000
-(`phase6-design.md`, item 11 of the work scheduled on 2026-10-07). Measured
+(`docs/design/phase6-design.md`, item 11 of the work scheduled on 2026-10-07). Measured
 on 2026-10-07 on this machine (Windows 11, build 26200, x64) against
 mockapp (`crates/mockapp/tests/instruction_limit.rs`), it is exactly
 10,000: a loop of 2,498 passes, which executes 10,000 instructions, runs,

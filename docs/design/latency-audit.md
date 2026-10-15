@@ -1,6 +1,8 @@
 # Latency audit: hand-offs and waits beyond the relay
 
-Proposed 2026-10-11, awaiting Dickson. Read-only audit of main at 50877e0. Nothing was built or run. Sources: the code cited by file and line, `docs/design/relay.md`, `docs/performance.md`, `phase6-design.md`, `docs/roadmap.md` lines 46 to 62, the scratchpad's `supervisor-latency.md`, and latency lines from the end-to-end runs kept in the scratchpad. Where a figure was measured it says so. Every other cost is labelled as an estimate, with the reasoning.
+Status: superseded by `docs/design/communication.md`, which subsumes findings 3, 4, 5 and 7 to 12 and keeps 1, 2 and 6 as its audio step; kept for the record.
+
+Written 2026-10-11. Read-only audit of main at 50877e0. Nothing was built or run. Sources: the code cited by file and line, `docs/design/relay.md`, `docs/performance.md`, `docs/design/phase6-design.md`, `docs/roadmap.md` lines 46 to 62, the scratchpad's `supervisor-latency.md`, and latency lines from the end-to-end runs kept in the scratchpad. Where a figure was measured it says so. Every other cost is labelled as an estimate, with the reasoning.
 
 ## 1. What the recorded measurements cover, and what they do not
 
@@ -11,7 +13,7 @@ Proposed 2026-10-11, awaiting Dickson. Read-only audit of main at 50877e0. Nothi
   - to speech (reducer done until the speech queue has taken the utterance): 0.2, 0.5, 6.8, 2,909; 2.7 percent.
   - synthesis, capture synthesizer, one thread with no hand-off inside the stage: 0.4, 1.3, 8.1, 48.7; 5.2 percent.
   - reducer: 0.0, 0.1, 0.2, 5.8; 0.1 percent.
-  - mixer and device, `SilentDevice`: 0.6, 67.7, 79.4, 98.3; 32 percent. `phase6-design.md:2617` attributes this to speech queued behind an earcon's 40 ms already handed to the device, and to the ledger counting the tail of earlier speech.
+  - mixer and device, `SilentDevice`: 0.6, 67.7, 79.4, 98.3; 32 percent. `docs/design/phase6-design.md:2617` attributes this to speech queued behind an earcon's 40 ms already handed to the device, and to the ledger counting the tail of earlier speech.
   - Windows (how long before the hook saw it Windows raised the event): 0.0, 0.0, 16.0, 47.0. This is computed from the event's tick-count time, which moves in steps of about 15.6 ms, so the 16 ms values are partly quantization.
   - listener to outpost and outpost queue include outpost start-up waits and floods, which `supervisor-latency.md` already explains.
 - The relay hops measured in `supervisor-latency.md` (release): a median of about 0.06 ms per hand-off, with 0.24 to 0.99 percent of hand-offs over 2 ms. I use these as the cost of one wake-up below.
@@ -70,7 +72,7 @@ NVDA is one process. A UIA focus reaches its main thread with one wake-up (an im
 ### 2. The shared-mode engine period sits under every first sample
 
 - Established: the stream uses `IAudioClient::Initialize` in shared mode with a 40 ms buffer (`wasapi/src/lib.rs:41`, `338-348`), so the engine's default period, normally 10 ms, applies. Inferred: the first sample is heard up to one period after `Start`, about 5 ms on average, plus the endpoint's own delay.
-- Cost: estimated 3 to 7 ms on every utterance where the driver supports a shorter shared period through `IAudioClient3::InitializeSharedAudioStream` (often about 3 ms). Not measured; `phase6-design.md:2624` already notes that `IAudioClock` would show it.
+- Cost: estimated 3 to 7 ms on every utterance where the driver supports a shorter shared period through `IAudioClient3::InitializeSharedAudioStream` (often about 3 ms). Not measured; `docs/design/phase6-design.md:2624` already notes that `IAudioClock` would show it.
 - NVDA uses the same default period, so this would be better than NVDA, not a regression to fix.
 - Fix: measure first, with a real-device scenario that records `IAudioClock` position against the write time; then try the minimum shared period with the stream kept awake.
 - Belongs: separately.
@@ -101,7 +103,7 @@ NVDA is one process. A UIA focus reaches its main thread with one wake-up (an im
 ### 6. Speech to earcon re-mix (decided, not built)
 
 - Established: speech that starts while an earcon is playing is appended after the 40 ms already handed to the device (`mixer.rs:1082-1101`). The decided re-mix (`roadmap.md:54-58`) has no code: the only requests that discard the device's queue are cancel, pause and fail (`mixer.rs:152-165`).
-- Measured in `phase6-design.md:2617`: 35 to 40 ms for such announcements. The pooled "mixer and device" figures above are consistent with it, mixed with the measurement artefact.
+- Measured in `docs/design/phase6-design.md:2617`: 35 to 40 ms for such announcements. The pooled "mixer and device" figures above are consistent with it, mixed with the measurement artefact.
 - On the path for: announcements with a sound, which depends on the theme. Most focus changes in the default theme have none (inferred).
 - Belongs: separately, already on the M4 list.
 

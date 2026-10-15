@@ -16,7 +16,7 @@ clap = { version = "4", features = ["derive"] }
 crossbeam-channel = "0.5"
 # The bridge between verbatim-gui and its C++ wxWidgets layer (decision D4).
 cxx = "1"
-# WAV decoding for the sounds of themes (phase6-design.md, "Earcons").
+# WAV decoding for the sounds of themes (docs/design/phase6-design.md, "Earcons").
 hound = "3"
 i18n-embed = { version = "0.16", features = ["fluent-system"] }
 i18n-embed-fl = "0.10"
@@ -32,7 +32,7 @@ rust-embed = { version = "8", features = ["debug-embed"] }
 rubato = { version = "5", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Text segmentation for M4 (phase6-design.md, "Internationalization in the
+# Text segmentation for M4 (docs/design/phase6-design.md, "Internationalization in the
 # text model"): ICU4X's segmenters with their compiled data (Unicode's
 # rules plus dictionaries for Chinese, Japanese, Thai, Lao, Khmer, and
 # Burmese), jieba for Chinese words as NVDA uses cppjieba, and terminal
@@ -49,7 +49,7 @@ toml = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unic-langid = "0.9"
-# Theme packages, a theme directory zipped (phase6-design.md, "Packaging"):
+# Theme packages, a theme directory zipped (docs/design/phase6-design.md, "Packaging"):
 # reading and writing deflated archives with a pure-Rust deflate.
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 

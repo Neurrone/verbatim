@@ -1,13 +1,15 @@
 # Wake-ups: an audit of every thread's wake-ups (2026-10-13)
 
+Status: audit log, 2026-10-13 to 2026-10-14.
+
 Dickson asked for efficiency as well as latency, ideally as few wake-ups as
 possible, and for root causes rather than mitigations (2026-10-13). The
 communication design's step 3 had raised thread priorities to cut latency;
 a WPR trace then showed the mixer's writer and audio thread waking each
 other thousands of times a second, and raised priorities made typed echoes
-slower. The migration is paused (`docs/design/communication.md`, section
-11) while every thread's wake-ups are measured and each source is fixed
-where it starts.
+slower. The migration (`docs/design/communication.md`, section 11) was paused
+while every thread's wake-ups were measured and each source fixed where
+it starts.
 
 ## How it is measured
 

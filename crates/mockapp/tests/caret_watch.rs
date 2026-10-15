@@ -215,7 +215,7 @@ fn a_key_that_moves_nothing_is_answered_with_nothing() {
 }
 
 /// Windows 11 Notepad, starting up, once answered that its document had
-/// no text pattern (`phase6-design.md`, "Live caret event checks"), and
+/// no text pattern (`docs/design/phase6-design.md`, "Live caret event checks"), and
 /// every caret key in it was silent from then on. A provider that fails the
 /// request reaches the client the same way, as no pattern, so the focus is
 /// reported as having no text, and Core speaks its value, as NVDA does for

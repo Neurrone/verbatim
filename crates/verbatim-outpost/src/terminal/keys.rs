@@ -1,6 +1,6 @@
 //! What a key judged by where the caret landed (Escape, Control+U) did to
 //! a typed line that had wrapped onto more rows, judged from the screen
-//! before the key and the screen as read now (`phase6-design.md`,
+//! before the key and the screen as read now (`docs/design/phase6-design.md`,
 //! "Selection lists in a terminal", the wrapped Escape).
 
 use super::Memory;

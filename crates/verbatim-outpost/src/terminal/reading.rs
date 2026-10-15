@@ -1,4 +1,4 @@
-//! On-demand reading (`phase6-design.md`, "Terminal decisions", Dickson
+//! On-demand reading (`docs/design/phase6-design.md`, "Terminal decisions", Dickson
 //! 2026-10-07): the outpost reads a focused terminal's new output at once
 //! while Core has room for it, and only notes that it changed while Core's
 //! output queue is full; Core asks for it when it hands the last line of a

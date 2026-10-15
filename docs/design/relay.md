@@ -1,6 +1,8 @@
 # verbatim.exe's relay: design for stage A step 9
 
-Approved by Dickson on 2026-10-11, with both decisions in section "Decisions" as recommended. Researched on main at 3804050. Sources: the code cited by file and line; `scratchpad\supervisor-latency.md` and its scripts and classified output in `scratchpad\sup-lat` (measured on the measure-timing branch, whose stamps are not on main); `docs/design/focus-pipeline.md` 12.4 and 15; `docs/roadmap.md`; `phase6-design.md`; `docs/performance.md`; `docs/architecture.md` D9 and D13; NVDA's `source/core.py`.
+Status: superseded by `docs/design/communication.md`, which subsumed it after its approval on 2026-10-11; kept for the record.
+
+Approved by Dickson on 2026-10-11, with both decisions in section "Decisions" as recommended. Researched on main at 3804050. Sources: the code cited by file and line; `scratchpad\supervisor-latency.md` and its scripts and classified output in `scratchpad\sup-lat` (measured on the measure-timing branch, whose stamps are not on main); `docs/design/focus-pipeline.md` 12.4 and 15; `docs/roadmap.md`; `docs/design/phase6-design.md`; `docs/performance.md`; `docs/architecture.md` D9 and D13; NVDA's `source/core.py`.
 
 ## 1. Summary
 
@@ -53,7 +55,7 @@ The ledger cannot see verbatim.exe's share of this today. Its `ListenerToOutpost
 - Bursts route in about 10 µs per fact once the owner is running. Logging rarely pre-empts a running thread: the QPC-to-log-time gap is over 1 ms in only 0.05 to 0.09 percent of lines. So the threads are late to start, not slow once they run.
 - Among the slow delivered relays, 32 of 91 in debug and 37 of 70 in release were whole-machine silences, where no process logged anything for at least half the relay. The rest were wake-up delays while other threads ran, plus 3 to 5 per set during another outpost's launch.
 - The machine is a Proxmox (QEMU/KVM) guest with 12 vCPUs on Balanced.
-- No Verbatim thread sets a priority or opts out of power throttling. The only priority call in the workspace is the audio thread's MMCSS "Pro Audio" (`crates/verbatim-audio-wasapi/src/lib.rs:261`). The 2026-10-08 decision (`phase6-design.md:2622-2626`, `docs/roadmap.md:60-62`) that every process opts out of EcoQoS, with raised thread priorities, is not implemented.
+- No Verbatim thread sets a priority or opts out of power throttling. The only priority call in the workspace is the audio thread's MMCSS "Pro Audio" (`crates/verbatim-audio-wasapi/src/lib.rs:261`). The 2026-10-08 decision (`docs/design/phase6-design.md:2622-2626`, `docs/roadmap.md:60-62`) that every process opts out of EcoQoS, with raised thread priorities, is not implemented.
 
 ### Inferred: likely, but not yet proven case by case
 

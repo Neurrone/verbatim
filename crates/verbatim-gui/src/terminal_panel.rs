@@ -1,4 +1,4 @@
-//! The settings dialog's Terminal page (`phase6-design.md`, "M4: text,
+//! The settings dialog's Terminal page (`docs/design/phase6-design.md`, "M4: text,
 //! editing, and terminals", Questions): its model, pure apart from the
 //! [`TerminalHost`] it reads and changes the settings through.
 //!

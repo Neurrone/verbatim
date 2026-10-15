@@ -1,5 +1,5 @@
 //! Text segmentation for Verbatim's text model (milestone M4;
-//! `phase6-design.md`, "Internationalization in the text model").
+//! `docs/design/phase6-design.md`, "Internationalization in the text model").
 //!
 //! Platform-neutral and original: the rules are Unicode's (UAX 29 for
 //! characters, words, and sentences; UAX 11 for terminal cell widths), as

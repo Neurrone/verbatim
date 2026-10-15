@@ -1,11 +1,11 @@
-//! New output in a terminal (milestone M4 item 9; `phase6-design.md`,
+//! New output in a terminal (milestone M4 item 9; `docs/design/phase6-design.md`,
 //! "Terminal output: notifications or diffing"): what an outpost's diff of
 //! a terminal's text found since its last read, sent to Core as
 //! [`NormalizedEvent::TerminalOutput`](crate::NormalizedEvent::TerminalOutput).
 //!
 //! The outpost never reads a terminal's whole buffer. Each read fetches the
 //! screen and diffs it by line with the screen as last seen
-//! (`phase6-design.md`, "Terminal reading by diffing the screen"), and
+//! (`docs/design/phase6-design.md`, "Terminal reading by diffing the screen"), and
 //! finds the last screen's top row again by its text to count the lines
 //! that scrolled by unread. What it found arrives in the order it is
 //! spoken: what is new above the last line read, that line where it

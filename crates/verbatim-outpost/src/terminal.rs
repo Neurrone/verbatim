@@ -1,4 +1,4 @@
-//! A terminal's new output (milestone M4 item 9; `phase6-design.md`,
+//! A terminal's new output (milestone M4 item 9; `docs/design/phase6-design.md`,
 //! "Terminal reading by diffing the screen"), public so mockapp's tests
 //! drive it as the worker does.
 //!
@@ -792,7 +792,7 @@ pub const MESSAGE_TEXT_BUDGET: usize = crate::protocol::MAX_MESSAGE_BYTES / 8;
 
 /// `output` split into outputs that each take at most `budget` bytes of
 /// text, in order, so that a message carrying one stays within
-/// [`crate::protocol::MAX_MESSAGE_BYTES`] (`phase6-design.md`, the limit
+/// [`crate::protocol::MAX_MESSAGE_BYTES`] (`docs/design/phase6-design.md`, the limit
 /// on outpost messages). What is said of the last line read before
 /// (`above` and `changed`) goes in the first; the rest keeps its order,
 /// the lines before a skipped count as a head and those after it as the
