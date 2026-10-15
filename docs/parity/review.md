@@ -36,7 +36,7 @@ The follow-focus default is matched, unverified. Following the caret
 NVDA's messages) is implemented in Core, unverified; `followMouse` is
 not yet built (unscheduled). NVDA's "review cursor follows focus"
 setting (on by default) has no counterpart yet: Verbatim always follows
-the focus, and the setting is part of the settings package (M4).
+the focus, and the setting is part of the settings package (M4.3).
 
 ### Report current object
 
@@ -233,8 +233,8 @@ announcement comes from the same comparison of the selection before and
 after, and the same wording, as a selecting key's, and the first press
 says "Not supported in this document" when the text cannot be selected.
 NVDA's "Press twice to copy or reset the start marker", for a first press
-after a selection not yet copied, is **not yet (unscheduled)**: such a
-press selects again; it is planned for later (Dickson, 2026-10-15).
+after a selection not yet copied, is **not yet (M4.2)**: such a
+press selects again (Dickson, 2026-10-15).
 
 ### Document review and screen review modes
 

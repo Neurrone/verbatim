@@ -24,7 +24,7 @@ released, on a normal exit, a failed start, a panic on the main thread,
 the console's Control+C, Control+Break or close, and the session ending
 (`verbatim-app`'s `screen_reader_flag`); a crash or a process ended from
 outside leaves it set, as it leaves NVDA's. Not yet built: an option to
-leave the flag alone, and a secure-desktop instance (M8). Programs
+leave the flag alone, and a secure-desktop instance (M8.1). Programs
 change their behaviour by it: Windows PowerShell, started while either
 screen reader runs, leaves `PSReadLine` out and prints "PowerShell
 detected that you might be using a screen reader and has disabled
@@ -58,8 +58,9 @@ Verbatim quits still plays it.
 NVDA: [The vision framework](../nvda/vision.md),
 [OCR and content recognition](../nvda/ocr-and-content-recognition.md),
 [Secure mode](../nvda/secure-mode.md), [Remote access](../nvda/remote-access.md).
-Verbatim: **not yet (M8)** for the focus highlight, screen curtain, OCR,
-and the secure desktop; remote access is M12's.
+Verbatim: **not yet (M8)** for the focus highlight, screen curtain and
+OCR, and **not yet (M8.1)** for the secure desktop; remote access is
+M12's.
 
 ### Elevated applications on the user desktop
 
@@ -67,9 +68,9 @@ Elevated applications on the user desktop (admin consoles,
 elevated installers): reading them requires uiAccess — signed
 binaries in a trusted install location. NVDA:
 [Secure mode](../nvda/secure-mode.md). Verbatim: **not yet
-(unscheduled)**: unsigned dev builds cannot reach elevated windows at
-all; the signing and packaging work has no milestone, and M8's
-secure-desktop work depends on it. Recognize the symptom now: "Verbatim
+(M8.1)**: unsigned dev builds cannot reach elevated windows at all;
+M8.1 brings UIAccess with test-signing in the VM, and production
+signing and packaging have no milestone. Recognize the symptom now: "Verbatim
 goes quiet in the admin prompt" is this, not a bug.
 
 ### Braille

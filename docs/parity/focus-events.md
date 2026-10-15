@@ -238,7 +238,7 @@ cases listed last are not implemented.
   forwards only a tooltip window's), and an ordinary tooltip is not, as
   NVDA's tooltip reporting is off by default (the `msaa_events` mockapp
   test, scripted; no end-to-end scenario yet).
-- Not implemented: the setting that turns tooltips on (not yet, M4, the
+- Not implemented: the setting that turns tooltips on (not yet, M4.3, the
   settings package in the roadmap) and a per-source cap on background
   events (not yet, unscheduled). The opt-ins application support asks
   for (`requestEvents`) have a table that nothing fills yet. NVDA's rule
@@ -384,7 +384,7 @@ Differences, in plain words:
   focus that reaches another window without a foreground report leaves
   Verbatim's foreground node on the old window until one arrives.
 - NVDA's advanced setting to turn the culling of expired focus speech
-  off is not offered (not yet, M4, the settings package in the roadmap).
+  off is not offered (not yet, M4.3, the settings package in the roadmap).
 - Only in a race: a second Shift pressed before NVDA's main thread has
   applied the first pause pauses again, so speech stays paused, where
   Verbatim always resumes.

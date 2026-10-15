@@ -33,6 +33,9 @@ so far".
 Exit: Notepad editing and Terminal sessions are solid; terminal flood E2E
 shows bounded latency and no hang.
 
+M4 ends when the items below land; the rest of the open work found
+during M4 is scheduled in the milestones that follow.
+
 What has landed is in [Completed milestones](roadmap-done.md), "M4,
 completed so far". The open work follows in its order (Dickson, 2026-10-10
 and 2026-10-13). Each item is one change, checked with `cargo xtask ci`
@@ -73,6 +76,32 @@ The design of record is [the focus pipeline](design/focus-pipeline.md)
   Dickson before changing the judgement's order, which ports NVDA's
   focus handler (design section 18).
 
+### Stage C, evidence and proposals, not building
+
+Placed before the terminal redesign, whose typing decisions need them.
+
+- Step 7, a fresh File Explorer evidence pass on the new pipeline: NVDA
+  captures and Verbatim logs with raw event timings, ten runs locally, ten
+  in the VM and on GitHub. Dickson then decides what Explorer should say,
+  and whether announcing a window only once it is shown (edd0352) stays.
+  The open Explorer items it covers: the "Working on it..." placeholder
+  that fails `explorer_folder_window` on GitHub (run 37974580973); the
+  early foreground event; a file-list focus once 10 seconds late; the
+  "e2e-stage - File Explorer" window of unknown origin; a 3-second wait
+  behind an MSAA focus; the 3-second probe window of stage A step 7,
+  checked against fixed recordings; and the folder window announced with
+  "pane" where NVDA says "Items View list" (2 of 29 openings on
+  2026-10-12), from a UIA focus on the items view's DirectUIHWND element
+  that neither NVDA nor a bare UIA client received.
+- Step 8, a throwaway prototype of holding keys, as NVDA holds a key with
+  a script while it reads the caret, measured, with a written analysis;
+  holding keys is Dickson's decision. Its first case is `notepad_say_all`,
+  a known failure, unchanged as its test (Dickson, 2026-10-11): a caret key
+  pressed within about 2 ms of say-all's caret move reaches the
+  application first and the wrong character is spoken. It also measures
+  what holding a key costs and how often a key's effect is misjudged, the
+  baseline the 2026-10-10 sequence's step 1 asked for.
+
 ### The terminal redesign
 
 Built from [terminal reading](design/terminal-reading.md) (approved, its
@@ -110,64 +139,11 @@ its measurements, with the corrections of
   retried; and `conhost_leave_flood` once never heard "blank" for an empty
   new console window, its first read giving nothing within 15 seconds.
 
-### Stage B, needing no decision
-
-- A Settings search suggestions scenario with an NVDA capture. It also
-  covers selecting inside a list the focus controls, which has no
-  scenario and was not checked live after the cheaper reads of 2026-10-10.
-- Toasts ([parity](parity/alerts.md), "Toasts"): Verbatim reads them only
-  through an MSAA alert, NVDA through UIA's window-opened event. Capture a
-  Windows 11 toast live with NVDA and with Verbatim; if Verbatim is silent,
-  follow NVDA (a `Windows.UI.Core.CoreWindow` whose automation id contains
-  `ToastView`, from a desktop-wide window-opened subscription in the
-  listener), then adopt NVDA's rule dropping MSAA alert and show events
-  from native UIA windows.
-- Medium integrity on GitHub's runner (Dickson, 2026-10-10): the e2e job
-  tries running Verbatim and the test applications at medium integrity, as
-  users run them, after measuring that it behaves with the runner's UAC
-  disabled. The runner is elevated today (`runneradmin`), which is what
-  puts "Administrator: " in console titles.
-- The `*_control_flood` scenarios' exception to the exact assertions of
-  [the testing standard](testing.md) awaits Dickson's review (provisional,
-  2026-10-11): the speech before Control is asserted by its first and last
-  lines and its endings, since the burst split depends on timing; the
-  alternative is an assertion on every utterance that does not depend on
-  the split, if one can be found.
-
-### Stage C, evidence and proposals, not building
-
-- Step 7, a fresh File Explorer evidence pass on the new pipeline: NVDA
-  captures and Verbatim logs with raw event timings, ten runs locally, ten
-  in the VM and on GitHub. Dickson then decides what Explorer should say,
-  and whether announcing a window only once it is shown (edd0352) stays.
-  The open Explorer items it covers: the "Working on it..." placeholder
-  that fails `explorer_folder_window` on GitHub (run 37974580973); the
-  early foreground event; a file-list focus once 10 seconds late; the
-  "e2e-stage - File Explorer" window of unknown origin; a 3-second wait
-  behind an MSAA focus; the 3-second probe window of stage A step 7,
-  checked against fixed recordings; and the folder window announced with
-  "pane" where NVDA says "Items View list" (2 of 29 openings on
-  2026-10-12), from a UIA focus on the items view's DirectUIHWND element
-  that neither NVDA nor a bare UIA client received.
-- Step 8, a throwaway prototype of holding keys, as NVDA holds a key with
-  a script while it reads the caret, measured, with a written analysis;
-  holding keys is Dickson's decision. Its first case is `notepad_say_all`,
-  a known failure, unchanged as its test (Dickson, 2026-10-11): a caret key
-  pressed within about 2 ms of say-all's caret move reaches the
-  application first and the wrong character is spoken. It also measures
-  what holding a key costs and how often a key's effect is misjudged, the
-  baseline the 2026-10-10 sequence's step 1 asked for.
-- An elevated console window is named "Administrator: <title>" or just
-  "<title>" depending on when it is first read (`conhost_raised_flood` on
-  GitHub's elevated runner, run 38031529579). Capture what NVDA says for
-  an elevated console window, which needs an elevation prompt Dickson
-  approves, then make Verbatim read one name consistently.
-
 ### Phase 6 remainder
 
-Decided by Dickson during phase 6 and not yet built; each is part of M4's
-completion. The reasoning is in [the phase 6 design](design/phase6-design.md),
-in the dated section named with each item.
+Decided by Dickson during phase 6 and not yet built. The reasoning is in
+[the phase 6 design](design/phase6-design.md), in the dated section named
+with the item.
 
 - Communication step 12's audio step ([communication](design/communication.md),
   step 12; "Audio start-up latency and scheduling", 2026-10-08): the audio
@@ -180,23 +156,128 @@ in the dated section named with each item.
   both. The latency ledger stops counting the tail of earlier speech as
   "mixer and device". Each is measured with the device stages of the
   communication design's section 10.1.
-- Status cues ("Status cues settled", 2026-10-08): every indication in
-  the theme's Events group (start and exit, error, application not
-  responding, browse and focus mode, suggestions opened and closed,
-  progress) plays through key presses; indications in every other group
-  are content and are cut off. This is built-in behaviour defined by the
-  group, not a setting.
-- Sound-only announcements ("The review cursor in a terminal", the
-  paragraph "Further", 2026-10-08): an announcement a theme reports by
-  sound alone is queued, timed, measured and cancelled exactly like a
-  spoken one; the start-up sound becomes one.
-- Memory growth ("Memory growth tracking", 2026-10-08): a scenario of
-  about 25 seconds in every suite, ten iterations of a Windows Forms text
-  box window opened, edited, reviewed and closed, and the settings dialog
-  Tabbed through. After two warm-up iterations, the counts Verbatim
-  reports through the control plane return to exactly the same values
-  after every iteration, and each process's private memory grows from
-  iteration 3 to 10 by no more than a small bound.
+
+### Stage B, needing no decision
+
+- The `*_control_flood` scenarios' exception to the exact assertions of
+  [the testing standard](testing.md) awaits Dickson's review (provisional,
+  2026-10-11): the speech before Control is asserted by its first and last
+  lines and its endings, since the burst split depends on timing; the
+  alternative is an assertion on every utterance that does not depend on
+  the split, if one can be found.
+
+### Other open items
+
+- Provisional decisions built while Dickson was away, awaiting his
+  confirmation: the console window's own UIA focus always dropped before
+  any read, as NVDA's `consoleUIAWindow` refuses it (stage A step 3); and
+  three details of NVDA's MSAA limiter followed in stage A step 4, each
+  heard only in a burst of events.
+
+### Deferred
+
+- Communication step 8, review keys straight to the reducer, is
+  reconsidered when the command set is settled (Dickson, 2026-10-14).
+- For a later milestone (Dickson, 2026-10-10): Verbatim echoes a typed
+  character from its keyboard hook, before the application handles the
+  key, where NVDA echoes from the application's typed-character event; a
+  letter typed within about 40 ms of Tab is not echoed.
+
+## M4.1 — Stability
+
+Verbatim stops crashing and stalling, and the suite stops failing by timing.
+
+- The outpost crash inside UI Automation's saved-event delivery
+  ([the phase 6 design](design/phase6-design.md), "Console windows as one
+  application"): section 17 of the focus-pipeline design is built
+  (152f09a), but `conhost_leave_flood`'s console host outpost failed fast
+  again on 2026-10-12. Read its full dump, kept outside the repository,
+  and make section 17's fifty-run check.
+- Verbatim's own outpost once left a fact in its intake for 6.37 seconds
+  (2026-10-11); reproduce it with the intake and menu logs of f9d067d.
+- Stage A step 5's open question ("MSAA events in each outpost's own
+  hook"): an event raised between a ready outpost's end and the listener
+  resuming is lost; a recommendation is recorded there.
+- An audit of every end-to-end scenario for timing races (2026-10-11),
+  each race fixed by waiting for evidence, not a longer bound; and the
+  agent's bring-forward, which always takes its slowest path (once 1.4
+  seconds), its cause open.
+- Scheduled for later (Dickson, 2026-10-11, from the communication
+  design): the mixer's retry after a failed audio device open is a timed
+  deadline, to be replaced by waiting for evidence such as a device
+  notification; and the keyboard hook drops a gesture when the router's
+  channel is full (`try_send` in `crates/verbatim-input-windows/src/lib.rs`),
+  which must never lose a key.
+- `CoCancelCall` for MSAA calls, a recommendation in the phase 6 design's
+  "Time limits that hold".
+- The audits' items 8 to 11 (deferred by Dickson, 2026-10-12, until after
+  the queue): one duplicate test and one acceptance test per focus, as
+  NVDA makes them; foreground events in the focus run as NVDA's `pumpAll`
+  takes them; the events NVDA registers desktop-wide that Verbatim lacks
+  (live regions, selection added and removed, progress values, window
+  opened, layout invalidated, system alerts, drag and drop); and the
+  smaller ones (the MSAA caret in UIA windows, the staging windows' focus,
+  live reads of the focus's property events, NVDA's Windows Forms and UWP
+  combo box rules, the controlled selection's route).
+
+Exit: a week of Dickson's daily use without a crash or a stall, and the
+full suite ten times clean.
+
+## M4.2 — Parity small items
+
+Small differences from NVDA found during M4, each closed against a live
+NVDA capture.
+
+- NVDA's "Press twice to copy or reset the start marker", for a first
+  press of Verbatim+F10 after a selection not yet copied, and the start
+  marker kept when a copy fails (Dickson, 2026-10-15;
+  [review parity](parity/review.md), "Select then copy from the review
+  cursor").
+- Announce a selection change of the focus that no key and no Verbatim
+  command made, such as one made with the mouse or by the application,
+  as NVDA reports any selection change after its caret event (Dickson,
+  2026-10-15; [text parity](parity/text.md), "TextInfo-equivalent
+  layer"). The pieces are the outpost's caret watch and the
+  selection-change reporting path built on 2026-10-15 (f964ba30).
+- A foreground UIA progress bar that is not the focus is reported, as
+  NVDA does (Dickson, 2026-10-10, as a separate fix); background progress
+  bars stay silent, with no setting.
+- Core speaks state changes such as "selected" for a focus that has
+  expired.
+- Toasts ([parity](parity/alerts.md), "Toasts"): Verbatim reads them only
+  through an MSAA alert, NVDA through UIA's window-opened event. Capture a
+  Windows 11 toast live with NVDA and with Verbatim; if Verbatim is silent,
+  follow NVDA (a `Windows.UI.Core.CoreWindow` whose automation id contains
+  `ToastView`, from a desktop-wide window-opened subscription in the
+  listener), then adopt NVDA's rule dropping MSAA alert and show events
+  from native UIA windows.
+- A Settings search suggestions scenario with an NVDA capture. It also
+  covers selecting inside a list the focus controls, which has no
+  scenario and was not checked live after the cheaper reads of 2026-10-10.
+- Text fields: on the classic text path `UiaText::caret_read`
+  (`verbatim-outpost` `text/mod.rs` and `text/uia.rs`) answers as if it
+  had read the caret, so the caret recheck added in 676d127 is skipped
+  there; and the `(Some(Removal::Joined) | None, Some(deleted))` arm in
+  Core's `editing.rs` has a case that cannot occur.
+- A test that UIA text fields are read by parts (coherence review,
+  2026-10-09).
+- The review cursor on objects that no longer exist (the section of that
+  name, 2026-10-08): review commands read live from the application
+  rather than from Core's cache; a Gone answer for the navigator's node
+  re-seeds it from the focus, or says "No navigator object" when the dead
+  node is the focus; the outpost reports held MSAA nodes it forgets with
+  their window; and an end-to-end test in both terminals that a reviewed
+  line stays on its text as new output is written below it ("Revised").
+
+Exit: each entry is matched (verified) by a scenario, with a declared
+deviation where Dickson chose one, checked with compare mode.
+
+## M4.3 — Settings and indications
+
+These are the decided phase 6 designs that daily use needs; the reasoning
+is in [the phase 6 design](design/phase6-design.md), in the dated section
+named with each item.
+
 - The settings package ("NVDA's settings in Verbatim", 2026-10-08): the
   missing settings for behaviour Verbatim already has (capital pitch
   change, OneCore's pause after punctuation, the audio output device,
@@ -210,94 +291,35 @@ in the dated section named with each item.
   the spelling-error sound while typing). The review cursor follows focus
   and the caret by default, each with NVDA's setting to turn it off.
   Spoken progress comes every 10 percent, as NVDA's does.
-- The review cursor on objects that no longer exist (the section of that
-  name, 2026-10-08): review commands read live from the application
-  rather than from Core's cache; a Gone answer for the navigator's node
-  re-seeds it from the focus, or says "No navigator object" when the dead
-  node is the focus; the outpost reports held MSAA nodes it forgets with
-  their window; and an end-to-end test in both terminals that a reviewed
-  line stays on its text as new output is written below it ("Revised").
-- A behaviour-based MSAA audit (the afternoon decisions of 2026-10-08):
-  live NVDA captures against a matrix of standard controls, compared
-  exactly with Verbatim.
-- Response-time budgets (the afternoon decisions of 2026-10-08,
-  reaffirmed 2026-10-09): enforced by default in local runs, recorded but
-  not enforced on GitHub's runners; today the suite records them and
-  asserts none. A failure when verbatim.exe's relay takes over 2 ms comes
-  with them.
-- A foreground UIA progress bar that is not the focus is reported, as
-  NVDA does (Dickson, 2026-10-10, as a separate fix); background progress
-  bars stay silent, with no setting.
+- Status cues ("Status cues settled", 2026-10-08): every indication in
+  the theme's Events group (start and exit, error, application not
+  responding, browse and focus mode, suggestions opened and closed,
+  progress) plays through key presses; indications in every other group
+  are content and are cut off. This is built-in behaviour defined by the
+  group, not a setting.
+- Sound-only announcements ("The review cursor in a terminal", the
+  paragraph "Further", 2026-10-08): an announcement a theme reports by
+  sound alone is queued, timed, measured and cancelled exactly like a
+  spoken one; the start-up sound becomes one.
+- Background progress bar reporting with its setting, an NVDA option off
+  by default (Dickson, 2026-10-10, confirmed as planned for later on
+  2026-10-15; [changes and selection parity](parity/changes-and-selection.md),
+  "Value change on focused node speaks bare value").
 
-### Other open items
+Exit: the settings dialog covers the settings package's inventory, and
+every indication plays or speaks as its cue says.
 
-- Announce a selection change of the focus that no key and no Verbatim
-  command made, such as one made with the mouse or by the application,
-  as NVDA reports any selection change after its caret event (Dickson,
-  2026-10-15; [text parity](parity/text.md), "TextInfo-equivalent
-  layer"). The pieces are the outpost's caret watch and the
-  selection-change reporting path built on 2026-10-15 (f964ba30).
-- A test that UIA text fields are read by parts (coherence review,
-  2026-10-09).
-- Text fields: on the classic text path `UiaText::caret_read`
-  (`verbatim-outpost` `text/mod.rs` and `text/uia.rs`) answers as if it
-  had read the caret, so the caret recheck added in 676d127 is skipped
-  there; and the `(Some(Removal::Joined) | None, Some(deleted))` arm in
-  Core's `editing.rs` has a case that cannot occur.
-- Core speaks state changes such as "selected" for a focus that has
-  expired.
-- The outpost crash inside UI Automation's saved-event delivery
-  ([the phase 6 design](design/phase6-design.md), "Console windows as one
-  application"): section 17 of the focus-pipeline design is built
-  (152f09a), but `conhost_leave_flood`'s console host outpost failed fast
-  again on 2026-10-12. Read its full dump, kept outside the repository,
-  and make section 17's fifty-run check.
-- Verbatim's own outpost once left a fact in its intake for 6.37 seconds
-  (2026-10-11); reproduce it with the intake and menu logs of f9d067d.
-- An audit of every end-to-end scenario for timing races (2026-10-11),
-  each race fixed by waiting for evidence, not a longer bound; and the
-  agent's bring-forward, which always takes its slowest path (once 1.4
-  seconds), its cause open.
-- Scheduled for later (Dickson, 2026-10-11, from the communication
-  design): the mixer's retry after a failed audio device open is a timed
-  deadline, to be replaced by waiting for evidence such as a device
-  notification; and the keyboard hook drops a gesture when the router's
-  channel is full (`try_send` in `crates/verbatim-input-windows/src/lib.rs`),
-  which must never lose a key.
+## M4.4 — Message types in their final home
+
+Before M5, because M5's extension API exposes events and commands, and the
+types they carry should have their final home first.
+
 - The messages exchanged with the outposts and the listener move into a
   platform-neutral crate as plain serde types, now that the communication
   migration is built (the communication design's decision 13, approved).
-- Stage A step 5's open question ("MSAA events in each outpost's own
-  hook"): an event raised between a ready outpost's end and the listener
-  resuming is lost; a recommendation is recorded there.
-- Provisional decisions built while Dickson was away, awaiting his
-  confirmation: the console window's own UIA focus always dropped before
-  any read, as NVDA's `consoleUIAWindow` refuses it (stage A step 3); and
-  three details of NVDA's MSAA limiter followed in stage A step 4, each
-  heard only in a burst of events.
 
-### Deferred
-
-- The audits' items 8 to 11 (deferred by Dickson, 2026-10-12, until after
-  the queue): one duplicate test and one acceptance test per focus, as
-  NVDA makes them; foreground events in the focus run as NVDA's `pumpAll`
-  takes them; the events NVDA registers desktop-wide that Verbatim lacks
-  (live regions, selection added and removed, progress values, window
-  opened, layout invalidated, system alerts, drag and drop); and the
-  smaller ones (the MSAA caret in UIA windows, the staging windows' focus,
-  live reads of the focus's property events, NVDA's Windows Forms and UWP
-  combo box rules, the controlled selection's route).
-- The secure desktop and the lock screen wait for UIAccess support,
-  without which Verbatim cannot read the secure desktop (Dickson,
-  2026-10-12).
-- `CoCancelCall` for MSAA calls, a recommendation in the phase 6 design's
-  "Time limits that hold".
-- Communication step 8, review keys straight to the reducer, is
-  reconsidered when the command set is settled (Dickson, 2026-10-14).
-- For a later milestone (Dickson, 2026-10-10): Verbatim echoes a typed
-  character from its keyboard hook, before the application handles the
-  key, where NVDA echoes from the application's typed-character event; a
-  letter typed within about 40 ms of Tab is not echoed.
+Exit: the messages exchanged with the outposts and the listener are the
+platform-neutral crate's types.
 
 ## M5 — Extensions v1
 
@@ -395,7 +417,7 @@ Exit: real browsing works day-to-day; large-page E2E passes; corpus
 performance/parity report vs NVDA written, at (or consciously accepted
 near) parity; screen review reads a modern app's screen correctly.
 
-## M8 — Breadth: speech configurability, profiles, overlays, OCR, secure desktop
+## M8 — Breadth: speech configurability, profiles, overlays, OCR
 
 - Automatic language switching, as NVDA does it: the language of each
   run of text (UIA's Culture per format run, IA2 text attributes) carried
@@ -424,8 +446,6 @@ near) parity; screen review reads a modern app's screen correctly.
 - OCR capability (Windows.Media.Ocr) exposed to extensions; synthetic-subtree
   review of an image/window; OCR becomes screen review's second text source,
   for windows whose pixels contain text that no API exposes.
-- Secure-desktop instance (`--secure`), AT registration, UIAccess/test-signing
-  story in the VM (R5).
 - Installer/updater skeleton.
 - From NVDA's changes up to 663e4b679 (reviewed 2026-10-06): copying the
   last spoken text to the clipboard (NVDA+Control+X) and a controller
@@ -437,7 +457,27 @@ near) parity; screen review reads a modern app's screen correctly.
   proxy reports when the client's bitness differs (needed once locations
   are used, by the focus highlight or the mouse).
 
-Exit: sign-in and UAC prompts are read in the VM; curtain + highlight E2E.
+Exit: curtain + highlight E2E.
+
+## M8.1 — UIAccess: elevated windows, UAC and sign-in
+
+Reading elevated console windows, UAC prompts and the lock screen or
+sign-in needs the UIAccess permission; this milestone builds it and reads
+each of them end to end.
+
+- Secure-desktop instance (`--secure`), AT registration, UIAccess/test-signing
+  story in the VM (R5).
+- The secure desktop and the lock screen wait for UIAccess support,
+  without which Verbatim cannot read the secure desktop (Dickson,
+  2026-10-12).
+- An elevated console window is named "Administrator: <title>" or just
+  "<title>" depending on when it is first read (`conhost_raised_flood` on
+  GitHub's elevated runner, run 38031529579). Capture what NVDA says for
+  an elevated console window, which needs an elevation prompt Dickson
+  approves, then make Verbatim read one name consistently.
+
+Exit: a UAC prompt, an elevated console, and the sign-in screen are read
+in the VM.
 
 ## M9 — Logging and log viewer
 
@@ -608,7 +648,27 @@ Tiers, gated by the capabilities each module needs:
   from M2 on. Enforcing the budgets is decided but not yet built
   (Dickson, 2026-10-08, reaffirmed 2026-10-09): enforced by default in
   local runs, and recorded but not enforced on GitHub's runners (see
-  "Phase 6 remainder" under M4).
+  the response-time budgets below).
+- Response-time budgets (the afternoon decisions of 2026-10-08,
+  reaffirmed 2026-10-09): enforced by default in local runs, recorded but
+  not enforced on GitHub's runners; today the suite records them and
+  asserts none. A failure when verbatim.exe's relay takes over 2 ms comes
+  with them.
+- Memory growth ("Memory growth tracking", 2026-10-08): a scenario of
+  about 25 seconds in every suite, ten iterations of a Windows Forms text
+  box window opened, edited, reviewed and closed, and the settings dialog
+  Tabbed through. After two warm-up iterations, the counts Verbatim
+  reports through the control plane return to exactly the same values
+  after every iteration, and each process's private memory grows from
+  iteration 3 to 10 by no more than a small bound.
+- A behaviour-based MSAA audit (the afternoon decisions of 2026-10-08):
+  live NVDA captures against a matrix of standard controls, compared
+  exactly with Verbatim.
+- Medium integrity on GitHub's runner (Dickson, 2026-10-10): the e2e job
+  tries running Verbatim and the test applications at medium integrity, as
+  users run them, after measuring that it behaves with the runner's UAC
+  disabled. The runner is elevated today (`runneradmin`), which is what
+  puts "Administrator: " in console titles.
 - **Localization**: no hardcoded user-visible strings, ever; pseudo-locale
   test from M1.
 - **Flight recorder into regression tests**: every reproduced field/VM bug

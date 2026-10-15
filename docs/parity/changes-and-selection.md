@@ -177,9 +177,8 @@ the same one-percent interval, where NVDA's speech mode speaks every
 ten percent. A UIA progress bar is reported only while it is the focus,
 since UIA's property events are followed on the focus alone
 (`docs/parity/backends.md`, "UIA event registration"); a foreground UIA
-progress bar that is not the focus is not yet reported (M4, the
-roadmap's "Phase 6 remainder"). Background progress bar reporting, an
-NVDA option off by default, is **not yet (unscheduled)**: background
+progress bar that is not the focus is not yet reported (M4.2). Background progress bar reporting, an
+NVDA option off by default, is **not yet (M4.3)**: background
 progress bars stay silent for now, with no setting (Dickson, 2026-10-10,
 confirmed as planned for later on 2026-10-15).
 

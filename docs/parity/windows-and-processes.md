@@ -84,5 +84,5 @@ window (`ForegroundStaging`, `LauncherTipWnd`,
 `ApplicationManager_DesktopShellWindow`), so nothing is said for it.
 **matched (verified)** for what is said (the two-window scenarios).
 Different: since the focus is dropped, speech is not cut at the staging
-window, only at the window switched to (deferred in the roadmap's
-"Deferred", the audits' items).
+window, only at the window switched to (the audits' items in the
+roadmap's M4.1).

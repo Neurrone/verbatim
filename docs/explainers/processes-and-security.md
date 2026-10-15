@@ -36,7 +36,7 @@ Winlogon secure desktop, where UAC consent prompts, Ctrl+Alt+Del, and the
 login screen live. Processes on the default desktop cannot see or touch it.
 A screen reader that should speak UAC prompts must arrange for an instance
 *on* that desktop — which only a SYSTEM-level service can launch there.
-This is why NVDA (and eventually Verbatim, roadmap M8) runs a copy of
+This is why NVDA (and eventually Verbatim, roadmap M8.1) runs a copy of
 itself on the secure desktop with a reduced, no-user-config profile, and
 why "why is the UAC prompt silent" is a deployment/signing/service
 question, not an API question.
