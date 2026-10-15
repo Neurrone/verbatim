@@ -597,7 +597,11 @@ pub(crate) fn reply(
                 Phrase::Positioned { x, y },
             ))],
         )],
+        // A copy clears the start marker, so a further press has none
+        // (`docs/parity/review.md`, "Select then copy from the review
+        // cursor").
         (TextFollowUp::Copy, TextReply::Range { text, .. }) if !text.is_empty() => {
+            state.start_marker = None;
             vec![Effect::CopyToClipboard(text)]
         }
         // The selection the command made is spoken as a caret key's is,
@@ -783,6 +787,7 @@ pub(crate) fn flat_extra(
                     let (from, to) = (start.min(end), start.max(end));
                     match flat.get(from..to) {
                         Some(copied) if !copied.is_empty() => {
+                            state.start_marker = None;
                             vec![Effect::CopyToClipboard(copied.to_owned())]
                         }
                         _ => Vec::new(),

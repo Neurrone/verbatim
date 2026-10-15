@@ -578,7 +578,7 @@ character at the review cursor and speaks the selection's change as a
 selecting key's is ("Name selected"), and pressed twice reads the range
 the first press selected, wherever the review cursor has gone since, and
 copies it (`Effect::CopyToClipboard`, so the shell's clipboard helper
-confirms). With no marker it says "No start marker set", and with the
+confirms), clearing the marker. With no marker it says "No start marker set", and with the
 marker in another object, NVDA's "The start marker must reside within the
 same object". Flat text cannot be selected, so there the first press says
 "Not supported in this document" and the second copies.

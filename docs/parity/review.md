@@ -225,15 +225,16 @@ messages ("Start marked", "No start marker set", "The start marker must
 reside within the same object"). The first press selects the range in
 the control and announces the selection's change as a selecting key's is
 announced ("Name selected"); the second, within the multi-press timeout,
-copies the range the first selected ("Copied to clipboard: Name").
+copies the range the first selected ("Copied to clipboard: Name") and
+clears the start marker, so a further press says "No start marker set".
 Verbatim: **matched (verified)** by `text_box_review_cursor` and
 `notepad_review_cursor`, implemented in Core: the first press's
 announcement comes from the same comparison of the selection before and
 after, and the same wording, as a selecting key's, and the first press
 says "Not supported in this document" when the text cannot be selected.
 NVDA's "Press twice to copy or reset the start marker", for a first press
-after a selection not yet copied, and its clearing of the start marker
-after a copy, are not built.
+after a selection not yet copied, is **not yet (unscheduled)**: such a
+press selects again; it is planned for later (Dickson, 2026-10-15).
 
 ### Document review and screen review modes
 

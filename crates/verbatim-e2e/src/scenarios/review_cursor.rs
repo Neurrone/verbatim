@@ -4,7 +4,8 @@
 //! the current line, word, and character without moving the caret, moving
 //! by line, word, and character, the line's ends (the end being its line
 //! break, named as NVDA names it) and the text's top and
-//! bottom, and Verbatim+F9 and F10 copying a range, checked by pasting it.
+//! bottom, and Verbatim+F9 and F10 copying a range, checked by pasting it,
+//! after which a further press of F10 finds the start marker cleared.
 //!
 //! The document is a small text table whose second column starts at column
 //! 8 on every row long enough to have one. Moving down the table keeps the
@@ -138,6 +139,9 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
         .expect("sends Verbatim+F10 again");
     scenario.speech().expect_ended(&selected, Ending::Cancelled);
     scenario.speech().expect(&["Copied to clipboard: Name"]);
+    // The copy cleared the start marker, so Verbatim+F10 pressed again,
+    // once the copy's confirmation is heard in full, finds none.
+    review(scenario, "kb:verbatim+f10", "No start marker set");
 
     // The range Verbatim+F10 selected in the text box is still selected;
     // moving the caret to the end
@@ -217,6 +221,9 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
         .expect("sends Verbatim+F10 again");
     scenario.speech().expect_ended(&selected, Ending::Cancelled);
     scenario.speech().expect(&["Copied to clipboard: Name"]);
+    // The copy cleared the start marker, so Verbatim+F10 pressed again,
+    // once the copy's confirmation is heard in full, finds none.
+    review(scenario, "kb:verbatim+f10", "No start marker set");
 
     // The range Verbatim+F10 selected in Notepad is still selected; moving
     // the caret to the end

@@ -1394,7 +1394,7 @@ fn a_navigator_without_a_caret_reads_its_line_first_and_falls_back_to_flat_text(
 }
 
 #[test]
-fn select_then_copy_selects_from_the_start_marker_says_so_and_copies_the_selection() {
+fn select_then_copy_selects_from_the_start_marker_says_so_copies_and_clears_the_marker() {
     let mut state = reviewing("hello world\n", 0);
     let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
     assert_eq!(spoken(&effects), vec![message(Message::NoStartMarker)]);
@@ -1467,6 +1467,9 @@ fn select_then_copy_selects_from_the_start_marker_says_so_and_copies_the_selecti
         ),
     );
     assert_eq!(effects, vec![Effect::CopyToClipboard("hello w".to_owned())]);
+    // The copy cleared the start marker: a further press has none.
+    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
+    assert_eq!(spoken(&effects), vec![message(Message::NoStartMarker)]);
 }
 
 #[test]
