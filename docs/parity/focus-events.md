@@ -247,8 +247,8 @@ cases listed last are not implemented.
   from belong to one application or input method (Internet Explorer's
   notification bar, a chat application's tray alert, IME candidate
   windows) and are deferred with application support.
-- Background progress bars are not offered, so they stay silent, as
-  NVDA's are by default (Dickson, 2026-10-10).
+- Background progress bars are not yet reported (M4.3); NVDA's are
+  silent by default (Dickson, 2026-10-10).
 
 ### Recovery after an outpost is replaced
 

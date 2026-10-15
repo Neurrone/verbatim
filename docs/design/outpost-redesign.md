@@ -6,7 +6,7 @@ This is the agreed design and implementation plan for the outposts, the
 focus listener, the supervisor, the app's handling of outpost traffic, and
 the reducer changes that follow from them. It was worked out with Dickson
 on 2026-10-01 while reading the reducer and outpost code in phase 1 of
-the handoff plan of 2026-09-02 (deleted on 2026-10-15; in git history), then reviewed adversarially against
+the handoff plan of 2026-09-02 (in git history), then reviewed adversarially against
 the repository audit of 2026-09-02 (removed from the tree; git history
 keeps it), the five additional findings in the handoff, the
 handoff's hot-path notes, and decisions D13 to D15.

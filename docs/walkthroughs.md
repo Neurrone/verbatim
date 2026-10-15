@@ -309,8 +309,8 @@ Not yet, or known limitations:
   2026-10-05"). The per-stage ledger D15 asks for is partly implemented:
   one `verbatim::latency` line per announcement.
 - The per-source cap on background events, tooltip and notification-bar
-  windows, and background progress bars are not implemented
-  ([parity ledger](parity/focus-events.md), "Event acceptance").
+  windows are not implemented, and background progress bars are not yet
+  reported (M4.3) ([parity ledger](parity/focus-events.md), "Event acceptance").
 
 ## 2. The life of a command keystroke: Verbatim+numpad6
 

@@ -341,7 +341,7 @@ knowing for review:
   answer, so the line names the hook to Core, the request's way to the
   outpost, and caret wait stages as well. verbatim.exe's relay stamps
   (`EventTiming::core_received_at_us` and those after it, and
-  `core_read_at_us` on the way back; `docs/design/relay.md`, section 4.5),
+  `core_read_at_us` on the way back; `docs/archive/relay.md`, section 4.5),
   and the senders' own stamps (the listener's handling's end and write, the
   outpost's write; `docs/design/communication.md`, section 10.1)
   split the spans across verbatim.exe: the listener's handling, its queue and

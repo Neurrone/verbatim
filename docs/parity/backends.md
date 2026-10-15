@@ -112,8 +112,8 @@ NVDA: [The UIA client](../nvda/uia.md), "Caching discipline", and
   destroyed, refused), the next older one is tried, up to three, as
   NVDA's event pump falls back.
 - The fake focus after a menu or the Alt+Tab switcher closes is skipped
-  only when a focus observed after the close was actually applied; any
-  focus fact used to cancel it, even one later dropped or unreadable.
+  only when a focus observed after the close was actually applied; a focus fact that
+  is dropped or unreadable does not skip it.
 - NVDA's early `WinEvent` filters: object ids at or below `OBJID_ALERT`,
   a focus on a menu bar object itself, foreground events for Program
   Manager and the taskbar, and menu events from the IME candidate

@@ -32,8 +32,8 @@ native UIA or not, and speaks whatever the object's role. A UIA
 notification event is not a toast path in either: both speak those only
 from the focus's application. Whether Windows 11 raises that MSAA alert
 for its toasts at all is unverified; if it does not, Verbatim says
-nothing for a toast that NVDA speaks (the roadmap's M4.2 item
-captures one live and follows NVDA if so). Help balloons are not
+nothing for a toast that NVDA speaks (the "Toasts" item under M4.2 in
+`docs/roadmap.md` captures one live and follows NVDA if so). Help balloons are not
 affected and match. Not yet built (unscheduled): the setting to turn
 toast reporting off.
 

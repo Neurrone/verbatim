@@ -233,10 +233,10 @@ announcement comes from the same comparison of the selection before and
 after, and the same wording, as a selecting key's, and the first press
 says "Not supported in this document" when the text cannot be selected.
 NVDA's "Press twice to copy or reset the start marker", for a first press
-after a selection not yet copied, is **not yet (M4.2)**: such a
+after a selection not yet copied, is not yet built (M4.2): such a
 press selects again (Dickson, 2026-10-15). NVDA's second press clears
 the start marker even when the copy fails, while Verbatim keeps it when
-there was nothing to copy; clearing it then is **not yet (M4.2)**
+there was nothing to copy; clearing it then is not yet built (M4.2)
 (Dickson, 2026-10-15).
 
 ### Document review and screen review modes

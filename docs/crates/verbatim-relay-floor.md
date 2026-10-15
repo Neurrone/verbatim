@@ -1,7 +1,7 @@
 # verbatim-relay-floor
 
 The platform floor's benchmark for Verbatim's pipes and verbatim.exe's
-relay (`docs/design/relay.md`, section 6; `docs/design/communication.md`,
+relay (`docs/archive/relay.md`, section 6; `docs/design/communication.md`,
 section 11, step 2), a binary run by `cargo xtask relay-floor`;
 `docs/tooling/measuring.md`, "Measuring the platform floor", says how to run it and
 read it.

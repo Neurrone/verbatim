@@ -167,7 +167,7 @@ installed.
 measures how long a message takes to cross processes on this machine,
 under its own power plan, with Verbatim's pipes, so verbatim.exe's stages
 in the latency line can be judged against what the platform allows
-(`docs/design/relay.md`, sections 6 and 7; `docs/design/communication.md`,
+(`docs/archive/relay.md`, sections 6 and 7; `docs/design/communication.md`,
 section 11, step 2). It runs headless and does not take over the desktop,
 but it loads the processors when asked to, so run it when nothing else is
 being measured. Each variant sends 20,000 frames by default, a burst of

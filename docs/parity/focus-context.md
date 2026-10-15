@@ -120,4 +120,5 @@ foreground events; the harness expects NVDA's speech there
 When the desktop takes focus, as when windows are minimized, Verbatim
 announces the desktop's nameless window of class `WorkerW` as "pane";
 NVDA's File Explorer app module ignores that window's focus events.
-**not yet**: it belongs to the app-module porting track's Tier A.
+That is not yet ported (unscheduled), with the app-module porting
+track's Tier A.

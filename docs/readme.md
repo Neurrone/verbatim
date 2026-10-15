@@ -91,12 +91,10 @@ NVDA says, to decide what Verbatim should say.
     listener, and supervisor; adopted and built.
   - [phase6-design.md](design/phase6-design.md) — phase 6's decision
     log; kept for the record.
-  - [relay.md](design/relay.md) and
-    [latency-audit.md](design/latency-audit.md) — superseded by the
-    communication design; kept for the record.
   - [wake-ups.md](design/wake-ups.md) and
     [safety-audit-2026-10-06.md](design/safety-audit-2026-10-06.md) —
     audit logs: every thread's wake-ups, and the unsafe code.
+  - Superseded design records live in [docs/archive/](archive/).
 - [The NVDA transcript](nvda-transcript.md) — the NVDA add-on and
   `cargo xtask nvda capture`, for recording what NVDA says in a scenario.
 - [Glossary](glossary.md) — Verbatim's invented vocabulary, each term

@@ -159,7 +159,7 @@ pub(crate) fn accepts_event(
         return true;
     }
     // NVDA accepts a value change from anywhere when it reports background
-    // progress bars. Verbatim has no such setting: a background progress
+    // progress bars. Verbatim has no such setting yet (M4.3): a background progress
     // bar is silent, as NVDA's is by default (Dickson, 2026-10-10).
     match event {
         // NVDA's hide rule, never accepted, has no event here.

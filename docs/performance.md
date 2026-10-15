@@ -199,7 +199,7 @@ trace's cost is visible in the debug log, not in the ledger.
 Every fact the focus listener sees passes through verbatim.exe on its way
 to the application's outpost, and every request Core makes goes the same
 way, so verbatim.exe's share of the time is a stage of its own in the
-latency line and in `verbatim-inspect latency` (`docs/design/relay.md`,
+latency line and in `verbatim-inspect latency` (`docs/archive/relay.md`,
 sections 4.5 and 7; `docs/tooling/inspect.md` lists the stages). Its budget is
 that verbatim.exe adds at most 1 to 2 ms, read as section 9 of the design
 defines it: verbatim.exe's own stage at most 1 to 2 ms, and its added hop
@@ -384,7 +384,7 @@ answered (two runs), after the ten selections; after it, 35 and 115 µs,
 before them. The test asserted the order exactly and that the focus waited
 less than one of the slow application's calls after the query.
 
-Removed on 2026-10-11 with the test (stage A step 4 in `docs/roadmap.md`;
+Removed on 2026-10-11 with the test (`docs/roadmap-done.md`, "M4, completed so far";
 `docs/design/focus-pipeline.md`, sections 5 and 9): the outpost handles
 events in the order they arrive, as NVDA does, so this wait can return
 until a UIA focus is judged as it arrives (stage A step 6), and an MSAA

@@ -2,7 +2,7 @@
 
 Status: superseded by `docs/design/communication.md`, which subsumes findings 3, 4, 5 and 7 to 12 and keeps 1, 2 and 6 as its audio step; kept for the record.
 
-Written 2026-10-11. Read-only audit of main at 50877e0. Nothing was built or run. Sources: the code cited by file and line, `docs/design/relay.md`, `docs/performance.md`, `docs/design/phase6-design.md`, `docs/roadmap.md` lines 46 to 62, the scratchpad's `supervisor-latency.md`, and latency lines from the end-to-end runs kept in the scratchpad. Where a figure was measured it says so. Every other cost is labelled as an estimate, with the reasoning.
+Written 2026-10-11. Read-only audit of main at 50877e0. Nothing was built or run. Sources: the code cited by file and line, `docs/archive/relay.md`, `docs/performance.md`, `docs/design/phase6-design.md`, `docs/roadmap.md` lines 46 to 62, the scratchpad's `supervisor-latency.md`, and latency lines from the end-to-end runs kept in the scratchpad. Where a figure was measured it says so. Every other cost is labelled as an estimate, with the reasoning.
 
 ## 1. What the recorded measurements cover, and what they do not
 

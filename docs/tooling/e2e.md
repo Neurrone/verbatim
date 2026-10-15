@@ -19,8 +19,8 @@ machine where you don't want Verbatim actually talking while you script a
 test. eSpeak NG is built with Verbatim, so it needs no installed voices
 either. The capture synth records every `SpeechSequence` with a
 timestamp into an in-memory log and produces only a short quiet tone; the
-end-to-end suite no longer selects it, and it remains for unit tests and
-for by-hand use under this variable. `SilentDevice` plays at real-time speed
+end-to-end suite does not select it; it serves unit tests and
+by-hand use under this variable. `SilentDevice` plays at real-time speed
 into silence: frames leave its queue at the rate a real device would play
 them, so the mixer reports each utterance's audio start and ending at the
 moments a listener would have heard them. `LatencyLedger` therefore still
@@ -654,8 +654,8 @@ runner-direct, `C:\VerbatimLab\verbatim` in the guest), a fragment starting
 at each keyframe, one a second. The capture is stopped as a user stops
 ffmpeg, with `q` on its standard input, which the agent gives it as a pipe
 (`stdin_piped` and `WriteStdin`), and the harness waits for it to exit
-with code 0. Killing ffmpeg loses more than the fragment being written,
-which this guide used to claim was all it lost: the muxer holds every frame since the
+with code 0. Killing ffmpeg loses more than the fragment being written:
+the muxer holds every frame since the
 last keyframe in memory, and up to 32 KB of the fragment before that
 waits in a file buffer that is never flushed, so a killed capture loses
 its last one to two seconds and ends in a cut keyframe. Every recording

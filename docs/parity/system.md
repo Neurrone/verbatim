@@ -59,7 +59,7 @@ NVDA: [The vision framework](../nvda/vision.md),
 [OCR and content recognition](../nvda/ocr-and-content-recognition.md),
 [Secure mode](../nvda/secure-mode.md), [Remote access](../nvda/remote-access.md).
 Verbatim: **not yet (M8)** for the focus highlight, screen curtain and
-OCR, and **not yet (M8.1)** for the secure desktop; remote access is
+OCR, and not yet for the secure desktop (M8.1); remote access is
 M12's.
 
 ### Elevated applications on the user desktop

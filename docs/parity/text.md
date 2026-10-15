@@ -101,7 +101,7 @@ Differences:
 - A caret event alone is not evidence when the caret's position is
   known, since an application's late caret event can belong to an
   earlier key; the position, the characters either side of the caret,
-  or the selection must change. **different** (the wait-for-evidence
+  or the selection must change (the wait-for-evidence
   design, Dickson, 2026-10-08, `docs/design/phase6-design.md`, "What a
   key did to the text").
 - Verbatim never swallows and resends the key, so what Backspace deleted
@@ -131,7 +131,7 @@ Differences:
 - NVDA reports any selection change of the focus after its caret event,
   such as one made with the mouse; Verbatim reports those that keys
   make and those it makes itself (select then copy's first press);
-  those the mouse or the application makes are **not yet (M4.2)**
+  those the mouse or the application makes are not yet reported (M4.2)
   (Dickson, 2026-10-15).
 
 ### A text pattern missing at the focus

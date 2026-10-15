@@ -33,8 +33,9 @@ so far".
 Exit: Notepad editing and Terminal sessions are solid; terminal flood E2E
 shows bounded latency and no hang.
 
-M4 ends when the items below land; the rest of the open work found
-during M4 is scheduled in the milestones that follow.
+M4 ends when the items in the three groups below land; the rest of the
+open work found during M4 is scheduled in the milestones that follow. A
+Deferred list closes the section with items that are not M4's.
 
 What has landed is in [Completed milestones](roadmap-done.md), "M4,
 completed so far". The open work follows in three groups, each one session (Dickson,
@@ -240,7 +241,7 @@ NVDA capture.
   selection-change reporting path built on 2026-10-15 (f964ba30).
 - A foreground UIA progress bar that is not the focus is reported, as
   NVDA does (Dickson, 2026-10-10, as a separate fix); background progress
-  bars stay silent, with no setting.
+  bars are not yet reported (M4.3).
 - Core speaks state changes such as "selected" for a focus that has
   expired.
 - Toasts ([parity](parity/alerts.md), "Toasts"): Verbatim reads them only
@@ -620,9 +621,11 @@ Tiers, gated by the capabilities each module needs:
 - **Tier A — immediately after M5** (needs only extension API v0: events,
   tree queries, speech, gestures): the Windows shell and utility modules —
   Explorer (starting with the cosmetic fixes deferred from M3), Settings,
-  Task Manager, Calculator, search, lock screen and logon UI, Open With,
+  Task Manager, Calculator, search, Open With,
   Notepad, Notepad++, VS Code, Poedit, Spotify, foobar2000, Audacity,
   1Password, basic Zoom and Teams behavior.
+- **Lock screen and logon UI — after M8.1**: reading the sign-in screen
+  needs UIAccess, which M8.1 builds.
 - **Tier B — the terminal clients, in two stages**: Windows Terminal
   workflows are core M4 behavior, and mintty is triaged on its own after M4
   (its ConPTY integration may make it readable stock). PuTTY, SecureCRT,
