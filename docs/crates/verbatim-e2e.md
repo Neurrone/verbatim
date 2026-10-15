@@ -223,9 +223,10 @@ inputs of two steps are never a repeated press for NVDA.
   so the scenario's next action, input or not, does not run ahead of
   NVDA, and mark how many entries the timeline held then.
   `expect_started` and `expect_queued` record their texts and return
-  placeholders without waiting, since they assert speech the next input
-  interrupts, which follows at once, as the second press of a double
-  press does; the assertions on endings, pauses and resumes return at
+  placeholders without waiting for the quiet period, only until NVDA has
+  queued speech in the step (a note says when it queued none within the
+  step timeout), since they assert speech the next input interrupts,
+  which follows at once, as the second press of a double press does; the assertions on endings, pauses and resumes return at
   once, and `ending_of` answers `None`. `require_all_asserted`, before
   every input and every action that changes what is in front, and
   `expect_nothing_more` close the step: they wait for `AwaitIdle` in the

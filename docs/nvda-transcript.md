@@ -230,8 +230,10 @@ step.
 
 Two things keep the waiting from changing what NVDA hears. First, an
 assertion that speech has started, or has been queued, for the next
-input to interrupt does not wait, since that input is meant to follow at
-once: the second press of Verbatim+F10, for example, must come within
+input to interrupt waits only until NVDA has queued speech in the step,
+not for the quiet period, since that input is meant to follow at once, as
+it follows the start of Verbatim's speech in a normal run: the second
+press of Verbatim+F10, for example, must come within
 NVDA's multi-press timeout, 500 ms, for NVDA to copy rather than select
 again. The check before that next input does not wait either, and the
 two steps are compared as one unit: the report shows both inputs,

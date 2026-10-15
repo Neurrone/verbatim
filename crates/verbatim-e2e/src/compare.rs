@@ -23,8 +23,9 @@
 //! since, takes what NVDA said, and closes the step as a [`CompareStep`],
 //! judged by [`CompareStep::verdict`]. A step whose speech the next input
 //! interrupts ([`crate::SpeechCollector::expect_started`],
-//! [`crate::SpeechCollector::expect_queued`]) is not waited for, since that
-//! input follows at once, as the second press of a key pressed twice does;
+//! [`crate::SpeechCollector::expect_queued`]) waits only for NVDA's first
+//! speech in it, not for the quiet period, since that input follows at
+//! once, as the second press of a key pressed twice does;
 //! it is compared together with the step after it, as one unit with both
 //! inputs and one verdict, since NVDA's speech for a rapid double press
 //! cannot be told apart press by press. The quiet period is never less

@@ -48,7 +48,8 @@
 //! under way and waits until `AwaitIdle`, which NVDA's sink answers when
 //! NVDA has been quiet for the quiet period, has been answered, so the
 //! scenario does not run ahead of NVDA, except an assertion on speech the
-//! next input interrupts, which that input follows at once; the check
+//! next input interrupts, which that input follows once NVDA has begun to
+//! speak; the check
 //! before each input or action, and the one at the end, close the step,
 //! waiting again only when anything has happened since.
 //! [`SpeechCollector::compare_mode`] says more.
@@ -1021,7 +1022,8 @@ impl SpeechCollector {
     /// what the scenario does next, input or not, does not run ahead of
     /// NVDA. [`expect_started`](Self::expect_started) and
     /// [`expect_queued`](Self::expect_queued) record their texts and return
-    /// placeholders without waiting, since they assert speech the next
+    /// placeholders without waiting for the quiet period, only until NVDA
+    /// has queued speech in the step, since they assert speech the next
     /// input interrupts, which follows at once, as the second press of a
     /// key pressed twice does. The assertions on endings, pauses and
     /// resumes return at once, and [`ending_of`](Self::ending_of) answers
@@ -1088,9 +1090,15 @@ impl SpeechCollector {
     }
 
     /// In compare mode, records `texts`, speech the next input interrupts,
-    /// as expected in the step under way without waiting for NVDA, which
-    /// leaves the step open ([`Self::close_step`]), and returns `true`;
-    /// otherwise returns `false`.
+    /// as expected in the step under way without waiting for NVDA to be
+    /// quiet, which leaves the step open ([`Self::close_step`]), and
+    /// returns `true`; otherwise returns `false`. It waits only until NVDA
+    /// has queued speech in the step, if it has not yet: the evidence that
+    /// the speech to interrupt has started, as
+    /// [`expect_started`](Self::expect_started) waits for Verbatim's
+    /// utterance to start playing, so the interrupting input comes when it
+    /// does in a run against Verbatim, and never before NVDA has spoken.
+    /// When NVDA queues nothing within the step timeout, a note says so.
     fn record_interrupted<'a>(&mut self, texts: impl IntoIterator<Item = &'a str>) -> bool {
         let Some(comparison) = &mut self.compare else {
             return false;
@@ -1099,6 +1107,19 @@ impl SpeechCollector {
             .expected
             .extend(texts.into_iter().map(str::to_owned));
         comparison.unsettled = true;
+        let deadline = Instant::now() + self.step_timeout;
+        while self.pending.is_empty() {
+            if Instant::now() >= deadline {
+                self.timeline.push_note(&format!(
+                    "NVDA queued no speech within {:?} for the next input to interrupt",
+                    self.step_timeout
+                ));
+                break;
+            }
+            if let Err(error) = self.read_by(deadline) {
+                self.fail(&format!("the speech connection failed: {error}"));
+            }
+        }
         true
     }
 
@@ -1893,8 +1914,10 @@ mod tests {
         speech.compare_mode();
         // The first press's speech is asserted to start, for the second
         // press to cut off: neither it nor the check before the second
-        // press waits for NVDA, which would count the second press as a
-        // repeat only within its multi-press timeout.
+        // press waits for NVDA to be quiet, since NVDA counts the second
+        // press as a repeat only within its multi-press timeout. The
+        // assertion waits only for NVDA's first speech of the step, here
+        // already queued.
         timeline.push_keys(&["insert+f10"]);
         script.feed(vec![queued(1, "Name selected")]);
         let selected = speech.expect_started("Name selected");
@@ -1933,6 +1956,31 @@ mod tests {
                  Verdict: same\n"
             ),
             "{report}"
+        );
+    }
+
+    #[test]
+    fn speech_to_interrupt_in_compare_mode_waits_for_nvda_s_first_speech_or_notes_none() {
+        let timeline = Timeline::new();
+        let (mut speech, mut script) = scripted(timeline.clone());
+        speech.compare_mode();
+        timeline.push_keys(&["insert+f10"]);
+        // Nothing queued: the assertion gives up after the step timeout,
+        // with a note, and asks NVDA nothing.
+        let _ = speech.expect_started("Name selected");
+        assert_eq!(script.requests_sent(), 0);
+        speech.require_all_asserted("before the second press");
+        timeline.push_keys(&["insert+f10"]);
+        script.feed(vec![queued(1, "Copied to clipboard: Name")]);
+        speech.expect(&["Copied to clipboard: Name"]);
+        let steps = speech.take_comparison();
+        assert_eq!(steps.len(), 1, "{steps:?}");
+        assert_eq!(
+            steps[0].notes,
+            [
+                "NVDA queued no speech within 50ms for the next input to interrupt",
+                "the next input or action follows at once and cuts this speech off, so the two are compared as one",
+            ]
         );
     }
 
