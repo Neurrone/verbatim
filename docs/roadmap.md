@@ -407,7 +407,11 @@ near) parity; screen review reads a modern app's screen correctly.
   reports a language per line (decided 2026-10-07).
 - Input help mode; the gesture-remapping configuration GUI; full
   pronunciation/symbol dictionaries and their configuration UI (the
-  data-driven infrastructure exists from M3/M4). With punctuation and
+  data-driven infrastructure exists from M3/M4). The built-in
+  dictionary's letter-to-digit rule, a space wherever a digit follows a
+  letter, is built with them, after checking whether eSpeak NG and
+  OneCore still need it ([speech and audio parity](parity/speech-audio.md),
+  "Letter-to-digit splitting"; Dickson, 2026-10-15). With punctuation and
   symbol levels in place, decide how terminal output's symbol-only lines
   (vim's "~" rows, box-drawing rules) are spoken: M4 speaks them as they
   are, and they should then follow the user's symbol level, as NVDA's

@@ -284,11 +284,12 @@ a digit follows a letter, in everything it speaks, so "issue123" is
 spoken "issue 123" and "e2e" as "e 2e"
 ([Symbols, dictionaries, and character processing](../nvda/symbols-and-dictionaries.md),
 the built-in layer under "Speech dictionaries").
-Verbatim: **not yet (unscheduled)**. Verbatim speaks the text as
-written. Open question, Dickson's (2026-10-15): the rule dates from
-2006 and a pronunciation problem in ViaVoice, and whether current
-synthesizers (eSpeak NG, OneCore) still need it is not known, so it is
-not built until that is checked with them. Until then, compare mode
+Verbatim: **not yet (M8)**, built with punctuation and symbol levels
+(Dickson, 2026-10-15). Verbatim speaks the text as written. Open
+question, Dickson's (2026-10-15): the rule dates from 2006 and a
+pronunciation problem in ViaVoice, and whether current synthesizers
+(eSpeak NG, OneCore) still need it is not known, so it is checked with
+them before it is built. Until then, compare mode
 shows a difference on any spoken name with a digit after a letter.
 
 ### Automatic language switching
