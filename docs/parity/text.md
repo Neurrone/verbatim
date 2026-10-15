@@ -181,7 +181,7 @@ word stops) and the three-way paragraph-style setting. NVDA:
 NVDA removes the left-to-right
 and right-to-left marks from list view items, File Explorer's values,
 and the clock ("Direction marks in names and values" in
-[NVDAObjects](../nvda/object-model.md)). Verbatim: **different**: the
+[NVDAObjects](../nvda/object-model.md)). Verbatim: **different** (deliberately, Dickson, 2026-10-15): the
 outposts remove them, and the embeddings, overrides, and isolates with
 them, from every name, value, and description they read, through UIA
 and MSAA alike, so a date reads the same in any application. In text
