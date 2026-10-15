@@ -120,7 +120,7 @@ Fix verified defects and re-run the relevant judge. When the review finds a bug,
 
 A slice is complete only when its behavior is implemented, its independent judge passes, the relevant documentation is current, every semantic-review finding is resolved or recorded, and every deliberate NVDA divergence it introduced is documented. Then commit.
 
-For a request with several slices, continue to the next unless the user asked for research or planning only, an owner decision blocks safe continuation, required external evidence cannot be obtained here, or proceeding would break repository rules. Do not stop merely because one slice completed, because the requested scope is the measure.
+The session ends at the slice's commit. If the scope held more slices than this one, record the remaining ones in `docs/roadmap.md` in dependency order, with what this slice's research and design settled for them, so the next session starts from the record rather than from the conversation. Start another slice in the same session only when Dickson says to.
 
 A slice left unfinished is the exception. When it happens, leave the repository coherent and record in the appropriate durable artifact the requested scope, the decomposition, completed and remaining slices, unresolved questions, tests or measurements still required, and the next dependency-ordered action, so that a fresh session can resume without the previous conversation.
 
