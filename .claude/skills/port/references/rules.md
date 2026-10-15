@@ -37,7 +37,7 @@ Paste or point to this file in every subagent brief.
 - Clean up: stop processes you started, remove worktrees once merged, delete
   large traces once read, and release held keys, because leftovers break the
   next run and fill the disk.
-- Do not stop while work in the slice remains; when a question needs
+- Do not stop while work in the scope remains; when a question needs
   Dickson, record it and continue with everything it does not block,
   because a turn that ends on a question idles until he reads it.
 - Platform-neutral crates (listed in `CLAUDE.md`) contain only original code

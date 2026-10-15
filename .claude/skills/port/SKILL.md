@@ -17,13 +17,13 @@ $ARGUMENTS
 
 This is a redesign migration, not a source-to-source translation. NVDA is a behavioral and implementation reference; Verbatim deliberately has different architecture. Preserve behavior that Verbatim has chosen to match, and do not preserve NVDA implementation structure merely because it exists, since it answers constraints Verbatim does not have.
 
-A session normally runs one slice from research through design, judge, implementation, review, and documentation to a commit. The files under `references/` hold the checklists and templates; each phase says when to read one.
+A session runs the scope from research through design, judge, implementation, review, and documentation to a commit. The files under `references/` hold the checklists and templates; each phase says when to read one.
 
 ## Operating principles
 
-A narrow request remains narrow. Do not expand a specific behavior into a general rewrite unless that is necessary to implement it correctly, because a widened scope does not fit one session.
+A narrow request remains narrow. Do not expand a specific behavior into a general rewrite unless that is necessary to implement it correctly, because a widened scope is what made past sessions run for days.
 
-The requested scope defines what success means; slices define how to reach it safely. A broad scope may contain many small vertical slices, each leaving the repository in a coherent, tested state.
+The requested scope defines what success means. The steps that reach it are chosen for safety: each leaves the repository coherent and tested.
 
 Divide the labour this way. The parent conversation reads the relevant sections of the durable docs, makes the design decisions with Dickson, writes briefs, reads reports, decides, and commits. Subagents do the NVDA research, returning the causal path and the preserve, replace, and omit list rather than file contents; the implementation and test work; and the review. The parent does not run cargo build, test, clippy, `cargo xtask ci`, or end-to-end scenarios itself, does not read source files at length, and does not re-run what a subagent has reported, because in past sessions that, not the hand-offs, was where the tokens went. Research subagents that only read and summarize can be Sonnet; implementation and review subagents are Opus.
 
@@ -47,17 +47,17 @@ Keep these current as part of the port. Do not create a second source of truth m
 
 Read parity entries and sections of `docs/nvda/` and `docs/design/` with `python -I .claude/skills/port/scripts/entry.py <file> "<name>"`, which prints one entry or section, rather than grep or sed over the whole file: these files are thousands of lines and were pulled into the parent's context hundreds of times in past sessions.
 
-## Size the scope
+## Confirm the scope
 
-Before phase 1, state the slice's end condition and judge whether research through commit fits one session. If it does not, narrow the slice now to one behavior, one backend, or one application, rather than planning several slices and carrying work over. A session whose scope was a whole milestone ran for eight days with fourteen context compactions and consumed most of the project's token budget; sessions that resumed one item from a written plan ran at a third of the context size.
+Before anything else, write down what the scope means in concrete terms: the behavior that will exist at the end, which applications and backends it covers, what is heard or asserted that is not heard or asserted today, and what is deliberately out. Where the request leaves this open, say what reading was taken and why, and ask Dickson before design begins. Scope that is only understood implicitly is how past sessions grew from one item into a whole milestone and ran for days.
 
-## Phase 1: Establish the current state and decompose the scope
+## Phase 1: Establish the current state and order the work
 
 Read the relevant parts of `docs/readme.md` to choose the shortest authoritative reading path, then the relevant architecture decisions, parity entries, `docs/nvda/` documents, and crate and design documentation, reading parity entries and sections with `scripts/entry.py` as above. Leave the Verbatim implementation and the NVDA source to research subagents. If existing documentation already establishes a fact, do not rediscover it unless current code or NVDA source gives reason to doubt it.
 
-If the scope contains several behaviors, decompose it into dependency-ordered vertical slices, each crossing the layers needed to make one behavior real rather than consisting of arbitrary files. For an event subsystem, slices might be registration and lifetime, raw intake, coalescing and ordering, normalization, focus and foreground behavior, acceptance filtering, backend arbitration, stale-event handling, reducer effects, speech consequences, and restart behavior; derive the actual decomposition from the subsystem and the repository. For each slice identify the behavior it delivers, its prerequisites, the affected crates, the independent evidence that will prove it, and which later slices depend on it. Map the scope well enough that an early slice is unlikely to force an architectural reversal later. For a narrow request, this phase may be a few sentences.
+If the scope contains several behaviors, order the work into dependency-ordered steps, each crossing the layers needed to make one behavior real rather than consisting of arbitrary files. For an event subsystem, steps might be registration and lifetime, raw intake, coalescing and ordering, normalization, focus and foreground behavior, acceptance filtering, backend arbitration, stale-event handling, reducer effects, speech consequences, and restart behavior; derive the actual order from the subsystem and the repository. For each step identify the behavior it delivers, its prerequisites, the affected crates, the independent evidence that will prove it, and which later steps depend on it. Map the scope well enough that an early step is unlikely to force an architectural reversal later. For a narrow request, this phase may be a few sentences.
 
-For a scope with several slices, do the smallest slice end to end first, as a shakedown, and note which rules this skill, the design, or the parity entry lacked before trusting the decomposition. The migration write-ups this skill draws on all found their critical rule gaps on a three-file trial, not in planning.
+For a scope with several steps, do the smallest one end to end first, as a shakedown, and note which rules this skill, the design, or the parity entry lacked before trusting the plan. The migration write-ups this skill draws on all found their critical rule gaps on a three-file trial, not in planning.
 
 ## Phase 2: Establish what NVDA actually does
 
@@ -98,7 +98,7 @@ Once the behavioral contract, design decisions, and expected results are establi
 
 If implementation shows the agreed specification is wrong, stop the loop, return to research or design, establish the new evidence, amend the durable specification explicitly, and then resume against the amendment. Keep correcting the specification and accommodating the implementation separate.
 
-## Phase 7: Implement dependency-first, one coherent slice at a time
+## Phase 7: Implement dependency-first, one coherent step at a time
 
 Brief implementation subagents in dependency order. Fix root causes rather than adding a mechanism for each failure, because the outpost code once became a pile of independent mechanisms each added for one live failure and had to be redesigned.
 
@@ -106,26 +106,24 @@ Ported code in the Windows-tier (GPL) crates cites, in a comment, the NVDA sourc
 
 ## Phase 8: Verify progressively
 
-Use cheap proofs before expensive ones: the narrowest unit or crate checks after a local change, the targeted cross-process or end-to-end scenarios after a completed slice, and `cargo xtask ci` under the repository's normal rules. Do not run the whole end-to-end suite by default, because it takes a long time; follow `CLAUDE.md` and `docs/tooling.md` for when a full run is justified.
+Use cheap proofs before expensive ones: the narrowest unit or crate checks after a local change, the targeted cross-process or end-to-end scenarios after a completed step, and `cargo xtask ci` under the repository's normal rules. Do not run the whole end-to-end suite by default, because it takes a long time; follow `CLAUDE.md` and `docs/tooling.md` for when a full run is justified.
 
 A passing compiler is not behavioral evidence, and a newly written test passing does not by itself prove that it asserts the right contract.
 
 ## Phase 9: Perform an adversarial semantic review
 
-Have a review subagent review the slice as if it is subtly wrong despite passing its tests. It runs in a separate context from the implementer, because the writer of code wants it accepted. Give it `references/review.md`. Every suspected defect needs a concrete counterexample, a violated invariant, or a missing piece of evidence.
+Have a review subagent review the result as if it is subtly wrong despite passing its tests. It runs in a separate context from the implementer, because the writer of code wants it accepted. Give it `references/review.md`. Every suspected defect needs a concrete counterexample, a violated invariant, or a missing piece of evidence.
 
-Fix verified defects and re-run the relevant judge. When the review finds a bug, sweep the slice for the same class before closing it. If the same class recurs across slices, stop treating each instance as independent: determine whether the design, parity description, test strategy, or this skill lacks a rule, and fix that before continuing.
+Fix verified defects and re-run the relevant judge. When the review finds a bug, sweep the whole change for the same class before closing. If the same class recurs across steps or sessions, stop treating each instance as independent: determine whether the design, parity description, test strategy, or this skill lacks a rule, and fix that before continuing.
 
-## Phase 10: Close the slice
+## Phase 10: Close the scope
 
-A slice is complete only when its behavior is implemented, its independent judge passes, the relevant documentation is current, every semantic-review finding is resolved or recorded, and every deliberate NVDA divergence it introduced is documented. Then commit.
+The scope is delivered only when its behavior is implemented as confirmed at the start, its independent judge passes, the relevant documentation is current, every semantic-review finding is resolved or recorded, and every deliberate NVDA divergence it introduced is documented. Then commit, and the session ends there.
 
-The session ends at the slice's commit. If the scope held more slices than this one, record the remaining ones in `docs/roadmap.md` in dependency order, with what this slice's research and design settled for them, so the next session starts from the record rather than from the conversation. Start another slice in the same session only when Dickson says to.
-
-A slice left unfinished is the exception. When it happens, leave the repository coherent and record in the appropriate durable artifact the requested scope, the decomposition, completed and remaining slices, unresolved questions, tests or measurements still required, and the next dependency-ordered action, so that a fresh session can resume without the previous conversation.
+A scope left unfinished is the exception. When it happens, leave the repository coherent and record in the appropriate durable artifact the confirmed scope, the work order, completed and remaining steps, unresolved questions, tests or measurements still required, and the next dependency-ordered action, so that a fresh session can resume without the previous conversation.
 
 ## Final report
 
-Report concisely: the requested scope; what was researched; the important preserve, replace, and omit decisions; slices completed; tests and other judges run, with results; documentation changed; semantic-review findings and their disposition; remaining work within the scope; and the exact next slice if work remains.
+Report concisely: the confirmed scope; what was researched; the important preserve, replace, and omit decisions; steps completed; tests and other judges run, with results; documentation changed; semantic-review findings and their disposition; remaining work within the scope; and the exact next step if work remains.
 
 Report concrete evidence rather than general confidence. Do not claim parity, correctness, or completion beyond what the judge actually established, because the next session builds on the claim.

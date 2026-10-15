@@ -4,13 +4,13 @@ Every brief the parent writes to a research, implementation, or review
 subagent has the parts below, each as a heading. The subagent starts with
 nothing but the brief, so the brief carries everything it needs.
 
-## The slice and its end condition
+## The task and its end condition
 
-What the slice delivers, stated so that a reader can tell when it is done.
+What the task delivers, stated so that a reader can tell when it is done.
 
 ## Done so far and what remains
 
-What earlier slices or subagents finished, with commit hashes, and what this
+What earlier steps or subagents finished, with commit hashes, and what this
 subagent is to do.
 
 ## What to read

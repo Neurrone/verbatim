@@ -1,6 +1,6 @@
 # Semantic-review targets
 
-Give this list to the review subagent in phase 9. Review the slice as if it
+Give this list to the review subagent in phase 9. Review the change as if it
 is subtly wrong despite passing its tests. Look especially for:
 
 - an omitted stage in the NVDA causal path;
