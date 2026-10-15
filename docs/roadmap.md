@@ -231,6 +231,12 @@ in the dated section named with each item.
 
 ### Other open items
 
+- Announce a selection change of the focus that no key and no Verbatim
+  command made, such as one made with the mouse or by the application,
+  as NVDA reports any selection change after its caret event (Dickson,
+  2026-10-15; [text parity](parity/text.md), "TextInfo-equivalent
+  layer"). The pieces are the outpost's caret watch and the
+  selection-change reporting path built on 2026-10-15 (f964ba30).
 - A test that UIA text fields are read by parts (coherence review,
   2026-10-09).
 - Text fields: on the classic text path `UiaText::caret_read`

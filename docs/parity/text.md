@@ -128,8 +128,9 @@ Differences:
   row, though the caret went up a row; NVDA is silent.
 - NVDA reports any selection change of the focus after its caret event,
   such as one made with the mouse; Verbatim reports those that keys
-  make and those it makes itself (select then copy's first press), and
-  not those the mouse or the application makes.
+  make and those it makes itself (select then copy's first press);
+  those the mouse or the application makes are **not yet (M4)**
+  (Dickson, 2026-10-15).
 
 ### A text pattern missing at the focus
 
