@@ -269,6 +269,21 @@ NVDA capture.
   their window; and an end-to-end test in both terminals that a reviewed
   line stays on its text as new output is written below it ("Revised").
 
+- Three differences the first compare-mode runs found on 2026-10-15,
+  each to be captured, decided and recorded as a parity entry: NVDA leaves
+  out the second "spelling error" in a line with two misspellings, where
+  Verbatim says it for each (`spelling_errors`, steps 2 and 11); NVDA says
+  "ready greater" at a shell prompt where Verbatim leaves the symbol out
+  (`windows_terminal_commands`, the first prompt; a symbol-level question
+  first, as docs/nvda-transcript.md's settings note says); and the
+  phonetic words after a character on some review gestures, to be checked
+  again with NVDA's delayed character descriptions off.
+- Two compare-mode limits, fixed when they get in the way: every
+  comparison's start step differs because NVDA says nothing about a
+  desktop already in front, so the report could treat the start step as
+  not compared; and `terminal_overflow`'s go files (`phased-go`,
+  `phased-go-2`) do not start their own step.
+
 Exit: each entry is matched (verified) by a scenario, with a declared
 deviation where Dickson chose one, checked with compare mode.
 
