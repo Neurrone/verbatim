@@ -57,8 +57,8 @@ enum TimelineKind {
         /// The entry's heading.
         entry: String,
     },
-    /// The step's input is Verbatim's own, with nothing to press for NVDA,
-    /// in compare mode: what it was, such as `gesture kb:verbatim+v`.
+    /// The step's input is Verbatim's own, a control-plane request with no
+    /// key to press for NVDA, in compare mode: what it was.
     VerbatimOnly(String),
 }
 
@@ -186,8 +186,8 @@ impl Timeline {
         });
     }
 
-    /// Records that the step under way is Verbatim's own, `what` saying
-    /// why, such as `gesture kb:verbatim+v`.
+    /// Records that the step under way is Verbatim's own, a control-plane
+    /// request with no key to press for NVDA, `what` saying which.
     pub fn push_verbatim_only(&self, what: &str) {
         self.push(TimelineKind::VerbatimOnly(what.to_owned()));
     }
@@ -215,6 +215,15 @@ impl Timeline {
             }
         }
         (step, entries.len())
+    }
+
+    /// How many entries the timeline holds: compare mode's mark of whether
+    /// anything has happened since NVDA was last found quiet.
+    pub(crate) fn entry_count(&self) -> usize {
+        self.entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
     }
 
     fn push(&self, kind: TimelineKind) {

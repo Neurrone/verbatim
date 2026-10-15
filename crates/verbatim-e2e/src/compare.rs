@@ -10,17 +10,20 @@
 //! Verbatim and reads NVDA's speech from the transcript add-on
 //! ([`crate::nvda`]), and its [`crate::SpeechCollector`] records each
 //! assertion's texts against the step under way instead of checking them.
-//! A step runs from one input to the next. Before each input, and at the
-//! end, the collector waits until NVDA has queued nothing for the quiet
-//! period ([`QUIET_ENV`]), takes what NVDA said, and closes the step as a
-//! [`CompareStep`], judged by [`CompareStep::verdict`]. The registry
+//! A step runs from one input to the next. Each assertion waits until NVDA
+//! has queued nothing for the quiet period ([`QUIET_ENV`]), so the
+//! scenario does not run ahead of NVDA. Before each input, and at the end,
+//! the collector waits the same way unless NVDA was found quiet and
+//! nothing has happened since, takes what NVDA said, and closes the step
+//! as a [`CompareStep`], judged by [`CompareStep::verdict`]. The registry
 //! writes the steps as `compare.txt` in the run's artifacts
 //! ([`render_report`]) and prints it.
 //!
 //! A step a scenario declares deliberately different from NVDA
 //! ([`crate::Scenario::deviates_from_nvda`]) is judged as declared, and a
-//! step whose input is Verbatim's own, such as a gesture with the Verbatim
-//! modifier, which is not pressed for NVDA, as Verbatim-only. A sound
+//! step whose input is Verbatim's own, a control-plane request with no key
+//! to press for NVDA, as Verbatim-only; a gesture is pressed as keys, the
+//! Verbatim modifier as Insert, and compared like any other step. A sound
 //! Verbatim is expected to play is listed but not compared, since the
 //! add-on records no sounds.
 
@@ -419,7 +422,7 @@ mod tests {
     #[test]
     fn a_verbatim_only_step_is_never_compared() {
         let mut only = step(&["Verbatim", "Context menu"], &[]);
-        only.verbatim_only = Some("gesture kb:verbatim+v".to_owned());
+        only.verbatim_only = Some("a control-plane request".to_owned());
         assert_eq!(only.verdict(), Verdict::VerbatimOnly);
     }
 
@@ -458,8 +461,8 @@ mod tests {
         cut.notes
             .push("NVDA's speech did not settle within 15s".to_owned());
         let mut menu = step(&[], &[]);
-        menu.input = "gesture kb:verbatim+v".to_owned();
-        menu.verbatim_only = Some("gesture kb:verbatim+v".to_owned());
+        menu.input = "a control-plane request".to_owned();
+        menu.verbatim_only = Some("a control-plane request".to_owned());
         assert_eq!(
             render_report(&header, &[start, cut, menu]),
             "Comparing text_box_review_cursor with NVDA\n\
@@ -487,8 +490,8 @@ mod tests {
              Note: NVDA's speech did not settle within 15s\n\
              Verdict: declared deviation: Review cursor columns\n\
              \n\
-             Step 3: gesture kb:verbatim+v\n\
-             Verbatim-only: gesture kb:verbatim+v\n\
+             Step 3: a control-plane request\n\
+             Verbatim-only: a control-plane request\n\
              Verbatim:\n\
              \x20 (nothing)\n\
              NVDA:\n\

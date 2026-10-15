@@ -31,10 +31,9 @@
 //! In compare mode ([`crate::compare`]) a scenario runs against NVDA
 //! instead: no Verbatim is launched, its speech is NVDA's, read from the
 //! transcript add-on ([`crate::nvda`]), and what needs Verbatim itself, such
-//! as its status or its processes, is an error. A gesture with the
-//! Verbatim modifier is not pressed and makes its step Verbatim's own; any
-//! other keyboard gesture is pressed as keys, which NVDA's desktop layout
-//! binds as Verbatim's does.
+//! as its status or its processes, is an error. A keyboard gesture is
+//! pressed as keys, the Verbatim modifier as Insert, and whatever NVDA does
+//! with them is what the step records.
 
 use std::fmt::Write as _;
 use std::fs;
@@ -652,11 +651,11 @@ impl Scenario {
     /// the keys had been pressed (`Request::SendGesture`), once every
     /// utterance heard so far has been asserted.
     ///
-    /// In compare mode a keyboard gesture with the Verbatim modifier, such
-    /// as `kb:verbatim+v`, presses nothing and makes the step Verbatim's
-    /// own, and any other keyboard gesture, such as `kb:numpad8`, is
-    /// pressed through the agent as [`Scenario::send_keys`] presses keys,
-    /// since NVDA's desktop layout binds the same plain keys.
+    /// In compare mode a keyboard gesture is pressed through the agent as
+    /// [`Scenario::send_keys`] presses keys, the Verbatim modifier as
+    /// Insert, NVDA's modifier: `kb:verbatim+v` as `insert+v`, and
+    /// `kb:numpad8` as `numpad8`. Whatever NVDA does with the keys is what
+    /// the step records.
     ///
     /// # Errors
     ///
@@ -688,12 +687,8 @@ impl Scenario {
                 "compare mode presses keyboard gestures only, not {identifier}"
             ))
         })?;
-        if keys.split('+').any(|key| key == "verbatim") {
-            self.timeline
-                .push_verbatim_only(&format!("gesture {identifier}"));
-            return Ok(());
-        }
-        self.last_input = Some(self.agent.send_keys(&[keys.to_owned()])?);
+        let keys = nvda_keys(keys);
+        self.last_input = Some(self.agent.send_keys(&[keys])?);
         Ok(())
     }
 
@@ -2449,6 +2444,15 @@ fn close_documents(agent: &mut AgentClient, opened: &[Launched]) -> io::Result<(
     Ok(())
 }
 
+/// The keys a gesture's plus-joined `keys` press for NVDA in compare mode:
+/// the same keys, with the Verbatim modifier pressed as Insert.
+fn nvda_keys(keys: &str) -> String {
+    keys.split('+')
+        .map(|key| if key == "verbatim" { "insert" } else { key })
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
 /// The error compare mode gives for what needs Verbatim: there is no
 /// Verbatim to `what`.
 fn no_verbatim(what: &str) -> io::Error {
@@ -2953,6 +2957,13 @@ mod tests {
         ));
         assert!(!outpost_log_names("listener.log", 29864));
         assert!(!outpost_log_names("synth-espeak.log", 29864));
+    }
+
+    #[test]
+    fn compare_mode_presses_the_verbatim_modifier_as_insert() {
+        assert_eq!(nvda_keys("verbatim+v"), "insert+v");
+        assert_eq!(nvda_keys("verbatim+shift+f9"), "insert+shift+f9");
+        assert_eq!(nvda_keys("numpad8"), "numpad8");
     }
 
     fn temp_dir(name: &str) -> PathBuf {

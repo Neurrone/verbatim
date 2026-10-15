@@ -211,12 +211,16 @@ It is a research instrument, not a test, and never runs in CI.
   with a note on the timeline that NVDA's speech did not settle: the
   capture's settling rule applied as the harness's barrier.
 - The collector (`SpeechCollector::compare_mode`). The assertions on
-  speech record their texts against the step under way and return at
-  once; `expect_started` and `expect_queued` return placeholders, the
-  assertions on endings, pauses and resumes return at once, and
-  `ending_of` answers `None`. `require_all_asserted`, before every input,
-  and `expect_nothing_more` close the step: they send `AwaitIdle`, read
-  everything until its answer, and record a `compare::CompareStep` from
+  speech record their texts against the step under way, send
+  `AwaitIdle` and read everything until its answer, so the scenario's
+  next action, input or not, does not run ahead of NVDA, and mark how
+  many entries the timeline held then; `expect_started` and
+  `expect_queued` return placeholders, the assertions on endings, pauses
+  and resumes return at once, and `ending_of` answers `None`.
+  `require_all_asserted`, before every input, and `expect_nothing_more`
+  close the step: they wait for `AwaitIdle` in the same way unless the
+  timeline holds no entry since that mark, so an input right after an
+  assertion does not wait twice, and record a `compare::CompareStep` from
   the timeline's entries since the step before (`Timeline::step_since`)
   and the texts expected. `take_until`, `take_until_idle` and
   `take_all_queued` cannot keep their promises without Verbatim and fail
@@ -227,17 +231,16 @@ It is a research instrument, not a test, and never runs in CI.
   connects to the transcript in the agent's session, before minimizing,
   so NVDA's announcement of the desktop is heard; it launches no Verbatim
   and records no video, and refuses a remote run. `is_comparing` says
-  which mode a run is in. `send_gesture` presses nothing for a gesture
-  with the Verbatim modifier, `kb:verbatim+v`, and marks its step
-  Verbatim's own on the timeline; any other keyboard gesture, such as
-  `kb:numpad8`, is pressed as keys, which NVDA's desktop layout binds as
-  Verbatim's does. What needs Verbatim itself (`status`,
+  which mode a run is in. `send_gesture` presses every keyboard gesture
+  as keys, the Verbatim modifier as Insert (`kb:verbatim+v` as
+  `insert+v`, `kb:numpad8` as `numpad8`), and whatever NVDA does with
+  them is what the step records. What needs Verbatim itself (`status`,
   `subscribe_events`, `verbatim_children`, `end_verbatim_process`,
   `send_keys_from_verbatim`, and the checks after the body) is an error.
   A wait on one of Verbatim's events has no NVDA equivalent, so
   `terminal::expect_prompt_read`, `text_box::paste` and
   `terminal_flood::watch_for_prompt` skip theirs in compare mode, and the
-  quiet period waited for before the next input stands in.
+  quiet period the assertion after it waits for stands in.
 - Declared differences. `Scenario::deviates_from_nvda(file, entry)`,
   called after a step's input, records on the timeline that the step
   deliberately differs from NVDA, as the parity entry headed `entry` in
@@ -269,7 +272,8 @@ It is a research instrument, not a test, and never runs in CI.
   deviation and note, and one verdict (`CompareStep::verdict`): "same"
   when NVDA's speech is exactly the texts expected, sounds left out;
   "differs"; "declared deviation: <entry>"; "declared, but NVDA agrees:
-  <entry>", worth a look; or "Verbatim-only". A summary counts each
+  <entry>", worth a look; or "Verbatim-only", for a control-plane step
+  with no key at all, never for a gesture. A summary counts each
   verdict.
 
 ## Input

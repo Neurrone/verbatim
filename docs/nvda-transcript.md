@@ -211,9 +211,15 @@ The command checks the agent is reachable, then runs
 variables with the usual `cargo test` command do the same.
 
 A step runs from one input, a key, typed text, or a gesture, to the next.
-Before each input, and at the end, the harness waits until NVDA has
-queued nothing for the quiet period, the capture's settling rule, and
-takes what NVDA said in the step. The report starts with the scenario's
+Every speech assertion waits until NVDA has queued nothing for the quiet
+period, the capture's settling rule, so what the scenario does after it,
+such as writing a file a shell waits for, does not run ahead of NVDA.
+Before each input, and at the end, the harness waits the same way,
+unless NVDA was already found quiet and nothing has happened since, and
+takes what NVDA said in the step. A gesture is pressed as keys, the
+Verbatim modifier as Insert, NVDA's modifier: `kb:verbatim+v` as
+`insert+v`, and `kb:numpad8` as `numpad8`. Whatever NVDA does with them
+is what the step records. The report starts with the scenario's
 name, the date, NVDA's version, the `nvda` submodule's pin, and the
 quiet period; it says "pin differs from the installed build" when the
 commit the NVDA version names is not the pin, since the expectations
@@ -232,13 +238,12 @@ cancelled speech; and one verdict:
 - "declared, but NVDA agrees: <entry>": the scenario declares a
   difference, but NVDA said the same; worth a look, since the difference
   may have gone, or the declaration may be on the wrong step.
-- "Verbatim-only": the step's input is Verbatim's own, a gesture with the
-  Verbatim modifier, such as `kb:verbatim+v` for Verbatim's menu, which
-  is not pressed for NVDA. Any other gesture, such as `kb:numpad8`, is
-  pressed as a key, since NVDA's desktop layout binds the same keys. The
-  steps after a Verbatim-only step run as they are written, so their
-  comparison means less: a say-all that never started, for example,
-  leaves NVDA quiet where Verbatim reads on.
+- "Verbatim-only": the step's input is a request to Verbatim's control
+  plane with no key at all, so nothing is pressed for NVDA and nothing
+  is compared. A gesture is never Verbatim-only: `kb:verbatim+f9`, for
+  example, is pressed as `insert+f9`, and its step is judged like any
+  other, "same" when NVDA's command says what Verbatim's does and
+  "differs" otherwise.
 
 A summary at the end counts each verdict.
 
@@ -261,7 +266,7 @@ Verbatim (`menu_and_settings_dialog`, `object_navigation_in_settings`,
 demonstrations and the measure set. Where a scenario waits for one of
 Verbatim's events, such as Core receiving a terminal's caret on its
 prompt, compare mode has no such evidence and relies on the quiet period
-before the next input instead.
+each assertion waits for instead.
 
 ## Changing the add-on
 

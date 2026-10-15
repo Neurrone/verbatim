@@ -342,8 +342,8 @@ pub struct ScenarioDef {
 /// ([`crate::compare`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Comparable {
-    /// It can: everything it does has an NVDA equivalent, or is a step of
-    /// Verbatim's own that the report marks as such.
+    /// It can: everything it does has an NVDA equivalent, or is a
+    /// control-plane step of Verbatim's own that the report marks as such.
     Yes,
     /// It cannot, for the reason given, such as needing Verbatim's
     /// processes, its status, or its own dialogs; compare mode refuses it

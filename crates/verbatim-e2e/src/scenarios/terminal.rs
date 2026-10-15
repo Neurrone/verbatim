@@ -576,6 +576,11 @@ pub(crate) fn title(state: &ScenarioState) -> &str {
 /// full. The console host reports its caret some time after its text, and
 /// the review cursor follows the caret, so the line is read only once Core
 /// has received the caret on the prompt.
+///
+/// Windows Terminal's announcement, which names its text area after the
+/// window's title, ends with "blank" for the empty line, which NVDA leaves
+/// out; the step is declared to differ for every Windows Terminal window
+/// and tab here.
 pub(crate) fn expect_prompt_read(
     scenario: &mut Scenario,
     state: &ScenarioState,
@@ -587,9 +592,12 @@ pub(crate) fn expect_prompt_read(
     else {
         panic!("a terminal scenario's setup opens a terminal window");
     };
+    if announcement.contains(&format!("{title} terminal").as_str()) {
+        scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
+    }
     scenario.speech().expect(announcement);
     // In compare mode NVDA offers no events, and its quiet period, waited
-    // for before the next input, is the only evidence there is.
+    // for by each assertion, is the only evidence there is.
     let mut events = (!scenario.is_comparing()).then(|| {
         scenario
             .subscribe_events()

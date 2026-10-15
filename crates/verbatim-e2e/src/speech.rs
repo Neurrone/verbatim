@@ -45,10 +45,11 @@
 //! In compare mode ([`crate::compare`]), the collector reads NVDA's speech
 //! through the same kind of source and sink ([`crate::nvda`]) and asserts
 //! nothing: each assertion records its expected texts against the step
-//! under way and returns at once, and the check before each input, and the
-//! one at the end, close the step instead, once `AwaitIdle`, which NVDA's
-//! sink answers when NVDA has been quiet for the quiet period, has been
-//! answered. [`SpeechCollector::compare_mode`] says more.
+//! under way and waits until `AwaitIdle`, which NVDA's sink answers when
+//! NVDA has been quiet for the quiet period, has been answered, so the
+//! scenario does not run ahead of NVDA; the check before each input, and
+//! the one at the end, close the step, waiting again only when anything
+//! has happened since. [`SpeechCollector::compare_mode`] says more.
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fmt::Write as _;
@@ -307,11 +308,13 @@ pub struct SpeechCollector {
 }
 
 /// Compare mode's record: the steps closed so far, the texts expected in
-/// the step under way, and the timeline entry that step begins at.
+/// the step under way, the timeline entry that step begins at, and how
+/// many entries the timeline held when NVDA was last found quiet.
 struct Comparison {
     steps: Vec<CompareStep>,
     expected: Vec<String>,
     from: usize,
+    settled_at: Option<usize>,
 }
 
 impl SpeechCollector {
@@ -1010,15 +1013,18 @@ impl SpeechCollector {
     /// [`expect_within`](Self::expect_within),
     /// [`expect_started`](Self::expect_started) and
     /// [`expect_queued`](Self::expect_queued) record their texts against
-    /// the step under way and return at once, the last two with
-    /// placeholders. The assertions on endings, pauses and resumes return
-    /// at once, and [`ending_of`](Self::ending_of) answers `None`.
+    /// the step under way and wait for `AwaitIdle`'s answer, which NVDA's
+    /// sink gives once NVDA has queued nothing for the quiet period, so
+    /// what the scenario does next, input or not, does not run ahead of
+    /// NVDA; the last two return placeholders. The assertions on endings,
+    /// pauses and resumes return at once, and
+    /// [`ending_of`](Self::ending_of) answers `None`.
     /// [`require_all_asserted`](Self::require_all_asserted), before every
     /// input, and [`expect_nothing_more`](Self::expect_nothing_more) close
-    /// the step: they wait for `AwaitIdle`'s answer, which NVDA's sink
-    /// gives once NVDA has queued nothing for the quiet period, and record
-    /// the step as a [`CompareStep`] from what the timeline holds since the
-    /// step before and the texts expected. [`take_until`](Self::take_until),
+    /// the step: they wait for `AwaitIdle`'s answer in the same way, unless
+    /// NVDA was found quiet and the timeline has had nothing since, and
+    /// record the step as a [`CompareStep`] from what the timeline holds
+    /// since the step before and the texts expected. [`take_until`](Self::take_until),
     /// [`take_until_idle`](Self::take_until_idle) and
     /// [`take_all_queued`](Self::take_all_queued) cannot keep their
     /// promises without Verbatim, and fail as a harness error.
@@ -1027,6 +1033,7 @@ impl SpeechCollector {
             steps: Vec::new(),
             expected: Vec::new(),
             from: 0,
+            settled_at: None,
         });
     }
 
@@ -1053,8 +1060,9 @@ impl SpeechCollector {
             .unwrap_or_default()
     }
 
-    /// In compare mode, records `texts` as expected in the step under way
-    /// and returns `true`; otherwise returns `false`.
+    /// In compare mode, records `texts` as expected in the step under way,
+    /// waits for NVDA to be quiet ([`Self::settle`]), and returns `true`;
+    /// otherwise returns `false`.
     fn record_expected<'a>(&mut self, texts: impl IntoIterator<Item = &'a str>) -> bool {
         let Some(comparison) = &mut self.compare else {
             return false;
@@ -1062,14 +1070,33 @@ impl SpeechCollector {
         comparison
             .expected
             .extend(texts.into_iter().map(str::to_owned));
+        self.settle();
         true
     }
 
-    /// Closes compare mode's step under way: waits for NVDA to be quiet
-    /// (`AwaitIdle`), reads what has arrived, and records the step.
-    fn close_step(&mut self) {
+    /// In compare mode, waits for NVDA to be quiet (`AwaitIdle`), reads
+    /// what has arrived, and marks how many entries the timeline then
+    /// held, as they were when the answer came.
+    fn settle(&mut self) {
         self.await_idle(None);
+        let count = self.timeline.entry_count();
         self.read_arrived();
+        if let Some(comparison) = &mut self.compare {
+            comparison.settled_at = Some(count);
+        }
+    }
+
+    /// Closes compare mode's step under way: waits for NVDA to be quiet,
+    /// unless it was found quiet and the timeline has had nothing since,
+    /// reads what has arrived, and records the step.
+    fn close_step(&mut self) {
+        let settled = self
+            .compare
+            .as_ref()
+            .and_then(|comparison| comparison.settled_at);
+        if settled != Some(self.timeline.entry_count()) {
+            self.settle();
+        }
         self.pending.clear();
         self.pauses.clear();
         self.record_step();
@@ -1363,15 +1390,19 @@ mod tests {
         }
     }
 
-    /// Answers `AwaitIdle` at once, after the frames fed before it.
+    /// Answers `AwaitIdle` at once, after the frames fed before it,
+    /// counting the requests in `sent`.
     struct ScriptedSink {
         frames: mpsc::Sender<Option<Frame>>,
         next_id: u64,
+        sent: std::sync::Arc<std::sync::atomic::AtomicU64>,
     }
 
     impl RequestSink for ScriptedSink {
         fn send(&mut self, _request: Request) -> io::Result<u64> {
             self.next_id += 1;
+            self.sent
+                .store(self.next_id, std::sync::atomic::Ordering::SeqCst);
             self.frames
                 .send(Some(Frame::Reply {
                     to: self.next_id,
@@ -1393,9 +1424,15 @@ mod tests {
         feed: mpsc::Sender<Option<Frame>>,
         idle: mpsc::Receiver<usize>,
         fed: usize,
+        sent: std::sync::Arc<std::sync::atomic::AtomicU64>,
     }
 
     impl Script {
+        /// How many requests the collector has sent its sink.
+        fn requests_sent(&self) -> u64 {
+            self.sent.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
         /// Feeds `frames` and waits until the reader thread has passed
         /// every one on, so each is on the timeline and waiting for the
         /// collector.
@@ -1414,6 +1451,7 @@ mod tests {
     fn scripted(timeline: Timeline) -> (SpeechCollector, Script) {
         let (feed, frames) = mpsc::channel();
         let (idle, handed) = mpsc::channel();
+        let sent = std::sync::Arc::default();
         let speech = SpeechCollector::from_source(
             Box::new(Scripted {
                 frames,
@@ -1423,6 +1461,7 @@ mod tests {
             Box::new(ScriptedSink {
                 frames: feed.clone(),
                 next_id: 0,
+                sent: std::sync::Arc::clone(&sent),
             }),
             timeline,
             SHORT,
@@ -1432,6 +1471,7 @@ mod tests {
             feed,
             idle: handed,
             fed: 0,
+            sent,
         };
         (speech, script)
     }
@@ -1771,7 +1811,7 @@ mod tests {
         speech.expect(&["Desktop list"]);
         speech.require_all_asserted("before the keys");
         // A step declared different, whose assertions on speech cut off
-        // record their texts and return without waiting.
+        // record their texts and return once NVDA is quiet.
         timeline.push_keys(&["numpad2"]);
         timeline.push_deviation("docs/parity/review.md", "Review cursor columns");
         script.feed(vec![queued(2, "A"), ended(2, UtteranceEnding::Completed)]);
@@ -1779,9 +1819,9 @@ mod tests {
         speech.expect_ended(&playing, Ending::Cancelled);
         speech.expect_paused();
         speech.require_all_asserted("before the gesture");
-        // A step of Verbatim's own, then the end, where NVDA said nothing.
+        // A gesture with the Verbatim modifier, pressed for NVDA and
+        // compared, then the end, where NVDA said nothing.
         timeline.push_gesture("kb:verbatim+v");
-        timeline.push_verbatim_only("gesture kb:verbatim+v");
         speech.expect(&["Verbatim", "Context menu"]);
         speech.expect_nothing_more(None);
         let steps = speech.take_comparison();
@@ -1798,13 +1838,31 @@ mod tests {
                     "keys [numpad2]",
                     Verdict::Declared("Review cursor columns".to_owned())
                 ),
-                ("gesture kb:verbatim+v", Verdict::VerbatimOnly),
+                ("gesture kb:verbatim+v", Verdict::Differs),
             ]
         );
         assert_eq!(steps[1].expected, ["3"]);
         assert_eq!(steps[1].heard, [Said::Speech("A".to_owned())]);
         assert_eq!(steps[2].expected, ["Verbatim", "Context menu"]);
         assert_eq!(steps[2].heard, []);
+    }
+
+    #[test]
+    fn a_compare_mode_expectation_waits_for_nvda_and_the_input_after_it_does_not_wait_again() {
+        let timeline = Timeline::new();
+        let (mut speech, mut script) = scripted(timeline.clone());
+        speech.compare_mode();
+        script.feed(vec![
+            queued(1, "Desktop list"),
+            ended(1, UtteranceEnding::Completed),
+        ]);
+        speech.expect(&["Desktop list"]);
+        assert_eq!(script.requests_sent(), 1, "the expectation waits for NVDA");
+        speech.require_all_asserted("before the keys");
+        assert_eq!(script.requests_sent(), 1, "NVDA was already quiet");
+        timeline.push_keys(&["tab"]);
+        speech.require_all_asserted("before the keys");
+        assert_eq!(script.requests_sent(), 2, "the keys came since");
     }
 
     #[test]

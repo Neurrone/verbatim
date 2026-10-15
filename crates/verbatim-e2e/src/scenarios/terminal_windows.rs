@@ -266,8 +266,6 @@ pub(crate) fn body_leave_windows_terminal(scenario: &mut Scenario, state: &mut S
     );
     let second_state = terminal::open_windows_terminal_window(scenario, "leave-b", state)
         .expect("opens a second Windows Terminal window");
-    // "blank" for the new window's empty line, which NVDA leaves out.
-    scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
     let second = terminal::title(&second_state).to_owned();
     terminal::expect_prompt_read(
         scenario,
@@ -320,8 +318,6 @@ pub(crate) fn body_close_tab(scenario: &mut Scenario, state: &mut ScenarioState)
     );
     let second_state = terminal::open_windows_terminal_tab(scenario, "close-tab-two", state)
         .expect("opens a second tab");
-    // "blank" for the new tab's empty line, which NVDA leaves out.
-    scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
     let second = terminal::title(&second_state).to_owned();
     terminal::expect_prompt_read(
         scenario,
@@ -387,8 +383,6 @@ pub(crate) fn body_two_windows_terminal(scenario: &mut Scenario, state: &mut Sce
     );
     let second_state = terminal::open_windows_terminal_window(scenario, "two-b", state)
         .expect("opens a second Windows Terminal window");
-    // "blank" for the new window's empty line, which NVDA leaves out.
-    scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
     let second = terminal::title(&second_state).to_owned();
     terminal::expect_prompt_read(
         scenario,
@@ -457,8 +451,6 @@ pub(crate) fn body_tabs(scenario: &mut Scenario, state: &mut ScenarioState) {
     );
     let second_state = terminal::open_windows_terminal_tab(scenario, "tabs-two", state)
         .expect("opens a second tab");
-    // "blank" for the new tab's empty line, which NVDA leaves out.
-    scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
     let second = terminal::title(&second_state).to_owned();
     terminal::expect_prompt_read(
         scenario,
