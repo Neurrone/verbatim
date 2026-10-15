@@ -6,7 +6,8 @@ A section is either a heading whose text starts with the name (printed up to
 the next heading of the same or a higher level) or a top-level list item
 whose text starts with the name (printed with its nested lines up to the next
 top-level item, heading, or unindented paragraph). Matching ignores case,
-heading marks, the "- " marker, and leading bold markers. With no match, the
+heading marks, the "- " marker, and leading bold markers. When a heading or
+item's text equals the name exactly, only those are printed. With no match, the
 headings and entry names containing the name are listed instead.
 """
 
@@ -42,6 +43,9 @@ def main():
             candidates.append((i, "i", 0, m.group(1)))
 
     matches = [c for c in candidates if key(c[3]).startswith(name)]
+    exact = [c for c in matches if key(c[3]) == name]
+    if exact:
+        matches = exact
     if not matches:
         near = [c for c in candidates if name in c[3].lower()]
         print(f"No entry in {path} starts with {sys.argv[2]!r}.")

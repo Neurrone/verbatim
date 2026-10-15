@@ -25,7 +25,7 @@ The scope is Dickson's to set, and the session delivers it as given: a narrow re
 
 The requested scope defines what success means. The steps that reach it are chosen for safety: each leaves the repository coherent and tested.
 
-Divide the labour this way. The parent conversation reads the relevant sections of the durable docs, makes the design decisions with Dickson, writes briefs, reads reports, decides, and commits. Subagents do the NVDA research, returning the causal path and the preserve, replace, and omit list rather than file contents; the implementation and test work; and the review. The parent does not run cargo build, test, clippy, `cargo xtask ci`, or end-to-end scenarios itself, does not read source files at length, and does not re-run what a subagent has reported, because in past sessions that, not the hand-offs, was where the tokens went. Research subagents that only read and summarize can be Sonnet; implementation and review subagents are Opus.
+Divide the labour this way. The parent conversation reads the relevant sections of the durable docs, makes the design decisions with Dickson, writes briefs, reads reports, decides, and reviews each commit. Subagents commit their work as their brief says, and do the NVDA research, returning the causal path and the preserve, replace, and omit list rather than file contents; the implementation and test work; and the review. The parent does not run cargo build, test, clippy, `cargo xtask ci`, or end-to-end scenarios itself, does not read source files at length, and does not re-run what a subagent has reported, because in past sessions that, not the hand-offs, was where the tokens went. Research subagents that only read and summarize can be Sonnet; implementation and review subagents are Opus.
 
 Write every brief from `references/brief.md`, and point it at the "Standing rules" section of `CLAUDE.md`, because subagents see neither this conversation nor Claude's memory.
 
@@ -130,6 +130,6 @@ A scope left unfinished is the exception. When it happens, leave the repository 
 
 ## Final report
 
-Report concisely: the confirmed scope; what was researched; the important preserve, replace, and omit decisions; steps completed; tests and other judges run, with results; the costing and the measurements against it, where the change touched the event or speech path; documentation changed; semantic-review findings and their disposition; remaining work within the scope; and the exact next step if work remains.
+Report concisely, opening with the decisions Dickson needs to make, each with a recommendation, then: the confirmed scope; what was researched; the important preserve, replace, and omit decisions; steps completed; tests and other judges run, with results; the costing and the measurements against it, where the change touched the event or speech path; documentation changed; semantic-review findings and their disposition; remaining work within the scope; and the exact next step if work remains.
 
 Report concrete evidence rather than general confidence. Do not claim parity, correctness, or completion beyond what the judge actually established, because the next session builds on the claim.

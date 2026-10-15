@@ -28,13 +28,11 @@ Point to the "Standing rules" section of `CLAUDE.md`.
 
 ## Build and test policy
 
-- Build into your own target directory, so that parallel subagents do not
-  wait on each other's build lock.
-- At most two building subagents run at once, because the machine runs short
-  of memory and disk beyond that.
-- Run only the end-to-end scenarios related to the change; never the full
-  suite unless this brief says so.
-- Never push.
+The "Standing rules" section of `CLAUDE.md` covers building, test runs and
+pushing. The brief adds only what is specific to this task: the target
+directory this subagent builds into, which end-to-end scenarios are the
+related ones, what it may or may not run live, and that it does not push
+unless the brief says so.
 
 ## Commit rule
 
@@ -44,8 +42,9 @@ here in the brief.
 
 ## Cleanup
 
-Before reporting, stop every process you started, remove worktrees you
-created, and release any held keys, because leftovers break the next run.
+The "Standing rules" section of `CLAUDE.md` covers cleanup. The brief adds
+only what is specific to this task, such as a worktree or a process this
+subagent is to leave in place.
 
 ## Report structure
 
