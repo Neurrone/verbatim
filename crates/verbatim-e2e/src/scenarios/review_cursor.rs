@@ -45,6 +45,16 @@ fn review(scenario: &mut Scenario, gesture: &str, heard: &str) {
     scenario.speech().expect(&[heard]);
 }
 
+/// [`review`] for a step that reads the column the review cursor kept from
+/// the line before, Verbatim's deliberate difference from NVDA, whose
+/// review cursor moves to the line's start (`docs/parity/review.md`,
+/// "Review cursor columns").
+fn review_kept_column(scenario: &mut Scenario, gesture: &str, heard: &str) {
+    scenario.send_gesture(gesture).expect("sends the gesture");
+    scenario.deviates_from_nvda("docs/parity/review.md", "Review cursor columns");
+    scenario.speech().expect(&[heard]);
+}
+
 /// Opens the scenario's document in the Windows Forms text box.
 pub(crate) fn text_box_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     super::text_box::open(
@@ -75,11 +85,11 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 
     // Down the table: each line, then the character in the kept column.
     review(scenario, "kb:numpad9", "Apple   3");
-    review(scenario, "kb:numpad2", "3");
+    review_kept_column(scenario, "kb:numpad2", "3");
     review(scenario, "kb:numpad9", "Fig");
-    review(scenario, "kb:numpad2", "g");
+    review_kept_column(scenario, "kb:numpad2", "g");
     review(scenario, "kb:numpad9", "Banana  12");
-    review(scenario, "kb:numpad2", "1");
+    review_kept_column(scenario, "kb:numpad2", "1");
 
     // The empty line after the text's final line break is a line of its
     // own, as in NVDA, and the bottom; back up to the last line of text.
@@ -142,11 +152,11 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
 
     // Down the table: each line, then the character in the kept column.
     review(scenario, "kb:numpad9", "Apple   3");
-    review(scenario, "kb:numpad2", "3");
+    review_kept_column(scenario, "kb:numpad2", "3");
     review(scenario, "kb:numpad9", "Fig");
-    review(scenario, "kb:numpad2", "g");
+    review_kept_column(scenario, "kb:numpad2", "g");
     review(scenario, "kb:numpad9", "Banana  12");
-    review(scenario, "kb:numpad2", "1");
+    review_kept_column(scenario, "kb:numpad2", "1");
 
     // The empty line after the text's final line break is a line of its
     // own, as in NVDA, and the bottom; back up to the last line of text.

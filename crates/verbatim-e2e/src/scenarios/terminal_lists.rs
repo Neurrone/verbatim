@@ -128,9 +128,20 @@ fn key_hearing(scenario: &mut Scenario, key: &str, heard: &[&str]) {
     scenario.speech().expect(heard);
 }
 
+/// [`key_hearing`] for a move of the redrawn list, which deliberately
+/// differs from NVDA: the key, which leaves the caret where it was, says
+/// nothing, and the line that gained the marker is output, where NVDA says
+/// "blank" and drops the marker's change.
+fn redrawn_key_hearing(scenario: &mut Scenario, key: &str, heard: &[&str]) {
+    scenario.send_keys(&[key]).expect("presses the key");
+    scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
+    scenario.speech().expect(heard);
+}
+
 /// Runs `script`, moves its marker down twice and up once, each move
-/// saying the line that gained the marker, and chooses.
-fn list_steps(scenario: &mut Scenario, script: &str) {
+/// saying the line that gained the marker, and chooses. `press` presses a
+/// move's key and asserts what it says.
+fn list_steps(scenario: &mut Scenario, script: &str, press: fn(&mut Scenario, &str, &[&str])) {
     terminal::type_with_echo(scenario, script, terminal::Echo::Shown);
     scenario.speech().expect(&[
         "Pick a fruit:",
@@ -140,9 +151,9 @@ fn list_steps(scenario: &mut Scenario, script: &str) {
         "  date",
         "  elderberry",
     ]);
-    key_hearing(scenario, "downarrow", &["> banana"]);
-    key_hearing(scenario, "downarrow", &["> cherry"]);
-    key_hearing(scenario, "uparrow", &["> banana"]);
+    press(scenario, "downarrow", &["> banana"]);
+    press(scenario, "downarrow", &["> cherry"]);
+    press(scenario, "uparrow", &["> banana"]);
     key_hearing(scenario, "enter", &["chose banana", PROMPT]);
 }
 
@@ -174,23 +185,23 @@ fn console_host_opening(scenario: &mut Scenario, state: &mut ScenarioState) {
 /// `windows_terminal_marker_list`.
 pub(crate) fn body_marker_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
     windows_terminal_opening(scenario, state);
-    list_steps(scenario, r".\marker.ps1");
+    list_steps(scenario, r".\marker.ps1", key_hearing);
 }
 
 /// `conhost_marker_list`.
 pub(crate) fn body_marker_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
     console_host_opening(scenario, state);
-    list_steps(scenario, r".\marker.ps1");
+    list_steps(scenario, r".\marker.ps1", key_hearing);
 }
 
 /// `windows_terminal_redrawn_list`.
 pub(crate) fn body_redrawn_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
     windows_terminal_opening(scenario, state);
-    list_steps(scenario, r".\redraw.ps1");
+    list_steps(scenario, r".\redraw.ps1", redrawn_key_hearing);
 }
 
 /// `conhost_redrawn_list`.
 pub(crate) fn body_redrawn_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
     console_host_opening(scenario, state);
-    list_steps(scenario, r".\redraw.ps1");
+    list_steps(scenario, r".\redraw.ps1", redrawn_key_hearing);
 }

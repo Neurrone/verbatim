@@ -53,6 +53,16 @@ fn review(scenario: &mut Scenario, gesture: &str, heard: &str) {
     scenario.speech().expect(&[heard]);
 }
 
+/// [`review`] for a step that reads the column the review cursor kept from
+/// the line before, Verbatim's deliberate difference from NVDA, whose
+/// review cursor moves to the line's start (`docs/parity/review.md`,
+/// "Review cursor columns").
+fn review_kept_column(scenario: &mut Scenario, gesture: &str, heard: &str) {
+    scenario.send_gesture(gesture).expect("sends the gesture");
+    scenario.deviates_from_nvda("docs/parity/review.md", "Review cursor columns");
+    scenario.speech().expect(&[heard]);
+}
+
 /// Presses the real keys `keys` in one burst and asserts exactly `said`,
 /// one utterance a press: each cut off by the press after it, and the last
 /// heard in full.
@@ -104,11 +114,11 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     // the column is kept both ways.
     for (row, cell) in &ROWS[1..] {
         review(scenario, "kb:numpad9", row);
-        review(scenario, "kb:numpad2", cell);
+        review_kept_column(scenario, "kb:numpad2", cell);
     }
     for (row, cell) in ROWS[1..3].iter().rev() {
         review(scenario, "kb:numpad7", row);
-        review(scenario, "kb:numpad2", cell);
+        review_kept_column(scenario, "kb:numpad2", cell);
     }
 
     // On the Apple row: its first word read and spelled, its first
@@ -140,11 +150,11 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     // the column is kept both ways.
     for (row, cell) in &ROWS[1..] {
         review(scenario, "kb:numpad9", row);
-        review(scenario, "kb:numpad2", cell);
+        review_kept_column(scenario, "kb:numpad2", cell);
     }
     for (row, cell) in ROWS[1..3].iter().rev() {
         review(scenario, "kb:numpad7", row);
-        review(scenario, "kb:numpad2", cell);
+        review_kept_column(scenario, "kb:numpad2", cell);
     }
 
     // On the Apple row: its first word read and spelled, its first

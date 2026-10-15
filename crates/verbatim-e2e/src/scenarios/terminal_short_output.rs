@@ -41,6 +41,7 @@ pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut Scenari
         ],
     );
     terminal::type_with_echo(scenario, r".\short.ps1", terminal::Echo::Shown);
+    scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
     scenario.speech().expect(&["y", "ok", PROMPT]);
 }
 
@@ -54,5 +55,6 @@ pub(crate) fn body_console_host(scenario: &mut Scenario, state: &mut ScenarioSta
         &[&format!("{title} window"), "terminal", "blank"],
     );
     terminal::type_with_echo(scenario, r".\short.ps1", terminal::Echo::Shown);
+    scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
     scenario.speech().expect(&["y", "ok", PROMPT]);
 }

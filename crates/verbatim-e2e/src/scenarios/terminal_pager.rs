@@ -90,10 +90,13 @@ fn pager_steps(scenario: &mut Scenario) {
     let page: Vec<&str> = page.iter().map(String::as_str).collect();
     scenario.speech().expect_within(&page, PAGE_SPEECH);
     scenario.send_keys(&["downarrow"]).expect("presses Down");
+    scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
     scenario.speech().expect(&["page line 30"]);
     scenario.send_keys(&["uparrow"]).expect("presses Up");
+    scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
     scenario.speech().expect(&["page line 1"]);
     scenario.send_keys(&["q"]).expect("presses Q");
+    scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
     scenario.speech().expect(&["closed", PROMPT]);
 }
 

@@ -65,6 +65,16 @@ fn review(scenario: &mut Scenario, gesture: &str, heard: &str) {
     scenario.speech().expect(&[heard]);
 }
 
+/// [`review`] for a step that reads the column the review cursor kept from
+/// the line before, Verbatim's deliberate difference from NVDA, whose
+/// review cursor moves to the line's start (`docs/parity/review.md`,
+/// "Review cursor columns").
+fn review_kept_column(scenario: &mut Scenario, gesture: &str, heard: &str) {
+    scenario.send_gesture(gesture).expect("sends the gesture");
+    scenario.deviates_from_nvda("docs/parity/review.md", "Review cursor columns");
+    scenario.speech().expect(&[heard]);
+}
+
 /// `windows_terminal_review_grid`.
 pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
     let title = terminal::title(state).to_owned();
@@ -96,7 +106,7 @@ pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut Scenari
     // Down the table, column 10 kept on every row.
     for (row, cell) in &TABLE[1..] {
         review(scenario, "kb:numpad9", row);
-        review(scenario, "kb:numpad2", cell);
+        review_kept_column(scenario, "kb:numpad2", cell);
     }
 }
 
@@ -128,7 +138,7 @@ pub(crate) fn body_console_host(scenario: &mut Scenario, state: &mut ScenarioSta
     // Down the table, column 10 kept on every row.
     for (row, cell) in &TABLE[1..] {
         review(scenario, "kb:numpad9", row);
-        review(scenario, "kb:numpad2", cell);
+        review_kept_column(scenario, "kb:numpad2", cell);
     }
 }
 

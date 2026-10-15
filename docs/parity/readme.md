@@ -43,6 +43,16 @@ exactly, so a search for the heading finds the entry and every place
 that relies on it. Cite this file, `docs/parity/readme.md`, only for
 the ledger as a whole or for its status legend.
 
+A deliberate difference from NVDA that an end-to-end scenario exercises
+is declared at the step that shows it, with
+`Scenario::deviates_from_nvda("docs/parity/<file>.md", "<entry heading>")`
+called after the step's input, beside the comment that cites the entry.
+Compare mode judges that step against the entry
+([the NVDA transcript guide](../nvda-transcript.md), "Comparing a
+scenario"), and a unit test checks that every entry a declaration names
+is a `###` heading of the file it names, so renaming an entry means
+renaming its declarations.
+
 ## The files
 
 - [Focus announcement](focus-announcement.md): what a focus announcement contains and in what order: names, roles, states, values, multi-line fields, and the reading of an edit field on focus.

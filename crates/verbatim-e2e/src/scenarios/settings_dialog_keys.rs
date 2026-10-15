@@ -88,6 +88,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     press(scenario, "uparrow", &["79"]);
     tab_past_rate(scenario, 5);
     close_with(scenario, "enter");
+    scenario.deviates_from_nvda("docs/parity/system.md", "Enter in the settings dialog");
 
     // Enter on Apply applies the change and leaves the dialog open: the
     // next Shift+Tab moves back from Apply inside the dialog. Escape then
@@ -98,6 +99,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario
         .send_keys(&["enter"])
         .expect("sends enter on Apply");
+    scenario.deviates_from_nvda("docs/parity/system.md", "Enter in the settings dialog");
     press(scenario, "shift+tab", &["Cancel button"]);
     close_with(scenario, "escape");
 

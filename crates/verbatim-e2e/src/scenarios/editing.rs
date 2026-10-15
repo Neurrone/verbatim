@@ -77,6 +77,7 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     scenario
         .send_keys(&["control+home"])
         .expect("sends control+home");
+    scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
     press(scenario, "rightarrow", &["l"]);
     press(scenario, "control+rightarrow", &["beta"]);
     press(scenario, "downarrow", &["delta epsilon"]);
@@ -123,6 +124,7 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     scenario
         .send_keys(&["control+home"])
         .expect("sends control+home");
+    scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
     press(scenario, "rightarrow", &["l"]);
     press(scenario, "control+rightarrow", &["beta"]);
     press(scenario, "downarrow", &["delta epsilon"]);

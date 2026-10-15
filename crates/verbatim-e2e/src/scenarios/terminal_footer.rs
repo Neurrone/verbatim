@@ -150,6 +150,8 @@ pub(crate) fn body_overflow_console_host(scenario: &mut Scenario, state: &mut Sc
     terminal::type_with_echo(scenario, r".\overflow.ps1", terminal::Echo::Shown);
     scenario.speech().expect(&["status: busy"]);
     scenario.send_keys(&["n"]).expect("presses n");
+    // The flood policy, which NVDA does not have.
+    scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
     scenario
         .speech()
         .expect_within(&["flood line 1"], FLOOD_STEP);
@@ -180,6 +182,8 @@ fn steps(scenario: &mut Scenario) {
     terminal::type_with_echo(scenario, r".\footer.ps1", terminal::Echo::Shown);
     scenario.speech().expect(&["status: busy"]);
     scenario.send_keys(&["n"]).expect("presses n");
+    // The flood policy, which NVDA does not have.
+    scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
     let mut heard = flood_lines(1, 30);
     heard.push("sound: skipped-lines skipped 41 lines".to_owned());
     heard.extend(flood_lines(72, 100));

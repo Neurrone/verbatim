@@ -295,6 +295,7 @@ fn up_typing_steps(scenario: &mut Scenario) {
     scenario
         .send_keys(&["uparrow", "x"])
         .expect("presses Up and types x at once");
+    scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
     scenario.speech().expect(&["echo onex"]);
     scenario.send_keys(&["enter"]).expect("presses Enter");
     scenario.speech().expect(&["onex", PROMPT]);

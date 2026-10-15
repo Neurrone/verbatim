@@ -2248,6 +2248,64 @@ mod tests {
     /// The scenario names in the `scenario_tests!` blocks of the suite's
     /// test binary, `tests/e2e.rs`, read as text: every identifier after
     /// each block's reason, up to the block's end.
+    /// Every `(file, entry)` a scenario's `deviates_from_nvda` call names,
+    /// read from the sources under `src/scenarios`: the call's two string
+    /// literals, however rustfmt breaks its line.
+    fn declared_deviations() -> Vec<(String, String, String)> {
+        let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("scenarios");
+        let mut declared = Vec::new();
+        for entry in std::fs::read_dir(&folder).expect("the scenarios folder is readable") {
+            let path = entry.expect("lists the scenarios").path();
+            let source = std::fs::read_to_string(&path).expect("reads a scenario's source");
+            for call in source.split(".deviates_from_nvda(").skip(1) {
+                let (arguments, _) = call.split_once(')').expect("the call is closed");
+                let literals: Vec<&str> = arguments.split('"').skip(1).step_by(2).collect();
+                let [file, heading] = literals.as_slice() else {
+                    panic!(
+                        "{}: deviates_from_nvda names a file and an entry as two string literals: {arguments}",
+                        path.display()
+                    );
+                };
+                declared.push((
+                    path.display().to_string(),
+                    (*file).to_owned(),
+                    (*heading).to_owned(),
+                ));
+            }
+        }
+        declared
+    }
+
+    #[test]
+    fn every_declared_deviation_names_an_entry_of_the_parity_ledger() {
+        let declared = declared_deviations();
+        assert!(
+            !declared.is_empty(),
+            "no scenario declares a deviation from NVDA"
+        );
+        let root = crate::scenario::workspace_root();
+        for (source, file, heading) in declared {
+            assert!(
+                file.starts_with("docs/parity/")
+                    && std::path::Path::new(&file)
+                        .extension()
+                        .is_some_and(|extension| extension == "md"),
+                "{source} names {file:?}, which is not a file of the parity ledger"
+            );
+            let ledger = std::fs::read_to_string(root.join(&file)).unwrap_or_else(|error| {
+                panic!("{source} names {file}, which cannot be read: {error}")
+            });
+            assert!(
+                ledger
+                    .lines()
+                    .any(|line| line.strip_prefix("### ") == Some(heading.as_str())),
+                "{source} names the entry {heading:?}, which is no ### heading in {file}"
+            );
+        }
+    }
+
     fn names_in_the_test_binary() -> Vec<String> {
         let source = include_str!("../tests/e2e.rs");
         let mut names = Vec::new();
