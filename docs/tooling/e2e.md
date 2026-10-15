@@ -726,12 +726,6 @@ are; a session left behind by a plain RDP disconnect is locked, which
 breaks the run itself before it matters for the video (see
 [Troubleshooting](troubleshooting.md)'s note on a locked desktop).
 
-History: until October 2026 a VM run could be recorded only with
-`--record`, which captured audio from a VB-CABLE virtual audio device in
-the guest. An RDP session hid that device, so recording and listening
-were mutually exclusive. VB-CABLE and `--record` are retired; the dead
-ends of that design are recorded in `docs/roadmap-done.md`.
-
 ### Comparing a scenario with NVDA
 
 A scenario can also run against NVDA instead of Verbatim, asserting
