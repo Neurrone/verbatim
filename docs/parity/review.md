@@ -222,10 +222,18 @@ descriptions on repeated presses, top and bottom, and the edge messages) read th
 Select then copy from the review cursor (Verbatim+F9, Verbatim+Shift+F9,
 Verbatim+F10 once to select and twice to copy). NVDA: the same keys and
 messages ("Start marked", "No start marker set", "The start marker must
-reside within the same object"). Verbatim: **matched (unverified)**,
-implemented in Core; the
-first press says nothing when the selection was made, and "Not supported
-in this document" when the text cannot be selected.
+reside within the same object"). The first press selects the range in
+the control and announces the selection's change as a selecting key's is
+announced ("Name selected"); the second, within the multi-press timeout,
+copies the range the first selected ("Copied to clipboard: Name").
+Verbatim: **matched (verified)** by `text_box_review_cursor` and
+`notepad_review_cursor`, implemented in Core: the first press's
+announcement comes from the same comparison of the selection before and
+after, and the same wording, as a selecting key's, and the first press
+says "Not supported in this document" when the text cannot be selected.
+NVDA's "Press twice to copy or reset the start marker", for a first press
+after a selection not yet copied, and its clearing of the start marker
+after a copy, are not built.
 
 ### Document review and screen review modes
 

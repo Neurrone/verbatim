@@ -13,15 +13,17 @@
 //! on its last character, and the next longer row returns it to column 8.
 //!
 //! The review commands are the desktop layout's numpad keys, sent as
-//! gestures; the copy is pressed as real keys, Verbatim+F10 twice in a
-//! row, since a gesture sent through the control plane is always a first
-//! press. Each step waits for its speech to be heard in full before the
-//! next; there is no other wait.
+//! gestures; the copy is pressed as real keys, since a gesture sent
+//! through the control plane is always a first press, the second press of
+//! Verbatim+F10 as soon as the first's announcement starts to play, so it
+//! counts as a second press. Every other step waits for its speech to be
+//! heard in full before the next; there is no other wait.
 
 use std::io;
 
 use crate::registry::ScenarioState;
 use crate::scenario::{Document, Scenario, WINDOW_TIMEOUT};
+use crate::speech::Ending;
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -124,13 +126,21 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     review(scenario, "kb:numpad3", "a");
     review(scenario, "kb:numpad3", "m");
     review(scenario, "kb:numpad3", "e");
+    // The first press of Verbatim+F10 selects the range and announces the
+    // selection as a selecting key's is. The second, pressed while that
+    // plays, so within the multi-press timeout, cuts it off and copies.
     scenario
-        .send_keys(&["insert+f10", "insert+f10"])
-        .expect("sends Verbatim+F10 twice");
+        .send_keys(&["insert+f10"])
+        .expect("sends Verbatim+F10");
+    let selected = scenario.speech().expect_started("Name selected");
+    scenario
+        .send_keys(&["insert+f10"])
+        .expect("sends Verbatim+F10 again");
+    scenario.speech().expect_ended(&selected, Ending::Cancelled);
     scenario.speech().expect(&["Copied to clipboard: Name"]);
 
-    // The first press of Verbatim+F10 selected the range in the text box, as
-    // NVDA's does, and the second copied it; moving the caret to the end
+    // The range Verbatim+F10 selected in the text box is still selected;
+    // moving the caret to the end
     // unselects it. Pasted there, the copy is a line of its own. A paste
     // says nothing, so the scenario waits for evidence of it. Home then
     // speaks the line's first character, and
@@ -195,13 +205,21 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     review(scenario, "kb:numpad3", "a");
     review(scenario, "kb:numpad3", "m");
     review(scenario, "kb:numpad3", "e");
+    // The first press of Verbatim+F10 selects the range and announces the
+    // selection as a selecting key's is. The second, pressed while that
+    // plays, so within the multi-press timeout, cuts it off and copies.
     scenario
-        .send_keys(&["insert+f10", "insert+f10"])
-        .expect("sends Verbatim+F10 twice");
+        .send_keys(&["insert+f10"])
+        .expect("sends Verbatim+F10");
+    let selected = scenario.speech().expect_started("Name selected");
+    scenario
+        .send_keys(&["insert+f10"])
+        .expect("sends Verbatim+F10 again");
+    scenario.speech().expect_ended(&selected, Ending::Cancelled);
     scenario.speech().expect(&["Copied to clipboard: Name"]);
 
-    // The first press of Verbatim+F10 selected the range in Notepad, as
-    // NVDA's does, and the second copied it; moving the caret to the end
+    // The range Verbatim+F10 selected in Notepad is still selected; moving
+    // the caret to the end
     // unselects it. Pasted there, the copy is a line of its own. A paste
     // says nothing, so the scenario waits for evidence of it. Home then
     // speaks the line's first character, and

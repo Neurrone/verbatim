@@ -395,7 +395,9 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   first in the document, answered `Range { text, truncated }`, cut to
   `MAX_RANGE_BYTES` (1 MB). For a copy to the clipboard.
 - `Select { start, end }`: select the text between two points and move the
-  caret there where the application allows; answer `Done`, or
+  caret there where the application allows; answer `Selected(changes)`,
+  how the selection changed from the one read just before to the one read
+  just after, by the rule of a caret reply's `selection_changes`, or
   `Unsupported` when the text cannot be selected.
 - `MoveCaret(point)`: move the caret, as say-all from the caret does as it
   reads; answer `Done` or `Unsupported`. Core does not wait for the answer.

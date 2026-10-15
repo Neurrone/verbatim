@@ -1483,13 +1483,17 @@ asks the application for its current focus with a single focus-now query.
     source lacks is `UnsupportedUnit`; UIA has no sentence, and an edit
     control's sentence read is its paragraph, which is its line, for Core
     to split. `ReadRange` reads up to 1 MB for a copy, `Select` and
-    `MoveCaret` select through the backend, and `Location` gives the
+    `MoveCaret` select through the backend, `Select` reading the selection
+    before and after it and answering how it changed, by the caret
+    watch's rule, and `Location` gives the
     screen position of the character at a point. `ReadAhead`, say-all's
     read, reads up to its count of units in one request, each the unit
     after the one before, stopping once 32 K UTF-16 code units are read,
     and marks the last chunk as the text's last when no unit follows it.
-  - Through UIA, every request but the caret watch is also one round trip
-    where the window's provider runs remote operations, with the same
+  - Through UIA, every request but the caret watch and `Select` is also
+    one round trip where the window's provider runs remote operations
+    (`Select` is the selection read before it, by classic calls, then the
+    selection and the read after it, one round trip each), with the same
     choice, fallback, logging, and marking as the caret read: a point
     named as the protocol names it (`PointFrom`: the caret, a selection's
     end, an end of the text, a kept position, or a position some text after

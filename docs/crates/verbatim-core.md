@@ -574,7 +574,9 @@ caret.
 Select then copy. Verbatim+F9 marks the review cursor's position ("Start
 marked"); Verbatim+Shift+F9 moves the review cursor there; Verbatim+F10
 asks the outpost to select from the marker up to and including the
-character at the review cursor, and pressed twice reads that text and
+character at the review cursor and speaks the selection's change as a
+selecting key's is ("Name selected"), and pressed twice reads the range
+the first press selected, wherever the review cursor has gone since, and
 copies it (`Effect::CopyToClipboard`, so the shell's clipboard helper
 confirms). With no marker it says "No start marker set", and with the
 marker in another object, NVDA's "The start marker must reside within the
