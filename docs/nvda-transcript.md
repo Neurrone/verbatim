@@ -227,12 +227,20 @@ come from captures and the ported code from the pin. Then, for each
 step: its input; "Verbatim:" and the texts the scenario expects, one per
 line, with a sound marked "not compared", since the add-on records no
 sounds; "NVDA:" and what NVDA queued, one per line, with "cancel" where it
-cancelled speech; and one verdict:
+cancelled speech; on a step that differs, the two strings compared,
+"Verbatim compared:" and "NVDA compared:"; and one verdict.
 
-- "same": NVDA queued exactly the texts expected, sounds left out.
-- "differs": it queued something else, and the scenario declares no
+A step is judged on normalized text: on each side, sounds, cancels and
+empty entries are dropped, the utterances are joined with single spaces,
+and every run of white space becomes one space, since the add-on records
+NVDA's speech sequence parts, joined with double spaces, rather than
+where an utterance ends, so neither boundaries nor spacing are evidence
+of a difference in what is heard. The verdicts are:
+
+- "same": the two normalized strings are equal.
+- "differs": they differ, and the scenario declares no
   difference there.
-- "declared deviation: <entry>": it queued something else, and the
+- "declared deviation: <entry>": they differ, and the
   scenario declares the step a deliberate difference, naming the parity
   ledger's entry.
 - "declared, but NVDA agrees: <entry>": the scenario declares a

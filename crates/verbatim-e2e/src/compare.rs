@@ -26,6 +26,13 @@
 //! Verbatim modifier as Insert, and compared like any other step. A sound
 //! Verbatim is expected to play is listed but not compared, since the
 //! add-on records no sounds.
+//!
+//! A step is compared on normalized text ([`CompareStep::compared`]): each
+//! side's utterances joined with single spaces, cancels and empty entries
+//! dropped, and every run of white space one space. The add-on records
+//! NVDA's speech sequence parts, joined with double spaces, not where an
+//! utterance ends, so neither boundaries nor spacing are evidence of a
+//! difference in what is heard.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -149,29 +156,34 @@ impl CompareStep {
             && self.notes.is_empty()
     }
 
+    /// The two strings the step is judged on, the expected texts' and
+    /// NVDA's speech's: each side's texts, sounds and NVDA's events such as
+    /// cancels left out, joined with single spaces, every run of white
+    /// space made one space, and trimmed, so an empty text adds nothing.
+    #[must_use]
+    pub fn compared(&self) -> (String, String) {
+        let expected = self
+            .expected
+            .iter()
+            .map(String::as_str)
+            .filter(|text| !text.starts_with(SOUND_PREFIX));
+        let heard = self.heard.iter().filter_map(|said| match said {
+            Said::Speech(text) => Some(text.as_str()),
+            Said::Event(_) => None,
+        });
+        (normalized(expected), normalized(heard))
+    }
+
     /// The step's verdict: Verbatim-only when its input is Verbatim's own;
-    /// otherwise whether the speech NVDA queued is exactly the texts
-    /// expected, sounds left out, judged against the first declared
-    /// deviation when there is one.
+    /// otherwise whether the two strings [`Self::compared`] gives are
+    /// equal, judged against the first declared deviation when there is
+    /// one.
     #[must_use]
     pub fn verdict(&self) -> Verdict {
         if self.verbatim_only.is_some() {
             return Verdict::VerbatimOnly;
         }
-        let expected: Vec<&str> = self
-            .expected
-            .iter()
-            .map(String::as_str)
-            .filter(|text| !text.starts_with(SOUND_PREFIX))
-            .collect();
-        let heard: Vec<&str> = self
-            .heard
-            .iter()
-            .filter_map(|said| match said {
-                Said::Speech(text) => Some(text.as_str()),
-                Said::Event(_) => None,
-            })
-            .collect();
+        let (expected, heard) = self.compared();
         let same = expected == heard;
         match (self.deviations.first(), same) {
             (None, true) => Verdict::Same,
@@ -180,6 +192,15 @@ impl CompareStep {
             (Some((_, entry)), false) => Verdict::Declared(entry.clone()),
         }
     }
+}
+
+/// `texts` joined with single spaces, every run of white space made one
+/// space, and trimmed.
+fn normalized<'a>(texts: impl Iterator<Item = &'a str>) -> String {
+    texts
+        .flat_map(str::split_whitespace)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// What the report's header says about the run.
@@ -258,8 +279,8 @@ fn pin_matches(commit: &str, tags: &[&str], nvda_version: &str) -> Option<bool> 
 }
 
 /// The report: a header, one block per step (its input, Verbatim's
-/// expected texts, what NVDA said, the harness's notes, and the verdict),
-/// and a summary counting each verdict. Plain text, one fact to a line, so
+/// expected texts, what NVDA said, the harness's notes, the two strings
+/// compared when the step differs, and the verdict), and a summary counting each verdict. Plain text, one fact to a line, so
 /// it reads well with a screen reader.
 #[must_use]
 pub fn render_report(header: &ReportHeader, steps: &[CompareStep]) -> String {
@@ -326,6 +347,17 @@ pub fn render_report(header: &ReportHeader, steps: &[CompareStep]) -> String {
         for note in &step.notes {
             let _ = writeln!(out, "Note: {note}");
         }
+        if verdict == Verdict::Differs {
+            let (expected, heard) = step.compared();
+            for (side, text) in [("Verbatim", expected), ("NVDA", heard)] {
+                let text = if text.is_empty() {
+                    "(nothing)".to_owned()
+                } else {
+                    text
+                };
+                let _ = writeln!(out, "{side} compared: {text}");
+            }
+        }
         let _ = writeln!(out, "Verdict: {}", verdict.line());
     }
     let _ = writeln!(out, "\nSummary of {} steps:", steps.len());
@@ -381,29 +413,108 @@ mod tests {
         step
     }
 
+    fn cancel() -> Said {
+        Said::Event("cancel".to_owned())
+    }
+
+    fn header() -> ReportHeader {
+        ReportHeader {
+            scenario: "text_box_review_cursor".to_owned(),
+            date: "2026-10-15".to_owned(),
+            nvda_version: "alpha-58022,732d1ce2".to_owned(),
+            pin: "732d1ce2f (release-2026.3beta3-44-g732d1ce2f)".to_owned(),
+            pin_matches: Some(false),
+            quiet: Duration::from_secs(1),
+        }
+    }
+
+    fn compared(expected: &str, heard: &str) -> (String, String) {
+        (expected.to_owned(), heard.to_owned())
+    }
+
     #[test]
-    fn a_step_is_the_same_only_when_nvda_said_exactly_the_expected_texts() {
-        assert_eq!(
-            step(&["a", "b"], &[speech("a"), speech("b")]).verdict(),
-            Verdict::Same
-        );
-        assert_eq!(
-            step(&["a", "b"], &[speech("a")]).verdict(),
-            Verdict::Differs
-        );
-        assert_eq!(
-            step(&["a"], &[speech("b"), speech("a")]).verdict(),
-            Verdict::Differs
-        );
-        assert_eq!(step(&[], &[]).verdict(), Verdict::Same);
+    fn a_step_is_the_same_only_when_nvda_said_the_expected_words_in_order() {
+        let both = step(&["a", "b"], &[speech("a"), speech("b")]);
+        assert_eq!(both.compared(), compared("a b", "a b"));
+        assert_eq!(both.verdict(), Verdict::Same);
+        let short = step(&["a", "b"], &[speech("a")]);
+        assert_eq!(short.compared(), compared("a b", "a"));
+        assert_eq!(short.verdict(), Verdict::Differs);
+        let extra = step(&["a"], &[speech("b"), speech("a")]);
+        assert_eq!(extra.compared(), compared("a", "b a"));
+        assert_eq!(extra.verdict(), Verdict::Differs);
+        let silent = step(&[], &[]);
+        assert_eq!(silent.compared(), compared("", ""));
+        assert_eq!(silent.verdict(), Verdict::Same);
     }
 
     #[test]
     fn sounds_and_nvda_s_cancels_are_left_out_of_the_comparison() {
-        let heard = [Said::Event("cancel".to_owned()), speech("x")];
+        let sounded = step(&["sound: start", "x"], &[cancel(), speech("x")]);
+        assert_eq!(sounded.compared(), compared("x", "x"));
+        assert_eq!(sounded.verdict(), Verdict::Same);
+    }
+
+    #[test]
+    fn utterance_boundaries_spacing_and_empty_entries_are_not_differences() {
+        // Each case is a step of the first compared run of
+        // text_box_review_cursor as NVDA's add-on recorded it.
+        let spaced = step(&["Name    Qty"], &[cancel(), speech("Name Qty")]);
+        let split = step(
+            &["Bottom blank"],
+            &[cancel(), speech("Bottom"), speech("blank")],
+        );
+        let joined = step(
+            &["Text edit multi line", "Name    Qty"],
+            &[speech("Text  edit  multi line  Name Qty")],
+        );
+        let trailing = step(&["line feed"], &[cancel(), speech("line feed"), speech("")]);
+        assert_eq!(spaced.compared(), compared("Name Qty", "Name Qty"));
+        assert_eq!(split.compared(), compared("Bottom blank", "Bottom blank"));
         assert_eq!(
-            step(&["sound: start", "x"], &heard).verdict(),
-            Verdict::Same
+            joined.compared(),
+            compared(
+                "Text edit multi line Name Qty",
+                "Text edit multi line Name Qty"
+            )
+        );
+        assert_eq!(trailing.compared(), compared("line feed", "line feed"));
+        for case in [spaced, split, joined, trailing] {
+            assert_eq!(case.verdict(), Verdict::Same);
+        }
+    }
+
+    #[test]
+    fn a_word_nvda_adds_differs_and_the_report_shows_the_strings_compared() {
+        let mut spelled = step(&["a"], &[cancel(), speech("a"), speech("Alfa")]);
+        spelled.input = "gesture kb:numpad3".to_owned();
+        assert_eq!(spelled.verdict(), Verdict::Differs);
+        assert_eq!(
+            render_report(&header(), &[spelled]),
+            "Comparing text_box_review_cursor with NVDA\n\
+             Date: 2026-10-15\n\
+             NVDA: alpha-58022,732d1ce2\n\
+             Submodule pin: 732d1ce2f (release-2026.3beta3-44-g732d1ce2f)\n\
+             pin differs from the installed build: expectations come from captures and ported code from the pin\n\
+             Quiet period: 1000 ms\n\
+             \n\
+             Step 1: gesture kb:numpad3\n\
+             Verbatim:\n\
+             \x20 a\n\
+             NVDA:\n\
+             \x20 cancel\n\
+             \x20 a\n\
+             \x20 Alfa\n\
+             Verbatim compared: a\n\
+             NVDA compared: a Alfa\n\
+             Verdict: differs\n\
+             \n\
+             Summary of 1 steps:\n\
+             \x20 same: 0\n\
+             \x20 differs: 1\n\
+             \x20 declared deviation: 0\n\
+             \x20 declared, but NVDA agrees: 0\n\
+             \x20 Verbatim-only: 0\n"
         );
     }
 
@@ -444,15 +555,10 @@ mod tests {
 
     #[test]
     fn the_report_shows_each_step_s_two_sides_and_verdict_and_counts_them() {
-        let header = ReportHeader {
-            scenario: "text_box_review_cursor".to_owned(),
-            date: "2026-10-15".to_owned(),
-            nvda_version: "alpha-58022,732d1ce2".to_owned(),
-            pin: "732d1ce2f (release-2026.3beta3-44-g732d1ce2f)".to_owned(),
-            pin_matches: Some(false),
-            quiet: Duration::from_secs(1),
-        };
-        let mut start = step(&["sound: start", "Desktop list"], &[speech("Desktop list")]);
+        let mut start = step(
+            &["sound: start", "Desktop list"],
+            &[speech("Desktop  list")],
+        );
         start.input = "start".to_owned();
         let mut cut = declared(step(
             &["3"],
@@ -464,7 +570,7 @@ mod tests {
         menu.input = "a control-plane request".to_owned();
         menu.verbatim_only = Some("a control-plane request".to_owned());
         assert_eq!(
-            render_report(&header, &[start, cut, menu]),
+            render_report(&header(), &[start, cut, menu]),
             "Comparing text_box_review_cursor with NVDA\n\
              Date: 2026-10-15\n\
              NVDA: alpha-58022,732d1ce2\n\
@@ -477,7 +583,7 @@ mod tests {
              \x20 sound: start (not compared)\n\
              \x20 Desktop list\n\
              NVDA:\n\
-             \x20 Desktop list\n\
+             \x20 Desktop  list\n\
              Verdict: same\n\
              \n\
              Step 2: keys [tab]\n\

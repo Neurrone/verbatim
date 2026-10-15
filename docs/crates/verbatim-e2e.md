@@ -269,8 +269,14 @@ It is a research instrument, not a test, and never runs in CI.
   and the quiet period. Each step gives its input, "Verbatim:" and the
   texts expected one per line, a sound marked "not compared", "NVDA:" and
   what it said one per line, "cancel" where it cancelled, any declared
-  deviation and note, and one verdict (`CompareStep::verdict`): "same"
-  when NVDA's speech is exactly the texts expected, sounds left out;
+  deviation and note, on a step that differs the two strings compared
+  ("Verbatim compared:" and "NVDA compared:"), and one verdict
+  (`CompareStep::verdict`). A step is judged on `CompareStep::compared`,
+  each side's texts with sounds, cancels and empty entries dropped,
+  joined with single spaces, and every run of white space made one
+  space, since the add-on records NVDA's speech sequence parts rather
+  than utterance boundaries, so boundaries and spacing are not evidence
+  of a difference. The verdict is "same" when the two strings are equal;
   "differs"; "declared deviation: <entry>"; "declared, but NVDA agrees:
   <entry>", worth a look; or "Verbatim-only", for a control-plane step
   with no key at all, never for a gesture. A summary counts each
