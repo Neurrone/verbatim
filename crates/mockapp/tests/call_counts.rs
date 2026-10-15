@@ -62,7 +62,7 @@ use verbatim_model::{
 };
 use verbatim_model::{
     CaretWatch, LineStyle, PreviousSelection, TextAttributes, TextMovement, TextOp, TextPoint,
-    TextPosition, TextRead, TextReadAhead, TextReply, TextUnit, Theme,
+    TextPosition, TextRead, TextReadAhead, TextReply, TextThrough, TextUnit, Theme,
 };
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::arbitration::NEGATIVE_VERDICT_LIFETIME;
@@ -2721,6 +2721,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         &TextOp::ReadRange {
             start: TextPoint::SelectionStart,
             end: TextPoint::SelectionEnd,
+            through: None,
         },
     );
     assert_eq!(
@@ -2848,27 +2849,40 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     );
 
     // The review copy's first press: "alpha" selected from a collapsed
-    // caret, the selection read before and after and compared.
+    // caret, the selection read before and after and compared. As Core
+    // sends it: the marker on the first "a" and the review cursor on the
+    // last, each with the point just past its character.
     common::apply(&mut app, hwnd, "caret doc 0");
+    let line_at = |offset| {
+        TextPoint::At(TextPosition {
+            anchor: collapsed.line.start,
+            offset,
+        })
+    };
     let (reply, cost) = measure_text(
         hwnd,
         &mut source,
         &mut anchors,
         &TextOp::Select {
             start: TextPoint::At(at),
-            end: TextPoint::At(TextPosition {
-                anchor: collapsed.line.start,
-                offset: 5,
+            end: line_at(4),
+            through: Some(TextThrough {
+                start: line_at(at.offset + 1),
+                end: line_at(5),
             }),
         },
     );
     assert_eq!(selected_texts(&reply), [(true, "alpha", 5)]);
-    // The end found by the text before it (a `MoveEndpointByUnit` and a
-    // `GetText`), the selection read before and after (the second with
+    // The three points past the start each found by the text before it
+    // (a `MoveEndpointByUnit` and a `GetText` each), the start and the end
+    // compared, the selection read before and after (the second with
     // `TextPattern2`'s caret, text now being selected), the select, and
     // the change's ends compared and its text read. Before 2026-10-15 the
     // read before was classic and the read after a caret read of its own:
-    // 4 calls remotely, 30 classically.
+    // 4 calls remotely, 30 classically; and the range was the marker to
+    // the point past the review cursor's character, two points, before
+    // the points past both ends' characters were sent for a range read
+    // either way round: 22 calls classically.
     let expected: (CallCounts, &[(&str, u32)]) = if remote {
         (
             calls(1, 0, 0),
@@ -2880,25 +2894,25 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
                 ("Navigate", 1),
                 ("ITextProvider::GetSelection", 2),
                 ("GetCaretRange", 1),
-                ("Clone", 5),
+                ("Clone", 9),
                 ("CompareEndpoints", 7),
-                ("GetText", 2),
-                ("MoveEndpointByUnit", 1),
-                ("MoveEndpointByRange", 6),
+                ("GetText", 4),
+                ("MoveEndpointByUnit", 3),
+                ("MoveEndpointByRange", 10),
                 ("ITextRangeProvider::Select", 1),
             ],
         )
     } else {
         (
-            calls(22, 0, 0),
+            calls(32, 0, 0),
             &[
                 ("ITextProvider::GetSelection", 2),
                 ("GetCaretRange", 1),
-                ("Clone", 3),
+                ("Clone", 5),
                 ("CompareEndpoints", 7),
-                ("GetText", 2),
-                ("MoveEndpointByUnit", 1),
-                ("MoveEndpointByRange", 5),
+                ("GetText", 4),
+                ("MoveEndpointByUnit", 3),
+                ("MoveEndpointByRange", 9),
                 ("ITextRangeProvider::Select", 1),
             ],
         )
@@ -3346,7 +3360,11 @@ fn caret_moves_cost_exactly() {
         &mut anchors,
         &TextOp::Select {
             start: at(0),
-            end: at(5),
+            end: at(4),
+            through: Some(TextThrough {
+                start: at(1),
+                end: at(5),
+            }),
         },
     );
     let measured = verbatim_ia2::calls::take();

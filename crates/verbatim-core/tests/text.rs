@@ -9,8 +9,8 @@ use verbatim_model::{
     NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, PreviousSelection,
     QueryId, ReaderSettings, ReviewCommand, Role, SegmentContent, Selection, SelectionChange,
     SelectionText, SpeechMark, State, StateSet, TextAnchor, TextChunk, TextMovement, TextOp,
-    TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextRequest, TextUnit, TraceId,
-    TypingEcho, UtteranceSegment,
+    TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextRequest, TextThrough,
+    TextUnit, TraceId, TypingEcho, UtteranceSegment,
 };
 use verbatim_model::{BulletStyle, FormatRun, LineStyle, TextAttributes, TextFormat};
 
@@ -1403,16 +1403,24 @@ fn select_then_copy_selects_from_the_start_marker_says_so_copies_and_clears_the_
     let _ = reduce(&mut state, &command(ReviewCommand::ReviewNextWord, 0));
 
     let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
-    let start = TextPoint::At(TextPosition {
-        anchor: TextAnchor(100),
-        offset: 0,
-    });
-    let end = TextPoint::At(TextPosition {
-        anchor: TextAnchor(100),
-        offset: 7,
+    // The marker on "h" and the review cursor on "w", each with the point
+    // just past its character, for the range from the earlier through the
+    // character at the later.
+    let start = at(0);
+    let end = at(6);
+    let through = Some(TextThrough {
+        start: at(1),
+        end: at(7),
     });
     let select = request(&effects);
-    assert_eq!(select.op, TextOp::Select { start, end });
+    assert_eq!(
+        select.op,
+        TextOp::Select {
+            start,
+            end,
+            through
+        }
+    );
     // The selection made is spoken as a selecting key's is.
     let effects = reduce(
         &mut state,
@@ -1455,7 +1463,14 @@ fn select_then_copy_selects_from_the_start_marker_says_so_copies_and_clears_the_
         ),
     );
     let request = request(&effects);
-    assert_eq!(request.op, TextOp::ReadRange { start, end });
+    assert_eq!(
+        request.op,
+        TextOp::ReadRange {
+            start,
+            end,
+            through
+        }
+    );
     let effects = reduce(
         &mut state,
         &completed(
@@ -1470,6 +1485,57 @@ fn select_then_copy_selects_from_the_start_marker_says_so_copies_and_clears_the_
     // The copy cleared the start marker: a further press has none.
     let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
     assert_eq!(spoken(&effects), vec![message(Message::NoStartMarker)]);
+}
+
+/// The point `offset` bytes into the line [`reviewing`] reads, anchor 100.
+fn at(offset: u32) -> TextPoint {
+    TextPoint::At(TextPosition {
+        anchor: TextAnchor(100),
+        offset,
+    })
+}
+
+#[test]
+fn select_then_copy_back_from_the_marker_runs_from_the_cursor_through_the_marker() {
+    // The marker on "w", the review cursor moved back to "h": the range
+    // runs from the cursor through the character at the marker, both
+    // ends' characters included (`docs/parity/review.md`, "Select then
+    // copy from the review cursor"). The outpost, which alone can tell
+    // which end comes first, is sent both ends and the points just past
+    // their characters.
+    let mut state = reviewing("hello world\n", 6);
+    let _ = reduce(&mut state, &command(ReviewCommand::SetStartMarker, 0));
+    let _ = reduce(&mut state, &command(ReviewCommand::ReviewPreviousWord, 0));
+    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
+    let through = Some(TextThrough {
+        start: at(7),
+        end: at(1),
+    });
+    let select = request(&effects);
+    assert_eq!(
+        select.op,
+        TextOp::Select {
+            start: at(6),
+            end: at(0),
+            through
+        }
+    );
+    // The text cannot be selected: said as NVDA says it, and the second
+    // press copies the same range.
+    let effects = reduce(
+        &mut state,
+        &completed(select.query_id, TextReply::Unsupported),
+    );
+    assert_eq!(spoken(&effects), vec![message(Message::CannotSelect)]);
+    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 1));
+    assert_eq!(
+        request(&effects).op,
+        TextOp::ReadRange {
+            start: at(6),
+            end: at(0),
+            through
+        }
+    );
 }
 
 #[test]
@@ -2152,6 +2218,7 @@ fn a_focused_field_with_text_selected_says_the_selection() {
         TextOp::ReadRange {
             start: TextPoint::At(selection.start),
             end: TextPoint::At(selection.end),
+            through: None,
         }
     );
     let effects = reduce(
@@ -2684,6 +2751,7 @@ fn navigating_to_an_edit_field_reads_the_caret_line_in_place_of_its_value() {
         TextOp::ReadRange {
             start: TextPoint::SelectionStart,
             end: TextPoint::SelectionEnd,
+            through: None,
         }
     );
     // Nothing selected: the caret's line is read next.
@@ -2847,6 +2915,7 @@ fn reporting_an_edit_field_again_spells_then_copies_its_name_and_caret_line() {
         TextOp::ReadRange {
             start: TextPoint::SelectionStart,
             end: TextPoint::SelectionEnd,
+            through: None,
         }
     );
     let effects = reduce(

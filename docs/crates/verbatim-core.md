@@ -573,15 +573,20 @@ caret.
 
 Select then copy. Verbatim+F9 marks the review cursor's position ("Start
 marked"); Verbatim+Shift+F9 moves the review cursor there; Verbatim+F10
-asks the outpost to select from the marker up to and including the
-character at the review cursor and speaks the selection's change as a
-selecting key's is ("Name selected"), and pressed twice reads the range
-the first press selected, wherever the review cursor has gone since, and
-copies it (`Effect::CopyToClipboard`, so the shell's clipboard helper
-confirms), clearing the marker. With no marker it says "No start marker set", and with the
-marker in another object, NVDA's "The start marker must reside within the
-same object". Flat text cannot be selected, so there the first press says
-"Not supported in this document" and the second copies.
+asks the outpost to select from the earlier of the marker and the review
+cursor through the character at the later, whichever that is, and speaks
+the selection's change as a selecting key's is ("Name selected"), and
+pressed twice reads the range the first press selected, wherever the
+review cursor has gone since, and copies it (`Effect::CopyToClipboard`,
+so the shell's clipboard helper confirms), clearing the marker. Only the
+outpost can tell which comes first, so Core sends both ends with the
+points just past their characters (`TextThrough`), which it finds in the
+lines it was sent: the marker keeps the point past its character as it
+is set. With no marker it says "No start marker set", and with the marker
+in another object, NVDA's "The start marker must reside within the same
+object". Where the text cannot be selected, flat text among it, the first
+press says NVDA's "Can't select text, press twice to copy" and the second
+copies.
 
 Toggles and locations. Verbatim+6 toggles the review cursor following the
 caret ("caret moves review cursor", "caret doesn't move review cursor");

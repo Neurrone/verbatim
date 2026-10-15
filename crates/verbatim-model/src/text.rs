@@ -508,6 +508,23 @@ pub struct TextReadAhead {
     pub count: u8,
 }
 
+/// The points just past the characters at the two ends of a
+/// [`TextOp::ReadRange`] or [`TextOp::Select`], each where the text after
+/// the character there starts (the end itself where there is no
+/// character), so that the text runs from whichever end comes first to the
+/// point just past the character at the other: it holds the characters at
+/// both ends whichever way round they are. Core finds them in the text it
+/// was sent, where only the outpost can tell which end comes first; the
+/// review copy's selection runs this way (`docs/parity/review.md`,
+/// "Select then copy from the review cursor").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextThrough {
+    /// Just past the character at `start`.
+    pub start: TextPoint,
+    /// Just past the character at `end`.
+    pub end: TextPoint,
+}
+
 /// One operation Core asks an outpost to perform on a node's text.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -525,6 +542,10 @@ pub enum TextOp {
         start: TextPoint,
         /// The other end.
         end: TextPoint,
+        /// When set, the text runs through the character at the later end
+        /// ([`TextThrough`]).
+        #[serde(default)]
+        through: Option<TextThrough>,
     },
     /// Select the text between two points, and move the caret there where
     /// the application allows: answered [`TextReply::Selected`], or
@@ -534,6 +555,10 @@ pub enum TextOp {
         start: TextPoint,
         /// The other end.
         end: TextPoint,
+        /// When set, the text runs through the character at the later end
+        /// ([`TextThrough`]).
+        #[serde(default)]
+        through: Option<TextThrough>,
     },
     /// Move the caret to a point (say-all moving the caret as it reads):
     /// answered [`TextReply::Done`] or [`TextReply::Unsupported`].

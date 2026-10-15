@@ -90,9 +90,9 @@ pub use terminal::{
     terminal_screen_classic, terminal_screen_remote,
 };
 pub use text::{
-    FoundPoint, LocationAnswer, LocationQuery, Movement, Position, RangeAction, RangeAnswer,
-    RangeQuery, TextFrom, TextLocationFn, TextRangeFn, TextTarget, TextUnitsFn, UnitText,
-    UnitsAnswer, UnitsQuery, text_location, text_location_classic, text_location_remote,
+    ChangesUnread, FoundPoint, LocationAnswer, LocationQuery, Movement, Position, RangeAction,
+    RangeAnswer, RangeQuery, TextFrom, TextLocationFn, TextRangeFn, TextTarget, TextUnitsFn,
+    UnitText, UnitsAnswer, UnitsQuery, text_location, text_location_classic, text_location_remote,
     text_range, text_range_classic, text_range_remote, text_units, text_units_classic,
     text_units_remote,
 };

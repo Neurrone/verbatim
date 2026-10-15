@@ -3020,6 +3020,7 @@ fn navigator_follows_focus_and_returns_to_focus() {
             op: verbatim_model::TextOp::ReadRange {
                 start: verbatim_model::TextPoint::SelectionStart,
                 end: verbatim_model::TextPoint::SelectionEnd,
+                through: None,
             },
         }))
     };
@@ -4832,6 +4833,30 @@ fn flat_review_moves_by_grapheme_cluster() {
         &command(TraceId::mint(), ReviewCommand::SelectThenCopy, 1),
     );
     assert_eq!(effects, vec![Effect::CopyToClipboard("न्दी".to_owned())]);
+}
+
+/// Flat text cannot be selected, so select then copy's first press says
+/// so as NVDA does, and the second copies; with the review cursor moved
+/// back before the marker, from the cursor through the character at the
+/// marker (`docs/parity/review.md`, "Select then copy from the review
+/// cursor").
+#[test]
+fn flat_review_copies_back_from_the_marker_through_the_marker_s_character() {
+    let state = reviewing("abcd");
+    let (state, _) = review(&state, ReviewCommand::ReviewNextCharacter, 0);
+    let (state, _) = review(&state, ReviewCommand::ReviewNextCharacter, 0);
+    let (state, _) = review(&state, ReviewCommand::SetStartMarker, 0);
+    let (state, _) = review(&state, ReviewCommand::ReviewPreviousCharacter, 0);
+    let (state, segments) = review(&state, ReviewCommand::SelectThenCopy, 0);
+    assert_eq!(
+        segments,
+        vec![message(verbatim_model::Message::CannotSelect)]
+    );
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::SelectThenCopy, 1),
+    );
+    assert_eq!(effects, vec![Effect::CopyToClipboard("bc".to_owned())]);
 }
 
 /// An emoji with a skin tone is one character in flat review, so the next

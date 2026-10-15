@@ -226,6 +226,7 @@ message-start-marker-elsewhere = The start marker must reside within the same ob
 message-caret-moves-review = caret moves review cursor
 message-caret-does-not-move-review = caret doesn't move review cursor
 message-not-supported = Not supported in this document
+message-cannot-select = Can't select text, press twice to copy
 message-no-caret = No caret
 message-report-new-output-on = report new output on
 message-report-new-output-off = report new output off

@@ -1502,7 +1502,10 @@ asks the application for its current focus with a single focus-now query.
     `UiaText` implements with `verbatim_uia_rops::text_units`,
     `text_range`, and `text_location`). A point found by matching text is
     remembered as one the outpost reported, so naming it again costs
-    nothing. The edit controls keep their message-by-message reads.
+    nothing; the points just past a range's two characters, which the
+    review copy sends with its ends (`TextThrough`), are not, since each
+    press sends them once. The edit controls keep their message-by-message
+    reads.
 - Caret and text events (the worker). A focus that may have text (through
   UIA an edit field, a document, or a terminal; through MSAA an edit
   control's client area) gets a caret report, queued just after the focus

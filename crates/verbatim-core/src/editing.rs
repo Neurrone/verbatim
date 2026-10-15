@@ -783,6 +783,7 @@ pub(crate) fn focus_caret(state: &mut SrState, trace_id: TraceId, node: NodeId) 
             op: TextOp::ReadRange {
                 start: TextPoint::At(selection.start),
                 end: TextPoint::At(selection.end),
+                through: None,
             },
         })];
     }
@@ -933,7 +934,11 @@ pub(crate) fn navigator_text(
     navigator_request(
         state,
         node.id,
-        TextOp::ReadRange { start, end },
+        TextOp::ReadRange {
+            start,
+            end,
+            through: None,
+        },
         TextFollowUp::NavigatorSelection(read),
     )
 }

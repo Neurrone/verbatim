@@ -793,6 +793,7 @@ fn a_range_reads_in_document_order_and_selecting_moves_the_caret() {
         &TextOp::ReadRange {
             start: at(11),
             end: at(6),
+            through: None,
         },
     );
     assert_eq!(
@@ -808,6 +809,7 @@ fn a_range_reads_in_document_order_and_selecting_moves_the_caret() {
         &TextOp::Select {
             start: at(5),
             end: at(0),
+            through: None,
         },
     );
     assert_eq!(
@@ -819,6 +821,65 @@ fn a_range_reads_in_document_order_and_selecting_moves_the_caret() {
         }])
     );
     assert_eq!(source.selection, Some((0, 5)));
+}
+
+#[test]
+fn a_range_through_its_ends_holds_both_ends_characters_whichever_comes_first() {
+    // The review copy's range: from the earlier end through the character
+    // at the later, the marker's ("w", at 6) or the review cursor's ("h",
+    // at 0), whichever way round they are.
+    let mut source = Fake::new("hello world", 0);
+    let mut anchors = store();
+    let line = report(&mut source, &mut anchors).line;
+    let at = |offset| {
+        TextPoint::At(TextPosition {
+            anchor: line.start,
+            offset,
+        })
+    };
+    let through = |start, end| {
+        Some(TextThrough {
+            start: at(start),
+            end: at(end),
+        })
+    };
+    for (start, end, past) in [(6, 0, through(7, 1)), (0, 6, through(1, 7))] {
+        let range = perform(
+            &mut source,
+            &mut anchors.node(1),
+            &TextOp::ReadRange {
+                start: at(start),
+                end: at(end),
+                through: past,
+            },
+        );
+        assert_eq!(
+            range,
+            TextReply::Range {
+                text: "hello w".to_owned(),
+                truncated: false
+            },
+            "from {start} to {end}"
+        );
+    }
+    let selected = perform(
+        &mut source,
+        &mut anchors.node(1),
+        &TextOp::Select {
+            start: at(6),
+            end: at(0),
+            through: through(7, 1),
+        },
+    );
+    assert_eq!(
+        selected,
+        TextReply::Selected(vec![SelectionChange {
+            selected: true,
+            text: "hello w".to_owned(),
+            characters: 7,
+        }])
+    );
+    assert_eq!(source.selection, Some((0, 7)));
 }
 
 #[test]

@@ -601,7 +601,9 @@ Every point is returned (`FoundPoint`) so the caller can remember it.
   start is the point, never collapsed first.
 - `text_range` (`RangeQuery`, `RangeAnswer`): two points (or one, for
   moving the caret), ordered by comparing them, and the text between them
-  read up to a limit or selected. A selection the provider refuses is
+  read up to a limit or selected. With `RangeQuery::through`, the points
+  just past the two points' characters, the range runs from the earlier
+  through the character at the later. A selection the provider refuses is
   caught inside the program (`try_catch`), answered as not selected, as
   the classic `Select` failure is. `RangeAction::SelectReporting` also
   reads the selection before selecting, with the caret read's
@@ -609,7 +611,15 @@ Every point is returned (`FoundPoint`) so the caller can remember it.
   (`RangeAnswer::changes`) by the caret read's rule, with the same
   instructions (`emit_changes`), all in the one program: the review
   copy's first press, one round trip (`docs/performance.md`, "The review
-  copy's selection, UIA").
+  copy's selection, UIA"). The reads after the select are in a try block
+  of their own: when one fails, the selection is made, and the program
+  still answers with the selection it read before
+  (`RangeAnswer::unread`, `ChangesUnread`). `text_range` then reads the
+  selection again the classic way and compares it with that one, which
+  is all of the classic implementation's work that remains, rather than
+  running the classic implementation, which would select again and
+  compare the new selection with itself, so the first press would say
+  nothing; the answer's path is a fallback.
 - `text_location` (`LocationQuery`, `LocationAnswer`): the character at
   the point and its bounding rectangles, the first rectangle's left and
   top. The program returns them as an array of doubles (verified against

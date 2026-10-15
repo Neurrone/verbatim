@@ -41,7 +41,7 @@ pub use text::{
     HeldAnchors, LanguageRun, LineStyle, MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_READ_AHEAD,
     MAX_READ_AHEAD_TEXT, MAX_SELECTION_TEXT_BYTES, PreviousSelection, Selection, SelectionChange,
     TextAnchor, TextAttributes, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead,
-    TextReadAhead, TextReply, TextRequest, TextUnit,
+    TextReadAhead, TextReply, TextRequest, TextThrough, TextUnit,
 };
 pub use theme::{
     DEFAULT_GAIN, Fetches, Indication, IndicationCategory, IndicationSetting, MAX_GAIN,

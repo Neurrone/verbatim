@@ -700,6 +700,7 @@ pub fn message_text(message: verbatim_model::Message) -> String {
             i18n_embed_fl::fl!(loader, "message-caret-does-not-move-review")
         }
         Message::NotSupported => i18n_embed_fl::fl!(loader, "message-not-supported"),
+        Message::CannotSelect => i18n_embed_fl::fl!(loader, "message-cannot-select"),
         Message::NoCaret => i18n_embed_fl::fl!(loader, "message-no-caret"),
         Message::ReportNewOutputOn => i18n_embed_fl::fl!(loader, "message-report-new-output-on"),
         Message::ReportNewOutputOff => {
@@ -1843,6 +1844,10 @@ mod tests {
         assert_eq!(
             message_text(verbatim_model::Message::NoStartMarker),
             "No start marker set"
+        );
+        assert_eq!(
+            message_text(verbatim_model::Message::CannotSelect),
+            "Can't select text, press twice to copy"
         );
         assert_eq!(role_name(verbatim_model::Role::Terminal), "terminal");
         assert_eq!(role_name(verbatim_model::Role::IpAddress), "IP address");

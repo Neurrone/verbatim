@@ -222,16 +222,28 @@ descriptions on repeated presses, top and bottom, and the edge messages) read th
 Select then copy from the review cursor (Verbatim+F9, Verbatim+Shift+F9,
 Verbatim+F10 once to select and twice to copy). NVDA: the same keys and
 messages ("Start marked", "No start marker set", "The start marker must
-reside within the same object"). The first press selects the range in
-the control and announces the selection's change as a selecting key's is
-announced ("Name selected"); the second, within the multi-press timeout,
-copies the range the first selected ("Copied to clipboard: Name") and
-clears the start marker, so a further press says "No start marker set".
+reside within the same object", "Can't select text, press twice to
+copy"). The first press selects the range in the control, from the
+earlier of the start marker and the review cursor through the character
+at the later, whichever of the two that is, so the characters at both
+ends are included whichever way the review cursor moved, and announces
+the selection's change as a selecting key's is announced ("Name
+selected"); where the text cannot be selected it says "Can't select text,
+press twice to copy". The second, within the multi-press timeout, copies
+the range the first selected ("Copied to clipboard: Name") and clears the
+start marker, so a further press says "No start marker set".
 Verbatim: **matched (verified)** by `text_box_review_cursor` and
 `notepad_review_cursor`, implemented in Core: the first press's
 announcement comes from the same comparison of the selection before and
 after, and the same wording, as a selecting key's, and the first press
-says "Not supported in this document" when the text cannot be selected.
+says "Can't select text, press twice to copy" when the text cannot be
+selected, flat text included. The range with the review cursor moved
+back before the marker is covered by
+`select_then_copy_back_from_the_marker_runs_from_the_cursor_through_the_marker`
+(`crates/verbatim-core/tests/text.rs`), with flat text by
+`flat_review_copies_back_from_the_marker_through_the_marker_s_character`
+(`crates/verbatim-core/tests/reduce.rs`), and the outpost's range by
+`a_range_through_its_ends_holds_both_ends_characters_whichever_comes_first`.
 NVDA's "Press twice to copy or reset the start marker", for a first press
 after a selection not yet copied, is not yet built (M4.2): such a
 press selects again (Dickson, 2026-10-15). NVDA's second press clears

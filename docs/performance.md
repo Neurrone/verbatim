@@ -1052,16 +1052,33 @@ start to its end).
 The first press of the review copy (Verbatim+F10, `TextOp::Select`),
 answered with how the selection changed so that Core speaks it as a
 selecting key's: mockapp's caret collapsed at the start, "alpha" selected
-from the start of the line to a position five characters on, which the
-program finds by the text before it.
+from the marker at the start of the line through the character at the
+review cursor, four characters on. Core sends both ends with the points
+just past their characters (`TextThrough`), since only the outpost can
+tell which end comes first, and the range runs from the earlier through
+the character at the later; the program finds the three points after the
+start by the text before each.
 
 - Minimum: 1 UIA call: one program reads the selection, selects
   (`ITextRangeProvider::Select` is an instruction of the remote operations
   bytecode, `TextRangeSelect`), reads the selection again, and compares
-  the two and reads the text of each change inside the provider.
+  the two and reads the text of each change inside the provider. It
+  executes 160 instructions (`instruction_limit.rs`,
+  `range_selections_execute_exactly`).
 - Today: 1 remotely (4 before 2026-10-15: the selection read before by
   two classic calls, the selection as a program of its own, and the read
-  after as a caret read's program); classically 22 (30 before).
+  after as a caret read's program); classically 32 (22 with the range
+  from the marker to the point past the review cursor's character, 30
+  before that).
+- When the program fails after its select, the selection is made: the
+  program, whose reads after the select are in a try block, still
+  returns the selection before, and the after-read alone is made the
+  classic way and compared with it, never the select again. That costs
+  the program and then, by the code's count for mockapp's case (not
+  measured, since mockapp cannot fail a call after the select), 11
+  classic calls: the selection, a comparison and `TextPattern2`'s caret
+  (3), four comparisons of the ends, and the change's copy, its two ends
+  moved and its text (8); each further change costs 4 more.
 - Target: 1, met.
 
 In a Win32 edit control the same request is 6 window messages, as before:

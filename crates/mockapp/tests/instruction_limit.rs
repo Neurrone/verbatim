@@ -21,9 +21,10 @@ use verbatim_uia::{Ancestor, Cached, Fill, FocusInput, Kept, Live, Node, Shape, 
 use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, ControlledQuery, Error,
     FocusAncestry, FocusQuery, FormatSpan, Movement, NavigationDirection, PathQuery, Position,
-    RangeEnd, ScreenAnchor, ScreenQuery, Status, StepQuery, TextAttribute, TextFrom, TextTarget,
-    UnitsQuery, caret_read_remote, controlled_selection_remote, counting, element_by_path_remote,
-    focus_ancestry_remote, navigation_step_remote, terminal_screen_remote, text_units_remote,
+    RangeAction, RangeEnd, RangeQuery, ScreenAnchor, ScreenQuery, Status, StepQuery, TextAttribute,
+    TextFrom, TextTarget, UnitsQuery, caret_read_remote, controlled_selection_remote, counting,
+    element_by_path_remote, focus_ancestry_remote, navigation_step_remote, terminal_screen_remote,
+    text_range_remote, text_units_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
@@ -544,6 +545,60 @@ fn say_all_batches_execute_exactly() {
     assert!(languages < LIMIT / 2 && first < LIMIT / 2);
 }
 
+/// The review copy's first press: "alpha" selected back from the review
+/// cursor, on its first "a", through the marker, on its last, every point
+/// but the document's start found by the text before it as Verbatim finds
+/// a held position's, from no selection, and the selection read again and
+/// compared.
+fn range_selections_execute_exactly() {
+    common::init_com();
+    let mut fixture = Fixture::start("text.json", "mockapp-instructions-range");
+    let notes = fixture.find("Notes");
+    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    common::apply(&mut fixture.app, fixture.hwnd, "caret doc 0");
+    let document = pattern.document_range().expect("the document range");
+    let start = Position {
+        range: &document,
+        endpoint: Endpoint::Start,
+        collapsed: false,
+    };
+    let texts: Vec<Vec<u16>> = ["alph", "alpha", "a"]
+        .iter()
+        .map(|text| text.encode_utf16().collect())
+        .collect();
+    let counts: Vec<[i32; 1]> = [4, 5, 1].map(|count| [count]).to_vec();
+    let after = |index: usize| TextFrom::After {
+        from: start,
+        prefix: &texts[index],
+        counts: &counts[index],
+    };
+    let query = RangeQuery {
+        target: TextTarget {
+            element: &notes,
+            pattern: &pattern,
+            pattern2: pattern2.as_ref(),
+        },
+        start: after(0),
+        end: Some(TextFrom::At(start)),
+        through: Some((after(1), after(2))),
+        action: RangeAction::SelectReporting(1024),
+    };
+    let press = counted(|| {
+        let answer = text_range_remote(&query).expect("the program runs");
+        assert!(answer.selected);
+        let changes: Vec<(bool, String)> = answer
+            .changes
+            .expect("the changes, read")
+            .into_iter()
+            .map(|change| (change.selected, String::from_utf16_lossy(&change.text)))
+            .collect();
+        assert_eq!(changes, [(true, "alpha".to_owned())]);
+    });
+    fixture.app.quit();
+    assert_eq!(press, 160, "the review copy's first press");
+    assert!(press < LIMIT / 2);
+}
+
 /// A terminal's screen read: an anchor whose top row is nowhere as a row of
 /// its own, under 90 rows that hold its text as part of theirs, so the
 /// search checks its 20 matches and gives up and the text's rows are
@@ -647,6 +702,10 @@ fn main() {
         (
             "say_all_batches_execute_exactly",
             say_all_batches_execute_exactly,
+        ),
+        (
+            "range_selections_execute_exactly",
+            range_selections_execute_exactly,
         ),
         (
             "terminal_screens_execute_exactly",

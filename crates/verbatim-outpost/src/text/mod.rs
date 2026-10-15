@@ -51,7 +51,7 @@ use verbatim_model::{
     CaretReply, CaretReport, CaretWatch, FormatRun, LanguageRun, MAX_CHUNK_BYTES, MAX_RANGE_BYTES,
     MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT, MAX_SELECTION_TEXT_BYTES, PreviousSelection, Selection,
     SelectionChange, TextAnchor, TextAttributes, TextChunk, TextMovement, TextOp, TextPoint,
-    TextPosition, TextRead, TextReadAhead, TextReply, TextUnit,
+    TextPosition, TextRead, TextReadAhead, TextReply, TextThrough, TextUnit,
 };
 
 /// How many of its newest caret reports for a node the outpost remembers,
@@ -193,6 +193,10 @@ pub struct UnitsRead<P> {
 /// What [`TextSource::read_units`] answers: `None` when the source reads
 /// call by call, or the units, or the reply that ends the request.
 pub type UnitsAnswer<P> = Option<Result<UnitsRead<P>, TextReply>>;
+
+/// The points just past the characters at a range's two ends, as
+/// [`TextSource::range`] takes them (`verbatim_model::TextThrough`).
+pub type PastEnds<'a, P> = (&'a PointFrom<P>, &'a PointFrom<P>);
 
 /// What [`TextSource::point_location`] answers: `None` when the source
 /// reads call by call, or the point found and its screen position, `None`
@@ -428,7 +432,10 @@ pub trait TextSource {
 
     /// Finds two points (the second the first again when `None`) and reads
     /// or selects the text between them, whichever comes first, at once
-    /// where the source can; `None` as for [`read_units`](Self::read_units).
+    /// where the source can; with `through`, the points just past the
+    /// characters at the two (`verbatim_model::TextThrough`), from
+    /// whichever comes first through the character at the other. `None`
+    /// as for [`read_units`](Self::read_units).
     ///
     /// # Errors
     ///
@@ -437,6 +444,7 @@ pub trait TextSource {
         &mut self,
         _start: &PointFrom<Self::Pos>,
         _end: Option<&PointFrom<Self::Pos>>,
+        _through: Option<PastEnds<'_, Self::Pos>>,
         _action: RangeAction,
     ) -> TextResult<Option<RangeRead<Self::Pos>>> {
         Ok(None)
@@ -777,8 +785,16 @@ pub fn perform<S: TextSource>(
     let result = match op {
         TextOp::Read(read) => read_unit(source, anchors, read),
         TextOp::ReadAhead(ahead) => read_ahead(source, anchors, ahead),
-        TextOp::ReadRange { start, end } => read_range(source, anchors, *start, *end),
-        TextOp::Select { start, end } => select_text(source, anchors, *start, *end),
+        TextOp::ReadRange {
+            start,
+            end,
+            through,
+        } => read_range(source, anchors, (*start, *end), *through),
+        TextOp::Select {
+            start,
+            end,
+            through,
+        } => select_text(source, anchors, (*start, *end), *through),
         TextOp::MoveCaret(point) => select(source, anchors, *point, None),
         TextOp::Location(point) => location(source, anchors, *point),
         _ => Ok(TextReply::Unsupported),
@@ -1831,12 +1847,13 @@ fn movement_unit<S: TextSource>(source: &S, unit: TextUnit) -> TextUnit {
     }
 }
 
-/// Two points resolved, in document order.
+/// Two points resolved, in document order; with `through`, the earlier and
+/// the point just past the character at the later.
 fn ordered<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    start: TextPoint,
-    end: TextPoint,
+    (start, end): (TextPoint, TextPoint),
+    through: Option<TextThrough>,
 ) -> OrReply<(S::Pos, S::Pos)> {
     let start = match point(source, anchors, start)? {
         Ok(pos) => pos,
@@ -1846,24 +1863,33 @@ fn ordered<S: TextSource>(
         Ok(pos) => pos,
         Err(reply) => return Ok(Err(reply)),
     };
-    Ok(Ok(if source.compare(&start, &end)? == Ordering::Greater {
-        (end, start)
+    let reversed = source.compare(&start, &end)? == Ordering::Greater;
+    let Some(through) = through else {
+        return Ok(Ok(if reversed { (end, start) } else { (start, end) }));
+    };
+    let (first, past) = if reversed {
+        (end, through.start)
     } else {
-        (start, end)
-    }))
+        (start, through.end)
+    };
+    Ok(match point(source, anchors, past)? {
+        Ok(past) => Ok((first, past)),
+        Err(reply) => Err(reply),
+    })
 }
 
-/// The text between two points, for a copy.
+/// The text between two points, for a copy; with `through`, through the
+/// character at the later.
 fn read_range<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    start: TextPoint,
-    end: TextPoint,
+    (start, end): (TextPoint, TextPoint),
+    through: Option<TextThrough>,
 ) -> TextResult<TextReply> {
     if let Some(reply) = range_at_once(
         source,
         anchors,
-        (start, Some(end)),
+        (start, Some(end), through),
         RangeAction::Text(MAX_RANGE_UNITS + 1),
     )? {
         let read = match reply {
@@ -1881,7 +1907,7 @@ fn read_range<S: TextSource>(
             truncated: read_cut || cut,
         });
     }
-    let (start, end) = match ordered(source, anchors, start, end)? {
+    let (start, end) = match ordered(source, anchors, (start, end), through)? {
         Ok(range) => range,
         Err(reply) => return Ok(reply),
     };
@@ -1902,7 +1928,7 @@ fn read_range<S: TextSource>(
 fn range_at_once<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    (start, end): (TextPoint, Option<TextPoint>),
+    (start, end, through): (TextPoint, Option<TextPoint>, Option<TextThrough>),
     action: RangeAction,
 ) -> TextResult<Option<Result<RangeRead<S::Pos>, TextReply>>> {
     let (start, start_position) = match point_from(anchors, start) {
@@ -1913,7 +1939,29 @@ fn range_at_once<S: TextSource>(
         Ok(end) => end,
         Err(reply) => return Ok(Some(Err(reply))),
     };
-    let Some(read) = source.range(&start, end.as_ref().map(|(end, _)| end), action)? else {
+    // The points just past the two characters are found by the program
+    // and not remembered: the review copy sends them once a press.
+    let through = match through
+        .map(|through| {
+            Ok::<_, TextReply>((
+                point_from(anchors, through.start)?.0,
+                point_from(anchors, through.end)?.0,
+            ))
+        })
+        .transpose()
+    {
+        Ok(through) => through,
+        Err(reply) => return Ok(Some(Err(reply))),
+    };
+    let Some(read) = source.range(
+        &start,
+        end.as_ref().map(|(end, _)| end),
+        through
+            .as_ref()
+            .map(|(past_start, past_end)| (past_start, past_end)),
+        action,
+    )?
+    else {
         return Ok(None);
     };
     remember_found(anchors, start_position, &read.start);
@@ -1930,14 +1978,14 @@ fn select<S: TextSource>(
     start: TextPoint,
     end: Option<TextPoint>,
 ) -> TextResult<TextReply> {
-    if let Some(reply) = range_at_once(source, anchors, (start, end), RangeAction::Select)? {
+    if let Some(reply) = range_at_once(source, anchors, (start, end, None), RangeAction::Select)? {
         return Ok(match reply {
             Ok(read) if read.selected => TextReply::Done,
             Ok(_) => TextReply::Unsupported,
             Err(reply) => reply,
         });
     }
-    let (start, end) = match ordered(source, anchors, start, end.unwrap_or(start))? {
+    let (start, end) = match ordered(source, anchors, (start, end.unwrap_or(start)), None)? {
         Ok(range) => range,
         Err(reply) => return Ok(reply),
     };
@@ -1957,13 +2005,13 @@ fn select<S: TextSource>(
 fn select_text<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    start: TextPoint,
-    end: TextPoint,
+    (start, end): (TextPoint, TextPoint),
+    through: Option<TextThrough>,
 ) -> TextResult<TextReply> {
     if let Some(reply) = range_at_once(
         source,
         anchors,
-        (start, Some(end)),
+        (start, Some(end), through),
         RangeAction::SelectReporting,
     )? {
         return Ok(match reply {
@@ -1982,9 +2030,12 @@ fn select_text<S: TextSource>(
     let previous = before
         .selection
         .unwrap_or_else(|| (before.caret.clone(), before.caret));
-    match select(source, anchors, start, Some(end))? {
-        TextReply::Done => {}
-        other => return Ok(other),
+    let (start, end) = match ordered(source, anchors, (start, end), through)? {
+        Ok(range) => range,
+        Err(reply) => return Ok(reply),
+    };
+    if !source.select(&start, &end)? {
+        return Ok(TextReply::Unsupported);
     }
     let state = source.caret()?;
     Ok(TextReply::Selected(selection_changes(

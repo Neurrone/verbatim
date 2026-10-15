@@ -56,8 +56,8 @@ use verbatim_uia_rops::{
 
 use super::{
     CaretRead, CaretRequest, CaretState, FormatSpan, Located, MAX_CHUNK_UNITS, MAX_RANGE_UNITS,
-    PointFrom, RangeAction, RangeRead, Sentences, TextError, TextResult, TextSource, Unit,
-    UnitRead, UnitsAnswer, UnitsRead, UnitsRequest,
+    PastEnds, PointFrom, RangeAction, RangeRead, Sentences, TextError, TextResult, TextSource,
+    Unit, UnitRead, UnitsAnswer, UnitsRead, UnitsRequest,
 };
 
 /// A position in UIA text: an end of a range.
@@ -740,6 +740,7 @@ impl TextSource for UiaText {
         &mut self,
         start: &PointFrom<UiaPos>,
         end: Option<&PointFrom<UiaPos>>,
+        through: Option<PastEnds<'_, UiaPos>>,
         action: RangeAction,
     ) -> TextResult<Option<RangeRead<UiaPos>>> {
         let target = self.target();
@@ -753,20 +754,34 @@ impl TextSource for UiaText {
                 i32::try_from(MAX_RANGE_UNITS).unwrap_or(i32::MAX),
             ),
         };
-        let run = |start: TextFrom<'_>, end: Option<TextFrom<'_>>| {
+        let run = |start: TextFrom<'_>,
+                   end: Option<TextFrom<'_>>,
+                   through: Option<(TextFrom<'_>, TextFrom<'_>)>| {
             verbatim_uia_rops::text_range(
                 &RangeQuery {
                     target,
                     start,
                     end,
+                    through,
                     action,
                 },
                 remote,
             )
         };
-        let answer = with_from(start, |start| match end {
-            Some(end) => with_from(end, |end| run(start, Some(end))),
-            None => Ok(run(start, None)),
+        let answer = with_from(start, |start| {
+            let Some(end) = end else {
+                return Ok(run(start, None, None));
+            };
+            with_from(end, |end| {
+                let Some((past_start, past_end)) = through else {
+                    return Ok(run(start, Some(end), None));
+                };
+                with_from(past_start, |past_start| {
+                    with_from(past_end, |past_end| {
+                        run(start, Some(end), Some((past_start, past_end)))
+                    })
+                })?
+            })?
         })??;
         let (answer, path) = answer.map_err(rops_failed)?;
         self.note(path);

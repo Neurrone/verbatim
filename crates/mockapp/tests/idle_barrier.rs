@@ -74,6 +74,7 @@ fn the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog() {
     let read = TextOp::ReadRange {
         start: TextPoint::Start,
         end: TextPoint::End,
+        through: None,
     };
     let first = outpost.ask(Query::Text {
         node_id: notes,

@@ -805,6 +805,7 @@ fn remote_and_classic_text_reads_agree() {
             target,
             start,
             end,
+            through: None,
             action,
         };
         let remote = text_range_remote(&query).expect("the remote program runs");
@@ -859,6 +860,7 @@ fn remote_and_classic_text_reads_agree() {
             target,
             start: TextFrom::Start,
             end: None,
+            through: None,
             action: RangeAction::Select,
         };
         assert!(
@@ -870,6 +872,7 @@ fn remote_and_classic_text_reads_agree() {
             target,
             start: TextFrom::Start,
             end: Some(after),
+            through: None,
             action: RangeAction::SelectReporting(1024),
         })
         .expect("the selection is made");

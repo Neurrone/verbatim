@@ -295,6 +295,10 @@ pub enum Message {
     /// The text cannot do what was asked (no page unit, no selection, no
     /// screen position) — NVDA's "Not supported in this document".
     NotSupported,
+    /// Select then copy's first press could not select the text, which a
+    /// second press still copies — NVDA's "Can't select text, press twice
+    /// to copy".
+    CannotSelect,
     /// A command that needs a caret found none — NVDA's "No caret".
     NoCaret,
     /// New terminal output is spoken again, after Verbatim+5 — "report new

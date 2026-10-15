@@ -21,7 +21,8 @@ use std::sync::Arc;
 
 use verbatim_model::{
     Effect, Message, NodeId, Phrase, ReviewCommand, SegmentContent, TextMovement, TextOp,
-    TextPoint, TextPosition, TextRead, TextReply, TextRequest, TextUnit, TraceId, UtteranceSegment,
+    TextPoint, TextPosition, TextRead, TextReply, TextRequest, TextThrough, TextUnit, TraceId,
+    UtteranceSegment,
 };
 
 use crate::editing::{is_grid, may_have_text, selection_segments, speak};
@@ -183,6 +184,19 @@ fn execute(
     let line = &position.line;
     let content = text::line_content(&line.text, grid);
     let language = line.language_at(position.offset);
+    // The review cursor's position, and the one just past the character
+    // there: the two ends of the review copy's character at the cursor.
+    let cursor = point_of(position);
+    let after_cursor = || TextPosition {
+        anchor: line.start,
+        offset: u32::try_from(
+            text::character_at(&line.text, position.offset, grid)
+                .map_or(position.offset, |character| {
+                    position.offset + character.len()
+                }),
+        )
+        .unwrap_or(u32::MAX),
+    };
     let read_line = |movement: Option<TextMovement>, at: TextPoint, landing: Landing| {
         (
             TextOp::Read(TextRead {
@@ -395,7 +409,8 @@ fn execute(
         ReviewCommand::SetStartMarker => {
             state.start_marker = Some(StartMarker::Text {
                 node,
-                at: point_of(position),
+                at: cursor,
+                after: after_cursor(),
                 selected_to: None,
             });
             return vec![speak(trace_id, message(Message::StartMarked))];
@@ -412,23 +427,32 @@ fn execute(
             }
         },
         ReviewCommand::SelectThenCopy => {
-            let (at, selected_to) = match marker_in(state, node) {
+            let (at, after, selected_to) = match marker_in(state, node) {
                 Err(effect) => return vec![speak(trace_id, effect)],
                 Ok(StartMarker::Text {
-                    at, selected_to, ..
-                }) => (at, selected_to),
+                    at,
+                    after,
+                    selected_to,
+                    ..
+                }) => (at, after, selected_to),
                 Ok(StartMarker::Flat { .. }) => {
                     return vec![speak(trace_id, message(Message::NoStartMarker))];
                 }
             };
-            // Up to and including the character at the review cursor.
-            let end = text::character_at(&line.text, position.offset, grid)
-                .map_or(position.offset, |character| {
-                    position.offset + character.len()
-                });
-            let end = TextPosition {
-                anchor: line.start,
-                offset: u32::try_from(end).unwrap_or(u32::MAX),
+            // From the earlier of the marker and the review cursor through
+            // the character at the later, whichever that is
+            // (`docs/parity/review.md`, "Select then copy from the review
+            // cursor"): which comes first only the outpost can tell, so
+            // both ends go with the points just past their characters.
+            let range = |(end, end_after): (TextPosition, TextPosition)| {
+                (
+                    TextPoint::At(at),
+                    TextPoint::At(end),
+                    Some(TextThrough {
+                        start: TextPoint::At(after),
+                        end: TextPoint::At(end_after),
+                    }),
+                )
             };
             if repeat == 0 {
                 // The second press copies the range this one selects, as
@@ -437,29 +461,33 @@ fn execute(
                 state.start_marker = Some(StartMarker::Text {
                     node,
                     at,
-                    selected_to: Some(end),
+                    after,
+                    selected_to: Some((cursor, after_cursor())),
                 });
-                let end = TextPoint::At(end);
+                let (start, end, through) = range((cursor, after_cursor()));
                 (
                     TextOp::Select {
-                        start: TextPoint::At(at),
+                        start,
                         end,
+                        through,
                     },
                     TextFollowUp::Selected,
                 )
             } else {
-                let end = TextPoint::At(selected_to.unwrap_or(end));
+                let (start, end, through) =
+                    range(selected_to.unwrap_or_else(|| (cursor, after_cursor())));
                 (
                     TextOp::ReadRange {
-                        start: TextPoint::At(at),
+                        start,
                         end,
+                        through,
                     },
                     TextFollowUp::Copy,
                 )
             }
         }
         ReviewCommand::ReportReviewLocation => (
-            TextOp::Location(TextPoint::At(point_of(position))),
+            TextOp::Location(TextPoint::At(cursor)),
             TextFollowUp::Location,
         ),
         ReviewCommand::SayAllFromReview => {
@@ -616,11 +644,14 @@ pub(crate) fn reply(
                 vec![speak(trace_id, segments)]
             }
         }
+        // The text cannot be selected: the second press still copies it.
+        (TextFollowUp::Selected, TextReply::Unsupported | TextReply::NoText) => {
+            vec![speak(trace_id, message(Message::CannotSelect))]
+        }
         (_, TextReply::Unsupported | TextReply::UnsupportedUnit(_))
-        | (
-            TextFollowUp::Location | TextFollowUp::Selected | TextFollowUp::Copy,
-            TextReply::NoText,
-        ) => vec![speak(trace_id, message(Message::NotSupported))],
+        | (TextFollowUp::Location | TextFollowUp::Copy, TextReply::NoText) => {
+            vec![speak(trace_id, message(Message::NotSupported))]
+        }
         (_, _) if !on_navigator => Vec::new(),
         (TextFollowUp::Seed { command, repeat }, TextReply::Read { chunk, .. }) => {
             let grid = navigator_grid(state);
@@ -781,10 +812,19 @@ pub(crate) fn flat_extra(
                 if repeat == 0 {
                     // Flat text cannot be selected; pressed again, it is
                     // copied.
-                    vec![speak(trace_id, message(Message::NotSupported))]
+                    vec![speak(trace_id, message(Message::CannotSelect))]
                 } else {
-                    let end = text::grapheme_at(&flat, offset).map_or(offset, |range| range.end);
-                    let (from, to) = (start.min(end), start.max(end));
+                    // From the earlier of the marker and the review cursor
+                    // through the character at the later
+                    // (`docs/parity/review.md`, "Select then copy from the
+                    // review cursor").
+                    let after =
+                        |at: usize| text::grapheme_at(&flat, at).map_or(at, |range| range.end);
+                    let (from, to) = if offset < start {
+                        (offset, after(start))
+                    } else {
+                        (start, after(offset))
+                    };
                     match flat.get(from..to) {
                         Some(copied) if !copied.is_empty() => {
                             state.start_marker = None;
