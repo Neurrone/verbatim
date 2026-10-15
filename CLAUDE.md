@@ -19,6 +19,26 @@ All documentation, comments, and commit messages in this repo must read well wit
 
 - No ASCII-art diagrams, box drawings, or arrow chains.
 - Prefer prose and lists over pipe tables.
+- Documents describe the present. When a mechanism changes, replace its description rather than appending a dated note or keeping the old text beside the new; history lives in git and the commit messages. A decision of record keeps its date and an amended-on line, but one current statement. A rule that exists because something went wrong keeps one sentence of why, not the narrative. A superseded design record is archived or deleted, never kept in place with a banner.
+- Reports to Dickson define any invented term on first use or avoid it, lead with the decision he needs to make, and keep status updates short, because in past sessions a third of his messages asked what a term meant.
+
+## Standing rules
+
+These hold for every session and every subagent; a subagent brief points here rather than restating them.
+
+- Fix root causes, never adding retries, sleeps, skipped cleanup, or self-termination to hide a race or failure, because the outpost code once became a pile of mechanisms each added for one live failure and had to be redesigned; a workaround needs evidence that the proper fix is not enough, and is documented as one.
+- Verify every claim about NVDA's behavior from the pinned source under `nvda/` or a live capture, and take spoken expectations only from captures, because an expectation taken from anywhere else encodes Verbatim's old behavior as NVDA's.
+- The NVDA submodule pin must equal the installed NVDA build used for captures: the capture header prints the build, so compare it with `git -C nvda rev-parse HEAD` before a capture series and stop when they differ, because expectations come from captures and ported code from the pinned source, and both must describe the same NVDA.
+- Follow `docs/testing.md` (one fixed target and code path, exact assertions, waits only for evidence, no branching on the environment, no alternative expectations, no substring matches), because a test that accepts two outcomes proves neither.
+- Run the end-to-end scenarios related to a change, and the full suite only for wide-ranging changes or when asked, because the full suite takes a long time and takes over the desktop.
+- Work on main, with no pull requests or feature branches unless asked, so that every session and subagent builds on the same history.
+- Push rarely, and only after `cargo xtask ci` and the related scenarios pass locally, because a push is not a test run.
+- Use UIA remote operations wherever a sequence of UIA calls would benefit, and audit this whenever UIA code changes, because each separate call is a cross-process round trip.
+- Judge every change on wake-ups and CPU as well as latency, and raise neither on the event or speech path unless that is the change's purpose, because a latency figure alone hides a cost paid on every event.
+- Clean up: stop the processes you started, remove merged worktrees, delete large traces once read, and release held keys, because leftovers break the next run and fill the disk.
+- Do not stop while work in scope remains; record a question for Dickson and continue with everything it does not block, because a turn that ends on a question idles until he reads it.
+- Keep ported NVDA code in the Windows-specific crates and write the platform-neutral crates from the parity docs (see "NVDA provenance"), so that the platform-neutral tier's licensing does not depend on NVDA's.
+- At most two subagents build at once on Dickson's machine, each in its own target directory, because more exhausts its disk and memory.
 
 ## NVDA provenance
 
@@ -47,5 +67,7 @@ We are using GitHub actions for CI.
 The end-to-end suite also runs without a VM, against this machine, by pointing it at a locally running `verbatim-agent`. It launches a real Verbatim and injects real keystrokes, so it takes over the desktop while it runs and does nothing useful on a locked one; `docs/tooling.md` has the details. Build and start the agent with `cargo build -p verbatim-agent` and `target\debug\verbatim-agent.exe --bind-address 127.0.0.1 --port 44001`, set `$env:VERBATIM_E2E_ENDPOINT = '127.0.0.1:44001'`, then run one scenario with `cargo test -p verbatim-e2e --test e2e -- --ignored --exact <name> --test-threads=1`, or the full suite with `cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip measure_ --test-threads=1`.
 
 The full suite takes a long time, so don't run it by default. For a change, run the scenarios related to the feature being worked on, such as the `windows_terminal_` and `conhost_` scenarios a terminal change affects. Keep full runs for wide-ranging changes, such as changes to the harness, to how outposts start and stop, or to behaviour every scenario sees.
+
+The `port` skill (`/port <scope>`, in `.claude/skills/port/`) is the protocol for porting an NVDA behavior or subsystem; its `references/` folder holds the brief template every subagent brief is written from.
 
 The GUI's wxWidgets is built from source by `verbatim-gui`'s build script the first time anything builds that crate: it downloads the pinned release, builds static libraries with CMake (Ninja on x64), and keeps them in `target/wxwidgets`, or under `VERBATIM_WX_DIR` when that is set, so later builds reuse them. Nothing has to be set up by hand beyond CMake and the Visual Studio C++ tools.

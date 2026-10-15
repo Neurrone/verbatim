@@ -24,7 +24,7 @@ NVDA or design sections with
 
 ## Standing rules
 
-Point to `.claude/skills/port/references/rules.md`, or paste it.
+Point to the "Standing rules" section of `CLAUDE.md`.
 
 ## Build and test policy
 

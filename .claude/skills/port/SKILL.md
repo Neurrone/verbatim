@@ -27,7 +27,7 @@ The requested scope defines what success means. The steps that reach it are chos
 
 Divide the labour this way. The parent conversation reads the relevant sections of the durable docs, makes the design decisions with Dickson, writes briefs, reads reports, decides, and commits. Subagents do the NVDA research, returning the causal path and the preserve, replace, and omit list rather than file contents; the implementation and test work; and the review. The parent does not run cargo build, test, clippy, `cargo xtask ci`, or end-to-end scenarios itself, does not read source files at length, and does not re-run what a subagent has reported, because in past sessions that, not the hand-offs, was where the tokens went. Research subagents that only read and summarize can be Sonnet; implementation and review subagents are Opus.
 
-Write every brief from `references/brief.md`, and include the standing rules in `references/rules.md`, because subagents see neither this conversation nor Claude's memory.
+Write every brief from `references/brief.md`, and point it at the "Standing rules" section of `CLAUDE.md`, because subagents see neither this conversation nor Claude's memory.
 
 ## The durable sources of truth
 
