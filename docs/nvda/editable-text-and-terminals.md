@@ -228,10 +228,14 @@ because users could not read the skipped output.
   the overlays (`winConsoleUIA.py` 431 to 440 and 474 to 476).
 - Every new line is queued (`behaviors.py` 455 to 466), and the monitor
   thread diffs on every change (`behaviors.py` 468 to 505).
-- The probably-typed drop covers a change of one or two characters on
-  one line (`behaviors.py` 491 to 495 and 559 to 566), so a short
-  status-line change, such as vim's ruler, or a counter of one or two
-  digits, is not spoken.
+- Two probably-typed drops apply. The monitor thread deletes a diff
+  that is one character after stripping white space (`behaviors.py` 491
+  to 495). The terminal overlay's `_reportNewLines` (559 to 566) then
+  drops a single new line whose stripped length is below the larger of
+  3 and one more than the typed word so far, unless Tab was pressed,
+  since completions can be short. So a short status-line change, such
+  as vim's ruler, or a counter of one or two digits, is not spoken, and
+  more is dropped while a word is being typed.
 - Typed characters are queued and dispatched on the terminal's next text
   change of any kind (`behaviors.py` 591 to 593 and 615 to 619), so a
   character typed at a prompt that shows nothing is spoken when anything
