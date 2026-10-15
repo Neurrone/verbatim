@@ -354,6 +354,21 @@ first (the debug binaries, or the release ones for `--release`, as "The
 measure set" below says). Both write under `target\perf\<label>`, which
 each run replaces when the label is the same.
 
+Every measurement reported for Verbatim gives the same figures, so that
+runs compare (Dickson, 2026-10-13): latency per stage and end to end as
+the minimum, P50, P95, P99, and maximum observed, never other
+percentiles; the latency of each cross-process hop on its own (outpost to
+verbatim.exe, listener to relay, verbatim.exe to an outpost, the
+synthesizer host), with the same five figures, split into the hop itself
+and the work on each side; and wake-ups and processor time for every
+workload, with the top wakers and readying stacks across all threads, not
+only the path to speech. User-cost measurements trace at info level
+(`VERBATIM_E2E_RUST_LOG=info`; the harness defaults the outpost to debug,
+about a fifth of the event thread in a flood) and on default-mode
+workloads. Compare with the earlier figures recorded in the design
+records rather than rebuilding old commits, except where no earlier
+figure exists. No per-process energy estimates: they are impractical.
+
 ### Latency: cargo xtask measure
 
 `cargo xtask measure [--release] [--audible] [--scenario <name>]...
