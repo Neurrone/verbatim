@@ -258,28 +258,23 @@ Stage A, the focus pipeline, option (b) and the focus fixes:
       windows' focus, live reads of the focus's property events, NVDA's
       Windows Forms and UWP combo box rules, and the controlled
       selection's route compared with NVDA's.
-7. The UIA probe asks once.
-8. Two reserved spare outposts.
+7. The UIA probe asks once (`docs/design/focus-pipeline.md`, section 8).
+   Not built: after a "no" that took over a second, the probe still waits
+   for the window to answer a message and asks again.
+8. Two reserved spare outposts. Not built; next in the order under step 9.
 9. verbatim.exe's relay: fewer hand-offs, its own stage in the latency
    ledger, and the platform's floor measured under Balanced. Replaced by
    the communication design's migration (`docs/design/communication.md`
-   section 11, steps 1 to 12, every decision approved, 2026-10-13), which
-   includes step 10 below as its step 6a. Order (Dickson, 2026-10-13):
-   this migration and then step 8, each merged into main, before the
-   terminal redesign. Paused after step 3 (Dickson, 2026-10-13): raised
-   thread priorities made typed echoes slower, and a trace found the mixer's
-   writer and audio thread waking each other thousands of times a second
-   (fixed, 6d5836f). The design counted hand-offs per event but never
-   steady-state wake-ups or CPU, and used priority as a latency lever.
-   Step 3's policy is reverted (1651ab0); every thread's wake-ups are
-   audited, idle and under each workload, and each source fixed at its
-   root; then the design is revised so every step is judged on wake-ups
-   and CPU as well as latency, and the revision goes to Dickson before the
-   migration resumes. The audit's fixes are in (`docs/design/wake-ups.md`)
-   and the revision is the design's section 18; Dickson decided its
-   decisions 14 to 17 on 2026-10-13 (14, 15 and 17 as recommended, 16
-   declined), and the migration resumes with step 3 as decision 14
-   redefines it.
+   section 11, steps 1 to 12), which includes step 10 below as its step
+   6a, every step judged on wake-ups and CPU as well as latency (the
+   design's section 18; `docs/design/wake-ups.md`). Order (Dickson,
+   2026-10-13): this migration and then step 8, each merged into main,
+   before the terminal redesign. Done: steps 1, 2, 4 to 7, 9 and 11 are
+   built, and step 12's measurements are recorded (743b377a); step 3's
+   priority policy was reverted (1651ab0) and replaced by decision 14's
+   measurement; the migration's step 8 is not adopted and its step 10
+   stays deferred (Dickson, 2026-10-14). What remains is step 12's audio step: the awake
+   period, the engine period trial, and the earcon re-mix.
 10. The harness's idle barrier covers outposts' and the listener's work in
     flight. Done as the communication migration's step 6a (2026-10-14,
     `docs/design/communication.md` section 6.7 and step 6a of section 11):

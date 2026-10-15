@@ -203,14 +203,18 @@ releases Alt. Notepad has no outpost yet.
    element behind every node it reported stays in the outpost's registry
    until Core says it no longer holds it ("Held objects" in
    [verbatim-outpost](crates/verbatim-outpost.md)).
-10. **The writer and the pipe.** Publishing happens under the watchdog's
-    lock (`Watch::publish`), so an abandoned worker can never publish.
-    The writer thread (`outpost/outbound.rs`) puts pongs and `Ready`
-    ahead of ordinary messages, which wait in a queue of 256. In Core,
-    the outpost's reader thread (`read_outpost`) stamps every node id
-    with the incarnation whose pipe the message arrived on, numbers the
-    messages that carry node ids, and forwards each to the reducer
-    thread as `OutpostMessage::Event`.
+10. **The pipe.** Publishing happens under the watchdog's lock
+    (`Watch::publish`), so an abandoned worker can never publish. The
+    worker writes the message to Core's pipe itself (`outpost/outbound.rs`)
+    when no write is in flight; otherwise it waits in the outbound
+    backlog, merged by object and kind, behind pongs and `Ready`, and the
+    outpost's I/O thread writes it once the write in flight completes. In
+    Core, the relay thread reads the outpost's pipe on its completion port
+    and posts the frame whole to the reducer thread
+    (`OutpostMessage::Frame`), whose `Frames` parses it, stamps every node
+    id with the incarnation whose pipe the message arrived on, numbers the
+    messages that carry node ids, and hands each on as
+    `OutpostMessage::Event`.
 11. **The reducer thread gates and records.** In
     `ReducerThread::on_outpost_message`, a message from an incarnation
     that is not in the live set (`LiveOutposts` in
@@ -422,14 +426,13 @@ reducer's `Speak` effect to the speaker (decisions D12, D17, D18;
    `HostedSynth`: it sends `ToHost::Speak` over a private pipe to
    `verbatim-synth-host.exe`, whose main thread runs eSpeak NG (or
    OneCore) and writes each block of audio back as a `Pcm` frame and each
-   mark as a `Mark` frame, then `Done`. In Core, the host's reader thread
-   relays frames through a channel of two to the synth thread, which
-   passes them to the pipeline sink. The sink trims leading silence and
+   mark as a `Mark` frame, then `Done`. In Core, the synth thread reads
+   the host's pipe itself, one frame at a time, and passes each to the
+   pipeline sink. The sink trims leading silence and
    held-back trailing silence and writes to the mixer (`Source::write`).
 5. **Backpressure.** `Source::write` blocks while the source is more than
    the device buffer plus 40 ms ahead of playback, so the synth thread
-   stops reading the channel, the reader stops reading the pipe, the
-   pipe's 4096-byte buffer fills, and the host's synthesizer blocks
+   stops reading the pipe, the pipe's 4096-byte buffer fills, and the host's synthesizer blocks
    inside its own write. Little audio is ever queued, so cancelling is
    cheap.
 6. **Played.** Each source's audio is converted to the device's format as
@@ -596,7 +599,7 @@ Each failure, what notices it, and what happens next.
    committed) until its call returns or the process ends. Events from a window the system already reports hung are
    dropped before any read, so they never reach a call.
 2. **An outpost wedges.** The lifecycle owner pings every child every
-   three seconds; the reader thread answers pings itself, so a busy
+   three seconds; the outpost's I/O thread answers pings itself, so a busy
    worker never looks dead. Nine seconds without a pong, or eight
    abandoned workers (unless the application's own windows are reported
    hung, when a replacement would hang the same way), ends the outpost as
@@ -629,7 +632,8 @@ Each failure, what notices it, and what happens next.
    retired (`retirement_decision`). No focus-now query follows.
 6. **The listener is replaced.** If its pipe closes or it misses nine
    seconds of pongs, the owner ends it and starts another. When the
-   replacement is ready, the owner sends `OutpostMessage::ListenerReplaced`;
+   replacement is ready, the owner sends `OutpostMessage::ListenerReady`
+   marked as a replacement;
    the reducer thread reads the foreground window itself (a local call)
    and asks that application for its focus, taken silently if unchanged.
    Desktop-wide UIA events from the gap are lost.

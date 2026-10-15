@@ -1002,7 +1002,7 @@ A scenario's name is also its
 --ignored --exact <name> --test-threads=1` runs exactly that one scenario
 runner-direct, the same
 selection mechanism `cargo xtask vm test --scenario <name>` uses against the
-VM (see "cargo xtask vm verbs" below).
+VM (see "cargo xtask vm verbs" in [The VM harness](vm.md)).
 
 Some scenarios are local-only: they test Windows 11 Notepad, which
 GitHub's Windows Server runner lacks (it has classic Notepad, a Win32 edit

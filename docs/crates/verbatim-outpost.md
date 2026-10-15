@@ -470,13 +470,10 @@ Public API:
     `verbatim_uia::CALL_TIMEOUT`, five seconds, set once for the process.
     A focus's ancestor walk checks its two-second budget
     (`ENRICHMENT_BUDGET`) between calls, so it ends within the budget and
-    one call. The two operations made of many provider calls, the
-    `FindFirst` searches for a moved focus's element
-    (`element_of_moved_focus`, `holds_element`, one second,
-    `SEARCH_DEADLINE`) and a UIA dialog's own text (one second,
-    `DIALOG_TEXT_WAIT`), run on the context's `verbatim_uia::BoundedClient`
-    and are given up at their deadline, their thread abandoned; a search
-    given up finds nothing, and a dialog's text given up is no text. Tree
+    one call. The one operation made of many provider calls, a UIA
+    dialog's own text (one second, `DIALOG_TEXT_WAIT`), runs on the
+    context's `verbatim_uia::BoundedClient` and is given up at its
+    deadline, its thread abandoned; a dialog's text given up is no text. Tree
     view messages are sent with `SendMessageTimeoutW`, half a second,
     aborting at once for a hung window, as list view and edit messages
     were already. An `IAccessible` call has no bound of its own: the

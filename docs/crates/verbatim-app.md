@@ -288,7 +288,7 @@ knowing for review:
   application, if that is not the attention one, ended in a crash or kill
   (asking the supervisor to start a new one first, since nothing else
   would), and when the supervisor reports
-  `OutpostMessage::ListenerReplaced`; each waits for the outpost's `Ready`
+  `OutpostMessage::ListenerReady` for a replacement listener; each waits for the outpost's `Ready`
   if it is still starting. These, the tree dump, and the attention view
   sent to the supervisor go by application, which for a console's client
   is its console host's outpost: an event carrying an `application`
