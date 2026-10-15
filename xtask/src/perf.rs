@@ -1,5 +1,5 @@
 //! Performance measurement on this machine, against a locally running
-//! agent (`docs/tooling.md`, "Measuring performance"):
+//! agent (`docs/tooling/measuring.md`, "Measuring performance"):
 //!
 //! - `cargo xtask measure`: the measure set's scenarios, one after another,
 //!   then each latency stage's distribution over every announcement, with
@@ -12,7 +12,7 @@
 //!
 //! Both take over the desktop, as every end-to-end run does, and leave
 //! their output under `target\perf`. Neither builds Verbatim: build first
-//! (`docs/tooling.md`).
+//! (`docs/tooling/measuring.md`).
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -410,7 +410,7 @@ fn run_trace_scenario(args: &[String]) -> Result<(), String> {
     let mut test = scenario(name, options, &folder)?;
     // The window is time inside the scenario, chosen by the caller: a
     // trace that covers a scenario's start or end can leave File Explorer
-    // stuck putting the focus on the Start button (`docs/tooling.md`).
+    // stuck putting the focus on the Start button (`docs/tooling/measuring.md`).
     thread::sleep(Duration::from_secs(after));
     crate::trace::start()?;
     thread::sleep(Duration::from_secs(seconds));

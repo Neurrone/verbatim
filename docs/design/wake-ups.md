@@ -14,7 +14,7 @@ it starts.
 ## How it is measured
 
 - `cargo xtask trace start` and `stop` record WPR's CPU profile through
-  the elevated tasks (`docs/tooling.md`, "Measuring performance").
+  the elevated tasks (`docs/tooling/measuring.md`, "Measuring performance").
   A trace is about 20 MB a second, so each covers 5 to 8 seconds of one
   scenario and is deleted once read.
 - `cargo xtask trace waits` counts, for every thread of Verbatim's
@@ -659,7 +659,7 @@ Nothing in the product changed for these measurements.
   `crates/verbatim-e2e/src/scenario.rs`) sets `verbatim_outpost` and
   `verbatim_ia2::hook` to debug: about 111,000 lines per `conhost_flood`
   run, about 20 percent of the event thread's processor time. Users run at
-  info level, at which the flood logs 2 lines. `docs/tooling.md`,
+  info level, at which the flood logs 2 lines. `docs/tooling/measuring.md`,
   "Measuring performance", now says to trace at info level and on the
   default floods.
 - Whole-scenario work for the floods: `intake pushed` and `worker: handled`

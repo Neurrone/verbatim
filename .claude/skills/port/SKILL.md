@@ -39,7 +39,7 @@ Write every brief from `references/brief.md`, and point it at the "Standing rule
 - `docs/design/` contains detailed Verbatim designs where a behavior requires nontrivial architectural decisions.
 - `docs/crates/` explains implemented crate responsibilities and public APIs.
 - `docs/testing.md` defines what counts as a valid Verbatim test.
-- `docs/tooling.md` defines how to exercise and inspect the implementation.
+- `docs/tooling/readme.md` defines how to exercise and inspect the implementation.
 - `docs/nvda-transcript.md` defines how to capture NVDA's speech live.
 - Code and tests record what has actually been implemented.
 
@@ -92,7 +92,7 @@ Where the assertion runs: choose the cheapest place that can catch the failure, 
 
 Where the expected value comes from: for anything spoken, a live NVDA capture (`cargo xtask nvda capture`, `docs/nvda-transcript.md`) taken before the expectation is written. Never take it from Verbatim's current output, and do not settle it by reading NVDA's source when a capture is possible: on 2026-10-11 desktop scenarios expected "Program Manager" after a dialog closed, which came from Verbatim's old rule rather than NVDA and was found only when Dickson questioned it.
 
-Performance has its own judge. An operation that makes calls into an application gets its entry in the ledger (`docs/performance.md`, "The ledger") and an exact call-count test in `crates/mockapp/tests/call_counts.rs`, in the same commit, because an exact count is a ratchet that fails CI when a later change adds a call. A change on the event or speech path is also measured as `docs/tooling.md`, "Measuring performance", prescribes, against the figures recorded before the change.
+Performance has its own judge. An operation that makes calls into an application gets its entry in the ledger (`docs/performance.md`, "The ledger") and an exact call-count test in `crates/mockapp/tests/call_counts.rs`, in the same commit, because an exact count is a ratchet that fails CI when a later change adds a call. A change on the event or speech path is also measured as `docs/tooling/measuring.md`, "Measuring performance", prescribes, against the figures recorded before the change.
 
 If the required judge does not exist, building the smallest trustworthy one is part of the work. Validate a new judge where feasible by showing that it passes the intended implementation and fails a deliberately wrong or previously failing case, because a judge that cannot detect a known error has not proved parity.
 
@@ -110,11 +110,11 @@ Ported code in the Windows-tier (GPL) crates cites, in a comment, the NVDA sourc
 
 ## Phase 8: Verify progressively
 
-Use cheap proofs before expensive ones: the narrowest unit or crate checks after a local change, the targeted cross-process or end-to-end scenarios after a completed step, and `cargo xtask ci` under the repository's normal rules. Do not run the whole end-to-end suite by default, because it takes a long time; follow `CLAUDE.md` and `docs/tooling.md` for when a full run is justified.
+Use cheap proofs before expensive ones: the narrowest unit or crate checks after a local change, the targeted cross-process or end-to-end scenarios after a completed step, and `cargo xtask ci` under the repository's normal rules. Do not run the whole end-to-end suite by default, because it takes a long time; follow `CLAUDE.md` and `docs/tooling/e2e.md` for when a full run is justified.
 
 A passing compiler is not behavioral evidence, and a newly written test passing does not by itself prove that it asserts the right contract.
 
-For a substantial change or a new feature on the event or speech path, measure before closing: the call counts against the design's costing, and latency, wake-ups, and processor time with `cargo xtask measure` and `cargo xtask trace scenario`, reported as `docs/tooling.md`, "Measuring performance", prescribes and compared with the figures recorded before the change. A measurement that is worse than the costing predicted is a defect to root-cause, not a figure to record, because a cost paid on every event outlives the session that added it.
+For a substantial change or a new feature on the event or speech path, measure before closing: the call counts against the design's costing, and latency, wake-ups, and processor time with `cargo xtask measure` and `cargo xtask trace scenario`, reported as `docs/tooling/measuring.md`, "Measuring performance", prescribes and compared with the figures recorded before the change. A measurement that is worse than the costing predicted is a defect to root-cause, not a figure to record, because a cost paid on every event outlives the session that added it.
 
 ## Phase 9: Perform an adversarial semantic review
 

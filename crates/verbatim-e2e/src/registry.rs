@@ -115,7 +115,7 @@
 //!   their `#[test]` wrappers are ignored and named `measure_`, so the
 //!   suite's runs deselect them with `--skip measure_`. Their speech is
 //!   collected without being asserted ([`SpeechCollector::collect_only`](crate::speech::SpeechCollector::collect_only));
-//!   `docs/tooling.md` says how to run them.
+//!   `docs/tooling/e2e.md` says how to run them.
 //!
 //! A scenario marked [`ScenarioDef::local_only`] tests Windows 11 Notepad,
 //! which GitHub's Windows Server runner, with classic Notepad, lacks; its
@@ -1472,7 +1472,7 @@ pub fn run_named(name: &str) {
     }
     assert!(
         crate::endpoint().is_some(),
-        "{} is not set: a live scenario needs a running agent (docs/tooling.md)",
+        "{} is not set: a live scenario needs a running agent (docs/tooling/e2e.md)",
         crate::ENDPOINT_ENV
     );
     run(def);

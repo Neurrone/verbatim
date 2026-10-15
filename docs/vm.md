@@ -1,10 +1,11 @@
 # The VM harness
 
 How to drive the Hyper-V end-to-end harness: every `cargo xtask vm`
-verb, and rebuilding the golden image from scratch. Split out of
-[the tooling guide](tooling.md), which covers verbatim-inspect,
-mockapp, and running the E2E suite runner-direct; the troubleshooting
-section there covers VM failures too.
+verb, and rebuilding the golden image from scratch. The rest of
+[the tooling guide](tooling/readme.md) covers verbatim-inspect,
+mockapp, and running the E2E suite runner-direct;
+[its troubleshooting guide](tooling/troubleshooting.md) covers VM
+failures too.
 
 ## cargo xtask vm verbs
 
@@ -43,7 +44,7 @@ arguments for the full verb list printed from the source of truth.
   portable Windows Terminal, downloaded and checked on the host into
   `target/xtask-vm-staging/windows-terminal-<version>` and shipped the
   same way as `windows-terminal.tar`, unpacked beside the executables
-  where the scenarios start it (`docs/tooling.md`); a staged
+  where the scenarios start it (`docs/tooling/e2e.md`); a staged
   `settings.toml` beside the executables selecting eSpeak NG, the default
   synthesizer; `verbatim-agent.exe` in `C:\VerbatimLab\agent`; and the
   vendored `ffmpeg.exe` in `C:\VerbatimLab\tools`, which each scenario's
@@ -84,7 +85,7 @@ arguments for the full verb list printed from the source of truth.
   fail, and `VERBATIM_E2E_RECORD=0` turns that off. Recording does not
   depend on any audio device in the guest, so a run can be watched and
   heard live over `cargo xtask vm connect` while it is recorded (see
-  "Hearing and recording a run" in the tooling guide). Building first is deliberate: a
+  "Hearing and recording a run" in [the end-to-end guide](tooling/e2e.md)). Building first is deliberate: a
   compile failure is then caught with zero VM state changes. This is the
   one-command loop `docs/roadmap.md`'s M2 exit criteria describes.
   - `--scenario <name>` (repeatable) and `--group <name>` (repeatable, one
@@ -206,7 +207,7 @@ Steps:
    retired still has that driver and works unchanged; Verbatim simply
    plays to it. ffmpeg is deliberately not installed by the image build;
    `cargo xtask vm deploy` stages it from `vm/vendor/ffmpeg` at deploy
-   time (see "Hearing and recording a run" in the tooling guide and
+   time (see "Hearing and recording a run" in [the end-to-end guide](tooling/e2e.md) and
    `vm/vendor/ffmpeg/README.md`), which is why an in-guest ffmpeg download
    is not among the provisioner steps. The
    wrapper then clears compression on the exported files and runs

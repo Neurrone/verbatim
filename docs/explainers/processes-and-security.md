@@ -77,7 +77,7 @@ hooks will see its injected input too — clients tag injected events (the
 is how a test harness drives a screen reader with "real" keystrokes, and
 its interaction with hooks is why input tests need a live, unlocked
 interactive desktop (a locked desktop has no input focus to deliver to —
-the trap documented in [Tooling](../tooling.md)).
+the trap documented in [Tooling](../tooling/troubleshooting.md)).
 
 ## References
 

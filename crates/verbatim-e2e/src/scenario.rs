@@ -849,7 +849,7 @@ impl Scenario {
     ///
     /// A window opened in front is refused the foreground unless the agent
     /// may allow it, which it may only while it injected the last input
-    /// (`docs/tooling.md`, "Windows' foreground lock keeps launched
+    /// (`docs/tooling/troubleshooting.md`, "Windows' foreground lock keeps launched
     /// applications behind"); a minimized window restored and set as the
     /// foreground, as Notepad's documents are brought forward, takes it
     /// whatever input came last. A program that ignores the minimized show

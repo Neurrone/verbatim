@@ -94,16 +94,16 @@ fn main() -> ExitCode {
                 "  park  move this Remote Desktop session to the console, unlocked, for unattended local runs"
             );
             eprintln!(
-                "  trace  WPR traces of the CPU's scheduling: start, stop, waits <trace.etl>, or scenario <name> to trace a window inside one scenario and read it (docs/tooling.md)"
+                "  trace  WPR traces of the CPU's scheduling: start, stop, waits <trace.etl>, or scenario <name> to trace a window inside one scenario and read it (docs/tooling/measuring.md)"
             );
             eprintln!(
-                "  measure  run the measure set on this machine and report each latency stage's distribution (cargo xtask measure [--release]; docs/tooling.md)"
+                "  measure  run the measure set on this machine and report each latency stage's distribution (cargo xtask measure [--release]; docs/tooling/measuring.md)"
             );
             eprintln!(
                 "  windows-terminal  download and unpack the terminal scenarios' pinned portable Windows Terminal into target/e2e-stage"
             );
             eprintln!(
-                "  relay-floor  measure the platform's floor for Verbatim's pipes and relay, in release (docs/tooling.md)"
+                "  relay-floor  measure the platform's floor for Verbatim's pipes and relay, in release (docs/tooling/measuring.md)"
             );
             ExitCode::from(2)
         }
@@ -111,7 +111,7 @@ fn main() -> ExitCode {
 }
 
 /// Builds the platform floor's benchmark in release and runs it with
-/// `args` (`docs/design/relay.md`, section 6; `docs/tooling.md`). It takes
+/// `args` (`docs/design/relay.md`, section 6; `docs/tooling/measuring.md`). It takes
 /// minutes per variant and loads the processors it is told to load.
 fn relay_floor(args: &[String]) -> ExitCode {
     let mut command = Command::new(env!("CARGO"));
@@ -193,7 +193,7 @@ fn ci() -> ExitCode {
         // The workspace-hack crate must match what cargo-hakari would
         // generate, and every package must depend on it, or commands that
         // select different packages build dependencies apart again
-        // (`docs/tooling.md`, "The workspace-hack crate").
+        // (`docs/tooling/setup.md`, "The workspace-hack crate").
         ("workspace-hack", &["hakari", "generate", "--diff"]),
         (
             "workspace-hack dependencies",

@@ -807,7 +807,7 @@ mod tests {
 
     /// `--wakers verbatim-outpost.exe:<name>` takes that process's threads
     /// of that name, and an empty name its unnamed threads, as
-    /// `docs/tooling.md` ("Measuring performance") documents.
+    /// `docs/tooling/measuring.md` ("Measuring performance") documents.
     #[test]
     fn a_process_waker_selector_takes_that_process_named_and_unnamed_threads() {
         let mut waits = Waits::default();
@@ -837,7 +837,7 @@ mod tests {
 
     /// `<process.exe>:#<thread id>` takes the one thread of that id in a
     /// process of that image, unnamed threads included, as
-    /// `docs/tooling.md` ("Measuring performance") documents.
+    /// `docs/tooling/measuring.md` ("Measuring performance") documents.
     #[test]
     fn a_thread_id_selector_takes_that_thread_alone() {
         let mut waits = Waits::default();

@@ -3,7 +3,7 @@
 `xtask/src/vm/` implements `cargo xtask vm <verb>` (`docs/architecture.md`
 section 14, decision D3): building and importing the golden Hyper-V VM,
 deploying builds into it, and running `verbatim-e2e`'s registered scenarios
-against it, one at a time (milestone M3 Track B). See `docs/tooling.md` for
+against it, one at a time (milestone M3 Track B). See `docs/vm.md` for
 the full verb reference and the steps to rebuild the golden image from
 scratch; this section is the code-level map.
 

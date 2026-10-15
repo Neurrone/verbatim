@@ -5,7 +5,7 @@ drives a real, running Verbatim (and target applications such as Notepad)
 through `verbatim-agent` and, tunneled through it, Verbatim's own control
 plane. Dev-only; a library rather than only a test binary because both
 `crates/verbatim-e2e/tests/e2e.rs` and `xtask vm test` drive it. Every scenario
-meets `docs/testing.md`. See `docs/tooling.md` for how to run it by hand
+meets `docs/testing.md`. See `docs/tooling/e2e.md` for how to run it by hand
 and how to read a failure.
 
 ## Running, skipping, and failing
@@ -40,7 +40,7 @@ and how to read a failure.
 - The measure set (the Measure group, `measure_` names) is measurement,
   not tests: ignored, run only by name or with `--group measure`, and
   deselected from every suite run with `--skip measure_`
-  (`docs/tooling.md`, "The measure set").
+  (`docs/tooling/e2e.md`, "The measure set").
 
 ## The starting state
 
@@ -207,7 +207,7 @@ windows: the window is brought forward through the agent, as its
 taskbar button does; a window that does not take the foreground fails
 the step. The agent can let a launched program take the
 foreground only while it injected the last input, which it does as every
-scenario runs (see `docs/tooling.md`).
+scenario runs (see `docs/tooling/troubleshooting.md`).
 
 ## Scenario
 
@@ -218,7 +218,7 @@ and the input methods above:
   whose window carries `title`, its first window minimized and inactive,
   then restores that window and sets it as the foreground, as its taskbar
   button does, and waits for it to take the foreground, so the launch does
-  not depend on the agent having injected the last input (`docs/tooling.md`,
+  not depend on the agent having injected the last input (`docs/tooling/troubleshooting.md`,
   "Windows' foreground lock keeps launched applications behind"); a
   window that ignores the minimized show state, as msinfo32's does, is
   minimized by the agent before it is restored;
@@ -353,7 +353,7 @@ Windows Terminal process the agent did not launch that appears during the
 run fails it (`Scenario::foreign_terminal_windows`). Verbatim is launched
 with `AgentClient::launch_verbatim`, which has the agent name every such
 Windows Terminal, and the console hosts it runs, for Verbatim to ignore
-entirely (`VERBATIM_IGNORE_PIDS`, `docs/tooling.md`); the run fails if
+entirely (`VERBATIM_IGNORE_PIDS`, `docs/tooling/e2e.md`); the run fails if
 Verbatim's log folder holds an outpost log named for one of them
 (`Scenario::collect_run_artifacts`).
 
@@ -483,7 +483,7 @@ The groups:
   `measure_speech_real`, the last only in an audible run: workloads
   for Verbatim's latency ledger, which assert no speech after the
   desktop's and write each step's ground truth to `measure-truth.jsonl`
-  in their artifacts. `docs/tooling.md`, "The measure set", describes
+  in their artifacts. `docs/tooling/e2e.md`, "The measure set", describes
   each and how to run them in debug and release.
 
 ### Shared setups

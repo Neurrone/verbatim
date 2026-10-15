@@ -2,7 +2,7 @@
 
 How long threads waited to run, read from a Windows Performance Recorder
 trace of the CPU's scheduling, a binary run by `cargo xtask trace waits
-<trace.etl> [process.exe ...]` (`docs/tooling.md`, "Measuring performance", where `cargo xtask trace scenario` runs it for a window inside one scenario). `docs/design/communication.md` uses it to attribute a slow
+<trace.etl> [process.exe ...]` (`docs/tooling/measuring.md`, "Measuring performance", where `cargo xtask trace scenario` runs it for a window inside one scenario). `docs/design/communication.md` uses it to attribute a slow
 hand-off to a thread that was ready and not run, and to check that raised
 thread priorities never keep Verbatim's GUI thread, or the foreground
 application's, waiting (section 6.1, and section 11 step 3's starvation

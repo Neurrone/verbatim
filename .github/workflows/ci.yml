@@ -119,7 +119,7 @@ jobs:
       # The Windows Terminal scenarios drive the harness's own portable copy
       # of Windows Terminal, at the release pinned in
       # crates/verbatim-e2e/src/windows_terminal.rs, never the runner's
-      # installed one (docs/tooling.md). This step downloads it, checks its
+      # installed one (docs/tooling/e2e.md). This step downloads it, checks its
       # pinned SHA-256, and unpacks it into target/e2e-stage, exactly as
       # the suite's first launch would, so the runner tests the same
       # version as a developer's machine and a failed download is reported
@@ -134,7 +134,7 @@ jobs:
       # (libtest counts them as filtered out, never as passed), and
       # VERBATIM_E2E_SKIP_LOCAL_ONLY makes one that ran anyway fail. The
       # demonstrations, named demo_, are recorded by `cargo xtask demo`
-      # and are not part of the suite (docs/tooling.md).
+      # and are not part of the suite (docs/tooling/e2e.md).
       # The agent is started in the same step as the suite: GitHub's Windows
       # runner ends the processes a step started when that step finishes, so
       # an agent started in a step of its own was gone (connection refused)

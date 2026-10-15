@@ -50,7 +50,7 @@ The end-to-end harness's hooks (private `harness` module):
   listener drops their facts, the shell never asks one for its focus (a
   foreground read naming one is passed over), and a focus reported in one
   of their top-level windows is dropped before the reducer. The harness
-  names the owner's own Windows Terminal (`docs/tooling.md`).
+  names the owner's own Windows Terminal (`docs/tooling/e2e.md`).
 - Readiness: when launched with `VERBATIM_READY_EVENT` naming an event,
   Verbatim sets that event once it is ready for input (the GUI up, the
   focus listener running, its own window's outpost ready, and the focus
@@ -330,7 +330,7 @@ knowing for review:
   `EventTiming`, Core's receipt and reduction, and the speech milestones
   of the trace's first utterance) and logs them as one `verbatim::latency`
   line once the device clock passes its first frame or it ends (see
-  `docs/tooling.md`), the outpost read
+  `docs/tooling/inspect.md`), the outpost read
   with its count of cross-process calls. A query reply the worker answered
   feeds it the same way as an event, so a navigation keypress's trace has
   its outpost stages and calls too. A caret key's trace starts when the

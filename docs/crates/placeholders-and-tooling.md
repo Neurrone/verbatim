@@ -13,7 +13,7 @@
   `ci` and `ci-arm64` jobs). `cargo xtask
   vm` is the milestone M2 Hyper-V harness (build, deploy, and E2E-test a
   real VM) — see this document's "xtask VM harness" section above and
-  `docs/tooling.md` for the full verb reference. `cargo xtask park`
+  `docs/vm.md` for the full verb reference. `cargo xtask park`
   (`xtask/src/park.rs`) moves the caller's Remote Desktop session onto the
   machine's console through a scheduled task that
   `vm/scripts/Register-VerbatimParkTask.ps1` registers once, then checks

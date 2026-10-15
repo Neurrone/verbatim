@@ -30,8 +30,9 @@ the NVDA reference for the behavior is in [docs/nvda](nvda/readme.md);
 the [design records](design/) hold the detailed designs behind the work
 and the decision log of phase 6.
 
-**Running and debugging things.** [The tooling guide](tooling.md)
-covers `verbatim-inspect`, `mockapp`, the end-to-end suite, and the
+**Running and debugging things.** [The tooling guides](tooling/readme.md),
+one file per purpose, cover setup and builds, `verbatim-inspect`,
+`mockapp`, measuring, the end-to-end suite, NVDA captures, and the
 troubleshooting traps; [the VM harness guide](vm.md) covers every
 `cargo xtask vm` verb and rebuilding the golden image;
 [the NVDA transcript guide](nvda-transcript.md) covers recording what
@@ -56,8 +57,12 @@ NVDA says, to decide what Verbatim should say.
 - [Explainers](explainers/readme.md) — Windows API background (COM,
   the accessibility APIs, IPC, audio and speech APIs) plus the Rust
   concurrency vocabulary Verbatim uses.
-- [Tooling](tooling.md) and [the VM harness](vm.md) — driving the
-  project day to day.
+- [Tooling](tooling/readme.md) and [the VM harness](vm.md) — driving the
+  project day to day: [setup](tooling/setup.md),
+  [verbatim-inspect](tooling/inspect.md), [mockapp](tooling/mockapp.md),
+  [measuring](tooling/measuring.md), [the end-to-end suite](tooling/e2e.md),
+  [NVDA captures](tooling/nvda.md), and
+  [troubleshooting](tooling/troubleshooting.md).
 - [The testing standard](testing.md) — what every test must meet: one
   target and code path, exact assertions, waits for evidence, and no
   hidden failures.

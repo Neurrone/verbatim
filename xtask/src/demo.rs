@@ -14,7 +14,7 @@
 //! runs them; this runs the scenario with `--include-ignored`. A scenario
 //! that fails leaves `videos` untouched. Like any local run, it takes over
 //! the desktop while it runs and needs an unlocked one
-//! (`docs/tooling.md`).
+//! (`docs/tooling/e2e.md`).
 
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};

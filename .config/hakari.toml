@@ -2,7 +2,7 @@
 # every cargo command, whichever packages it selects, builds each third-party
 # dependency with the same features, and so shares one set of artifacts.
 # See https://docs.rs/cargo-hakari/latest/cargo_hakari/config and the
-# workspace-hack section of docs/tooling.md.
+# workspace-hack section of docs/tooling/setup.md.
 
 hakari-package = "workspace-hack"
 

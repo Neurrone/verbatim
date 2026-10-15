@@ -200,7 +200,7 @@ Every fact the focus listener sees passes through verbatim.exe on its way
 to the application's outpost, and every request Core makes goes the same
 way, so verbatim.exe's share of the time is a stage of its own in the
 latency line and in `verbatim-inspect latency` (`docs/design/relay.md`,
-sections 4.5 and 7; `docs/tooling.md` lists the stages). Its budget is
+sections 4.5 and 7; `docs/tooling/inspect.md` lists the stages). Its budget is
 that verbatim.exe adds at most 1 to 2 ms, read as section 9 of the design
 defines it: verbatim.exe's own stage at most 1 to 2 ms, and its added hop
 no worse than the platform's floor, every exception attributed.
@@ -222,7 +222,7 @@ no worse than the platform's floor, every exception attributed.
   earlier input, not the relay.
 - Nothing on the relay's path logs: stamps travel in the messages, and
   the platform floor's benchmark (`cargo xtask relay-floor`,
-  `docs/tooling.md`) keeps its stamps in memory until it exits.
+  `docs/tooling/measuring.md`) keeps its stamps in memory until it exits.
 
 ## The ledger
 

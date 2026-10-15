@@ -60,7 +60,7 @@ Public API:
   request, to the synthesizer host, the host's first chunk, and back from
   the synthesizer host; leading silence, mixer and device, device clock;
   `label` names each
-  as the latency log does, and `docs/tooling.md` says what each covers;
+  as the latency log does, and `docs/tooling/inspect.md` says what each covers;
   listener to outpost, Core to outpost, and to Core are the whole spans a
   timeline without verbatim.exe's relay stamps has instead of the split
   ones, added 2026-10-11 by `docs/design/relay.md`; listener to

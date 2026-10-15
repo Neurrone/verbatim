@@ -12,7 +12,7 @@ and kill processes, read files, and drive Verbatim as the signed-in user.
 It binds all interfaces by default, because the Hyper-V host reaches the
 guest at an address not known ahead of time. That is acceptable only on an
 isolated lab network or a disposable CI runner. On a development machine,
-run it with `--bind-address 127.0.0.1`, as `docs/tooling.md` does, and stop
+run it with `--bind-address 127.0.0.1`, as `docs/tooling/e2e.md` does, and stop
 it when the suite is done.
 
 Public API:

@@ -237,8 +237,8 @@ pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmRes
     if !session_status.success() {
         return Err(format!(
             "session_info precondition failed ({session_status}); the agent is not reporting an \
-             interactive session, so no scenario downstream can work — see docs/tooling.md's \
-             Troubleshooting section before looking at anything else"
+             interactive session, so no scenario downstream can work — see the interactive-session \
+             rule in docs/tooling/readme.md before looking at anything else"
         ));
     }
 

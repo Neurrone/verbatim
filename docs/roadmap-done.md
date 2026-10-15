@@ -12,7 +12,7 @@ the repeatable, scripted form of that verification now runs as
 `crates/verbatim-e2e`'s `m1_exit_regression` test: locally
 runner-direct, in CI runner-direct on plain GitHub-hosted Windows
 runners, and locally against the Hyper-V VM harness via
-`cargo xtask vm test`. See [the tooling guide](tooling.md) and
+`cargo xtask vm test`. See [the tooling guide](tooling/e2e.md) and
 [the VM harness guide](vm.md) for how to run any of these by hand.
 
 ## M0 — Foundations

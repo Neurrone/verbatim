@@ -37,7 +37,7 @@ safe to leave installed for everyday use.
 ## Capturing a scenario
 
 Capturing presses real keys, so it takes over the desktop like a local
-end-to-end run (see [the tooling guide](tooling.md)). Run it only when the
+end-to-end run (see [the tooling guide](tooling/e2e.md)). Run it only when the
 person at the machine is away or has agreed.
 
 1. Start the agent in the same session as the NVDA you want to record:
@@ -86,7 +86,7 @@ A step is a key to press, or one of these:
   launched program's window before any key. It checks once more at its
   end and fails when the window is no longer in front and responding,
   since keys it has not read would go to the window behind it when it
-  closes (`docs/tooling.md`, "Recording what NVDA says").
+  closes (`docs/tooling/nvda.md`, "Recording what NVDA says").
 - `--gesture <identifier>` sends a gesture such as `kb:verbatim+v` to
   the Verbatim running on this machine through its control pipe, so
   Verbatim's own commands can be used without pressing a modifier key
@@ -157,7 +157,7 @@ The options are:
   not settle, which has no `ms`.
 
 To record NVDA reading Verbatim's own GUI, run Verbatim with test audio so
-that it is silent (see the test-audio section of the tooling guide), open
+that it is silent (see "Test-audio mode" in [the end-to-end guide](tooling/e2e.md)), open
 its menu with `--gesture kb:verbatim+v`, and move through the menu and
 dialogs with plain keys, which both screen readers let through.
 

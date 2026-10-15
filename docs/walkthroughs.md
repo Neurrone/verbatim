@@ -681,7 +681,7 @@ handle could inherit a held node's identity.
 on this machine, or the
 same suite on GitHub's runner or against a Hyper-V guest
 ([verbatim-e2e](crates/verbatim-e2e.md),
-[verbatim-agent](crates/verbatim-agent.md), [Tooling](tooling.md)).
+[verbatim-agent](crates/verbatim-agent.md), [Tooling](tooling/e2e.md)).
 
 1. **Preparing this machine (runner-direct).** The agent runs in the
    signed-in user's session: `target\debug\verbatim-agent.exe

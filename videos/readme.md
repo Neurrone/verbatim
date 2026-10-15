@@ -27,7 +27,7 @@ underscores, and without a demonstration's `demo_` prefix;
 `cargo xtask demo` with no arguments lists the demonstrations and the test
 scenarios. A scenario that fails leaves both folders unchanged. Like any
 local end-to-end run, it takes over the desktop while it runs
-(`docs/tooling.md`).
+(`docs/tooling/e2e.md`).
 
 Demonstrations are the registry's `demo` group
 (`crates/verbatim-e2e/src/registry.rs`). They are never part of the
