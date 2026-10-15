@@ -55,8 +55,13 @@ The design of record is [the focus pipeline](design/focus-pipeline.md)
   fewer than two remain, and an outpost once given never returns to the
   spares. Starting an outpost took about 40 ms (debug) before its first
   event, paid by every new File Explorer folder window; the spares remove
-  the relay's tail over 20 ms for facts held for a starting outpost. How a
-  spare learns its focus is the focus-pipeline design's section 2.4.
+  the relay's tail over 20 ms for facts held for a starting outpost. The
+  focus-pipeline design's section 2.4 describes how a spare learns its
+  focus under option (c), which is rejected; under option (b), the plan
+  of record, the spares have no design yet, so the step begins by
+  writing one into that record (how the listener's focus fact reaches a
+  spare, what a spare registers before it is given, and what starting
+  one costs) and getting Dickson's decisions before implementation.
 - Step 7, the UIA probe asks once (focus-pipeline design, section 8):
   after a "no" that took over a second, `probe`
   (`crates/verbatim-uia/src/probe.rs`) still waits for the window to answer
