@@ -180,6 +180,98 @@ queued, it is the newest heard in the step.
 `latency_rows` gives one row per utterance with the time of the event
 behind it, which the run saves as `latency.csv`.
 
+## Compare mode
+
+Compare mode runs a scenario's own setup and body against NVDA instead of
+Verbatim, asserts nothing, and writes a report setting what the scenario
+expects Verbatim to say beside what NVDA said, step by step
+(`docs/nvda-transcript.md`, "Comparing a scenario", says how to run it).
+It is a research instrument, not a test, and never runs in CI.
+`compare::ENV`, `VERBATIM_E2E_COMPARE=1`, selects it, and
+`compare::QUIET_ENV`, `VERBATIM_E2E_QUIET_MS`, sets the quiet period
+(`nvda::DEFAULT_QUIET`, one second, by default).
+
+- The NVDA source and sink. `nvda::Transcript` is the add-on's client,
+  shared with `cargo xtask nvda capture`: `session_port`, `connect` with
+  its `Hello`, and `entries_after`, giving `TranscriptEntry`s. For
+  compare mode, `nvda::speech_source` makes the frame source and request
+  sink the collector reads a speech connection through, so the collector
+  and the scenarios need nothing of NVDA's own. A reader thread polls the
+  transcript every `POLL_INTERVAL` (50 ms). Each speech entry becomes
+  `Frame::Speech` with an utterance id of its own, the flattened text, a
+  trace ID minted for it, which nothing reads, and its time on the
+  harness's clock from the entry's milliseconds since the `Hello`,
+  followed at once by `Frame::SpeechEnded`, completed, since the add-on
+  reports only what NVDA queued. A cancel, or any other event, goes on
+  the timeline as `nvda cancel` and is no frame. The sink answers
+  `SubscribeSpeech` at once and refuses every other request but one.
+- The barrier. The sink answers `AwaitIdle` once NVDA has queued nothing
+  for the quiet period since the request or since its last entry,
+  whichever is later (`nvda::QuietWait`), or at the request's timeout,
+  with a note on the timeline that NVDA's speech did not settle: the
+  capture's settling rule applied as the harness's barrier.
+- The collector (`SpeechCollector::compare_mode`). The assertions on
+  speech record their texts against the step under way and return at
+  once; `expect_started` and `expect_queued` return placeholders, the
+  assertions on endings, pauses and resumes return at once, and
+  `ending_of` answers `None`. `require_all_asserted`, before every input,
+  and `expect_nothing_more` close the step: they send `AwaitIdle`, read
+  everything until its answer, and record a `compare::CompareStep` from
+  the timeline's entries since the step before (`Timeline::step_since`)
+  and the texts expected. `take_until`, `take_until_idle` and
+  `take_all_queued` cannot keep their promises without Verbatim and fail
+  as a harness error. `take_comparison` hands the steps to the registry.
+- The scenario. `Scenario::launch_with` does everything up to opening
+  the document as usual, building and staging included, since scenarios
+  start `mockapp` and the portable Windows Terminal from the stage, then
+  connects to the transcript in the agent's session, before minimizing,
+  so NVDA's announcement of the desktop is heard; it launches no Verbatim
+  and records no video, and refuses a remote run. `is_comparing` says
+  which mode a run is in. `send_gesture` presses nothing for a gesture
+  with the Verbatim modifier, `kb:verbatim+v`, and marks its step
+  Verbatim's own on the timeline; any other keyboard gesture, such as
+  `kb:numpad8`, is pressed as keys, which NVDA's desktop layout binds as
+  Verbatim's does. What needs Verbatim itself (`status`,
+  `subscribe_events`, `verbatim_children`, `end_verbatim_process`,
+  `send_keys_from_verbatim`, and the checks after the body) is an error.
+  A wait on one of Verbatim's events has no NVDA equivalent, so
+  `terminal::expect_prompt_read`, `text_box::paste` and
+  `terminal_flood::watch_for_prompt` skip theirs in compare mode, and the
+  quiet period waited for before the next input stands in.
+- Declared differences. `Scenario::deviates_from_nvda(file, entry)`,
+  called after a step's input, records on the timeline that the step
+  deliberately differs from NVDA, as the parity entry headed `entry` in
+  `file` records, such as `"docs/parity/review.md"` and
+  `"Review cursor columns"`. In a normal run it is a timeline note only. A
+  unit test (`every_declared_deviation_names_an_entry_of_the_parity_ledger`)
+  reads every call under `src/scenarios` and checks the entry is a `###`
+  heading of that file.
+- `ScenarioDef::comparable`. `Comparable::Yes`, or `Comparable::No` with
+  why: the scenarios that end Verbatim's processes, read its status, take
+  speech until a line or until idle, or drive Verbatim's own menu and
+  settings dialog, which do not exist without Verbatim, and the demo and
+  measure groups. Compare mode refuses them with the reason.
+- The run (`registry::run_compare`). It hears the desktop as an ordinary
+  step, runs setup, the body and the end of the speech, the teardown and
+  the cleanup, and writes the timeline, the report, the foreground record
+  and the summary, and archives the run; none of the checks on Verbatim
+  after the body runs. It passes unless the harness itself fails, such as
+  a window not in front, a method that needs Verbatim, or the transcript
+  lost.
+- The report (`compare::render_report`, `compare.txt` in the run's
+  artifacts, also printed). The header names the scenario, the date,
+  NVDA's version from the `Hello`, the `nvda` submodule's pin
+  (`compare::submodule_pin`), whether the pin is the installed build,
+  told from the commit an alpha's version ends with or a release's tag,
+  and the quiet period. Each step gives its input, "Verbatim:" and the
+  texts expected one per line, a sound marked "not compared", "NVDA:" and
+  what it said one per line, "cancel" where it cancelled, any declared
+  deviation and note, and one verdict (`CompareStep::verdict`): "same"
+  when NVDA's speech is exactly the texts expected, sounds left out;
+  "differs"; "declared deviation: <entry>"; "declared, but NVDA agrees:
+  <entry>", worth a look; or "Verbatim-only". A summary counts each
+  verdict.
+
 ## Input
 
 Every key and character the scenario injects goes through the agent
@@ -438,8 +530,9 @@ is a failure.
 
 `ScenarioDef` is one named, grouped scenario: `name` (its `#[test]`
 function, `--scenario` selector, artifacts directory, and video name),
-`group`, `settings` (a change to the fixed settings), `local_only`, and
-`setup`/`body`/`teardown`. `ScenarioState` is what setup hands the body
+`group`, `settings` (a change to the fixed settings), `local_only`,
+`comparable` (whether compare mode can run it, and why not; see "Compare
+mode"), and `setup`/`body`/`teardown`. `ScenarioState` is what setup hands the body
 and teardown: nothing, a target's pid, a window title, names, or a
 `Window` (the launch's pid, the window's title, how Verbatim announces
 the terminal's text area, `text_area`, and the folder of its files).
@@ -655,7 +748,11 @@ debug log can be larger than one read of the agent's.
   thread.
 - `timeline`: injected gestures, keys, typed text, and speech (queued,
   audio started, ended), saved whole in time order, and printed on
-  failure with each earlier step shortened to one line.
+  failure with each earlier step shortened to one line. It also holds
+  the declared differences from NVDA (`push_deviation`) and, in compare
+  mode, NVDA's other events, the harness's notes, and the steps of
+  Verbatim's own.
+- `nvda` and `compare`: compare mode, described above.
 - `artifacts::trace_lines`: every line carrying a trace ID in a run's
   collected logs and flight recorder, in time order.
 - `artifacts`: `artifacts_root`, `scenario_dir`, `ScenarioSummary` (with

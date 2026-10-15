@@ -732,6 +732,15 @@ the guest. An RDP session hid that device, so recording and listening
 were mutually exclusive. VB-CABLE and `--record` are retired; the dead
 ends of that design are recorded in `docs/roadmap-done.md`.
 
+### Comparing a scenario with NVDA
+
+A scenario can also run against NVDA instead of Verbatim, asserting
+nothing, to see what it expects beside what NVDA says, step by step:
+`cargo xtask nvda compare <scenario>`, or `VERBATIM_E2E_COMPARE=1` with
+the usual `cargo test` command. [The NVDA transcript
+guide](../nvda-transcript.md), "Comparing a scenario", says how, and
+which scenarios cannot be compared.
+
 ## The VM harness
 
 The `cargo xtask vm` verbs and the golden-image rebuild live in

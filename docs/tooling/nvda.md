@@ -4,7 +4,10 @@ How to capture what NVDA says from this repository, and the rules the capture fo
 
 Install `nvda-addon/verbatimTranscript.nvda-addon` into NVDA and run
 `cargo xtask nvda capture` with the keys to press;
-[the NVDA transcript guide](../nvda-transcript.md) has the details.
+[the NVDA transcript guide](../nvda-transcript.md) has the details. To
+run a whole end-to-end scenario against NVDA and see its expectations
+beside what NVDA said, step by step, run `cargo xtask nvda compare
+<scenario>` ("Comparing a scenario" in the same guide).
 
 The capture presses its keys only in the window it means to, known by
 its handle: the one in front when it starts, then the one each `--front`

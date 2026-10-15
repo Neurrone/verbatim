@@ -8,13 +8,23 @@ a transcript, and NVDA never runs in continuous integration. Where Verbatim
 deliberately differs from NVDA, record the difference in
 [the parity ledger](parity/readme.md).
 
-There are two parts:
+There are three parts:
 
 - The add-on, `nvda-addon/verbatimTranscript.nvda-addon`, installed into
   NVDA. It records each speech sequence NVDA queues and serves those
   records over a local TCP connection.
 - `cargo xtask nvda capture`, which presses keys through the agent's real
   OS input and prints what NVDA queued for speech after each key.
+- `cargo xtask nvda compare`, which runs one end-to-end scenario against
+  NVDA and reports, step by step, what the scenario expects Verbatim to
+  say beside what NVDA said (see "Comparing a scenario" below).
+
+Use a capture to explore: to find what NVDA says for keys you choose,
+before a scenario exists, or for a step a scenario cannot take. Use a
+comparison to check a scenario that exists against NVDA as a whole: every
+step it takes, in its own order and with its own setup, so you see where
+its expectations and NVDA part, and whether each place they part is a
+difference the ledger records.
 
 ## Installing the add-on
 
@@ -171,6 +181,87 @@ to it, so check the foreground (the agent's `ForegroundInfo`) before a
 capture. And a Settings app page can take a few seconds to appear after
 `--launch`; give `--front` a long enough `--timeout-ms` before pressing
 keys meant for it.
+
+## Comparing a scenario
+
+`cargo xtask nvda compare <scenario>` runs one end-to-end scenario's own
+setup and body, unchanged, with NVDA running instead of Verbatim. Every
+speech assertion records what it expects instead of checking it, and the
+run writes a report, `compare.txt` in the scenario's artifacts folder
+(`target/e2e-artifacts/<scenario>`), and prints it. It is a research
+instrument, not a test: it asserts nothing, never runs in continuous
+integration, and passes unless the harness itself fails, such as a
+window that does not come to the front. It takes over the desktop like
+any local end-to-end run.
+
+To run it:
+
+1. Start NVDA, with the add-on installed, in the session you will run in,
+   and close Verbatim.
+2. Start the agent in the same session:
+   `target\debug\verbatim-agent.exe --bind-address 127.0.0.1 --port 44001`.
+3. Run `cargo xtask nvda compare text_box_review_cursor`, for example.
+   `--agent <address>` names another agent, and `--quiet-ms <ms>` sets
+   the quiet period, by default 1000.
+
+The command checks the agent is reachable, then runs
+`cargo test -p verbatim-e2e --test e2e -- --ignored --exact <scenario>
+--test-threads=1` with `VERBATIM_E2E_ENDPOINT` set to the agent,
+`VERBATIM_E2E_COMPARE=1`, and `VERBATIM_E2E_QUIET_MS` when given. Those
+variables with the usual `cargo test` command do the same.
+
+A step runs from one input, a key, typed text, or a gesture, to the next.
+Before each input, and at the end, the harness waits until NVDA has
+queued nothing for the quiet period, the capture's settling rule, and
+takes what NVDA said in the step. The report starts with the scenario's
+name, the date, NVDA's version, the `nvda` submodule's pin, and the
+quiet period; it says "pin differs from the installed build" when the
+commit the NVDA version names is not the pin, since the expectations
+come from captures and the ported code from the pin. Then, for each
+step: its input; "Verbatim:" and the texts the scenario expects, one per
+line, with a sound marked "not compared", since the add-on records no
+sounds; "NVDA:" and what NVDA queued, one per line, with "cancel" where it
+cancelled speech; and one verdict:
+
+- "same": NVDA queued exactly the texts expected, sounds left out.
+- "differs": it queued something else, and the scenario declares no
+  difference there.
+- "declared deviation: <entry>": it queued something else, and the
+  scenario declares the step a deliberate difference, naming the parity
+  ledger's entry.
+- "declared, but NVDA agrees: <entry>": the scenario declares a
+  difference, but NVDA said the same; worth a look, since the difference
+  may have gone, or the declaration may be on the wrong step.
+- "Verbatim-only": the step's input is Verbatim's own, a gesture with the
+  Verbatim modifier, such as `kb:verbatim+v` for Verbatim's menu, which
+  is not pressed for NVDA. Any other gesture, such as `kb:numpad8`, is
+  pressed as a key, since NVDA's desktop layout binds the same keys. The
+  steps after a Verbatim-only step run as they are written, so their
+  comparison means less: a say-all that never started, for example,
+  leaves NVDA quiet where Verbatim reads on.
+
+A summary at the end counts each verdict.
+
+For the comparison to say anything, NVDA must run with the settings the
+scenarios' expectations were captured with: eSpeak NG as its
+synthesizer, as the suite runs Verbatim with eSpeak NG, and its symbol
+level and verbosity settings at NVDA's defaults. The quiet period and
+the text compared do not depend on the voice's rate. Check the pin
+before a series of comparisons, as before a capture.
+
+Some scenarios cannot be compared, and compare mode refuses them, saying
+why: those that end Verbatim's own processes (`outpost_crash_recovery`,
+`synth_host_crash_recovery`); those that read Verbatim's status
+(`switch_to_onecore`, `second_application_and_verbatim_menu`); those
+that take speech until a given line or until Verbatim is idle
+(`rapid_tabbing_in_settings`, the `*_control_flood` scenarios); those that
+drive Verbatim's own menu and settings dialog, which do not exist without
+Verbatim (`menu_and_settings_dialog`, `object_navigation_in_settings`,
+`settings_dialog_keys`, `theme_panel`, `terminal_settings_page`); and the
+demonstrations and the measure set. Where a scenario waits for one of
+Verbatim's events, such as Core receiving a terminal's caret on its
+prompt, compare mode has no such evidence and relies on the quiet period
+before the next input instead.
 
 ## Changing the add-on
 

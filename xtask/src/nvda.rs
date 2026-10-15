@@ -19,6 +19,13 @@
 //! transcripts that can be compared line by line. With `--json`, every
 //! step and entry is printed as one JSON object per line instead, for a
 //! script comparing transcripts, since spoken text can hold a line break.
+//!
+//! `compare` runs one end-to-end scenario in the harness's compare mode
+//! (`verbatim_e2e::compare`): its own setup and body against the NVDA
+//! running in the agent's session instead of Verbatim, asserting nothing,
+//! and prints the report setting what the scenario expects Verbatim to say
+//! beside what NVDA said, step by step.
+//!
 //! The add-on's client itself is `verbatim_e2e::nvda`, shared with the
 //! end-to-end harness.
 
@@ -26,7 +33,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -39,6 +46,8 @@ use verbatim_e2e::agent_client::AgentClient;
 use verbatim_e2e::nvda::{
     POLL_INTERVAL, QuietWait, Settling, Transcript, TranscriptEvent, session_port,
 };
+use verbatim_e2e::registry::Comparable;
+use verbatim_e2e::{artifacts, compare as compare_mode};
 use verbatim_model::UtteranceEnding;
 
 /// The add-on's source directory, relative to the workspace root.
@@ -54,6 +63,7 @@ pub fn run(args: &[String]) -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("build") => build(),
         Some("capture") => capture(&args[1..]),
+        Some("compare") => compare(&args[1..]),
         _ => {
             eprintln!("usage: cargo xtask nvda <verb>");
             eprintln!("verbs:");
@@ -70,6 +80,12 @@ pub fn run(args: &[String]) -> ExitCode {
                  --release <key> (a key held down across the steps between them, released \
                  when the capture ends or fails), or --gesture <id> (sent to the local \
                  Verbatim)"
+            );
+            eprintln!(
+                "  compare  [--agent <address>] [--quiet-ms <ms>] <scenario>: run an end-to-end \
+                 scenario against the NVDA running in the agent's session, asserting nothing, and \
+                 print what the scenario expects Verbatim to say beside what NVDA said, step by \
+                 step"
             );
             return ExitCode::from(2);
         }
@@ -519,6 +535,103 @@ fn millis(ms: u64) -> i64 {
 
 fn millis_of(ms: u128) -> i64 {
     i64::try_from(ms).unwrap_or(i64::MAX)
+}
+
+/// What `compare` runs: the scenario, the agent, and the quiet period
+/// when one is given.
+struct CompareOptions {
+    agent: String,
+    quiet_ms: Option<u64>,
+    scenario: String,
+}
+
+fn parse_compare_args(args: &[String]) -> io::Result<CompareOptions> {
+    let mut agent = format!("127.0.0.1:{}", verbatim_agent::protocol::DEFAULT_PORT);
+    let mut quiet_ms = None;
+    let mut scenario = None;
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        let mut value = || {
+            args.next()
+                .ok_or_else(|| io::Error::other(format!("{arg} needs a value")))
+        };
+        match arg.as_str() {
+            "--agent" => agent.clone_from(value()?),
+            "--quiet-ms" => {
+                let text = value()?;
+                quiet_ms = Some(text.parse::<u64>().map_err(|_| {
+                    io::Error::other(format!("not a number of milliseconds: {text}"))
+                })?);
+            }
+            name if scenario.is_none() && !name.starts_with("--") => {
+                scenario = Some(name.to_owned());
+            }
+            other => return Err(io::Error::other(format!("unexpected argument {other}"))),
+        }
+    }
+    let scenario = scenario.ok_or_else(|| io::Error::other("compare needs the scenario to run"))?;
+    Ok(CompareOptions {
+        agent,
+        quiet_ms,
+        scenario,
+    })
+}
+
+/// Runs `compare`: checks the scenario can be compared and the agent is
+/// reachable, runs the scenario's test in compare mode, and prints its
+/// report.
+fn compare(args: &[String]) -> io::Result<()> {
+    let options = parse_compare_args(args)?;
+    let def = verbatim_e2e::registry::find(&options.scenario)
+        .ok_or_else(|| io::Error::other(format!("no scenario named {:?}", options.scenario)))?;
+    if let Comparable::No(why) = def.comparable {
+        return Err(io::Error::other(format!(
+            "{} cannot be compared with NVDA: {why}",
+            def.name
+        )));
+    }
+    // The agent presses the keys and finds NVDA's session, as for a
+    // capture.
+    AgentClient::connect(options.agent.as_str())?;
+    let mut command = Command::new(env!("CARGO"));
+    command
+        .args([
+            "test",
+            "-p",
+            "verbatim-e2e",
+            "--test",
+            "e2e",
+            "--",
+            "--ignored",
+            "--exact",
+            def.name,
+            "--test-threads=1",
+        ])
+        .env(verbatim_e2e::ENDPOINT_ENV, &options.agent)
+        .env(compare_mode::ENV, "1")
+        .current_dir(workspace_root());
+    if let Some(quiet_ms) = options.quiet_ms {
+        command.env(compare_mode::QUIET_ENV, quiet_ms.to_string());
+    }
+    println!(
+        "xtask nvda: comparing {} with NVDA; the desktop belongs to it until it ends",
+        def.name
+    );
+    let status = command.status()?;
+    let report = artifacts::scenario_dir(&artifacts::artifacts_root(), def.name)
+        .join(compare_mode::REPORT_FILE_NAME);
+    match fs::read_to_string(&report) {
+        Ok(text) => println!("\n{}:\n{text}", report.display()),
+        Err(error) => eprintln!("xtask nvda: could not read {}: {error}", report.display()),
+    }
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "the comparison of {} stopped on a harness error ({status})",
+            def.name
+        )))
+    }
 }
 
 fn capture(args: &[String]) -> io::Result<()> {

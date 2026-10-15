@@ -16,8 +16,9 @@
 //! the repository's `videos` folder: a test scenario's in `videos/tests`,
 //! a demonstration's in `videos/demos`. See `xtask/src/demo.rs`.
 //!
-//! `nvda` builds the NVDA transcript add-on and captures what NVDA speaks
-//! (`docs/nvda-transcript.md`). See `xtask/src/nvda.rs`.
+//! `nvda` builds the NVDA transcript add-on, captures what NVDA speaks, and
+//! compares an end-to-end scenario with NVDA (`docs/nvda-transcript.md`).
+//! See `xtask/src/nvda.rs`.
 //!
 //! `windows-terminal` downloads and unpacks the pinned portable Windows
 //! Terminal the terminal scenarios drive (`verbatim_e2e::windows_terminal`).
@@ -88,7 +89,7 @@ fn main() -> ExitCode {
                 "  demo  record one scenario on this machine as a video in videos/tests, or a demonstration in videos/demos (cargo xtask demo <scenario> [--name <name>])"
             );
             eprintln!(
-                "  nvda  build the NVDA transcript add-on, or capture what NVDA speaks; run `cargo xtask nvda` alone for its verbs"
+                "  nvda  build the NVDA transcript add-on, capture what NVDA speaks, or compare a scenario with NVDA; run `cargo xtask nvda` alone for its verbs"
             );
             eprintln!(
                 "  park  move this Remote Desktop session to the console, unlocked, for unattended local runs"
