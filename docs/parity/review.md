@@ -212,9 +212,10 @@ character, and the column is remembered, so the next longer line returns
 to it, as editors do with their caret. From the second column of a
 table in Notepad, NVDA's next line and current character say each row's
 first letter ("A", "F", "B") where Verbatim says the column's ("3", "g",
-"1"). The rest of the review commands (line, word, and character,
-spelling and descriptions on repeated presses, top and bottom, and the
-edge messages) read the same in both, on both layouts.
+"1"), and a later move by character from the kept column, such as
+previous character, reads a different character from NVDA's. The rest
+of the review commands (line, word, and character, spelling and
+descriptions on repeated presses, top and bottom, and the edge messages) read the same in both, on both layouts.
 
 ### Select then copy from the review cursor
 

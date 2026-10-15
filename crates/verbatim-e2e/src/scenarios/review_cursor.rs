@@ -105,7 +105,12 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     // says the edge and the break again; previous character crosses back
     // to the line's last letter.
     review(scenario, "kb:numpad7", "Fig");
-    review(scenario, "kb:numpad1", "i");
+    // The review cursor is on a different column from NVDA's here, from the kept column.
+    scenario
+        .send_gesture("kb:numpad1")
+        .expect("sends the gesture");
+    scenario.deviates_from_nvda("docs/parity/review.md", "Review cursor columns");
+    scenario.speech().expect(&["i"]);
     review(scenario, "kb:shift+numpad1", "F");
     review(scenario, "kb:shift+numpad3", "line feed");
     review(scenario, "kb:numpad3", "Right line feed");
@@ -171,7 +176,12 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     // says the edge and the break again; previous character crosses back
     // to the line's last letter.
     review(scenario, "kb:numpad7", "Fig");
-    review(scenario, "kb:numpad1", "i");
+    // The review cursor is on a different column from NVDA's here, from the kept column.
+    scenario
+        .send_gesture("kb:numpad1")
+        .expect("sends the gesture");
+    scenario.deviates_from_nvda("docs/parity/review.md", "Review cursor columns");
+    scenario.speech().expect(&["i"]);
     review(scenario, "kb:shift+numpad1", "F");
     review(scenario, "kb:shift+numpad3", "carriage return");
     review(scenario, "kb:numpad3", "Right carriage return");
