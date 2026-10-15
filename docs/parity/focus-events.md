@@ -277,7 +277,7 @@ the same window compare by unique id; otherwise differing event
 addresses are unequal, and the MSAA identity strings, location, role,
 and name must all match.
 
-Verbatim: **different**, by the outposts' node lifetime
+Verbatim: **different (D9)**, by the outposts' node lifetime
 ([Architecture](../architecture.md), D9, and
 [verbatim-outpost](../crates/verbatim-outpost.md)); no test pins it as
 a whole. NVDA releases an object when nothing refers to it, Verbatim

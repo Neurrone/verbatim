@@ -157,23 +157,6 @@ with the item.
   "mixer and device". Each is measured with the device stages of the
   communication design's section 10.1.
 
-### Stage B, needing no decision
-
-- The `*_control_flood` scenarios' exception to the exact assertions of
-  [the testing standard](testing.md) awaits Dickson's review (provisional,
-  2026-10-11): the speech before Control is asserted by its first and last
-  lines and its endings, since the burst split depends on timing; the
-  alternative is an assertion on every utterance that does not depend on
-  the split, if one can be found.
-
-### Other open items
-
-- Provisional decisions built while Dickson was away, awaiting his
-  confirmation: the console window's own UIA focus always dropped before
-  any read, as NVDA's `consoleUIAWindow` refuses it (stage A step 3); and
-  three details of NVDA's MSAA limiter followed in stage A step 4, each
-  heard only in a burst of events.
-
 ### Deferred
 
 - Communication step 8, review keys straight to the reducer, is
@@ -230,9 +213,13 @@ NVDA capture.
 
 - NVDA's "Press twice to copy or reset the start marker", for a first
   press of Verbatim+F10 after a selection not yet copied, and the start
-  marker kept when a copy fails (Dickson, 2026-10-15;
-  [review parity](parity/review.md), "Select then copy from the review
-  cursor").
+  marker cleared when a copy fails, where Verbatim keeps it (Dickson,
+  2026-10-15; [review parity](parity/review.md), "Select then copy from
+  the review cursor").
+- The M4.2 compare runs capture NVDA's review bottom (Shift+Numpad 9) in
+  the Windows Forms text box, to confirm or correct the source reading in
+  [text parity](parity/text.md), "The review cursor's bottom in a
+  standard edit control".
 - Announce a selection change of the focus that no key and no Verbatim
   command made, such as one made with the mouse or by the application,
   as NVDA reports any selection change after its caret event (Dickson,

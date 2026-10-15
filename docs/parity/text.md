@@ -101,7 +101,9 @@ Differences:
 - A caret event alone is not evidence when the caret's position is
   known, since an application's late caret event can belong to an
   earlier key; the position, the characters either side of the caret,
-  or the selection must change.
+  or the selection must change. **different** (the wait-for-evidence
+  design, Dickson, 2026-10-08, `docs/design/phase6-design.md`, "What a
+  key did to the text").
 - Verbatim never swallows and resends the key, so what Backspace deleted
   is worked out by comparing Core's copy of the caret's line before the
   key with the line after it (Dickson, 2026-10-08,
@@ -201,7 +203,11 @@ Unicode's line and paragraph separators (`verbatim-text`'s `lines`).
 NVDA's review
 bottom (Shift+Numpad 9) there is the last line with text, while
 Verbatim's, like NVDA's in Windows 11 Notepad, is the empty line after a
-final line break. **Different, not yet decided.**
+final line break. Verbatim: **different** (Dickson, 2026-10-15): in
+every control, the review cursor's bottom is the last line the caret can
+occupy, including the empty line after a final line break. The claim
+about NVDA's Shift+Numpad 9 in a standard edit control is from reading
+its source and awaits a capture (M4.2).
 
 ### Browse mode, quick nav, pass-through rules, virtual-buffer equivalent
 
