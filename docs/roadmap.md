@@ -216,6 +216,17 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   investigate from that log, which shows the step where it stopped;
   otherwise drop this item when M4.1 closes.
 
+- GitHub's CI on main had failed on the two pushes before 2026-10-15
+  (runs 38271366442 and 38544999189), in two places that this machine
+  never runs: the ARM64 job's unit test
+  `the_codeview_record_read_is_the_one_dbghelp_reports` in
+  `verbatim-trace-waits` (`server.rs`, an equality assertion), and the
+  hosted end-to-end job, where `windows_terminal_two_windows` and
+  `windows_terminal_leave_flood` failed beside the known
+  `explorer_folder_window` placeholder (80 of 83 passed). Root-cause each
+  from the run logs (`gh run view <id> --log-failed`) rather than from a
+  local run, since neither reproduces here.
+
 Exit: a week of Dickson's daily use without a crash or a stall, and the
 full suite ten times clean.
 
