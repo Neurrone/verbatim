@@ -305,7 +305,7 @@ pub enum PostProbeCheck {
 /// The check NVDA makes on a window of these classes after its probe finds a
 /// provider, if it makes one. NVDA's Word, Excel, and Chromium exceptions
 /// apply only when it has injected its in-process helper, so they wait for
-/// Verbatim's (decision D2, M6).
+/// Verbatim's (decision D2, M7).
 #[must_use]
 pub fn post_probe_check(classes: &WindowClasses) -> Option<PostProbeCheck> {
     match classes.normalized.as_str() {

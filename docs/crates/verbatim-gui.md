@@ -125,7 +125,7 @@ The private modules:
   callbacks Rust keeps. Escape and window close dismiss; Enter or a double
   click on a list item triggers the default button; activation only ever
   runs against a selected item. The systrayList replica presents through
-  it and M6's elements list will present through the same one.
+  it and M7's elements list will present through the same one.
 - `plan` — `plan_for(descriptor, value)` maps a `SettingDescriptor` to a
   `ControlPlan` (slider, choice, or check box with clamped initial value),
   `accessible_name` strips ampersand mnemonics for accessible names (a

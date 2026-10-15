@@ -313,7 +313,20 @@ Verbatim; capability denial is enforced and tested. This milestone opens the
 app-module porting track (see the section after M15), which then runs
 continuously alongside every later milestone.
 
-## M6 — Browse mode, browsers, and the injection helper
+## M6 — Native synth host + Eloquence PoC
+
+This milestone comes right after M5 and before browse mode so that
+Eloquence can be delivered through the extension mechanism and
+Verbatim can become Dickson's daily screen reader sooner (Dickson,
+2026-10-15).
+
+- Sandboxed native synth host process (AppContainer, job object, shared-memory
+  PCM ring), arch-matched loading.
+- Eloquence proof of concept meeting the same latency budget.
+
+Exit: Eloquence speaks through Verbatim under sandbox; latency test green.
+
+## M7 — Browse mode, browsers, and the injection helper
 
 - Document projection / incremental virtual buffer over the normalized tree;
   quick-nav keys, elements list (presented through the M3 list dialog),
@@ -377,14 +390,6 @@ continuously alongside every later milestone.
 Exit: real browsing works day-to-day; large-page E2E passes; corpus
 performance/parity report vs NVDA written, at (or consciously accepted
 near) parity; screen review reads a modern app's screen correctly.
-
-## M7 — Native synth host + Eloquence PoC
-
-- Sandboxed native synth host process (AppContainer, job object, shared-memory
-  PCM ring), arch-matched loading.
-- Eloquence proof of concept meeting the same latency budget.
-
-Exit: Eloquence speaks through Verbatim under sandbox; latency test green.
 
 ## M8 — Breadth: speech configurability, profiles, overlays, OCR, secure desktop
 
@@ -518,7 +523,7 @@ then-current PuTTY, SecureCRT, and Tera Term (and any other app that has
 motivated this milestone by then) against stock Verbatim plus OCR, and
 build only if the display model still earns its maintenance cost. By this
 point everything it needs already exists, which is what keeps the
-milestone cheap: the M6 injection helper is the delivery vehicle (the
+milestone cheap: the M7 injection helper is the delivery vehicle (the
 display model is its second in-process client), synthetic nodes make its
 output first-class model content, and the M4 diff announcer and flood
 policy handle live terminal output.
@@ -577,7 +582,7 @@ Tiers, gated by the capabilities each module needs:
   and Tera Term draw their screens through GDI with no accessibility API at
   all, so they are gated on the M14 display model — with ssh from Windows
   Terminal as the recommended interim answer.
-- **Tier C — after M6 browse mode** (web-content-hosting apps): WebView2
+- **Tier C — after M7 browse mode** (web-content-hosting apps): WebView2
   hosts, WhatsApp, deeper Teams support, Thunderbird, Kindle and other
   readers.
 - **Tier D — after the object-model bridge capability lands (planned around

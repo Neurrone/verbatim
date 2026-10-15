@@ -3,7 +3,7 @@
 Three web-and-document semantics layers that sit above the raw
 backends: the ARIA vocabulary mapping, the annotation/details
 machinery, and compound documents. All become load-bearing with
-browse-mode work (roadmap M6 for Verbatim); collected here so that
+browse-mode work (roadmap M7 for Verbatim); collected here so that
 work has its reference.
 
 ## The ARIA mapping

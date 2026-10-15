@@ -40,7 +40,7 @@
 //!   for the foreground layout's language, nothing is translated, so
 //!   Verbatim stays silent rather than echoing the raw keys (decided
 //!   2026-10-08). Echoing the composed text needs the injection helper and
-//!   is on the roadmap for M6 (`docs/roadmap.md`, "Typed-character echo of
+//!   is on the roadmap for M7 (`docs/roadmap.md`, "Typed-character echo of
 //!   composed text").
 //!
 //! Keys typed with `KEYEVENTF_UNICODE` (an on-screen keyboard, the

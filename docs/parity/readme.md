@@ -98,13 +98,13 @@ NVDA: unrestricted Python add-ons
 NVDA: universal lazy DLL injection
 ([Process injection](../nvda/process-injection.md)). Verbatim:
 **different (D2)**: injection only ever accelerates, never required
-for correctness; not yet built (M6).
+for correctness; not yet built (M7).
 
 ### Display model
 
 NVDA: GDI hooks power screen review
 ([The display model](../nvda/display-model.md)). Verbatim: **different (D11)** —
-screen review will be a spatial projection of the tree (M6); GDI
+screen review will be a spatial projection of the tree (M7); GDI
 model deliberately last (M14, gated).
 
 ### Spoken vocabulary and key layouts

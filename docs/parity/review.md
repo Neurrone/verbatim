@@ -239,7 +239,7 @@ press selects again; it is planned for later (Dickson, 2026-10-15).
 ### Document review and screen review modes
 
 Verbatim: **not yet
-(M6)**; screen review will be a projection of the tree, different by
+(M7)**; screen review will be a projection of the tree, different by
 decision D11.
 
 ### Object activation

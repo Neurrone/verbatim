@@ -1,7 +1,7 @@
 # verbatim-ia2
 
 The minimal MSAA client (IA2 interface acquisition is an explicit seam
-left for M6, landing with the browsers that motivate it; M3's backend
+left for M7, landing with the browsers that motivate it; M3's backend
 parity work covers MSAA and UIA only).
 
 Public API:
@@ -147,7 +147,7 @@ Public API:
   style, from one local style read, as NVDA's
   `isPresentableFocusAncestor` singles it out; position-in-set is
   counted for list-view and tree-view items, as described below, and is
-  otherwise `None` until IA2's `groupPosition` (roadmap M6)),
+  otherwise `None` until IA2's `groupPosition` (roadmap M7)),
   `tree_view_child_count` (a `SysTreeView32` item's number of children,
   its first child and each next sibling through `TVM_GETNEXTITEM`, as
   NVDA counts them; read by the outpost only with a state change that

@@ -261,7 +261,7 @@ tail); tested with mockapp's `backward_moves.json` and
 NVDA: in-process drivers (crash = NVDA crash),
 one out-of-process precedent ([Synth drivers](../nvda/synth-drivers.md)).
 Verbatim: **different (D18)** — native synth host out of process
-(M7).
+(M6).
 
 ### Symbol/punctuation processing, speech dictionaries, character descriptions
 

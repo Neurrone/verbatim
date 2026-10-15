@@ -242,7 +242,7 @@ too.
 
 The idea this sets up for later milestones: install scripts for target
 applications the E2E corpus needs (a specific Notepad++ build for the
-porting track, a browser for M6, an Office install for the M8-era Tier D
+porting track, a browser for M7, an Office install for the M8-era Tier D
 work) can each be written the same idempotent, one-fact-per-line way, run
 once against a running `verbatim` VM, and checkpointed under their own name
 layered on top of `golden` (or on top of each other) — so a given E2E

@@ -23,7 +23,7 @@ cache period; no window's answer was seen to change from a provider to
 none during its life, across about 65 windows of Explorer, Settings,
 Start, and the desktop.
 
-Not yet (M6): NVDA's Word, Excel, and Chromium exceptions, which set UIA
+Not yet (M7): NVDA's Word, Excel, and Chromium exceptions, which set UIA
 aside only when NVDA has injected its in-process helper; without it NVDA
 uses UIA for them, as Verbatim does, and they arrive with Verbatim's
 helper (decision D2). Not carried: the Office 2013 and older ribbon rule
@@ -216,7 +216,7 @@ cannot travel to another process, so the focus listener cannot carry
 it), keeps the range's start as a position in the focus's text, and
 sends it to Core (`ActiveTextPositionChanged`), dropping an event whose
 element or range cannot be had, or whose window is hung. Core does
-nothing with it. Not yet (M6): browse mode, which moves its caret there
+nothing with it. Not yet (M7): browse mode, which moves its caret there
 and speaks the line, as NVDA's does; it will need the registration on
 the document a focus is inside, not only a text focus.
 
@@ -269,7 +269,7 @@ outpost's queue is full.
 NVDA: `normalizeIAccessible`
 ([IA2 usage](../nvda/ia2.md)). Verbatim: **partial**: the verbatim-ia2
 QueryService path exists ([verbatim-ia2](../crates/verbatim-ia2.md)),
-unverified; IA2 text and hypertext consumption is not yet (M6).
+unverified; IA2 text and hypertext consumption is not yet (M7).
 
 ### JAB
 

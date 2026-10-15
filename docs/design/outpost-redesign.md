@@ -521,7 +521,7 @@ outpost ended (outpost id, reason: retired, exited, or killed). Every
 other outpost message reaches the app labelled with its outpost id.
 
 Framing stays newline-delimited JSON through `write_message` and
-`read_message`, which remain the seam for a bulk path in M6.
+`read_message`, which remain the seam for a bulk path in M7.
 
 ## Ordering guarantees
 

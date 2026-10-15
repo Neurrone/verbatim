@@ -21,12 +21,12 @@ screen reader in both rendered and source form.
   MSAA/IA2-only. Neither API alone covers the desktop.
 - **D2 — Injection is planned but never required for correctness.** An
   in-process injection helper (NVDA's nvdaHelper analog) ships with browse
-  mode (roadmap M6), staged inside that milestone: out-of-process IA2 lands
+  mode (roadmap M7), staged inside that milestone: out-of-process IA2 lands
   first to prove correctness, then the helper adds IA2 call batching and
   virtual-buffer acceleration for performance. NVDA has already proven that
   in-process access is what makes large browser documents fast enough, so
   the helper is scheduled work rather than gated on new measurements; the
-  fixed-corpus comparison against NVDA (M6 exit) verifies the result.
+  fixed-corpus comparison against NVDA (M7 exit) verifies the result.
   Keeping the helper off the correctness path keeps the x64/ARM64EC/x86
   binary matrix and antivirus friction out of the early milestones.
 - **D3 — The end-to-end suite runs against any Windows session the
@@ -116,10 +116,10 @@ screen reader in both rendered and source form.
   lines, extent-backed wherever a text interface exposes per-character
   geometry (UIA TextPattern bounding rectangles, IA2 character extents),
   rectangle interpolation otherwise — landing with the browse-mode
-  projection machinery (roadmap M6), with OCR as a second text source (M8).
+  projection machinery (roadmap M7), with OCR as a second text source (M8).
   A GDI display model in the NVDA tradition (in-process hooks on GDI
   text-output calls) is deliberately last (M14) and behind a re-triage
-  gate, riding the M6 injection helper as its delivery vehicle; the only
+  gate, riding the M7 injection helper as its delivery vehicle; the only
   work gated on it is the legacy GDI terminal clients (PuTTY, SecureCRT,
   Tera Term). Rationale: a display model sees only GDI-drawn text, a
   shrinking share of a Windows 11 screen, while tree-plus-extents is exact
@@ -332,7 +332,7 @@ screen reader in both rendered and source form.
   and is started again with its saved settings after a crash, the
   utterance in flight ending as failed. Pipes, not shared memory, until
   the latency ledger shows the hop matters. The AppContainer sandbox and
-  the 32-bit host for Eloquence remain M7 work. Verbatim is licensed GPL
+  the 32-bit host for Eloquence remain M6 work. Verbatim is licensed GPL
   version 3 or later from the same date, and eSpeak NG (GPL version 3 or
   later) is statically linked into the host, not into `verbatim.exe`.
   Decided 2026-10-04.
@@ -379,7 +379,7 @@ Verbatim runs as three kinds of process:
    its own messages to Core (`docs/design/communication.md`, section 6.4).
 3. **Synthesizer host processes** (D18) — one per synthesizer in use, in
    a kill-on-close job, streaming PCM to Core over a pipe; the AppContainer
-   sandbox arrives with Eloquence in M7.
+   sandbox arrives with Eloquence in M6.
 
 A supervisor in Core spawns outposts, tracks their health, and kills and
 respawns any that stop responding. Because Windows has no parent-child
@@ -768,14 +768,14 @@ M13) for Java applications.
   then the IA2 text, hypertext, and relation interfaces as needed
   (`nvda/include/ia2` vendors the IDL). The IA2 proxy/stub (marshaling)
   story from Rust — registered or reg-free — is settled during the first
-  IA2 implementation work, which lands with the browsers in M6; before
+  IA2 implementation work, which lands with the browsers in M7; before
   then MSAA-only apps are read through plain MSAA.
 - **Cost model**: unlike UIA there are no cache requests and no remote ops;
   every property is a cross-process COM round trip. Mitigations, in order:
   fetch discipline (only what the reducer asked for), aggressive outpost-side
   caching keyed to WinEvent invalidations, incremental browse-mode builds,
   and the D2 in-process helper for batching, which lands with browse mode
-  (M6).
+  (M7).
 - **MSAA-only apps** are normalized at "usable" fidelity through the same
   stack (IA2 is a set of interfaces layered on MSAA plumbing).
 
@@ -837,8 +837,8 @@ language tagging, synth driver, PCM, the mixer (D17), and the
     source-available synths. Whether they run in Core's extension host or
     in a synth host is decided in M5.
   - **Native synth host** (D18): one process per synthesizer, matching the
-    DLL's architecture (x86 under emulation if needed, M7), streaming PCM
-    over a pipe. Eloquence adds the AppContainer sandbox in M7. Latency
+    DLL's architecture (x86 under emulation if needed, M6), streaming PCM
+    over a pipe. Eloquence adds the AppContainer sandbox in M6. Latency
     budget applies equally (the pipe hop is tens of microseconds).
 - **Audio**: a mixer with one audio thread that converts every source to
   the device's format, sums them, and tracks playback position per
@@ -951,7 +951,7 @@ input.
 
 ## 12. Security posture
 
-- No injection unless and until the D2 helper ships (M6), and then only via
+- No injection unless and until the D2 helper ships (M7), and then only via
   it.
 - Native synth DLLs and Wasm extensions are sandboxed as described; Core never
   loads third-party native code in-process.
@@ -1050,7 +1050,7 @@ otherwise.
   sparse overlays, mirroring NVDA's base-plus-diffs model. Profiles cannot
   carry global settings by construction.
 - `verbatim-core` — the reducer, modes, review cursor; the browse-mode
-  projection is planned (M6).
+  projection is planned (M7).
 - `verbatim-uia` and `verbatim-uia-rops` — UIA client stack; remote
   operations.
 - `verbatim-ia2` — MSAA/IA2 client stack (WinEvents, IAccessible2).
@@ -1096,8 +1096,8 @@ otherwise.
 - **R1 — Out-of-process IA2 chattiness.** No cache requests or remote ops
   means large browser documents could make browse-mode builds feel slow.
   Mitigation: fetch discipline and incremental builds first; the D2
-  injection helper lands inside M6 itself (out-of-process first, then the
-  helper), and the M6 exit's fixed-corpus measurement against NVDA verifies
+  injection helper lands inside M7 itself (out-of-process first, then the
+  helper), and the M7 exit's fixed-corpus measurement against NVDA verifies
   the result.
 - **R2 — Outpost process overhead.** One process per app costs working set
   and spawn latency, which matters on low-end devices. Mitigation: idle
@@ -1112,7 +1112,7 @@ otherwise.
   the ARM64 verification is not yet scheduled to a milestone.
 - **R4 — Eloquence complications.** DLL architecture or licensing issues.
   Mitigation: native host is already arch-flexible; PoC scoped to its own
-  milestone (M7), off the critical path.
+  milestone (M6), off the critical path.
 - **R5 — UIAccess signing.** Signing requirements could block reading
   elevated UIs during development. Mitigation: develop with test-signing in
   the VM; production signing tracked as release infra.

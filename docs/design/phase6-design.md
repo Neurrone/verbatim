@@ -332,7 +332,7 @@ ledger.
     toggle it, Verbatim+5, NVDA's key for its "report dynamic content
     changes" toggle. It silences a noisy window for a while without
     leaving the terminal. NVDA's setting covers all dynamic content, live
-    regions included; Verbatim's covers terminals until M6 adds live
+    regions included; Verbatim's covers terminals until M7 adds live
     regions, when it widens to match.
   - "Lines spoken in full", a number, default 30: up to this many lines
     of output waiting to be spoken are all spoken.
@@ -836,7 +836,7 @@ extensions.
 
 ## Core's state
 
-### What Core has to store, now and through M6
+### What Core has to store, now and through M7
 
 - **Today**: the focus context (the focused node's snapshot and its
   ancestor chain), the navigator, the attention record, the latest focus
@@ -856,7 +856,7 @@ extensions.
 - **M4, the review cursor**: a position, as a reference to a node and a
   position within its text that the outpost resolves; text is fetched
   per command.
-- **M6, browse mode**: the virtual buffer, text plus a node map for a
+- **M7, browse mode**: the virtual buffer, text plus a node map for a
   whole document, which can be megabytes for a large page. This is the
   only state that is large by nature.
 
@@ -893,8 +893,8 @@ explicitly, as `last_selection` already does.
   and shares memory: text in a rope whose nodes are reference counted,
   so a clone is constant time and an edit copies only the path to the
   changed leaf; node maps in a persistent map with the same property.
-  Until M6 the only such data is the text Core keeps for an edit field,
-  which is small, so this rule mostly constrains M6.
+  Until M7 the only such data is the text Core keeps for an edit field,
+  which is small, so this rule mostly constrains M7.
 - The flight recorder takes a snapshot of the state each time its window
   advances past a checkpoint, which the cheap clone makes affordable, so
   every recorded window can be replayed from its start.
@@ -902,9 +902,9 @@ explicitly, as `last_selection` already does.
   same number of bytes for a small and a large state, and that taking a
   snapshot allocates a bounded number of bytes whatever the state's size.
 
-Whether the M6 virtual buffer lives in Core at all, or in the outpost
+Whether the M7 virtual buffer lives in Core at all, or in the outpost
 with Core querying it (NVDA keeps its buffers inside the browser's
-process and queries them), is an M6 decision. The proposal above holds
+process and queries them), is an M7 decision. The proposal above holds
 either way.
 
 ## Internationalization in the text model
@@ -1033,7 +1033,7 @@ For step 3, the GUI port:
   children and no position, so NVDA supplies its own. Any check list box
   in Verbatim's GUI gets its own accessible and must not notify twice.
 
-For later milestones, recorded in `docs/roadmap.md` under M6 and M8:
+For later milestones, recorded in `docs/roadmap.md` under M7 and M8:
 browse-mode additions, copying the last spoken text, dictionary rule
 style, OCR capture, and menu item locations in 32-bit applications.
 
@@ -1122,7 +1122,7 @@ Python framework is allowed. Three layers:
    array, string map, cache request) and structured control flow (if,
    while, for each, try and catch) that compute jump offsets, and a local
    emulator of the program machine used for its tests. Verbatim ports the
-   first two whole, since terminals, text attribute runs, and M6's buffer
+   first two whole, since terminals, text attribute runs, and M7's buffer
    fetches will use most of them: every opcode in the table with a unit
    test of its exact bytes, and a typed builder in which each register
    has a Rust type for what it holds, so a program that compares an
@@ -1202,7 +1202,7 @@ same tree.
 
 Where remote operations are used: for every operation that would
 otherwise take several round trips (the focus ancestry, terminal reads,
-and later text attribute runs and M6's buffer fetches), whenever the
+and later text attribute runs and M7's buffer fetches), whenever the
 window's provider is native. Not for a single read that is already one
 round trip, since a program cannot make it cheaper, and never for event
 subscriptions, which are not calls. Each choice is justified by the
@@ -1567,7 +1567,7 @@ In this order, since later parts build on earlier ones:
    NVDA's `EditTextInfo` does), which covers edit fields in applications
    Verbatim otherwise reads through MSAA; MSAA itself has no text
    interface, so a custom control known only through MSAA reports its
-   value, as in NVDA, until IA2 (M6) and the display model (M14); caret and selection events; text sent to Core with the caret
+   value, as in NVDA, until IA2 (M7) and the display model (M14); caret and selection events; text sent to Core with the caret
    event; unsupported units reported as such, movement stopping at
    document ends.
 3. **Caret navigation and selection**, following NVDA's wait-for-evidence
@@ -1621,7 +1621,7 @@ In this order, since later parts build on earlier ones:
    Not in M4: switching review modes (Verbatim+numpad 7 and 1). M4 has
    only object review, the text of the navigator object; document review
    needs browse mode and screen review needs the screen projection, both
-   M6. Object navigation, already implemented, is unchanged.
+   M7. Object navigation, already implemented, is unchanged.
 6. **Say-all** with index marks, the "Say all reads by" setting
    (sentence by default where the text can be split into sentences, line
    for UIA), and the display kept on while reading.
@@ -2575,7 +2575,7 @@ A read-only audit found these, ranked by how likely a user of the language is to
 
 Lower likelihood: kanji-only Japanese segmented as Chinese, and Han outside the BMP; locale-free word rules ("EU:n"); text chunks cut mid-surrogate or mid-grapheme; East Asian Ambiguous cell widths; Cherokee as capitals; Turkish casing for a future table; the ideographic space unnamed.
 
-Decisions on the language audit (Dickson, 2026-10-08): automatic language switching (item 6) is on the roadmap under M8, not in this package; with a text-service keyboard outside Chinese, Japanese and Korean active (item 4), Verbatim stays silent instead of echoing raw keys, until composed echo arrives with the D2 injection helper (M6, also on the roadmap).
+Decisions on the language audit (Dickson, 2026-10-08): automatic language switching (item 6) is on the roadmap under M8, not in this package; with a text-service keyboard outside Chinese, Japanese and Korean active (item 4), Verbatim stays silent instead of echoing raw keys, until composed echo arrives with the D2 injection helper (M7, also on the roadmap).
 
 ## What a key did to the text (Dickson, 2026-10-08)
 
@@ -2642,7 +2642,7 @@ Further (Dickson, 2026-10-08): the review cursor follows the caret by default, a
 
 ## NVDA's settings in Verbatim (inventory 2026-10-08)
 
-Of NVDA's 242 user-visible settings, Verbatim has 18, has an equivalent with a difference for 25 (mostly theme indications standing in for NVDA's checkboxes, per D12), lacks 14 whose behaviour already exists, and lacks 177 whose feature is not built yet (M4 6, M6 33, M8 30, M12 9, M15 29, the Office porting track 5, unscheduled 65); 8 do not apply. The settings package builds now: the 14 missing settings for behaviour Verbatim already has (capital pitch change, OneCore's pause after punctuation, the audio output device, sounds' volume following the voice, the audio device awake time, handling keys from other applications, the multiple key press timeout, review cursor following focus, reporting tooltips, reporting notifications, the word segmentation standard, cancelling speech for expired focus events, trimming leading silence), dialog controls for the nine settings that exist only in settings.toml, and the three small M4 features (say "cap" before capitals, delayed character descriptions, the spelling-error sound while typing). NVDA's caret movement timeout has no counterpart once caret keys become event-driven. Each setting for a feature not yet built lands with its milestone.
+Of NVDA's 242 user-visible settings, Verbatim has 18, has an equivalent with a difference for 25 (mostly theme indications standing in for NVDA's checkboxes, per D12), lacks 14 whose behaviour already exists, and lacks 177 whose feature is not built yet (M4 6, M7 33, M8 30, M12 9, M15 29, the Office porting track 5, unscheduled 65); 8 do not apply. The settings package builds now: the 14 missing settings for behaviour Verbatim already has (capital pitch change, OneCore's pause after punctuation, the audio output device, sounds' volume following the voice, the audio device awake time, handling keys from other applications, the multiple key press timeout, review cursor following focus, reporting tooltips, reporting notifications, the word segmentation standard, cancelling speech for expired focus events, trimming leading silence), dialog controls for the nine settings that exist only in settings.toml, and the three small M4 features (say "cap" before capitals, delayed character descriptions, the spelling-error sound while typing). NVDA's caret movement timeout has no counterpart once caret keys become event-driven. Each setting for a feature not yet built lands with its milestone.
 
 Revised (Dickson, 2026-10-08): the review cursor's position is left to the provider, with no bookkeeping of Verbatim's own. With the history not yet full, a UIA range stays on its text as new lines are written below it, which is the case that matters; with it full, staying on the same row is acceptable; when the review line itself is rewritten, the position stays where the provider keeps it, as in NVDA. This replaces following the logical line by scroll distance. An end-to-end test in both terminals pins the case that matters: review a line still on screen, write new output below it without filling the history, and read the same line. Status cues (the start-up and exit sounds, progress beeps, error sounds) always play through and are not cut off by keys; content announcements are. Spoken progress comes every 10 percent, as NVDA's does. The error sound plays in every build for now.
 

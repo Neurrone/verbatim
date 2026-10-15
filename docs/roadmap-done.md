@@ -265,7 +265,7 @@ and the D9 outpost generalization — were finished early, at the end of M2
   `layout` is either `desktop` (the default) or `laptop` — exposed only in
   the file in M3; its GUI surface arrives with M8's gesture-remapping
   work. Review-mode switching stays excluded (it arrives with screen
-  review in M6). Object navigation sees the full tree, matching NVDA with
+  review in M7). Object navigation sees the full tree, matching NVDA with
   its simple review mode off — the user's baseline, and a decision this
   milestone re-affirmed after briefly shipping NVDA's simple-review
   projection instead (reverted the same day: the baseline is the
@@ -317,7 +317,7 @@ and the D9 outpost generalization — were finished early, at the end of M2
 
   Also excluded from M3, beyond simple review: NVDA's review-mode
   next/previous (Verbatim+numpad7 and Verbatim+numpad1 — document and
-  screen review land in M6), move focus to navigator object
+  screen review land in M7), move focus to navigator object
   (Verbatim+shift+numpadMinus), say-all (M4), and the mouse commands.
 - Windows shell support expressed as generic core policy, not per-app
   patches. NVDA's live Windows 11 Explorer fixes reduce almost entirely to
@@ -404,7 +404,7 @@ and the D9 outpost generalization — were finished early, at the end of M2
   screen rectangle and injects the matching mouse events. Enumeration goes
   through the existing UIA client over the shell windows, not the add-on's
   per-Windows-build window-class walks, which predate usable UIA there.
-  The list dialog is a reusable component — M6's elements list presents
+  The list dialog is a reusable component — M7's elements list presents
   through the same one. Both are core features.
 - Latency budget enforcement starts here: the pipeline budget via the
   capture synthesizer (deterministic, measures everything except
@@ -438,7 +438,7 @@ and the D9 outpost generalization — were finished early, at the end of M2
   description, positional info), the WinEvent and UIA event sets with
   NVDA's acceptance filtering, and the arbitration class lists. IA2
   interface acquisition (the `QueryService` seam left in `verbatim-ia2`)
-  is deliberately deferred to M6, where the browsers that motivate it
+  is deliberately deferred to M7, where the browsers that motivate it
   land; until then MSAA-only apps are read through plain MSAA.
 - E2E scenarios: Explorer, Settings, Start menu, task switching, at least
   one MSAA-only legacy app;

@@ -121,7 +121,7 @@ does):
   it answers true for every layout, the US one included (found
   2026-10-06). The committed text is not echoed; NVDA hears it from inside
   the application (its `ime` and `tsf` hooks), which Verbatim's injection
-  helper (decision D2, milestone M6) can do, and announcing compositions is
+  helper (decision D2, milestone M7) can do, and announcing compositions is
   a later milestone (`docs/design/phase6-design.md`, "Internationalization in the text
   model").
 - Keyboard text services. Outside Chinese, Japanese, and Korean, Windows'
@@ -137,7 +137,7 @@ does):
   application together unless the user chose otherwise, which is why the
   hook thread's active profile stands for the foreground application's.
   Echoing the composed text needs the injection helper and is on the
-  roadmap for M6.
+  roadmap for M7.
 - A key typed as a Unicode packet (`VK_PACKET`, from an on-screen keyboard
   or `SendInput` with `KEYEVENTF_UNICODE`) carries its UTF-16 unit, a
   surrogate pair as two keys, which are joined.

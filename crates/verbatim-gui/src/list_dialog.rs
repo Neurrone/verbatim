@@ -1,7 +1,7 @@
 //! A reusable list dialog: a title, a static label above a single-selection
 //! list box, and a configurable row of buttons plus Cancel.
 //!
-//! The M3 systrayList replica presents through this component, and M6's
+//! The M3 systrayList replica presents through this component, and M7's
 //! elements list will present through the same one. Callers describe the
 //! dialog as data (a [`ListDialogSpec`]): items are display strings whose
 //! index doubles as the opaque payload key (callers keep their own side
@@ -31,7 +31,7 @@ pub(crate) enum ButtonVerdict {
         not(test),
         expect(
             dead_code,
-            reason = "every systrayList button closes; M6's elements list will keep its dialog open"
+            reason = "every systrayList button closes; M7's elements list will keep its dialog open"
         )
     )]
     KeepOpen,

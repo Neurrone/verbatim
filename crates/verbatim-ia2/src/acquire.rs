@@ -5,7 +5,7 @@
 //! from a `WinEvent` address, or from the focused window, it acquires an
 //! `IAccessible`, reads name/role/value/state, and maps to a [`NodeSnapshot`].
 //!
-//! `IAccessible2` is not implemented. Roadmap M6 adds it here, with the
+//! `IAccessible2` is not implemented. Roadmap M7 adds it here, with the
 //! browsers that need it, by calling `IServiceProvider::QueryService` on the
 //! `IAccessible` obtained below for the IA2 text, hypertext, and relation
 //! interfaces.
@@ -1484,7 +1484,7 @@ fn window_sibling(
 /// MSAA offers (`accDescription`, `accKeyboardShortcut`, `accLocation`) from
 /// an accessible and its child id. Position-in-set is computed for list-view
 /// and tree-view items (`position_of`) and is otherwise `None` until IA2's
-/// group position (roadmap M6).
+/// group position (roadmap M7).
 ///
 /// Level is the one exception: a `SysTreeView32` item ([`Role::TreeItem`])
 /// overloads `accValue` to report its 0-based indent depth as a numeric

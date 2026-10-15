@@ -204,7 +204,7 @@ final line break. **Different, not yet decided.**
 
 ### Browse mode, quick nav, pass-through rules, virtual-buffer equivalent
 
-**not yet (M6)**; references
+**not yet (M7)**; references
 [Browse mode](../nvda/browse-mode.md), [Virtual buffers](../nvda/virtual-buffers.md).
 
 ### Office object-model reading
@@ -238,7 +238,7 @@ for the review: where is Verbatim's home for this layer?
 
 NVDA:
 [ARIA, annotations, and compound documents](../nvda/aria-and-annotations.md).
-Verbatim: **not yet (M6)**.
+Verbatim: **not yet (M7)**.
 
 ### Math
 

@@ -64,7 +64,7 @@ echoed; NVDA echoes it from inside the application. The same holds for
 a keyboard text service outside Chinese, Japanese, and Korean
 (Vietnamese Telex and VNI, the Indic Phonetic keyboards), found by the
 active keyboard profile: Verbatim stays silent rather than echoing the
-raw keys, until composed echo arrives with the injection helper (M6).
+raw keys, until composed echo arrives with the injection helper (M7).
 
 ### Mouse tracking and touch interaction
 

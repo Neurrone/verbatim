@@ -111,7 +111,7 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   returns the next state and effects, no I/O, no clocks (architecture
   section 2). [verbatim-core](crates/verbatim-core.md).
 - **Scan mode** — Verbatim's planned document-reading mode family
-  (the browse-mode analog), landing with M6.
+  (the browse-mode analog), landing with M7.
   [Architecture](architecture.md) section 8.
 - **Scenario** — one named, registered E2E test: setup, body,
   teardown, artifacts, and a `#[test]` wrapper sharing its name.

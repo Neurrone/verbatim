@@ -685,7 +685,7 @@ asks the application for its current focus with a single focus-now query.
   capability at once. It takes `--classic-uia` as an outpost does, for
   its reads. Range-value changes and live regions, which NVDA
   also registers globally, are not subscribed yet: the reducer speaks values
-  only for the focus, and live regions are milestone M6's.
+  only for the focus, and live regions are milestone M7's.
 
 ### The supervisor
 

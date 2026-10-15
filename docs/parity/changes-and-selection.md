@@ -140,7 +140,7 @@ yet. The ControllerFor relation is read live for each selection event,
 as NVDA reads it (Dickson, 2026-10-10), in one remote operation with
 the search for the selected element. Not yet built: Start's results
 that are in a Chromium document NVDA reads through IA2, which belong to
-the phase that implements IA2 (browsers, M6).
+the phase that implements IA2 (browsers, M7).
 
 ### Suggestions appearing and going away
 

@@ -72,4 +72,4 @@ each found against NVDA's source:
 ### Live regions
 
 Live regions (browsers). NVDA: in-process IA2 machinery
-([IA2 usage](../nvda/ia2.md)). Verbatim: **not yet (M6)**.
+([IA2 usage](../nvda/ia2.md)). Verbatim: **not yet (M7)**.
