@@ -810,7 +810,14 @@ fn a_range_reads_in_document_order_and_selecting_moves_the_caret() {
             end: at(0),
         },
     );
-    assert_eq!(selected, TextReply::Done);
+    assert_eq!(
+        selected,
+        TextReply::Selected(vec![SelectionChange {
+            selected: true,
+            text: "hello".to_owned(),
+            characters: 5,
+        }])
+    );
     assert_eq!(source.selection, Some((0, 5)));
 }
 

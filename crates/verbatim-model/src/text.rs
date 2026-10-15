@@ -527,7 +527,7 @@ pub enum TextOp {
         end: TextPoint,
     },
     /// Select the text between two points, and move the caret there where
-    /// the application allows: answered [`TextReply::Done`], or
+    /// the application allows: answered [`TextReply::Selected`], or
     /// [`TextReply::Unsupported`] when the text cannot be selected.
     Select {
         /// One end.
@@ -609,9 +609,13 @@ pub enum TextReply {
         /// The text was cut.
         truncated: bool,
     },
-    /// A [`TextOp::Select`], [`TextOp::MoveCaret`], or
-    /// [`TextOp::TerminalHold`] was done.
+    /// A [`TextOp::MoveCaret`] or [`TextOp::TerminalHold`] was done.
     Done,
+    /// The answer to [`TextOp::Select`]: how the selection changed from
+    /// the one the outpost read just before selecting (collapsed at the
+    /// caret when nothing was selected) to the one it read just after, by
+    /// the rule [`CaretReply`] describes for its `selection_changes`.
+    Selected(Vec<SelectionChange>),
     /// The answer to [`TextOp::TerminalRead`] and
     /// [`TextOp::TerminalCancel`]: what is new, empty when nothing is.
     Terminal(Box<crate::TerminalOutput>),

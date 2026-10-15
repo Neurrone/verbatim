@@ -770,7 +770,7 @@ pub fn perform<S: TextSource>(
         TextOp::Read(read) => read_unit(source, anchors, read),
         TextOp::ReadAhead(ahead) => read_ahead(source, anchors, ahead),
         TextOp::ReadRange { start, end } => read_range(source, anchors, *start, *end),
-        TextOp::Select { start, end } => select(source, anchors, *start, Some(*end)),
+        TextOp::Select { start, end } => select_text(source, anchors, *start, *end),
         TextOp::MoveCaret(point) => select(source, anchors, *point, None),
         TextOp::Location(point) => location(source, anchors, *point),
         _ => Ok(TextReply::Unsupported),
@@ -1938,6 +1938,45 @@ fn select<S: TextSource>(
     } else {
         TextReply::Unsupported
     })
+}
+
+/// Selects between two points, answering how the selection changed: the
+/// selection read before selecting, then compared with the one read after,
+/// by the rule a caret key's reply follows ([`selection_changes`]), so Core
+/// speaks a selection it made as it speaks one a key made.
+fn select_text<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    start: TextPoint,
+    end: TextPoint,
+) -> TextResult<TextReply> {
+    let before = source.caret()?;
+    let previous = before
+        .selection
+        .unwrap_or_else(|| (before.caret.clone(), before.caret));
+    match select(source, anchors, start, Some(end))? {
+        TextReply::Done => {}
+        other => return Ok(other),
+    }
+    let request = CaretRequest {
+        since: None,
+        previous: Some(&previous),
+        unit: None,
+        formats: None,
+        recheck: false,
+    };
+    let (state, changes) = match source.caret_read(&request)? {
+        Some(read) => (read.state, read.changes),
+        None => (source.caret()?, None),
+    };
+    let changes = match changes {
+        Some(changes) => changes
+            .into_iter()
+            .filter_map(|(selected, text)| change_of(selected, &text))
+            .collect(),
+        None => selection_changes(source, &previous, &state)?,
+    };
+    Ok(TextReply::Selected(changes))
 }
 
 /// The screen position of a point.

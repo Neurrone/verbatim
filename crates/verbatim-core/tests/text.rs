@@ -1394,7 +1394,7 @@ fn a_navigator_without_a_caret_reads_its_line_first_and_falls_back_to_flat_text(
 }
 
 #[test]
-fn select_then_copy_uses_the_start_marker() {
+fn select_then_copy_selects_from_the_start_marker_says_so_and_copies_the_selection() {
     let mut state = reviewing("hello world\n", 0);
     let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
     assert_eq!(spoken(&effects), vec![message(Message::NoStartMarker)]);
@@ -1411,8 +1411,49 @@ fn select_then_copy_uses_the_start_marker() {
         anchor: TextAnchor(100),
         offset: 7,
     });
-    assert_eq!(request(&effects).op, TextOp::Select { start, end });
+    let select = request(&effects);
+    assert_eq!(select.op, TextOp::Select { start, end });
+    // The selection made is spoken as a selecting key's is.
+    let effects = reduce(
+        &mut state,
+        &completed(
+            select.query_id,
+            TextReply::Selected(vec![SelectionChange {
+                selected: true,
+                text: "hello w".to_owned(),
+                characters: 7,
+            }]),
+        ),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::new(SegmentContent::Phrase(
+            Phrase::Selected(SelectionText::Text("hello w".to_owned()))
+        ))]
+    );
+    // The caret the selection moved takes the review cursor to the range's
+    // start; the second press still copies the range selected.
+    caret_event(
+        &mut state,
+        5,
+        line(
+            "hello world
+",
+            101,
+            0,
+        ),
+    );
     let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 1));
+    let effects = read_at_caret(
+        &mut state,
+        &effects,
+        line(
+            "hello world
+",
+            101,
+            0,
+        ),
+    );
     let request = request(&effects);
     assert_eq!(request.op, TextOp::ReadRange { start, end });
     let effects = reduce(

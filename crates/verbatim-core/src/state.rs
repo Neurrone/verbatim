@@ -318,8 +318,15 @@ pub(crate) enum LandingPlace {
 /// The select-then-copy start marker: where in which node's text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum StartMarker {
-    /// A position in a node's text.
-    Text { node: NodeId, at: TextPosition },
+    /// A position in a node's text, and where the range a select then
+    /// copy's first press selected from it ends, which its second press
+    /// copies (`docs/parity/review.md`, "Select then copy from the review
+    /// cursor").
+    Text {
+        node: NodeId,
+        at: TextPosition,
+        selected_to: Option<TextPosition>,
+    },
     /// A byte offset into a node's flat text.
     Flat { node: NodeId, offset: usize },
 }
@@ -722,8 +729,16 @@ impl SrState {
                 ReviewText::Unknown | ReviewText::Flat | ReviewText::Caret => {}
             }
         }
-        if let Some(StartMarker::Text { node, at }) = self.start_marker {
+        if let Some(StartMarker::Text {
+            node,
+            at,
+            selected_to,
+        }) = self.start_marker
+        {
             insert(node, at);
+            if let Some(end) = selected_to {
+                insert(node, end);
+            }
         }
         if let Some(say_all) = &self.say_all {
             if let Some((position, _)) = say_all.last_chunk {

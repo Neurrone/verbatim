@@ -13,7 +13,9 @@
 //! Up or Down Arrow, the page keys, and Control with Home or End; the
 //! paragraph after Control with Up or Down Arrow; what Backspace deleted;
 //! the character or word now at the caret after Delete. A key with Shift
-//! speaks what became selected or unselected instead. A newer key, a typed
+//! speaks what became selected or unselected instead, as does a selection
+//! Verbatim makes itself (the review copy's first press, in `review_text`);
+//! one the mouse or the application makes is not spoken. A newer key, a typed
 //! character, or a focus change supersedes a key still watched, so speech
 //! never lags behind fast typing, a later edit is not spoken as an earlier
 //! key's answer, and a focus announcement wins over a caret line.
@@ -646,7 +648,7 @@ fn unit_segments(
 /// The speech for a selection change: each change as NVDA's "selected" or
 /// "unselected", a single character by its name, 512 characters or more as
 /// a count.
-fn selection_segments(changes: &[SelectionChange]) -> Vec<UtteranceSegment> {
+pub(crate) fn selection_segments(changes: &[SelectionChange]) -> Vec<UtteranceSegment> {
     changes
         .iter()
         .filter(|change| change.characters > 0)

@@ -24,7 +24,7 @@ use verbatim_model::{
     TextPoint, TextPosition, TextRead, TextReply, TextRequest, TextUnit, TraceId, UtteranceSegment,
 };
 
-use crate::editing::{is_grid, may_have_text, speak};
+use crate::editing::{is_grid, may_have_text, selection_segments, speak};
 use crate::state::{
     Landing, LandingPlace, PendingText, ReviewPosition, ReviewText, SharedChunk, SrState,
     StartMarker, TextFollowUp,
@@ -396,6 +396,7 @@ fn execute(
             state.start_marker = Some(StartMarker::Text {
                 node,
                 at: point_of(position),
+                selected_to: None,
             });
             return vec![speak(trace_id, message(Message::StartMarked))];
         }
@@ -411,9 +412,11 @@ fn execute(
             }
         },
         ReviewCommand::SelectThenCopy => {
-            let at = match marker_in(state, node) {
+            let (at, selected_to) = match marker_in(state, node) {
                 Err(effect) => return vec![speak(trace_id, effect)],
-                Ok(StartMarker::Text { at, .. }) => at,
+                Ok(StartMarker::Text {
+                    at, selected_to, ..
+                }) => (at, selected_to),
                 Ok(StartMarker::Flat { .. }) => {
                     return vec![speak(trace_id, message(Message::NoStartMarker))];
                 }
@@ -423,11 +426,20 @@ fn execute(
                 .map_or(position.offset, |character| {
                     position.offset + character.len()
                 });
-            let end = TextPoint::At(TextPosition {
+            let end = TextPosition {
                 anchor: line.start,
                 offset: u32::try_from(end).unwrap_or(u32::MAX),
-            });
+            };
             if repeat == 0 {
+                // The second press copies the range this one selects, as
+                // NVDA's does, wherever the review cursor has gone since:
+                // the caret the selection moved may have taken it along.
+                state.start_marker = Some(StartMarker::Text {
+                    node,
+                    at,
+                    selected_to: Some(end),
+                });
+                let end = TextPoint::At(end);
                 (
                     TextOp::Select {
                         start: TextPoint::At(at),
@@ -436,6 +448,7 @@ fn execute(
                     TextFollowUp::Selected,
                 )
             } else {
+                let end = TextPoint::At(selected_to.unwrap_or(end));
                 (
                     TextOp::ReadRange {
                         start: TextPoint::At(at),
@@ -587,7 +600,18 @@ pub(crate) fn reply(
         (TextFollowUp::Copy, TextReply::Range { text, .. }) if !text.is_empty() => {
             vec![Effect::CopyToClipboard(text)]
         }
-        (TextFollowUp::Selected, TextReply::Done) => Vec::new(),
+        // The selection the command made is spoken as a caret key's is,
+        // "selected" and "unselected" from the same comparison
+        // (`docs/parity/review.md`, "Select then copy from the review
+        // cursor").
+        (TextFollowUp::Selected, TextReply::Selected(changes)) => {
+            let segments = selection_segments(&changes);
+            if segments.is_empty() {
+                Vec::new()
+            } else {
+                vec![speak(trace_id, segments)]
+            }
+        }
         (_, TextReply::Unsupported | TextReply::UnsupportedUnit(_))
         | (
             TextFollowUp::Location | TextFollowUp::Selected | TextFollowUp::Copy,
