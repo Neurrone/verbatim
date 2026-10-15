@@ -23,6 +23,24 @@ is subtly wrong despite passing its tests. Look especially for:
 - tests weakened during implementation;
 - undocumented intentional divergence.
 
+And for cost, which the design's costing and the ledger
+(`docs/performance.md`) fix in advance:
+
+- a call into the application that the costing did not predict, or one
+  made from a process other than the one the design names;
+- a sequence of UIA calls that a remote operation could have made in one
+  round trip;
+- a property fetched that the event's cache request already held, or a
+  cached read the request did not fill (counted as a failed cached read);
+- work done, or a thread woken, on every occurrence of an event that is
+  only needed when the event is spoken;
+- an allocation, copy, or parse on the per-event path that could be done
+  once;
+- a new wake-up source: a timer, a poll, or a hand-off between threads
+  where the producing thread could do the work;
+- a ledger entry or call-count test left unchanged by a change that
+  altered the operation's calls.
+
 For every suspected defect, give a concrete counterexample, a violated
 invariant, or the missing piece of evidence. Leave out style-only
 suggestions, because they bury the findings that matter.

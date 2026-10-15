@@ -80,7 +80,9 @@ Do not assume that an NVDA implementation detail is a Verbatim requirement, nor 
 
 Design the implementation against the architecture that exists, rather than an NVDA-shaped one. Read `references/boundaries.md` to decide which part owns each responsibility and, for work across a process or thread boundary, what crosses it and who may block.
 
-For a nontrivial redesign, update or create the design document before implementation. It is the migration rulebook: it decides architectural questions once so that implementation subagents do not improvise them differently. Have a subagent review the design adversarially.
+Cost the design before it is built, because the number of cross-process calls an operation makes is the cost Verbatim controls and the one CI pins (`docs/performance.md`, "What counts as a call" and "The ledger"). For each operation the change adds or touches, state which process makes each call into the application, which calls a UIA remote operation batches into one, what the operation reads from the event's cache rather than fetching, and what it adds to the per-event work and wake-ups of the listener, the outpost, or Core. For new event support, that includes the registration itself and what every occurrence costs whether or not it is spoken. Write the expected counts into the design as the ledger entry the implementation must meet.
+
+For a nontrivial redesign, update or create the design document before implementation. It is the migration rulebook: it decides architectural questions once so that implementation subagents do not improvise them differently. Have a subagent review the design adversarially, including its costing.
 
 ## Phase 5: Establish the judge before implementation
 
@@ -89,6 +91,8 @@ Before changing production behavior, settle two separate questions.
 Where the assertion runs: choose the cheapest place that can catch the failure, in this order: a unit test, a `mockapp` cross-process test, an end-to-end scenario, an interactive probe. Follow `docs/testing.md` exactly. Do not run desktop-taking tests or NVDA captures unless the session has permission under the repository's tooling rules.
 
 Where the expected value comes from: for anything spoken, a live NVDA capture (`cargo xtask nvda capture`, `docs/nvda-transcript.md`) taken before the expectation is written. Never take it from Verbatim's current output, and do not settle it by reading NVDA's source when a capture is possible: on 2026-10-11 desktop scenarios expected "Program Manager" after a dialog closed, which came from Verbatim's old rule rather than NVDA and was found only when Dickson questioned it.
+
+Performance has its own judge. An operation that makes calls into an application gets its entry in the ledger (`docs/performance.md`, "The ledger") and an exact call-count test in `crates/mockapp/tests/call_counts.rs`, in the same commit, because an exact count is a ratchet that fails CI when a later change adds a call. A change on the event or speech path is also measured as `docs/tooling.md`, "Measuring performance", prescribes, against the figures recorded before the change.
 
 If the required judge does not exist, building the smallest trustworthy one is part of the work. Validate a new judge where feasible by showing that it passes the intended implementation and fails a deliberately wrong or previously failing case, because a judge that cannot detect a known error has not proved parity.
 
@@ -110,6 +114,8 @@ Use cheap proofs before expensive ones: the narrowest unit or crate checks after
 
 A passing compiler is not behavioral evidence, and a newly written test passing does not by itself prove that it asserts the right contract.
 
+For a substantial change or a new feature on the event or speech path, measure before closing: the call counts against the design's costing, and latency, wake-ups, and processor time with `cargo xtask measure` and `cargo xtask trace scenario`, reported as `docs/tooling.md`, "Measuring performance", prescribes and compared with the figures recorded before the change. A measurement that is worse than the costing predicted is a defect to root-cause, not a figure to record, because a cost paid on every event outlives the session that added it.
+
 ## Phase 9: Perform an adversarial semantic review
 
 Have a review subagent review the result as if it is subtly wrong despite passing its tests. It runs in a separate context from the implementer, because the writer of code wants it accepted. Give it `references/review.md`. Every suspected defect needs a concrete counterexample, a violated invariant, or a missing piece of evidence.
@@ -124,6 +130,6 @@ A scope left unfinished is the exception. When it happens, leave the repository 
 
 ## Final report
 
-Report concisely: the confirmed scope; what was researched; the important preserve, replace, and omit decisions; steps completed; tests and other judges run, with results; documentation changed; semantic-review findings and their disposition; remaining work within the scope; and the exact next step if work remains.
+Report concisely: the confirmed scope; what was researched; the important preserve, replace, and omit decisions; steps completed; tests and other judges run, with results; the costing and the measurements against it, where the change touched the event or speech path; documentation changed; semantic-review findings and their disposition; remaining work within the scope; and the exact next step if work remains.
 
 Report concrete evidence rather than general confidence. Do not claim parity, correctness, or completion beyond what the judge actually established, because the next session builds on the claim.
