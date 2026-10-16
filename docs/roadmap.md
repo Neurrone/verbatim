@@ -53,19 +53,6 @@ recorded as provisional.
 The design of record is [the focus pipeline](design/focus-pipeline.md)
 (section 12, the design adopted and built as of 8fe59b1b).
 
-- Two reserved spare outposts (Dickson, 2026-10-10; next in the
-  order, before the terminal redesign, 2026-10-13): one is given to an
-  application as its first event arrives, a new one is started whenever
-  fewer than two remain, and an outpost once given never returns to the
-  spares. Starting an outpost took about 40 ms (debug) before its first
-  event, paid by every new File Explorer folder window; the spares remove
-  the relay's tail over 20 ms for facts held for a starting outpost. The
-  focus-pipeline design describes the spares only under an alternative
-  it rejected (section 2.4), so under the adopted design they have no
-  design yet: the item begins by writing one into that record (how the
-  listener's focus fact reaches a spare, what a spare registers before
-  it is given, and what starting one costs) and getting Dickson's
-  decisions before implementation.
 - The UIA focus change's call count with remote operations (found on
   2026-10-15, correcting [the operation ledger](performance.md)): steady
   state takes 4 calls (the nearest window, `CompareElements`,

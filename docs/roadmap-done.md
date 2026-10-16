@@ -534,6 +534,10 @@ landed it.
 - The UIA probe asks once, as NVDA does
   ([focus pipeline](design/focus-pipeline.md), section 8): c0b81555,
   2026-10-16.
+- Two spare outposts kept waiting and given to applications as they need
+  an outpost, and an outpost whose hook fails exits instead of saying
+  `Ready` ([focus pipeline](design/focus-pipeline.md), section 19):
+  5eae1b65, 2d47a3da and 878a586c, 2026-10-16.
 
 ### The communication migration
 

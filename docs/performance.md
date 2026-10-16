@@ -215,7 +215,13 @@ no worse than the platform's floor, every exception attributed.
   verbatim.exe to the outpost, are on the wall clock every process shares
   (`now_us`), as the other cross-process stages are.
 - A fact held while its outpost started is reported as "waiting for the
-  outpost to start", never pooled with verbatim.exe's own time.
+  outpost to start", never pooled with verbatim.exe's own time. Since
+  2026-10-16 an application's outpost is usually a spare, started before
+  it was needed (`docs/design/focus-pipeline.md`, section 19), and the
+  wait from the first held fact to `Ready`, which the supervisor logs, is
+  the assignment and the hook: a P50 of 1.4 to 3.6 ms in a debug build,
+  where starting an outpost took 36 to 118 ms (section 19.9 has the
+  figures).
 - On the way back, verbatim.exe's reader stamps when it read and parsed
   each outpost message, which divides the old "to Core" stage into the
   pipe and the wait for the reducer, which is the reducer busy with

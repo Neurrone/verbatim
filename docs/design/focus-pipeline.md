@@ -1,6 +1,6 @@
 # How events reach Verbatim and are processed: a design aligned with NVDA
 
-Status: adopted (option (b), section 12); built as of 8fe59b1b (2026-10-12): stage A step 6 and its revisions in sections 16 and 18. The probe asks once (section 8, c0b81555). The spare outposts (section 19) are decided and not yet built.
+Status: adopted (option (b), section 12); built as of 8fe59b1b (2026-10-12): stage A step 6 and its revisions in sections 16 and 18. The probe asks once (section 8, c0b81555). The spare outposts are built as section 19 decides (2d47a3da, 878a586c; section 19.9 says what the design left open and what was measured).
 
 Design draft, 2026-10-10, for the redo of phase 6's step 6 (and steps 5 and the related open items). Written against main at 2cadb35. Verbatim references are relative to the repository root; NVDA references are under `nvda/source/` unless they start with `nvda/nvdaHelper/`. Prior work this builds on, all in the scratchpad: `event-processing-audit.md` (the audit, cited as "audit D1" and so on), `nvda-answers.md`, `focus-read-timeout.md`, `verify-focus.md`, `event-filtering-plan.md`, and the unmerged step 6 branch `worktree-agent-a27b534fac627b1ae` with its runs `runs-step6-full` and `runs-step6-fix`.
 
@@ -967,3 +967,29 @@ Documents and comments that say an outpost's application is fixed at spawn (`cra
 3. After three spare failures in one minute, spares stay off until Verbatim restarts, logged as an error.
 4. Spares are built: 40 ms is at the threshold of being noticed.
 5. An outpost whose `WinEvent` hook fails to install reports the failure and exits instead of sending `Ready` (today it logs a warning and sends `Ready`, and the listener stops forwarding an application nothing then hooks); the supervisor handles it as an outpost that ended before `Ready`, under 19.5, and as the application's exit when the application has exited.
+
+### 19.9 As built (2026-10-16)
+
+The choices the design left open:
+
+- The replacement's limit (decision 1). The first idle answer has a bound, but not a fixed one: it waits behind every entry queued ahead of it, each of which the worker may take up to its ten-second deadline to handle in a hung application before the watchdog abandons it; behind a UIA focus's marker until the listener's read, which its own watchdog ends past UIA's call timeout; and behind a caret key's watch and a terminal read owed to Core, the latter until the terminal's output settles, which continuous output can postpone indefinitely. So the replacement also starts after `REPLACEMENT_LIMIT`, ten seconds, one worker deadline, checked at the supervisor's heartbeat, so it starts within one ping interval after that.
+- The first idle query. The app runs idle rounds only for the end-to-end harness, so the supervisor asks a given spare one of its own behind the application's first facts, round 0, which the app never numbers and never sees; when the app's barrier has a round held for the outpost, that round is asked instead, and any idle answer from it counts.
+- The spare's log is `outpost-spare-<launch>`, and its launch number is also its outpost id once given; the app hears `Started` with that id at the assignment.
+- A spare given while its launch was still at work is sent `Assign`, and the app `Started`, when the launch reports, so nothing the app sends reaches it before `Assign`.
+- The app hears each spare's readiness (`OutpostMessage::SpareReady`, with how many are ready) and the spares' stop (`SparesStopped`); Verbatim's readiness waits for two ready at once, or the stop.
+- After the stop, the spares still waiting are ended, and one still launching is ended as its launch reports.
+- A spare's worker makes its UIA client as the spare starts; an outpost started for its application still makes it on its first read, as before.
+- The supervisor tests are a binary of their own, `crates/verbatim-outpost/tests/spares.rs`, whose stand-in outpost learns `--spare` and `Assign`; `target_gone.rs`'s stand-in is unchanged, since its tests never start Core's own outpost and so never start spares.
+
+Measured on 2026-10-16, debug build, as `docs/tooling/measuring.md` prescribes, ten runs before (5eae1b65) and after, at info level. The first event to its audio, minimum, P50, P95 (with ten runs, P95 and P99 are the maximum), maximum, in milliseconds:
+
+- Windows Terminal launched and focused (`windows_terminal_commands`, the window's announcement): before 14, 41, 3034, 3034; after 32, 37, 59, 59 (one run in each set took about three seconds from the event to its queueing, outside the outpost's start). The first held fact to `Ready`: before 30.5, 36.0, 47.7, 47.7; after 0.9, 1.4, 1.5, 1.5.
+- Notepad brought forward first, its outpost starting (`notepad_typed_words`): before 50, 133, 165, 165; after 30, 85, 118, 118. First held fact to `Ready`: before 28.8, 117.9, 153.0, 153.0; after 0.5, 1.4, 6.9, 6.9.
+- An application returned to after its outpost was retired (`return_after_retirement`): before 49, 73, 113, 113; after 24, 42, 67, 67. First held fact to `Ready`: before 33.7, 50.2, 93.4, 93.4; after 0.5, 3.6, 11.5, 11.5.
+
+Idle for a minute, three runs each: before 510 (one run in which an outpost's worker woke 219 times), 150 and 134 wake-ups, 31.3, 14.7 and 14.1 ms on a processor; after 201, 193 and 184 wake-ups, 21.0, 20.1 and 19.6 ms. The spares add about 50 wake-ups and 5 to 6 ms a minute: their I/O threads' pings (about 40) and UIA's client threads with nothing registered (about 24), less some relay wake-ups the pings share. Each spare's working set is about 14.2 MB, 2.1 MB of it private (debug build), 28 MB for the two.
+
+Opening new windows (`measure_focus_explorer`'s windows phase, six seconds from 2.5 seconds after Verbatim is ready, six runs each): before 88,568 wake-ups and 5,297 ms over 23 new windows, 3,851 and 230 ms a window; after 109,609 and 6,559 ms over 30 windows, 3,654 and 219 ms a window. The cost per window is unchanged: it is moved from the window's first focus to the replacement spare's start, and more windows opened in the same six seconds because each was announced sooner.
+
+One effect the design did not foresee: with a spare, the outpost handles Windows Terminal's first focus about 35 ms sooner, while the terminal is still starting, and in about 3 percent of launches (2 of 60 runs of `windows_terminal_commands`, and 7 more first focuses among 300 runs of the other `windows_terminal_` scenarios) the first focus is not the terminal: the single UIA provider probe (section 8, c0b81555) of the terminal's `Windows.UI.Input.InputSite.WindowClass` window answers "no" after 3 seconds, so the focus is read through MSAA and spoken as "pane" (6 cases), or the terminal is announced twice (2 cases). Before the spares, none of 100 launches (60 runs of `windows_terminal_commands`, 20 of `windows_terminal_two_windows`) did. It is the mechanism behind the known Notepad case, about 1 in 25 first focuses read through MSAA, now reached by Windows Terminal, and is open for decision.
+
