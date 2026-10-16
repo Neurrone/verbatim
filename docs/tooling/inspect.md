@@ -11,9 +11,12 @@ prints plain text, one fact per line.
 Build and start a Verbatim to inspect first:
 
 ```
-cargo build -p verbatim-app -p verbatim-outpost -p verbatim-synth-host
+cargo verbatim-build
 target\debug\verbatim.exe
 ```
+
+`cargo verbatim-build` is an alias, defined in `.cargo/config.toml`, for
+`cargo build -p verbatim-app -p verbatim-outpost -p verbatim-synth-host`.
 
 Verbatim finds `verbatim-outpost.exe` and `verbatim-synth-host.exe` next
 to its own executable; without the synthesizer host, no synthesizer can
