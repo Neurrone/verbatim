@@ -532,7 +532,8 @@ landed it.
 ### The focus pipeline
 
 - The UIA probe asks once, as NVDA does
-  ([focus pipeline](design/focus-pipeline.md), section 8): 2026-10-16.
+  ([focus pipeline](design/focus-pipeline.md), section 8): c0b81555,
+  2026-10-16.
 
 ### The communication migration
 
