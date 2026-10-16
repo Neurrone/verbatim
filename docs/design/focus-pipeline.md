@@ -1,6 +1,6 @@
 # How events reach Verbatim and are processed: a design aligned with NVDA
 
-Status: adopted (option (b), section 12); built as of 8fe59b1b (2026-10-12): stage A step 6 and its revisions in sections 16 and 18. The probe that asks once (section 8) is not built.
+Status: adopted (option (b), section 12); built as of 8fe59b1b (2026-10-12): stage A step 6 and its revisions in sections 16 and 18. The probe asks once (section 8, c0b81555). The spare outposts (section 19) are decided and not yet built.
 
 Design draft, 2026-10-10, for the redo of phase 6's step 6 (and steps 5 and the related open items). Written against main at 2cadb35. Verbatim references are relative to the repository root; NVDA references are under `nvda/source/` unless they start with `nvda/nvdaHelper/`. Prior work this builds on, all in the scratchpad: `event-processing-audit.md` (the audit, cited as "audit D1" and so on), `nvda-answers.md`, `focus-read-timeout.md`, `verify-focus.md`, `event-filtering-plan.md`, and the unmerged step 6 branch `worktree-agent-a27b534fac627b1ae` with its runs `runs-step6-full` and `runs-step6-fix`.
 
@@ -895,3 +895,75 @@ Not ported, each recorded for the audit:
 - NVDA's duplicate rule compares with the last focus queued from any API (`eventHandler.lastQueuedFocusObject`), and only when that is a UIA object; the listener compares with the last UIA focus it accepted and never hears of MSAA focuses. A UIA focus repeated after an MSAA one is therefore dropped where NVDA would speak it. To be checked with a mockapp test of mixed backends before changing.
 - NVDA makes a shell staging window its focus object before File Explorer's app module ignores it; the listener drops it before. Part of the audit of NVDA's core focus processing.
 - File Explorer's app module refuses the focus of Windows 11's task switching pane (`MultitaskingViewFrameWindow`, a `Windows.UI.Input.InputSite.WindowClass` pane); not ported, and to be checked with an NVDA capture of Alt+Tab first.
+
+## 19. Spare outposts under option (b) (decided 2026-10-16)
+
+Two outposts are kept started and waiting, with no application. One is given to an application when the supervisor would otherwise start an outpost for it, a new one is started whenever fewer than two are waiting, and an outpost once given never returns to the spares (Dickson, 2026-10-10). Section 2.4 described spares for option (c), with a desktop-wide focus registration in one of them; under option (b) the listener reads every UIA focus whatever outposts exist (section 12.6), so a spare registers nothing that concerns an application, and nothing of section 2.4 carries over but the count and the never-returned rule.
+
+### 19.1 What a spare saves, case by case
+
+Starting an outpost takes about 40 ms in a debug build before it can take its first event (`docs/performance.md`, the outpost's start); the supervisor holds the application's facts meanwhile (`HeldFacts`, `crates/verbatim-outpost/src/supervisor/policy.rs`). How much of that is on the way to speech depends on the fact that starts the outpost:
+
+- A foreground change or an MSAA focus first: the whole start. The commonest case is a return to an application whose outpost was retired after two minutes without attention (`supervisor/mod.rs`, the retirement interval), such as Alt+Tab back to it.
+- A UIA focus first: the start less the listener's read, since the listener's focus marker starts the outpost before the reading thread reads (`listener.rs`, the marker sent from the callback), and the two run at once. Against mockapp's read of about 10 ms that is up to about 30 ms; for a slow provider, nothing.
+- A new File Explorer folder window: probably nothing. File Explorer raises a foreground event of its own 140 to 404 ms before the folder window comes in front, in 14 of 14 launches (`docs/design/phase6-design.md`, the step 6 Explorer runs), and that event starts the outpost long before the first focus.
+
+The rest of the start that is still on the path today is the worker's UIA client, created on its first use, which is the first UIA focus read after `Ready` (`outpost/read.rs`); a spare creates it while it waits.
+
+### 19.2 What a spare is
+
+A spare is the outpost process started with `--spare` in place of `--target-pid`. It does every part of an outpost's start that does not need the application:
+
+- Done while a spare: the process in the supervisor's job, its two pipes, tracing, the COM apartment and UIA client with the focus-following registration, which starts scoped to nothing (`register_focus_events`, `Scope::Nothing`), the worker with its UIA client created and its watchdog, and the `WinEvent` thread with its message loop but no hook. It then sends `SpareReady` and answers the supervisor's pings.
+- Done on assignment: the application's process id is set (`Context.target_pid` becomes set once instead of fixed at construction); the hand-over clock is read and the process-scoped `WinEvent` hook installed on the already running thread, which is still that thread's first and only hook set (`event_thread.rs`: a second hook set on one thread has stopped delivery on that thread); and the thread that waits for the application's exit is started. The outpost logs the application's image and process id, then sends `Ready { target_pid }`.
+
+A spare makes no call into any application, holds no process handle of one, and receives no events: its UIA registration listens nowhere, and it has no hook. Every use of the application's process id in the outpost comes after `Ready` or from a query, and the trace-id namespace is the outpost's own process id, so none of them needs it earlier.
+
+### 19.3 How the listener's facts reach a spare
+
+As they reach a newly started outpost today; nothing new is buffered. When a fact that may start an outpost (`DeliveredFact::may_start_outpost`) arrives for a process that has no record and is not ignored, `start_outpost` opens the application's process as now, creates the record with the fact held, and takes the oldest spare instead of launching one, whether or not it has sent `SpareReady` yet (`Assign` waits in its pipe). The record's child is the spare, still not ready; the supervisor sends the spare `Assign { target_pid }`, then the app `Started { outpost, target_pid }`, on the same writer, so everything the app sends the outpost follows the assignment. Later facts for the application are held behind the first. When `Ready` arrives, `on_ready` runs unchanged: it releases the held facts in order, then the idle query, then tells the listener `HookInstalled`; the listener forwards the application's MSAA events until then, and the outpost's hand-over (section 12.4, "The MSAA hand-over, exactly") takes the overlap as now.
+
+Every path that starts an outpost takes a spare: a listener fact, and the app's `ensure_spawned` (a focus-now query, the replacement of a crashed attention application's outpost). Core's own outpost is started directly at Verbatim's start, as now (`warm_own_outpost`), because it must be ready before the first key. When no spare exists (three applications appeared within one start, or spares are off after failures, 19.5), the outpost is started for the application directly, as today.
+
+### 19.4 The supervisor's changes
+
+The supervisor's reading of a child's pipe is keyed today by the application's process id fixed at launch (`Source::Outpost(pid)`, `relay.rs`), and several of its paths look only at the records keyed by application. A spare needs its own branch in each:
+
+- The relay has a spare source, named by the spare's launch number, rewritten to the application's source at `Assign`; frames from a spare (its `SpareReady`, pongs and faults) are taken by the spare branch rather than dropped for having no record (`outpost_frame`), and frames after assignment carry the application as now.
+- Launch: a spare's launch is not retired as unwanted (`launched`), and sends no `Started` (`on_launched`); the app hears `Started` at assignment.
+- Heartbeat, shutdown and its finish include the spares, and shutdown waits for spares still launching.
+- Spares are kept in the supervisor's own list, with no process to hold, no crash history and no attention; they are not asked in idle-barrier rounds, not sent end-of-reads markers, and not retired by the sweep.
+- Log files are named by launch number, `outpost-spare-<n>`, since the log is opened before the process exists. The end-to-end check that no outpost starts for an ignored process, which reads log names (`crates/verbatim-e2e`, `outpost_log_names`), reads the outposts' assignment lines instead.
+- The replacement spare is started once the outpost just assigned has answered its first idle query, so that the replacement's start does not compete with the first focus; the two spares are started once Core's own outpost is ready, or has ended without becoming ready.
+- Verbatim's readiness, which the end-to-end harness waits for, also waits for the two spares to be ready, so every scenario's applications take a spare rather than a spare in some runs and a direct start in others (`docs/testing.md`, one code path).
+
+### 19.5 Failures
+
+- A spare that exits or is killed while waiting, or after `Assign` before its `Ready`, is a spare failure, not the application's crash: an assigned spare's record keeps its held facts and takes the next spare, or a direct start when none is left, and no crash is recorded against the application. Today's crash handling would instead drop the held facts and record a crash against an application that has not yet had attention, so its first focus would never be spoken; this rule is what prevents that.
+- A spare that misses its pings for three intervals is killed, as a wedged outpost is, and counts as a spare failure.
+- If three spares fail within one minute, the supervisor stops keeping spares, logs it as an error with each exit's reason, and starts outposts directly as today. The direct start is the existing path, and the error is the evidence to find the cause from (decision 19.8 item 3 says for how long).
+- A spare that fails after its `Ready` is that application's outpost failing, handled as now.
+
+### 19.6 Cost
+
+- While waiting: two processes, about 19 MB of working set each by R2's figure for a live outpost (`docs/roadmap-done.md`), about 38 MB held permanently; an idle spare's own figure is to be measured, since its UIA client has nothing registered in any application. Wake-ups: per spare, one ping written and one pong read every 3 seconds, which wake the supervisor's relay and the spare's I/O thread, and whatever UIA's client threads do with nothing registered, to be measured; nothing else in a spare has a timer (the worker and watchdog wait on deadlines, the `WinEvent` thread on messages).
+- Per event and per focus: nothing. No calls into any application are added or removed: the first focus in a new application makes the calls it makes today (the ledger's "A focus change, UIA, cold" and the MSAA entries are unchanged), and no process sees an event it did not see before.
+- Per new application: one pipe message to assign, the hook (about a millisecond, section 2.4 step 4), and the exit-waiting thread on the way to speech. The start itself still happens once per new application, as now, after the first focus instead of before it; its wake-ups and processor time (the window-opening phase of `docs/design/wake-ups.md` counts most of its outposts' wake-ups in UIA's start-up) are moved, not removed.
+
+Measured before and after, ten runs each, as `docs/tooling/measuring.md`, "Measuring performance" prescribes: the latency from the first event observed to its speech, and the time from the supervisor's first held fact to `Ready`, for Windows Terminal launched and focused, for Notepad launched, and for an application whose outpost was retired (a scenario returning to it after retirement) (Dickson, 2026-10-16); Verbatim's wake-ups and processor time while idle for a minute, and over a workload that opens new windows, as the window-opening phase of `docs/design/wake-ups.md`; and the spares' working set.
+
+### 19.7 Tests
+
+- Supervisor unit tests: a start takes the oldest spare, including one not yet ready, and the replacement starts after the assigned outpost's first idle answer; a given spare is never listed again; a fact that may not start an outpost, or one for an ignored process, takes no spare; a spare that dies waiting, or after `Assign` before `Ready`, is replaced, the application's held facts go to the next spare and no crash is recorded; three failures in a minute stop the spares. The stand-in child the supervisor tests run (`crates/verbatim-outpost/tests/target_gone.rs`) learns `--spare` and `Assign`.
+- Mockapp: a spare given to mockapp reports its first focus from the held facts, and its MSAA events from its own hook after the hand-over, each exactly once.
+- Scenarios, ten times each: `explorer_folder_window`, `second_application_and_verbatim_menu`, `settings_system_page`, and the new return-after-retirement scenario; and the start of every scenario, since Verbatim's start changes.
+
+Documents and comments that say an outpost's application is fixed at spawn (`crates/verbatim-outpost/src/main.rs`, `event_thread.rs`, `outpost/mod.rs`, `docs/crates/verbatim-outpost.md`) are reworded to say it is fixed once, at spawn or at assignment.
+
+### 19.8 Decisions (Dickson, 2026-10-16)
+
+1. The replacement spare starts once the assigned outpost has answered its first idle query, not at the assignment. If that answer can wait without bound behind a hung application's reads, the replacement also starts after a fixed upper limit.
+2. Verbatim's readiness waits for the two spares, so end-to-end runs always take a spare; a direct start is pinned by unit and mockapp tests.
+3. After three spare failures in one minute, spares stay off until Verbatim restarts, logged as an error.
+4. Spares are built: 40 ms is at the threshold of being noticed.
+5. An outpost whose `WinEvent` hook fails to install reports the failure and exits instead of sending `Ready` (today it logs a warning and sends `Ready`, and the listener stops forwarding an application nothing then hooks); the supervisor handles it as an outpost that ended before `Ready`, under 19.5, and as the application's exit when the application has exited.
