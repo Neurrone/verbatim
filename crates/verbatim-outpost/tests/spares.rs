@@ -39,8 +39,8 @@ use crossbeam_channel::unbounded;
 use verbatim_model::{OutpostId, Pid, TraceId};
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::protocol::{
-    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
-    read_message, write_message,
+    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SetUpOutcome,
+    SupervisorToOutpost, read_message, write_message,
 };
 use verbatim_outpost::supervisor::{
     EndReason, IgnoredProcesses, OutpostMessage, ShutdownSummary, Supervisor,
@@ -329,6 +329,12 @@ fn stand_in(args: &[String]) -> ! {
     let mut commands = BufReader::new(commands);
     loop {
         match read_message::<_, SupervisorToOutpost>(&mut commands) {
+            Ok(Some(SupervisorToOutpost::SetUp { pid, .. })) => {
+                send(&OutpostToSupervisor::SetUpDone {
+                    pid,
+                    outcome: SetUpOutcome::Done,
+                });
+            }
             Ok(Some(SupervisorToOutpost::Shutdown) | None) => std::process::exit(0),
             Ok(Some(_)) if mute => {}
             Ok(Some(SupervisorToOutpost::Ping { seq, .. })) => send(&OutpostToSupervisor::Pong {

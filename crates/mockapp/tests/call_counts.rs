@@ -67,7 +67,10 @@ use verbatim_model::{
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::arbitration::NEGATIVE_VERDICT_LIFETIME;
 use verbatim_outpost::dialog_text::{UiaDialog, dialog_text};
-use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, SupervisorToOutpost};
+use verbatim_outpost::protocol::{
+    DeliveredFact, OutpostToSupervisor, SetUpOutcome, SupervisorToOutpost,
+};
+use verbatim_outpost::set_up::SetUpResult;
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
 use verbatim_outpost::text::{
@@ -1412,6 +1415,78 @@ fn uia_repeated_focus_costs_exactly() {
             ("HostRawElementProvider", 5),
             ("Navigate", 5),
             ("FragmentRoot", 2),
+        ],
+    );
+
+    ratchet.finish();
+    drop(outpost);
+    app.quit();
+}
+
+/// An application's first sight (`docs/performance.md`, "An application's
+/// first sight"; `docs/design/focus-pipeline.md`, section 20.4): UIA's
+/// one-time setup the focus listener completes in it before the supervisor
+/// gives it an outpost. When its first fact is a UIA focus, the reading
+/// thread's read of it, a remote operation, did the setup, and the setup's
+/// remote operation, in that focus's element, finds it done: one call.
+/// When its first fact is a foreground change or an MSAA focus, the setup
+/// probes the window the fact names for a provider of its own, takes its
+/// element, and runs the remote operation, which does the setup: a window
+/// message and two calls.
+fn first_sight_costs_exactly() {
+    let mut ratchet = Ratchet::default();
+
+    let title = common::unique_title("mockapp-counts-first-sight-uia");
+    let mut app = common::spawn("counts.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+    let _ = measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("first", "First"));
+    common::reset_hits(hwnd);
+    let (result, calls_made) = outpost.listener_set_up(&app, 0);
+    assert_eq!(result, SetUpResult::Over(SetUpOutcome::Done));
+    let cost = Cost {
+        calls: calls_made,
+        hits: common::read_hits(hwnd),
+        failed_reads: verbatim_uia::calls::take_failed_reads(),
+    };
+    ratchet.check(
+        "An application's first sight, its first fact a UIA focus",
+        &cost,
+        calls(1, 0, 0),
+        0,
+        &[
+            ("ProviderOptions", 2),
+            ("GetPropertyValue", 1),
+            ("HostRawElementProvider", 1),
+            ("Navigate", 1),
+        ],
+    );
+    drop(outpost);
+    app.quit();
+
+    let title = common::unique_title("mockapp-counts-first-sight-foreground");
+    let app = common::spawn("counts.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    common::reset_hits(hwnd);
+    let (result, calls_made) = outpost.listener_set_up(&app, hwnd.0 as isize);
+    assert_eq!(result, SetUpResult::Over(SetUpOutcome::Done));
+    let cost = Cost {
+        calls: calls_made,
+        hits: common::read_hits(hwnd),
+        failed_reads: verbatim_uia::calls::take_failed_reads(),
+    };
+    ratchet.check(
+        "An application's first sight, its first fact a foreground change",
+        &cost,
+        calls(2, 0, 1),
+        0,
+        &[
+            ("WM_GETOBJECT", 5),
+            ("ProviderOptions", 19),
+            ("HostRawElementProvider", 6),
+            ("Navigate", 6),
         ],
     );
 
@@ -3483,6 +3558,7 @@ fn main() {
             "uia_repeated_focus_costs_exactly",
             uia_repeated_focus_costs_exactly,
         ),
+        ("first_sight_costs_exactly", first_sight_costs_exactly),
         (
             "uia_navigation_steps_cost_exactly",
             uia_navigation_steps_cost_exactly,

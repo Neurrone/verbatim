@@ -35,8 +35,8 @@ use common::Delivered;
 use verbatim_model::{OutpostId, Pid, TraceId};
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::protocol::{
-    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
-    read_message, write_message,
+    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SetUpOutcome,
+    SupervisorToOutpost, read_message, write_message,
 };
 use verbatim_outpost::supervisor::{OutpostMessage, ShutdownSummary, Supervisor};
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
@@ -111,6 +111,10 @@ fn stand_in(args: &[String]) -> ! {
                 seq,
                 parked_count: 0,
                 written_at_us: 0,
+            }),
+            SupervisorToOutpost::SetUp { pid, .. } => send(&OutpostToSupervisor::SetUpDone {
+                pid,
+                outcome: SetUpOutcome::Done,
             }),
             SupervisorToOutpost::Shutdown => std::process::exit(0),
             SupervisorToOutpost::Cancel { request_id: 0 } if !listener => send(&ready),

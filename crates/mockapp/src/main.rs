@@ -18,6 +18,7 @@ mod fixture;
 mod hits;
 mod list_view;
 mod msaa;
+mod setup_hold;
 mod stdin;
 mod tree;
 mod tree_view;

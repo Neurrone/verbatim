@@ -481,6 +481,28 @@ impl DeliveredFact {
         }
     }
 
+    /// The window this fact names, 0 when it names none: where the focus
+    /// listener looks first for the application's own UIA provider when it
+    /// sets UIA up in an application this fact is the first of
+    /// (`docs/design/focus-pipeline.md`, section 20.2).
+    #[must_use]
+    pub fn window(&self) -> isize {
+        match self {
+            DeliveredFact::MsaaFocus { hwnd, .. }
+            | DeliveredFact::Foreground { hwnd }
+            | DeliveredFact::MenuPopup { hwnd, .. }
+            | DeliveredFact::UiaSelection { hwnd, .. }
+            | DeliveredFact::UiaNotification { hwnd, .. }
+            | DeliveredFact::Alert { hwnd, .. }
+            | DeliveredFact::Show { hwnd, .. } => *hwnd,
+            DeliveredFact::UiaFocusRead { read, .. } => read.window.unwrap_or(read.hwnd),
+            DeliveredFact::UiaMarked { fact, .. } => fact.window(),
+            DeliveredFact::UiaFocusMarker { .. }
+            | DeliveredFact::UiaFocusDropped { .. }
+            | DeliveredFact::UiaFocusReadsEnded => 0,
+        }
+    }
+
     /// The object and kind this fact concerns, for NVDA's limiter rule (one
     /// waiting entry per object and kind, a newer one replacing it); for a
     /// notification, its element, kind, processing, and activity id, not
@@ -749,6 +771,17 @@ pub enum SupervisorToOutpost {
     Assign {
         /// The application.
         target_pid: Pid,
+    },
+    /// To the focus listener: complete UIA's one-time setup in the
+    /// application `pid`, which no outpost is given until the listener
+    /// answers [`OutpostToSupervisor::SetUpDone`]
+    /// (`docs/design/focus-pipeline.md`, section 20). `hwnd` is the window
+    /// the application's first fact named, 0 when it named none.
+    SetUp {
+        /// The application.
+        pid: Pid,
+        /// The window its first fact named, or 0.
+        hwnd: isize,
     },
 }
 
@@ -1050,6 +1083,46 @@ pub enum OutpostToSupervisor {
         /// The round answered.
         round: u64,
     },
+    /// The focus listener's answer to [`SupervisorToOutpost::SetUp`]: UIA's
+    /// one-time setup in the application `pid` is over, as `outcome` says,
+    /// and the application may be given an outpost
+    /// (`docs/design/focus-pipeline.md`, section 20). Sent only by the
+    /// listener, behind every fact it sent before.
+    SetUpDone {
+        /// The application.
+        pid: Pid,
+        /// What became of the setup.
+        outcome: SetUpOutcome,
+    },
+    /// The focus listener's word that a call of the setup in `pid` passed
+    /// UIA's time limit, so the application is not answering: the setup
+    /// waits for it to answer, off the reading threads, and
+    /// [`OutpostToSupervisor::SetUpDone`] follows once it has. The
+    /// end-to-end harness's idle rounds count the application as idle from
+    /// then on (section 20.3).
+    SetUpWaiting {
+        /// The application.
+        pid: Pid,
+    },
+}
+
+/// What became of UIA's one-time setup in an application
+/// ([`OutpostToSupervisor::SetUpDone`]; `docs/design/focus-pipeline.md`,
+/// section 20.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SetUpOutcome {
+    /// A remote operation in the application has completed: the setup is
+    /// done, and no later connection to it collides with it.
+    Done,
+    /// No window of the application has a UIA provider of its own now, so
+    /// nothing could be set up.
+    NoProvider,
+    /// The listener runs no remote operation (`--classic-uia`), so no setup
+    /// is ever started by Verbatim.
+    Off,
+    /// The setup's remote operation failed other than by its time limit,
+    /// such as on a version of Windows without remote operations.
+    Failed,
 }
 
 impl OutpostToSupervisor {

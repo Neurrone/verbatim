@@ -9,7 +9,8 @@
 //! process holding the desktop-global UIA focus registration and global
 //! MSAA hooks, forwarding each focus fact to Core; [`focus_read`] is its
 //! judging and reading of each UIA focus from the event's own element, on a
-//! thread per application. [`supervisor`] is
+//! thread per application, and [`set_up`] its setup of UIA in each new
+//! application before the supervisor gives it an outpost. [`supervisor`] is
 //! the Core-side piece (the lifecycle owner, launches, writers, fact routing,
 //! crash and hang handling, and retirement), wired into `verbatim-app`.
 //! [`arbitration`] holds the per-window backend arbitration the outpost
@@ -29,6 +30,7 @@ mod gates;
 pub mod listener;
 pub mod outpost;
 pub mod protocol;
+pub mod set_up;
 pub mod supervisor;
 pub mod terminal;
 pub mod text;

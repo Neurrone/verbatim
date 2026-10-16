@@ -42,6 +42,13 @@
 //!   own outpost is ready: a start for an application takes the oldest,
 //!   sends it `Assign`, and tells the app the incarnation `Started`; a
 //!   spare given never returns, and its replacement starts at once.
+//! - No application is given an outpost until the focus listener has done
+//!   UIA's one-time setup in it (`docs/design/focus-pipeline.md`, section
+//!   20): the first remote operation in an application sets UIA up inside
+//!   it, and while that runs every new connection from another process
+//!   fails, so the supervisor holds a new record, its facts with it, from
+//!   `SetUp` to the listener's `SetUpDone`, and remembers a setup done for
+//!   the process, whose later outposts are given at once.
 //! - Every outpost failure takes one path, whatever its cause: a crash, a
 //!   hook that fails, missed pings, piled-up abandoned workers, or a spare
 //!   that dies waiting. The outpost is ended; an application it served is

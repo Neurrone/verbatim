@@ -28,7 +28,7 @@ mod common;
 use common::Delivered;
 use verbatim_model::{OutpostId, Pid};
 use verbatim_outpost::protocol::{
-    OutpostToSupervisor, SupervisorToOutpost, read_message, write_message,
+    OutpostToSupervisor, SetUpOutcome, SupervisorToOutpost, read_message, write_message,
 };
 use verbatim_outpost::supervisor::{EndReason, OutpostMessage, ShutdownSummary, Supervisor};
 use verbatim_outpost::{EventSink, OutpostOptions, Undelivered};
@@ -93,6 +93,12 @@ fn stand_in(args: &[String]) -> ! {
                 parked_count: 0,
                 written_at_us: 0,
             }),
+            Ok(Some(SupervisorToOutpost::SetUp { pid, .. })) => {
+                send(&OutpostToSupervisor::SetUpDone {
+                    pid,
+                    outcome: SetUpOutcome::Done,
+                });
+            }
             Ok(Some(SupervisorToOutpost::Shutdown) | None) => std::process::exit(0),
             Ok(Some(_)) if outpost => std::process::exit(3),
             Ok(Some(_)) => {}

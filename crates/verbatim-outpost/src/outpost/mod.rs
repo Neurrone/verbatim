@@ -1232,7 +1232,8 @@ impl Outpost {
             | SupervisorToOutpost::Assign { .. }
             | SupervisorToOutpost::HookInstalled { .. }
             | SupervisorToOutpost::HookRemoved { .. }
-            | SupervisorToOutpost::FocusQueued { .. } => {}
+            | SupervisorToOutpost::FocusQueued { .. }
+            | SupervisorToOutpost::SetUp { .. } => {}
             SupervisorToOutpost::NodesHeld {
                 nodes,
                 anchors,

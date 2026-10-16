@@ -33,14 +33,14 @@ use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{FrameBody, Reading};
 
 use crate::protocol::{
-    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
-    WinEventStamp, decode_message, hop_us, message_kind, now_us,
+    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SetUpOutcome,
+    SupervisorToOutpost, WinEventStamp, decode_message, hop_us, message_kind, now_us,
 };
 
 use super::frames::Frame;
 use super::ignored::IgnoredProcesses;
 use super::policy::{
-    Backoff, HeldFact, HeldFacts, Spares, WedgeReason, retirement_decision, wedge_decision,
+    Backoff, HeldFact, HeldFacts, SetUps, Spares, WedgeReason, retirement_decision, wedge_decision,
 };
 use super::process::{self, Launched, Role, Target};
 use super::relay::{COMPLETIONS_PER_WAIT, CommandPipes, Inbox, Mailbox, Relay, Source, Taken};
@@ -191,6 +191,25 @@ struct Record {
     /// runs: the app hears it replaced ([`OutpostMessage::Reincarnated`])
     /// when the next is given.
     unready: Option<Unready>,
+    /// While the application waits for the focus listener to finish UIA's
+    /// one-time setup in it, before it is given its first outpost
+    /// (`docs/design/focus-pipeline.md`, section 20): it has no
+    /// incarnation meanwhile, and its facts are held.
+    set_up: Option<SetUpHold>,
+}
+
+/// An application held for UIA's one-time setup in it
+/// (`docs/design/focus-pipeline.md`, section 20.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SetUpHold {
+    /// The window its first fact named, 0 for none, which the listener is
+    /// told, and told again by a listener that replaces it.
+    window: isize,
+    /// Whether a call of the setup passed UIA's time limit, so the
+    /// application is not answering and the setup waits for it: the idle
+    /// barrier's rounds count the application as idle from then on
+    /// (section 20.3).
+    waiting: bool,
 }
 
 /// An incarnation that failed before its `Ready`, whose replacement waits
@@ -347,6 +366,9 @@ struct Owner {
     /// Every spare's process, by outpost id, from its launch until it is
     /// given or ends: `None` while its launch is at work.
     spare_children: HashMap<OutpostId, SpareChild>,
+    /// The application processes UIA's one-time setup is done in
+    /// (`docs/design/focus-pipeline.md`, section 20.2).
+    set_ups: SetUps,
 }
 
 /// A spare outpost's process while it waits.
@@ -440,6 +462,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         reducer: ReducerWatch::default(),
         spares: Spares::default(),
         spare_children: HashMap::new(),
+        set_ups: SetUps::default(),
     };
     thread::Builder::new()
         .name("verbatim-relay".to_owned())
@@ -736,6 +759,14 @@ impl Owner {
                 tracing::warn!(detail, "focus listener fault");
                 return;
             }
+            OutpostToSupervisor::SetUpDone { pid, outcome } => {
+                self.set_up_done(pid, outcome);
+                return;
+            }
+            OutpostToSupervisor::SetUpWaiting { pid } => {
+                self.set_up_waiting(pid);
+                return;
+            }
             _ => return, // The listener sends nothing else.
         };
         self.handle(event);
@@ -890,11 +921,16 @@ impl Owner {
     /// whose failed outpost's replacement waits for its backoff has no
     /// incarnation to ask.
     fn query_outposts(&mut self, round: u64) {
+        // An application held for UIA's setup is waited for while the
+        // setup's calls are within their time limit, and counts as idle
+        // once one has passed it (`docs/design/focus-pipeline.md`, section
+        // 20.3), so one application hung at first sight holds no round.
         if self.shutting_down.is_none()
-            && self
-                .records
-                .values()
-                .any(|record| record.child.is_none() && record.backoff.due().is_none())
+            && self.records.values().any(|record| {
+                record.child.is_none()
+                    && record.backoff.due().is_none()
+                    && !record.set_up.is_some_and(|hold| hold.waiting)
+            })
         {
             self.idle = Some(IdleStage::Launches(round));
             return;
@@ -911,7 +947,11 @@ impl Owner {
         for record in self.records.values_mut() {
             match record.child.as_ref().filter(|_| record.ready) {
                 Some(child) => ask_idle(&child.writer, round),
-                None if record.backoff.due().is_none() => record.idle_query = Some(round),
+                None if record.backoff.due().is_none()
+                    && !record.set_up.is_some_and(|hold| hold.waiting) =>
+                {
+                    record.idle_query = Some(round);
+                }
                 None => {}
             }
         }
@@ -958,6 +998,7 @@ impl Owner {
             return false;
         }
         let now = Instant::now();
+        let window = first.as_ref().map_or(0, |first| first.fact.window());
         let mut held = HeldFacts::default();
         if let Some(fact) = first {
             held.hold(fact);
@@ -980,10 +1021,121 @@ impl Owner {
                 since: now,
                 backoff: Backoff::default(),
                 unready: None,
+                set_up: None,
             },
         );
+        // UIA's one-time setup in each application, done before an outpost
+        // is given (`docs/design/focus-pipeline.md`, section 20). The first
+        // remote operation any client runs in an application makes UIA set
+        // itself up inside it, in COM's modal loop on the application's UI
+        // thread, and while that runs every new UIA connection from another
+        // process to the application fails: the provider probe waits three
+        // seconds and answers "no", and the element lookups return UIA's
+        // client-side window proxy instead of the application's element.
+        // The listener's reads are remote operations, so an outpost
+        // connecting while the listener's first read runs was read through
+        // MSAA or announced twice. So the listener completes the setup
+        // first, and the application is held, its facts with it, until it
+        // says so; an application set up before, whose outpost failed or
+        // was retired, is given its next at once.
+        if self.needs_set_up(pid) {
+            self.request_set_up(pid, window);
+            return true;
+        }
         self.incarnate(pid);
         true
+    }
+
+    /// Whether `pid`'s application must wait for UIA's one-time setup
+    /// before it is given an outpost: it is not Verbatim's own process,
+    /// which serves no UIA provider of its own and whose outpost starts
+    /// before its windows exist (section 20.2), and the setup has not been
+    /// done in this process, by its id and creation time.
+    fn needs_set_up(&self, pid: Pid) -> bool {
+        pid != self.own_pid
+            && self
+                .targets
+                .get(&pid)
+                .is_none_or(|target| !self.set_ups.is_done(pid, target.created()))
+    }
+
+    /// Holds `pid`'s record for UIA's one-time setup and asks the listener
+    /// for it, naming `window`, the window the application's first fact
+    /// named, or 0.
+    fn request_set_up(&mut self, pid: Pid, window: isize) {
+        let Some(record) = self.records.get_mut(&pid) else {
+            return;
+        };
+        record.set_up = Some(SetUpHold {
+            window,
+            waiting: false,
+        });
+        tracing::info!(%pid, window, "UIA's setup in the application is asked of the listener; it is given no outpost until it is done");
+        self.tell_listener(SupervisorToOutpost::SetUp { pid, hwnd: window });
+    }
+
+    /// The listener says UIA's one-time setup in `pid` is over, as
+    /// `outcome` says: the application, held for it, is given its outpost
+    /// now, and a setup done is remembered for the process. An answer for
+    /// an application not held, one that has exited or one answered
+    /// already, is dropped.
+    fn set_up_done(&mut self, pid: Pid, outcome: SetUpOutcome) {
+        let Some(record) = self
+            .records
+            .get_mut(&pid)
+            .filter(|record| record.set_up.is_some())
+        else {
+            tracing::debug!(%pid, ?outcome, "UIA's setup is over in an application no longer held for it");
+            return;
+        };
+        record.set_up = None;
+        let held_ms = record
+            .held
+            .first_held_at()
+            .map_or(0, |held| held.elapsed().as_millis());
+        tracing::info!(%pid, ?outcome, held_ms, "UIA's setup in the application is over; it is given its outpost");
+        if outcome == SetUpOutcome::Done
+            && let Some(target) = self.targets.get(&pid)
+        {
+            self.set_ups.done(pid, target.created());
+        }
+        self.incarnate(pid);
+        if let Some(IdleStage::Launches(round)) = self.idle {
+            self.query_outposts(round);
+        }
+    }
+
+    /// The listener says a call of UIA's one-time setup in `pid` passed
+    /// UIA's time limit: the application is not answering, and stays held
+    /// until the setup completes, its facts with it; the idle barrier's
+    /// rounds count it as idle meanwhile (section 20.3).
+    fn set_up_waiting(&mut self, pid: Pid) {
+        let Some(hold) = self
+            .records
+            .get_mut(&pid)
+            .and_then(|record| record.set_up.as_mut())
+        else {
+            return;
+        };
+        hold.waiting = true;
+        tracing::warn!(%pid, "UIA's setup in the application did not answer in time; it stays held until the application answers");
+        if let Some(IdleStage::Launches(round)) = self.idle {
+            self.query_outposts(round);
+        }
+    }
+
+    /// Ends the record of `pid`, held for UIA's one-time setup, whose
+    /// application has exited: the listener is told, so it ends the
+    /// application's reading thread, and the app hears that no outpost
+    /// watches it.
+    fn end_held(&mut self, pid: Pid) {
+        if self.records.remove(&pid).is_none() {
+            return;
+        }
+        tracing::info!(%pid, "an application held for UIA's setup has exited");
+        self.tell_listener(SupervisorToOutpost::HookRemoved { pid, sent_at_us: 0 });
+        self.release_target(pid);
+        self.not_watched(pid);
     }
 
     /// Gives `pid`'s record, starting or after a failure, a new
@@ -1332,6 +1484,19 @@ impl Owner {
             replacement,
             pending: Vec::new(),
         });
+        // A listener that replaces one does every setup the one before left
+        // unfinished, from the start (`docs/design/focus-pipeline.md`,
+        // section 20.2): its first commands, held until its launch reports.
+        let mut held: Vec<(Pid, isize)> = Vec::new();
+        for (pid, record) in &mut self.records {
+            if let Some(hold) = record.set_up.as_mut() {
+                hold.waiting = false;
+                held.push((*pid, hold.window));
+            }
+        }
+        for (pid, hwnd) in held {
+            self.tell_listener(SupervisorToOutpost::SetUp { pid, hwnd });
+        }
         self.launch(outpost, Role::Listener);
     }
 
@@ -1824,7 +1989,9 @@ impl Owner {
         let launched: Vec<Pid> = self
             .records
             .iter()
-            .filter(|(_, record)| record.child.is_some() || record.backoff.due().is_some())
+            .filter(|(_, record)| {
+                record.child.is_some() || record.backoff.due().is_some() || record.set_up.is_some()
+            })
             .map(|(pid, _)| *pid)
             .collect();
         for pid in launched {
@@ -2146,6 +2313,16 @@ impl Owner {
             .collect();
         for pid in gone {
             self.target_exited(pid, "target exited while its outpost's replacement waited");
+        }
+        // Applications held for UIA's setup, which have since exited.
+        let gone: Vec<Pid> = self
+            .records
+            .iter()
+            .filter(|(pid, record)| record.set_up.is_some() && self.has_exited(**pid))
+            .map(|(pid, _)| *pid)
+            .collect();
+        for pid in gone {
+            self.end_held(pid);
         }
     }
 }

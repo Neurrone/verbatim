@@ -1,0 +1,25 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp First Sight",
+  "children": [
+    {
+      "id": "choices",
+      "role": "group",
+      "name": "Choices",
+      "children": [
+        { "id": "one", "role": "button", "name": "One", "states": ["focusable"] },
+        { "id": "two", "role": "button", "name": "Two", "states": ["focusable"] }
+      ]
+    },
+    {
+      "id": "embedded",
+      "role": "group",
+      "name": "Embedded",
+      "native": "uia_window",
+      "children": [
+        { "id": "ok", "role": "button", "name": "OK", "states": ["focusable"] }
+      ]
+    }
+  ]
+}

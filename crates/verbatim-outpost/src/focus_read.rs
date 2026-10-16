@@ -90,6 +90,7 @@ use crate::outpost::window::{
 use crate::protocol::{
     DeliveredFact, EventTiming, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact, now_us,
 };
+pub use crate::set_up::SetUpResult;
 
 /// The most ancestors read for a focus, as many as the outpost walks.
 const MAX_ANCESTORS: u32 = 64;
@@ -105,6 +106,18 @@ const READ_BUDGET: Duration = Duration::from_secs(2);
 /// ends the read's one transaction.
 pub(crate) const READ_DEADLINE: Duration =
     Duration::from_secs(verbatim_uia::CALL_TIMEOUT.as_secs() + 1);
+
+/// Why an event, or a setup, is dropped when its read ran past its
+/// deadline.
+pub(crate) const NOT_IN_TIME: &str = "its read did not return in time";
+
+/// Why an event, or a setup, is dropped while its application's abandoned
+/// reads have not returned.
+pub(crate) const NOT_RETURNED: &str = "its application's reads have not returned";
+
+/// Why an event, or a setup, is dropped when no thread could be started to
+/// read it.
+pub(crate) const NO_THREAD: &str = "no thread to read it";
 
 /// How many of an application's reading threads may be abandoned and still
 /// in their calls before its focus events are dropped without a read.
@@ -126,6 +139,11 @@ pub enum FocusEvent {
     /// A notification, judged by its sender's nearest window
     /// ([`FocusReader::check_fact`]).
     Notification,
+    /// Not an event: UIA's one-time setup in the application, which the
+    /// supervisor asks for before it gives the application an outpost
+    /// ([`FocusReader::set_up`]; `docs/design/focus-pipeline.md`, section
+    /// 20), queued behind the application's events.
+    SetUp,
 }
 
 /// What became of one focus event.
@@ -138,6 +156,10 @@ pub enum Judged {
     /// A selection or notification that passed its checks, to be passed on
     /// as it now stands ([`FocusReader::check_fact`]).
     Passed(Box<DeliveredFact>),
+    /// What UIA's one-time setup in the application found
+    /// ([`FocusReader::set_up`]): answered to the supervisor, not sent to
+    /// an outpost.
+    SetUp(SetUpResult),
 }
 
 impl Judged {
@@ -146,7 +168,7 @@ impl Judged {
     pub fn into_fact(self, marker: u64) -> DeliveredFact {
         match self {
             Judged::Read(read) => DeliveredFact::UiaFocusRead { marker, read },
-            Judged::Dropped(_) => DeliveredFact::UiaFocusDropped { marker },
+            Judged::Dropped(_) | Judged::SetUp(_) => DeliveredFact::UiaFocusDropped { marker },
             Judged::Passed(fact) => DeliveredFact::UiaMarked { marker, fact },
         }
     }
@@ -461,6 +483,21 @@ impl FocusReader {
         }
     }
 
+    /// Runs UIA's one-time setup in the application `pid`, this reader's
+    /// (`docs/design/focus-pipeline.md`, section 20; [`crate::set_up`]):
+    /// in the element of the focus this reader read last, when it has one,
+    /// which costs one call, the remote operation, and finds the setup done
+    /// when that read ran one; else in an element of the application's own
+    /// provider found from `hint`, the window the application's first fact
+    /// named, or 0. With remote operations off, nothing is set up.
+    pub fn set_up(&mut self, pid: Pid, hint: isize) -> SetUpResult {
+        if !self.remote {
+            return SetUpResult::Over(crate::protocol::SetUpOutcome::Off);
+        }
+        let known = self.last.as_ref().map(|last| last.element.clone());
+        crate::set_up::run(&self.uia, pid, hint, known.as_ref())
+    }
+
     /// What NVDA checks of a selection's or a notification's sender,
     /// `element`, before it handles one, here where a cross-process call
     /// may be made: for a sender that is not a window, its nearest window,
@@ -715,7 +752,10 @@ impl FocusReader {
             }
             // Only focuses and menu openings are read; a selection or a
             // notification is checked ([`Self::check_fact`]).
-            FocusEvent::Focus | FocusEvent::Selection | FocusEvent::Notification => {
+            FocusEvent::Focus
+            | FocusEvent::Selection
+            | FocusEvent::Notification
+            | FocusEvent::SetUp => {
                 let nearest = self.native_window(element, hwnd)?;
                 // 3. NVDA's duplicate rule (`UIAHandler/__init__.py` 902 to
                 // 923; section 16.3): the sender is the last focus accepted,
@@ -1221,6 +1261,21 @@ impl<R: Reading> Readers<R> {
     /// for `pid`'s reading thread, starting one if it has none. Never waits
     /// on a read.
     pub(crate) fn push(&self, pid: Pid, meta: Meta, job: R::Job) {
+        self.queue(pid, meta, job, false);
+    }
+
+    /// Queues `job`, UIA's one-time setup in `pid`
+    /// (`docs/design/focus-pipeline.md`, section 20.2), as [`Self::push`]
+    /// queues an event, behind every event waiting. A thread started for it
+    /// ends once it has done it, unless an event comes for it meanwhile, so
+    /// the listener keeps no thread for an application whose focus it has
+    /// not read.
+    pub(crate) fn push_set_up(&self, pid: Pid, meta: Meta, job: R::Job) {
+        self.queue(pid, meta, job, true);
+    }
+
+    /// [`Self::push`], or, with `set_up`, [`Self::push_set_up`].
+    fn queue(&self, pid: Pid, meta: Meta, job: R::Job, set_up: bool) {
         let shared = &self.shared;
         let mut state = shared.lock();
         if state.stopping {
@@ -1232,16 +1287,19 @@ impl<R: Reading> Readers<R> {
         let app = state.apps.entry(pid).or_insert_with(App::new);
         if app.live.is_none() && app.abandoned >= ABANDONED_LIMIT {
             tracing::warn!(%pid, "a UIA focus is dropped: its application's reads have not returned");
-            shared.reading.outcome(
-                pid,
-                meta,
-                Judged::Dropped("its application's reads have not returned"),
-            );
+            shared
+                .reading
+                .outcome(pid, meta, Judged::Dropped(NOT_RETURNED));
             return;
         }
         // An event after its outpost ended: the application runs on, and
-        // its thread with it.
-        app.ending = false;
+        // its thread with it. A setup leaves a thread in charge as it was,
+        // and one it starts ends once it is done.
+        if set_up {
+            app.ending = app.ending || app.live.is_none();
+        } else {
+            app.ending = false;
+        }
         // NVDA's UIA limiter keeps one waiting focus event per element: a
         // newer one erases the older and takes the back of the queue
         // (`rateLimitedEventHandler.cpp`), so an element that raises its
@@ -1328,6 +1386,11 @@ impl<R: Reading> Readers<R> {
         state.wake_idle_waiters();
     }
 
+    /// The work the threads do.
+    pub(crate) fn reading(&self) -> &R {
+        &self.shared.reading
+    }
+
     /// The failed cached reads the reading threads have made so far.
     pub(crate) fn failed_reads(&self) -> u32 {
         self.shared.failed_reads.load(Ordering::Relaxed)
@@ -1387,7 +1450,7 @@ fn start<R: Reading>(shared: &Arc<Shared<R>>, state: &mut ReadersState<R::Job>, 
             for (_, meta, _) in app.queue.drain(..) {
                 shared
                     .reading
-                    .outcome(pid, meta, Judged::Dropped("no thread to read it"));
+                    .outcome(pid, meta, Judged::Dropped(NO_THREAD));
             }
             state.wake_idle_waiters();
         }
@@ -1527,18 +1590,14 @@ fn abandon<R: Reading>(shared: &Arc<Shared<R>>, state: &mut ReadersState<R::Job>
     app.abandoned += 1;
     let abandoned = app.abandoned;
     tracing::warn!(%pid, abandoned, "a UIA focus read did not return in time; its thread is abandoned");
-    shared.reading.outcome(
-        pid,
-        meta,
-        Judged::Dropped("its read did not return in time"),
-    );
+    shared
+        .reading
+        .outcome(pid, meta, Judged::Dropped(NOT_IN_TIME));
     if abandoned >= ABANDONED_LIMIT {
         for (_, meta, _) in app.queue.drain(..) {
-            shared.reading.outcome(
-                pid,
-                meta,
-                Judged::Dropped("its application's reads have not returned"),
-            );
+            shared
+                .reading
+                .outcome(pid, meta, Judged::Dropped(NOT_RETURNED));
         }
     } else if !app.queue.is_empty() {
         start(shared, state, pid);
