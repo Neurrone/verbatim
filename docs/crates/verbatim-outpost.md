@@ -2100,8 +2100,10 @@ finds it.
   answered `Done`), `TextOp::TerminalRead { hold }` (answered with what
   is new, read only if the text changed since the last read, then
   holding or live again), and `TextOp::TerminalCancel` (speech was cut
-  off: read to the end, answered with the read for typing echo only,
-  live again; a read written to meanwhile is still remembered). A read
+  off: live again, and, when the text changed while held or a read is
+  owed, read to the end and answered with the read for typing echo only,
+  a read written to meanwhile still remembered; otherwise answered empty
+  without reading, as Core already has everything read before the cut). A read
   Core asked for that the terminal disturbed is owed, and the next change,
   which the writing raises, reads again and answers it. In the console
   host, the console's own `WinEvents` (`EVENT_CONSOLE_UPDATE_REGION`,

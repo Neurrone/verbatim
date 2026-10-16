@@ -62,7 +62,7 @@ pub enum Action {
     /// changed since the last read.
     ReplyEmpty,
     /// Read to the end and answer the cancel with it, for typing echo
-    /// only.
+    /// only: what changed while held, or the owed read's answer.
     ReplySilently,
     /// Read only to note where the text is now.
     Baseline,
@@ -82,7 +82,17 @@ impl Reading {
             }
         };
         match (self, event) {
-            (_, Event::Cancel) => (Self::Live, Action::ReplySilently),
+            // A cut reads only what was held back from Core. Live, or held
+            // with nothing changed, Core already has everything read
+            // before the cut, and a read now would find only what the key
+            // that cut speech did, taking it from the report that would
+            // speak it.
+            (Self::Held { changed: true } | Self::Owed { .. }, Event::Cancel) => {
+                (Self::Live, Action::ReplySilently)
+            }
+            (Self::Live | Self::Held { changed: false }, Event::Cancel) => {
+                (Self::Live, Action::ReplyEmpty)
+            }
             (_, Event::Focused) => (Self::Live, Action::Baseline),
             (Self::Live, Event::TextChanged) => (Self::Live, Action::Report),
             (Self::Held { .. }, Event::TextChanged) => {
@@ -146,7 +156,7 @@ mod tests {
                 Reading::Live,
                 Event::Cancel,
                 Reading::Live,
-                Action::ReplySilently,
+                Action::ReplyEmpty,
             ),
             (
                 Reading::Live,
@@ -169,7 +179,7 @@ mod tests {
                 Reading::Live,
                 Action::ReplyEmpty,
             ),
-            (held, Event::Cancel, Reading::Live, Action::ReplySilently),
+            (held, Event::Cancel, Reading::Live, Action::ReplyEmpty),
             (held, Event::Focused, Reading::Live, Action::Baseline),
             (held, Event::ReplyUnsettled, owed, Action::Nothing),
             (changed, Event::TextChanged, changed, Action::Nothing),
