@@ -20,9 +20,9 @@
 //! window now owned by another thread is probed afresh, so a reused window
 //! handle does not inherit a verdict when its destroy event was lost. A probe
 //! that finds none is trusted for only [`NEGATIVE_VERDICT_LIFETIME`], NVDA's
-//! cache period, and then probed again. The probe itself counts only the
-//! window's own answer, so a busy window that has a provider is not
-//! reported as having none ([`verbatim_uia::has_server_side_provider`]).
+//! cache period, and then probed again. The probe asks once, as NVDA does,
+//! so a window too busy to answer UIA's check in time is read through MSAA
+//! until that verdict runs out ([`verbatim_uia::has_server_side_provider`]).
 //!
 //! The renewal is by time because nothing else can drive it: an
 //! application that starts answering the probe raises no event, as a
@@ -319,10 +319,7 @@ pub fn post_probe_check(classes: &WindowClasses) -> Option<PostProbeCheck> {
 /// `isUIAWindow` decides it, for an outpost's events and for the focus
 /// listener's UIA focus judgement alike: the class lists and kept verdicts first, then
 /// the provider probe, whose answer the arbitrator keeps (a provider for the
-/// window's lifetime, none for a short while). A window that did not answer
-/// the probe is read through MSAA for the event at hand, as NVDA does when
-/// its probe is cancelled, and is probed again next time. Returns `true` for
-/// UIA.
+/// window's lifetime, none for a short while). Returns `true` for UIA.
 pub(crate) fn uses_uia(arbitrator: &Mutex<Arbitrator>, hwnd: isize) -> bool {
     uses_uia_keeping(arbitrator, hwnd).0
 }
@@ -336,17 +333,14 @@ pub(crate) fn uses_uia_keeping(arbitrator: &Mutex<Arbitrator>, hwnd: isize) -> (
         return (verdict, false);
     }
     let started = std::time::Instant::now();
-    let answer = verbatim_uia::probe_server_side_provider(hwnd);
+    let is_uia = verbatim_uia::has_server_side_provider(hwnd);
     tracing::debug!(
         hwnd,
         class = classes.raw,
-        ?answer,
+        is_uia,
         elapsed_ms = started.elapsed().as_millis(),
         "arbitration probed"
     );
-    let Some(is_uia) = answer else {
-        return (false, false);
-    };
     if is_uia && let Some(check) = post_probe_check(&classes) {
         // NVDA uses some providers only after checking them.
         let usable = match check {

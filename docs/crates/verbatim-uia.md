@@ -241,7 +241,7 @@ Public API:
   checks are written against these, so they are safe code; `unsafe`
   remains only in the wrapper module (`element.rs`), the `VARIANT` and
   `SAFEARRAY` helpers (`com.rs`), the event handler registrations, the
-  provider probe's window messages, client creation, and apartment setup.
+  provider probe's window message, client creation, and apartment setup.
 - `text` (milestone M4) — the same kind of safe wrappers over the text
   pattern, which the outpost's text protocol reads with:
   `text_pattern(element)` fetches a node's `TextPattern2` where the
@@ -421,18 +421,11 @@ Public API:
   (`docs/performance.md`, "Event handler groups").
 - `has_server_side_provider(hwnd)` — the arbitration probe. Sends
   `WM_GETOBJECT` and can block on a hung application, so it is documented
-  as callable only from deadline-guarded query threads. Only the window's
-  own answer counts: `UiaHasServerSideProvider` reports no provider when
-  a busy window does not answer in time, so a "no" slower than a second
-  is followed by waiting for the window to process a `WM_NULL` and asking
-  once more, all within eight seconds. `probe_server_side_provider`
-  answers `None` for a window that never answered, which the outpost
-  reads through MSAA for the event at hand without keeping that as the
-  window's answer, as NVDA treats a cancelled probe. `probe(hwnd)` gives
-  the same answer as a `Probe`, with how many times the window was asked
-  (1, or 2 when UIA gave up on a busy window first), so a test can show
-  which way the answer came; `PROBE_BUDGET` is the eight seconds. The
-  probe waits for UIA's first-time setup in the process (`ensure_ready`)
+  as callable only from deadline-guarded query threads. It asks once, as
+  NVDA does, and its answer is the answer: `UiaHasServerSideProvider`
+  reports no provider when a busy window does not answer within three to
+  five seconds, and the outpost keeps that "no" for 500 ms like any other
+  (`docs/design/focus-pipeline.md`, section 8). The probe waits for UIA's first-time setup in the process (`ensure_ready`)
   before it asks: one racing that setup answered "no provider" at once for
   a window that has one, about one run in five of two probes started
   together in a fresh process.
@@ -475,8 +468,8 @@ Public API:
   `*BuildCache` fetches and tree-walker steps, `BuildUpdatedCache`,
   `FindFirst`, `CurrentControllerFor`, pattern fetches and methods,
   `NormalizeElementBuildCache`, and the provider checks' text reads, as UIA
-  calls; the arbitration probe's `UiaHasServerSideProvider` and its
-  `WM_NULL` wait, as window messages. Cached reads, `GetRuntimeId`, and
+  calls; the arbitration probe's `UiaHasServerSideProvider`, as a window
+  message. Cached reads, `GetRuntimeId`, and
   creating clients, conditions, walkers, and cache requests are local and
   not counted, nor are event subscriptions (`docs/performance.md`, "What
   counts as a call"). The outpost's worker takes the count around each

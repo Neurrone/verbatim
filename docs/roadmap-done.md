@@ -529,6 +529,11 @@ landed it.
 - Step 11, measure again, full suite, push: the measurements of
   communication step 12, 743b377a, pushed on 2026-10-14.
 
+### The focus pipeline
+
+- The UIA probe asks once, as NVDA does
+  ([focus pipeline](design/focus-pipeline.md), section 8): 2026-10-16.
+
 ### The communication migration
 
 Steps of [the communication design](design/communication.md), section 11.

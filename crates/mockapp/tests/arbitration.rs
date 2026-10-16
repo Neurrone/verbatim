@@ -2,21 +2,18 @@
 //! that a `uia`-backend mockapp window has a server-side UIA provider and a
 //! `msaa`-backend one does not, each found by a single probe, and that
 //! `verbatim-outpost`'s real `Arbitrator`, given that probe's answer,
-//! resolves each to the matching backend.
-//!
-//! Two tests depend on how long UIA's own check waits for a busy window
-//! before it gives up. They do not assume it: the probe reports how many
-//! times it asked, so a stall that UIA waited out, rather than gave up on,
-//! fails the test instead of passing it without exercising the second ask.
+//! resolves each to the matching backend, and that a window too busy to
+//! answer is asked once and its "no" taken, as NVDA takes it.
 
 mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use verbatim_model::CallCounts;
 use verbatim_outpost::arbitration::{Arbitrator, WindowClasses};
-use verbatim_uia::{PROBE_BUDGET, Probe, probe};
+use verbatim_uia::has_server_side_provider;
 
 fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
     let title = common::unique_title("mockapp-arb-uia");
@@ -30,14 +27,9 @@ fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
         None,
         "only the probe decides"
     );
-    let probed = probe(hwnd);
-    assert_eq!(
-        probed,
-        Probe {
-            answer: Some(true),
-            asks: 1
-        },
-        "a uia-backend mockapp window has a server-side UIA provider, at the first ask"
+    assert!(
+        has_server_side_provider(hwnd),
+        "a uia-backend mockapp window has a server-side UIA provider"
     );
     arbitrator.record_probe(hwnd, true);
     assert_eq!(
@@ -49,31 +41,42 @@ fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
     app.quit();
 }
 
-fn a_busy_uia_window_still_has_a_server_side_provider() {
+fn a_busy_uia_window_is_asked_once_and_its_no_kept() {
     let title = common::unique_title("mockapp-arb-busy");
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title).0 as isize;
+    let classes = WindowClasses::of(hwnd);
 
-    // Block the window thread past the point where UIA's own check gives up
-    // (about five seconds here, three for Notepad starting up) and reports
-    // no provider: the probe must wait for the window's real answer. The
-    // second ask is the evidence that UIA did give up.
-    let stall = Duration::from_secs(6);
+    // Blocked past the point where UIA's own check gives up (about five
+    // seconds here, three for Notepad starting up) and reports no provider:
+    // that "no" is the answer, from one message, as NVDA takes it.
+    let stall = Duration::from_secs(8);
     app.stall(stall);
-    let probed = probe(hwnd);
+    let _ = verbatim_uia::calls::take();
+    let has = has_server_side_provider(hwnd);
     let returned_at = common::now_us();
+    let calls = verbatim_uia::calls::take();
     let stall_ended_at = app.stall_ended(stall);
+    assert!(!has, "a window too busy to answer has no provider, for now");
     assert_eq!(
-        probed,
-        Probe {
-            answer: Some(true),
-            asks: 2
+        calls,
+        CallCounts {
+            uia: 0,
+            msaa: 0,
+            window_messages: 1
         },
-        "a window too busy to answer at once is asked again once it answers"
+        "the window is asked once"
     );
     assert!(
-        returned_at >= stall_ended_at,
-        "the answer came from the window once it answered, {returned_at} before {stall_ended_at}"
+        returned_at < stall_ended_at,
+        "the answer came while the window was busy, {returned_at} after {stall_ended_at}"
+    );
+    let mut arbitrator = Arbitrator::new(&[]);
+    arbitrator.record_probe(hwnd, has);
+    assert_eq!(
+        arbitrator.verdict(hwnd, &classes),
+        Some(false),
+        "the slow no is kept, as any no is, for its lifetime"
     );
 
     app.quit();
@@ -127,12 +130,8 @@ fn msaa_backend_has_no_server_side_provider_and_arbitrates_to_msaa() {
         "only the probe decides"
     );
     // An answer, not silence: "no provider" said by the window itself.
-    assert_eq!(
-        probe(hwnd),
-        Probe {
-            answer: Some(false),
-            asks: 1
-        },
+    assert!(
+        !has_server_side_provider(hwnd),
         "a msaa-backend mockapp window answers that it has no server-side UIA provider"
     );
     arbitrator.record_probe(hwnd, false);
@@ -140,42 +139,6 @@ fn msaa_backend_has_no_server_side_provider_and_arbitrates_to_msaa() {
         arbitrator.verdict(hwnd, &classes),
         Some(false),
         "the real arbitrator must resolve a msaa-backend window to MSAA"
-    );
-
-    app.quit();
-}
-
-fn a_window_that_never_answers_gets_no_verdict_within_the_budget() {
-    let title = common::unique_title("mockapp-arb-silent");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let hwnd = common::find_window(&title).0 as isize;
-
-    // Silent for longer than the probe may take: no answer, rather than a
-    // "no" that would be kept, and well inside the outpost's ten-second
-    // deadline for handling the event. The probe asked once, UIA gave up,
-    // and the window never answered the wait that followed, so it was not
-    // asked again.
-    let stall = Duration::from_secs(12);
-    app.stall(stall);
-    let started = Instant::now();
-    let probed = probe(hwnd);
-    let elapsed = started.elapsed();
-    assert_eq!(
-        probed,
-        Probe {
-            answer: None,
-            asks: 1
-        }
-    );
-    // It waited out its whole budget for the window; the second bound only
-    // stops a hang.
-    assert!(
-        elapsed >= PROBE_BUDGET,
-        "the probe waits its budget for the window to answer, gave up after {elapsed:?}"
-    );
-    assert!(
-        elapsed < PROBE_BUDGET + Duration::from_secs(1),
-        "the probe stays within its budget, took {elapsed:?}"
     );
 
     app.quit();
@@ -190,8 +153,8 @@ fn main() {
             uia_backend_has_a_server_side_provider_and_arbitrates_to_uia,
         ),
         (
-            "a_busy_uia_window_still_has_a_server_side_provider",
-            a_busy_uia_window_still_has_a_server_side_provider,
+            "a_busy_uia_window_is_asked_once_and_its_no_kept",
+            a_busy_uia_window_is_asked_once_and_its_no_kept,
         ),
         (
             "a_busy_uia_window_is_read_once_it_answers",
@@ -200,10 +163,6 @@ fn main() {
         (
             "msaa_backend_has_no_server_side_provider_and_arbitrates_to_msaa",
             msaa_backend_has_no_server_side_provider_and_arbitrates_to_msaa,
-        ),
-        (
-            "a_window_that_never_answers_gets_no_verdict_within_the_budget",
-            a_window_that_never_answers_gets_no_verdict_within_the_budget,
         ),
     ]);
 }

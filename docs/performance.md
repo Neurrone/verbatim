@@ -60,7 +60,7 @@ kinds, counted separately (`verbatim_model::CallKind`):
   but `IUnknown` on an object from the application.
 - A window message sent to one of the application's windows and answered
   by its window procedure: the arbitration probe (`UiaHasServerSideProvider`
-  is one `WM_GETOBJECT`, and the probe's `WM_NULL` wait for a busy window),
+  is one `WM_GETOBJECT`),
   a list view's or tree view's `LVM_` and `TVM_` messages, and an edit
   control's `EM_` messages and `WM_GETTEXT`.
 

@@ -78,7 +78,7 @@ pub use com::{
 pub use element::{ElementExt, WalkerExt, elements_of};
 pub use focus::FocusCallback;
 pub use nearest::nearest_window_handle;
-pub use probe::{PROBE_BUDGET, Probe, has_server_side_provider, probe, probe_server_side_provider};
+pub use probe::has_server_side_provider;
 pub use registry::{NodeIdRegistry, Released};
 pub use shape::{
     Absent, Agile, Ancestor, AncestorGates, Cached, Covers, Description, DialogText, Direction,

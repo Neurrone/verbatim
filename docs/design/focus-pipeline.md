@@ -278,9 +278,7 @@ Change: Core keeps the observation time of the last applied foreground change; a
 
 ## 8. The UIA probe asks once
 
-`probe` (`crates/verbatim-uia/src/probe.rs` 60 to 91) asks `UiaHasServerSideProvider`; when the answer is "no" and took longer than a second, it waits for the window to answer `WM_NULL` and asks again, up to 8 seconds in all (`PROBE_BUDGET`, 22). NVDA asks once (`UIAHandler/__init__.py` 1280) and keeps a "no" for 0.5 seconds (1368 to 1381); Verbatim already keeps a "no" for 0.5 seconds (D15 amendment of 2026-10-02, `docs/architecture.md` 257 to 262).
-
-Change: one ask; its answer is the answer; `responds`, `ANSWERED_WITHIN` and the second ask go, and `PROBE_BUDGET` with them. This was added for Windows 11 Notepad's text control, which answered "no" after 3 to 5 seconds while Notepad was starting and "yes" 18 ms later (probe.rs 11 to 16). With one ask, such a window is read through MSAA for the next half second, as NVDA reads it. That is a possible audible change, item 11 in section 10.
+`has_server_side_provider` (`crates/verbatim-uia/src/probe.rs`) asks `UiaHasServerSideProvider` once, and its answer is the answer, as NVDA asks once (`UIAHandler/__init__.py` 1279 to 1282) and keeps a "no" for 0.5 seconds (1368 to 1381). Verbatim keeps a "no" for 0.5 seconds too (D15 amendment of 2026-10-02, `docs/architecture.md`). `UiaHasServerSideProvider` reports no provider when the window does not answer within three to five seconds, as Windows 11 Notepad's text control did while Notepad was starting; such a window is read through MSAA until the "no" runs out, as NVDA reads it (item 11 in section 10.1).
 
 ## 9. What becomes removable, and what stays
 
@@ -288,7 +286,7 @@ Removable once the steps in section 10.2 are in:
 
 - Intake: `overtaken`, `take_back_overtaken` and the ancestor-state exception (42d9caa, ce53dbc; intake.rs 317 to 352, 371 to 394, 843 to 849, 868 to 877); `FOCUS_CANDIDATES` and `uia_focus_plan`; whole-batch MSAA collapsing; UIA's counting in MSAA's limits; `msaa_focus_waiting`.
 - Worker: `live_focus_element`, `LiveFocus`, `own_element_focused` (3214 to 3280); the moved-on rules in `uia_focus_element` (2933 to 2992): 2818fd4's report "as the event said", the gone element ("Working on it..."), `holds_element` (5076b5a), 8be2223's tab rule; `element_of_moved_focus`; `reissue_unless_focused`; `follow_focus_window` and `adopt_focus_element` (dd9114f); `FocusQuery::require_focus` and its `NotFocused` answers (the program no longer judges; stage 1 has); the console rules (2944 and 3257 at the audit's commit) and console `report_foreign_window`; `FOCUS_READ_WAIT`.
-- `verbatim-uia`: `Uia::within`, `element_by_name_and_position`, the probe's second ask and `PROBE_BUDGET`. `focused_element` stays only for the focus-now query after a restart.
+- `verbatim-uia`: `Uia::within`, `element_by_name_and_position`. `focused_element` stays only for the focus-now query after a restart.
 - Listener: the UIA focus registration, the desktop-wide selection, menu and notification group, `uia_focus_fact`, `focus_window_for` (moves to the outpost for windowless senders), and routing by a UIA element's process.
 - Supervisor: routing of UIA facts; `HeldFacts` stays for trigger facts.
 - Core: the random `select!`.
@@ -317,7 +315,7 @@ What stays:
 8. Background speech (a toast, a balloon, a snap result) observed before a switch to another application is not spoken after the switch. NVDA cancels it. Recommend: adopt.
 9. Key commands and events reach Core in arrival order: a typed character's echo always before the output it causes; a review command answered after a focus that arrived first. NVDA queues them together. Recommend: adopt.
 10. Console windows: announced once, with one name; the application is the shell (for example PowerShell). NVDA as described. Decided.
-11. The probe asks once: a window busy for more than about a second when first asked is read through MSAA for half a second (Windows 11 Notepad while starting was the case the second ask was added for). NVDA behaves the same. Recommend: adopt, and check `notepad_` scenarios ten times; if Notepad's first focus is read through MSAA, bring the capture to Dickson rather than restoring the second ask.
+11. The probe asks once: a window too busy to answer UIA's check in time when first asked is read through MSAA until the "no" runs out, half a second later (Windows 11 Notepad while starting is the known case). NVDA behaves the same. Built (section 8).
 12. A new application's first UIA focus when no spare is ready: either only the window is announced until the next focus event, or one focus-now read (`GetFocusedElement` after a local check that the focus window is the application's). NVDA reads the event it was given, so it has no such case. Recommend: the focus-now read, since it is the existing restart path and is bounded by the new timeouts; Dickson's decision because it is `GetFocusedElement`.
 13. A UIA menu opened in a brand-new popup window before the outpost's scoped registration reaches it is not announced as a menu (the focus into its item still is). NVDA, with one desktop-wide registration, announces it. Recommend: scoped registration, and measure how often `menu_and_settings_dialog` and the context menu scenarios miss it; if they do, register menu opened desktop-wide in each outpost and accept its cost.
 14. Time limits: a hung application's reads fail after 5 seconds instead of 10 to 20; its focus is reported from the event, with its containers unknown, sooner. NVDA waits up to 20 seconds and is unresponsive meanwhile. Recommend: 5 seconds; Dickson to choose the value.
@@ -330,7 +328,6 @@ What stays:
 - The spares buffering applications' focus events, and the no-spare case (item 12).
 - The timeout value (section 6.1, item 14), and trying `CoCancelCall` for MSAA calls (section 6.2).
 - Core's background drop on foreground change (section 7, item 8).
-- The probe's single ask (section 8, item 11).
 - Arrival order, not observation order, for Core's single channel (section 4.1).
 
 ### 10.3 Migration in small steps

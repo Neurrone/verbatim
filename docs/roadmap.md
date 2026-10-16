@@ -66,13 +66,6 @@ The design of record is [the focus pipeline](design/focus-pipeline.md)
   listener's focus fact reaches a spare, what a spare registers before
   it is given, and what starting one costs) and getting Dickson's
   decisions before implementation.
-- The UIA probe asks once (focus-pipeline design, section 8):
-  after a "no" that took over a second, `probe`
-  (`crates/verbatim-uia/src/probe.rs`) still waits for the window to answer
-  a message and asks again; `UiaHasServerSideProvider` took 3 seconds on a
-  new File Explorer window (2026-10-10). Probing in the background is not
-  adopted (Dickson, 2026-10-10), since NVDA asks synchronously. One ask is
-  a possible audible change (the design's section 10, item 11).
 - The UIA focus change's call count with remote operations (found on
   2026-10-15, correcting [the operation ledger](performance.md)): steady
   state takes 4 calls (the nearest window, `CompareElements`,
@@ -93,8 +86,8 @@ The design of record is [the focus pipeline](design/focus-pipeline.md)
   that fails `explorer_folder_window` on GitHub (run 37974580973); the
   early foreground event; a file-list focus once 10 seconds late; the
   "e2e-stage - File Explorer" window of unknown origin; a 3-second wait
-  behind an MSAA focus; the 3-second probe window of the UIA probe item
-  above, checked against fixed recordings; and the folder window announced with
+  behind an MSAA focus; the 3 seconds `UiaHasServerSideProvider` took on
+  a new File Explorer window (2026-10-10), checked against fixed recordings; and the folder window announced with
   "pane" where NVDA says "Items View list" (2 of 29 openings on
   2026-10-12), from a UIA focus on the items view's DirectUIHWND element
   that neither NVDA nor a bare UIA client received.

@@ -21,7 +21,9 @@ list view was recognized live). A probe that finds a UIA provider is
 kept for the window's lifetime, one that finds none for 500 ms, NVDA's
 cache period; no window's answer was seen to change from a provider to
 none during its life, across about 65 windows of Explorer, Settings,
-Start, and the desktop.
+Start, and the desktop. The window is asked once, and a "no" that UIA
+gave after the window did not answer in time is kept like any other, as
+NVDA keeps it (`docs/design/focus-pipeline.md`, section 8).
 
 Not yet (M7): NVDA's Word, Excel, and Chromium exceptions, which set UIA
 aside only when NVDA has injected its in-process helper; without it NVDA
@@ -33,14 +35,9 @@ inside the screen reader's process that outposts cannot have.
 Application modules' own good and bad windows wait for extensions,
 except the Explorer shell rule above, which is core policy.
 
-Different (`docs/design/focus-pipeline.md`, section 8): Verbatim counts
-only the window's own answer, where NVDA takes a timed-out probe's "no"
-as the answer. A "no" slower than a second (real answers took 0 to
-89 ms) makes the probe wait for the window to process messages and ask
-again. Verbatim's UIA client waits ten seconds for a provider, the
-deadline its watchdog already holds each read to, where NVDA keeps
-UIA's default of two. The `notepad_and_verbatim_menu` scenario depends
-on both.
+Different (`docs/design/focus-pipeline.md`, section 6.1): Verbatim's UIA
+client waits five seconds for a provider, where NVDA keeps UIA's default
+of two.
 
 ### How an outpost turns events into focus reports
 
@@ -123,9 +120,9 @@ NVDA: [The UIA client](../nvda/uia.md), "Caching discipline", and
 - Events are judged by their own application's window, never the
   system's focus window, which can belong to another application; UIA
   notifications are not arbitrated, as NVDA does not arbitrate them.
-- A provider probe stays within the outpost's deadline; a window that
-  does not answer is read through MSAA for the event at hand and probed
-  again next time, as NVDA treats a cancelled probe.
+- A provider probe stays within the outpost's deadline: UIA gives up on
+  a window that does not answer within three to five seconds and reports
+  no provider, which is kept for 500 ms, as NVDA keeps it.
 
 ### UIA caching discipline
 
