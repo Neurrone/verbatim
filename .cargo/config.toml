@@ -1,3 +1,5 @@
 # Makes `cargo xtask <command>` invoke the workspace automation crate.
 [alias]
 xtask = "run --package xtask --"
+# Makes `cargo verbatim-build` build Verbatim and the programs it starts.
+verbatim-build = "build -p verbatim-app -p verbatim-outpost -p verbatim-synth-host"
