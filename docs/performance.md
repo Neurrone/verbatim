@@ -337,24 +337,36 @@ verdict for the focus's window rather than asking the window again.
 
 ### A focus change, UIA, steady state
 
-- Minimum: 2 UIA calls. The outpost must have a live element, confirm that
-  it still has the keyboard focus (NVDA's live `HasKeyboardFocus` check),
-  and read its ancestors up to the first one it already knows, with
-  Verbatim's cached property set, and its nearest window. One remote
-  operations program does all of that after the element is in hand: it
-  reads `HasKeyboardFocus` first and returns early if it is false (Option
-  B, agreed on 2026-10-06), then walks the raw-view parents until it meets
-  a known runtime id, and reads the nearest window handle on the way.
-  Since 2026-10-12 the listener reads the sender's keyboard focus plainly
-  as well, before the program, as NVDA does: read inside the program, the
-  element is the provider's own, which for Windows Terminal's second focus
-  identity answers that it has the focus where the plain read, NVDA's,
-  answers that it has not (`docs/design/focus-pipeline.md`, section 16.8).
-  The program's own check stays, for a focus that moves on while it is
-  read. The
-  element itself costs no call: the listener holds the event's sender and
-  reads from it, so the two calls are the plain keyboard focus read and
-  the program.
+- Minimum: 4 UIA calls for a sender without a window of its own, as
+  mockapp's are, and 3 for a sender that is a window: the calls NVDA's
+  focus handler makes, in its order (`docs/design/focus-pipeline.md`,
+  section 18; Dickson, 2026-10-16). The element itself costs no call: the
+  listener holds the event's sender and reads from it. The calls are:
+  - the sender's nearest window (`NormalizeElementBuildCache`), for NVDA's
+    native check and acceptance test; a sender that is a window answers
+    it from the event's cache without a call. NVDA makes it before its
+    duplicate rule, so it stays there;
+  - the comparison with the last focus accepted (`CompareElements`),
+    NVDA's duplicate rule, made while that focus is still the last focus
+    queued. It reaches no provider, but it is a UIA client call and is
+    counted as one, as NVDA makes it;
+  - the sender's keyboard focus, read plainly (`CurrentHasKeyboardFocus`),
+    NVDA's last check: read inside the program, the element is the
+    provider's own, which for Windows Terminal's second focus identity
+    answers that it has the focus where the plain read, NVDA's, answers
+    that it has not (section 16.8);
+  - one remote operations program (`Execute`), which reads
+    `HasKeyboardFocus` again first and returns early if it is false
+    (Option B, agreed on 2026-10-06), for a focus that moves on while it
+    is read, then fills the sender's cache afresh and walks the raw-view
+    parents until it meets a known runtime id, reading the nearest window
+    handle on the way.
+
+  The investigation of 2026-10-15 found that neither the nearest window
+  nor the comparison can be folded into the program or answered from the
+  event's cache without reordering NVDA's checks: both come before the
+  acceptance test and the keyboard focus read, which decide whether the
+  program runs at all.
 - Today, with remote operations: 4 UIA calls, all the listener's: the
   sender's nearest window (`NormalizeElementBuildCache`), the comparison
   with the last focus accepted (`CompareElements`, which reaches no
@@ -364,9 +376,8 @@ verdict for the focus's window rather than asking the window again.
   its own copy of the element and the subscriptions' moves included.
 - Today, classic: 7 UIA calls: the same three checks before the read, and
   four for the classic read itself. 449 provider calls in all.
-- Target: 2. The two calls over it with remote operations are the nearest
-  window and the comparison, NVDA's focus handler's checks made in its
-  order (`docs/design/focus-pipeline.md`, section 18).
+- Target: the minimum, 4 for a windowless sender and 3 for a sender that
+  is a window, which the remote path meets.
 
 ### A focus behind other objects' events
 
@@ -402,10 +413,16 @@ focus waits behind the events queued before it as NVDA's does.
 
 ### A focus change, UIA, cold
 
-- Minimum: 1 window message and 2 UIA calls. The window's provider must be
-  probed once in its lifetime for arbitration (the listener's probe), the
-  sender's keyboard focus read plainly, and one program reads the whole
-  chain up to the top-level window.
+- Minimum: 1 window message and 3 UIA calls for a sender without a window
+  of its own, as mockapp's are, and 1 window message and 2 UIA calls for a
+  sender that is a window: the calls NVDA's focus handler makes, in its
+  order (`docs/design/focus-pipeline.md`, section 18; Dickson,
+  2026-10-16). They are the sender's nearest window, for a windowless
+  sender; the window's provider, probed once in its lifetime for NVDA's
+  native check (the listener's probe, `UiaHasServerSideProvider`); the
+  sender's keyboard focus, read plainly; and one program reading the whole
+  chain up to the top-level window. There is no comparison, since no focus
+  was accepted before.
 - Today, with remote operations: 3 UIA calls and 1 window message: the
   sender's nearest window, its plain keyboard focus read, and one
   `Execute`, which walks up to the process's top-level window and stops
@@ -416,37 +433,37 @@ focus waits behind the events queued before it as NVDA's does.
   and five for the classic read (the live keyboard focus, the focus's
   cache, and three hops up to the desktop's root), and the probe. 422
   provider calls in all.
-- Target: 2 UIA calls and 1 window message. The call over it with remote
-  operations is the nearest window, NVDA's check made in its order. The classic walk could
-  still stop at the desktop's root element, which is known locally,
+- Target: the minimum, which the remote path meets. The classic walk
+  could still stop at the desktop's root element, which is known locally,
   instead of asking for its parent.
 
 ### A focus change into a list, UIA
 
 The focus lands on the list itself, and its selected item is read with it.
 
-- Minimum: 2 UIA calls: the focused element, and the same program also
-  reads the list's selection and the first selected item's cached
-  properties.
+- Minimum: 4 UIA calls, as for a steady-state focus change on a
+  windowless element: the same program also reads the list's selection
+  and the first selected item's cached properties.
 - Today, with remote operations: 4 UIA calls, the three checks of a
   steady-state focus change and one `Execute`. 343 provider calls in all.
 - Today, classic: 8 UIA calls: the three checks, and five for the classic
   read, the selected item among them in two calls (`SelectionPattern2`'s
   `FirstSelectedItem` and `BuildUpdatedCache` on it). 411 provider calls
   in all.
-- Target: 2, as for a steady-state focus change.
+- Target: 4, as for a steady-state focus change.
 
 ### Arrowing through a list, UIA
 
 The focus moves from one list item to the next.
 
-- Minimum: 2 UIA calls, as for any steady-state focus change.
+- Minimum: 4 UIA calls, as for any steady-state focus change on a
+  windowless element.
 - Today, with remote operations: 4 UIA calls, the same as a steady-state
   focus change, 346 provider calls in all; the program stops at the list,
   which the previous chain holds.
 - Today, classic: 7 UIA calls, the same as a steady-state focus change.
   512 provider calls in all.
-- Target: 2, as for a steady-state focus change.
+- Target: 4, as for a steady-state focus change.
 
 ### An object navigation step, UIA
 

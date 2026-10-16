@@ -70,11 +70,12 @@ impl Client {
 ///
 /// The calls each read makes are pinned, the outpost's own included, which
 /// are none: it reads nothing before it reports the focus. Before any read,
-/// the listener compares the sender with the last focus it accepted and,
-/// UI Automation equating them, reads that element's keyboard focus: two
-/// calls; then, for the acceptance test, the windowless item's nearest
-/// window, one call; then the sender's own keyboard focus, read plainly as
-/// NVDA reads it, one call. Remotely, the earlier element's focus is read in the focus's one
+/// the listener finds the windowless item's nearest window, for NVDA's
+/// native check and acceptance test, one call; then compares the sender
+/// with the last focus it accepted and, UI Automation equating them, reads
+/// that element's keyboard focus: two calls; then the sender's own keyboard
+/// focus, read plainly as NVDA reads it, one call. Remotely, the earlier
+/// element's focus is read in the focus's one
 /// round trip; an earlier element that is gone fails the whole run before
 /// it starts, which is run again without it, one call more. Classically,
 /// the read makes five calls: the focus's keyboard focus, the earlier
