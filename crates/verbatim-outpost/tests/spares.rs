@@ -31,7 +31,7 @@ use std::cell::RefCell;
 use std::io::{BufReader, Read as _};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::unbounded;
@@ -249,6 +249,33 @@ fn assignment_failure() -> Option<Failure> {
     ))
 }
 
+/// A stand-in spare's assignment to `target_pid`: says `Ready`, or fails
+/// as [`assignment_failure`] says. Returns whether it goes mute.
+fn assign(send: &impl Fn(&OutpostToSupervisor), outpost_pid: Pid, target_pid: Pid) -> bool {
+    match assignment_failure() {
+        None => send(&OutpostToSupervisor::Ready {
+            outpost_pid,
+            target_pid,
+        }),
+        Some(Failure::Exits) => std::process::exit(3),
+        Some(Failure::HookFails) => {
+            send(&OutpostToSupervisor::Fault {
+                detail: HOOK_FAULT.to_owned(),
+            });
+            std::process::exit(1);
+        }
+        Some(Failure::HookFailsAndApplicationExits) => {
+            send(&OutpostToSupervisor::Fault {
+                detail: HOOK_FAULT.to_owned(),
+            });
+            wait_for_exit(target_pid);
+            std::process::exit(1);
+        }
+        Some(Failure::Mute) => return true,
+    }
+    false
+}
+
 /// A stand-in child.
 fn stand_in(args: &[String]) -> ! {
     let handle = |name| {
@@ -264,14 +291,19 @@ fn stand_in(args: &[String]) -> ! {
     .expect("the inherited pipes");
     // The supervisor makes both ends overlapped; this stand-in blocks on
     // each read and write.
-    let (commands, mut messages) = (
+    // The writer is shared with the thread that answers a held idle query,
+    // so pings are answered while it waits, as the real outpost's I/O
+    // thread answers them while its worker is busy.
+    let (commands, messages) = (
         BlockingReader::new(commands).expect("a reader"),
-        BlockingWriter::new(messages).expect("a writer"),
+        Arc::new(Mutex::new(BlockingWriter::new(messages).expect("a writer"))),
     );
     let listener = args.iter().any(|arg| arg == "--listener");
     let spare = value(args, "--spare");
-    let mut send = |message: &OutpostToSupervisor| {
-        write_message(&mut messages, message).expect("a message is written");
+    let writer = Arc::clone(&messages);
+    let send = move |message: &OutpostToSupervisor| {
+        let mut writer = writer.lock().expect("the writer");
+        write_message(&mut *writer, message).expect("a message is written");
     };
     let outpost_pid = Pid(std::process::id());
     let target = value(args, "--target-pid").map(|pid| Pid(pid.parse().expect("a pid")));
@@ -311,27 +343,9 @@ fn stand_in(args: &[String]) -> ! {
                     send(&fact);
                 }
             }
-            Ok(Some(SupervisorToOutpost::Assign { target_pid })) => match assignment_failure() {
-                None => send(&OutpostToSupervisor::Ready {
-                    outpost_pid,
-                    target_pid,
-                }),
-                Some(Failure::Exits) => std::process::exit(3),
-                Some(Failure::HookFails) => {
-                    send(&OutpostToSupervisor::Fault {
-                        detail: HOOK_FAULT.to_owned(),
-                    });
-                    std::process::exit(1);
-                }
-                Some(Failure::HookFailsAndApplicationExits) => {
-                    send(&OutpostToSupervisor::Fault {
-                        detail: HOOK_FAULT.to_owned(),
-                    });
-                    wait_for_exit(target_pid);
-                    std::process::exit(1);
-                }
-                Some(Failure::Mute) => mute = true,
-            },
+            Ok(Some(SupervisorToOutpost::Assign { target_pid })) => {
+                mute = assign(&send, outpost_pid, target_pid);
+            }
             Ok(Some(SupervisorToOutpost::DeliverFact { observed_at_ms, .. })) => {
                 send(&OutpostToSupervisor::Fault {
                     detail: format!("fact {observed_at_ms}"),
@@ -344,8 +358,13 @@ fn stand_in(args: &[String]) -> ! {
                 send(&OutpostToSupervisor::Fault {
                     detail: format!("idle query {round}"),
                 });
-                wait_for_answers_released();
-                send(&OutpostToSupervisor::IdleAnswer { round });
+                let messages = Arc::clone(&messages);
+                std::thread::spawn(move || {
+                    wait_for_answers_released();
+                    let mut writer = messages.lock().expect("the writer");
+                    write_message(&mut *writer, &OutpostToSupervisor::IdleAnswer { round })
+                        .expect("the answer is written");
+                });
             }
             Ok(Some(_)) => {}
             Err(error) => panic!("the command pipe failed: {error}"),
