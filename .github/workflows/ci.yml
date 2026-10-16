@@ -13,12 +13,28 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Started by hand (`gh workflow run ci.yml -f scenario=<name> -f repeat=<n>`)
+  # to run one end-to-end scenario n times on GitHub's runner, as evidence
+  # for an intermittent failure, without a push for each run. Only the e2e
+  # job runs, and every run's artifacts are kept (docs/tooling/e2e.md).
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: The end-to-end scenario to run, by its exact name
+        required: true
+        type: string
+      repeat:
+        description: How many times to run it, one after another
+        required: true
+        default: "10"
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   ci:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +63,7 @@ jobs:
   # The same checks on an ARM64 runner: nothing names a target, so this
   # job builds and tests ARM64, as `ci` does x64.
   ci-arm64:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: windows-11-arm
     steps:
       - uses: actions/checkout@v4
@@ -144,6 +161,8 @@ jobs:
         env:
           VERBATIM_E2E_ENDPOINT: 127.0.0.1:44001
           VERBATIM_E2E_SKIP_LOCAL_ONLY: "1"
+          E2E_SCENARIO: ${{ inputs.scenario }}
+          E2E_REPEAT: ${{ inputs.repeat }}
         shell: pwsh
         run: |
           $agent = Start-Process -FilePath "target\debug\verbatim-agent.exe" `
@@ -164,8 +183,20 @@ jobs:
             Write-Error "verbatim-agent never started listening on 127.0.0.1:44001"
             exit 1
           }
-          cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip measure_ --skip notepad_ --test-threads=1 2>&1 | Tee-Object -FilePath verbatim-e2e-test-output.log
-          $status = $LASTEXITCODE
+          if ($env:E2E_SCENARIO) {
+            # Started by hand: one scenario, run E2E_REPEAT times, each in
+            # its own test process as a suite run would run it; a failed
+            # run fails the step but the remaining runs still go ahead.
+            $status = 0
+            for ($run = 1; $run -le [int]$env:E2E_REPEAT; $run++) {
+              "run $run of $env:E2E_REPEAT" | Tee-Object -FilePath verbatim-e2e-test-output.log -Append
+              cargo test -p verbatim-e2e --test e2e -- --ignored --exact $env:E2E_SCENARIO --test-threads=1 2>&1 | Tee-Object -FilePath verbatim-e2e-test-output.log -Append
+              if ($LASTEXITCODE -ne 0) { $status = $LASTEXITCODE }
+            }
+          } else {
+            cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip measure_ --skip notepad_ --test-threads=1 2>&1 | Tee-Object -FilePath verbatim-e2e-test-output.log
+            $status = $LASTEXITCODE
+          }
           Stop-Process -Id $agent.Id -ErrorAction SilentlyContinue
           exit $status
       # Kept for passing runs as well as failing ones: each scenario's
@@ -181,4 +212,14 @@ jobs:
             verbatim-agent-stderr.log
             target/e2e-artifacts/
             !target/e2e-artifacts/history/
+          if-no-files-found: ignore
+      # A run started by hand repeats one scenario, and only the latest run
+      # is in the scenario's own directory, so each run's copy in the
+      # history (which leaves out the video) is kept as well.
+      - name: Upload every run's artifacts of a repeated scenario
+        if: always() && github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: verbatim-e2e-history
+          path: target/e2e-artifacts/history/
           if-no-files-found: ignore

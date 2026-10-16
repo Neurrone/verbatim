@@ -87,7 +87,12 @@ under it (`single_instance::acquire_replacing`'s own algorithm).
 runner with the same environment variable,
 `cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip measure_ --skip notepad_ --test-threads=1`,
 with `VERBATIM_E2E_SKIP_LOCAL_ONLY=1` as well (see the local-only scenarios
-below).
+below). Started by hand, as `gh workflow run ci.yml -f scenario=<name> -f
+repeat=<n>`, the workflow runs only its `e2e` job, which runs that one
+scenario n times, each in its own test process, and uploads every run's
+copy from the history (below) as the `verbatim-e2e-history` artifact, so
+an intermittent failure on GitHub's runner can be measured without a push
+for each run.
 
 Every scenario starts from the same desktop, recorded or not: the harness
 closes what an earlier run left (processes the agent launched, by their
