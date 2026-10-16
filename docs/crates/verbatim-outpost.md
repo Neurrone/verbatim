@@ -714,8 +714,10 @@ fault and exits with code 1 without `Ready`.
   event handler group on the desktop's root element. A UIA menu opening
   takes the focus's route: its marker, then its application's reading
   thread, which judges it as NVDA's automation event handler judges a
-  menu opening (the focus handler's checks but the duplicate test) and
-  reads it as a focus on the menu, with its ancestors; one that arrives
+  menu opening (the focus handler's checks but the duplicate test, with a
+  sender UI Automation counts as the current focus judged as that focus,
+  with its window and without the native check) and reads it as a focus
+  on the menu, with its ancestors; one that arrives
   while a focus event waits for or is in its read is dropped, as NVDA
   drops a menu opening while a focus is pending. A newer focus event, or
   menu opening, of an element replaces its waiting one, as NVDA's UIA

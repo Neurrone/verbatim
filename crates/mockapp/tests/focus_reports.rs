@@ -786,6 +786,82 @@ fn a_menu_opening_is_judged_as_a_focus_on_the_menu() {
     app.quit();
 }
 
+/// A UIA menu opening whose sender UI Automation counts as the current
+/// focus, the last focus the listener accepted with no newer focus queued
+/// since, is judged as that focus, as NVDA's automation event handler
+/// redirects it to its focus object (`docs/design/focus-pipeline.md`,
+/// section 18): with the focus's window and without NVDA's native check,
+/// so the windowless sender's nearest window is not read. Three calls: the
+/// comparison (`CompareElements`), the focus's keyboard focus, and the read
+/// (`Execute`).
+fn a_menu_opening_on_the_current_focus_is_judged_as_that_focus() {
+    let title = common::unique_title("mockapp-menu-opening-focus");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let button = client.focused();
+    let _ = outpost.uia_focus(&button);
+    let (judged, calls) = outpost.listener_read_as(&button, FocusEvent::MenuOpened);
+    let Judged::Read(read) = judged else {
+        panic!("the listener did not read the menu opening: {judged:?}");
+    };
+    assert_eq!(read.snapshot.name.as_deref(), Some("Original Name"));
+    assert_eq!(
+        (calls.uia, calls.msaa, calls.window_messages),
+        (3, 0, 0),
+        "the comparison, the focus's keyboard focus, and the read, and no nearest window"
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A UIA menu opening whose sender is not the current focus goes through
+/// NVDA's native check, its windowless sender's nearest window read: four
+/// calls, the comparison with the current focus, the nearest window, the
+/// sender's keyboard focus, and the read. Once Core has queued a focus the
+/// listener did not accept, as an MSAA focus, the current focus is no UIA
+/// element the listener holds, as NVDA's focus object is then no UIA
+/// object, and nothing is compared: three calls.
+fn a_menu_opening_on_another_element_is_judged_by_its_own_window() {
+    let title = common::unique_title("mockapp-menu-opening-other");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let _ = outpost.uia_focus(&client.focused());
+    app.send("set-focus slider1");
+    let slider = client.focused();
+    let (judged, calls) = outpost.listener_read_as(&slider, FocusEvent::MenuOpened);
+    let Judged::Read(read) = judged else {
+        panic!("the listener did not read the menu opening: {judged:?}");
+    };
+    assert_eq!(read.snapshot.name.as_deref(), Some("Level"));
+    assert_eq!(
+        (calls.uia, calls.msaa, calls.window_messages),
+        (4, 0, 0),
+        "the comparison, the nearest window, the keyboard focus, and the read"
+    );
+
+    outpost.listener_focus_queued(u64::MAX);
+    let (judged, calls) = outpost.listener_read_as(&slider, FocusEvent::MenuOpened);
+    let Judged::Read(read) = judged else {
+        panic!("the listener did not read the menu opening: {judged:?}");
+    };
+    assert_eq!(read.snapshot.name.as_deref(), Some("Level"));
+    assert_eq!(
+        (calls.uia, calls.msaa, calls.window_messages),
+        (3, 0, 0),
+        "the nearest window, the keyboard focus, and the read, and no comparison"
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 /// A focus on a menu item that no pattern makes checkable reads its legacy
 /// MSAA state, where a Windows Forms menu item says it is checked, inside
 /// the focus's one remote operation, the program choosing to by the
@@ -1098,6 +1174,14 @@ fn main() {
         (
             "a_menu_opening_is_judged_as_a_focus_on_the_menu",
             a_menu_opening_is_judged_as_a_focus_on_the_menu,
+        ),
+        (
+            "a_menu_opening_on_the_current_focus_is_judged_as_that_focus",
+            a_menu_opening_on_the_current_focus_is_judged_as_that_focus,
+        ),
+        (
+            "a_menu_opening_on_another_element_is_judged_by_its_own_window",
+            a_menu_opening_on_another_element_is_judged_by_its_own_window,
         ),
         (
             "a_menu_items_legacy_state_is_read_with_its_focus",

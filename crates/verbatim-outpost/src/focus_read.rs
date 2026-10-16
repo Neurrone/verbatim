@@ -26,7 +26,10 @@
 //!   switch, whose focus NVDA's File Explorer app module leaves unsaid,
 //!   are dropped; and a sender without the keyboard focus, read with a
 //!   plain property read, is dropped, as NVDA's `shouldAllowUIAFocusEvent`
-//!   drops it;
+//!   drops it; a menu opening is judged by NVDA's automation event
+//!   handler's checks instead, the same but for the repeat, and with a
+//!   sender UI Automation counts as the current focus judged as that
+//!   focus, with its window and without the native check;
 //! - then one remote operation from the sender: its `HasKeyboardFocus`
 //!   read again first, for a focus that moves on while it is read; then,
 //!   when the sender has
@@ -176,13 +179,15 @@ struct LastFocus {
 pub struct LastAccepted(Arc<Mutex<Option<Accepted>>>);
 
 /// The last focus accepted: the number of the reader that accepted it, the
-/// element, the event it came in, and whether a newer focus has been queued
-/// since, after which it is no repeat's evidence. It is kept until its
-/// reader replaces or releases it, so it is released on a thread in COM's
-/// apartment.
+/// element, the window it was judged with (NVDA's object's `windowHandle`),
+/// the event it came in, and whether a newer focus has been queued since,
+/// after which it is no repeat's evidence and not the current focus. It is
+/// kept until its reader replaces or releases it, so it is released on a
+/// thread in COM's apartment.
 struct Accepted {
     reader: u64,
     element: AgileReference<IUIAutomationElement>,
+    window: isize,
     arrival: Arrival,
     superseded: bool,
 }
@@ -202,23 +207,33 @@ impl LastAccepted {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The last focus accepted, if there is one and it can be had on this
-    /// thread.
-    fn element(&self) -> Option<IUIAutomationElement> {
+    /// The last focus accepted, with the window it was judged with, if
+    /// there is one, no newer focus has been queued since, and it can be had
+    /// on this thread: the current focus, as far as the listener can hold
+    /// it, which NVDA's automation event handler compares a menu opening's
+    /// sender with.
+    fn current(&self) -> Option<(IUIAutomationElement, isize)> {
         self.lock()
             .as_ref()
             .filter(|accepted| !accepted.superseded)
-            .and_then(|accepted| accepted.element.resolve().ok())
+            .and_then(|accepted| {
+                accepted
+                    .element
+                    .resolve()
+                    .ok()
+                    .map(|element| (element, accepted.window))
+            })
     }
 
     /// Makes `element`, which reader `reader` accepted from the event
-    /// `arrival`, the last focus accepted.
-    fn accept(&self, reader: u64, element: &IUIAutomationElement, arrival: Arrival) {
+    /// `arrival` and judged with window `window`, the last focus accepted.
+    fn accept(&self, reader: u64, element: &IUIAutomationElement, window: isize, arrival: Arrival) {
         match AgileReference::new(element) {
             Ok(element) => {
                 *self.lock() = Some(Accepted {
                     reader,
                     element,
+                    window,
                     arrival,
                     superseded: false,
                 });
@@ -431,7 +446,8 @@ impl FocusReader {
                     element: element.clone(),
                     ancestors: Vec::new(),
                 });
-                self.last_accepted.accept(self.number, element, arrival);
+                self.last_accepted
+                    .accept(self.number, element, nearest, arrival);
                 Judged::Read(Box::new(UiaFocusRead {
                     hwnd,
                     focus_window,
@@ -610,7 +626,8 @@ impl FocusReader {
             element: element.clone(),
             ancestors: ancestors.clone().unwrap_or_default(),
         });
-        self.last_accepted.accept(self.number, element, arrival);
+        self.last_accepted
+            .accept(self.number, element, nearest, arrival);
         Judged::Read(Box::new(UiaFocusRead {
             hwnd,
             focus_window,
@@ -630,15 +647,20 @@ impl FocusReader {
     /// `runtime_id`, is read: a port of NVDA's focus handler,
     /// `IUIAutomationFocusChangedEventHandler_HandleFocusChangedEvent`
     /// (`UIAHandler/__init__.py` 874 to 958), step by step in its order
-    /// (`docs/design/focus-pipeline.md`, section 18). Answers the sender's
-    /// nearest window, or why the event is dropped.
+    /// (`docs/design/focus-pipeline.md`, section 18). Answers the window
+    /// the focus is judged with, the sender's nearest window unless a menu
+    /// opening is redirected, or why the event is dropped.
     ///
     /// A menu opening (`kind`) goes through NVDA's automation event
-    /// handler instead, which makes the same checks in the same order but
-    /// the duplicate test (step 3), which is the focus handler's alone; its
-    /// drop while a focus is pending is made as it arrives
-    /// (`Readers::focus_pending`). As NVDA queues it as a focus on the
-    /// menu, it becomes the last focus accepted.
+    /// handler instead, `IUIAutomationEventHandler_HandleAutomationEvent`
+    /// (757 to 868), which has no duplicate test (step 3) and, before the
+    /// native check (step 2), compares the sender with the current focus:
+    /// a sender UI Automation counts as the current focus is redirected to
+    /// it, judged with the focus's window and its keyboard focus read from
+    /// the focus's element, without the native check. Its drop while a
+    /// focus is pending is made as it arrives (`Readers::focus_pending`).
+    /// As NVDA queues it as a focus on the menu, it becomes the last focus
+    /// accepted.
     fn judge_before_reading(
         &self,
         element: &IUIAutomationElement,
@@ -654,62 +676,76 @@ impl FocusReader {
         if hwnd != 0 && window_is_hung(hwnd) {
             return Err("its window is hung");
         }
-        // 2. Whether the sender is native UIA (`isNativeUIAElement`,
-        // `UIAHandler/__init__.py` 1515 to 1575): its nearest window, its
-        // own else the nearest ancestor's (`getNearestWindowHandle`, one
-        // call), must use UIA as NVDA decides it (`isUIAWindow`: the class
-        // lists, then the window's own provider), or NVDA ignores the event
-        // ("Ignoring for non native element") and the window's MSAA events
-        // speak for it. A sender with no window anywhere above it, or whose
-        // walk to one fails, is not native either, and NVDA's object for it
-        // could not be made without a window ("no windowHandle",
-        // `NVDAObjects/UIA/__init__.py` 1598 to 1606). Windows Terminal's
-        // second identity of its terminal can be such an element, its
-        // island not yet joined to its window (section 16.8). NVDA's two
-        // exceptions, a NetUI container in a Word document and Internet
-        // Explorer 9's downloads list, are Office's and Internet
-        // Explorer's, and are not ported.
-        let nearest = if hwnd == 0 {
-            verbatim_uia::nearest_window_handle(element)
-                .ok_or("it has no window above it, so NVDA makes no object for it")?
-        } else {
-            hwnd
+        // The current focus, as far as the listener holds it: the last
+        // focus accepted, while no newer focus has been queued (section
+        // 16.3). Core's current focus is the last focus it queued, and the
+        // listener holds an element only for a UIA focus it accepted
+        // itself. An MSAA focus, a foreground change, or a focus Core asked
+        // for supersedes it, and NVDA's last focus or focus object is then
+        // no UIA object either, so nothing is compared with it.
+        let current = self.last_accepted.current();
+        let compare = || {
+            let same = current
+                .as_ref()
+                .map(|(focus, _)| self.uia.compare_elements(element, focus));
+            if tracing::enabled!(tracing::Level::DEBUG) {
+                Self::log_sender(sender, runtime_id, same.as_ref());
+            }
+            same
         };
-        if !uses_uia(&self.arbitrator, nearest) {
-            return Err("its window does not use UIA, so its MSAA events speak for it");
-        }
-        // 3. NVDA's duplicate rule (`UIAHandler/__init__.py` 902 to 923;
-        // section 16.3): the sender is the last focus accepted, by any of
-        // the listener's readers, as UIA compares them, and that element
-        // still has the keyboard focus, read live. A comparison that fails
-        // is no duplicate, as NVDA lets the event through on a COM error,
-        // and so is a keyboard focus read that fails: the earlier element is
-        // gone. Two calls, the second only for an element UIA equates.
-        let last = self.last_accepted.element();
-        let same_as_last_accepted = last
-            .as_ref()
-            .map(|last| self.uia.compare_elements(element, last));
-        if tracing::enabled!(tracing::Level::DEBUG) {
-            Self::log_sender(sender, runtime_id, same_as_last_accepted.as_ref());
-        }
-        if kind == FocusEvent::Focus
-            && let (Some(Ok(true)), Some(last)) = (&same_as_last_accepted, &last)
-            && last.has_keyboard_focus().unwrap_or(false)
-        {
-            return Err("a repeat of the last focus, which still has the keyboard focus");
-        }
-        // 4. NVDA's acceptance test against the same nearest window
-        // (`shouldAcceptEvent`, `UIAHandler/__init__.py` 924 to 930;
-        // sections 16.2 and 16.3). A focus that fails is dropped and never
-        // becomes the last accepted, so the same element's focus once its
-        // window is in front, as a console's text area's comes, is no
-        // repeat.
+        // The window the focus is judged with, and the element whose
+        // keyboard focus decides it (step 6): NVDA's object's.
+        let (window, subject) = match kind {
+            FocusEvent::MenuOpened => {
+                // NVDA's automation event handler (`UIAHandler/__init__.py`
+                // 806 to 824) compares the sender with its focus object's
+                // element (`compareElements` with `api.getFocusObject()`,
+                // when that is a UIA object) before anything else, and a
+                // sender that is the focus is the focus object: the event
+                // goes to it, judged with its window, and the native check
+                // is not made. NVDA catches no error from the comparison, so
+                // one that fails drops the event.
+                match (compare(), current.as_ref()) {
+                    (Some(Err(_)), _) => {
+                        return Err("its comparison with the current focus failed");
+                    }
+                    (Some(Ok(true)), Some((focus, window))) => (*window, focus),
+                    _ => (self.native_window(element, hwnd)?, element),
+                }
+            }
+            // Only focuses and menu openings are read; a selection or a
+            // notification is checked ([`Self::check_fact`]).
+            FocusEvent::Focus | FocusEvent::Selection | FocusEvent::Notification => {
+                let nearest = self.native_window(element, hwnd)?;
+                // 3. NVDA's duplicate rule (`UIAHandler/__init__.py` 902 to
+                // 923; section 16.3): the sender is the last focus accepted,
+                // by any of the listener's readers, as UIA compares them,
+                // and that element still has the keyboard focus, read live.
+                // A comparison that fails is no duplicate, as NVDA lets the
+                // event through on a COM error, and so is a keyboard focus
+                // read that fails: the earlier element is gone. Two calls,
+                // the second only for an element UIA equates.
+                if let (Some(Ok(true)), Some((last, _))) = (compare(), current.as_ref())
+                    && kind == FocusEvent::Focus
+                    && last.has_keyboard_focus().unwrap_or(false)
+                {
+                    return Err("a repeat of the last focus, which still has the keyboard focus");
+                }
+                (nearest, element)
+            }
+        };
+        // 4. NVDA's acceptance test against the same window
+        // (`shouldAcceptEvent`, `UIAHandler/__init__.py` 924 to 930, and
+        // for a menu opening 825 to 837; sections 16.2 and 16.3). A focus
+        // that fails is dropped and never becomes the last accepted, so the
+        // same element's focus once its window is in front, as a console's
+        // text area's comes, is no repeat.
         let windows = SystemWindows {
             foreground: (self.foreground)(),
         };
         if !accepts_event(
             EventName::GainFocus,
-            nearest,
+            window,
             &windows,
             &RequestedEvents::default(),
         ) {
@@ -731,15 +767,16 @@ impl FocusReader {
         // handles the focus (`appModules/explorer.py` 443 to 449). NVDA
         // makes such a window its focus object before the app module
         // ignores it; that is not ported here.
-        if is_shell_transition_window(nearest) {
+        if is_shell_transition_window(window) {
             return Err("a shell window that only stages a switch");
         }
         // 6. NVDA's last check before it queues the focus,
         // `shouldAllowUIAFocusEvent` (`UIAHandler/__init__.py` 948,
         // `NVDAObjects/UIA/__init__.py` 1632): the sender's keyboard focus,
         // read live with a plain property read (`CurrentHasKeyboardFocus`
-        // on the event's element, client side), a failed read letting the
-        // event through.
+        // on the event's element, client side, or on the focus's for a
+        // menu opening redirected to it), a failed read letting the event
+        // through.
         //
         // Until 2026-10-12 this check was made only inside the remote
         // operation that reads the focus (Option B, 2026-10-06), its first
@@ -760,8 +797,40 @@ impl FocusReader {
         // here, before the read; the remote operation keeps its own check,
         // for a focus that moves on while it is read
         // (`docs/design/focus-pipeline.md`, section 16.8).
-        if matches!(element.has_keyboard_focus(), Ok(false)) {
+        if matches!(subject.has_keyboard_focus(), Ok(false)) {
             return Err("its element no longer has the keyboard focus");
+        }
+        Ok(window)
+    }
+
+    /// Step 2: whether the sender, `element`, whose own window is `hwnd`, is
+    /// native UIA (`isNativeUIAElement`, `UIAHandler/__init__.py` 1515 to
+    /// 1575): its nearest window, its own else the nearest ancestor's
+    /// (`getNearestWindowHandle`, one call), must use UIA as NVDA decides
+    /// it (`isUIAWindow`: the class lists, then the window's own provider),
+    /// or NVDA ignores the event ("Ignoring for non native element") and
+    /// the window's MSAA events speak for it. A sender with no window
+    /// anywhere above it, or whose walk to one fails, is not native either,
+    /// and NVDA's object for it could not be made without a window ("no
+    /// windowHandle", `NVDAObjects/UIA/__init__.py` 1598 to 1606). Windows
+    /// Terminal's second identity of its terminal can be such an element,
+    /// its island not yet joined to its window (section 16.8). NVDA's two
+    /// exceptions, a `NetUI` container in a Word document and Internet
+    /// Explorer 9's downloads list, are Office's and Internet Explorer's,
+    /// and are not ported. Answers the nearest window.
+    fn native_window(
+        &self,
+        element: &IUIAutomationElement,
+        hwnd: isize,
+    ) -> Result<isize, &'static str> {
+        let nearest = if hwnd == 0 {
+            verbatim_uia::nearest_window_handle(element)
+                .ok_or("it has no window above it, so NVDA makes no object for it")?
+        } else {
+            hwnd
+        };
+        if !uses_uia(&self.arbitrator, nearest) {
+            return Err("its window does not use UIA, so its MSAA events speak for it");
         }
         Ok(nearest)
     }
@@ -770,15 +839,16 @@ impl FocusReader {
     /// asks to see of each read before the duplicate rule is built on
     /// `CompareElements`: the sender's runtime id, class name, framework,
     /// and own native window handle, `hwnd`, and whether UI Automation
-    /// counts it as the same element as the last focus any of the
-    /// listener's readers accepted, in any application
-    /// (`same_as_last_accepted`, the duplicate rule's comparison). All but
+    /// counts it as the same element as the current focus, the last focus
+    /// any of the listener's readers accepted, in any application, while no
+    /// newer focus has been queued (`same_as_current`, the duplicate rule's
+    /// comparison, and a menu opening's with the focus). All but
     /// the comparison come from the event's cache, as NVDA's debug strings
     /// do; nothing is read live for the log.
     fn log_sender(
         sender: &ListenerEvent,
         runtime_id: &[i32],
-        same_as_last_accepted: Option<&windows::core::Result<bool>>,
+        same_as_current: Option<&windows::core::Result<bool>>,
     ) {
         // From the event's cache, as NVDA's debug strings read it.
         let class_name = &sender.role.class_name;
@@ -788,7 +858,7 @@ impl FocusReader {
             ?class_name,
             ?framework,
             hwnd = sender.role.hwnd,
-            ?same_as_last_accepted,
+            ?same_as_current,
             "UIA focus sender"
         );
     }
