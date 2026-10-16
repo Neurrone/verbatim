@@ -68,12 +68,16 @@ in*, in a loop every 50 ms until the heartbeat resumes:
   making the stuck call raise `RPC_E_CALL_CANCELED` in the caller.
 - Window messages: NVDA's helper DLL hooks `SendMessage*` in NVDA's own
   process (`nvdaHelper/local/nvdaHelperLocal.cpp`,
-  `fake_SendMessageTimeoutW` etc. installed via Detours-style import
-  hooking) so every send becomes `SendMessageTimeout` with
-  `SMTO_ABORTIFHUNG` plus a 60 s cap, checked against a shared
-  `cancelCallEvent` in 10 ms slices — the watchdog sets that event
-  during recovery, aborting *all* in-flight and future sends until the
-  core is alive again. A cancelled send is surfaced to Python by an
+  `fake_SendMessageTimeoutW` etc., installed with Detours, which patches
+  the functions themselves, so every caller in NVDA's process is
+  affected) so every send to another thread becomes `SendMessageTimeout`
+  with `SMTO_ABORTIFHUNG` (except for messages in the application range
+  0x8000 to 0xBFFF), its timeout capped at 10 s, sent in 400 ms slices
+  (`CANCELSENDMESSAGE_CHECK_INTERVAL`) with a check of a shared
+  `cancelCallEvent` before each slice (`cancellableSendMessageTimeoutTemplate`).
+  A plain `SendMessage` is given a 60 s timeout, which the cap reduces
+  to 10 s. The watchdog sets the event during recovery, aborting *all*
+  in-flight and future sends until the core is alive again. A cancelled send is surfaced to Python by an
   exported callback that raises `exceptions.CallCancelled` in the
   calling frame via `sys.setprofile` trickery
   (`watchdog._notifySendMessageCancelled`).
@@ -81,8 +85,121 @@ in*, in a loop every 50 ms until the heartbeat resumes:
   the call runs on a sacrificial `CancellableCallThread` while the main
   thread waits on {done, cancel} events; on cancellation the worker
   thread is *abandoned* (marked unusable, replaced next time) since the
-  call inside it may never return. `cancellableSendMessage` wraps the
-  helper's cancellable send for explicit use.
+  call inside it may never return. Off the main thread, or while the
+  watchdog is suspended, `cancellableExecute` simply makes the call,
+  so it protects nothing on the UIA event threads. `cancellableSendMessage`
+  wraps the helper's cancellable send for explicit use.
+
+`CoCancelCall` is aimed at the main thread only, and only COM calls
+that go through COM's own channel can be cancelled; a cancelled call
+surfaces as `exceptions.CallCancelled`, which a comtypes patch raises
+in place of the `RPC_E_CALL_CANCELED` error
+(`monkeyPatches/comtypesMonkeyPatches.py`, `new_WINFUNCTYPE`).
+`CallCancelled` derives from `Exception`, not from `COMError`, so the
+many property getters that catch only `COMError` let it through. NVDA's
+own comment on `UiaHasServerSideProvider` calls it "a blocking
+cross-process call that the watchdog cannot otherwise cancel"
+(`UIAHandler._isUIAWindowHelper`); that UIA client calls in general
+are not cancelled by `CoCancelCall` is a reasonable inference from
+it, not something the source states.
+
+## When an application stops responding
+
+NVDA has no special case for a focus that arrives just before its
+application stops responding, and no mode that reports a focus "from
+the event" without its ancestors. What happens follows from the
+ordinary mechanisms above plus one check, Windows' own verdict that an
+application is hung (`winUser.isHungAppWindow`, which calls
+`IsHungAppWindow`). Windows gives that verdict once the window's thread
+has not retrieved messages for about five seconds; that figure comes
+from Microsoft's documentation of `IsHungAppWindow`, not from NVDA's
+source.
+
+NVDA sets neither UIA timeout: nothing in its source or helper sets
+`ConnectionTimeout` or `TransactionTimeout`, so UIA's defaults apply
+(two seconds to connect to a provider and 20 seconds for a call, per
+Microsoft's documentation).
+
+Once Windows reports the application hung, NVDA stops making new
+calls into it:
+
+- `winEventToNVDAEvent` (`IAccessibleHandler/__init__.py`) drops every
+  winevent whose window belongs to a hung application, after the
+  ghost-window check and before any object is built.
+- Every UIA event handler (focus changed, automation event, property
+  changed, notification, active text position changed;
+  `UIAHandler/__init__.py`) first asks `_shouldSkipEventForHungWindow`
+  (`UIAHandler/utils.py`), which reads the sender's cached native window
+  handle (cached by the base cache request every registration carries,
+  never fetched live) and drops the event when that window is hung. An
+  element without a window handle of its own is never treated as hung
+  by this check.
+- `Window.getPossibleAPIClasses` (`NVDAObjects/window/__init__.py`)
+  offers no UIA, MSAA or Java Access Bridge class for a hung window,
+  so any object built for it, including a parent reached through
+  `GetAncestor`, is a plain `Window`, whose name is read with
+  `InternalGetWindowText` without calling into the application.
+  `isUsableWindow` treats a hung window as unusable, so the window-level
+  sibling and child walks skip it.
+
+Before that verdict, which is the case for a focus event raised just
+before the application stopped, the event is processed normally and its
+calls block:
+
+- MSAA: the winevent hook is out of context, so the event itself
+  reaches NVDA, and the main thread builds the object
+  (`AccessibleObjectFromEvent`, then `IAccessible` construction) and
+  blocks. The watchdog sees the main thread stop after 0.5 s and
+  starts recovery at once when the foreground window no longer contains
+  NVDA's current focus or the focused window is on a different thread
+  from it (`_shouldRecoverAfterMinTimeout`); when the application took
+  the focus from another application this is true, since NVDA's focus
+  is still the old one. Otherwise it waits up to 10 s. Recovery cancels
+  the call: `accessibleObjectFromEvent` catches any exception and
+  returns nothing, so the focus event is dropped; a `CallCancelled`
+  raised later, from a getter that catches only `COMError`, ends the
+  whole core cycle (`CorePump.Notify` logs "errors in this core pump
+  cycle"), and the winevents already taken from the limiter for that
+  cycle are lost. Nothing is spoken for the focus. A window message
+  that is still in flight when Windows declares the application hung
+  returns at its next 400 ms slice, since `SMTO_ABORTIFHUNG` is set on
+  every slice.
+- UIA: with enhanced event processing on (the default), every UIA
+  handler runs on the rate limiter's single flusher thread
+  (`nvdaHelper/local/UIAEventLimiter/rateLimitedEventHandler.cpp`,
+  `flushEvents`), one event after another. The focus handler makes live
+  calls into the application before queuing the event
+  (`getNearestWindowHandle`'s `NormalizeElementBuildCache`,
+  `UiaHasServerSideProvider` when the 500 ms window verdict has lapsed,
+  and `shouldAllowUIAFocusEvent`'s `currentHasKeyboardFocus`, which
+  treats an error as "allow"). The watchdog does not watch this thread,
+  so each call lasts until the application answers or UIA's timeout
+  expires, and every UIA event from every application waits behind it,
+  coalesced by element and event type. If the event is queued, the main
+  thread then makes more live calls: the parent walk in
+  `api.setFocusObject` (`GetParentElementBuildCache`), and in
+  `event_gainFocus` the prefetch (`buildUpdatedCache`) and property
+  reads. A parent fetch that fails with a `COMError` falls back to the
+  window parent, so the ancestors become plain windows once the
+  application is flagged hung. The values cached with the event
+  (`baseCachePropertyIDs`, including the name; the role comes from the
+  cached control type) are used only within the core cycle in which the
+  object was created, because `AutoPropertyObject.invalidateCaches` at
+  the end of every cycle discards them (`core.py`, `CorePump.Notify`);
+  after that, reads are live and a failed name read gives an empty name.
+
+During recovery (`isAttemptingRecovery`), NVDA executes no input
+gestures: keys and mouse input pass to the system unhandled
+(`inputCore.manager.executeGesture`, `keyboardHandler`,
+`winInputHook.mouseHook`). `api.setFocusObject` calls `watchdog.alive()`
+inside its ancestor loop, so an ancestor walk that makes progress ends
+recovery.
+
+Nothing is replayed when the application recovers. Dropped events are
+gone, nothing re-reads the focus, and NVDA's focus stays whatever it
+last committed (the previous application's object, if the dropped event
+was the one bringing focus here) until the application raises another
+focus event or the user moves the focus.
 
 Crash handling is adjacent (`initialize()`): an unhandled-exception
 filter writes a minidump and restarts NVDA, with a crash-loop breaker

@@ -110,7 +110,12 @@ winevent limiter.
 Each handler (`IUIAutomationFocusChangedEventHandler_...`,
 `IUIAutomationEventHandler_HandleAutomationEvent`,
 `IUIAutomationPropertyChangedEventHandler_...`) applies, in order:
-startup/shutdown guards; `isNativeUIAElement` — the element must come
+startup/shutdown guards; the hung-application check
+(`_shouldSkipEventForHungWindow`, which drops the event when the
+sender's cached window handle belongs to an application Windows
+reports hung, and never fires for an element without a window handle
+of its own; [Main loop and watchdog](main-loop-and-watchdog.md));
+`isNativeUIAElement` — the element must come
 from a window NVDA has *decided* is UIA (below), dropping events from
 proxied-MSAA elements (those are MSAA's job) and from NVDA's own
 process; and per-event special cases (for example, redundant
