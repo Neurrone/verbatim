@@ -11,10 +11,9 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumChildWindows, EnumWindows, GA_PARENT, GA_ROOT, GA_ROOTOWNER, GUITHREADINFO, GWL_EXSTYLE,
-    GetAncestor, GetForegroundWindow, GetGUIThreadInfo, GetPropW, GetWindowLongW,
-    GetWindowThreadProcessId, InternalGetWindowText, IsChild, IsHungAppWindow, IsWindow,
-    IsWindowVisible, WS_EX_TOPMOST,
+    EnumWindows, GA_PARENT, GA_ROOT, GA_ROOTOWNER, GUITHREADINFO, GWL_EXSTYLE, GetAncestor,
+    GetForegroundWindow, GetGUIThreadInfo, GetPropW, GetWindowLongW, GetWindowThreadProcessId,
+    InternalGetWindowText, IsChild, IsHungAppWindow, IsWindow, IsWindowVisible, WS_EX_TOPMOST,
 };
 use windows::core::{BOOL, HSTRING, s, w};
 
@@ -433,29 +432,6 @@ pub(crate) fn top_level_windows(target_pid: u32) -> Vec<isize> {
         let _ = EnumWindows(Some(visit), LPARAM((&raw mut search) as isize));
     }
     search.windows
-}
-
-/// Every descendant window of `parent`, in the order `EnumChildWindows`
-/// gives them: each child, then its own descendants. A local enumeration.
-pub(crate) fn descendant_windows(parent: isize) -> Vec<isize> {
-    unsafe extern "system" fn visit(window: HWND, lparam: LPARAM) -> BOOL {
-        // SAFETY: `lparam` is the list passed below, alive for the call.
-        let windows = unsafe { &mut *(lparam.0 as *mut Vec<isize>) };
-        windows.push(window.0 as isize);
-        BOOL::from(true)
-    }
-    let mut windows: Vec<isize> = Vec::new();
-    // SAFETY: `visit` only pushes onto the list, which outlives the
-    // synchronous EnumChildWindows call; an invalid parent enumerates
-    // nothing.
-    unsafe {
-        let _ = EnumChildWindows(
-            Some(hwnd(parent)),
-            Some(visit),
-            LPARAM((&raw mut windows) as isize),
-        );
-    }
-    windows
 }
 
 /// Waits, for as long as it takes, for process `pid` to exit, and says

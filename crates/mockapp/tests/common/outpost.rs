@@ -599,21 +599,6 @@ impl OutpostUnderTest {
         (judged, verbatim_uia::calls::take())
     }
 
-    /// Runs UIA's one-time setup in `app`, as the focus listener's thread
-    /// for it does before the supervisor gives it an outpost
-    /// (`docs/design/focus-pipeline.md`, section 20), on this thread, with
-    /// `hint` the window its first fact named, and returns what it found
-    /// and the calls it made.
-    pub fn listener_set_up(
-        &self,
-        app: &super::MockApp,
-        hint: isize,
-    ) -> (verbatim_outpost::set_up::SetUpResult, CallCounts) {
-        let _ = verbatim_uia::calls::take();
-        let result = self.reader.borrow_mut().set_up(Pid(app.pid()), hint);
-        (result, verbatim_uia::calls::take())
-    }
-
     /// Tells the listener's reader that Core took another event, observed
     /// at `observed_at_ms`, as the focus, as the supervisor tells the
     /// listener ([`SupervisorToOutpost::FocusQueued`]).
@@ -628,7 +613,6 @@ impl OutpostUnderTest {
             read @ Judged::Read(_) => read.into_fact(0),
             Judged::Dropped(reason) => panic!("the listener dropped the focus: {reason}"),
             Judged::Passed(fact) => panic!("a focus read passed a fact on: {fact:?}"),
-            Judged::SetUp(result) => panic!("a focus read answered a setup: {result:?}"),
         }
     }
 

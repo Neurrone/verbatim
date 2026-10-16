@@ -56,10 +56,6 @@ name = "events"
 harness = false
 
 [[test]]
-name = "first_sight"
-harness = false
-
-[[test]]
 name = "focus_reports"
 harness = false
 

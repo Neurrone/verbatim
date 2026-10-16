@@ -51,10 +51,7 @@
 //! own thread. One exposure is UIA's own and cannot be contained here: a
 //! hung window named in a focus `WinEvent` holds UIA's delivery of every
 //! focus event to the listener until it answers (section 12.11), as it
-//! holds NVDA's. The reading threads also do UIA's one-time setup in each
-//! new application before the supervisor gives it an outpost (section 20,
-//! [`crate::set_up`]); a setup the application does not answer in time is
-//! waited for on a thread of its own, outside the watchdog.
+//! holds NVDA's.
 //!
 //! The hand-over of MSAA events (`docs/design/focus-pipeline.md`, section
 //! 12.4, "The MSAA hand-over, exactly"): every application's outpost takes
@@ -96,11 +93,11 @@
 //! [--classic-uia]` — the same binary as a per-application outpost, with no
 //! target pid, supervised by the same machinery.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::io;
 use std::os::windows::io::OwnedHandle;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -127,17 +124,14 @@ use crate::OutpostOptions;
 use crate::arbitration::window_class_name;
 use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use crate::focus_read::{
-    Arrival, FocusEvent, FocusReader, Judged, LastAccepted, Meta, NO_THREAD, NOT_IN_TIME,
-    NOT_RETURNED, READ_DEADLINE, Readers, Reading, SetUpResult,
+    Arrival, FocusEvent, FocusReader, Judged, LastAccepted, Meta, READ_DEADLINE, Readers, Reading,
 };
 use crate::outpost::now_ms;
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::protocol::{
-    DeliveredFact, EventTiming, FactKey, ListenerFact, OutpostToSupervisor, SetUpOutcome,
-    SupervisorToOutpost, UiaSnapshotFact, WinEventStamp, decode_message, hop_us, now_us,
-    put_message,
+    DeliveredFact, EventTiming, FactKey, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
+    UiaSnapshotFact, WinEventStamp, decode_message, hop_us, now_us, put_message,
 };
-use crate::set_up;
 use crate::supervisor::IgnoredProcesses;
 
 /// How long after a menu or the Alt+Tab switcher closes the listener waits
@@ -535,12 +529,6 @@ impl Outgoing {
         sent(&self.sender.send(Sent::Urgent(message)));
     }
 
-    /// Sends `message` behind every fact waiting, never merged: the
-    /// answers about UIA's setup in an application.
-    fn behind_facts(&self, message: OutpostToSupervisor) {
-        sent(&self.sender.send(Sent::Fact(None, message, None)));
-    }
-
     /// Sends a fact, replacing any waiting fact for the same element and
     /// kind. `raised_ms_ago` is how long before now Windows raised the event,
     /// and `win_event` which thread raised it and when, for a `WinEvent`'s
@@ -685,8 +673,6 @@ impl Outgoing {
 /// The focus listener: owns its subscriptions for the whole life of the
 /// process.
 struct Listener {
-    /// Whether the listener runs remote operations ([`OutpostOptions`]).
-    remote: bool,
     outgoing: Arc<Outgoing>,
     readers: Arc<Readers<UiaFocusReading>>,
     /// The last focus any reading thread accepted, which Core's queued
@@ -701,52 +687,27 @@ struct Listener {
 
 /// The reading threads' work in the listener: each UIA focus event judged
 /// and read from its own element ([`FocusReader`]), and what became of it
-/// sent to its application's outpost behind its marker; and UIA's one-time
-/// setup in each application the supervisor is about to give an outpost
-/// (`docs/design/focus-pipeline.md`, section 20), answered to the
-/// supervisor.
+/// sent to its application's outpost behind its marker.
 struct UiaFocusReading {
     /// Whether reads may use remote operations ([`OutpostOptions`]).
     remote: bool,
     outgoing: Arc<Outgoing>,
     /// The last focus any reading thread accepted, which they share.
     last_accepted: LastAccepted,
-    /// The threads waiting for an application that did not answer its
-    /// setup, and what stops them at the listener's shutdown.
-    waits: Mutex<Vec<std::thread::JoinHandle<()>>>,
-    stop: Arc<AtomicBool>,
-    /// The applications released without a setup, since no window of
-    /// theirs had a UIA provider of its own: the first focus the listener
-    /// reads in one may be the process's first remote operation, which
-    /// collides with a connection the outpost makes meanwhile, and is
-    /// logged so how often can be measured (section 20.2).
-    released_without_set_up: Mutex<HashSet<Pid>>,
 }
 
-/// What a reading thread does for one item of an application's queue.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a job is queued once and moved, never stored in bulk"
-)]
-enum ListenerJob {
-    /// A UIA event: its element, its application's keyboard focus window
-    /// when it arrived, for an element that is not a window, its runtime
-    /// id from the event's cache, the kind of event, and, for a selection
-    /// or a notification, the fact captured from it.
-    Event(
+impl Reading for UiaFocusReading {
+    /// The event's element, its application's keyboard focus window when
+    /// it arrived, for an element that is not a window, its runtime id
+    /// from the event's cache, the kind of event, and, for a selection or a
+    /// notification, the fact captured from it.
+    type Job = (
         Agile<ListenerEvent>,
         isize,
         Vec<i32>,
         FocusEvent,
         Option<DeliveredFact>,
-    ),
-    /// UIA's one-time setup in the application, with the window its first
-    /// fact named, or 0 ([`FocusReader::set_up`]).
-    SetUp(Pid, isize),
-}
-
-impl Reading for UiaFocusReading {
-    type Job = ListenerJob;
+    );
     type Reader = FocusReader;
 
     fn reader(&self) -> Option<FocusReader> {
@@ -759,18 +720,14 @@ impl Reading for UiaFocusReading {
         }
     }
 
-    fn read(&self, reader: Option<&mut FocusReader>, meta: Meta, job: Self::Job) -> Judged {
+    fn read(
+        &self,
+        reader: Option<&mut FocusReader>,
+        meta: Meta,
+        (element, focus_window, _, kind, fact): Self::Job,
+    ) -> Judged {
         let Some(reader) = reader else {
-            return match job {
-                ListenerJob::SetUp(..) => Judged::SetUp(SetUpResult::Over(SetUpOutcome::Failed)),
-                ListenerJob::Event(..) => Judged::Dropped("its reading thread has no UIA client"),
-            };
-        };
-        let (element, focus_window, kind, fact) = match job {
-            ListenerJob::SetUp(pid, hint) => return Judged::SetUp(reader.set_up(pid, hint)),
-            ListenerJob::Event(element, focus_window, _, kind, fact) => {
-                (element, focus_window, kind, fact)
-            }
+            return Judged::Dropped("its reading thread has no UIA client");
         };
         match (element.resolve(), fact) {
             (Ok(sender), Some(fact)) => reader.check_fact(&sender, fact),
@@ -787,17 +744,13 @@ impl Reading for UiaFocusReading {
         }
     }
 
-    fn key<'a>(&self, job: &'a Self::Job) -> Option<(FocusEvent, &'a [i32])> {
-        match job {
-            // A newer setup of one application replaces one still waiting,
-            // which is then not answered: the newer one is.
-            ListenerJob::SetUp(..) => Some((FocusEvent::SetUp, &[])),
-            // A notification is replaced only by one of the same kind,
-            // processing, and activity, as the intake replaces it.
-            ListenerJob::Event(_, _, runtime_id, kind, _) => {
-                (*kind != FocusEvent::Notification).then_some((*kind, runtime_id.as_slice()))
-            }
-        }
+    fn key<'a>(
+        &self,
+        (_, _, runtime_id, kind, _): &'a Self::Job,
+    ) -> Option<(FocusEvent, &'a [i32])> {
+        // A notification is replaced only by one of the same kind,
+        // processing, and activity, as the intake replaces it.
+        (*kind != FocusEvent::Notification).then_some((*kind, runtime_id.as_slice()))
     }
 
     fn finish(&self, reader: Option<FocusReader>) {
@@ -811,122 +764,14 @@ impl Reading for UiaFocusReading {
     }
 
     fn outcome(&self, pid: Pid, meta: Meta, judged: Judged) {
-        if meta.marker == SET_UP_MARKER {
-            self.set_up_outcome(pid, &judged);
-            return;
-        }
-        match &judged {
-            Judged::Dropped(reason) => {
-                tracing::debug!(%pid, marker = meta.marker, reason, "UIA focus dropped");
-            }
-            Judged::Read(_)
-                if self.remote
-                    && self
-                        .released_without_set_up
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .remove(&pid) =>
-            {
-                tracing::info!(%pid, "the first UIA focus read in an application given its outpost without UIA's setup ran there; an outpost connecting meanwhile may have collided with it");
-            }
-            _ => {}
+        if let Judged::Dropped(reason) = &judged {
+            tracing::debug!(%pid, marker = meta.marker, reason, "UIA focus dropped");
         }
         self.outgoing
             .focus_read(pid, judged.into_fact(meta.marker), meta);
     }
 }
 
-/// The marker a setup's [`Meta`] carries: no UIA event's, whose markers
-/// start at 1.
-const SET_UP_MARKER: u64 = 0;
-
-impl UiaFocusReading {
-    /// What became of the setup in `pid` (`docs/design/focus-pipeline.md`,
-    /// section 20): over, which the supervisor is told; or not answering,
-    /// whether a call passed UIA's time limit or the reading thread was
-    /// abandoned to one, when the supervisor is told the application is
-    /// waited for and a thread of its own waits for it ([`set_up::wait_for`]).
-    /// A setup dropped because a newer one replaced it, or the listener is
-    /// shutting down, is not answered.
-    fn set_up_outcome(&self, pid: Pid, judged: &Judged) {
-        let result = match judged {
-            Judged::SetUp(result) => *result,
-            Judged::Dropped(reason) if matches!(*reason, NOT_IN_TIME | NOT_RETURNED) => {
-                SetUpResult::NotAnswering(0)
-            }
-            Judged::Dropped(reason) if *reason == NO_THREAD => {
-                SetUpResult::Over(SetUpOutcome::Failed)
-            }
-            Judged::Dropped(_) | Judged::Read(_) | Judged::Passed(_) => return,
-        };
-        match result {
-            SetUpResult::Over(outcome) => self.set_up_done(pid, outcome),
-            SetUpResult::NotAnswering(window) => {
-                // UIA's setup is a Windows defect's workaround (section 20):
-                // a call of it that passed its time limit is still processed
-                // when the application next pumps, and an outpost
-                // connecting then would collide with it, so the application
-                // stays held until a second remote operation, which can
-                // complete only after the setup has, completes.
-                tracing::warn!(%pid, window, "UIA's setup in an application did not answer in time; it is waited for");
-                self.outgoing
-                    .behind_facts(OutpostToSupervisor::SetUpWaiting { pid });
-                self.wait(pid, window);
-            }
-        }
-    }
-
-    /// Answers the setup in `pid` with `outcome`, behind every fact sent
-    /// before.
-    fn set_up_done(&self, pid: Pid, outcome: SetUpOutcome) {
-        tracing::info!(%pid, ?outcome, "UIA's setup in an application is over");
-        if outcome == SetUpOutcome::NoProvider {
-            self.released_without_set_up
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .insert(pid);
-        }
-        self.outgoing
-            .behind_facts(OutpostToSupervisor::SetUpDone { pid, outcome });
-    }
-
-    /// Starts a thread that waits for `pid`, which did not answer its setup
-    /// from `window`, and answers the setup once it is over.
-    fn wait(&self, pid: Pid, window: isize) {
-        let stop = Arc::clone(&self.stop);
-        let outgoing = Arc::clone(&self.outgoing);
-        let spawned = std::thread::Builder::new()
-            .name("verbatim-listener-set-up-wait".to_owned())
-            .spawn(move || {
-                if let Some(outcome) = set_up::wait_for(pid, window, &stop) {
-                    tracing::info!(%pid, ?outcome, "UIA's setup in an application that did not answer is over");
-                    outgoing.behind_facts(OutpostToSupervisor::SetUpDone { pid, outcome });
-                }
-            });
-        match spawned {
-            Ok(thread) => {
-                let mut waits = self.waits.lock().unwrap_or_else(PoisonError::into_inner);
-                waits.retain(|thread| !thread.is_finished());
-                waits.push(thread);
-            }
-            Err(error) => {
-                tracing::error!(%error, %pid, "no thread to wait for an application's setup");
-                self.set_up_done(pid, SetUpOutcome::Failed);
-            }
-        }
-    }
-
-    /// Stops every thread waiting for an application's setup, for the
-    /// listener's shutdown, and waits for each, which takes at most one of
-    /// its waits' slices.
-    fn stop_waits(&self) {
-        self.stop.store(true, Ordering::Relaxed);
-        let waits = std::mem::take(&mut *self.waits.lock().unwrap_or_else(PoisonError::into_inner));
-        for thread in waits {
-            let _ = thread.join();
-        }
-    }
-}
 impl Listener {
     /// Sets up the listener, sending through `sender`: installs every
     /// subscription,
@@ -965,9 +810,6 @@ impl Listener {
                 remote: options.remote_operations,
                 outgoing: Arc::clone(&outgoing),
                 last_accepted: last_accepted.clone(),
-                waits: Mutex::new(Vec::new()),
-                stop: Arc::new(AtomicBool::new(false)),
-                released_without_set_up: Mutex::new(HashSet::new()),
             },
             READ_DEADLINE,
         ));
@@ -1008,7 +850,6 @@ impl Listener {
         });
 
         Ok(Self {
-            remote: options.remote_operations,
             outgoing,
             readers,
             last_accepted,
@@ -1031,7 +872,6 @@ impl Listener {
     fn shutdown(self, io: &mut ChildIo) {
         let started = Instant::now();
         let Self {
-            remote: _,
             outgoing,
             readers,
             last_accepted: _,
@@ -1043,7 +883,6 @@ impl Listener {
         let registration_failed_reads = registration.as_ref().map_or(0, Registration::failed_reads);
         drop(registration);
         let reading_threads = readers.stop();
-        readers.reading().stop_waits();
         let failed_reads = registration_failed_reads.saturating_add(readers.failed_reads());
         outgoing.close();
         io.finish(&outgoing.sender);
@@ -1090,39 +929,8 @@ impl Listener {
                 ..
             } => self.last_accepted.queued(*trace_id, *observed_at_ms),
             SupervisorToOutpost::IdleQuery { round } => self.idle_query(*round),
-            SupervisorToOutpost::SetUp { pid, hwnd } => self.set_up(*pid, *hwnd),
             _ => {}
         }
-    }
-
-    /// Does UIA's one-time setup in `pid` before the supervisor gives it an
-    /// outpost (`docs/design/focus-pipeline.md`, section 20), and answers
-    /// [`OutpostToSupervisor::SetUpDone`]. The first remote operation any
-    /// client runs in an application makes UIA set itself up there, and
-    /// while it does, every new UIA connection from another process to the
-    /// application fails without an error, giving "no provider" after three
-    /// seconds or UIA's window proxy in place of the application's element;
-    /// so the setup is done here, where the application's focus reads run
-    /// their remote operations, before any outpost connects. It is a job on
-    /// the application's reading thread, behind any focus read already
-    /// queued there, which may have done the setup already. With remote
-    /// operations off, Verbatim starts no setup, and it is answered at once.
-    fn set_up(&self, pid: Pid, hwnd: isize) {
-        if !self.remote {
-            self.outgoing.behind_facts(OutpostToSupervisor::SetUpDone {
-                pid,
-                outcome: SetUpOutcome::Off,
-            });
-            return;
-        }
-        let meta = Meta {
-            marker: SET_UP_MARKER,
-            trace: TraceId::mint(),
-            observed_at_ms: now_ms(),
-            timing: EventTiming::default(),
-        };
-        self.readers
-            .push_set_up(pid, meta, ListenerJob::SetUp(pid, hwnd));
     }
 
     /// The idle barrier's query for `round` (`docs/design/communication.md`,
@@ -1282,11 +1090,7 @@ fn queue_for_reading(
         meta,
     );
     match sender.agile() {
-        Ok(agile) => readers.push(
-            pid,
-            meta,
-            ListenerJob::Event(agile, focus_window, runtime_id, kind, fact),
-        ),
+        Ok(agile) => readers.push(pid, meta, (agile, focus_window, runtime_id, kind, fact)),
         Err(error) => {
             tracing::warn!(%error, "a UIA focus's element could not be kept for its read");
             outgoing.focus_read(

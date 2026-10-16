@@ -1,8 +1,8 @@
 //! The supervisor's pure decisions, kept apart from the I/O that gathers
 //! their inputs so each is unit-tested on its own: when an outpost is stuck,
 //! when an idle one is retired, how long a failed outpost's replacement
-//! waits, how facts that arrive during a spawn are held, which spare outposts are kept
-//! and given, and which application processes UIA's one-time setup is done in.
+//! waits, how facts that arrive during a spawn are held, and which spare outposts are kept
+//! and given.
 
 #![forbid(unsafe_code)]
 
@@ -286,53 +286,11 @@ impl Spares {
     }
 }
 
-/// The application processes in which UIA's one-time setup is done
-/// (`docs/design/focus-pipeline.md`, section 20.2), each by its process id
-/// and creation time, so a later process given the same id is not taken
-/// for one set up. An outpost given to one of them, replacing one that
-/// failed or was retired, is given at once; any other record is held until
-/// the focus listener has done the setup. One entry is kept per process id,
-/// a newer process's replacing an older one's.
-#[derive(Debug, Default)]
-pub(super) struct SetUps {
-    done: std::collections::HashMap<verbatim_model::Pid, u64>,
-}
-
-impl SetUps {
-    /// Whether the setup is done in the process `pid` created at `created`.
-    pub(super) fn is_done(&self, pid: verbatim_model::Pid, created: u64) -> bool {
-        self.done.get(&pid) == Some(&created)
-    }
-
-    /// Remembers that the setup is done in the process `pid` created at
-    /// `created`.
-    pub(super) fn done(&mut self, pid: verbatim_model::Pid, created: u64) {
-        self.done.insert(pid, created);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const PING: Duration = Duration::from_secs(3);
-
-    #[test]
-    fn a_setup_is_remembered_by_process_id_and_creation_time() {
-        let pid = verbatim_model::Pid(42);
-        let mut set_ups = SetUps::default();
-        assert!(!set_ups.is_done(pid, 7));
-        set_ups.done(pid, 7);
-        assert!(set_ups.is_done(pid, 7));
-        assert!(
-            !set_ups.is_done(pid, 8),
-            "a later process given the same id is not set up"
-        );
-        assert!(!set_ups.is_done(verbatim_model::Pid(43), 7));
-        set_ups.done(pid, 8);
-        assert!(set_ups.is_done(pid, 8));
-        assert!(!set_ups.is_done(pid, 7), "the newer process replaced it");
-    }
 
     #[test]
     fn a_recent_pong_with_few_abandoned_workers_is_healthy() {

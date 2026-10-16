@@ -33,8 +33,7 @@ use crossbeam_channel::{Receiver, unbounded};
 use verbatim_model::{Backend, NodeId, NormalizedEvent, OutpostId, Pid, TraceId};
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::protocol::{
-    EventTiming, OutpostToSupervisor, SetUpOutcome, SupervisorToOutpost, read_message,
-    write_message,
+    EventTiming, OutpostToSupervisor, SupervisorToOutpost, read_message, write_message,
 };
 use verbatim_outpost::supervisor::{
     EventSink, Frames, LARGE_FRAME_BYTES, OutpostMessage, ReducerStall, ShutdownSummary, Supervisor,
@@ -202,13 +201,6 @@ fn stand_in(args: &[String]) -> ! {
                     seq,
                     parked_count: 0,
                     written_at_us: 0,
-                },
-            ),
-            SupervisorToOutpost::SetUp { pid, .. } => send(
-                &mut messages,
-                &OutpostToSupervisor::SetUpDone {
-                    pid,
-                    outcome: SetUpOutcome::Done,
                 },
             ),
             SupervisorToOutpost::Shutdown => {

@@ -7,8 +7,8 @@
 //! `text-changed <id>`,
 //! `notify <text>`,
 //! `active-text-position <id> <start> <end>`, `take-runtime-id <id> <from>`,
-//! `stall <ms> [<at> <command>[ ; <at> <command>]...]`, `on-activate
-//! <command>`, `slow <ms>`, `hold`, `hold-setup`, `release`, and `quit`.
+//! `stall <ms> [<at> <command>]`, `on-activate <command>`, `slow <ms>`, `hold`,
+//! `release`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
@@ -99,18 +99,16 @@ pub(crate) enum Command {
     /// MSAA backend reports it as unsupported, since MSAA has no
     /// notification event.
     Notify(String),
-    /// `stall <ms> [<at> <command>[ ; <at> <command>]...]`: blocks the window
-    /// thread for that many milliseconds, so every cross-process call into
-    /// the window waits, as with an application that is starting up or
-    /// busy. The window thread prints `stall started` on stdout as it
-    /// begins, and `stall ended <us>`, with the time in microseconds since
-    /// the Unix epoch, as it ends. With `<at> <command>`, the window thread
-    /// applies the command `at` milliseconds into the stall, still taking
-    /// no message, as a busy application raises an event from the middle of
-    /// its work, and acknowledges it as usual between the two lines; several,
-    /// separated by ` ; `, are applied in the order given, each at its own
-    /// time or at once if that has passed.
-    Stall(u64, Vec<(u64, Box<Command>)>),
+    /// `stall <ms> [<at> <command>]`: blocks the window thread for that many
+    /// milliseconds, so every cross-process call into the window waits, as
+    /// with an application that is starting up or busy. The window thread
+    /// prints `stall started` on stdout as it begins, and `stall ended <us>`,
+    /// with the time in microseconds since the Unix epoch, as it ends. With
+    /// `<at> <command>`, the window thread applies the command `at`
+    /// milliseconds into the stall, still taking no message, as a busy
+    /// application raises an event from the middle of its work, and
+    /// acknowledges it as usual between the two lines.
+    Stall(u64, Option<(u64, Box<Command>)>),
     /// `on-activate <command>`: the command is applied once the window is
     /// next activated, after the window messages of the activation have
     /// been handled, as an application starts work the moment it is
@@ -167,16 +165,8 @@ pub(crate) enum Command {
     /// finishes. Applied on the window thread, so the calls before it are
     /// not held.
     Hold,
-    /// `hold-setup`: the window thread's next COM modal loop, the one UIA's
-    /// one-time setup inside mockapp runs in when a client's first remote
-    /// operation reaches it, prints `held modal-loop` on stdout and then
-    /// waits until `release`, dispatching only the messages other threads
-    /// send ([`crate::setup_hold`]; `docs/design/focus-pipeline.md`, section
-    /// 20). Applied on the window thread.
-    HoldSetup,
-    /// `release`: lets the call `hold` held, or the modal loop `hold-setup`
-    /// held, go on. Applied and acknowledged on the stdin thread, since the
-    /// window thread is the one held.
+    /// `release`: lets the call `hold` held go on. Applied and acknowledged
+    /// on the stdin thread, since the window thread is the one held.
     Release,
     /// `quit`.
     Quit,
@@ -206,17 +196,17 @@ fn caret(rest: &str) -> Option<Command> {
     Some(Command::Caret(id.to_owned(), start, end))
 }
 
-/// `stall`'s arguments: its length, and the commands to apply inside it,
-/// each with when into it, separated by ` ; `.
+/// `stall`'s arguments: its length, and optionally when into it to apply
+/// which command.
 fn stall(rest: &str) -> Option<Command> {
-    let (ms, inside) = rest.split_once(' ').unwrap_or((rest, ""));
-    let ms = ms.parse().ok()?;
-    let mut commands = Vec::new();
-    for part in inside.split(" ; ").filter(|part| !part.trim().is_empty()) {
-        let (at, command) = part.trim().split_once(' ')?;
-        commands.push((at.parse().ok()?, Box::new(parse_command(command)?)));
-    }
-    Some(Command::Stall(ms, commands))
+    let mut parts = rest.splitn(3, ' ');
+    let ms = parts.next()?.parse().ok()?;
+    let Some(at) = parts.next() else {
+        return Some(Command::Stall(ms, None));
+    };
+    let at = at.parse().ok()?;
+    let command = parse_command(parts.next()?)?;
+    Some(Command::Stall(ms, Some((at, Box::new(command)))))
 }
 
 /// `write-on-read`'s arguments, a node's id and the text to write.
@@ -239,7 +229,6 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
     match verb {
         "quit" => Some(Command::Quit),
         "hold" => Some(Command::Hold),
-        "hold-setup" => Some(Command::HoldSetup),
         "release" => Some(Command::Release),
         "focus" if !rest.is_empty() => Some(Command::Focus(rest.to_owned())),
         "set-focus" if !rest.is_empty() => Some(Command::SetFocus(rest.to_owned())),
@@ -502,26 +491,13 @@ mod tests {
     fn parses_a_stall_with_a_command_inside_it() {
         assert!(matches!(
             parse_command("stall 8000"),
-            Some(Command::Stall(8000, inside)) if inside.is_empty()
+            Some(Command::Stall(8000, None))
         ));
         match parse_command("stall 20000 8000 focus btn2") {
-            Some(Command::Stall(20000, inside)) => match inside.as_slice() {
-                [(8000, command)] => {
-                    assert!(matches!(**command, Command::Focus(ref id) if id == "btn2"));
-                }
-                _ => panic!("expected one command inside the stall"),
-            },
+            Some(Command::Stall(20000, Some((8000, command)))) => {
+                assert!(matches!(*command, Command::Focus(ref id) if id == "btn2"));
+            }
             _ => panic!("expected Stall with a command"),
-        }
-        match parse_command("stall 20000 0 focus a ; 50 focus b") {
-            Some(Command::Stall(20000, inside)) => match inside.as_slice() {
-                [(0, first), (50, second)] => {
-                    assert!(matches!(**first, Command::Focus(ref id) if id == "a"));
-                    assert!(matches!(**second, Command::Focus(ref id) if id == "b"));
-                }
-                _ => panic!("expected two commands inside the stall"),
-            },
-            _ => panic!("expected Stall with two commands"),
         }
         assert!(parse_command("stall 20000 8000").is_none());
         assert!(parse_command("stall 20000 8000 frobnicate").is_none());
@@ -531,19 +507,11 @@ mod tests {
     fn parses_on_activate() {
         match parse_command("on-activate stall 6000") {
             Some(Command::OnActivate(command)) => {
-                assert!(matches!(*command, Command::Stall(6000, ref inside) if inside.is_empty()));
+                assert!(matches!(*command, Command::Stall(6000, None)));
             }
             _ => panic!("expected OnActivate"),
         }
         assert!(parse_command("on-activate").is_none());
-    }
-
-    #[test]
-    fn parses_hold_setup() {
-        assert!(matches!(
-            parse_command("hold-setup"),
-            Some(Command::HoldSetup)
-        ));
     }
 
     #[test]

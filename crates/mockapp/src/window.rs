@@ -446,10 +446,9 @@ fn apply(hwnd: HWND, context: &WindowContext, command: Command) -> bool {
         let started = std::time::Instant::now();
         let length = std::time::Duration::from_millis(ms);
         let mut open = true;
-        for (at, inner) in inside {
-            let at = std::time::Duration::from_millis(at).min(length);
-            std::thread::sleep(at.saturating_sub(started.elapsed()));
-            open = open && apply(hwnd, context, *inner);
+        if let Some((at, inner)) = inside {
+            std::thread::sleep(std::time::Duration::from_millis(at).min(length));
+            open = apply(hwnd, context, *inner);
         }
         std::thread::sleep(length.saturating_sub(started.elapsed()));
         acknowledge(&format!("stall ended {}", unix_micros()));
@@ -473,13 +472,6 @@ fn apply(hwnd: HWND, context: &WindowContext, command: Command) -> bool {
     if let Command::RefuseText(refuse) = command {
         uia::refuse_text(refuse);
         acknowledge("applied");
-        return true;
-    }
-    if let Command::HoldSetup = command {
-        match crate::setup_hold::arm(hwnd) {
-            Ok(()) => acknowledge("applied"),
-            Err(error) => acknowledge(&format!("rejected: {error}")),
-        }
         return true;
     }
     if let Command::Hold = command {

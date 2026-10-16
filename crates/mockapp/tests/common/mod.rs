@@ -291,38 +291,6 @@ impl MockApp {
         self.send("release");
     }
 
-    /// Holds mockapp's window thread in its next COM modal loop, the one
-    /// UIA's one-time setup runs in, until [`release`](Self::release)
-    /// (`hold-setup`): returns once mockapp has taken the command.
-    pub fn hold_setup(&mut self) {
-        self.send("hold-setup");
-    }
-
-    /// Waits for the modal loop [`hold_setup`](Self::hold_setup) holds to
-    /// begin: the evidence that a client's first remote operation is
-    /// setting UIA up inside mockapp.
-    pub fn held_modal_loop(&mut self) {
-        let line = self.next_line("a modal loop to be held", WAIT_TIMEOUT);
-        assert_eq!(line, "held modal-loop", "mockapp's line");
-    }
-
-    /// Writes `line` to mockapp and returns at once, for a command whose
-    /// acknowledgement the test reads later ([`Self::next`]), such as a
-    /// stall with commands inside it.
-    pub fn write(&mut self, line: &str) {
-        self.write_line(line);
-    }
-
-    /// The next line mockapp prints, waiting at most `timeout`.
-    pub fn next(&self, timeout: Duration) -> String {
-        self.next_line("its next line", timeout)
-    }
-
-    /// The next line mockapp has printed already, if there is one.
-    pub fn printed(&self) -> Option<String> {
-        self.lines.try_recv().ok()
-    }
-
     /// The next line mockapp prints, waiting at most `timeout`.
     fn next_line(&self, what: &str, timeout: Duration) -> String {
         self.lines
@@ -360,14 +328,6 @@ pub fn spawn(fixture: &str, backend: &str, title: &str) -> MockApp {
 #[must_use]
 pub fn spawn_counting_registrations(fixture: &str, title: &str) -> MockApp {
     spawn_with(fixture, "uia", title, &["--count-registrations"])
-}
-
-/// [`spawn`], its window shown (`--show`): an application whose windows a
-/// client finds by enumerating the visible ones, as the focus listener's
-/// setup does (`docs/design/focus-pipeline.md`, section 20.2).
-#[must_use]
-pub fn spawn_shown(fixture: &str, backend: &str, title: &str) -> MockApp {
-    spawn_with(fixture, backend, title, &["--show"])
 }
 
 fn spawn_with(fixture: &str, backend: &str, title: &str, extra: &[&str]) -> MockApp {

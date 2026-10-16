@@ -64,9 +64,3 @@ harness = false
 [[test]]
 name = "spares"
 harness = false
-
-# Runs itself as stand-in applications, listener, outposts, and spares,
-# which its own `main` recognizes.
-[[test]]
-name = "set_up"
-harness = false

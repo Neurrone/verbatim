@@ -7,13 +7,10 @@ use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 use std::path::Path;
 
-use windows::Win32::Foundation::{
-    ERROR_INVALID_PARAMETER, FILETIME, HANDLE, STILL_ACTIVE, WAIT_OBJECT_0,
-};
+use windows::Win32::Foundation::{ERROR_INVALID_PARAMETER, HANDLE, STILL_ACTIVE, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{
-    GetExitCodeProcess, GetProcessTimes, OpenProcess, PROCESS_NAME_WIN32,
-    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, QueryFullProcessImageNameW,
-    WaitForSingleObject,
+    GetExitCodeProcess, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    PROCESS_SYNCHRONIZE, QueryFullProcessImageNameW, WaitForSingleObject,
 };
 use windows::core::PWSTR;
 
@@ -155,10 +152,6 @@ pub(super) fn launch(
 #[derive(Debug)]
 pub(super) struct Target {
     process: OwnedHandle,
-    /// When the process was created, as a `FILETIME`'s 100-nanosecond
-    /// count, read once as it is opened: with its pid, what names this
-    /// process apart from any later one given the same pid.
-    created: u64,
 }
 
 /// Why a target was not opened.
@@ -208,32 +201,11 @@ impl Target {
         // SAFETY: the handle was just returned by OpenProcess, is valid,
         // and is owned by nothing else.
         let process = unsafe { OwnedHandle::from_raw_handle(handle.0 as RawHandle) };
-        let mut times = [FILETIME::default(); 4];
-        let [created, exited, kernel, user] = &mut times;
-        // SAFETY: the handle is open with at least limited query access;
-        // the four times are locals the call writes.
-        let created = match unsafe {
-            GetProcessTimes(
-                HANDLE(process.as_raw_handle()),
-                created,
-                exited,
-                kernel,
-                user,
-            )
-        } {
-            Ok(()) => (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime),
-            Err(error) => return Err(NotHeld::Denied(error)),
-        };
-        let target = Self { process, created };
+        let target = Self { process };
         if target.has_exited() {
             return Err(NotHeld::Exited);
         }
         Ok(target)
-    }
-
-    /// When the process was created, read as it was opened.
-    pub(super) fn created(&self) -> u64 {
-        self.created
     }
 
     /// Whether the process has exited.

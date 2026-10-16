@@ -28,8 +28,8 @@ use common::Delivered;
 use verbatim_model::{Pid, TraceId};
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::protocol::{
-    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SetUpOutcome,
-    SupervisorToOutpost, read_message, write_message,
+    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
+    read_message, write_message,
 };
 use verbatim_outpost::supervisor::{IgnoredProcesses, OutpostMessage, ShutdownSummary, Supervisor};
 
@@ -128,12 +128,6 @@ fn stand_in(args: &[String]) -> ! {
                 parked_count: 0,
                 written_at_us: 0,
             }),
-            Ok(Some(SupervisorToOutpost::SetUp { pid, .. })) => {
-                send(&OutpostToSupervisor::SetUpDone {
-                    pid,
-                    outcome: SetUpOutcome::Done,
-                });
-            }
             Ok(Some(SupervisorToOutpost::Shutdown) | None) => std::process::exit(0),
             Ok(Some(_)) => {}
             Err(error) => panic!("the command pipe failed: {error}"),

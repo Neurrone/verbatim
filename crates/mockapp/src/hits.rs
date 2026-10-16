@@ -442,24 +442,6 @@ pub(crate) fn hold_next() {
     HOLD.store(true, Ordering::Relaxed);
 }
 
-/// Readies the `release` command for a hold of the window thread's next
-/// COM modal loop (`hold-setup`, [`crate::setup_hold`]), which waits on
-/// [`released`] rather than here.
-pub(crate) fn hold_next_modal_loop() {
-    *RELEASED
-        .0
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
-}
-
-/// Whether `release` has come since the last hold was readied.
-pub(crate) fn released() -> bool {
-    *RELEASED
-        .0
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
 /// Lets a held call go on: the `release` command, which the stdin thread
 /// applies itself, since the window thread is the one held.
 pub(crate) fn release() {
