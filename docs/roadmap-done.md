@@ -538,6 +538,15 @@ landed it.
   an outpost, and an outpost whose hook fails exits instead of saying
   `Ready` ([focus pipeline](design/focus-pipeline.md), section 19):
   5eae1b65, 2d47a3da and 878a586c, 2026-10-16.
+- The UIA focus change's call count with remote operations: the ledger's
+  targets revised to the calls NVDA's focus handler makes in its order,
+  4 for a windowless sender and 3 for a window in the steady state
+  (Dickson, 2026-10-16), b5e84ae1; a menu item's legacy checked state read
+  inside the focus's remote operation, a Windows Forms menu item's
+  included, 9ad3cb44 (committed together with that commit's NVDA
+  capture record); and NVDA's handling of a menu opening on the current
+  focus ported ([focus pipeline](design/focus-pipeline.md), section 18),
+  3137408e; 2026-10-17.
 
 ### The communication migration
 

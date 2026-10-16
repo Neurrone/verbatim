@@ -53,18 +53,6 @@ recorded as provisional.
 The design of record is [the focus pipeline](design/focus-pipeline.md)
 (section 12, the design adopted and built as of 8fe59b1b).
 
-- The UIA focus change's call count with remote operations (found on
-  2026-10-15, correcting [the operation ledger](performance.md)): steady
-  state takes 4 calls (the nearest window, `CompareElements`,
-  `CurrentHasKeyboardFocus`, and the `Execute`) against a target of 2, and
-  cold takes 3 calls plus the listener's probe against a target of 2; the
-  ledger's entries "A focus change, UIA, steady state" and "A focus
-  change, UIA, cold" name which calls are over. Investigate whether the
-  nearest-window and comparison calls can be folded into the remote
-  operation or answered from the event's cache, and bring the result to
-  Dickson before changing the judgement's order, which ports NVDA's
-  focus handler (design section 18).
-
 - A fresh File Explorer evidence pass on the new pipeline: NVDA
   captures and Verbatim logs with raw event timings, ten runs locally, ten
   in the VM and on GitHub. Dickson then decides what Explorer should say,
