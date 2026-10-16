@@ -42,6 +42,7 @@ scenario_tests! {
     switch_to_onecore
     synth_host_crash_recovery
     outpost_crash_recovery
+    return_after_retirement
     lock_key_announcements
     explorer_folder_window
     settings_dialog_keys

@@ -233,7 +233,10 @@ foreground between the harness's Windows Forms text box and Verbatim's own
 menu keeps the text box's outpost, the same process, and re-announces it),
 `outpost_crash_recovery` (an application's outpost ended as a crash would
 end it is replaced, saying nothing more, and the text is read through the
-new one), `explorer_folder_window` (a File Explorer window on a harness
+new one), `return_after_retirement` (an application brought forward again
+once its outpost was retired after two minutes without attention is
+announced as before, through a new outpost; it takes about three
+minutes), `explorer_folder_window` (a File Explorer window on a harness
 folder), `settings_system_page` (the Settings app's System page),
 `lock_key_announcements` (Scroll Lock pressed twice is announced on,
 then off, or the reverse),

@@ -596,7 +596,10 @@ The groups:
   text box's outpost is the same process), `outpost_crash_recovery` (an
   application's outpost ended by its process id; once Core reports its end
   and is idle, nothing more was said, and the review cursor reads the text
-  through a new outpost), `explorer_folder_window`, and
+  through a new outpost), `return_after_retirement` (a Windows Forms text
+  box brought forward again once Core reports its outpost retired after
+  two minutes without attention, announced as before through a new
+  outpost), `explorer_folder_window`, and
   `settings_system_page` (the list focused by its UI Automation
   identifier through the agent).
 - Navigation: `object_navigation_in_settings` (over MSAA, in Verbatim's

@@ -1138,6 +1138,17 @@ impl Owner {
             return;
         };
         record.ready = true;
+        if let Some(held_at) = record.held.first_held_at() {
+            // The time the supervisor held the application's first fact
+            // for its outpost's start (`docs/design/focus-pipeline.md`,
+            // section 19.6).
+            tracing::info!(
+                %outpost,
+                %pid,
+                first_fact_held_us = u64::try_from(held_at.elapsed().as_micros()).unwrap_or(u64::MAX),
+                "outpost ready, its application's first fact held until now"
+            );
+        }
         let Some(writer) = record.child.as_ref().map(|child| child.writer.clone()) else {
             return;
         };

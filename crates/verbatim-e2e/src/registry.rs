@@ -66,6 +66,8 @@
 //!   [`second_application_and_verbatim_menu`](crate::scenarios::second_application_and_verbatim_menu)),
 //!   an outpost replaced after it dies
 //!   ([`outpost_crash_recovery`](crate::scenarios::outpost_crash_recovery)),
+//!   an application returned to after its outpost was retired
+//!   ([`return_after_retirement`](crate::scenarios::return_after_retirement)),
 //!   a File Explorer window
 //!   ([`explorer_folder_window`](crate::scenarios::explorer_folder_window)),
 //!   and the Settings app's System page
@@ -146,13 +148,14 @@ use crate::scenarios::{
     demo_terminal_session, editing, explorer_folder_window, lock_key_announcements, measure,
     menu_and_settings_dialog, notepad_say_all, notepad_spelling_errors,
     object_navigation_in_settings, object_navigation_over_uia, outpost_crash_recovery,
-    rapid_tabbing_in_settings, review_cursor, review_words, second_application_and_verbatim_menu,
-    settings_dialog_keys, settings_system_page, spelling_errors, switch_to_onecore,
-    synth_host_crash_recovery, system_information_tree, terminal_commands, terminal_editing,
-    terminal_flood, terminal_flood_kinds, terminal_footer, terminal_key_timing, terminal_lists,
-    terminal_overflow, terminal_pager, terminal_progress, terminal_review_grid,
-    terminal_review_output, terminal_screens, terminal_settings_page, terminal_short_output,
-    terminal_typing, terminal_windows, text_box_say_all, theme_panel, typed_words, word_selection,
+    rapid_tabbing_in_settings, return_after_retirement, review_cursor, review_words,
+    second_application_and_verbatim_menu, settings_dialog_keys, settings_system_page,
+    spelling_errors, switch_to_onecore, synth_host_crash_recovery, system_information_tree,
+    terminal_commands, terminal_editing, terminal_flood, terminal_flood_kinds, terminal_footer,
+    terminal_key_timing, terminal_lists, terminal_overflow, terminal_pager, terminal_progress,
+    terminal_review_grid, terminal_review_output, terminal_screens, terminal_settings_page,
+    terminal_short_output, terminal_typing, terminal_windows, text_box_say_all, theme_panel,
+    typed_words, word_selection,
 };
 use crate::speech::SpeechFailure;
 
@@ -437,6 +440,17 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: outpost_crash_recovery::setup,
         body: outpost_crash_recovery::body,
         teardown: outpost_crash_recovery::teardown,
+    },
+    ScenarioDef {
+        name: "return_after_retirement",
+        group: Group::Shell,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::No("it waits for Verbatim's idle retirement of an outpost"),
+        setup: return_after_retirement::setup,
+        body: return_after_retirement::body,
+        teardown: return_after_retirement::teardown,
     },
     ScenarioDef {
         name: "lock_key_announcements",

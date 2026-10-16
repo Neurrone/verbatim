@@ -134,6 +134,8 @@ pub(super) struct HeldFact {
 #[derive(Debug, Default)]
 pub(super) struct HeldFacts {
     facts: Vec<HeldFact>,
+    /// When the first fact was held, until they are taken.
+    first_held_at: Option<Instant>,
 }
 
 impl HeldFacts {
@@ -143,11 +145,19 @@ impl HeldFacts {
             self.facts
                 .retain(|held| held.fact.key().as_ref() != Some(&key));
         }
+        self.first_held_at.get_or_insert_with(Instant::now);
         self.facts.push(fact);
+    }
+
+    /// When the first fact still held, or taken since, was held: how long
+    /// the application's first fact has waited for its outpost.
+    pub(super) fn first_held_at(&self) -> Option<Instant> {
+        self.first_held_at
     }
 
     /// Takes every held fact, in release order.
     pub(super) fn take(&mut self) -> Vec<HeldFact> {
+        self.first_held_at = None;
         std::mem::take(&mut self.facts)
     }
 }
