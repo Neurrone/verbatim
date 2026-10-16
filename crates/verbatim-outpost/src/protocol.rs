@@ -627,12 +627,16 @@ pub enum SupervisorToOutpost {
         #[serde(default)]
         sent_at_us: u64,
     },
-    /// To the focus listener: Core has taken as the focus the event traced
-    /// `trace_id`, observed at `observed_at_ms` (0 for a focus Core asked
-    /// for). NVDA's duplicate rule compares a UIA focus event with the last
-    /// focus queued, whatever reported it, so the listener forgets the
+    /// To the focus listener, after every focus Core queues, and to the
+    /// outpost that reported the focus Core queued before, when the new
+    /// one is another application's: Core has taken as the focus the event
+    /// traced `trace_id`, observed at `observed_at_ms` (0 for a focus Core
+    /// asked for). NVDA's duplicate rules compare a focus event with the
+    /// last focus queued, whatever reported it, so the listener forgets the
     /// last focus it accepted when a newer, other focus was queued
-    /// (`focus_read::LastAccepted`).
+    /// (`focus_read::LastAccepted`), and the outpost's MSAA duplicate test
+    /// stops comparing with its last focus when that was observed no later
+    /// than this one.
     FocusQueued {
         /// The trace of the event Core took.
         trace_id: TraceId,

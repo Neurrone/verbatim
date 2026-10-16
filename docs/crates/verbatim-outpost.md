@@ -308,7 +308,7 @@ fault and exits with code 1 without `Ready`.
   pipe's. `MenuOrSwitchEnded` carries an `EventTiming` with the same
   listener stamps, and `Pong` a `written_at_us` stamped the same way. The
   commands to the listener (`Ping`, `HookInstalled`, `HookRemoved`,
-  `FocusQueued`) carry `sent_at_us`, which verbatim.exe's writer stamps
+  `FocusQueued`, which an outpost also receives) carry `sent_at_us`, which verbatim.exe's writer stamps
   as the write begins (`SupervisorToOutpost::stamp_sent`); the listener
   stamps its read of each and logs the hop at trace level under
   `verbatim::stage`, and verbatim.exe logs each pong's trip back and a
@@ -325,7 +325,10 @@ fault and exits with code 1 without `Ready`.
   `FocusQueued` (to the listener: the trace and observation time of each
   focus Core queued, after which the last focus the listener accepted is
   no repeat's evidence unless it is that focus or newer, as NVDA's last
-  queued focus is replaced by every focus it queues),
+  queued focus is replaced by every focus it queues; and, when the focus
+  is another application's, to the outpost that reported the focus
+  before, whose MSAA duplicate test then no longer compares with its last
+  focus unless that was observed later),
   `ForwardingEnded` (to an outpost, the hand-over's end), `Query` (a
   request id and a `Query`: `FocusNow`, `Navigate` with a model `QueryKind`,
   `Activate`, `Ancestors`, `DumpTree`, or `Text`, a node and a model
@@ -782,7 +785,11 @@ fault and exits with code 1 without `Ready`.
   `send_to_outpost(outpost_id, command)` queues a command for one outpost
   incarnation without waiting, failing at once with a `QueueError` when that
   incarnation has ended or its queue is full; `note_views(attention,
-  holding)` passes the views the app derives from the reducer state; and
+  holding)` passes the views the app derives from the reducer state;
+  `focus_queued(trace_id, observed_at_ms, superseded)` sends
+  `FocusQueued` to the listener, and to the outpost `superseded` when the
+  app names one, the outpost that reported the focus Core queued before,
+  when that was another application's; and
   `query_idle(round)` runs the idle barrier's round through the children
   (under "The idle barrier" below), the app hearing which outposts it
   asked through `OutpostMessage::IdleQueried`. The

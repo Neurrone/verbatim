@@ -100,11 +100,11 @@ NVDA: [The UIA client](../nvda/uia.md), "Caching discipline", and
   the states are checked first and read live, as NVDA reads them,
   ancestors included. A focus event naming the address of the focus
   last reported, a whole object, is dropped before it is read, as NVDA's
-  `isDuplicateIAccessibleEvent` drops it. Different only in that a
-  reported foreground change makes the next such event no duplicate,
-  since an outpost does not see focus in other applications, which is
-  how NVDA knows the focus left. `msaa_focus_changes_cost_exactly` pins
-  both.
+  `isDuplicateIAccessibleEvent` drops it, unless a foreground change the
+  outpost reported, or a focus Core queued from another application,
+  came after it, as NVDA compares with the last focus queued from any
+  application (`docs/parity/focus-events.md`, "Duplicate focus
+  suppression"). `msaa_focus_changes_cost_exactly` pins both.
 - When the newest focus event of a batch cannot be reported (unreadable,
   destroyed, refused), the next older one is tried, up to three, as
   NVDA's event pump falls back.

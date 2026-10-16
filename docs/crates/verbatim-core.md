@@ -21,7 +21,8 @@ Public API:
   object, which the control plane's `DumpFocus` answers with for a test's
   artifacts; `focuses_queued()`, how many focuses the reducer has taken as
   the focus, which the host compares across an input to tell the focus
-  listener a focus was queued; `attention()`, the application holding
+  listener a focus was queued, and the outpost of the focus before when
+  the new focus is from another outpost; `attention()`, the application holding
   attention; `held_nodes()`,
   every node id the state refers to grouped by the outpost that issued it;
   and `held_anchors()` (milestone M4), every text anchor the state refers

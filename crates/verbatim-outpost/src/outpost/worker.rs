@@ -303,6 +303,13 @@ pub(super) struct Tracking {
     /// focus may then have been elsewhere meanwhile, so a focus event that
     /// repeats it is not a duplicate.
     foreground_since_focus: bool,
+    /// When the last focus this outpost reported was observed, in
+    /// milliseconds since the Unix epoch, or when it was reported, for a
+    /// focus with no observation time.
+    focus_observed_at_ms: u64,
+    /// The newest observation time of the focuses Core queued from another
+    /// application after this outpost's ([`Tracking::focus_queued_elsewhere`]).
+    queued_elsewhere_at_ms: u64,
     /// Whether the last MSAA focus reported was a simple child, by the
     /// child id its object was acquired with: a child id can be reused, so
     /// a focus event at its address is never a duplicate of it.
@@ -325,6 +332,29 @@ impl Tracking {
     /// The window of the last focus this outpost reported.
     pub(super) fn window(&self) -> Option<isize> {
         self.window
+    }
+
+    /// Core queued a focus from another application, observed at
+    /// `observed_at_ms` (0 for a focus Core asked for, taken as now), after
+    /// the last focus this outpost reported
+    /// ([`SupervisorToOutpost::FocusQueued`]).
+    pub(super) fn focus_queued_elsewhere(&mut self, observed_at_ms: u64) {
+        let observed_at_ms = if observed_at_ms == 0 {
+            now_ms()
+        } else {
+            observed_at_ms
+        };
+        self.queued_elsewhere_at_ms = self.queued_elsewhere_at_ms.max(observed_at_ms);
+    }
+
+    /// Whether a focus Core queued from another application was observed
+    /// no earlier than the last focus this outpost reported, so that focus
+    /// is no longer the last focus queued, as NVDA's
+    /// `lastQueuedFocusObject` is replaced by a focus from any application.
+    /// A focus from elsewhere observed before it is one Core took before
+    /// this outpost's, or dropped as stale.
+    fn focus_superseded(&self) -> bool {
+        self.queued_elsewhere_at_ms >= self.focus_observed_at_ms
     }
 }
 
@@ -1947,6 +1977,11 @@ impl Worker<'_> {
             tracking.foreground_since_focus = foreground;
             if !foreground {
                 tracking.reported += 1;
+                tracking.focus_observed_at_ms = if observed_at_ms == 0 {
+                    now_ms()
+                } else {
+                    observed_at_ms
+                };
                 tracking.focus = Some(node_id);
                 tracking.focus_states = Some(states);
                 tracking.focus_role = Some(role);
@@ -3052,14 +3087,21 @@ impl Worker<'_> {
         // queued, after acquiring the object and making the list redirect,
         // unless that last focus was a simple child, by the child id its
         // object was acquired with, whose id can be reused
-        // (`isDuplicateIAccessibleEvent`, `IAccessibleChildID > 0`). The
-        // focus may have been in another application since a foreground
-        // change, which this outpost does not see, so a focus after one is
-        // never a duplicate.
+        // (`isDuplicateIAccessibleEvent`, `IAccessibleChildID > 0`). NVDA
+        // compares with the last focus it queued from any application
+        // (`lastQueuedFocusObject`), so the last focus this outpost reported
+        // stops counting after its own foreground change, and once Core has
+        // queued a newer focus from another application, which Core tells
+        // this outpost (`SupervisorToOutpost::FocusQueued`).
         let (address_hwnd, address_object, address_child) = candidate.key();
         let resolved_child = candidate.resolved_child();
-        let repeated = !self.context.tracking().focus_was_simple_child
-            && !self.context.tracking().foreground_since_focus
+        let still_last = {
+            let tracking = self.context.tracking();
+            !tracking.focus_was_simple_child
+                && !tracking.foreground_since_focus
+                && !tracking.focus_superseded()
+        };
+        let repeated = still_last
             && self.context.intake.focused()
                 == Some(Object::Msaa(address_hwnd, address_object, address_child));
         if repeated {

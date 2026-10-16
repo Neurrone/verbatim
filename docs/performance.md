@@ -718,7 +718,8 @@ NVDA's acceptance test against the foreground window before anything else
 
 - A focus event naming the address of the focus the outpost last
   reported, a whole object rather than a child by id, with no foreground
-  change since: NVDA drops it as a duplicate. Before the MSAA work
+  change it reported and no focus Core queued from another application
+  since: NVDA drops it as a duplicate. Before the MSAA work
   package (2026-10-07) it was read in full with its ancestors and the
   reducer found it the focus already, 29 MSAA calls; today only its role
   is read, for NVDA's list redirect, and its `accFocus` asked, for a

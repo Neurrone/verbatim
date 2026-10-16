@@ -514,6 +514,91 @@ fn a_focus_is_no_repeat_once_another_focus_was_queued() {
     app.quit();
 }
 
+/// NVDA keeps one last queued focus for every application and backend
+/// (`lastQueuedFocusObject`), and its UIA duplicate test compares with it
+/// only while it is a UIA object: a UIA focus repeated on the element that
+/// still has the keyboard focus is dropped, and once another
+/// application's MSAA focus has been queued in between, which Core tells
+/// the listener, it is read in full.
+fn a_uia_focus_is_no_repeat_after_another_application_s_msaa_focus() {
+    let title = common::unique_title("mockapp-uia-after-msaa");
+    let mut uia_app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let uia_outpost = OutpostUnderTest::new(&uia_app);
+    let title = common::unique_title("mockapp-msaa-before-uia");
+    let mut msaa_app = common::spawn("small.json", "msaa", &title);
+    let msaa_hwnd = common::find_window(&title);
+    common::apply(&mut msaa_app, msaa_hwnd, "set-focus btn1");
+    let msaa_outpost = OutpostUnderTest::new(&msaa_app);
+
+    uia_app.send("set-focus btn1");
+    let button = client.focused();
+    let _ = uia_outpost.listener_fact(&button);
+    let (judged, _) = uia_outpost.listener_read(&button);
+    assert!(
+        matches!(judged, Judged::Dropped(_)),
+        "a repeat with nothing between is dropped, not {judged:?}"
+    );
+
+    let reported = msaa_outpost.msaa_focus(msaa_hwnd, 1);
+    assert_eq!(reported.node.role, Role::Button);
+    uia_outpost.listener_focus_queued(common::outpost::now_ms());
+    let (judged, _) = uia_outpost.listener_read(&button);
+    assert!(
+        matches!(judged, Judged::Read(_)),
+        "after another application's MSAA focus, the focus is read, not {judged:?}"
+    );
+
+    drop(msaa_outpost);
+    drop(uia_outpost);
+    msaa_app.quit();
+    uia_app.quit();
+}
+
+/// NVDA's MSAA duplicate test compares with the last focus queued from any
+/// application (`lastQueuedFocusObject`): an MSAA focus repeated at the
+/// address of the outpost's last focus is dropped, and once another
+/// application's UIA focus has been queued in between, with no foreground
+/// change this outpost reports, which Core tells the outpost whose focus
+/// it supersedes, it is reported again.
+fn a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus() {
+    let title = common::unique_title("mockapp-msaa-after-uia");
+    let mut msaa_app = common::spawn("small.json", "msaa", &title);
+    let msaa_hwnd = common::find_window(&title);
+    common::apply(&mut msaa_app, msaa_hwnd, "set-focus btn1");
+    let msaa_outpost = OutpostUnderTest::new(&msaa_app);
+    let title = common::unique_title("mockapp-uia-before-msaa");
+    let mut uia_app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let uia_outpost = OutpostUnderTest::new(&uia_app);
+    // The button is node 1, after the root, so its object id is 2.
+    let button = DeliveredFact::MsaaFocus {
+        hwnd: msaa_hwnd.0 as isize,
+        id_object: 2,
+        id_child: 0,
+    };
+
+    let reported = msaa_outpost.focus(button.clone());
+    assert_eq!(reported.node.role, Role::Button);
+    msaa_outpost.deliver(button.clone());
+    msaa_outpost.settled();
+
+    uia_app.send("set-focus btn1");
+    let reported = uia_outpost.uia_focus(&client.focused());
+    assert_eq!(reported.node.role, Role::Button);
+    msaa_outpost.focus_queued_elsewhere(common::outpost::now_ms());
+    let reported = msaa_outpost.focus(button);
+    assert_eq!(
+        (reported.node.role, reported.node.name.as_deref()),
+        (Role::Button, Some("Original Name"))
+    );
+
+    drop(uia_outpost);
+    drop(msaa_outpost);
+    uia_app.quit();
+    msaa_app.quit();
+}
+
 /// Focuses `id` in mockapp's caret watch fixture and returns the focus the
 /// outpost reports, which must be the next thing it says, followed by the
 /// caret it reports for a document, and nothing more.
@@ -1157,6 +1242,7 @@ fn an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off
     app.quit();
 }
 
+#[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
         (
@@ -1166,6 +1252,14 @@ fn main() {
         (
             "a_focus_is_no_repeat_once_another_focus_was_queued",
             a_focus_is_no_repeat_once_another_focus_was_queued,
+        ),
+        (
+            "a_uia_focus_is_no_repeat_after_another_application_s_msaa_focus",
+            a_uia_focus_is_no_repeat_after_another_application_s_msaa_focus,
+        ),
+        (
+            "a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus",
+            a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus,
         ),
         (
             "a_windowless_selection_is_given_its_nearest_window",

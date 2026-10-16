@@ -606,6 +606,19 @@ impl OutpostUnderTest {
         self.last_accepted.queued(TraceId::mint(), observed_at_ms);
     }
 
+    /// Tells the outpost that Core took another application's focus,
+    /// observed at `observed_at_ms`, after the last focus the outpost
+    /// reported, as the supervisor tells it
+    /// ([`SupervisorToOutpost::FocusQueued`]).
+    pub fn focus_queued_elsewhere(&self, observed_at_ms: u64) {
+        self.outpost
+            .handle_command(&SupervisorToOutpost::FocusQueued {
+                trace_id: TraceId::mint(),
+                observed_at_ms,
+                sent_at_us: 0,
+            });
+    }
+
     /// The fact the focus listener sends for a UIA focus event on `element`
     /// once it has read it, which must not be dropped.
     pub fn listener_fact(&self, element: &Cached<ListenerEvent>) -> DeliveredFact {
@@ -770,7 +783,7 @@ impl OutpostUnderTest {
 
 /// Milliseconds since the Unix epoch, as the listener stamps an event's
 /// arrival.
-fn now_ms() -> u64 {
+pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| {

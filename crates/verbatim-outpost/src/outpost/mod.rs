@@ -1146,6 +1146,7 @@ impl Outpost {
     /// Handles one command from Core, on the I/O thread. Pings are
     /// answered here, the pong written at once unless a write is in flight;
     /// everything that reads the application is queued for the worker.
+    #[expect(clippy::too_many_lines, reason = "one arm per command")]
     pub fn handle_command(&self, command: &SupervisorToOutpost) {
         let context = &self.context;
         match command {
@@ -1231,8 +1232,11 @@ impl Outpost {
             SupervisorToOutpost::Shutdown
             | SupervisorToOutpost::Assign { .. }
             | SupervisorToOutpost::HookInstalled { .. }
-            | SupervisorToOutpost::HookRemoved { .. }
-            | SupervisorToOutpost::FocusQueued { .. } => {}
+            | SupervisorToOutpost::HookRemoved { .. } => {}
+            // Core queued a focus from another application after this one's.
+            SupervisorToOutpost::FocusQueued { observed_at_ms, .. } => {
+                context.tracking().focus_queued_elsewhere(*observed_at_ms);
+            }
             SupervisorToOutpost::NodesHeld {
                 nodes,
                 anchors,

@@ -6,8 +6,11 @@ How focus events are accepted, deduplicated, and ordered: duplicate and stale fo
 
 NVDA: each backend has its own duplicate test, the MSAA one by event
 address and the UIA one by `CompareElements` while the last focus NVDA
-queued still has the keyboard focus, read live; it has no test across
-backends, and none for a foreground or menu focus
+queued still has the keyboard focus, read live. Both compare with the
+one last focus queued from any backend and application, and each only
+while that focus is its own backend's object, so a focus from the other
+backend or another application in between makes the next one new; it
+has no test for a foreground or menu focus
 ([Event handling](../nvda/events.md),
 [The UIA client](../nvda/uia.md)).
 
@@ -42,8 +45,21 @@ Verbatim: **matched (verified)**, with one rule of its own.
   once Core has queued a newer, other focus, which Core tells the
   listener by the event's trace and observation time
   (`SupervisorToOutpost::FocusQueued`). Mockapp's
-  `a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read`
-  and `a_focus_is_no_repeat_once_another_focus_was_queued` pin it.
+  `a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read`,
+  `a_focus_is_no_repeat_once_another_focus_was_queued`, and
+  `a_uia_focus_is_no_repeat_after_another_application_s_msaa_focus` pin
+  it.
+- Each outpost makes NVDA's MSAA test, by the address of the last focus
+  it reported, a whole object rather than a child by id. That focus
+  stops counting after a foreground change the outpost reports, and once
+  Core has queued a newer focus from another application, which Core
+  tells the outpost that reported the focus before
+  (`SupervisorToOutpost::FocusQueued`, once per change of application);
+  a UIA focus in the same application replaces it as the outpost's last
+  focus (`docs/design/focus-pipeline.md`, section 16.3). Mockapp's
+  `a_repeated_msaa_focus_is_a_duplicate_only_of_a_full_object` and
+  `a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus`
+  pin it.
 - A runtime id is unique only among live elements, and File Explorer
   reuses them: going back from a subfolder, an item of the parent folder
   can take the runtime id of the subfolder's item, destroyed with its

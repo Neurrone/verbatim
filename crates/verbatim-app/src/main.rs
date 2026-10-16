@@ -1453,15 +1453,20 @@ impl ReducerThread<'_> {
             _ => TraceId::mint(),
         };
         let queued = self.state.focuses_queued();
+        let focus_outpost = self.state.focused().map(|(_, node)| node.id.outpost());
         let effects = reduce(&mut self.state, &input);
         if self.state.focuses_queued() != queued {
             let observed_at_ms = match &input {
                 Input::Event { observed_at_ms, .. } => *observed_at_ms,
                 _ => 0,
             };
+            // The outpost that reported the focus before hears of a focus
+            // from another application, once per change of application.
+            let now = self.state.focused().map(|(_, node)| node.id.outpost());
+            let superseded = focus_outpost.filter(|&before| Some(before) != now);
             self.context
                 .supervisor
-                .focus_queued(trace_id, observed_at_ms);
+                .focus_queued(trace_id, observed_at_ms, superseded);
         }
         if self.state.focused().is_some() && !self.context.focus_known.swap(true, Ordering::AcqRel)
         {
