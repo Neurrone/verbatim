@@ -212,6 +212,13 @@ element it compares equal to still has the focus. The `Ancestry`:
 - `previous_focused`: whether the query's `previous` element has the
   keyboard focus, false when it does not or its read failed, `None` when
   the query named none.
+- `legacy_state`: for an element whose cached control type is a menu
+  item, its legacy MSAA state bits (`LegacyIAccessibleState`, ignoring
+  its default), read by the remote program, `Some(None)` when the element
+  does not support it; `None` when it was not read, for any other element
+  and always from the classic walk, which leaves it to its caller's one
+  live read. A menu item that no pattern makes checkable, as a Windows
+  Forms one, says it is checked only there.
 
 The remote program is one round trip. It reads `HasKeyboardFocus` and
 halts when it is false, then reads the previous element's. UIA fails a
@@ -843,8 +850,9 @@ runs as a named operation above, except these:
 - Activation (`Uia::activate`): each pattern is fetched live and its
   method called, two calls for an `Invoke`. The pattern methods
   (`Invoke`, `Toggle`, `Select`) have no instructions.
-- The menu item's legacy checked state: one call, read for that element
-  alone.
+- The menu item's legacy checked state for the focus-now answer and a
+  navigation step's neighbor: one call, read for that element alone. A
+  focus's is read by its program.
 - A dialog's own text through UIA: already one call
   (`BuildUpdatedCache` over the children).
 - The ancestors query (`Query::Ancestors`), a full classic walk: nothing

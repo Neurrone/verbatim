@@ -221,6 +221,70 @@ collection), treating any such log line as a bug. The transferable
 rule: in a COM-holding system, object graphs must be kept acyclic so
 destruction happens deterministically on a known thread.
 
+### What a live capture shows
+
+Captured on 2026-10-17 against NVDA alpha-58022 (the pinned commit),
+with mockapp as the application: its window is activated, raises a focus
+event for a button inside a grouping, and its window thread stops
+pumping for 6, 20 or 30 seconds (mockapp's `on-activate` and `stall`
+commands); in most runs it raises a second focus event, for a check box
+in the same grouping, 8 seconds into the stall (2 seconds into the
+6-second one). Each case was run three times with identical results;
+the transcripts and NVDA debug-log excerpts are under
+`target/e2e-evidence/nvda-hung-app/`.
+
+- UIA, focus arriving from another application, no second focus: the
+  button is spoken when the application resumes, 30 to 180 ms after it
+  does, with its full ancestry ("Mockapp Tree Fixture window", "Group
+  One grouping", "OK button" and its description and shortcut). Nothing
+  is spoken during the stall; NVDA's focus stays on the other
+  application.
+- UIA, stall longer than UIA's call timeout (30 s): the flusher thread's
+  first live call for the button (`getNearestWindowHandle`) fails with
+  `UIA_E_TIMEOUT` about 22 s after it began; the element is then treated
+  as not native and the event ignored. Nothing is spoken, not even when
+  the application resumes 8 s later, and NVDA's focus stays on the other
+  application.
+- UIA, with a second focus during the stall: the button's event, held on
+  the flusher thread until the application answers, is then ignored
+  because the button no longer has the keyboard focus
+  (`shouldAllowUIAFocusEvent`), and the check box's event, which waited
+  behind it, is processed: the check box is spoken 30 to 70 ms after the
+  application resumes, with the ancestors NVDA's focus did not already
+  share (window and grouping when the focus came from another
+  application; none when it was already in the grouping). The second
+  event is not dropped although Windows judged the window hung when it
+  was raised: the check box has no window of its own, so
+  `_shouldSkipEventForHungWindow` cannot see the hang, and by the time
+  the handler ran the window was no longer hung. The same held for a
+  6-second stall and a 30-second one.
+- A UIA focus event also reaches NVDA as a winevent, on the main thread.
+  With the window's UIA verdict lapsed, `UiaHasServerSideProvider`
+  blocks; when the focus came from another application the watchdog
+  starts recovery after 0.5 s, the call is cancelled ("treating window
+  as non-UIA"), `AccessibleObjectFromEvent` fails and the winevent is
+  dropped. When NVDA's focus was already in the application there is no
+  recovery: the main thread waits in `AccessibleObjectFromEvent` about
+  5.2 s, until Windows judges the window hung, and the call then fails.
+- MSAA: the button's focus winevent is lost the same way, after 0.5 s
+  (from another application, by the watchdog) or about 5.2 s (within the
+  application, by the window message failing once Windows judges the
+  window hung; the watchdog does not intervene). The second focus is
+  dropped at once ("Hung application. Dropping winEvent"). Nothing is
+  spoken during the stall or after it, and NVDA's focus stays where it
+  was, on the other application or the previously focused control.
+- About 8 s into a 20- or 30-second stall, Windows replaces the window
+  with a ghost window (class `Ghost`, owned by `dwm`), which takes the
+  foreground; NVDA drops its foreground, focus and name-change
+  winevents as belonging to a hung application, and its UIA
+  window-opened event through `_shouldSkipEventForHungWindow`. No ghost
+  appeared in the 6-second stall.
+- The activation that came just before the stall produced no foreground
+  winevent for the application's window in NVDA's log, during the stall
+  or after it; when the application resumes, NVDA receives the window's
+  show event and its UIA window-opened event, neither of which is
+  spoken.
+
 ## The evidence that stuck cross-process calls cause the hangs
 
 Everything above encodes a diagnosis: NVDA freezes because its one

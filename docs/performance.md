@@ -242,12 +242,20 @@ the ratchet beside them.
 
 One UIA read is made only for a kind of element the fixture does not
 have: a menu item that no pattern makes checkable reads its legacy MSAA
-state live, one more UIA call, when it is the focus, the focus-now answer,
-or a navigation step's neighbor (NVDA 2027.1 reads it the same way, and
-only for menu items). Every other focus and step makes no such call, as
-the ratchet's unchanged counts confirm. Caching the state for every
-element instead cost no call but roughly doubled the provider work of every
-focus change, so it is read lazily.
+state (NVDA 2027.1 reads it the same way, and only for menu items). For a
+focus, the remote program reads it in its one round trip, for an element
+whose cached control type is a menu item, at no extra call
+(`focus_reports.rs`, `a_menu_items_legacy_state_is_read_with_its_focus`:
+4 calls, where the live read made 5). A Windows Forms menu item, which
+says it is checked only there, is read the same way: its element can be
+imported into the program (`remote_ops.rs`,
+`a_windows_forms_menu_item_is_checked_from_the_remote_read`). A focus
+read the classic way, for a window whose elements cannot be imported or
+with remote operations off, the focus-now answer, and a navigation
+step's neighbor read it live, one more UIA call. Every other focus and step makes no such read, as the
+ratchet's unchanged counts confirm. Caching the state for every element
+instead cost no call but roughly doubled the provider work of every focus
+change, so it is read only for menu items.
 
 Focus changes and navigation steps, UIA and MSAA alike, run through a
 real outpost in the test's process, handed the focus fact or the query as

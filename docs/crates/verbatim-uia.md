@@ -214,9 +214,10 @@ Public API:
   for such a menu item, as NVDA reads it lazily for its menu item class:
   caching it for every element made UIA ask every provider for the
   `LegacyIAccessible` pattern, roughly doubling a focus change's provider
-  work. The outpost applies it to the focus it reports, the focus-now
-  answer, and a navigation step's neighbor; `map::add_legacy_checked_state`
-  is the rule alone, for tests.
+  work. The outpost applies it to the focus-now answer and a navigation
+  step's neighbor; the focus listener applies `map::add_legacy_checked_state`,
+  the rule alone, to the state its remote program read with the focus, or
+  reads it live when the focus was read the classic way.
   A selected radio button is checked rather than selected, and a
   toggleable element other than a check box or toggle button is
   checkable.

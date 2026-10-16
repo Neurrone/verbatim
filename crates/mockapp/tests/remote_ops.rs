@@ -11,15 +11,21 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
+use std::io::{BufRead, BufReader};
+use std::os::windows::io::AsRawHandle;
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
 use common::outpost::OutpostUnderTest;
 use verbatim_model::NormalizedEvent;
-use verbatim_model::State;
+use verbatim_model::{Role, State};
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::focus_read::Judged;
 use verbatim_outpost::protocol::OutpostToSupervisor;
+use verbatim_uia::map::{add_legacy_checked_state, wants_legacy_checked_state};
 use verbatim_uia::{
     Ancestor, Cached, ElementExt, Fill, FocusInput, Kept, ListenerEvent, Live, Node, Shape, Uia,
 };
@@ -28,11 +34,14 @@ use verbatim_uia_rops::{
     StepQuery, focus_ancestry, focus_ancestry_classic, focus_ancestry_remote,
     navigation_step_classic, navigation_step_remote,
 };
+use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, WAIT_OBJECT_0, WPARAM};
+use windows::Win32::System::Threading::WaitForSingleObject;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     IUIAutomation2, IUIAutomationElement, TreeScope_Descendants, UIA_E_ELEMENTNOTAVAILABLE,
-    UIA_E_TIMEOUT, UIA_NamePropertyId,
+    UIA_E_TIMEOUT, UIA_LegacyIAccessibleStatePropertyId, UIA_NamePropertyId,
 };
+use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
 use windows::core::{BSTR, Interface};
 
 const BOTH: [(&str, FocusAncestryFn); 2] = [
@@ -915,10 +924,188 @@ fn a_provider_that_has_exited_fails_at_once() {
     );
 }
 
+/// Windows PowerShell showing a Windows Forms window whose menu bar holds
+/// one menu item, "View", checked: Windows Forms says a menu item is
+/// checked only in its legacy MSAA state, which NVDA reads for menu items
+/// (`verbatim_uia::map::wants_legacy_checked_state`). Every Windows has
+/// Windows PowerShell and Windows Forms, as the end-to-end suite's text box
+/// relies on. Closed through its window, the process exiting, by
+/// [`close`](Self::close); ended on drop otherwise.
+struct FormsMenu {
+    child: Child,
+    hwnd: HWND,
+    script: PathBuf,
+}
+
+impl FormsMenu {
+    /// Opens the window, titled `title`, and waits for the script's word
+    /// that it is shown.
+    fn open(title: &str) -> Self {
+        common::contain_children();
+        let script = std::env::temp_dir().join(format!("{title}.ps1"));
+        std::fs::write(
+            &script,
+            format!(
+                "Add-Type -AssemblyName System.Windows.Forms\r\n\
+                 $form = New-Object System.Windows.Forms.Form\r\n\
+                 $form.Text = '{title}'\r\n\
+                 $menu = New-Object System.Windows.Forms.MenuStrip\r\n\
+                 $view = New-Object System.Windows.Forms.ToolStripMenuItem('View')\r\n\
+                 $view.Checked = $true\r\n\
+                 [void]$menu.Items.Add($view)\r\n\
+                 $form.MainMenuStrip = $menu\r\n\
+                 $form.Controls.Add($menu)\r\n\
+                 $form.Add_Shown({{ [Console]::Out.WriteLine('shown'); [Console]::Out.Flush() }})\r\n\
+                 [void]$form.ShowDialog()\r\n"
+            ),
+        )
+        .expect("the script is written");
+        let mut child = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+            ])
+            .arg(&script)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("Windows PowerShell starts");
+        let stdout = child.stdout.take().expect("its output");
+        let (lines, received) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if lines.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        let line = received
+            .recv_timeout(common::WAIT_TIMEOUT)
+            .expect("the window is shown");
+        assert_eq!(line, "shown", "the script's word");
+        let hwnd = common::find_window(title);
+        Self {
+            child,
+            hwnd,
+            script,
+        }
+    }
+
+    /// Closes the window and waits for Windows PowerShell to exit, which it
+    /// must do cleanly.
+    fn close(mut self) {
+        // SAFETY: posting a message to a window handle is sound whatever
+        // the handle; the window is the script's, live until it closes.
+        unsafe { PostMessageW(Some(self.hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) }
+            .expect("the close message is posted");
+        let handle = HANDLE(self.child.as_raw_handle());
+        let timeout = u32::try_from(common::WAIT_TIMEOUT.as_millis()).unwrap_or(u32::MAX);
+        // SAFETY: the child's process handle, live while `self` owns it.
+        let waited = unsafe { WaitForSingleObject(handle, timeout) };
+        assert_eq!(waited, WAIT_OBJECT_0, "Windows PowerShell did not exit");
+        let status = self.child.wait().expect("its exit is read");
+        assert!(status.success(), "Windows PowerShell exited with {status}");
+    }
+}
+
+impl Drop for FormsMenu {
+    fn drop(&mut self) {
+        let killed = self.child.kill();
+        let ended = self.child.wait();
+        let removed = std::fs::remove_file(&self.script);
+        if !std::thread::panicking() {
+            if let Err(error) = &killed {
+                assert!(
+                    matches!(self.child.try_wait(), Ok(Some(_))),
+                    "Windows PowerShell {} could not be ended: {error}",
+                    self.child.id()
+                );
+            }
+            ended.expect("Windows PowerShell is reaped");
+            removed.expect("the script is removed");
+        }
+    }
+}
+
+/// A Windows Forms menu item, which no pattern makes checkable, says it is
+/// checked only in its legacy MSAA state. Its element can be imported into
+/// a remote operation (found on 2026-10-17, Windows PowerShell 5.1's
+/// Windows Forms on Windows 11 26200), so the focus read takes the remote
+/// program, which reads that state in its one round trip: the checked and
+/// focusable bits (`STATE_SYSTEM_CHECKED`, `STATE_SYSTEM_FOCUSABLE`), the
+/// same bits the live read the listener made before answers. The classic
+/// walk reads none, leaving the live read to its caller.
+fn a_windows_forms_menu_item_is_checked_from_the_remote_read() {
+    let title = common::unique_title("mockapp-rops-forms-menu");
+    let forms = FormsMenu::open(&title);
+    let uia = Uia::new().expect("Uia::new");
+    let root = uia
+        .window_live(forms.hwnd.0 as isize)
+        .expect("the form's window element");
+    let value = VARIANT::from(BSTR::from("View"));
+    let condition = uia
+        .property_condition(UIA_NamePropertyId, &value)
+        .expect("condition");
+    let request = uia
+        .request::<Node>(Node::all_on())
+        .expect("the node's cache request");
+    let view = root
+        .find_first(TreeScope_Descendants, &condition, &request)
+        .expect("the search")
+        .expect("the menu item");
+    let parts = view.read().parts(view.runtime_id());
+    assert_eq!(parts.role, Role::MenuItem);
+    assert!(
+        wants_legacy_checked_state(parts.role, parts.states),
+        "no pattern makes it checkable: {:?}",
+        parts.states
+    );
+
+    let input: Cached<FocusInput> = view.narrow();
+    let fill = Fill::new(
+        &uia.request::<Ancestor>(Ancestor::all_on())
+            .expect("the ancestors' cache request"),
+    );
+    let query = FocusQuery {
+        require_focus: false,
+        ..query(&input, &[], &fill)
+    };
+    let (answer, path) = focus_ancestry(&uia, &query, true).expect("the focus ancestry");
+    assert!(matches!(path, verbatim_uia_rops::Path::Remote), "{path:?}");
+    let ancestry = focused(Ok(answer), "remote");
+    let legacy = ancestry.legacy_state.expect("read for a menu item");
+    assert_eq!(legacy, Some(0x0010_0010), "checked and focusable");
+    let classic = focused(focus_ancestry_classic(&uia, &query), "classic");
+    assert_eq!(classic.legacy_state, None, "the classic walk reads none");
+
+    let live = view
+        .live()
+        .element()
+        .current_i32_ignoring_default(UIA_LegacyIAccessibleStatePropertyId)
+        .expect("the legacy state's read");
+    assert_eq!(live, legacy, "the live read answers the same");
+    let mut states = parts.states;
+    add_legacy_checked_state(&mut states, legacy);
+    assert_eq!(
+        states,
+        parts.states.with(State::Checkable).with(State::Checked),
+        "checked, from its legacy state {legacy:?}"
+    );
+
+    forms.close();
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_windows_forms_menu_item_is_checked_from_the_remote_read",
+            a_windows_forms_menu_item_is_checked_from_the_remote_read,
+        ),
         (
             "a_navigation_step_reads_the_same_both_ways",
             a_navigation_step_reads_the_same_both_ways,

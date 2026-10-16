@@ -7,9 +7,10 @@ use std::time::Instant;
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, UIA_E_ELEMENTNOTAVAILABLE, UIA_E_TIMEOUT, UIA_HasKeyboardFocusPropertyId,
-    UIA_ListControlTypeId, UIA_NativeWindowHandlePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
-    UIA_RuntimeIdPropertyId, UIA_Selection2FirstSelectedItemPropertyId,
-    UIA_SelectionSelectionPropertyId, UIA_TabControlTypeId,
+    UIA_LegacyIAccessibleStatePropertyId, UIA_ListControlTypeId, UIA_MenuItemControlTypeId,
+    UIA_NativeWindowHandlePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId,
+    UIA_Selection2FirstSelectedItemPropertyId, UIA_SelectionSelectionPropertyId,
+    UIA_TabControlTypeId,
 };
 
 use verbatim_uia::{
@@ -106,6 +107,15 @@ pub struct Ancestry {
     /// With [`FocusQuery::refresh`], the element itself with its cache
     /// filled afresh; `None` without it.
     pub element: Option<Cached<Ancestor>>,
+    /// For a menu item, by its cached control type, its legacy MSAA state
+    /// bits (`LegacyIAccessibleState`), read by the remote program in its
+    /// one round trip, where a menu item that no pattern makes checkable
+    /// may say it is checked (`verbatim_uia::map::wants_legacy_checked_state`):
+    /// `Some(None)` when the element does not support the property. `None`
+    /// when it was not read: for any other element, and always from the
+    /// classic walk, which leaves the read to its caller, one live call
+    /// made only when the caller needs it.
+    pub legacy_state: Option<Option<i32>>,
 }
 
 /// The signature both implementations share, so a caller can hold either.
@@ -232,6 +242,13 @@ fn wants_selected_child(element: &FocusInput) -> bool {
     })
 }
 
+/// Whether the focused element's legacy MSAA state is read with it, by its
+/// cached control type: a menu item, the one kind of element whose checked
+/// state may be only there (`verbatim_uia::map::wants_legacy_checked_state`).
+fn wants_legacy_state(element: &FocusInput) -> bool {
+    element.control_type == Some(UIA_MenuItemControlTypeId.0)
+}
+
 /// A native window handle, `None` for 0, an element that is not a window.
 fn own_window(hwnd: isize) -> Option<isize> {
     Some(hwnd).filter(|&hwnd| hwnd != 0)
@@ -240,8 +257,10 @@ fn own_window(hwnd: isize) -> Option<isize> {
 /// The focus ancestry in one cross-process round trip: a program that
 /// reads the element's `HasKeyboardFocus` live and stops if it is false,
 /// then reads the previous element's (`FocusQuery::previous`), then, with
-/// [`FocusQuery::refresh`], fills the element's own cache afresh, then
-/// reads a list's or tab control's selected child, then walks
+/// [`FocusQuery::refresh`], fills the element's own cache afresh, then,
+/// for a menu item, reads its legacy MSAA state
+/// ([`Ancestry::legacy_state`]), then reads a list's or tab control's
+/// selected child, then walks
 /// raw-view parents, filling each one's cache inside the provider, until
 /// the top-level window, a known ancestor, or the depth limit, and finds
 /// the element's nearest window, walking on past where it stopped if no
@@ -296,6 +315,27 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         b.set(element_absent, absent);
         b.add_to_results(element);
     }
+
+    // A menu item's legacy MSAA state, ignoring its default, so an element
+    // without the LegacyIAccessible pattern answers "not supported". Its
+    // registers are made only for a menu item, so no other focus's program
+    // grows.
+    let legacy = wants_legacy_state(&input).then(|| {
+        let legacy_state = b.new_int(0);
+        let legacy_state = b.add_to_results(legacy_state);
+        let supported = b.new_bool(false);
+        let supported = b.add_to_results(supported);
+        let property = b.int(UIA_LegacyIAccessibleStatePropertyId.0);
+        let ignore_default = b.bool(true);
+        let state = b.get_property_value(element, property, ignore_default);
+        let is_int = b.is(TypeTest::Int, state);
+        b.if_(is_int, |b| {
+            b.set(legacy_state, state.assume::<kind::Int>());
+            let yes = b.bool(true);
+            b.set(supported, yes);
+        });
+        (legacy_state, supported)
+    });
 
     let selected = b.new_null_element();
     let selected = b.add_to_results(selected);
@@ -463,6 +503,12 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         } else {
             None
         },
+        legacy_state: match legacy {
+            Some((state, supported)) => {
+                Some(outcome.get(supported)?.then_some(outcome.get(state)?))
+            }
+            None => None,
+        },
     }))
 }
 
@@ -619,6 +665,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         window: own_window(input.hwnd),
         previous_focused,
         element,
+        legacy_state: None,
     };
     let out_of_time = || {
         query

@@ -786,6 +786,43 @@ fn a_menu_opening_is_judged_as_a_focus_on_the_menu() {
     app.quit();
 }
 
+/// A focus on a menu item that no pattern makes checkable reads its legacy
+/// MSAA state, where a Windows Forms menu item says it is checked, inside
+/// the focus's one remote operation, the program choosing to by the
+/// sender's cached control type: four calls, as a button's focus after
+/// another focus costs (the nearest window, the comparison, the keyboard
+/// focus, and the read), where the state's own live read made five. A
+/// Windows Forms menu item's is read the same way (`remote_ops.rs`,
+/// `a_windows_forms_menu_item_is_checked_from_the_remote_read`); a focus
+/// read the classic way still reads it live.
+fn a_menu_items_legacy_state_is_read_with_its_focus() {
+    let title = common::unique_title("mockapp-menu-item-focus");
+    let mut app = common::spawn("modal_owner.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus close");
+    let _ = outpost.uia_focus(&client.focused());
+    app.send("set-focus copy");
+    let reported = outpost.uia_focus(&client.focused());
+    assert_eq!(
+        (reported.node.name.as_deref(), reported.node.role),
+        (Some("Copy"), Role::MenuItem)
+    );
+    assert_eq!(
+        (
+            reported.calls.uia,
+            reported.calls.msaa,
+            reported.calls.window_messages
+        ),
+        (4, 0, 0),
+        "the nearest window, the comparison, the keyboard focus, and the read"
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 /// The console host's window is the parent of its text area, reports the
 /// keyboard focus whenever the text area has it, and raises focus events
 /// around the text area's; those are never the focus (NVDA refuses them
@@ -1061,6 +1098,10 @@ fn main() {
         (
             "a_menu_opening_is_judged_as_a_focus_on_the_menu",
             a_menu_opening_is_judged_as_a_focus_on_the_menu,
+        ),
+        (
+            "a_menu_items_legacy_state_is_read_with_its_focus",
+            a_menu_items_legacy_state_is_read_with_its_focus,
         ),
         (
             "a_repeated_msaa_focus_is_a_duplicate_only_of_a_full_object",

@@ -1298,9 +1298,12 @@ fault and exits with code 1 without `Ready`.
   UIA focus event costs the outpost no UIA call before it is reported:
   the listener's read is one `Execute`, and the outpost's walk to its own
   copy of the element after the report is one `ElementFromHandle` and one
-  `Execute` (`docs/performance.md`). A focused menu item that no pattern
-  makes checkable costs the listener one call more: its legacy MSAA
-  checked state, read live for it alone, as are the focus-now answer
+  `Execute` (`docs/performance.md`). A focused menu item's legacy MSAA
+  checked state, which a menu item that no pattern makes checkable may
+  have, is read by the listener's program at no extra call
+  (`Ancestry::legacy_state`), a Windows Forms menu item's included; read
+  the classic way, it costs the listener one call more, read live for it
+  alone, as are the focus-now answer
   (`verbatim_uia::map::with_legacy_checked_state`) and a navigation step's
   neighbor.
 - A UIA object-navigation step (`read::uia_remote_step`) is one remote

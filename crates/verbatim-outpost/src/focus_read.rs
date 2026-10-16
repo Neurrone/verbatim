@@ -35,7 +35,8 @@
 //!   runtime id still names it; then the sender's own value, states, and
 //!   details afresh, its selected child for a list or tab control, and its
 //!   ancestors up to the first one the thread knew from the focus before,
-//!   whose ancestors are reused from that read.
+//!   whose ancestors are reused from that read; and for a menu item, its
+//!   legacy MSAA state, where its checked state may be.
 //!
 //! The result, or the drop, goes to the application's outpost through
 //! verbatim.exe like every fact; the outpost was sent a marker the moment
@@ -541,11 +542,16 @@ impl FocusReader {
         };
         if wants_legacy_checked_state(snapshot.role, snapshot.states) {
             // A menu item without the Toggle pattern: its checked state may
-            // be only in its legacy MSAA state, one call.
-            let legacy = element
-                .current_i32_ignoring_default(UIA_LegacyIAccessibleStatePropertyId)
-                .ok()
-                .flatten();
+            // be only in its legacy MSAA state, which the remote program
+            // read with the focus. The classic walk, which a window whose
+            // elements cannot be imported into a program is read with, left
+            // it to this one live call.
+            let legacy = ancestry.legacy_state.unwrap_or_else(|| {
+                element
+                    .current_i32_ignoring_default(UIA_LegacyIAccessibleStatePropertyId)
+                    .ok()
+                    .flatten()
+            });
             add_legacy_checked_state(&mut snapshot.states, legacy);
         }
         let mut ancestors = (!ancestry.out_of_time).then(|| {
