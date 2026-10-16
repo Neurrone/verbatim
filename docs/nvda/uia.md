@@ -42,7 +42,8 @@ than the cached value (commit `3ca80a5fa`, #20764), because with the
 richer cache a stale cached "has focus" let intermediate focus events
 through (a container announced before the focused item in WeChat).
 That read is the duplicate test: a UIA focus event is a repeat, and
-dropped before anything else about it is judged, when its element
+dropped once the native-element check (`isNativeUIAElement`) has passed
+and before the window is judged, when its element
 compares equal (`CompareElements`, by runtime id) to the last focus NVDA
 queued, from any application, and that element still reports
 `HasKeyboardFocus` when read live; a comparison or read that fails lets
@@ -158,8 +159,11 @@ treats a window through UIA or leaves it to MSAA/IA2:
 The verdict is cached for 500 ms. `UiaHasServerSideProvider` reports no
 provider when the window does not answer in time (three seconds for
 Windows 11 Notepad's text control while Notepad was starting, measured
-on 2026-10-03), and NVDA takes that as the answer, reading the focus
-through MSAA ("edit") until it moves. NVDA leaves UIA's own provider
+on 2026-10-03). From the source, NVDA takes a no as the answer for 0.5 s,
+so it would read the focus through MSAA ("edit") until it moves; the
+spoken "edit" was inferred from the source and never captured, because
+the NVDA captures of 2026-10-16 (60 Notepad and 60 Windows Terminal
+openings) never produced a slow probe. NVDA leaves UIA's own provider
 timeout at its default of two seconds, after which reading a starting
 Notepad's focused element returns UIA's stand-in for the window, a
 nameless edit.

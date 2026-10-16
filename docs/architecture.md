@@ -142,11 +142,12 @@ screen reader in both rendered and source form.
   outposts announce it.** One permanent, stateless listener process holds
   the single desktop-global UIA focus registration and global MSAA
   WinEvent hooks (focus, foreground, menu popups), under a hard rule: it
-  never makes a cross-process call — it reads only what the event itself
-  carries (a UIA element's cached properties, an MSAA event's raw window
-  and object ids) plus hang-safe local reads, and forwards each captured
-  focus fact to Core, which routes it to the target's own outpost for
-  acquisition, arbitration, enrichment, and announcement. Rationale:
+  never makes a cross-process call from a callback, writer, or
+  registration thread — those read only what the event itself carries (a
+  UIA element's cached properties, an MSAA event's raw window and object
+  ids) plus hang-safe local reads, and forward each captured focus fact to
+  Core, which routes it to the target's own outpost for acquisition,
+  arbitration, enrichment, and announcement. Rationale:
   per-app outposts structurally race first focus — the event fires before
   the newly foregrounded app's outpost has spawned and hooked — and the
   synthetic announce-by-polling that papered over the race was root-caused
@@ -202,6 +203,13 @@ screen reader in both rendered and source form.
   longer reads the focused element for a focus event: it reports the
   listener's read and finds its own copy of the element afterwards, off
   the way to speech.
+  Amended 2026-10-17 (the adopted pipeline, section 12.3, and UIA's setup,
+  section 20 of the same document): the listener's per-application reading
+  threads, and no other of its threads, make calls into applications: the
+  judgment and read of each UIA focus (a remote operation,
+  `HasKeyboardFocus`, the nearest window, the provider probe) and UIA's
+  setup in an application before the supervisor gives it an outpost. A
+  slow or hung application holds only its own reading thread.
 - **D14 — Attention follows focus; foreground is announced, not used as a
   gate.** The reducer tracks an attention record: the process and root
   window that most recently received a focus fact. It replaces the earlier

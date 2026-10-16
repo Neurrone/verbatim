@@ -403,14 +403,14 @@ focus waits behind the events queued before it as NVDA's does.
 ### A focus change, UIA, cold
 
 - Minimum: 1 window message and 2 UIA calls. The window's provider must be
-  probed once in its lifetime for arbitration (the outpost's probe), the
+  probed once in its lifetime for arbitration (the listener's probe), the
   sender's keyboard focus read plainly, and one program reads the whole
   chain up to the top-level window.
 - Today, with remote operations: 3 UIA calls and 1 window message: the
   sender's nearest window, its plain keyboard focus read, and one
   `Execute`, which walks up to the process's top-level window and stops
   there, never asking for the desktop's root, all the listener's; and the
-  outpost's probe. There is no comparison, since no focus was accepted
+  listener's probe. There is no comparison, since no focus was accepted
   before. 375 provider calls in all.
 - Today, classic: 7 UIA calls and 1 window message: the same two checks,
   and five for the classic read (the live keyboard focus, the focus's

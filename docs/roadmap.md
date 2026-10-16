@@ -57,7 +57,7 @@ The design of record is [the focus pipeline](design/focus-pipeline.md)
   2026-10-15, correcting [the operation ledger](performance.md)): steady
   state takes 4 calls (the nearest window, `CompareElements`,
   `CurrentHasKeyboardFocus`, and the `Execute`) against a target of 2, and
-  cold takes 3 calls plus the outpost's probe against a target of 2; the
+  cold takes 3 calls plus the listener's probe against a target of 2; the
   ledger's entries "A focus change, UIA, steady state" and "A focus
   change, UIA, cold" name which calls are over. Investigate whether the
   nearest-window and comparison calls can be folded into the remote
