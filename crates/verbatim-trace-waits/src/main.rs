@@ -51,6 +51,12 @@
 //! waited on (recorded when it was switched back in) and the stack that
 //! readied it, which says what a stalled thread, such as an application's
 //! UI thread, was waiting for.
+//! With `--timeline <thread> <from> <to>` (named the same way, the times
+//! UTC times of day as the logs give them) it reports, in time order, what
+//! those threads did between the two times: each blocked wait that
+//! overlaps the window, however short, as `--blocked` reports one, and each
+//! CPU sample of them in it with its stack, which together say whether a
+//! thread was waiting, and on what, or running, and in what.
 //! Names come from the thread events (`SetThreadDescription`,
 //! which Rust's named threads set); a process is named by the `.exe` image
 //! the trace saw loaded in it.
@@ -172,6 +178,19 @@ struct Waits {
     /// The shortest blocked wait `--blocked` reports, in 100-nanosecond
     /// units.
     long_blocked: i64,
+    /// The window `--timeline` reports, as times of day (UTC) in
+    /// 100-nanosecond units: blocked waits and samples outside it are not
+    /// kept.
+    window: Option<(i64, i64)>,
+    /// When each sampled thread's pending sample was taken.
+    sample_time: HashMap<u32, i64>,
+    /// When each collected sample was taken, and its thread, in the order
+    /// of `sample_stacks`.
+    sample_taken: Vec<(i64, u32)>,
+    /// The user parts still to come of collected samples' walks, by the
+    /// thread walked and the event's time as the walk gives it: the
+    /// sample's index in `sample_stacks`.
+    sample_user_part: HashMap<(u32, u64), usize>,
 }
 
 /// One blocked wait, as long as `--blocked` asks or longer, of a thread it
@@ -192,6 +211,10 @@ struct LongWait {
 /// The shortest blocked wait `--blocked` reports unless it is given
 /// another, in milliseconds.
 const LONG_BLOCKED_MS: i64 = 100;
+
+/// The lowest kernel-mode address on 64-bit Windows: a walk whose frames
+/// are all at or above it is a kernel part, its user part to come.
+const KERNEL_SPACE: u64 = 0xffff_8000_0000_0000;
 
 /// The shortest blocked wait recorded, in 100-nanosecond units.
 const SHORTEST_BLOCKED: i64 = 5_000;
@@ -227,11 +250,11 @@ impl Waits {
                         }
                         self.ready_since.entry(thread).or_insert(time);
                         *self.woken.entry(thread).or_default() += 1;
-                        if let Some(since) = self.blocked_since.remove(&thread)
-                            && time - since >= SHORTEST_BLOCKED
-                        {
+                        if let Some(since) = self.blocked_since.remove(&thread) {
                             let waker = self.running.get(&processor).copied().unwrap_or(0);
-                            self.wakes.push((thread, waker, time - since));
+                            if time - since >= SHORTEST_BLOCKED {
+                                self.wakes.push((thread, waker, time - since));
+                            }
                             self.long_block(thread, since, time, waker, processor);
                         }
                     }
@@ -250,17 +273,27 @@ impl Waits {
         } else if header.ProviderId == IMAGE && matches!(opcode, IMAGE_LOAD | IMAGE_DC_START) {
             self.image(data);
         } else if header.ProviderId == PERF_INFO && opcode == SAMPLED_PROFILE {
-            self.sample(data);
+            self.sample(data, time);
         } else if header.ProviderId == STACK_WALK && opcode == STACK {
             if self.long_block_stack(processor, data) {
                 return;
             }
-            if u32_at(data, 12).is_some_and(|thread| self.sample_pending.remove(&thread)) {
+            let walked = (u32_at(data, 12).unwrap_or(0), u64_at(data, 0).unwrap_or(0));
+            if let Some(index) = self.sample_user_part.remove(&walked) {
+                self.sample_user_stack(index, data);
+            } else if self.sample_pending.remove(&walked.0) {
                 self.sample_stack(data);
             } else if self.stack_pending.remove(&processor) {
                 self.stack(data);
             }
         }
+    }
+
+    /// Whether the span from `from` to `to` overlaps the `--timeline`
+    /// window, if there is one.
+    fn in_window(&self, from: i64, to: i64) -> bool {
+        self.window
+            .is_none_or(|(start, end)| of_day(from) <= end && of_day(to) >= start)
     }
 
     /// A blocked wait of a thread `--blocked` names, from `since` until
@@ -269,6 +302,7 @@ impl Waits {
     /// waiting stack at its next switch in.
     fn long_block(&mut self, thread: u32, since: i64, time: i64, waker: u32, processor: u16) {
         if time - since < self.long_blocked
+            || !self.in_window(since, time)
             || !self
                 .blocked_target
                 .as_ref()
@@ -432,7 +466,7 @@ impl Waits {
 
     /// A CPU sample: counted, with the module it was running in, when its
     /// thread is the one asked for; its stack follows.
-    fn sample(&mut self, data: &[u8]) {
+    fn sample(&mut self, data: &[u8], time: i64) {
         let (Some(address), Some(thread)) = (u64_at(data, 0), u32_at(data, 8)) else {
             return;
         };
@@ -440,9 +474,11 @@ impl Waits {
             .sample_target
             .as_ref()
             .is_some_and(|target| self.targets(thread, target))
+            || !self.in_window(time, time)
         {
             return;
         }
+        self.sample_time.insert(thread, time);
         let process = self.process_of.get(&thread).copied().unwrap_or(0);
         let module = self.module(process, address);
         self.samples += 1;
@@ -461,10 +497,40 @@ impl Waits {
             .iter()
             .map(|&address| self.module(process, address))
             .collect();
+        // A sample taken in the kernel walks its kernel part with its
+        // event, and the user part, when there is one, later, as a walk of
+        // the same thread and event time.
+        let kernel_only = addresses.iter().all(|&address| address >= KERNEL_SPACE);
         self.sample_stacks.push((process, addresses));
+        let thread = u32_at(data, 12).unwrap_or(0);
+        if kernel_only {
+            let walked = (thread, u64_at(data, 0).unwrap_or(0));
+            self.sample_user_part
+                .insert(walked, self.sample_stacks.len() - 1);
+        }
+        let taken = self.sample_time.remove(&thread).unwrap_or(0);
+        self.sample_taken.push((taken, thread));
         for module in modules {
             *self.sampled_under.entry(module).or_default() += 1;
         }
+    }
+
+    /// The user part of collected sample `index`'s walk: added to its
+    /// stack, each module on it counted once.
+    fn sample_user_stack(&mut self, index: usize, data: &[u8]) {
+        let process = u32_at(data, 8).unwrap_or(0);
+        let addresses: Vec<u64> = (16..data.len())
+            .step_by(8)
+            .filter_map(|offset| u64_at(data, offset))
+            .collect();
+        let modules: HashSet<String> = addresses
+            .iter()
+            .map(|&address| self.module(process, address))
+            .collect();
+        for module in modules {
+            *self.sampled_under.entry(module).or_default() += 1;
+        }
+        self.sample_stacks[index].1.extend(addresses);
     }
 
     /// The image holding `address`, in `process` or the kernel.
@@ -509,6 +575,42 @@ impl Waits {
         self.image_at(process, address)
             .map_or_else(|| "?".to_owned(), |(_, _, name)| name.clone())
     }
+}
+
+/// The time of day (UTC) of a trace time, both in 100-nanosecond units.
+fn of_day(units: i64) -> i64 {
+    units.rem_euclid(864_000_000_000)
+}
+
+/// A time of day as the logs give it, `HH:MM:SS.ffffff` (UTC), in
+/// 100-nanosecond units.
+fn parse_clock(text: &str) -> Option<i64> {
+    let (hms, fraction) = text.split_once('.').unwrap_or((text, "0"));
+    let mut parts = hms.split(':').map(str::parse::<i64>);
+    let (hours, minutes, seconds) = (
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+    );
+    let digits: String = fraction
+        .chars()
+        .chain(std::iter::repeat('0'))
+        .take(7)
+        .collect();
+    Some(((hours * 60 + minutes) * 60 + seconds) * 10_000_000 + digits.parse::<i64>().ok()?)
+}
+
+/// The time of day (UTC) of a trace time to the microsecond, as the logs
+/// give it.
+fn clock(units: i64) -> String {
+    let of_day = of_day(units);
+    format!(
+        "{:02}:{:02}:{:02}.{:06}",
+        of_day / 36_000_000_000,
+        of_day / 600_000_000 % 60,
+        of_day / 10_000_000 % 60,
+        of_day % 10_000_000 / 10
+    )
 }
 
 fn u64_at(data: &[u8], offset: usize) -> Option<u64> {
@@ -566,6 +668,7 @@ fn read(
     stack_target: Option<String>,
     sample_target: Option<String>,
     blocked: Option<(String, i64)>,
+    window: Option<(i64, i64)>,
 ) -> Result<Waits, String> {
     let (blocked_target, blocked_ms) = blocked.map_or((None, 0), |(target, ms)| (Some(target), ms));
     let mut waits = Waits {
@@ -573,6 +676,7 @@ fn read(
         sample_target,
         blocked_target,
         long_blocked: blocked_ms * 10_000,
+        window,
         ..Waits::default()
     };
     let mut name: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
@@ -814,17 +918,6 @@ fn report_blocked(waits: &Waits, mut symbols: symbols::Symbols) {
         let name = waits.names.get(&thread).map_or("", String::as_str);
         format!("{image} {process} thread {thread} {name:?}")
     };
-    // The time of day, UTC, to the microsecond, as the logs give it.
-    let clock = |units: i64| {
-        let of_day = units.rem_euclid(864_000_000_000);
-        format!(
-            "{:02}:{:02}:{:02}.{:06}",
-            of_day / 36_000_000_000,
-            of_day / 600_000_000 % 60,
-            of_day / 10_000_000 % 60,
-            of_day % 10_000_000 / 10
-        )
-    };
     let mut order: Vec<&LongWait> = waits.long_blocks.iter().collect();
     order.sort_by_key(|wait| wait.from);
     for wait in order {
@@ -854,6 +947,66 @@ fn report_blocked(waits: &Waits, mut symbols: symbols::Symbols) {
     }
 }
 
+/// What the threads `--timeline` names did in its window, in time order:
+/// each blocked wait overlapping it, with its waker and the stacks it
+/// waited on and was readied from, and each CPU sample in it with its
+/// stack, kernel frames left out.
+fn report_timeline(waits: &Waits, mut symbols: symbols::Symbols) {
+    let label = |thread: u32| {
+        let process = waits.process_of.get(&thread).copied().unwrap_or(0);
+        let image = waits.images.get(&process).map_or("?", String::as_str);
+        let name = waits.names.get(&thread).map_or("", String::as_str);
+        format!("{image} {process} thread {thread} {name:?}")
+    };
+    let mut named = |process: u32, addresses: &[u64]| -> Vec<String> {
+        addresses
+            .iter()
+            .map(|&address| waits.function(&mut symbols, process, address))
+            .filter(|frame| !frame.starts_with("ntoskrnl") && !frame.contains(".sys"))
+            .map(|frame| format!("    {frame}"))
+            .collect()
+    };
+    let mut entries: Vec<(i64, Vec<String>)> = Vec::new();
+    for wait in &waits.long_blocks {
+        let blocked = wait.to - wait.from;
+        let mut text = vec![format!(
+            "{} blocked {}.{:03} ms, from {} to {}, woken by {}",
+            label(wait.thread),
+            blocked / 10_000,
+            blocked % 10_000 / 10,
+            clock(wait.from),
+            clock(wait.to),
+            label(wait.waker),
+        )];
+        for (title, stack) in [
+            ("where it waited", &wait.wait_stack),
+            ("where it was readied", &wait.ready_stack),
+        ] {
+            match stack {
+                Some((process, addresses)) => {
+                    text.push(format!("  {title}:"));
+                    text.extend(named(*process, addresses));
+                }
+                None => text.push(format!("  {title}: no stack recorded")),
+            }
+        }
+        entries.push((wait.from, text));
+    }
+    for ((process, addresses), &(taken, thread)) in
+        waits.sample_stacks.iter().zip(&waits.sample_taken)
+    {
+        let mut text = vec![format!("{} sampled at {}", label(thread), clock(taken))];
+        text.extend(named(*process, addresses));
+        entries.push((taken, text));
+    }
+    entries.sort_by_key(|(time, _)| *time);
+    for (_, text) in entries {
+        for line in text {
+            println!("{line}");
+        }
+    }
+}
+
 /// The readying stacks collected, each frame named as the function holding
 /// it, the most frequent first, the top ten.
 fn report_stacks(waits: &Waits, mut symbols: symbols::Symbols) {
@@ -879,10 +1032,12 @@ fn report_stacks(waits: &Waits, mut symbols: symbols::Symbols) {
     }
 }
 
-fn main() -> ExitCode {
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
-    // `--symbols <folder>`, anywhere and any number of times: folders
-    // searched for every image's PDB.
+/// The symbol options, taken out of `args` from anywhere in them: the
+/// folders of `--symbols <folder>` (any number of times), searched for
+/// every image's PDB, and, with `--symbol-server`, the server's cache, the
+/// folder of `--symbol-cache <folder>` or by default `symbols` beside the
+/// build's own folder (`target\symbols`).
+fn symbol_options(args: &mut Vec<String>) -> (Vec<String>, Option<server::Server>) {
     let mut symbol_folders = Vec::new();
     while let Some(at) = args.iter().position(|arg| arg == "--symbols") {
         args.remove(at);
@@ -890,9 +1045,6 @@ fn main() -> ExitCode {
             symbol_folders.push(args.remove(at));
         }
     }
-    // `--symbol-server`, and `--symbol-cache <folder>` for where its PDBs
-    // are kept, by default `symbols` beside the build's own folder
-    // (`target\symbols`).
     let symbol_server = args.iter().position(|arg| arg == "--symbol-server");
     if let Some(at) = symbol_server {
         args.remove(at);
@@ -904,9 +1056,23 @@ fn main() -> ExitCode {
             symbol_cache = Some(std::path::PathBuf::from(args.remove(at)));
         }
     }
+    let server = symbol_server.map(|_| {
+        server::Server::new(symbol_cache.unwrap_or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|exe| Some(exe.parent()?.parent()?.join("symbols")))
+                .unwrap_or_else(|| "symbols".into())
+        }))
+    });
+    (symbol_folders, server)
+}
+
+fn main() -> ExitCode {
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let (symbol_folders, server) = symbol_options(&mut args);
     let Some(path) = args.first() else {
         eprintln!(
-            "usage: verbatim-trace-waits <trace.etl> [--by-name | --wakers <thread> | --stacks <thread> | --samples <thread> | --blocked <thread> [<shortest ms>]] [--symbols <folder>] [--symbol-server [--symbol-cache <folder>]] [process.exe ...], a <thread> being a thread name, <process.exe>:<thread name> or <process.exe>:#<thread id>"
+            "usage: verbatim-trace-waits <trace.etl> [--by-name | --wakers <thread> | --stacks <thread> | --samples <thread> | --blocked <thread> [<shortest ms>] | --timeline <thread> <from> <to>] [--symbols <folder>] [--symbol-server [--symbol-cache <folder>]] [process.exe ...], a <thread> being a thread name, <process.exe>:<thread name> or <process.exe>:#<thread id>"
         );
         return ExitCode::from(2);
     };
@@ -916,7 +1082,22 @@ fn main() -> ExitCode {
     let mut samples = None;
     let mut by_name = false;
     let mut blocked = None;
+    let mut window = None;
     match rest.first().map(String::as_str) {
+        Some("--timeline") => {
+            let (Some(target), Some(from), Some(to)) = (
+                rest.get(1),
+                rest.get(2).and_then(|text| parse_clock(text)),
+                rest.get(3).and_then(|text| parse_clock(text)),
+            ) else {
+                eprintln!("usage: --timeline <thread> <from HH:MM:SS.ffffff> <to HH:MM:SS.ffffff>");
+                return ExitCode::from(2);
+            };
+            blocked = Some((target.clone(), 0));
+            samples = Some(target.clone());
+            window = Some((from, to));
+            rest = rest.get(4..).unwrap_or(&[]);
+        }
         Some("--wakers") => {
             wakers = rest.get(1).cloned();
             rest = rest.get(2..).unwrap_or(&[]);
@@ -955,18 +1136,17 @@ fn main() -> ExitCode {
         .map(str::to_owned)
         .to_vec();
     }
-    let server = symbol_server.map(|_| {
-        server::Server::new(symbol_cache.unwrap_or_else(|| {
-            std::env::current_exe()
-                .ok()
-                .and_then(|exe| Some(exe.parent()?.parent()?.join("symbols")))
-                .unwrap_or_else(|| "symbols".into())
-        }))
-    });
     let symbols = || symbols::Symbols::new(symbol_folders.clone(), server);
-    match read(path, stacks.clone(), samples.clone(), blocked.clone()) {
+    match read(
+        path,
+        stacks.clone(),
+        samples.clone(),
+        blocked.clone(),
+        window,
+    ) {
         Ok(waits) => {
             match (&wakers, &stacks, &samples) {
+                _ if window.is_some() => report_timeline(&waits, symbols()),
                 _ if blocked.is_some() => report_blocked(&waits, symbols()),
                 (Some(target), _, _) => report_wakers(&waits, target),
                 (None, Some(_), _) => report_stacks(&waits, symbols()),
@@ -1041,6 +1221,31 @@ mod tests {
         assert_eq!(taken("verbatim-outpost.exe:#2"), vec![2]);
         assert_eq!(taken("verbatim.exe:#3"), vec![3]);
         assert_eq!(taken("verbatim.exe:#2"), Vec::<u32>::new());
+    }
+
+    /// `--timeline` reads its times as the logs give them and keeps what
+    /// overlaps its window, whatever the trace's date, as
+    /// `docs/crates/verbatim-trace-waits.md` documents.
+    #[test]
+    fn a_timeline_keeps_what_overlaps_its_window() {
+        let from = parse_clock("21:37:09.4250");
+        let to = parse_clock("21:37:09.439");
+        assert_eq!(
+            from,
+            Some(((21 * 60 + 37) * 60 + 9) * 10_000_000 + 4_250_000)
+        );
+        let waits = Waits {
+            window: from.zip(to),
+            ..Waits::default()
+        };
+        // 2026-10-16 in the trace's units (days since 1601), at a time of day.
+        let day = 154_237 * 864_000_000_000_i64;
+        let at = |clock: &str| day + parse_clock(clock).unwrap();
+
+        assert!(waits.in_window(at("21:37:09.400"), at("21:37:09.426")));
+        assert!(waits.in_window(at("21:37:09.438"), at("21:37:09.438")));
+        assert!(!waits.in_window(at("21:37:09.400"), at("21:37:09.424")));
+        assert!(!waits.in_window(at("21:37:09.440"), at("21:37:09.500")));
     }
 
     /// `<process.exe>:*` takes every thread of a process of that image,

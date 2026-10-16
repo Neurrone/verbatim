@@ -149,7 +149,7 @@ names it in `last-trace.txt` there; that folder is readable by his account,
 and he may delete what is in it. `cargo xtask trace waits <trace.etl>
 [report] [process.exe ...]` reads a trace with `verbatim-trace-waits`, any
 of its reports (`--by-name`, `--wakers`, `--stacks`, `--samples`,
-`--blocked`, with `--symbols <folder>` for the PDBs of binaries run from a copy, such as the
+`--blocked`, `--timeline`, with `--symbols <folder>` for the PDBs of binaries run from a copy, such as the
 end-to-end harness's `target\e2e-stage`). Stacks and samples name kernel
 frames by the kernel's exported functions; add `--symbol-server` to fetch
 the PDBs of the system images they pass through from Microsoft's public
@@ -168,6 +168,14 @@ thread, or a Verbatim thread waiting on it, was doing while it stalled.
 A stall at an application's start falls outside the window `cargo xtask
 trace scenario` allows, so trace it by hand: `cargo xtask trace start`,
 run the scenario, `cargo xtask trace stop`.
+
+`--timeline <thread> <from> <to>` shows what a thread did in a window of
+a few milliseconds, taken from the logs' times: every blocked wait in it,
+however short, with its stacks, and every CPU sample, with its stack. Use
+it on an application's UI thread and on UI Automation's I/O thread in the
+application (the unnamed thread whose stacks hold
+`OverlappedIOManager::IoThreadProc`) to see how a UIA call from Verbatim
+was served there, and on the Verbatim thread that made the call.
 
 ## Measuring the platform floor
 

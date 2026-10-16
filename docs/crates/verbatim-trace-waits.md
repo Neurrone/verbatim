@@ -85,6 +85,19 @@ stalled thread was waiting for and what ended the wait: a timer's expiry,
 for instance, shows as a readying by the idle thread from
 `KiTimerExpiration`.
 
+`--timeline <thread> <from> <to>` takes the same names as `--blocked`,
+and two UTC times of day as the logs give them (`21:37:09.4250`). It
+reports what those threads did between the two times, in time order: each
+blocked wait that overlaps the window, however short, as `--blocked`
+prints one, and each CPU sample of them inside it, with its stack. Kernel
+frames are left out of both. Together they say, a fraction of a
+millisecond at a time, whether an application's UI thread was waiting,
+on what and for whom, or running, and in what: for instance, whether a
+remote operation's call reached the thread at once or waited behind the
+application's own work. A sample taken in kernel mode is walked in two
+parts, as a wait is, and the two are joined, so `--samples` also sees the
+user-mode frames under a kernel-mode sample.
+
 `--symbol-server`, off by default, fetches the PDB of each image a report
 names a frame in, user-mode or the kernel's, from Microsoft's public symbol
 server, so system code is named by its real functions (`server.rs`). The
