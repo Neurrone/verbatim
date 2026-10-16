@@ -163,8 +163,9 @@ impl Frames {
     /// a frame, the [`OutpostMessage::Event`] it carries, unless it waits
     /// behind a parse of that outpost's or goes to the helper; or, for the
     /// helper's result, that event and everything of the outpost's that
-    /// waited behind it, up to its next large frame. An outpost's end
-    /// waits behind its frames too, and while it waits, so does everything
+    /// waited behind it, up to its next large frame. Word that an outpost
+    /// that failed before its `Ready` is replaced waits behind its frames
+    /// too, as its end does; and while its end waits, so does everything
     /// about the same application that arrives after it: another outpost's
     /// start, frames and end, word that a failed spare's place went to
     /// another incarnation, and word that the application is not watched,
@@ -172,8 +173,18 @@ impl Frames {
     pub fn arrived(&mut self, message: OutpostMessage, out: &mut Vec<OutpostMessage>) {
         if let Some(pid) = application_of(&message)
             && let Some(&held) = self.held_ends.get(&pid)
-            && !matches!(&message, OutpostMessage::Ended { outpost, .. } if *outpost == held)
+            && !matches!(&message, OutpostMessage::Ended { outpost, .. }
+                | OutpostMessage::Reincarnated { outpost, .. } if *outpost == held)
             && let Some(stream) = self.streams.get_mut(&held)
+        {
+            stream.behind.push_back(message);
+            return;
+        }
+        if let OutpostMessage::Reincarnated { outpost, .. } = &message
+            && let Some(stream) = self
+                .streams
+                .get_mut(outpost)
+                .filter(|stream| stream.parsing)
         {
             stream.behind.push_back(message);
             return;

@@ -1,12 +1,12 @@
 //! The supervisor's pure decisions, kept apart from the I/O that gathers
-//! their inputs so each is unit-tested on its own: when an outpost is wedged,
-//! when an idle one is retired, when crashes stop respawns, how facts
-//! that arrive during a spawn are held, and which spare outposts are kept
+//! their inputs so each is unit-tested on its own: when an outpost is stuck,
+//! when an idle one is retired, how long a failed outpost's replacement
+//! waits, how facts that arrive during a spawn are held, and which spare outposts are kept
 //! and given.
 
 #![forbid(unsafe_code)]
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use verbatim_model::{OutpostId, TraceId};
@@ -72,44 +72,73 @@ pub(super) fn retirement_decision(
         && now.saturating_duration_since(last_attention_at) >= idle_after
 }
 
-/// Recent crashes of one application's outposts. After
-/// [`CRASH_LIMIT`](super::CRASH_LIMIT) crashes within
-/// [`CRASH_WINDOW`](super::CRASH_WINDOW) respawning stops until the next
-/// foreground change to that application.
+/// The backoff between an outpost's failures (`docs/design/focus-pipeline.md`,
+/// section 19.5): one application's outposts that fail while serving it, or
+/// the spares that fail while they wait. The first failure is replaced at
+/// once; each further one waits twice as long as the one before, from
+/// [`BACKOFF_FIRST`](super::BACKOFF_FIRST) up to
+/// [`BACKOFF_LIMIT`](super::BACKOFF_LIMIT). Nothing is ever given up. The
+/// count starts again once what failed had stayed up for
+/// [`STAYED_UP`](super::STAYED_UP), and, for an application, when it comes
+/// to the foreground, which also ends a wait that runs
+/// ([`foreground`](Self::foreground)).
 #[derive(Debug, Default)]
-pub(super) struct CrashHistory {
-    crashes: VecDeque<Instant>,
-    stopped: bool,
+pub(super) struct Backoff {
+    /// The failures counted since the count last started again.
+    failures: u32,
+    /// When the replacement is given or started, while a wait runs.
+    due: Option<Instant>,
 }
 
-impl CrashHistory {
-    /// Records a crash at `now` and reports whether respawning has now
-    /// stopped.
-    pub(super) fn record(&mut self, now: Instant, limit: usize, window: Duration) -> bool {
-        self.crashes.push_back(now);
-        while self
-            .crashes
-            .front()
-            .is_some_and(|&crash| now.saturating_duration_since(crash) > window)
-        {
-            self.crashes.pop_front();
+impl Backoff {
+    /// Records, at `now`, a failure of an outpost that had been up for
+    /// `up`, and returns how long its replacement waits: none for the first
+    /// failure since the count started again, then `first`, doubling up to
+    /// `limit`; the wait runs until [`due`](Self::due). A failure of one
+    /// that had stayed up for `stayed_up` starts the count again.
+    pub(super) fn failed(
+        &mut self,
+        up: Duration,
+        now: Instant,
+        (first, limit, stayed_up): (Duration, Duration, Duration),
+    ) -> Duration {
+        if up >= stayed_up {
+            self.failures = 0;
         }
-        if self.crashes.len() >= limit {
-            self.stopped = true;
-        }
-        self.stopped
+        self.failures = self.failures.saturating_add(1);
+        let wait = match self.failures {
+            1 => Duration::ZERO,
+            failures => {
+                // 2^(failures - 2) times `first`, stopped at `limit` before
+                // it can overflow.
+                let doublings = (failures - 2).min(31);
+                first.saturating_mul(1 << doublings).min(limit)
+            }
+        };
+        self.due = (!wait.is_zero()).then(|| now + wait);
+        wait
     }
 
-    /// Whether respawning has stopped.
-    pub(super) fn stopped(&self) -> bool {
-        self.stopped
+    /// When the replacement is given or started, while a wait runs.
+    pub(super) fn due(&self) -> Option<Instant> {
+        self.due
     }
 
-    /// Clears the history: a foreground change to the application earns it
-    /// another try.
-    pub(super) fn reset(&mut self) {
-        self.crashes.clear();
-        self.stopped = false;
+    /// Whether the wait that ran has ended at `now`: once it says so, no
+    /// wait runs.
+    pub(super) fn ended(&mut self, now: Instant) -> bool {
+        let ended = self.due.is_some_and(|due| now >= due);
+        if ended {
+            self.due = None;
+        }
+        ended
+    }
+
+    /// The application came to the foreground: the count starts again,
+    /// and a wait that runs ends now. Returns whether one ran.
+    pub(super) fn foreground(&mut self) -> bool {
+        self.failures = 0;
+        self.due.take().is_some()
     }
 }
 
@@ -164,13 +193,11 @@ impl HeldFacts {
 }
 
 /// The spare outposts (`docs/design/focus-pipeline.md`, section 19):
-/// whether they are kept yet, which wait, oldest first, whether each has
-/// said it is ready, and which given ones still owe their replacement. A
-/// spare given to an application never returns to the list. Its
-/// replacement is owed until the outpost it became answers its first idle
-/// query, or the limit passes, so the replacement's start does not compete
-/// with the application's first focus. A spare that fails is always
-/// replaced.
+/// whether they are kept yet, which wait, oldest first, and whether each has
+/// said it is ready. A spare given to an application never returns to the
+/// list, and its replacement is wanted at once. A spare that fails while it
+/// waits is always replaced, its replacement's start spaced from the
+/// failures before it by the spares' [`Backoff`].
 #[derive(Debug, Default)]
 pub(super) struct Spares {
     /// Whether spares are kept: from the moment Core's own outpost is
@@ -178,9 +205,9 @@ pub(super) struct Spares {
     kept: bool,
     /// The spares waiting, oldest first, each with whether it is ready.
     waiting: VecDeque<(OutpostId, bool)>,
-    /// The given spares whose replacements are owed, with when each was
-    /// given.
-    owed: HashMap<OutpostId, Instant>,
+    /// The failures of spares while they waited, and the wait one's
+    /// replacement has before it starts.
+    backoff: Backoff,
 }
 
 impl Spares {
@@ -190,12 +217,21 @@ impl Spares {
         !std::mem::replace(&mut self.kept, true)
     }
 
-    /// How many spares to start now so that `count` wait or are owed.
-    pub(super) fn wanted(&self, count: usize) -> usize {
+    /// How many spares to start at `now` so that `count` wait: none while
+    /// spares are not kept, or a failure's backoff runs.
+    pub(super) fn wanted(&mut self, count: usize, now: Instant) -> usize {
         if !self.kept {
             return 0;
         }
-        count.saturating_sub(self.waiting.len() + self.owed.len())
+        if self.backoff.due().is_some() && !self.backoff.ended(now) {
+            return 0;
+        }
+        count.saturating_sub(self.waiting.len())
+    }
+
+    /// When the next spare may start, while a failure's backoff runs.
+    pub(super) fn due(&self) -> Option<Instant> {
+        self.backoff.due()
     }
 
     /// Lists a spare just started, at the back.
@@ -221,14 +257,12 @@ impl Spares {
     }
 
     /// Gives the oldest spare waiting, ready or not, while spares are
-    /// kept, and owes its replacement from `now`.
-    pub(super) fn take(&mut self, now: Instant) -> Option<OutpostId> {
+    /// kept.
+    pub(super) fn take(&mut self) -> Option<OutpostId> {
         if !self.kept {
             return None;
         }
-        let (spare, _) = self.waiting.pop_front()?;
-        self.owed.insert(spare, now);
-        Some(spare)
+        self.waiting.pop_front().map(|(spare, _)| spare)
     }
 
     /// Takes `spare` off the list: it has ended while waiting. Returns
@@ -239,30 +273,16 @@ impl Spares {
         self.waiting.len() != before
     }
 
-    /// Whether the given outpost `outpost` still owes its replacement.
-    pub(super) fn owes(&self, outpost: OutpostId) -> bool {
-        self.owed.contains_key(&outpost)
-    }
-
-    /// The given outpost `outpost` has answered an idle query, or has
-    /// ended: its replacement is owed no longer. Returns whether it was.
-    pub(super) fn settled(&mut self, outpost: OutpostId) -> bool {
-        self.owed.remove(&outpost).is_some()
-    }
-
-    /// The given outposts whose replacements have been owed for `limit` or
-    /// longer at `now`, owed no longer.
-    pub(super) fn overdue(&mut self, now: Instant, limit: Duration) -> Vec<OutpostId> {
-        let overdue: Vec<OutpostId> = self
-            .owed
-            .iter()
-            .filter(|&(_, &given)| now.saturating_duration_since(given) >= limit)
-            .map(|(&outpost, _)| outpost)
-            .collect();
-        for outpost in &overdue {
-            self.owed.remove(outpost);
-        }
-        overdue
+    /// A spare that had been up for `up` failed while it waited, at `now`:
+    /// its replacement starts at once, or when the backoff
+    /// ([`Backoff::failed`], with `times`) says, which this returns.
+    pub(super) fn failed(
+        &mut self,
+        up: Duration,
+        now: Instant,
+        times: (Duration, Duration, Duration),
+    ) -> Duration {
+        self.backoff.failed(up, now, times)
     }
 }
 
@@ -337,20 +357,101 @@ mod tests {
         ));
     }
 
+    /// The backoff's times as the supervisor sets them: 1 s first, 30 s
+    /// at most, starting again after 60 s up.
+    const TIMES: (Duration, Duration, Duration) = (
+        Duration::from_secs(1),
+        Duration::from_secs(30),
+        Duration::from_secs(60),
+    );
+
     #[test]
-    fn three_crashes_within_a_minute_stop_respawning_until_reset() {
-        let start = Instant::now();
-        let window = Duration::from_mins(1);
-        let mut history = CrashHistory::default();
-        assert!(!history.record(start, 3, window));
-        // A crash more than a minute after the first one leaves two in the
-        // window, not three.
-        assert!(!history.record(start + Duration::from_secs(30), 3, window));
-        assert!(!history.record(start + Duration::from_secs(70), 3, window));
-        assert!(history.record(start + Duration::from_secs(80), 3, window));
-        assert!(history.stopped());
-        history.reset();
-        assert!(!history.stopped());
+    fn repeated_failures_wait_one_two_four_seconds_up_to_thirty_and_never_give_up() {
+        let now = Instant::now();
+        let mut backoff = Backoff::default();
+        let young = Duration::from_secs(1);
+        let waits: Vec<u64> = (0..9)
+            .map(|_| backoff.failed(young, now, TIMES).as_secs())
+            .collect();
+        assert_eq!(waits, [0, 1, 2, 4, 8, 16, 30, 30, 30]);
+        for _ in 0..100 {
+            assert_eq!(backoff.failed(young, now, TIMES), Duration::from_secs(30));
+        }
+        assert_eq!(backoff.due(), Some(now + Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn a_wait_runs_until_it_is_due() {
+        let now = Instant::now();
+        let mut backoff = Backoff::default();
+        let young = Duration::from_secs(1);
+        assert_eq!(backoff.failed(young, now, TIMES), Duration::ZERO);
+        assert_eq!(backoff.due(), None, "the first is replaced at once");
+        assert_eq!(backoff.failed(young, now, TIMES), Duration::from_secs(1));
+        let due = now + Duration::from_secs(1);
+        assert_eq!(backoff.due(), Some(due));
+        let just_before = due
+            .checked_sub(Duration::from_millis(1))
+            .expect("computable");
+        assert!(!backoff.ended(just_before));
+        assert!(backoff.ended(due));
+        assert_eq!(backoff.due(), None);
+        assert!(!backoff.ended(due), "ended once");
+    }
+
+    #[test]
+    fn the_count_starts_again_after_a_minute_up() {
+        let now = Instant::now();
+        let mut backoff = Backoff::default();
+        let young = Duration::from_secs(59);
+        assert_eq!(backoff.failed(young, now, TIMES), Duration::ZERO);
+        assert_eq!(backoff.failed(young, now, TIMES), Duration::from_secs(1));
+        assert_eq!(backoff.failed(young, now, TIMES), Duration::from_secs(2));
+        // One that stayed up a minute fails as the first.
+        assert_eq!(
+            backoff.failed(Duration::from_secs(60), now, TIMES),
+            Duration::ZERO
+        );
+        assert_eq!(backoff.due(), None);
+        assert_eq!(backoff.failed(young, now, TIMES), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn the_foreground_starts_the_count_again_and_ends_a_wait_that_runs() {
+        let now = Instant::now();
+        let mut backoff = Backoff::default();
+        let young = Duration::from_secs(1);
+        for _ in 0..3 {
+            let _ = backoff.failed(young, now, TIMES);
+        }
+        assert_eq!(backoff.due(), Some(now + Duration::from_secs(2)));
+        assert!(backoff.foreground(), "a wait ran");
+        assert_eq!(backoff.due(), None);
+        assert!(!backoff.foreground(), "none runs now");
+        assert_eq!(backoff.failed(young, now, TIMES), Duration::ZERO);
+        assert_eq!(backoff.failed(young, now, TIMES), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_failed_spares_replacement_waits_for_its_backoff() {
+        let now = Instant::now();
+        let mut spares = kept(2);
+        let young = Duration::from_secs(1);
+        assert!(spares.remove(OutpostId(1)));
+        assert_eq!(spares.failed(young, now, TIMES), Duration::ZERO);
+        assert_eq!(spares.due(), None);
+        assert_eq!(spares.wanted(2, now), 1, "the first failure's at once");
+        spares.add(OutpostId(3));
+        assert!(spares.remove(OutpostId(3)));
+        assert_eq!(spares.failed(young, now, TIMES), Duration::from_secs(1));
+        let due = now + Duration::from_secs(1);
+        assert_eq!(spares.due(), Some(due));
+        let just_before = due
+            .checked_sub(Duration::from_millis(1))
+            .expect("computable");
+        assert_eq!(spares.wanted(2, just_before), 0, "not before its backoff");
+        assert_eq!(spares.wanted(2, due), 1);
+        assert_eq!(spares.due(), None);
     }
 
     fn held(observed_at_ms: u64, fact: DeliveredFact) -> HeldFact {
@@ -384,25 +485,25 @@ mod tests {
 
     #[test]
     fn no_spare_is_started_or_given_before_they_are_kept() {
+        let now = Instant::now();
         let mut spares = Spares::default();
-        assert_eq!(spares.wanted(2), 0);
+        assert_eq!(spares.wanted(2, now), 0);
         spares.add(OutpostId(1));
-        assert_eq!(spares.take(Instant::now()), None);
+        assert_eq!(spares.take(), None);
         assert!(spares.keep());
         assert!(!spares.keep(), "kept once");
-        assert_eq!(spares.wanted(2), 1);
+        assert_eq!(spares.wanted(2, now), 1);
     }
 
     #[test]
     fn the_oldest_spare_is_given_ready_or_not_and_never_listed_again() {
-        let now = Instant::now();
         let mut spares = kept(2);
         assert_eq!(
             spares.ready(OutpostId(2)),
             Some(1),
             "the newer one is ready"
         );
-        assert_eq!(spares.take(now), Some(OutpostId(1)), "the older, not ready");
+        assert_eq!(spares.take(), Some(OutpostId(1)), "the older, not ready");
         assert!(!spares.contains(OutpostId(1)));
         assert_eq!(
             spares.ready(OutpostId(1)),
@@ -410,35 +511,15 @@ mod tests {
             "a given spare is not listed"
         );
         assert!(spares.contains(OutpostId(2)));
-        assert_eq!(spares.take(now), Some(OutpostId(2)));
-        assert_eq!(spares.take(now), None);
+        assert_eq!(spares.take(), Some(OutpostId(2)));
+        assert_eq!(spares.take(), None);
     }
 
     #[test]
-    fn a_given_spares_replacement_is_owed_until_its_first_idle_answer() {
-        let now = Instant::now();
+    fn a_given_spares_replacement_is_wanted_at_once() {
         let mut spares = kept(2);
-        let given = spares.take(now).expect("a spare");
-        assert!(spares.owes(given));
-        assert_eq!(spares.wanted(2), 0, "the replacement waits for the answer");
-        assert!(spares.settled(given), "the first idle answer");
-        assert!(!spares.settled(given), "only the first counts");
-        assert_eq!(spares.wanted(2), 1, "the replacement is started now");
-    }
-
-    #[test]
-    fn a_replacement_owed_past_the_limit_is_started() {
-        let now = Instant::now();
-        let limit = Duration::from_secs(10);
-        let mut spares = kept(2);
-        let given = spares.take(now).expect("a spare");
-        let just_before = (now + limit)
-            .checked_sub(Duration::from_millis(1))
-            .expect("computable");
-        assert_eq!(spares.overdue(just_before, limit), []);
-        assert_eq!(spares.overdue(now + limit, limit), [given]);
-        assert!(!spares.owes(given));
-        assert_eq!(spares.wanted(2), 1);
+        let _ = spares.take().expect("a spare");
+        assert_eq!(spares.wanted(2, Instant::now()), 1);
     }
 
     #[test]
@@ -446,7 +527,7 @@ mod tests {
         let mut spares = kept(2);
         assert!(spares.remove(OutpostId(1)));
         assert!(!spares.remove(OutpostId(1)), "removed once");
-        assert_eq!(spares.wanted(2), 1);
+        assert_eq!(spares.wanted(2, Instant::now()), 1);
     }
 
     #[test]

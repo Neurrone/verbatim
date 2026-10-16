@@ -41,12 +41,13 @@
 //!   (`docs/design/focus-pipeline.md`, section 19), from the moment Core's
 //!   own outpost is ready: a start for an application takes the oldest,
 //!   sends it `Assign`, and tells the app the incarnation `Started`; a
-//!   spare given never returns, and its replacement starts once the
-//!   outpost it became has answered its first idle query, or after
-//!   [`REPLACEMENT_LIMIT`]. A spare that fails before its `Ready` is
-//!   replaced, the application's held facts going to the next one, which
-//!   the app hears of ([`OutpostMessage::Reincarnated`]); a spare that
-//!   fails is always replaced.
+//!   spare given never returns, and its replacement starts at once.
+//! - Every outpost failure takes one path, whatever its cause: a crash, a
+//!   hook that fails, missed pings, piled-up abandoned workers, or a spare
+//!   that dies waiting. The outpost is ended; an application it served is
+//!   given the next spare, its held facts with it; and nothing is given up,
+//!   repeated failures being spaced by an exponential backoff
+//!   ([`policy::Backoff`]).
 //!
 //! The app hears of each outpost incarnation through [`OutpostMessage`]:
 //! `Started` before any of its messages, then its messages, then `Ended`.
@@ -102,34 +103,26 @@ const IDLE_RETIREMENT: Duration = Duration::from_mins(2);
 /// How often idle outposts are looked for.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 
-/// How many crashes within [`CRASH_WINDOW`] stop respawning until the next
-/// foreground change to the application.
-const CRASH_LIMIT: usize = 3;
-
-/// The window [`CRASH_LIMIT`] counts crashes in.
-const CRASH_WINDOW: Duration = Duration::from_mins(1);
-
 /// How many spare outposts the supervisor keeps waiting
 /// (`docs/design/focus-pipeline.md`, section 19).
 pub const SPARES: usize = 2;
 
-/// The longest a given spare's replacement waits for the outpost it became
-/// to answer its first idle query. The answer waits behind the
-/// application's first facts, each of which the worker may take up to its
-/// ten-second deadline to handle in a hung application before it is
-/// abandoned, and behind a terminal read owed to Core, which waits for the
-/// terminal's output to settle; so it has no fixed bound
-/// (`docs/design/focus-pipeline.md`, section 19.8, item 1). Five seconds
-/// (Dickson, 2026-10-16) is long past any first focus that is not stuck,
-/// so the replacement still does not compete with it. Checked at the
-/// heartbeat, so the replacement starts up to one ping interval later.
-pub(crate) const REPLACEMENT_LIMIT: Duration = Duration::from_secs(5);
+/// How long the replacement of an outpost's second failure in a row
+/// waits; each failure after it waits twice as long as the one before, up
+/// to [`BACKOFF_LIMIT`] (`docs/design/focus-pipeline.md`, section 19.5).
+/// The first failure is replaced at once.
+const BACKOFF_FIRST: Duration = Duration::from_secs(1);
 
-/// The idle round the supervisor asks a given spare itself, behind the
-/// application's first facts, when the app has asked none: its answer
-/// starts the spare's replacement and is not the app's. The app numbers
-/// its rounds from 1.
-const FIRST_ANSWER_ROUND: u64 = 0;
+/// The longest a failed outpost's replacement waits.
+const BACKOFF_LIMIT: Duration = Duration::from_secs(30);
+
+/// How long an outpost, or a spare, must have been up for its failure to
+/// count as the first again: a minute, twenty heartbeats, long past the
+/// start and first focus in which a failure that repeats shows itself.
+const STAYED_UP: Duration = Duration::from_mins(1);
+
+/// The backoff's three times, as [`policy::Backoff::failed`] takes them.
+const BACKOFF: (Duration, Duration, Duration) = (BACKOFF_FIRST, BACKOFF_LIMIT, STAYED_UP);
 
 /// Why an outpost incarnation ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -333,13 +326,14 @@ pub enum OutpostMessage {
         /// Why it ended.
         reason: EndReason,
     },
-    /// A spare given to `target_pid`, the incarnation `outpost`, ended
-    /// before its `Ready` (`docs/design/focus-pipeline.md`, section 19.5),
-    /// and the application's held facts, and the idle query held for it,
-    /// go to the incarnation `next`: the next spare, or an outpost
-    /// launched for the application. Sent before `outpost`'s `Ended`, which
-    /// follows when the app heard it started, and before `next`'s
-    /// `Started`, which follows at once or once its launch reports. In an
+    /// The incarnation `outpost` given to `target_pid` failed before its
+    /// `Ready` (`docs/design/focus-pipeline.md`, section 19.5), and the
+    /// application's held facts, and the idle query held for it, go to the
+    /// incarnation `next`: the next spare, or an outpost launched for the
+    /// application. Sent when `next` is given, at once or when the
+    /// failure's backoff ends, before `outpost`'s `Ended`, which follows
+    /// when the app heard it started, and before `next`'s `Started`, which
+    /// follows at once or once its launch reports. In an
     /// idle round that asked `outpost`, `next` answers in its place; and
     /// nothing the application reported is lost, so the app asks it for
     /// nothing again.
@@ -351,12 +345,12 @@ pub enum OutpostMessage {
         /// The application.
         target_pid: Pid,
     },
-    /// An outpost was wanted for `target_pid`, asked for or to replace one
-    /// that crashed, and none was started: the application's process has
-    /// exited, or cannot be opened to be held, or is one Verbatim ignores
-    /// ([`IgnoredProcesses`]), or its outposts crashed repeatedly, which
-    /// stops respawning until the next foreground change to it. Nothing
-    /// should wait for one.
+    /// An outpost was wanted for `target_pid`, and none was started: the
+    /// application's process has exited, or cannot be opened to be held,
+    /// or is one Verbatim ignores ([`IgnoredProcesses`]). Nothing should
+    /// wait for one. An application whose outposts fail is never given up
+    /// and never reported so: each failure's replacement only waits for
+    /// its backoff.
     NotWatched {
         /// The application.
         target_pid: Pid,
@@ -489,8 +483,8 @@ impl Supervisor {
     /// startup for Core's own process, before any spare exists, so its
     /// outpost is warm before the first gesture: a cold spawn races a real
     /// keypress sent right after Verbatim's menu opens; the spares are
-    /// started once it is ready. An application whose process has exited,
-    /// or whose outposts crashed repeatedly, gets none, and the app hears
+    /// started once it is ready. An application whose process has exited
+    /// gets none, and the app hears
     /// [`OutpostMessage::NotWatched`].
     pub fn ensure_spawned(&self, target_pid: Pid) {
         let _ = self
@@ -573,8 +567,7 @@ impl Supervisor {
 
     /// Tells the owner the views the app derives from the reducer state:
     /// the application holding attention, and the outposts in which the
-    /// state holds nodes. Attention decides respawn after a crash; both
-    /// decide retirement.
+    /// state holds nodes, which decide retirement.
     pub fn note_views(&self, attention: Option<Pid>, holding: BTreeSet<OutpostId>) {
         let _ = self
             .owner

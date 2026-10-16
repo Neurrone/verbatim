@@ -2,12 +2,8 @@
 //! that has exited: an outpost that crashes after its application exited
 //! ends as the application's exit (`TargetExited`) and is not replaced,
 //! though the application held attention, and asking for an outpost for it
-//! afterwards starts none and says so (`NotWatched`). Likewise, once an
-//! application's outposts have crashed three times within a minute, the
-//! supervisor says so after the third crash, since the app may be waiting
-//! for a replacement, and again whenever an outpost is asked for, until
-//! the next foreground change to it. And an outpost's end that the app
-//! refuses for now, as a completion port refusing its packet does, is not
+//! afterwards starts none and says so (`NotWatched`). And an outpost's end
+//! that the app refuses for now, as a completion port refusing its packet does, is not
 //! lost: it reaches the app later, still before its replacement's start.
 //!
 //! This test binary runs itself three ways: as the application, a process
@@ -208,90 +204,11 @@ fn started_and_ready(events: &Delivered, target_pid: Pid) -> OutpostId {
     outpost
 }
 
-fn an_application_whose_outposts_crashed_repeatedly_is_reported_not_watched() {
-    let (events_tx, events) = unbounded();
-    let exe = std::env::current_exe().expect("this test binary's path");
-    let supervisor = Supervisor::with_executable(
-        events_tx,
-        OutpostOptions::default(),
-        exe.clone(),
-        LIMIT,
-        std::sync::Arc::default(),
-    )
-    .expect("the supervisor starts");
-    let events = Delivered::new(events, &supervisor);
-    match next(&events) {
-        OutpostMessage::ListenerReady { replacement: false } => {}
-        other => panic!("the supervisor said {other:?} before the listener was ready"),
-    }
-
-    let mut application = Command::new(&exe)
-        .arg(APPLICATION)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .spawn()
-        .expect("the application starts");
-    let target_pid = Pid(application.id());
-    supervisor.note_views(Some(target_pid), std::collections::BTreeSet::new());
-    supervisor.ensure_spawned(target_pid);
-    let mut outpost = started_and_ready(&events, target_pid);
-
-    // Three crashes within a minute: the first two are replaced at once,
-    // since the application holds attention; after the third, respawning
-    // stops, and the app, which heard of the crash, is told no outpost
-    // comes.
-    for crash in 1..=3 {
-        supervisor
-            .send_to_outpost(outpost, SupervisorToOutpost::Cancel { request_id: 0 })
-            .expect("the command that crashes the stand-in is queued");
-        match next(&events) {
-            OutpostMessage::Ended {
-                outpost: ended,
-                target_pid: ended_pid,
-                reason: EndReason::Exited,
-            } if ended == outpost && ended_pid == target_pid => {}
-            other => panic!("crash {crash}: the supervisor said {other:?}, not that it ended"),
-        }
-        if crash < 3 {
-            outpost = started_and_ready(&events, target_pid);
-        }
-    }
-    match next(&events) {
-        OutpostMessage::NotWatched { target_pid: wanted } if wanted == target_pid => {}
-        other => panic!("the supervisor said {other:?}, not that it replaced no outpost"),
-    }
-
-    // Asked for one again, it starts none, and says so.
-    supervisor.ensure_spawned(target_pid);
-    match next(&events) {
-        OutpostMessage::NotWatched { target_pid: wanted } if wanted == target_pid => {}
-        other => panic!("the supervisor said {other:?}, not that it started no outpost"),
-    }
-
-    assert_eq!(
-        supervisor.shutdown(),
-        ShutdownSummary {
-            clean: 1,
-            exited: 3,
-            killed: 0,
-        },
-        "the listener shut down cleanly and the three crashed outposts had exited"
-    );
-    let rest: Vec<OutpostMessage> = events.try_iter().collect();
-    assert!(
-        rest.is_empty(),
-        "the supervisor said nothing more, and started no outpost: {rest:?}"
-    );
-    drop(application.stdin.take());
-    let status = application.wait().expect("the application exits");
-    assert!(status.success(), "the application exited with {status}");
-}
-
 /// An outpost's end that the app refuses for now is delivered again, and
 /// nothing about its application overtakes it. The sink refuses the first
 /// `Ended` once, giving it back as a port that refuses a packet does. The
-/// outpost crashes while its application holds attention, so the relay
-/// starts a replacement at once, with the end still undelivered; the app
+/// outpost crashes, so the relay starts a replacement at once, the
+/// application's first failure, with the end still undelivered; the app
 /// hears the end, then the replacement's start and its `Ready`, in that
 /// order.
 fn an_end_the_app_refuses_for_now_still_comes_before_its_replacement() {
@@ -383,10 +300,6 @@ fn main() {
     an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited();
     println!(
         "test an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited ... ok"
-    );
-    an_application_whose_outposts_crashed_repeatedly_is_reported_not_watched();
-    println!(
-        "test an_application_whose_outposts_crashed_repeatedly_is_reported_not_watched ... ok"
     );
     an_end_the_app_refuses_for_now_still_comes_before_its_replacement();
     println!("test an_end_the_app_refuses_for_now_still_comes_before_its_replacement ... ok");

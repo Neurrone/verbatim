@@ -390,6 +390,9 @@ impl Reducer {
             OutpostMessage::Ended {
                 outpost, reason, ..
             } => format!("{} ended: {reason}", self.names[&outpost]),
+            OutpostMessage::Reincarnated { outpost, .. } => {
+                format!("{} replaced", self.names[&outpost])
+            }
             other => format!("{other:?}"),
         }
     }
@@ -528,7 +531,9 @@ fn a_large_frame_delays_no_key_and_no_other_outposts_frame_and_its_outposts_next
 }
 
 /// An outpost's pipe closing reaches the app, as its end, after every
-/// frame it wrote before, the last a large one parsed by the helper.
+/// frame it wrote before, the last a large one parsed by the helper. It
+/// ended before its `Ready`, so the app hears it replaced, after its frames
+/// as its end is, and after its end its replacement's start.
 fn a_closed_pipe_reaches_the_app_after_every_frame_before_it() {
     let (app, pid) = application();
     let mut reducer = Reducer::start();
@@ -536,13 +541,21 @@ fn a_closed_pipe_reaches_the_app_after_every_frame_before_it() {
 
     reducer.cue("O1", 5);
     assert_eq!(
-        reducer.take(4),
-        ["O1: F1", "O1: F2", "O1: F3", "O1 ended: exited"]
+        reducer.take(6),
+        [
+            "O1: F1",
+            "O1: F2",
+            "O1: F3",
+            "O1 replaced",
+            "O1 ended: exited",
+            "O2 started"
+        ]
     );
 
-    // The outpost exited with code 3 on its own.
+    // The outpost exited with code 3 on its own; the listener and its
+    // replacement shut down cleanly.
     reducer.finish(ShutdownSummary {
-        clean: 1,
+        clean: 2,
         exited: 1,
         killed: 0,
     });
@@ -612,7 +625,7 @@ fn while_the_reducer_is_held_the_relay_drains_every_frame_and_two_value_changes_
 /// A frame that is not a message has its outpost ended, and nothing that
 /// outpost sent after it reaches the reducer but its end: a frame and its
 /// `Ready`, read by the relay behind it while the reducer was held, are
-/// dropped.
+/// dropped. It had said `Ready`, so its replacement starts after its end.
 fn nothing_an_outpost_sent_after_a_frame_that_is_not_a_message_reaches_the_reducer_but_its_end(
     signal: &Signal,
 ) {
@@ -625,10 +638,10 @@ fn nothing_an_outpost_sent_after_a_frame_that_is_not_a_message_reaches_the_reduc
     // listener.
     reducer.cue("O1", 8);
     signal.wait("the unreadable frame, G1 and Ready");
-    assert_eq!(reducer.take(1), ["O1 ended: exited"]);
+    assert_eq!(reducer.take(2), ["O1 ended: exited", "O2 started"]);
 
     reducer.finish(ShutdownSummary {
-        clean: 2,
+        clean: 3,
         exited: 0,
         killed: 0,
     });
@@ -638,19 +651,24 @@ fn nothing_an_outpost_sent_after_a_frame_that_is_not_a_message_reaches_the_reduc
 /// What an outpost the supervisor has ended itself writes afterwards is
 /// dropped: here a frame it writes as the retirement shuts it down, which
 /// the relay reads before the pipe ends, and before the supervisor's
-/// shutdown returns.
+/// shutdown returns. It had not said `Ready`, so the app hears it replaced
+/// before its end, and its replacement's start after.
 fn nothing_an_outpost_writes_after_the_supervisor_ended_it_reaches_the_reducer() {
     let (app, pid) = application();
     let mut reducer = Reducer::start();
     reducer.with_outposts(&[pid]);
 
     reducer.cue("O1", 9);
-    assert_eq!(reducer.take(1), ["O1 ended: exited"]);
+    assert_eq!(
+        reducer.take(3),
+        ["O1 replaced", "O1 ended: exited", "O2 started"]
+    );
 
     // The retirement's shutdown message had the outpost write Z, then
-    // exit cleanly; `finish` asserts Z never arrived.
+    // exit cleanly; `finish` asserts Z never arrived. The listener and the
+    // replacement shut down cleanly too.
     reducer.finish(ShutdownSummary {
-        clean: 2,
+        clean: 3,
         exited: 0,
         killed: 0,
     });

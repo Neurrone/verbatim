@@ -102,8 +102,9 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   [Object model](nvda/object-model.md).
 - **Recovery ladder** — the escalation for misbehaving outposts:
   rung 1, per-entry deadlines; rung 2, abandon the stuck worker and
-  start a replacement; rung 3, end and respawn a wedged outpost; plus
-  respawn after a crash. [Architecture](architecture.md) section 1.
+  start a replacement; rung 3, end a failed outpost, crashed, stuck or
+  piling up abandoned workers, and give its application the next one.
+  [Architecture](architecture.md) section 1.
 - **Request table** — the app's record of every query sent to an
   outpost, the single owner of "exactly one outcome per query".
   [verbatim-app](crates/verbatim-app.md).
@@ -149,6 +150,7 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   plus source metadata) emitted by the reducer (D12).
   [verbatim-speech](crates/verbatim-speech.md).
 - **Wedge** — an outpost that is alive but no longer answering
-  (missed pongs) or accumulating parked workers; the heartbeat's
-  `wedge_decision` kills and respawns it (rung 3).
+  (missed pongs, called stuck) or accumulating parked workers; the
+  heartbeat's `wedge_decision` ends it and its application is given the
+  next outpost (rung 3).
   [verbatim-outpost](crates/verbatim-outpost.md).

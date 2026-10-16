@@ -598,7 +598,7 @@ Each failure, what notices it, and what happens next.
    thread keeps its stack (Rust's default 2 MiB, reserved rather than
    committed) until its call returns or the process ends. Events from a window the system already reports hung are
    dropped before any read, so they never reach a call.
-2. **An outpost wedges.** The lifecycle owner pings every child every
+2. **An outpost is stuck.** The lifecycle owner pings every child every
    three seconds; the outpost's I/O thread answers pings itself, so a busy
    worker never looks dead. Nine seconds without a pong, or eight
    abandoned workers (unless the application's own windows are reported
@@ -613,16 +613,15 @@ Each failure, what notices it, and what happens next.
 4. **After either.** The reducer thread drops later messages from that
    incarnation, the reducer marks the focus dead but keeps its copied
    data and clears a navigator or pending navigation in that outpost, and
-   outstanding queries end "gone". The owner replaces the outpost at once
-   only if its application holds attention (`Owner::after_crash`);
-   otherwise the next fact for the application starts one. After three
-   crashes within a minute it stops replacing it until the next
-   foreground change to that application; an application that has itself
-   exited is left alone. The reducer thread asks the replacement for the
-   current focus when it is ready (`focus_now_wanted`); for a focus whose
-   application is not the attention one (a Settings page's content inside
-   `ApplicationFrameHost`'s window) it also asks the supervisor to start
-   one. When the answer arrives, the reducer compares it with the dead
+   outstanding queries end "gone". The owner gives the application the
+   next spare outpost, whether or not it holds attention
+   (`Owner::outpost_failed`), at once for its first failure and after a
+   backoff of 1, 2, 4, up to 30 seconds for each further one, never giving
+   up; an application that has itself exited is left alone. The reducer
+   thread asks the replacement for the current focus when it is ready
+   (`focus_now_wanted`), for the attention application and for a focus
+   whose application is another (a Settings page's content inside
+   `ApplicationFrameHost`'s window). When the answer arrives, the reducer compares it with the dead
    focus's copy (role, name, value, states, and ancestors' names and
    roles, `reads_the_same`): if they match, it takes the new node ids
    silently; otherwise it announces the focus as usual.

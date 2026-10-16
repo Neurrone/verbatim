@@ -1,16 +1,18 @@
-//! The supervisor's spare outposts (`docs/design/focus-pipeline.md`,
-//! section 19): two are started once Core's own outpost is ready; a start
-//! for an application takes the oldest, which is never listed again, and
-//! no replacement starts until the outpost it became has answered its first
-//! idle query, or five seconds have passed; a fact that may not start an
-//! outpost, or one from an ignored process, takes none; a spare that dies
-//! waiting, or misses its pings, is replaced; one that fails after it was
-//! given, before its `Ready`, its hook failing included, is replaced, the
-//! application's held facts, and an idle round's query, going to the next
-//! spare, even one still launching, or to an outpost started for it, with no
-//! crash recorded against the application, unless the application has
-//! exited, which ends it as the application's exit; one that misses its
-//! pings after it was given is ended as killed.
+//! The supervisor's spare outposts and its one failure path
+//! (`docs/design/focus-pipeline.md`, section 19): two spares are started
+//! once Core's own outpost is ready; a start for an application takes the
+//! oldest, which is never listed again, and its replacement starts at once;
+//! a fact that may not start an outpost, or one from an ignored process,
+//! takes none; a spare that dies waiting, or misses its pings, is replaced.
+//! An outpost that fails, whatever the cause, is ended, and its application
+//! is given the next spare: before its `Ready`, its hook failing or its
+//! pings missed included, the application's held facts, and an idle
+//! round's query, go to the next, unless the application has exited, which
+//! ends it as the application's exit; after its `Ready`, crashing or
+//! missing its pings, the application's later facts go to the next, whether
+//! or not it holds attention. Repeated failures for one application are
+//! never given up, and are spaced by the backoff, whose count a foreground
+//! change to the application starts again.
 //!
 //! This test binary runs itself four ways: as an application, a process with
 //! no windows that runs until its standard input closes; as a stand-in for
@@ -21,18 +23,17 @@
 //! stand-in outpost says it is ready or a spare, answers pings, says `Ready`
 //! for `Assign`, reports with a fault the test reads that it was started
 //! for its application ([`DIRECT`]), each fact delivered to it and each idle
-//! query, answers each idle query once the event [`HOLD_ANSWERS`] names is
-//! set, if one is named, and fails as [`MUTE_SPARE`] and [`Failing`]
-//! say. Nothing makes a UI Automation or `WinEvent` call, so the
-//! test touches nothing on the desktop. Its own `main` recognizes each
+//! query, answers each idle query, and fails as [`MUTE_SPARE`] and
+//! [`Failing`] say. Nothing makes a UI Automation or `WinEvent` call, so
+//! the test touches nothing on the desktop. Its own `main` recognizes each
 //! command line.
 
 use std::cell::RefCell;
 use std::io::{BufReader, Read as _};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
 use crossbeam_channel::unbounded;
 use verbatim_model::{OutpostId, Pid, TraceId};
@@ -60,13 +61,10 @@ const APPLICATION: &str = "--stand-in-application";
 
 /// Names the facts the stand-in listener sends, the first time it is told
 /// a focus was queued: `focus:<pid>:<ms>` for an MSAA focus, which may
-/// start an outpost, and `drop:<pid>:<ms>` for a UIA focus's drop, which
-/// may not, separated by commas, each observed at `<ms>`.
+/// start an outpost, `drop:<pid>:<ms>` for a UIA focus's drop, which may
+/// not, and `foreground:<pid>:<ms>` for a foreground change, separated by
+/// commas, each observed at `<ms>`.
 const FACTS: &str = "VERBATIM_TEST_FACTS";
-
-/// Names a manual-reset event the stand-in outposts wait on before they
-/// answer an idle query.
-const HOLD_ANSWERS: &str = "VERBATIM_TEST_HOLD_ANSWERS";
 
 /// Names the launch number of the one stand-in spare that answers no ping
 /// while it waits.
@@ -116,6 +114,9 @@ enum Failure {
     HookFailsAndApplicationExits,
     /// It answers nothing more, pings included, until it is shut down.
     Mute,
+    /// It says `Ready`, then answers nothing more, pings included, until
+    /// it is shut down.
+    MuteAfterReady,
 }
 
 impl Failure {
@@ -125,6 +126,7 @@ impl Failure {
             Failure::HookFails => "hook",
             Failure::HookFailsAndApplicationExits => "hook-then-application",
             Failure::Mute => "mute",
+            Failure::MuteAfterReady => "mute-after-ready",
         }
     }
 
@@ -134,6 +136,7 @@ impl Failure {
             Failure::HookFails,
             Failure::HookFailsAndApplicationExits,
             Failure::Mute,
+            Failure::MuteAfterReady,
         ]
         .into_iter()
         .find(|failure| failure.name() == name)
@@ -167,6 +170,7 @@ fn scripted_facts() -> Vec<OutpostToSupervisor> {
                     id_child: 0,
                 },
                 "drop" => DeliveredFact::UiaFocusDropped { marker: 1 },
+                "foreground" => DeliveredFact::Foreground { hwnd: 1 },
                 other => panic!("no fact is called {other}"),
             };
             OutpostToSupervisor::FocusFact {
@@ -193,13 +197,6 @@ fn wait_for_event(name: &str) {
     let waited = unsafe { WaitForSingleObject(event, u32::MAX) };
     assert_eq!(waited, WAIT_OBJECT_0, "the test's event was set");
     close(event);
-}
-
-/// Waits until the event [`HOLD_ANSWERS`] names is set, if one is named.
-fn wait_for_answers_released() {
-    if let Ok(name) = std::env::var(HOLD_ANSWERS) {
-        wait_for_event(&name);
-    }
 }
 
 /// Waits until the process `pid` has exited.
@@ -272,6 +269,13 @@ fn assign(send: &impl Fn(&OutpostToSupervisor), outpost_pid: Pid, target_pid: Pi
             std::process::exit(1);
         }
         Some(Failure::Mute) => return true,
+        Some(Failure::MuteAfterReady) => {
+            send(&OutpostToSupervisor::Ready {
+                outpost_pid,
+                target_pid,
+            });
+            return true;
+        }
     }
     false
 }
@@ -291,19 +295,14 @@ fn stand_in(args: &[String]) -> ! {
     .expect("the inherited pipes");
     // The supervisor makes both ends overlapped; this stand-in blocks on
     // each read and write.
-    // The writer is shared with the thread that answers a held idle query,
-    // so pings are answered while it waits, as the real outpost's I/O
-    // thread answers them while its worker is busy.
     let (commands, messages) = (
         BlockingReader::new(commands).expect("a reader"),
-        Arc::new(Mutex::new(BlockingWriter::new(messages).expect("a writer"))),
+        RefCell::new(BlockingWriter::new(messages).expect("a writer")),
     );
     let listener = args.iter().any(|arg| arg == "--listener");
     let spare = value(args, "--spare");
-    let writer = Arc::clone(&messages);
-    let send = move |message: &OutpostToSupervisor| {
-        let mut writer = writer.lock().expect("the writer");
-        write_message(&mut *writer, message).expect("a message is written");
+    let send = |message: &OutpostToSupervisor| {
+        write_message(&mut *messages.borrow_mut(), message).expect("a message is written");
     };
     let outpost_pid = Pid(std::process::id());
     let target = value(args, "--target-pid").map(|pid| Pid(pid.parse().expect("a pid")));
@@ -358,13 +357,7 @@ fn stand_in(args: &[String]) -> ! {
                 send(&OutpostToSupervisor::Fault {
                     detail: format!("idle query {round}"),
                 });
-                let messages = Arc::clone(&messages);
-                std::thread::spawn(move || {
-                    wait_for_answers_released();
-                    let mut writer = messages.lock().expect("the writer");
-                    write_message(&mut *writer, &OutpostToSupervisor::IdleAnswer { round })
-                        .expect("the answer is written");
-                });
+                send(&OutpostToSupervisor::IdleAnswer { round });
             }
             Ok(Some(_)) => {}
             Err(error) => panic!("the command pipe failed: {error}"),
@@ -654,40 +647,10 @@ fn clear_env(name: &str) {
     unsafe { std::env::remove_var(name) };
 }
 
-/// A manual-reset event, not set, named `name` for this test process.
-fn named_event(name: &str) -> (HANDLE, String) {
-    let name = format!("Local\\verbatim-spares-test-{name}-{}", std::process::id());
-    // SAFETY: creates a named event; the handle is closed by the caller.
-    let event = unsafe { CreateEventW(None, true, false, &HSTRING::from(name.as_str())) }
-        .expect("the event is made");
-    (event, name)
-}
-
 /// Sets an event this test made.
 fn set(event: HANDLE) {
     // SAFETY: an event this test made, still open.
     unsafe { SetEvent(event) }.expect("the event is set");
-}
-
-/// A manual-reset event the stand-in outposts wait on before they answer an
-/// idle query, named in [`HOLD_ANSWERS`] until [`HeldAnswers::done`].
-struct HeldAnswers(HANDLE);
-
-impl HeldAnswers {
-    fn hold() -> Self {
-        let (event, name) = named_event("answers");
-        set_env(HOLD_ANSWERS, &name);
-        Self(event)
-    }
-
-    fn release(&self) {
-        set(self.0);
-    }
-
-    fn done(self) {
-        clear_env(HOLD_ANSWERS);
-        close(self.0);
-    }
 }
 
 /// The given spares' assignments that fail, as [`Failure`] says, each,
@@ -768,8 +731,7 @@ impl Failing {
     }
 }
 
-fn a_start_takes_the_oldest_spare_and_no_replacement_starts_before_its_first_idle_answer() {
-    let answers = HeldAnswers::hold();
+fn a_start_takes_the_oldest_spare_and_its_replacement_starts_at_once() {
     let run = Run::start(&[]);
     run.keep_spares();
 
@@ -777,44 +739,24 @@ fn a_start_takes_the_oldest_spare_and_no_replacement_starts_before_its_first_idl
     run.supervisor.ensure_spawned(first_pid);
     assert_eq!(run.expect_started(first_pid), OutpostId(3), "the oldest");
     run.expect_ready(OutpostId(3), first_pid);
-    run.expect_report(OutpostId(3), "idle query 0");
+    // Its replacement started as it was given, and waits with the other.
+    run.expect_spare(5, 2);
     let (second, second_pid) = application_and_pid();
     run.supervisor.ensure_spawned(second_pid);
     assert_eq!(
         run.expect_started(second_pid),
         OutpostId(4),
-        "the oldest left"
+        "the oldest left; a given spare is never given again"
     );
     run.expect_ready(OutpostId(4), second_pid);
-    run.expect_report(OutpostId(4), "idle query 0");
-    // Both first idle answers are held: no replacement has started, so no
-    // spare waits, and the next start is an outpost started for its
-    // application.
-    let (third, third_pid) = application_and_pid();
-    run.supervisor.ensure_spawned(third_pid);
-    assert_eq!(run.expect_started(third_pid), OutpostId(5));
-    run.expect_ready(OutpostId(5), third_pid);
-    run.expect_report(OutpostId(5), DIRECT);
-
-    // Each answer starts its replacement.
-    answers.release();
-    run.expect_two_spares([6, 7]);
-    // A start takes the oldest spare left; a given spare is never given
-    // again.
-    let (fourth, fourth_pid) = application_and_pid();
-    run.supervisor.ensure_spawned(fourth_pid);
-    assert_eq!(run.expect_started(fourth_pid), OutpostId(6));
-    run.expect_ready(OutpostId(6), fourth_pid);
-    run.expect_report(OutpostId(6), "idle query 0");
-    run.expect_spare(8, 2);
+    run.expect_spare(6, 2);
 
     run.finish(ShutdownSummary {
-        clean: 8,
+        clean: 6,
         exited: 0,
         killed: 0,
     });
-    answers.done();
-    for application in [first, second, third, fourth] {
+    for application in [first, second] {
         end(application);
     }
 }
@@ -839,7 +781,6 @@ fn a_fact_that_may_not_start_an_outpost_or_an_ignored_processs_takes_no_spare() 
     assert_eq!(run.expect_started(first_pid), OutpostId(3));
     run.expect_ready(OutpostId(3), first_pid);
     run.expect_report(OutpostId(3), "fact 3");
-    run.expect_report(OutpostId(3), "idle query 0");
     run.expect_spare(5, 2);
 
     run.finish(ShutdownSummary {
@@ -881,7 +822,6 @@ fn a_spare_that_dies_waiting_is_replaced() {
         "the oldest left"
     );
     run.expect_ready(OutpostId(4), first_pid);
-    run.expect_report(OutpostId(4), "idle query 0");
     run.expect_spare(6, 2);
 
     run.finish(ShutdownSummary {
@@ -909,16 +849,17 @@ fn a_spare_that_misses_its_pings_while_it_waits_is_replaced() {
 }
 
 fn a_spare_that_fails_after_it_is_given_hands_the_held_facts_to_the_next() {
-    let failing = Failing::assignments(&[1], Failure::Exits, false);
+    let failing = Failing::assignments(&[1], Failure::Exits, true);
     let (first, first_pid) = application_and_pid();
     set_env(FACTS, format!("focus:{first_pid}:7"));
-    // No application holds attention: an outpost's crash would not be
-    // replaced, so a replacement is the spare's failure handled.
+    // No application holds attention.
     let run = Run::start(&[]);
     run.keep_spares();
 
     run.supervisor.focus_queued(TraceId::mint(), 0);
     assert_eq!(run.expect_started(first_pid), OutpostId(3));
+    run.expect_spare(5, 2);
+    failing.fail(1);
     run.expect_reincarnated(OutpostId(3), OutpostId(4), first_pid);
     run.expect_ended(OutpostId(3), first_pid, EndReason::Exited);
     assert_eq!(
@@ -928,9 +869,7 @@ fn a_spare_that_fails_after_it_is_given_hands_the_held_facts_to_the_next() {
     );
     run.expect_ready(OutpostId(4), first_pid);
     run.expect_report(OutpostId(4), "fact 7");
-    run.expect_report(OutpostId(4), "idle query 0");
-    // One replacement for the failed spare, one for the given one.
-    run.expect_two_spares([5, 6]);
+    run.expect_spare(6, 2);
 
     run.finish(ShutdownSummary {
         clean: 5,
@@ -953,6 +892,7 @@ fn a_round_that_asked_a_failed_spare_waits_for_the_next_incarnations_answer() {
     let (first, first_pid) = application_and_pid();
     run.supervisor.ensure_spawned(first_pid);
     assert_eq!(run.expect_started(first_pid), OutpostId(3));
+    run.expect_spare(5, 2);
 
     run.supervisor.query_idle(1);
     match run.next() {
@@ -973,7 +913,7 @@ fn a_round_that_asked_a_failed_spare_waits_for_the_next_incarnations_answer() {
     run.expect_ready(OutpostId(4), first_pid);
     run.expect_report(OutpostId(4), "idle query 1");
     run.expect_idle_answer(OutpostId(4), 1);
-    run.expect_two_spares([5, 6]);
+    run.expect_spare(6, 2);
 
     run.finish(ShutdownSummary {
         clean: 5,
@@ -984,114 +924,209 @@ fn a_round_that_asked_a_failed_spare_waits_for_the_next_incarnations_answer() {
     end(first);
 }
 
-/// A given spare that fails while no spare waits hands its application to
-/// the replacement just started for it, still launching: it is sent its
-/// `Assign`, and the app `Started`, once its launch reports, and its pipe
-/// is read as the application's.
-fn a_failed_given_spare_hands_its_application_to_a_spare_still_launching() {
-    let answers = HeldAnswers::hold();
-    let failing = Failing::assignments(&[2], Failure::Exits, false);
+/// An outpost that crashes after its `Ready`, in an application that does
+/// not hold attention, is replaced by the next spare at once, and the
+/// application's later facts reach the new one.
+fn an_outpost_that_crashes_after_its_ready_is_replaced_by_a_spare_at_once() {
+    let (first, first_pid) = application_and_pid();
+    set_env(FACTS, format!("focus:{first_pid}:7"));
     let run = Run::start(&[]);
     run.keep_spares();
-    // The first application's spare owes its replacement while its first
-    // idle answer is held.
+    run.supervisor.ensure_spawned(first_pid);
+    assert_eq!(run.expect_started(first_pid), OutpostId(3));
+    let crashing = run.expect_ready(OutpostId(3), first_pid);
+    run.expect_spare(5, 2);
+
+    kill(crashing);
+    run.expect_ended(OutpostId(3), first_pid, EndReason::Exited);
+    assert_eq!(
+        run.expect_started(first_pid),
+        OutpostId(4),
+        "the next spare"
+    );
+    run.expect_ready(OutpostId(4), first_pid);
+    run.expect_spare(6, 2);
+    run.supervisor.focus_queued(TraceId::mint(), 0);
+    run.expect_report(OutpostId(4), "fact 7");
+
+    run.finish(ShutdownSummary {
+        clean: 5,
+        exited: 1,
+        killed: 0,
+    });
+    clear_env(FACTS);
+    end(first);
+}
+
+/// An outpost that stops answering pings after its `Ready` is stuck: it is
+/// ended after three ping intervals, as killed, and its application is
+/// given the next spare.
+fn a_stuck_outpost_is_ended_and_replaced() {
+    let failing = Failing::assignments(&[1], Failure::MuteAfterReady, false);
+    let run = Run::start(&[]);
+    run.keep_spares();
     let (first, first_pid) = application_and_pid();
     run.supervisor.ensure_spawned(first_pid);
     assert_eq!(run.expect_started(first_pid), OutpostId(3));
     run.expect_ready(OutpostId(3), first_pid);
-    run.expect_report(OutpostId(3), "idle query 0");
+    run.expect_spare(5, 2);
+    run.expect_ended(OutpostId(3), first_pid, EndReason::Killed);
+    assert_eq!(run.expect_started(first_pid), OutpostId(4));
+    run.expect_ready(OutpostId(4), first_pid);
+    run.expect_spare(6, 2);
 
-    // The second application's spare fails: no spare waits, so the one
-    // launched to replace it is given while it launches.
-    let (second, second_pid) = application_and_pid();
-    run.supervisor.ensure_spawned(second_pid);
-    assert_eq!(run.expect_started(second_pid), OutpostId(4));
-    run.expect_reincarnated(OutpostId(4), OutpostId(5), second_pid);
-    run.expect_ended(OutpostId(4), second_pid, EndReason::Exited);
-    assert_eq!(run.expect_started(second_pid), OutpostId(5));
-    run.expect_ready(OutpostId(5), second_pid);
-    run.expect_report(OutpostId(5), "idle query 0");
-
-    answers.release();
-    run.expect_two_spares([6, 7]);
-
+    // The stuck outpost, asked to shut down, still does.
     run.finish(ShutdownSummary {
         clean: 6,
-        exited: 1,
+        exited: 0,
         killed: 0,
     });
-    answers.done();
-    failing.made(3).done();
-    for application in [first, second] {
-        end(application);
-    }
-}
-
-/// Spares given to one application that fail before their `Ready`, as
-/// many times as stop an application's outposts' respawning when they
-/// crash, record no crash against it (`docs/design/focus-pipeline.md`,
-/// section 19.5): each is replaced, the application is served by the
-/// next, and, when that one crashes after its `Ready`, by the next one
-/// asked for.
-fn spares_given_to_one_application_that_fail_record_no_crash_against_it() {
-    let failing = Failing::assignments(&[1, 2, 3], Failure::Exits, true);
-    let run = Run::start(&[]);
-    run.keep_spares();
-    let (first, first_pid) = application_and_pid();
-    run.supervisor.ensure_spawned(first_pid);
-    assert_eq!(run.expect_started(first_pid), OutpostId(3));
-
-    // Each failure hands the application to the oldest spare waiting, and
-    // a replacement is started for the failed one.
-    for (failure, given, next) in [(1, 3, 4), (2, 4, 5), (3, 5, 6)] {
-        failing.fail(failure);
-        run.expect_reincarnated(OutpostId(given), OutpostId(next), first_pid);
-        run.expect_ended(OutpostId(given), first_pid, EndReason::Exited);
-        assert_eq!(run.expect_started(first_pid), OutpostId(next));
-        if failure < 3 {
-            run.expect_spare(next + 1, 1);
-        }
-    }
-    let served = run.expect_ready(OutpostId(6), first_pid);
-    run.expect_report(OutpostId(6), "idle query 0");
-    run.expect_two_spares([7, 8]);
-
-    // Its crash is the application's first: no application holds
-    // attention, so it is not replaced, and the next start is not refused.
-    kill(served);
-    run.expect_ended(OutpostId(6), first_pid, EndReason::Exited);
-    run.supervisor.ensure_spawned(first_pid);
-    assert_eq!(run.expect_started(first_pid), OutpostId(7));
-    run.expect_ready(OutpostId(7), first_pid);
-    run.expect_report(OutpostId(7), "idle query 0");
-    run.expect_spare(9, 2);
-
-    // The three failed spares and the killed outpost had exited.
-    run.finish(ShutdownSummary {
-        clean: 5,
-        exited: 4,
-        killed: 0,
-    });
-    failing.made(5).done();
+    failing.made(2).done();
     end(first);
 }
 
+/// The next messages: an outpost started for each of `applications`, as
+/// no spare is kept, each followed by its `Ready` and its report that it
+/// was started for its application. Each outpost is launched on a thread of
+/// its own and is a process of its own, so the app hears them start in the
+/// order their launches finish, and one's messages may come between
+/// another's; the order the supervisor decided to start them in is the
+/// order of their incarnations' numbers. Returns each application's outpost
+/// and its process id.
+fn served<const N: usize>(run: &Run, applications: [Pid; N]) -> [(OutpostId, Pid); N] {
+    // Each application's outpost, process, and how many of its three
+    // messages have come, once it has started.
+    let mut seen: [Option<(OutpostId, Pid, usize)>; N] = [None; N];
+    while seen
+        .iter()
+        .any(|entry| entry.is_none_or(|(_, _, step)| step < 3))
+    {
+        match run.next() {
+            OutpostMessage::Started {
+                outpost,
+                target_pid,
+            } if applications
+                .iter()
+                .position(|&pid| pid == target_pid)
+                .is_some_and(|index| seen[index].is_none()) =>
+            {
+                let index = applications
+                    .iter()
+                    .position(|&pid| pid == target_pid)
+                    .expect("found above");
+                seen[index] = Some((outpost, Pid(0), 1));
+            }
+            OutpostMessage::Event {
+                outpost, message, ..
+            } => {
+                let Some(entry) = seen
+                    .iter_mut()
+                    .flatten()
+                    .find(|(started, _, _)| *started == outpost)
+                else {
+                    panic!("{outpost}, not started, said {message:?}");
+                };
+                match (*message, entry.2) {
+                    (OutpostToSupervisor::Ready { outpost_pid, .. }, 1) => {
+                        *entry = (outpost, outpost_pid, 2);
+                    }
+                    (OutpostToSupervisor::Fault { detail }, 2) if detail == DIRECT => {
+                        entry.2 = 3;
+                    }
+                    (other, step) => panic!("{outpost} said {other:?} at its step {step}"),
+                }
+            }
+            other => panic!(
+                "the supervisor said {other:?}, not that the outposts of {applications:?} started"
+            ),
+        }
+    }
+    seen.map(|entry| {
+        let (outpost, process, _) = entry.expect("every one served");
+        (outpost, process)
+    })
+}
+
+/// Repeated failures of one application's outposts, which does not hold
+/// attention, are each replaced and never given up, and are spaced by the
+/// backoff: the first is replaced at once; the second waits a second, and
+/// the third two, so a start for another application asked for after each
+/// of their ends is decided first. A foreground change to the application
+/// ends the fourth's wait, its fact held meanwhile reaching the next
+/// outpost, and starts the count again, so the fifth is replaced at once,
+/// decided before a start asked for after its end. No spare is kept, so
+/// every outpost is started for its application.
+fn repeated_failures_are_spaced_by_the_backoff_until_a_foreground_change() {
+    let (first, first_pid) = application_and_pid();
+    let others: Vec<(Child, Pid)> = (0..3).map(|_| application_and_pid()).collect();
+    set_env(FACTS, format!("foreground:{first_pid}:7"));
+    let run = Run::start(&[]);
+    run.supervisor.ensure_spawned(first_pid);
+    let [(mut outpost, mut process)] = served(&run, [first_pid]);
+
+    // The first failure: replaced at once.
+    kill(process);
+    run.expect_ended(outpost, first_pid, EndReason::Exited);
+    [(outpost, process)] = served(&run, [first_pid]);
+
+    // The second and third: each waits, and another application's start
+    // asked for after the end comes first.
+    for (_, other_pid) in &others[..2] {
+        kill(process);
+        run.expect_ended(outpost, first_pid, EndReason::Exited);
+        run.supervisor.ensure_spawned(*other_pid);
+        let other;
+        [other, (outpost, process)] = served(&run, [*other_pid, first_pid]);
+        assert!(other.0 < outpost, "{other:?} was started first");
+    }
+
+    // The fourth waits four seconds, which the foreground change ends; the
+    // change, held meanwhile, reaches the next outpost.
+    kill(process);
+    run.expect_ended(outpost, first_pid, EndReason::Exited);
+    run.supervisor.focus_queued(TraceId::mint(), 0);
+    [(outpost, process)] = served(&run, [first_pid]);
+    run.expect_report(outpost, "fact 7");
+
+    // The count started again: the fifth is replaced at once, decided
+    // before a start asked for after its end.
+    kill(process);
+    run.expect_ended(outpost, first_pid, EndReason::Exited);
+    let (_, last_pid) = &others[2];
+    run.supervisor.ensure_spawned(*last_pid);
+    let [(replacement, _), (last, _)] = served(&run, [first_pid, *last_pid]);
+    assert!(replacement < last, "{replacement} was started first");
+
+    // The listener and the four live outposts; the five failed had exited.
+    run.finish(ShutdownSummary {
+        clean: 5,
+        exited: 5,
+        killed: 0,
+    });
+    clear_env(FACTS);
+    end(first);
+    for (other, _) in others {
+        end(other);
+    }
+}
+
 /// A given spare whose hook fails reports it and exits before its
-/// `Ready`: a spare's failure, its application's facts going to the next.
-fn a_given_spare_whose_hook_fails_is_a_spares_failure() {
-    let failing = Failing::assignments(&[1], Failure::HookFails, false);
+/// `Ready`: its application's facts go to the next.
+fn a_given_spare_whose_hook_fails_is_replaced() {
+    let failing = Failing::assignments(&[1], Failure::HookFails, true);
     let run = Run::start(&[]);
     run.keep_spares();
     let (first, first_pid) = application_and_pid();
     run.supervisor.ensure_spawned(first_pid);
     assert_eq!(run.expect_started(first_pid), OutpostId(3));
+    run.expect_spare(5, 2);
+    failing.fail(1);
     run.expect_report(OutpostId(3), HOOK_FAULT);
     run.expect_reincarnated(OutpostId(3), OutpostId(4), first_pid);
     run.expect_ended(OutpostId(3), first_pid, EndReason::Exited);
     assert_eq!(run.expect_started(first_pid), OutpostId(4));
     run.expect_ready(OutpostId(4), first_pid);
-    run.expect_report(OutpostId(4), "idle query 0");
-    run.expect_two_spares([5, 6]);
+    run.expect_spare(6, 2);
 
     run.finish(ShutdownSummary {
         clean: 5,
@@ -1112,9 +1147,9 @@ fn a_given_spare_whose_hook_fails_after_its_application_exited_ends_with_it() {
     run.supervisor.ensure_spawned(first_pid);
     assert_eq!(run.expect_started(first_pid), OutpostId(3));
     run.expect_report(OutpostId(3), HOOK_FAULT);
+    run.expect_spare(5, 2);
     end(first);
     run.expect_ended(OutpostId(3), first_pid, EndReason::TargetExited);
-    run.expect_spare(5, 2);
 
     run.finish(ShutdownSummary {
         clean: 4,
@@ -1134,15 +1169,11 @@ fn a_given_spare_that_misses_its_pings_is_ended_as_killed() {
     let (first, first_pid) = application_and_pid();
     run.supervisor.ensure_spawned(first_pid);
     assert_eq!(run.expect_started(first_pid), OutpostId(3));
+    run.expect_spare(5, 2);
     run.expect_reincarnated(OutpostId(3), OutpostId(4), first_pid);
     run.expect_ended(OutpostId(3), first_pid, EndReason::Killed);
     assert_eq!(run.expect_started(first_pid), OutpostId(4));
     run.expect_ready(OutpostId(4), first_pid);
-    run.expect_report(OutpostId(4), "idle query 0");
-    // The mute spare's replacement started at the limit, before it was
-    // ended, while the next waited: two were ready then; the failed one's
-    // replacement started as it ended, with the first still waiting.
-    run.expect_spare(5, 2);
     run.expect_spare(6, 2);
 
     // The mute spare, asked to shut down, still does.
@@ -1152,36 +1183,6 @@ fn a_given_spare_that_misses_its_pings_is_ended_as_killed() {
         killed: 0,
     });
     failing.made(2).done();
-    end(first);
-}
-
-/// A given spare's replacement starts after `REPLACEMENT_LIMIT`, five
-/// seconds, while its first idle answer is still held.
-fn a_replacement_starts_after_the_limit_while_the_first_answer_waits() {
-    let answers = HeldAnswers::hold();
-    let run = Run::start(&[]);
-    run.keep_spares();
-    let (first, first_pid) = application_and_pid();
-    run.supervisor.ensure_spawned(first_pid);
-    let given = Instant::now();
-    assert_eq!(run.expect_started(first_pid), OutpostId(3));
-    run.expect_ready(OutpostId(3), first_pid);
-    run.expect_report(OutpostId(3), "idle query 0");
-    run.expect_spare(5, 2);
-    assert!(
-        given.elapsed() >= Duration::from_secs(5),
-        "not before the limit: {:?}",
-        given.elapsed()
-    );
-    // Its answer, released now, owes no replacement any more.
-    answers.release();
-
-    run.finish(ShutdownSummary {
-        clean: 5,
-        exited: 0,
-        killed: 0,
-    });
-    answers.done();
     end(first);
 }
 
@@ -1199,8 +1200,8 @@ fn main() {
     // ignored: the binary runs all of its tests.
     let tests: [(&str, fn()); 12] = [
         (
-            "a_start_takes_the_oldest_spare_and_no_replacement_starts_before_its_first_idle_answer",
-            a_start_takes_the_oldest_spare_and_no_replacement_starts_before_its_first_idle_answer,
+            "a_start_takes_the_oldest_spare_and_its_replacement_starts_at_once",
+            a_start_takes_the_oldest_spare_and_its_replacement_starts_at_once,
         ),
         (
             "a_fact_that_may_not_start_an_outpost_or_an_ignored_processs_takes_no_spare",
@@ -1223,16 +1224,20 @@ fn main() {
             a_round_that_asked_a_failed_spare_waits_for_the_next_incarnations_answer,
         ),
         (
-            "a_failed_given_spare_hands_its_application_to_a_spare_still_launching",
-            a_failed_given_spare_hands_its_application_to_a_spare_still_launching,
+            "an_outpost_that_crashes_after_its_ready_is_replaced_by_a_spare_at_once",
+            an_outpost_that_crashes_after_its_ready_is_replaced_by_a_spare_at_once,
         ),
         (
-            "spares_given_to_one_application_that_fail_record_no_crash_against_it",
-            spares_given_to_one_application_that_fail_record_no_crash_against_it,
+            "a_stuck_outpost_is_ended_and_replaced",
+            a_stuck_outpost_is_ended_and_replaced,
         ),
         (
-            "a_given_spare_whose_hook_fails_is_a_spares_failure",
-            a_given_spare_whose_hook_fails_is_a_spares_failure,
+            "repeated_failures_are_spaced_by_the_backoff_until_a_foreground_change",
+            repeated_failures_are_spaced_by_the_backoff_until_a_foreground_change,
+        ),
+        (
+            "a_given_spare_whose_hook_fails_is_replaced",
+            a_given_spare_whose_hook_fails_is_replaced,
         ),
         (
             "a_given_spare_whose_hook_fails_after_its_application_exited_ends_with_it",
@@ -1241,10 +1246,6 @@ fn main() {
         (
             "a_given_spare_that_misses_its_pings_is_ended_as_killed",
             a_given_spare_that_misses_its_pings_is_ended_as_killed,
-        ),
-        (
-            "a_replacement_starts_after_the_limit_while_the_first_answer_waits",
-            a_replacement_starts_after_the_limit_while_the_first_answer_waits,
         ),
     ];
     let filter = args.iter().skip(1).find(|arg| !arg.starts_with('-'));

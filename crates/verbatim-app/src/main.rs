@@ -998,23 +998,21 @@ impl ReducerThread<'_> {
                 // Everything it sent is ahead of its end: in the idle
                 // barrier's round, its end is its answer.
                 self.barrier.ended(outpost);
-                // A crashed or killed outpost of the attention application,
-                // or of the focus's when that is another (a Settings page's
-                // content, inside ApplicationFrameHost's window), is
-                // replaced at once; ask the replacement for the focus,
-                // which is taken silently if the user already heard it. The
-                // replacement is asked for here in both cases, by the
-                // reducer's own view of attention, rather than left to the
-                // supervisor's, which follows it by a message and may not
-                // name the same application yet; the supervisor starts
-                // none when its own replacement already runs, and tells
-                // the app the application is not watched when it stopped
-                // replacing it after repeated crashes. A retired outpost,
-                // or one whose application exited, is not replaced. A
-                // console host's outpost reports for the console's client.
-                // A given spare that failed before its `Ready` loses
-                // nothing: its application's held facts went to the next
-                // incarnation, which reports them, so nothing is asked.
+                // An outpost that failed, crashed or killed, is replaced by
+                // the supervisor whatever application it served, at once or
+                // after its backoff (`docs/design/focus-pipeline.md`,
+                // section 19.5). For the attention application, or the
+                // focus's when that is another (a Settings page's content,
+                // inside ApplicationFrameHost's window), the replacement is
+                // asked for the focus once it is ready, which is taken
+                // silently if the user already heard it; the reducer's own
+                // view of attention decides, rather than the supervisor's,
+                // which follows it by a message. A retired outpost, or one
+                // whose application exited, is not replaced. A console
+                // host's outpost reports for the console's client. A given
+                // spare that failed before its `Ready` loses nothing: its
+                // application's held facts went to the next incarnation,
+                // which reports them, so nothing is asked.
                 let reincarnated = self.reincarnated.remove(&outpost);
                 let replaced = !reincarnated
                     && !matches!(reason, EndReason::Retired | EndReason::TargetExited);
@@ -1024,7 +1022,6 @@ impl ReducerThread<'_> {
                         || self.state.focus_source() == Some(application))
                 {
                     self.focus_now_wanted.insert(target_pid, application);
-                    self.context.supervisor.ensure_spawned(target_pid);
                 }
                 if self.live.ended(outpost) {
                     self.context
@@ -1076,9 +1073,8 @@ impl ReducerThread<'_> {
             // anything reaches here.
             OutpostMessage::Frame(_) | OutpostMessage::Parsed(_) => {}
             OutpostMessage::NotWatched { target_pid } => {
-                // The application is not running, or its outposts crashed
-                // repeatedly: no outpost will answer for it, so its focus is
-                // no longer awaited.
+                // The application is not running, or is ignored: no outpost
+                // will answer for it, so its focus is no longer awaited.
                 self.focus_now_wanted.remove(&target_pid);
                 let mut outposts = self.context.outposts.lock().expect("outposts lock");
                 if outposts

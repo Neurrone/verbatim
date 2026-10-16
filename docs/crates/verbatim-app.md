@@ -69,7 +69,7 @@ The end-to-end harness's hooks (private `harness` module):
   the question is still in progress, and tells the reducer which outposts
   it asked (`OutpostMessage::IdleQueried`). Each child answers behind
   every message it sent before, and an outpost that ends counts as having
-  answered, except a given spare that failed before its `Ready`, whose
+  answered, except an outpost that failed before its `Ready`, whose
   place goes to the incarnation `OutpostMessage::Reincarnated` names,
   which holds its facts and its query. When every answer is in, the reducer takes in what is already
   on its port and checks its own conditions: no outpost request
@@ -285,11 +285,11 @@ knowing for review:
   when it is presentable, as NVDA announces the focus it starts with (since
   2026-10-11; the desktop's Program Manager had been spoken), or, with no
   focused control, a foreground change to the window. The reducer thread sends a focus-now query at startup (for the
-  foreground application), when the attention application's outpost was
-  replaced after a crash or kill, when the outpost of the focus's
-  application, if that is not the attention one, ended in a crash or kill
-  (asking the supervisor to start a new one first, since nothing else
-  would), and when the supervisor reports
+  foreground application), when the outpost of the attention application,
+  or of the focus's application if that is another, ended in a crash or
+  kill after its `Ready` (the supervisor replaces every failed outpost
+  itself, at once or after its backoff, so the query waits for the
+  replacement's `Ready`), and when the supervisor reports
   `OutpostMessage::ListenerReady` for a replacement listener; each waits for the outpost's `Ready`
   if it is still starting. These, the tree dump, and the attention view
   sent to the supervisor go by application, which for a console's client

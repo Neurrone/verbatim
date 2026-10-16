@@ -233,32 +233,39 @@ The supervisor starts the two spares once Core's own outpost, which is
 started for Verbatim's own process at startup, is ready, or has ended
 without becoming ready. It reads a spare's pipe as the spare's, by its
 launch, until `Assign`, and as the application's after. A given spare
-never returns to the list, and its replacement starts once the outpost it
-became has answered its first idle query, which the supervisor asks behind
-the application's first facts (round 0, which the app never sees) unless
-the app's idle barrier asked one first, so the replacement's start does not
-compete with the first focus; a replacement still owed after five seconds
-(`REPLACEMENT_LIMIT`, checked at the heartbeat) starts anyway, since the
-answer can wait behind a hung application's reads, each up to the
-worker's ten-second deadline, and behind a terminal read that waits for
-output to settle. Spares are pinged as outposts are, are never asked in
-idle rounds, sent end-of-reads markers, or retired, and are shut down with
-the rest. A spare that exits, is killed for missing its pings, fails to
-launch, or ends after `Assign` before its `Ready` (its hook failing
-included) is a spare's failure, not the application's crash: it is
-replaced, always, and logged as an error with its reason, the last fault
-it sent included. A given one's application, unless it has exited, keeps
-its held facts, and any idle query held for it, for its next incarnation,
-the next spare, or an outpost started for it when none is left, with no
-crash recorded against it: the app hears `Reincarnated`, naming the
-failed incarnation and the next, then the failed one's `Ended` (exited,
-or killed when it missed its pings) if it heard it started, then the
-next one's `Started`. In an idle round that asked the failed one, the
-next answers in its place, and the app asks the application for no
-focus at that `Ended`, since nothing is lost. When the application has
-exited, the failure ends it as the application's exit. A spare that
-fails after its `Ready` is its application's outpost failing, handled as
-any outpost's crash. An outpost that cannot watch the application it is
+never returns to the list, and its replacement starts at once, as it is
+given. Spares are pinged as outposts are, are never asked in idle rounds,
+sent end-of-reads markers, or retired, and are shut down with the rest.
+
+Every outpost failure takes one path (`Owner::outpost_failed`), whatever
+its cause: the process exits or crashes, its hook fails (it reports the
+fault and exits), its launch fails, it misses its pings for three
+intervals, or it piles up abandoned workers. The supervisor ends it and
+logs the failure with its reason, the last fault it sent included: as an
+error, whose sound a user hears, for a spare's failure and for one before
+its `Ready`, and as a warning for a ready outpost that crashed or was
+stuck, as before. If its application has exited, it ends as the application's
+exit. Otherwise the application keeps its record, with its held facts and
+any idle query held for it, and is given the next spare, or an outpost
+started for it when none waits, whether or not it holds attention; facts
+that arrive meanwhile are held for it. Nothing is ever given up: the
+application's first failure is replaced at once, and each further one
+after a backoff (`policy::Backoff`) of 1, 2, 4, 8 and 16 seconds, then 30
+seconds for every one after; the count starts again when the outpost that
+failed had been up for a minute (`STAYED_UP`), and when the application
+comes to the foreground, which also ends a backoff that runs. One that was
+ready is ended for the app at once (`Ended`, exited, or killed when the
+supervisor ended it), and its hook goes with it (`HookRemoved`), so the
+listener forwards the application's MSAA events again until the next is
+ready. One that failed before its `Ready` lost nothing: when the next is
+given, the app hears `Reincarnated`, naming the failed incarnation and the
+next, then the failed one's `Ended` if it heard it started, then the next
+one's `Started`; in an idle round that asked the failed one, the next
+answers in its place, and the app asks the application for no focus at
+that `Ended`. A spare that fails while it waits (it exits, misses its
+pings, or fails to launch) is replaced, at once for the first failure and
+after the same backoff, counted for the spares, for each further one. An
+outpost that cannot watch the application it is
 given, its hook failing or its having one already, reports why as a
 fault and exits with code 1 without `Ready`.
 
@@ -781,7 +788,7 @@ fault and exits with code 1 without `Ready`.
   ended, through `OutpostMessage::ListenerReady`; that a spare is ready,
   with how many are ready and waiting, through `SpareReady` (Verbatim's
   readiness waits for `SPARES`, two, so every end-to-end scenario's
-  applications take a spare); that a given spare failed before its
+  applications take a spare); that an outpost failed before its
   `Ready` and which incarnation holds its application's facts, through
   `Reincarnated`; and of each incarnation
   through
@@ -804,13 +811,16 @@ fault and exits with code 1 without `Ready`.
   4.8). `Frames::parsing()` says whether a frame is with the helper; the
   idle barrier waits for it. A frame that is not a message has its
   outpost ended, as a pipe that fails does, and its later frames are
-  dropped, only its `Ended` handed on. While an outpost's `Ended` waits
+  dropped, only its `Ended` handed on. Word that an outpost that failed
+  before its `Ready` is replaced (`Reincarnated`) waits behind that
+  outpost's frame with the helper as its `Ended` does. While an outpost's
+  `Ended` waits
   behind its frame with the helper, everything about the same application
   that arrives after it waits behind it too (a replacement's `Started`,
   frames and `Ended`, and `NotWatched`), so the app, which keys its
   outpost state by application, always hears an outpost's end before its
   replacement's start. The relay drops every frame from
-  an outpost it has already ended itself (wedged, retired, its target
+  an outpost it has already ended itself (stuck, retired, its target
   gone, or unreadable), though it reads that pipe until it ends. Every message is delivered
   through the `EventSink` given to `new`: a channel of `OutpostMessage`s
   converts into one (the tests use that), and `EventSink::new` takes a
@@ -901,8 +911,8 @@ fault and exits with code 1 without `Ready`.
     at work.
   - Targets: the owner identifies each application by a process it holds
     open (`process::Target`), opened when the application's first outpost
-    is started and kept while the application has an outpost or a crash
-    history. Windows never gives a process's id to another process while a
+    is started and kept while the application has a record: an outpost, or
+    a failed outpost's replacement waiting for its backoff. Windows never gives a process's id to another process while a
     handle to it is open, so the pid the owner knows, and passes to the
     outpost, names that application and no other for as long as it is
     held. No outpost is started or replaced for an application whose
@@ -911,27 +921,23 @@ fault and exits with code 1 without `Ready`.
     application is held, the pid in a routed fact, or in the app's request,
     is trusted to name the process that raised the fact or holds the
     foreground, which was observed moments before it is opened.
-  - Crash: when an outpost's pipe closes, the owner ends it after the
+  - Failure: when an outpost's pipe closes, the owner ends it after the
     relay has handed on everything it wrote. If its application has
     exited, it ended with its target (`Ended`, target exited), is not
-    replaced, and the application's process and crash history are let go.
-    Otherwise it ended unexpectedly (`Ended`, exited), and it is replaced
-    at once only if its application holds attention; otherwise the next
-    fact for the application starts one. After three crashes within a
-    minute (`CRASH_LIMIT`, `CRASH_WINDOW`, the pure `CrashHistory`) it is
-    not replaced until the next foreground change to that application;
-    the app hears `OutpostMessage::NotWatched` after the third crash, since
-    it may be waiting for a replacement to ask for the focus, and again for
-    every request to start one meanwhile (`ensure_spawned`), so a focus it
-    wants from that application is dropped rather than awaited for ever
-    (`crates/verbatim-outpost/tests/target_gone.rs`). The
-    sweep lets go of crash histories of applications that have since
-    exited.
-  - Hang: every child is pinged every three seconds; nine seconds without a
-    pong ends it (`Ended`, killed). Eight abandoned workers end an outpost
-    too, except while its application's windows are reported hung
-    (`IsHungAppWindow`), when a replacement would hang the same way (the
-    pure `wedge_decision`). A kill is followed by the crash rules, an
+    replaced, and the application's process is let go. Otherwise it
+    failed, and takes the one failure path described above, under "Spare
+    outposts": its application is given the next outpost, at once or after
+    the backoff, and is never given up
+    (`crates/verbatim-outpost/tests/spares.rs`). The sweep ends the record
+    of an application that has exited while its replacement waited.
+  - Stuck: every child is pinged every three seconds; nine seconds without
+    a pong ends it (`Ended`, killed). An outpost whose worker waits on a
+    slow application still answers pings from its I/O thread, so it is not
+    stuck. Eight abandoned workers end an outpost too, except while its
+    application's windows are reported hung (`IsHungAppWindow`), when a
+    replacement would hang the same way (the pure `wedge_decision`): each
+    abandoned worker is a thread blocked in the application, freed only
+    when the process exits. Either is followed by the failure path, an
     application that has exited included. The pongs are read by the relay
     itself, never through the reducer, so a reducer that has stalled ends
     no outpost; it is reported as its own stall

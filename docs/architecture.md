@@ -465,16 +465,28 @@ Recovery is a ladder, cheapest rung first:
    The abandoned thread publishes nothing if its call ever returns, and
    stays parked (roughly a megabyte of stack and a handle) until then or
    until the outpost exits.
-3. **Kill and respawn.** If an outpost accumulates eight abandoned workers
-   (unless its application's windows are reported hung), stops answering
-   pings for nine seconds, or crashes, the supervisor ends it and, if its
-   application holds attention and is still running, starts a fresh one
-   and asks it for the current focus; Core's references to the old
-   outpost's nodes are dead. The supervisor knows each application by a
-   process handle it holds for as long as it has an outpost or a crash
-   history for it, so the application's pid cannot name another process
-   meanwhile, and no outpost is ever started or replaced for an
-   application that has exited.
+3. **Kill and replace.** Every outpost failure takes one path, whatever
+   its cause: it crashes, its hook fails, it stops answering pings for
+   nine seconds (stuck: the process itself does not answer, which a
+   worker waiting on a slow application never causes, since the I/O
+   thread answers pings), or it accumulates eight abandoned workers
+   (unless its application's windows are reported hung). The supervisor
+   ends it, and, if its application is still running, gives the
+   application the next spare outpost, or starts one for it, whether or
+   not it holds attention, with the facts held for it; Core asks the
+   replacement for the current focus where it needs to, and its
+   references to the old outpost's nodes are dead. Nothing is ever given
+   up: an application's repeated failures are spaced by an exponential
+   backoff, 1 second, then 2, 4, up to 30, counted again once an outpost
+   has stayed up a minute or the application comes to the foreground, and
+   so are the failures of spares while they wait
+   (`docs/design/focus-pipeline.md`, section 19.5; amended 2026-10-16,
+   replacing a rule that stopped replacing an application's outposts after
+   three crashes in a minute). The supervisor knows each application by a
+   process handle it holds for as long as it has a record for it, so the
+   application's pid cannot name another process meanwhile, and no
+   outpost is ever started or replaced for an application that has
+   exited.
    This is the uniform hard-recovery path — and, because abandoned threads
    are only truly freed by process exit, the only one that reclaims
    everything.
