@@ -1,6 +1,6 @@
 # How events reach Verbatim and are processed: a design aligned with NVDA
 
-Status: adopted (option (b), section 12); built as of 8fe59b1b (2026-10-12): stage A step 6 and its revisions in sections 16 and 18. The probe asks once (section 8, c0b81555). The spare outposts are built as section 19 decides (2d47a3da, 878a586c; section 19.9 says what the design left open and what was measured).
+Status: adopted (option (b), section 12); built as of 8fe59b1b (2026-10-12): stage A step 6 and its revisions in sections 16 and 18. The probe asks once (section 8, c0b81555). The spare outposts are built as section 19 decides (2d47a3da, 878a586c; section 19.9 says what the design left open and what was measured). UIA's setup in each application before an outpost is given (section 20) is decided and not yet built.
 
 Design draft, 2026-10-10, for the redo of phase 6's step 6 (and steps 5 and the related open items). Written against main at 2cadb35. Verbatim references are relative to the repository root; NVDA references are under `nvda/source/` unless they start with `nvda/nvdaHelper/`. Prior work this builds on, all in the scratchpad: `event-processing-audit.md` (the audit, cited as "audit D1" and so on), `nvda-answers.md`, `focus-read-timeout.md`, `verify-focus.md`, `event-filtering-plan.md`, and the unmerged step 6 branch `worktree-agent-a27b534fac627b1ae` with its runs `runs-step6-full` and `runs-step6-fix`.
 
@@ -1003,3 +1003,70 @@ With one failure path and the replacement started as a spare is given (decisions
 
 One effect the design did not foresee: with a spare, the outpost handles Windows Terminal's first focus about 35 ms sooner, while the terminal is still starting, and in about 3 percent of launches (2 of 60 runs of `windows_terminal_commands`, and 7 more first focuses among 300 runs of the other `windows_terminal_` scenarios) the first focus is not the terminal: the single UIA provider probe (section 8, c0b81555) of the terminal's `Windows.UI.Input.InputSite.WindowClass` window answers "no" after 3 seconds, so the focus is read through MSAA and spoken as "pane" (6 cases), or the terminal is announced twice (2 cases). Before the spares, none of 100 launches (60 runs of `windows_terminal_commands`, 20 of `windows_terminal_two_windows`) did. It is the mechanism behind the known Notepad case, about 1 in 25 first focuses read through MSAA, now reached by Windows Terminal, and is open for decision.
 
+
+## 20. UIA's setup in each application, done before an outpost is given (decided 2026-10-17; provisional points marked)
+
+### 20.1 The defect this prevents
+
+UIA performs a one-time setup inside each application process the first time any client runs a remote operation against it (`RemoteOperation::EvaluateOnCorrectThread`, then `NavigationHelperProxyOneCore::Initialize` and `EnsureEndpointStateNotifierSinkRegistered`, a `CoCreateInstance` in COM's modal loop on the application's UI thread; about 7.5 ms on this machine). While it runs, a new UIA connection from any other process to any window of that application fails: `UiaHasServerSideProvider` waits 3 seconds and answers "no", and `ElementFromHandle`, `ElementFromHandleBuildCache` and `GetFocusedElement` wait 2 seconds and return UIA's client-side window proxy instead of the application's element, with no error. The process running the remote operation is not harmed by its own connections, a client already holding a live element is only delayed, MSAA calls are unaffected, and only a remote operation starts the setup (element lookups, tree walks and event registrations do not). It happens once per application process, whatever window or UI thread the operation targets. Evidence: `target/e2e-evidence/probe-stall/` and `target/e2e-evidence/probe-collision/` (2026-10-16), reproduced deterministically in mockapp by holding the setup's modal loop with a COM message filter.
+
+In Verbatim it happened when the listener's first focus read of a new application (a remote operation) overlapped the outpost's first UIA call into it: about 1 in 25 Notepad openings, about 3 in 100 Windows Terminal launches, and Settings, File Explorer and mockapp windows; the window was then read through MSAA ("edit multi line", "pane") or announced twice. The roles can also be reversed: an outpost started without a listener fact (a focus-now query) runs a remote operation of its own, and the listener's probe then collides.
+
+### 20.2 The rule
+
+No Verbatim process other than the listener makes a UIA call into an application process until UIA's setup in that process has completed, and the listener completes it before the supervisor gives the application an outpost (Dickson, 2026-10-17: the assignment is held, rather than the outpost's UIA calls gated).
+
+- The supervisor drives it. Whenever it creates a record for an application process it has not seen set up, whatever started the record (a listener fact, `ensure_spawned` for a focus-now query, a fake focus after a menu ends, the replacement of the listener), it sends the listener `SetUp { pid }` and holds the record, with its held facts, until the listener's `SetUpDone { pid, outcome, unresponsive }`. After a listener replacement it sends `SetUp` again for every record still held. It remembers a completed setup for the application process, keyed by process id and creation time (read once from the process handle it holds), so an outpost replacing a failed or retired one is given at once.
+- The listener does the setup as a job on the application's reading thread, queued behind any focus job already there. The job finds an element served by the application's own provider: the top-level window the record's first fact names, or the application's foreground or focus window, then their child windows (a local enumeration), probing each with `UiaHasServerSideProvider` (one window message) until one answers "yes", and taking it with `ElementFromHandle`. It runs a trivial remote operation on it (import the element, halt). When the operation completes, the setup is done; if a focus read before it already did the setup, the operation finds it done (about 1 ms). Importing UIA's client-side proxy fails (`crates/verbatim-uia-rops/src/operation.rs`), which is why the element must be the application's own.
+- No provider found (provisional, 2026-10-17): when no window of the application at that moment has a provider of its own (an MSAA-only application, or one whose UIA windows do not exist yet), `SetUpDone` reports it and the application is released without a setup. The race remains for a provider window created later, whose first remote operation the listener runs while the outpost may connect; it is logged when a later listener read is the process's first remote operation, so its frequency can be measured.
+- Remote operations off (`--classic-uia`): no Verbatim process runs a remote operation, so no setup is ever started by Verbatim; `SetUp` is answered at once.
+- Verbatim's own process (provisional, 2026-10-17): exempt. Core's own outpost is started before Verbatim's windows exist, and `verbatim-gui` does not serve a UIA provider of its own, so there is nothing to set up; Verbatim's own windows are read through UIA's proxies. If `verbatim-gui` gains a provider, this exemption ends.
+- The outpost needs no gate and no message: being given an application means the setup is done, or that the application had no provider to set up.
+
+### 20.3 A hung application
+
+The setup's calls are ordinary UIA calls, bounded by the ordinary 5-second limit (`CALL_TIMEOUT`, `crates/verbatim-uia/src/client.rs`). When one times out, the setup is not done: the application will process the request when it next pumps, and an outpost connecting then would collide. So the record stays held (provisional, 2026-10-17), and the job moves to a waiting thread outside the reading threads' watchdog, which can be stopped at shutdown. It sends the window `WM_NULL` with `SendMessageTimeout` and no time limit (a blocking send that returns when the application's thread has processed it, or fails when the window is destroyed), then runs the trivial remote operation again. Because the setup's own modal loop dispatches sent messages, `WM_NULL` returning does not prove the setup finished; the second remote operation completing does, provided a remote operation sent during a setup in progress cannot complete before it. That is checked with the mockapp hold before building (20.6); if it does not hold, the design returns to Dickson.
+
+When the application exits while held, the supervisor's sweep ends the record (`has_exited` on its process handle), tells the listener, and the waiting thread's send fails with the window.
+
+While an application is held, its facts stay held, coalesced by NVDA's limiter rule (`HeldFacts`). NVDA drops the events of a window Windows reports hung (`docs/nvda/main-loop-and-watchdog.md`, "When an application stops responding"; to be confirmed by the capture against a stalled mockapp). So `SetUpDone` carries the interval in which the listener saw the application unresponsive (from the first timed-out call to the `WM_NULL` reply), and the supervisor drops the held facts observed inside it (provisional until that capture). Nothing is checked per event.
+
+The end-to-end harness's idle rounds count a held application as busy only while its setup call is within its time limit; once it has timed out, the application counts as idle, so one application hung at first sight does not hold every round.
+
+### 20.4 Cost
+
+What counts as a call is as `docs/performance.md` defines it. Per application process, once in its lifetime:
+
+- A UIA focus first: the reading thread already exists and its focus read did the setup; the setup job adds one `Execute` that finds it done (1 UIA call, about 1 ms), and the assignment follows the read rather than running beside it, so the hook's installation (about 1 ms) comes after the read.
+- A foreground change or MSAA focus first: a reading thread and its UIA client are created (about 4 ms), then one `UiaHasServerSideProvider` per window tried (1 window message each; usually one), one `ElementFromHandle` (1 UIA call, 9 to 15 ms measured, the first connection), and one `Execute` (1 UIA call, about 7.5 to 8 ms including the setup): about 21 to 27 ms on this machine before the outpost is given, against the about 35 ms the spares saved. This delays that application's first fact by that much.
+- After a timeout: one `WM_NULL` and one more `Execute`.
+- An application already set up (a return after retirement, a replacement after a crash): nothing.
+- Per event: nothing.
+- The reading thread ends once the setup is done and it has no focus job, so the listener does not keep a thread for every application seen.
+
+The ledger gains an entry "An application's first sight" with these counts, pinned in `crates/mockapp/tests/call_counts.rs`. Measured before and after as `docs/tooling/measuring.md` prescribes: first event to audio for Notepad and Windows Terminal launched, ten runs each, and wake-ups and processor time idle for a minute and while opening new windows.
+
+### 20.5 Tests
+
+The deterministic mockapp tests are the proof; ten clean scenario runs are not, since at a failure rate of 1 in 25 ten clean runs happen two times in three anyway.
+
+- Mockapp, with the investigation's hold: while the listener's setup is held, no outpost is given and no UIA call from another Verbatim process reaches mockapp; when released, the outpost is given, its probe answers "yes", and its `ElementFromHandle` returns mockapp's own element, not the proxy. Validated by a mutation that gives the outpost before `SetUpDone`.
+- Mockapp, an outpost started by a focus-now query, not a listener fact: the setup is requested and the outpost given only after it.
+- Mockapp, an application whose first window has no provider but a child window has one: the setup runs on the child.
+- Mockapp, a first fact that is a UIA focus: exact call counts.
+- Mockapp, hung at first sight: mockapp stops pumping for 20 seconds as it takes the focus; the setup times out, the application stays held, no outpost is given; when mockapp pumps again the setup completes and the outpost is given; facts observed while unresponsive are dropped and the rest delivered once, in order. Assertions on order and counts, not durations.
+- Supervisor unit tests: a record waits for `SetUpDone`, from every path that creates one; a replacement for a set-up process is given at once; the memory is keyed by process id and creation time; a held record whose application exits is ended; listener replacement re-sends `SetUp`.
+- Scenarios, ten times each, for regressions: every `notepad_` scenario, `windows_terminal_commands`, `windows_terminal_two_windows`, `windows_terminal_tabs`, `windows_terminal_editing`, `windows_terminal_redrawn_list`, `settings_system_page`, `explorer_folder_window`, `outpost_crash_recovery`, with slow probes counted.
+
+### 20.6 Before building
+
+With the mockapp hold, establish: whether a remote operation sent during a setup in progress can complete before the setup does; whether a request that timed out is still processed when the application wakes; and whether the Windows Terminal frame and `verbatim-gui`'s windows have providers of their own.
+
+### 20.7 Not covered
+
+Collisions caused by other software that runs remote operations (NVDA in Word documents, for example) while Verbatim connects to a new application, and Verbatim's setup exposing other clients' new connections, NVDA's among them when both run on one machine. Neither is Verbatim's to order. Other Verbatim clients outside the outposts and the listener (the tray dialog's shell item reads, the end-to-end agent) are not ordered either.
+
+### 20.8 Decisions
+
+1. Hold the assignment until the setup completes, rather than gating the outpost's UIA calls (Dickson, 2026-10-17). The setup's cost on a foreground-first application is about 21 to 27 ms, not the 5 to 20 ms first estimated; if the measurements show that matters, gating the outpost's UIA calls instead is a contained change.
+2. Provisional, decided by the session while Dickson was away, for his review: the supervisor drives the setup for every new record; an application with no provider of its own at first sight is released without a setup; a hung application stays held, with idle rounds treating it as idle once its setup call has timed out; Verbatim's own process is exempt; facts observed while the application was unresponsive are dropped, pending the NVDA capture.
