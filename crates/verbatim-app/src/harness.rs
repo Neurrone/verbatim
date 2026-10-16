@@ -40,6 +40,9 @@ pub(crate) struct Readiness {
     pub(crate) listener_ready: Arc<AtomicBool>,
     pub(crate) focus_known: Arc<AtomicBool>,
     pub(crate) outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
+    /// Whether the supervisor's spare outposts are ready, or it has stopped
+    /// keeping them ([`Readiness::spares_ready`]).
+    spares_ready: AtomicBool,
     /// The harness's event, when one was named.
     event: Option<String>,
     signalled: AtomicBool,
@@ -61,6 +64,7 @@ impl Readiness {
             listener_ready,
             focus_known,
             outposts,
+            spares_ready: AtomicBool::new(false),
             event: std::env::var(READY_EVENT_ENV)
                 .ok()
                 .filter(|name| !name.is_empty()),
@@ -70,13 +74,17 @@ impl Readiness {
 
     /// Whether Verbatim is ready to take input: the GUI can act on
     /// gestures, the focus listener is running, the outpost reading
-    /// Verbatim's own windows (its menu and dialogs) is ready, and Core
-    /// knows the focus, so the first focus report cannot arrive after, and
-    /// cut off, the speech of a key pressed straight away. With no
-    /// foreground window at all there is no focus to wait for.
+    /// Verbatim's own windows (its menu and dialogs) is ready, the
+    /// supervisor's spare outposts are ready, so every application a
+    /// scenario starts takes a spare (`docs/design/focus-pipeline.md`,
+    /// section 19.8, item 2), and Core knows the focus, so the first focus
+    /// report cannot arrive after, and cut off, the speech of a key pressed
+    /// straight away. With no foreground window at all there is no focus to
+    /// wait for.
     pub(crate) fn is_ready(&self) -> bool {
         self.gui_handle.get().is_some()
             && self.listener_ready.load(Ordering::Acquire)
+            && self.spares_ready.load(Ordering::Acquire)
             && (self.focus_known.load(Ordering::Acquire) || crate::foreground_pid().is_none())
             && self
                 .outposts
@@ -86,6 +94,13 @@ impl Readiness {
                 .any(|outpost| {
                     outpost.target_pid == Pid(self.own_pid) && outpost.state == OutpostState::Ready
                 })
+    }
+
+    /// Notes that the supervisor's spares are all ready, or that it has
+    /// stopped keeping them, which it logs as an error.
+    pub(crate) fn spares_ready(&self) {
+        self.spares_ready.store(true, Ordering::Release);
+        self.notify();
     }
 
     /// Sets the harness's event the first time Verbatim is ready. Called

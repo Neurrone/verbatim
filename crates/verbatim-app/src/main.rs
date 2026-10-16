@@ -1031,6 +1031,15 @@ impl ReducerThread<'_> {
                     server.broadcast_outpost_ended(target_pid, reason.to_string());
                 }
             }
+            OutpostMessage::SpareReady { spare, waiting, .. } => {
+                tracing::debug!(%spare, waiting, "spare outpost ready");
+                if waiting >= verbatim_outpost::supervisor::SPARES {
+                    self.context.readiness.spares_ready();
+                }
+            }
+            // The supervisor logged why; outposts start for their
+            // applications directly from now on.
+            OutpostMessage::SparesStopped => self.context.readiness.spares_ready(),
             OutpostMessage::ListenerReady { replacement } => {
                 self.context.listener_ready.store(true, Ordering::Release);
                 self.context.readiness.notify();

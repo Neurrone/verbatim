@@ -1952,19 +1952,25 @@ impl Scenario {
                 "{logs_dir} holds no listener.log; the focus listener never started"
             ));
         }
-        for pid in &self.ignored {
-            if let Some(name) = names.iter().find(|name| outpost_log_names(name, *pid)) {
-                problems.push(format!(
-                    "an outpost was started for process {pid}, which Verbatim was told to ignore (the owner's Windows Terminal): {name}"
-                ));
-            }
-        }
-        for name in names {
+        for name in &names {
             let remote_path = format!(r"{logs_dir}\{name}");
             // In chunks: an outpost's debug log over a long flood is larger
             // than one read may be.
-            if let Err(error) = self.agent.copy_file(&remote_path, &dir.join(&name)) {
+            if let Err(error) = self.agent.copy_file(&remote_path, &dir.join(name)) {
                 problems.push(format!("could not collect {remote_path}: {error}"));
+            }
+        }
+        for pid in &self.ignored {
+            let watching = names.iter().find(|name| {
+                outpost_log_names(name, *pid)
+                    || (name.starts_with(SPARE_LOG_PREFIX)
+                        && fs::read_to_string(dir.join(name))
+                            .is_ok_and(|log| log_assigns(&log, *pid)))
+            });
+            if let Some(name) = watching {
+                problems.push(format!(
+                    "an outpost was started for process {pid}, which Verbatim was told to ignore (the owner's Windows Terminal): {name}"
+                ));
             }
         }
         // Deleted once collected, so a later launch that Windows gives the
@@ -2956,10 +2962,48 @@ fn document_token() -> String {
     digits.iter().rev().collect()
 }
 
-/// Whether `name` is the log of an outpost watching process `pid`, as the
-/// supervisor names it: `outpost-<image>-<pid>.log`, or `outpost-<pid>.log`
-/// when the image could not be read.
+/// How the log of a spare outpost is named, `outpost-spare-<launch>.log`:
+/// its application is not known when the log is opened, so its assignment
+/// line names it ([`log_assigns`]).
+const SPARE_LOG_PREFIX: &str = "outpost-spare-";
+
+/// Whether `log`, an outpost's log, has the line an outpost writes when it
+/// starts watching process `pid`: "watching its application", with
+/// `target_pid=<pid>`, read with its colours' escape sequences removed.
+fn log_assigns(log: &str, pid: u32) -> bool {
+    let wanted = format!("target_pid={pid}");
+    log.lines().any(|line| {
+        let plain = strip_ansi(line);
+        plain.contains("watching its application")
+            && plain.split_whitespace().any(|field| field == wanted)
+    })
+}
+
+/// `line` without its terminal colour escape sequences (`ESC [ ... m`).
+fn strip_ansi(line: &str) -> String {
+    let mut plain = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            plain.push(c);
+        }
+    }
+    plain
+}
+
+/// Whether `name` is the log of an outpost started for process `pid`, as
+/// the supervisor names it: `outpost-<image>-<pid>.log`, or
+/// `outpost-<pid>.log` when the image could not be read.
 fn outpost_log_names(name: &str, pid: u32) -> bool {
+    if name.starts_with(SPARE_LOG_PREFIX) {
+        return false;
+    }
     let Some(stem) = name
         .strip_prefix("outpost-")
         .and_then(|rest| rest.strip_suffix(".log"))
@@ -3030,6 +3074,19 @@ mod tests {
         ));
         assert!(!outpost_log_names("listener.log", 29864));
         assert!(!outpost_log_names("synth-espeak.log", 29864));
+        assert!(!outpost_log_names("outpost-spare-7.log", 7));
+    }
+
+    #[test]
+    fn a_spare_outposts_log_is_told_by_its_assignment_line() {
+        let log = "\u{1b}[2m2026-10-16T07:01:28.355579Z\u{1b}[0m \u{1b}[32m INFO\u{1b}[0m \u{1b}[2mverbatim_outpost::outpost\u{1b}[0m\u{1b}[2m:\u{1b}[0m watching its application \u{1b}[3mtarget_pid\u{1b}[0m\u{1b}[2m=\u{1b}[0m29864 \u{1b}[3mimage\u{1b}[0m\u{1b}[2m=\u{1b}[0m\"windowsterminal\"\n";
+        assert!(log_assigns(log, 29864));
+        assert!(!log_assigns(log, 2986));
+        assert!(!log_assigns(log, 129_864));
+        assert!(!log_assigns(
+            "a spare, waiting for its application\n",
+            29864
+        ));
     }
 
     #[test]

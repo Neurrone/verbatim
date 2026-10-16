@@ -37,6 +37,16 @@
 //!   wedged (section 6.8).
 //! - The supervisor therefore runs on one thread, the relay, plus a helper
 //!   that parses large frames for the app ([`Frames`]).
+//! - It keeps two spare outposts started and waiting, with no application
+//!   (`docs/design/focus-pipeline.md`, section 19), from the moment Core's
+//!   own outpost is ready: a start for an application takes the oldest,
+//!   sends it `Assign`, and tells the app the incarnation `Started`; a
+//!   spare given never returns, and its replacement starts once the
+//!   outpost it became has answered its first idle query, or after
+//!   [`REPLACEMENT_LIMIT`]. A spare that fails before its `Ready` is
+//!   replaced, the application's held facts going to the next one, and
+//!   after three failures within a minute no spare is kept until Verbatim
+//!   restarts.
 //!
 //! The app hears of each outpost incarnation through [`OutpostMessage`]:
 //! `Started` before any of its messages, then its messages, then `Ended`.
@@ -98,6 +108,35 @@ const CRASH_LIMIT: usize = 3;
 
 /// The window [`CRASH_LIMIT`] counts crashes in.
 const CRASH_WINDOW: Duration = Duration::from_mins(1);
+
+/// How many spare outposts the supervisor keeps waiting
+/// (`docs/design/focus-pipeline.md`, section 19).
+pub const SPARES: usize = 2;
+
+/// How many spare failures within [`SPARE_FAILURE_WINDOW`] stop the
+/// supervisor keeping spares until Verbatim restarts.
+const SPARE_FAILURE_LIMIT: usize = 3;
+
+/// The window [`SPARE_FAILURE_LIMIT`] counts spare failures in.
+const SPARE_FAILURE_WINDOW: Duration = Duration::from_mins(1);
+
+/// The longest a given spare's replacement waits for the outpost it became
+/// to answer its first idle query. The answer waits behind the
+/// application's first facts, each of which the worker may take up to its
+/// ten-second deadline to handle in a hung application before it is
+/// abandoned, and behind a terminal read owed to Core, which waits for the
+/// terminal's output to settle; so it has no fixed bound
+/// (`docs/design/focus-pipeline.md`, section 19.8, item 1). Ten seconds,
+/// one worker deadline, is long past any first focus that is not stuck,
+/// so the replacement still does not compete with it. Checked at the
+/// heartbeat, so the replacement starts up to one ping interval later.
+pub(crate) const REPLACEMENT_LIMIT: Duration = Duration::from_secs(10);
+
+/// The idle round the supervisor asks a given spare itself, behind the
+/// application's first facts, when the app has asked none: its answer
+/// starts the spare's replacement and is not the app's. The app numbers
+/// its rounds from 1.
+const FIRST_ANSWER_ROUND: u64 = 0;
 
 /// Why an outpost incarnation ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -265,6 +304,22 @@ pub enum OutpostMessage {
         /// the largest reply.
         message: Box<OutpostToSupervisor>,
     },
+    /// A spare outpost said it is ready, and `waiting` spares are ready and
+    /// waiting now (`docs/design/focus-pipeline.md`, section 19). Verbatim
+    /// is ready for the end-to-end harness once [`SPARES`] are, so every
+    /// scenario's applications take a spare.
+    SpareReady {
+        /// The spare's incarnation: the id it has once given.
+        spare: OutpostId,
+        /// The spare's own process id.
+        outpost_pid: Pid,
+        /// How many spares are ready and waiting.
+        waiting: usize,
+    },
+    /// The supervisor stopped keeping spares after repeated failures, until
+    /// Verbatim restarts; every outpost is started for its application from
+    /// now on.
+    SparesStopped,
     /// The focus listener is ready. When it is a replacement for one that
     /// ended, facts were lost in the gap, so the app asks the foreground
     /// application for its current focus.
@@ -421,11 +476,13 @@ impl Supervisor {
     }
 
     /// Starts an outpost for `target_pid` if none exists, without asking it
-    /// to report anything. Used once at startup for Core's own process, so
-    /// its outpost is warm before the first gesture: a cold spawn races a
-    /// real keypress sent right after Verbatim's menu opens. An application
-    /// whose process has exited, or whose outposts crashed repeatedly, gets
-    /// none, and the app hears [`OutpostMessage::NotWatched`].
+    /// to report anything, giving it a spare when one waits. Used once at
+    /// startup for Core's own process, before any spare exists, so its
+    /// outpost is warm before the first gesture: a cold spawn races a real
+    /// keypress sent right after Verbatim's menu opens; the spares are
+    /// started once it is ready. An application whose process has exited,
+    /// or whose outposts crashed repeatedly, gets none, and the app hears
+    /// [`OutpostMessage::NotWatched`].
     pub fn ensure_spawned(&self, target_pid: Pid) {
         let _ = self
             .owner

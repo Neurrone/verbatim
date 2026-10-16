@@ -28,6 +28,9 @@ const OUTPOST_MEMORY_CAP: usize = 200 * 1024 * 1024;
 pub(super) enum Role {
     /// An outpost watching one application for its whole life (decision D9).
     Outpost(Pid),
+    /// A spare outpost, started with no application and given one later
+    /// (`docs/design/focus-pipeline.md`, section 19), by its launch's id.
+    Spare(verbatim_model::OutpostId),
     /// The focus listener (decision D13).
     Listener,
 }
@@ -55,8 +58,10 @@ pub(super) struct Launched {
 }
 
 /// Launches `verbatim-outpost.exe` from `exe_path` in `role`, contained in
-/// a kill-on-close job with the memory cap (see `verbatim-process`). Both
-/// roles are told `options` on their command line (`--classic-uia` when
+/// a kill-on-close job with the memory cap (see `verbatim-process`). Its log
+/// is named for its application, or, for a spare, whose application is not
+/// known when the log is opened, `outpost-spare-<launch>`. Every role is
+/// told `options` on its command line (`--classic-uia` when
 /// remote operations are off: the listener reads each UIA focus); the
 /// listener is also told `ignored`, the pids of the processes ignored entirely,
 /// separated by commas, and `hooks_in`, the applications whose outposts
@@ -93,6 +98,15 @@ pub(super) fn launch(
                 format!(
                     "--pipe-in {pipe_in} --pipe-out {pipe_out} --target-pid {}{classic_uia}",
                     pid.0
+                )
+            }),
+        ),
+        Role::Spare(spare) => (
+            format!("outpost-spare-{}", spare.0),
+            Box::new(move |pipe_in, pipe_out| {
+                format!(
+                    "--pipe-in {pipe_in} --pipe-out {pipe_out} --spare {}{classic_uia}",
+                    spare.0
                 )
             }),
         ),

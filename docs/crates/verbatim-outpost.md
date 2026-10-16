@@ -6,10 +6,12 @@ and 4, decisions D9 and D13, implemented in full: one outpost per
 application, many at once, with a dedicated listener that detects focus
 and the outposts announcing it).
 
-An outpost's target application is fixed at spawn and never retargeted:
-the pid arrives on its command line (`--target-pid`), hooks and UIA
-registrations install once during construction, and there is no rebind
-path. Outposts stay alive when their application loses foreground.
+An outpost's target application is set once and never retargeted: the pid
+arrives on its command line (`--target-pid`), or, for a spare started
+before it had an application, in the supervisor's `Assign`; its
+`WinEvent` hooks install once, when it has its application, its UIA
+registration once during construction, and there is no rebind path.
+Outposts stay alive when their application loses foreground.
 
 ## How focus reaches an outpost
 
@@ -213,6 +215,47 @@ and the receiving outpost mints the `NodeId` from it. There is no announce
 poll: at startup, and after an outpost or the listener is replaced, Core
 asks the application for its current focus with a single focus-now query.
 
+The outpost an application gets is usually a spare
+(`docs/design/focus-pipeline.md`, section 19): the supervisor keeps two
+outposts started with no application (`--spare`), each with its pipes,
+tracing, COM apartment, UIA client and focus-following registration
+(scoped to nothing), worker with its UIA client already made, watchdog,
+and `WinEvent` thread with no hook, which say `SpareReady` and answer
+pings. A start for an application takes the oldest, ready or not, and
+sends it `Assign`; the spare sets its application, reads the hand-over's
+clock, installs its process-scoped hook on its running `WinEvent` thread,
+starts waiting for the application's exit, logs "watching its
+application" with the application's image and pid, and says `Ready`. The
+supervisor holds the application's facts meanwhile and releases them on
+`Ready`, as for an outpost started for the application.
+
+The supervisor starts the two spares once Core's own outpost, which is
+started for Verbatim's own process at startup, is ready, or has ended
+without becoming ready. It reads a spare's pipe as the spare's, by its
+launch, until `Assign`, and as the application's after. A given spare
+never returns to the list, and its replacement starts once the outpost it
+became has answered its first idle query, which the supervisor asks behind
+the application's first facts (round 0, which the app never sees) unless
+the app's idle barrier asked one first, so the replacement's start does not
+compete with the first focus; a replacement still owed after ten seconds
+(`REPLACEMENT_LIMIT`, checked at the heartbeat) starts anyway, since the
+answer can wait behind a hung application's reads, each up to the
+worker's ten-second deadline, and behind a terminal read that waits for
+output to settle. Spares are pinged as outposts are, are never asked in
+idle rounds, sent end-of-reads markers, or retired, and are shut down with
+the rest. A spare that exits, is killed for missing its pings, fails to
+launch, or ends after `Assign` before its `Ready` (its hook failing
+included) is a spare's failure, not the application's crash: it is
+replaced, and a given one's application, unless it has exited, keeps its
+held facts for the next spare, or an outpost started for it when none is
+left, with no crash recorded against it; the app hears the failed
+incarnation's `Ended` with the reason exited. After three spare failures
+within a minute the supervisor logs an error with each failure's reason,
+ends the spares still waiting, says `SparesStopped`, and starts every
+outpost for its application directly until Verbatim restarts. A spare
+that fails after its `Ready` is its application's outpost failing,
+handled as any outpost's crash.
+
 ## Public API
 
 ### The protocol
@@ -275,9 +318,13 @@ asks the application for its current focus with a single focus-now query.
   `Activate`, `Ancestors`, `DumpTree`, or `Text`, a node and a model
   `TextOp`, milestone M4's text protocol), `Cancel` (withdraws a query that
   has not started), `Ping`, `IdleQuery` (the harness's idle barrier's
-  round, under "The idle barrier" below), and `Shutdown` (shut down
-  cleanly and exit, under "Shutting down" below). `OutpostToSupervisor`:
-  `Ready`, `Event`
+  round, under "The idle barrier" below), `Shutdown` (shut down
+  cleanly and exit, under "Shutting down" below), and `Assign` (to a
+  spare: the application it watches from now on). `OutpostToSupervisor`:
+  `Ready` (the outpost has its application and its hook is in: the first
+  message of an outpost started for an application, a spare's answer to
+  `Assign`), `SpareReady` (a spare's first message: it waits for
+  `Assign`), `Event`
   (trace id, observation timestamp, backend, the event window's
   `WindowFacts`, normalized event), `Reply` (exactly one per accepted query,
   echoing its request id, with its `EventTiming`, default for a query
@@ -349,11 +396,25 @@ asks the application for its current focus with a single focus-now query.
 ### The outpost
 
 - `Outpost`, `run_pipe`, `run_attach` — the per-application outpost (the
-  `outpost` module; outpost redesign, "Inside an outpost"). Its parts:
+  `outpost` module; outpost redesign, "Inside an outpost").
+  `run_pipe(pipe_in, pipe_out, target_pid, options)` runs one on Core's
+  pipes, watching `target_pid`, or, for `None`, as a spare that sends
+  `SpareReady` and watches the application `Assign` names. Either way the
+  application is set once, by `Outpost::assign`: the hand-over's clock is
+  read, the process-scoped `WinEvent` hook installed on the outpost's
+  `WinEvent` thread, which started with no hook (`EventThread::hook`), and
+  `Ready` sent. When the hook cannot be installed the outpost reports a
+  `Fault` saying why, sends no `Ready`, shuts down, and exits with code
+  1, since the listener stops forwarding an application's events once its
+  outpost is ready (`docs/design/focus-pipeline.md`, section 19.8, item
+  5); the supervisor handles it as an outpost that ended before `Ready`.
+  `Outpost::new` and its siblings, for tests in their own process, watch
+  their application from construction and panic when the hook cannot be
+  installed. Its parts:
   - Intake (`outpost::intake`): the MSAA hook callbacks (`APP_SUBSCRIPTIONS`:
     focus, foreground, menu-popup, alert, and tooltip events, which become
     the same facts the listener forwards, value, state, name, selection,
-    destroy, and a top-level window shown, for the fixed pid),
+    destroy, and a top-level window shown, for its application's pid),
     the focus-following UIA callbacks, and the reader's routed facts
     (the UIA focus's marker and read, the listener's desktop-wide selections, menus, and
     notifications, and the MSAA facts it forwards until the hand-over ends,
@@ -696,10 +757,13 @@ asks the application for its current focus with a single focus-now query.
   test that launches a stand-in); `shutdown()` shuts every outpost and the
   listener down for Verbatim's exit, returning once every one has ended
   with a `ShutdownSummary`, how many of the children that ended during
-  Verbatim's life shut down cleanly, had already exited or exited with an
+  Verbatim's life, spares included, shut down cleanly, had already exited
+  or exited with an
   error, or had to be killed; `ensure_spawned(pid)` starts an outpost
-  without asking it to report anything (used once, at Core startup, for
-  Core's own pid, so its outpost is warm before the first gesture);
+  without asking it to report anything, giving it a spare when one waits
+  (used at Core startup for Core's own pid, so its outpost is warm before
+  the first gesture, and for a focus-now query of an application with
+  none);
   `send_to_outpost(outpost_id, command)` queues a command for one outpost
   incarnation without waiting, failing at once with a `QueueError` when that
   incarnation has ended or its queue is full; `note_views(attention,
@@ -708,7 +772,11 @@ asks the application for its current focus with a single focus-now query.
   (under "The idle barrier" below), the app hearing which outposts it
   asked through `OutpostMessage::IdleQueried`. The
   app hears that the listener is ready, and whether it replaced one that
-  ended, through `OutpostMessage::ListenerReady`, and of each incarnation
+  ended, through `OutpostMessage::ListenerReady`; that a spare is ready,
+  with how many are ready and waiting, through `SpareReady` (Verbatim's
+  readiness waits for `SPARES`, two, so every end-to-end scenario's
+  applications take a spare); that spares are no longer kept, through
+  `SparesStopped`; and of each incarnation
   through
   `OutpostMessage`: `Started` before
   any of its messages, then its messages, and `Ended` with a reason
@@ -905,7 +973,9 @@ asks the application for its current focus with a single focus-now query.
   instruction. Core holds the only job handle, so kernel teardown of Core,
   however it dies, kills every outpost. A per-application outpost's command
   line carries `--target-pid`, fixing the watched application for its whole
-  life, and `--classic-uia` when `uia.remote_operations` is off in
+  life, and a spare's `--spare <launch>`, the supervisor's number for the
+  launch, its application coming later in `Assign`; both carry
+  `--classic-uia` when `uia.remote_operations` is off in
   `settings.toml` (`Supervisor::new` takes the `OutpostOptions` every
   outpost is launched with, which `verbatim-app` reads from the setting at
   startup); the listener's carries `--listener` and no pid.
@@ -914,7 +984,9 @@ asks the application for its current focus with a single focus-now query.
   and listener's own `tracing` output — which otherwise had no subscriber and
   went nowhere — lands in a per-role log file in this Verbatim launch's own
   log directory (`logs\<Verbatim's pid>\outpost-<target image>-<target
-  pid>.log` and `listener.log`, next to the outpost executable; the
+  pid>.log`, `outpost-spare-<launch>.log` for a spare, whose application
+  is not known when its log opens, and `listener.log`, next to the outpost
+  executable; the
   synthesizer host's `synth-<id>.log` lands there too). The app calls
   `verbatim_process::prepare_launch_logs` at startup, before it starts
   any child, which empties

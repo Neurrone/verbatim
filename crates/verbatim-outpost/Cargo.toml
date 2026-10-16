@@ -58,3 +58,9 @@ harness = false
 [[test]]
 name = "arrival_order"
 harness = false
+
+# Runs itself as stand-in applications, listener, outposts, and spares,
+# which its own `main` recognizes.
+[[test]]
+name = "spares"
+harness = false

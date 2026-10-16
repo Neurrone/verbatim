@@ -40,16 +40,17 @@ use crate::protocol::{
 use super::frames::Frame;
 use super::ignored::IgnoredProcesses;
 use super::policy::{
-    CrashHistory, HeldFact, HeldFacts, WedgeReason, retirement_decision, wedge_decision,
+    CrashHistory, HeldFact, HeldFacts, Spares, WedgeReason, retirement_decision, wedge_decision,
 };
 use super::process::{self, Launched, Role, Target};
 use super::relay::{COMPLETIONS_PER_WAIT, CommandPipes, Inbox, Mailbox, Relay, Source, Taken};
 use super::retire::{Ending, ShutdownSummary, retire};
 use super::writer::{Outgoing, Received, WriterHandle};
 use super::{
-    ABANDONED_WORKER_LIMIT, CRASH_LIMIT, CRASH_WINDOW, EndReason, EventSink, IDLE_RETIREMENT,
-    MISSED_PONG_THRESHOLD, OutpostMessage, PING_INTERVAL, ReducerStall, SWEEP_INTERVAL,
-    Undelivered, Writers,
+    ABANDONED_WORKER_LIMIT, CRASH_LIMIT, CRASH_WINDOW, EndReason, EventSink, FIRST_ANSWER_ROUND,
+    IDLE_RETIREMENT, MISSED_PONG_THRESHOLD, OutpostMessage, PING_INTERVAL, REPLACEMENT_LIMIT,
+    ReducerStall, SPARE_FAILURE_LIMIT, SPARE_FAILURE_WINDOW, SPARES, SWEEP_INTERVAL, Undelivered,
+    Writers,
 };
 
 /// The relay thread's priority: it reads each of the listener's facts and
@@ -154,12 +155,17 @@ pub(super) struct Setup {
     pub(super) ignored: std::sync::Arc<IgnoredProcesses>,
 }
 
-/// One application's outpost: starting until its launch reports back, then
-/// running.
+/// One application's outpost: starting until its launch reports back, or
+/// until a spare given to it sends `Ready`, then running.
 struct Record {
     outpost: OutpostId,
     /// `None` while the launch helper is still at work.
     child: Option<Child>,
+    /// Whether this incarnation was a spare
+    /// (`docs/design/focus-pipeline.md`, section 19), whose end before
+    /// `Ready` is a spare's failure, not the application's crash, and
+    /// whether it has been sent its `Assign`.
+    spare: Option<Assigned>,
     /// Whether the outpost has sent `Ready`.
     ready: bool,
     /// Facts that arrived before `Ready`, released in order on `Ready`.
@@ -184,6 +190,16 @@ enum IdleStage {
     /// being launched: the outposts are asked once every launch has
     /// reported, so the round covers the facts held for it.
     Launches(u64),
+}
+
+/// Whether a spare given to an application has been sent its `Assign`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Assigned {
+    /// Sent, and the app told the incarnation `Started`.
+    Sent,
+    /// Not yet: it was given while its launch was still at work, and is
+    /// sent `Assign`, and the app `Started`, once it has reported.
+    Pending,
 }
 
 /// The focus listener.
@@ -303,6 +319,19 @@ struct Owner {
     idle: Option<IdleStage>,
     /// The watch over the reducer, read at each heartbeat.
     reducer: ReducerWatch,
+    /// The spare outposts kept waiting, and the replacements owed
+    /// (`docs/design/focus-pipeline.md`, section 19).
+    spares: Spares,
+    /// Every spare's process, by outpost id, from its launch until it is
+    /// given or ends: `None` while its launch is at work.
+    spare_children: HashMap<OutpostId, SpareChild>,
+}
+
+/// A spare outpost's process while it waits.
+struct SpareChild {
+    /// `None` while the launch helper is still at work.
+    child: Option<Child>,
+    last_pong_at: Instant,
 }
 
 /// The relay's watch over the thread taking the app's inputs, the reducer
@@ -384,6 +413,8 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         ignored,
         idle: None,
         reducer: ReducerWatch::default(),
+        spares: Spares::default(),
+        spare_children: HashMap::new(),
     };
     thread::Builder::new()
         .name("verbatim-relay".to_owned())
@@ -473,6 +504,7 @@ impl Owner {
                     Ok(())
                 }
                 Source::Outpost(pid) => self.outpost_frame(outpost, pid, body),
+                Source::Spare => self.spare_frame(outpost, &body),
             });
         match (reading, source) {
             (Reading::Waiting | Reading::Yielded, _) => self.relay.put_reader(key, read),
@@ -484,8 +516,10 @@ impl Owner {
                 tracing::warn!(%outpost, %error, "the focus listener's pipe ended in a fault");
                 self.on_pipe_closed(outpost);
             }
-            (Reading::Ended(Ok(())), Source::Outpost(_)) => self.on_pipe_closed(outpost),
-            (Reading::Ended(Err(error)), Source::Outpost(_)) => {
+            (Reading::Ended(Ok(())), Source::Outpost(_) | Source::Spare) => {
+                self.on_pipe_closed(outpost);
+            }
+            (Reading::Ended(Err(error)), Source::Outpost(_) | Source::Spare) => {
                 // A message too large, or not a message: the outpost is
                 // treated as failed, as when its pipe closes.
                 tracing::warn!(%outpost, %error, "an outpost's message could not be read");
@@ -548,7 +582,59 @@ impl Owner {
                 self.hand_on(Frame::new(pid, outpost, body.into_owned(), read_at_us));
                 self.on_ready(outpost);
             }
+            // Written by a spare before it read its `Assign`, and read
+            // since: it was given already.
+            Some("SpareReady") => {}
+            Some("IdleAnswer") => {
+                let OutpostToSupervisor::IdleAnswer { round } = decode_message(body.bytes())?
+                else {
+                    return Err(io::Error::other("an idle answer that is not one"));
+                };
+                // A given spare's first answer: the application's first
+                // facts are handled, and its replacement starts now.
+                if self.spares.settled(outpost) {
+                    tracing::info!(%outpost, %pid, "a given spare answered its first idle query; its replacement starts");
+                    self.replenish_spares();
+                }
+                // The supervisor's own round is not the app's.
+                if round != FIRST_ANSWER_ROUND {
+                    self.hand_on(Frame::new(pid, outpost, body.into_owned(), read_at_us));
+                }
+            }
             _ => self.hand_on(Frame::new(pid, outpost, body.into_owned(), read_at_us)),
+        }
+        Ok(())
+    }
+
+    /// A frame read from the pipe of the spare `outpost`, before it was
+    /// given: its `SpareReady`, its pongs, and its faults. Dropped once the
+    /// spare has ended.
+    fn spare_frame(&mut self, outpost: OutpostId, body: &FrameBody<'_>) -> io::Result<()> {
+        let Some(spare) = self.spare_children.get_mut(&outpost) else {
+            return Ok(());
+        };
+        match message_kind(body.bytes()) {
+            Some("Pong") => spare.last_pong_at = Instant::now(),
+            Some("SpareReady") => {
+                let OutpostToSupervisor::SpareReady { outpost_pid } = decode_message(body.bytes())?
+                else {
+                    return Err(io::Error::other("a spare's ready that is not one"));
+                };
+                if let Some(waiting) = self.spares.ready(outpost) {
+                    tracing::info!(%outpost, %outpost_pid, waiting, "spare outpost ready");
+                    self.outbox.send(OutpostMessage::SpareReady {
+                        spare: outpost,
+                        outpost_pid,
+                        waiting,
+                    });
+                }
+            }
+            Some("Fault") => {
+                if let OutpostToSupervisor::Fault { detail } = decode_message(body.bytes())? {
+                    tracing::warn!(%outpost, detail, "spare outpost fault");
+                }
+            }
+            kind => tracing::debug!(%outpost, ?kind, "a spare outpost's message dropped"),
         }
         Ok(())
     }
@@ -823,11 +909,13 @@ impl Owner {
         OutpostId(self.generation)
     }
 
-    /// Records `pid` as starting and hands its launch to a helper thread,
-    /// once its process is held ([`hold_target`](Self::hold_target)), and
-    /// says whether it did. An application whose process has exited, or
-    /// cannot be held, gets no outpost, and the app is told
-    /// ([`OutpostMessage::NotWatched`]), so nothing waits for one.
+    /// Records `pid` as starting, once its process is held
+    /// ([`hold_target`](Self::hold_target)), and gives it the oldest spare
+    /// outpost, or, with none, hands its launch to a helper thread
+    /// ([`incarnate`](Self::incarnate)); says whether it did. An
+    /// application whose process has exited, or cannot be held, gets no
+    /// outpost, and the app is told ([`OutpostMessage::NotWatched`]), so
+    /// nothing waits for one.
     fn start_outpost(&mut self, pid: Pid, first: Option<HeldFact>) -> bool {
         if self.ignored.contains(pid) {
             tracing::debug!(%pid, "no outpost is started for a process Verbatim ignores");
@@ -841,7 +929,6 @@ impl Owner {
             self.not_watched(pid);
             return false;
         }
-        let outpost = self.next_outpost_id();
         let now = Instant::now();
         let mut held = HeldFacts::default();
         if let Some(fact) = first {
@@ -850,8 +937,10 @@ impl Owner {
         self.records.insert(
             pid,
             Record {
-                outpost,
+                // Set by `incarnate` below.
+                outpost: OutpostId(0),
                 child: None,
+                spare: None,
                 ready: false,
                 held,
                 last_pong_at: now,
@@ -861,8 +950,185 @@ impl Owner {
                 idle_query: None,
             },
         );
-        self.launch(outpost, Role::Outpost(pid));
+        self.incarnate(pid);
+        self.replenish_spares();
         true
+    }
+
+    /// Gives `pid`'s record, starting, a new incarnation: the oldest spare
+    /// waiting, ready or not, which is sent `Assign` and the app `Started`
+    /// at once, or once its launch has reported; or, with no spare, an
+    /// outpost launched for it.
+    fn incarnate(&mut self, pid: Pid) {
+        let now = Instant::now();
+        let spare = self.spares.take(now);
+        let (outpost, child) = match spare {
+            Some(spare) => (
+                spare,
+                self.spare_children
+                    .remove(&spare)
+                    .and_then(|spare| spare.child),
+            ),
+            None => (self.next_outpost_id(), None),
+        };
+        let Some(record) = self.records.get_mut(&pid) else {
+            return;
+        };
+        record.outpost = outpost;
+        record.spare = spare.map(|_| {
+            if child.is_some() {
+                Assigned::Sent
+            } else {
+                Assigned::Pending
+            }
+        });
+        record.child = child;
+        record.ready = false;
+        record.last_pong_at = now;
+        record.abandoned = 0;
+        record.hang_check = false;
+        match record.spare {
+            Some(Assigned::Sent) => self.assign(pid),
+            Some(Assigned::Pending) => {}
+            None => self.launch(outpost, Role::Outpost(pid)),
+        }
+    }
+
+    /// Sends `pid`'s spare its `Assign`, ahead of everything the app will
+    /// send it, reads its pipe as the application's from now on, and tells
+    /// the app the incarnation started.
+    fn assign(&mut self, pid: Pid) {
+        let Some(record) = self.records.get(&pid) else {
+            return;
+        };
+        let outpost = record.outpost;
+        if let Some(child) = &record.child
+            && let Err(error) = child
+                .writer
+                .push(Outgoing::HandOver(SupervisorToOutpost::Assign {
+                    target_pid: pid,
+                }))
+        {
+            // Its pipe's end follows, and is the spare's failure.
+            tracing::warn!(%error, %outpost, %pid, "a spare could not be sent its application");
+        }
+        self.relay.set_source(outpost, Source::Outpost(pid));
+        tracing::info!(%outpost, %pid, "a spare outpost is given to the application");
+        self.outbox.send(OutpostMessage::Started {
+            outpost,
+            target_pid: pid,
+        });
+    }
+
+    /// Starts keeping spare outposts, once: Core's own outpost is ready, or
+    /// has ended without becoming ready.
+    fn keep_spares(&mut self) {
+        if self.shutting_down.is_none() && self.spares.keep() {
+            tracing::info!(count = SPARES, "spare outposts are kept from now on");
+            self.replenish_spares();
+        }
+    }
+
+    /// Launches spares until [`SPARES`] wait or are owed.
+    fn replenish_spares(&mut self) {
+        if self.shutting_down.is_some() {
+            return;
+        }
+        for _ in 0..self.spares.wanted(SPARES) {
+            let spare = self.next_outpost_id();
+            self.spares.add(spare);
+            self.spare_children.insert(
+                spare,
+                SpareChild {
+                    child: None,
+                    last_pong_at: Instant::now(),
+                },
+            );
+            self.launch(spare, Role::Spare(spare));
+        }
+    }
+
+    /// Records a spare's failure, for `why`, and replaces it; after
+    /// [`SPARE_FAILURE_LIMIT`] within [`SPARE_FAILURE_WINDOW`], stops
+    /// keeping spares until Verbatim restarts, says so with every failure's
+    /// reason, and ends the spares still waiting.
+    fn spare_failed(&mut self, why: String) {
+        let stopped = self.spares.failed(
+            Instant::now(),
+            why,
+            (SPARE_FAILURE_LIMIT, SPARE_FAILURE_WINDOW),
+        );
+        let Some((failures, waiting)) = stopped else {
+            self.replenish_spares();
+            return;
+        };
+        tracing::error!(
+            ?failures,
+            "spare outposts failed repeatedly; none is kept until Verbatim restarts, and every outpost is started for its application"
+        );
+        for spare in waiting {
+            // One still launching is ended as its launch reports.
+            if let Some(child) = self
+                .spare_children
+                .get_mut(&spare)
+                .and_then(|spare| spare.child.take())
+            {
+                self.spare_children.remove(&spare);
+                self.forget_writer(spare);
+                self.retire_child(
+                    child,
+                    format!("spare outpost {spare}"),
+                    "spares are no longer kept".to_owned(),
+                );
+            }
+        }
+        self.outbox.send(OutpostMessage::SparesStopped);
+    }
+
+    /// The spare given to `pid` ended before its `Ready`, for `why`: a
+    /// spare's failure, not the application's crash. Unless the
+    /// application has exited, which ends it as the application's exit,
+    /// the app hears the incarnation ended, and the record keeps its held
+    /// facts for the next spare, or an outpost launched for it.
+    fn given_spare_failed(&mut self, pid: Pid, why: &str) {
+        if self.has_exited(pid) {
+            self.target_exited(pid, why);
+            return;
+        }
+        let Some(record) = self.records.get_mut(&pid) else {
+            return;
+        };
+        let failed = record.outpost;
+        let started = record.spare == Some(Assigned::Sent);
+        let child = record.child.take();
+        self.forget_writer(failed);
+        if let Some(child) = child {
+            self.retire_child(
+                child,
+                format!("spare outpost {failed} given to {pid}"),
+                why.to_owned(),
+            );
+        }
+        tracing::warn!(%failed, %pid, why, "a spare outpost failed after it was given; the application's facts wait for the next");
+        if started {
+            self.outbox.send(OutpostMessage::Ended {
+                outpost: failed,
+                target_pid: pid,
+                reason: EndReason::Exited,
+            });
+        }
+        self.spares.settled(failed);
+        self.spare_failed(format!("spare {failed}, given to {pid}: {why}"));
+        self.incarnate(pid);
+        self.replenish_spares();
+    }
+
+    /// Removes `outpost`'s writer from those the app can reach.
+    fn forget_writer(&self, outpost: OutpostId) {
+        self.writers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&outpost);
     }
 
     /// Tells the app that no outpost will watch `pid` for now
@@ -989,7 +1255,7 @@ impl Owner {
         let ignored = self.ignored.list();
         let hooks_in = match role {
             Role::Listener => crate::listener::format_hooks_in(&self.hooks_in()),
-            Role::Outpost(_) => String::new(),
+            Role::Outpost(_) | Role::Spare(_) => String::new(),
         };
         let exe_path = self.exe_path.clone();
         let options = self.options;
@@ -1028,13 +1294,16 @@ impl Owner {
             });
         }
         // The child's pipe to Core is read from now on, whoever ends up
-        // ending the child, so its end is always seen.
+        // ending the child, so its end is always seen. A spare given while
+        // it was launching is read as its application's.
+        let given = self.pid_of(outpost);
         let mut unread = None;
         let result = result.map(|launch| {
-            if let Err(error) = self
-                .relay
-                .add_reader(outpost, launch.source, launch.from_child)
-            {
+            let source = match (launch.source, given) {
+                (Source::Spare, Some(pid)) => Source::Outpost(pid),
+                (source, _) => source,
+            };
+            if let Err(error) = self.relay.add_reader(outpost, source, launch.from_child) {
                 unread = Some(error);
             }
             launch.child
@@ -1079,6 +1348,10 @@ impl Owner {
             }
             return;
         }
+        if self.spare_children.contains_key(&outpost) {
+            self.spare_launched(outpost, result);
+            return;
+        }
         let Some(pid) = self.pid_of(outpost) else {
             // A child nobody wants any more: unreachable while records are
             // only ended once their launch has reported, but if it happens
@@ -1099,18 +1372,71 @@ impl Owner {
         };
         match result {
             Ok(child) => {
+                let mut assign = false;
                 if let Some(record) = self.records.get_mut(&pid) {
                     record.child = Some(child);
                     record.last_pong_at = Instant::now();
+                    assign = record.spare == Some(Assigned::Pending);
+                    if assign {
+                        record.spare = Some(Assigned::Sent);
+                    }
+                }
+                if assign {
+                    self.assign(pid);
                 }
                 if self.shutting_down.is_some() {
                     self.end_quietly(pid, "Verbatim is exiting");
                 }
             }
+            Err(error)
+                if self
+                    .records
+                    .get(&pid)
+                    .is_some_and(|record| record.spare.is_some())
+                    && self.shutting_down.is_none() =>
+            {
+                tracing::error!(%error, %pid, "failed to launch a spare outpost given while it launched");
+                self.given_spare_failed(pid, &format!("its launch failed: {error}"));
+            }
             Err(error) => {
                 tracing::error!(%error, %pid, "failed to launch an outpost");
                 self.records.remove(&pid);
                 self.release_target(pid);
+                if pid == self.own_pid {
+                    self.keep_spares();
+                }
+            }
+        }
+    }
+
+    /// The launch of the spare `outpost` reported: it waits from now on,
+    /// unless Verbatim is exiting or spares are no longer kept, when it is
+    /// ended; a failed launch is a spare's failure.
+    fn spare_launched(&mut self, outpost: OutpostId, result: io::Result<Child>) {
+        let kept = self.shutting_down.is_none() && self.spares.contains(outpost);
+        match result {
+            Ok(child) if !kept => {
+                // Verbatim is exiting, or spares are no longer kept.
+                self.spare_children.remove(&outpost);
+                self.forget_writer(outpost);
+                self.retire_child(
+                    child,
+                    format!("spare outpost {outpost}"),
+                    "it is no longer kept".to_owned(),
+                );
+            }
+            Ok(child) => {
+                if let Some(spare) = self.spare_children.get_mut(&outpost) {
+                    spare.child = Some(child);
+                    spare.last_pong_at = Instant::now();
+                }
+            }
+            Err(error) => {
+                tracing::error!(%error, %outpost, "failed to launch a spare outpost");
+                self.spare_children.remove(&outpost);
+                if self.spares.remove(outpost) {
+                    self.spare_failed(format!("spare {outpost}'s launch failed: {error}"));
+                }
             }
         }
     }
@@ -1160,6 +1486,14 @@ impl Owner {
         }
         if let Some(round) = record.idle_query.take() {
             ask_idle(&writer, round);
+        } else if self.spares.owes(outpost) {
+            // A given spare's replacement starts once it has answered an
+            // idle query behind the application's first facts; the
+            // supervisor asks one of its own when the app has not.
+            ask_idle(&writer, FIRST_ANSWER_ROUND);
+        }
+        if pid == self.own_pid {
+            self.keep_spares();
         }
         // An outpost is ready once its own `WinEvent` hook is in: the
         // listener stops forwarding the application's MSAA events raised
@@ -1228,9 +1562,33 @@ impl Owner {
             self.start_listener(true);
             return;
         }
+        if let Some(spare) = self.spare_children.remove(&outpost) {
+            let listed = self.spares.remove(outpost);
+            self.forget_writer(outpost);
+            if let Some(child) = spare.child {
+                self.retire_child(
+                    child,
+                    format!("spare outpost {outpost}"),
+                    "its pipe closed".to_owned(),
+                );
+            }
+            if listed && self.shutting_down.is_none() {
+                tracing::warn!(%outpost, "a spare outpost ended while it waited");
+                self.spare_failed(format!("spare {outpost} ended while it waited"));
+            }
+            return;
+        }
         if let Some(pid) = self.pid_of(outpost) {
             if self.shutting_down.is_some() {
                 self.end_quietly(pid, "its pipe closed while Verbatim is exiting");
+                return;
+            }
+            if self
+                .records
+                .get(&pid)
+                .is_some_and(|record| record.spare.is_some() && !record.ready)
+            {
+                self.given_spare_failed(pid, "its pipe closed before it was ready");
                 return;
             }
             self.ended_unexpectedly(pid, EndReason::Exited, &EndReason::Exited.to_string());
@@ -1281,6 +1639,13 @@ impl Owner {
     /// has one yet, for `why`. Returns the record's outpost id.
     fn take_record(&mut self, pid: Pid, why: &str) -> Option<OutpostId> {
         let record = self.records.remove(&pid)?;
+        // A given spare that ends owes its replacement no longer.
+        if self.spares.settled(record.outpost) {
+            self.replenish_spares();
+        }
+        if pid == self.own_pid && !record.ready {
+            self.keep_spares();
+        }
         if record.ready {
             // Its hook goes with it: the listener forwards the
             // application's MSAA events again, to start the next outpost.
@@ -1343,6 +1708,27 @@ impl Owner {
         for pid in launched {
             self.end_quietly(pid, "Verbatim is exiting");
         }
+        // Spares still launching are ended as their launch reports.
+        let spares: Vec<OutpostId> = self
+            .spare_children
+            .iter()
+            .filter(|(_, spare)| spare.child.is_some())
+            .map(|(outpost, _)| *outpost)
+            .collect();
+        for outpost in spares {
+            if let Some(child) = self
+                .spare_children
+                .remove(&outpost)
+                .and_then(|spare| spare.child)
+            {
+                self.forget_writer(outpost);
+                self.retire_child(
+                    child,
+                    format!("spare outpost {outpost}"),
+                    "Verbatim is exiting".to_owned(),
+                );
+            }
+        }
         if self
             .listener
             .as_ref()
@@ -1359,6 +1745,7 @@ impl Owner {
     fn finish_shutdown(&mut self) -> bool {
         if self.shutting_down.is_none()
             || !self.records.is_empty()
+            || !self.spare_children.is_empty()
             || self.listener.is_some()
             || self.retiring > 0
             || !self.relay.is_idle()
@@ -1497,12 +1884,18 @@ impl Owner {
         }
         for (pid, reason) in wedged {
             tracing::warn!(%pid, %reason, "ending a wedged outpost");
-            self.ended_unexpectedly(
-                pid,
-                EndReason::Killed,
-                &format!("ended as wedged: {reason}"),
-            );
+            let why = format!("ended as wedged: {reason}");
+            if self
+                .records
+                .get(&pid)
+                .is_some_and(|record| record.spare.is_some() && !record.ready)
+            {
+                self.given_spare_failed(pid, &why);
+            } else {
+                self.ended_unexpectedly(pid, EndReason::Killed, &why);
+            }
         }
+        self.spare_heartbeat(now, &ping);
 
         match &self.listener {
             None => self.start_listener(true),
@@ -1528,6 +1921,58 @@ impl Owner {
                     }
                 }
             }
+        }
+    }
+
+    /// Pings every spare waiting and ends any that has missed its pings, as
+    /// a spare's failure; and starts the replacement of every given spare
+    /// that has not answered its first idle query within
+    /// [`REPLACEMENT_LIMIT`].
+    fn spare_heartbeat(&mut self, now: Instant, ping: &SupervisorToOutpost) {
+        let mut wedged = Vec::new();
+        for (&outpost, spare) in &self.spare_children {
+            let Some(child) = &spare.child else { continue };
+            let decision = wedge_decision(
+                spare.last_pong_at,
+                now,
+                PING_INTERVAL,
+                MISSED_PONG_THRESHOLD,
+                0,
+                ABANDONED_WORKER_LIMIT,
+                false,
+            );
+            if decision.is_some() {
+                wedged.push(outpost);
+            } else {
+                let _ = child.writer.push(Outgoing::Ping(ping.clone()));
+            }
+        }
+        for outpost in wedged {
+            tracing::warn!(%outpost, "ending a spare outpost that stopped answering pings");
+            if let Some(child) = self
+                .spare_children
+                .remove(&outpost)
+                .and_then(|spare| spare.child)
+            {
+                self.forget_writer(outpost);
+                self.retire_child(
+                    child,
+                    format!("spare outpost {outpost}"),
+                    "it stopped answering pings".to_owned(),
+                );
+            }
+            if self.spares.remove(outpost) {
+                self.spare_failed(format!("spare {outpost} stopped answering pings"));
+            }
+        }
+        let overdue = self.spares.overdue(now, REPLACEMENT_LIMIT);
+        if !overdue.is_empty() {
+            tracing::info!(
+                ?overdue,
+                limit_ms = REPLACEMENT_LIMIT.as_millis(),
+                "given spares have not answered their first idle query within the limit; their replacements start"
+            );
+            self.replenish_spares();
         }
     }
 
@@ -1678,8 +2123,9 @@ fn launch_child(
     let source = match role {
         Role::Listener => Source::Listener,
         Role::Outpost(pid) => Source::Outpost(pid),
+        Role::Spare(_) => Source::Spare,
     };
-    if let Role::Outpost(_) = role {
+    if let Role::Outpost(_) | Role::Spare(_) = role {
         writers
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

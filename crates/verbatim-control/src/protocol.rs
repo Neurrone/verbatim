@@ -280,7 +280,8 @@ pub struct StatusInfo {
     pub outposts: Vec<OutpostStatus>,
     /// Whether Verbatim is ready for input: its GUI can act on gestures,
     /// the focus listener is running, the outpost reading Verbatim's own
-    /// windows is ready, and Core knows the current focus, if any window
+    /// windows and the spare outposts are ready, and Core knows the
+    /// current focus, if any window
     /// has the foreground. A client that acts right after connecting
     /// waits for this rather than for a fixed time.
     #[serde(default)]

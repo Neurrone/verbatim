@@ -215,6 +215,10 @@ pub(super) enum Source {
     Listener,
     /// An outpost's, watching this application.
     Outpost(Pid),
+    /// A spare outpost's, before it is given an application: named by its
+    /// launch, the reader's outpost id, until [`Relay::set_source`] makes
+    /// it the application's.
+    Spare,
 }
 
 /// A child's pipe to Core, being read.
@@ -289,6 +293,16 @@ impl Relay {
             },
         );
         Ok(())
+    }
+
+    /// Reads `outpost`'s pipe as `source`'s from now on: a spare's, once
+    /// it is given its application. Not called while that pipe's reader is
+    /// taken out to be read, which only the handling of that pipe's own
+    /// frames does.
+    pub(super) fn set_source(&mut self, outpost: OutpostId, source: Source) {
+        if let Some(reader) = self.readers.get_mut(&read_key(outpost)) {
+            reader.source = source;
+        }
     }
 
     /// Takes the reader under `key` out to read it, if it is still read: a
