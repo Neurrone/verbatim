@@ -40,8 +40,8 @@ pub(crate) struct Readiness {
     pub(crate) listener_ready: Arc<AtomicBool>,
     pub(crate) focus_known: Arc<AtomicBool>,
     pub(crate) outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
-    /// Whether the supervisor's spare outposts are ready, or it has stopped
-    /// keeping them ([`Readiness::spares_ready`]).
+    /// Whether the supervisor's spare outposts are ready
+    /// ([`Readiness::spares_ready`]).
     spares_ready: AtomicBool,
     /// The harness's event, when one was named.
     event: Option<String>,
@@ -96,8 +96,7 @@ impl Readiness {
                 })
     }
 
-    /// Notes that the supervisor's spares are all ready, or that it has
-    /// stopped keeping them, which it logs as an error.
+    /// Notes that the supervisor's spares are all ready.
     pub(crate) fn spares_ready(&self) {
         self.spares_ready.store(true, Ordering::Release);
         self.notify();

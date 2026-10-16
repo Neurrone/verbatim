@@ -44,9 +44,9 @@
 //!   spare given never returns, and its replacement starts once the
 //!   outpost it became has answered its first idle query, or after
 //!   [`REPLACEMENT_LIMIT`]. A spare that fails before its `Ready` is
-//!   replaced, the application's held facts going to the next one, and
-//!   after three failures within a minute no spare is kept until Verbatim
-//!   restarts.
+//!   replaced, the application's held facts going to the next one, which
+//!   the app hears of ([`OutpostMessage::Reincarnated`]); a spare that
+//!   fails is always replaced.
 //!
 //! The app hears of each outpost incarnation through [`OutpostMessage`]:
 //! `Started` before any of its messages, then its messages, then `Ended`.
@@ -113,24 +113,17 @@ const CRASH_WINDOW: Duration = Duration::from_mins(1);
 /// (`docs/design/focus-pipeline.md`, section 19).
 pub const SPARES: usize = 2;
 
-/// How many spare failures within [`SPARE_FAILURE_WINDOW`] stop the
-/// supervisor keeping spares until Verbatim restarts.
-const SPARE_FAILURE_LIMIT: usize = 3;
-
-/// The window [`SPARE_FAILURE_LIMIT`] counts spare failures in.
-const SPARE_FAILURE_WINDOW: Duration = Duration::from_mins(1);
-
 /// The longest a given spare's replacement waits for the outpost it became
 /// to answer its first idle query. The answer waits behind the
 /// application's first facts, each of which the worker may take up to its
 /// ten-second deadline to handle in a hung application before it is
 /// abandoned, and behind a terminal read owed to Core, which waits for the
 /// terminal's output to settle; so it has no fixed bound
-/// (`docs/design/focus-pipeline.md`, section 19.8, item 1). Ten seconds,
-/// one worker deadline, is long past any first focus that is not stuck,
+/// (`docs/design/focus-pipeline.md`, section 19.8, item 1). Five seconds
+/// (Dickson, 2026-10-16) is long past any first focus that is not stuck,
 /// so the replacement still does not compete with it. Checked at the
 /// heartbeat, so the replacement starts up to one ping interval later.
-pub(crate) const REPLACEMENT_LIMIT: Duration = Duration::from_secs(10);
+pub(crate) const REPLACEMENT_LIMIT: Duration = Duration::from_secs(5);
 
 /// The idle round the supervisor asks a given spare itself, behind the
 /// application's first facts, when the app has asked none: its answer
@@ -316,10 +309,6 @@ pub enum OutpostMessage {
         /// How many spares are ready and waiting.
         waiting: usize,
     },
-    /// The supervisor stopped keeping spares after repeated failures, until
-    /// Verbatim restarts; every outpost is started for its application from
-    /// now on.
-    SparesStopped,
     /// The focus listener is ready. When it is a replacement for one that
     /// ended, facts were lost in the gap, so the app asks the foreground
     /// application for its current focus.
@@ -343,6 +332,24 @@ pub enum OutpostMessage {
         target_pid: Pid,
         /// Why it ended.
         reason: EndReason,
+    },
+    /// A spare given to `target_pid`, the incarnation `outpost`, ended
+    /// before its `Ready` (`docs/design/focus-pipeline.md`, section 19.5),
+    /// and the application's held facts, and the idle query held for it,
+    /// go to the incarnation `next`: the next spare, or an outpost
+    /// launched for the application. Sent before `outpost`'s `Ended`, which
+    /// follows when the app heard it started, and before `next`'s
+    /// `Started`, which follows at once or once its launch reports. In an
+    /// idle round that asked `outpost`, `next` answers in its place; and
+    /// nothing the application reported is lost, so the app asks it for
+    /// nothing again.
+    Reincarnated {
+        /// The incarnation that failed.
+        outpost: OutpostId,
+        /// The incarnation that takes its place.
+        next: OutpostId,
+        /// The application.
+        target_pid: Pid,
     },
     /// An outpost was wanted for `target_pid`, asked for or to replace one
     /// that crashed, and none was started: the application's process has
@@ -369,7 +376,9 @@ pub enum OutpostMessage {
     /// is ready. Sent before any of them is asked, so it reaches the app
     /// ahead of every answer. Each answers
     /// [`OutpostToSupervisor::IdleAnswer`] as a message of its own, or
-    /// ends ([`OutpostMessage::Ended`]), which counts as its answer.
+    /// ends ([`OutpostMessage::Ended`]), which counts as its answer, unless
+    /// it was a spare that failed before its `Ready`: then the incarnation
+    /// [`OutpostMessage::Reincarnated`] names answers in its place.
     IdleQueried {
         /// The round.
         round: u64,

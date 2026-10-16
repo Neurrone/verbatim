@@ -49,8 +49,7 @@ use super::writer::{Outgoing, Received, WriterHandle};
 use super::{
     ABANDONED_WORKER_LIMIT, CRASH_LIMIT, CRASH_WINDOW, EndReason, EventSink, FIRST_ANSWER_ROUND,
     IDLE_RETIREMENT, MISSED_PONG_THRESHOLD, OutpostMessage, PING_INTERVAL, REPLACEMENT_LIMIT,
-    ReducerStall, SPARE_FAILURE_LIMIT, SPARE_FAILURE_WINDOW, SPARES, SWEEP_INTERVAL, Undelivered,
-    Writers,
+    ReducerStall, SPARES, SWEEP_INTERVAL, Undelivered, Writers,
 };
 
 /// The relay thread's priority: it reads each of the listener's facts and
@@ -178,6 +177,9 @@ struct Record {
     last_attention_at: Instant,
     /// The idle barrier's round, held behind the held facts until `Ready`.
     idle_query: Option<u64>,
+    /// The last fault a spare given to the application reported before its
+    /// `Ready`, such as its hook failing: logged with its failure.
+    fault: Option<String>,
 }
 
 /// Where the idle barrier's round is in the relay
@@ -332,6 +334,8 @@ struct SpareChild {
     /// `None` while the launch helper is still at work.
     child: Option<Child>,
     last_pong_at: Instant,
+    /// The last fault it reported: logged with its failure.
+    fault: Option<String>,
 }
 
 /// The relay's watch over the thread taking the app's inputs, the reducer
@@ -585,6 +589,19 @@ impl Owner {
             // Written by a spare before it read its `Assign`, and read
             // since: it was given already.
             Some("SpareReady") => {}
+            Some("Fault") => {
+                // A given spare's fault before its `Ready`, such as its
+                // hook failing, is kept for the log of its failure.
+                if let Some(record) = self
+                    .records
+                    .get_mut(&pid)
+                    .filter(|record| record.spare.is_some() && !record.ready)
+                    && let OutpostToSupervisor::Fault { detail } = decode_message(body.bytes())?
+                {
+                    record.fault = Some(detail);
+                }
+                self.hand_on(Frame::new(pid, outpost, body.into_owned(), read_at_us));
+            }
             Some("IdleAnswer") => {
                 let OutpostToSupervisor::IdleAnswer { round } = decode_message(body.bytes())?
                 else {
@@ -632,6 +649,7 @@ impl Owner {
             Some("Fault") => {
                 if let OutpostToSupervisor::Fault { detail } = decode_message(body.bytes())? {
                     tracing::warn!(%outpost, detail, "spare outpost fault");
+                    spare.fault = Some(detail);
                 }
             }
             kind => tracing::debug!(%outpost, ?kind, "a spare outpost's message dropped"),
@@ -948,6 +966,7 @@ impl Owner {
                 hang_check: false,
                 last_attention_at: now,
                 idle_query: None,
+                fault: None,
             },
         );
         self.incarnate(pid);
@@ -955,11 +974,22 @@ impl Owner {
         true
     }
 
-    /// Gives `pid`'s record, starting, a new incarnation: the oldest spare
-    /// waiting, ready or not, which is sent `Assign` and the app `Started`
-    /// at once, or once its launch has reported; or, with no spare, an
-    /// outpost launched for it.
+    /// Gives `pid`'s record, starting, a new incarnation
+    /// ([`next_incarnation`](Self::next_incarnation)) and starts it
+    /// ([`start_incarnation`](Self::start_incarnation)).
     fn incarnate(&mut self, pid: Pid) {
+        if self.next_incarnation(pid).is_some() {
+            self.start_incarnation(pid);
+        }
+    }
+
+    /// Gives `pid`'s record, starting, its next incarnation without
+    /// starting it: the oldest spare waiting, ready or not, or, with no
+    /// spare, a new outpost to launch for it. Returns the incarnation.
+    fn next_incarnation(&mut self, pid: Pid) -> Option<OutpostId> {
+        if !self.records.contains_key(&pid) {
+            return None;
+        }
         let now = Instant::now();
         let spare = self.spares.take(now);
         let (outpost, child) = match spare {
@@ -971,9 +1001,7 @@ impl Owner {
             ),
             None => (self.next_outpost_id(), None),
         };
-        let Some(record) = self.records.get_mut(&pid) else {
-            return;
-        };
+        let record = self.records.get_mut(&pid)?;
         record.outpost = outpost;
         record.spare = spare.map(|_| {
             if child.is_some() {
@@ -987,10 +1015,22 @@ impl Owner {
         record.last_pong_at = now;
         record.abandoned = 0;
         record.hang_check = false;
+        record.fault = None;
+        Some(outpost)
+    }
+
+    /// Starts the incarnation [`next_incarnation`](Self::next_incarnation)
+    /// gave `pid`'s record: a spare is sent `Assign` and the app `Started`
+    /// at once, or once its launch has reported; an outpost for it is
+    /// launched.
+    fn start_incarnation(&mut self, pid: Pid) {
+        let Some(record) = self.records.get(&pid) else {
+            return;
+        };
         match record.spare {
             Some(Assigned::Sent) => self.assign(pid),
             Some(Assigned::Pending) => {}
-            None => self.launch(outpost, Role::Outpost(pid)),
+            None => self.launch(record.outpost, Role::Outpost(pid)),
         }
     }
 
@@ -1042,55 +1082,30 @@ impl Owner {
                 SpareChild {
                     child: None,
                     last_pong_at: Instant::now(),
+                    fault: None,
                 },
             );
             self.launch(spare, Role::Spare(spare));
         }
     }
 
-    /// Records a spare's failure, for `why`, and replaces it; after
-    /// [`SPARE_FAILURE_LIMIT`] within [`SPARE_FAILURE_WINDOW`], stops
-    /// keeping spares until Verbatim restarts, says so with every failure's
-    /// reason, and ends the spares still waiting.
-    fn spare_failed(&mut self, why: String) {
-        let stopped = self.spares.failed(
-            Instant::now(),
-            why,
-            (SPARE_FAILURE_LIMIT, SPARE_FAILURE_WINDOW),
-        );
-        let Some((failures, waiting)) = stopped else {
-            self.replenish_spares();
-            return;
-        };
-        tracing::error!(
-            ?failures,
-            "spare outposts failed repeatedly; none is kept until Verbatim restarts, and every outpost is started for its application"
-        );
-        for spare in waiting {
-            // One still launching is ended as its launch reports.
-            if let Some(child) = self
-                .spare_children
-                .get_mut(&spare)
-                .and_then(|spare| spare.child.take())
-            {
-                self.spare_children.remove(&spare);
-                self.forget_writer(spare);
-                self.retire_child(
-                    child,
-                    format!("spare outpost {spare}"),
-                    "spares are no longer kept".to_owned(),
-                );
-            }
-        }
-        self.outbox.send(OutpostMessage::SparesStopped);
+    /// Logs a spare's failure, for `why`, as an error, the evidence to
+    /// find its cause from, and replaces it: spares are always replaced.
+    fn spare_failed(&mut self, why: &str) {
+        tracing::error!(why, "a spare outpost failed; it is replaced");
+        self.replenish_spares();
     }
 
-    /// The spare given to `pid` ended before its `Ready`, for `why`: a
-    /// spare's failure, not the application's crash. Unless the
-    /// application has exited, which ends it as the application's exit,
-    /// the app hears the incarnation ended, and the record keeps its held
-    /// facts for the next spare, or an outpost launched for it.
-    fn given_spare_failed(&mut self, pid: Pid, why: &str) {
+    /// The spare given to `pid` ended before its `Ready`, for `why`, as
+    /// `reason` says: a spare's failure, not the application's crash.
+    /// Unless the application has exited, which ends it as the
+    /// application's exit, the record keeps its held facts, and the idle
+    /// query held for it, for its next incarnation, the next spare or an
+    /// outpost launched for it; the app hears `Reincarnated` naming that
+    /// incarnation, then the failed one's `Ended` if it heard it started,
+    /// then the next one's `Started`, so an idle round that asked the
+    /// failed one waits for the next one's answer.
+    fn given_spare_failed(&mut self, pid: Pid, why: &str, reason: EndReason) {
         if self.has_exited(pid) {
             self.target_exited(pid, why);
             return;
@@ -1100,26 +1115,39 @@ impl Owner {
         };
         let failed = record.outpost;
         let started = record.spare == Some(Assigned::Sent);
+        // What it reported before it failed is the evidence of why.
+        let why = match record.fault.take() {
+            Some(fault) => format!("{why}, after its fault: {fault}"),
+            None => why.to_owned(),
+        };
         let child = record.child.take();
         self.forget_writer(failed);
         if let Some(child) = child {
             self.retire_child(
                 child,
                 format!("spare outpost {failed} given to {pid}"),
-                why.to_owned(),
+                why.clone(),
             );
         }
         tracing::warn!(%failed, %pid, why, "a spare outpost failed after it was given; the application's facts wait for the next");
+        self.spares.settled(failed);
+        self.spare_failed(&format!("spare {failed}, given to {pid}: {why}"));
+        let Some(next) = self.next_incarnation(pid) else {
+            return;
+        };
+        self.outbox.send(OutpostMessage::Reincarnated {
+            outpost: failed,
+            next,
+            target_pid: pid,
+        });
         if started {
             self.outbox.send(OutpostMessage::Ended {
                 outpost: failed,
                 target_pid: pid,
-                reason: EndReason::Exited,
+                reason,
             });
         }
-        self.spares.settled(failed);
-        self.spare_failed(format!("spare {failed}, given to {pid}: {why}"));
-        self.incarnate(pid);
+        self.start_incarnation(pid);
         self.replenish_spares();
     }
 
@@ -1396,7 +1424,11 @@ impl Owner {
                     && self.shutting_down.is_none() =>
             {
                 tracing::error!(%error, %pid, "failed to launch a spare outpost given while it launched");
-                self.given_spare_failed(pid, &format!("its launch failed: {error}"));
+                self.given_spare_failed(
+                    pid,
+                    &format!("its launch failed: {error}"),
+                    EndReason::Exited,
+                );
             }
             Err(error) => {
                 tracing::error!(%error, %pid, "failed to launch an outpost");
@@ -1410,19 +1442,17 @@ impl Owner {
     }
 
     /// The launch of the spare `outpost` reported: it waits from now on,
-    /// unless Verbatim is exiting or spares are no longer kept, when it is
-    /// ended; a failed launch is a spare's failure.
+    /// unless Verbatim is exiting, when it is ended; a failed launch is a
+    /// spare's failure.
     fn spare_launched(&mut self, outpost: OutpostId, result: io::Result<Child>) {
-        let kept = self.shutting_down.is_none() && self.spares.contains(outpost);
         match result {
-            Ok(child) if !kept => {
-                // Verbatim is exiting, or spares are no longer kept.
+            Ok(child) if self.shutting_down.is_some() => {
                 self.spare_children.remove(&outpost);
                 self.forget_writer(outpost);
                 self.retire_child(
                     child,
                     format!("spare outpost {outpost}"),
-                    "it is no longer kept".to_owned(),
+                    "Verbatim is exiting".to_owned(),
                 );
             }
             Ok(child) => {
@@ -1435,7 +1465,7 @@ impl Owner {
                 tracing::error!(%error, %outpost, "failed to launch a spare outpost");
                 self.spare_children.remove(&outpost);
                 if self.spares.remove(outpost) {
-                    self.spare_failed(format!("spare {outpost}'s launch failed: {error}"));
+                    self.spare_failed(&format!("spare {outpost}'s launch failed: {error}"));
                 }
             }
         }
@@ -1573,8 +1603,12 @@ impl Owner {
                 );
             }
             if listed && self.shutting_down.is_none() {
-                tracing::warn!(%outpost, "a spare outpost ended while it waited");
-                self.spare_failed(format!("spare {outpost} ended while it waited"));
+                let fault = spare
+                    .fault
+                    .map(|fault| format!(", after its fault: {fault}"))
+                    .unwrap_or_default();
+                tracing::warn!(%outpost, fault, "a spare outpost ended while it waited");
+                self.spare_failed(&format!("spare {outpost} ended while it waited{fault}"));
             }
             return;
         }
@@ -1588,7 +1622,11 @@ impl Owner {
                 .get(&pid)
                 .is_some_and(|record| record.spare.is_some() && !record.ready)
             {
-                self.given_spare_failed(pid, "its pipe closed before it was ready");
+                self.given_spare_failed(
+                    pid,
+                    "its pipe closed before it was ready",
+                    EndReason::Exited,
+                );
                 return;
             }
             self.ended_unexpectedly(pid, EndReason::Exited, &EndReason::Exited.to_string());
@@ -1890,7 +1928,7 @@ impl Owner {
                 .get(&pid)
                 .is_some_and(|record| record.spare.is_some() && !record.ready)
             {
-                self.given_spare_failed(pid, &why);
+                self.given_spare_failed(pid, &why, EndReason::Killed);
             } else {
                 self.ended_unexpectedly(pid, EndReason::Killed, &why);
             }
@@ -1962,7 +2000,7 @@ impl Owner {
                 );
             }
             if self.spares.remove(outpost) {
-                self.spare_failed(format!("spare {outpost} stopped answering pings"));
+                self.spare_failed(&format!("spare {outpost} stopped answering pings"));
             }
         }
         let overdue = self.spares.overdue(now, REPLACEMENT_LIMIT);

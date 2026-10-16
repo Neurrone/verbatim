@@ -163,70 +163,36 @@ impl HeldFacts {
     }
 }
 
-/// Whether the supervisor keeps spare outposts
-/// (`docs/design/focus-pipeline.md`, section 19).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Keeping {
-    /// Not yet: they are started once Core's own outpost is ready, or has
-    /// ended without becoming ready.
-    NotYet,
-    /// Kept: a start takes one, and one is started whenever fewer than
-    /// [`SPARES`](super::SPARES) wait and are owed.
-    Kept,
-    /// Stopped after repeated failures, until Verbatim restarts: every
-    /// outpost is started for its application directly.
-    Stopped,
-}
-
-/// The spare outposts: which wait, oldest first, whether each has said it
-/// is ready, which given ones still owe their replacement, and their recent
-/// failures. A spare given to an application never returns to the list.
-/// Its replacement is owed until the outpost it became answers its first
-/// idle query, or the limit passes, so the replacement's start does not
-/// compete with the application's first focus.
-#[derive(Debug)]
+/// The spare outposts (`docs/design/focus-pipeline.md`, section 19):
+/// whether they are kept yet, which wait, oldest first, whether each has
+/// said it is ready, and which given ones still owe their replacement. A
+/// spare given to an application never returns to the list. Its
+/// replacement is owed until the outpost it became answers its first idle
+/// query, or the limit passes, so the replacement's start does not compete
+/// with the application's first focus. A spare that fails is always
+/// replaced.
+#[derive(Debug, Default)]
 pub(super) struct Spares {
-    keeping: Keeping,
+    /// Whether spares are kept: from the moment Core's own outpost is
+    /// ready, or has ended without becoming ready, until Verbatim exits.
+    kept: bool,
     /// The spares waiting, oldest first, each with whether it is ready.
     waiting: VecDeque<(OutpostId, bool)>,
     /// The given spares whose replacements are owed, with when each was
     /// given.
     owed: HashMap<OutpostId, Instant>,
-    /// Recent failures, with why each failed.
-    failures: VecDeque<(Instant, String)>,
-}
-
-impl Default for Spares {
-    fn default() -> Self {
-        Self {
-            keeping: Keeping::NotYet,
-            waiting: VecDeque::new(),
-            owed: HashMap::new(),
-            failures: VecDeque::new(),
-        }
-    }
 }
 
 impl Spares {
-    /// Starts keeping spares, unless they are kept already or stopped.
-    /// Returns whether this call started it.
+    /// Starts keeping spares, unless they are kept already. Returns
+    /// whether this call started it.
     pub(super) fn keep(&mut self) -> bool {
-        if self.keeping != Keeping::NotYet {
-            return false;
-        }
-        self.keeping = Keeping::Kept;
-        true
-    }
-
-    /// Whether spares are kept, not yet, or stopped.
-    #[cfg(test)]
-    fn keeping(&self) -> Keeping {
-        self.keeping
+        !std::mem::replace(&mut self.kept, true)
     }
 
     /// How many spares to start now so that `count` wait or are owed.
     pub(super) fn wanted(&self, count: usize) -> usize {
-        if self.keeping != Keeping::Kept {
+        if !self.kept {
             return 0;
         }
         count.saturating_sub(self.waiting.len() + self.owed.len())
@@ -238,7 +204,8 @@ impl Spares {
     }
 
     /// Whether `spare` is a spare waiting.
-    pub(super) fn contains(&self, spare: OutpostId) -> bool {
+    #[cfg(test)]
+    fn contains(&self, spare: OutpostId) -> bool {
         self.waiting.iter().any(|&(waiting, _)| waiting == spare)
     }
 
@@ -256,7 +223,7 @@ impl Spares {
     /// Gives the oldest spare waiting, ready or not, while spares are
     /// kept, and owes its replacement from `now`.
     pub(super) fn take(&mut self, now: Instant) -> Option<OutpostId> {
-        if self.keeping != Keeping::Kept {
+        if !self.kept {
             return None;
         }
         let (spare, _) = self.waiting.pop_front()?;
@@ -296,34 +263,6 @@ impl Spares {
             self.owed.remove(outpost);
         }
         overdue
-    }
-
-    /// Records a spare's failure at `now`, for `why`. After `limit` failures
-    /// within `window`, stops keeping spares and returns every recent
-    /// failure's reason, with the spares still waiting, which are ended:
-    /// they are no longer kept.
-    pub(super) fn failed(
-        &mut self,
-        now: Instant,
-        why: String,
-        (limit, window): (usize, Duration),
-    ) -> Option<(Vec<String>, Vec<OutpostId>)> {
-        self.failures.push_back((now, why));
-        while self
-            .failures
-            .front()
-            .is_some_and(|&(at, _)| now.saturating_duration_since(at) > window)
-        {
-            self.failures.pop_front();
-        }
-        if self.failures.len() < limit || self.keeping == Keeping::Stopped {
-            return None;
-        }
-        self.keeping = Keeping::Stopped;
-        self.owed.clear();
-        let reasons = self.failures.iter().map(|(_, why)| why.clone()).collect();
-        let waiting = self.waiting.drain(..).map(|(spare, _)| spare).collect();
-        Some((reasons, waiting))
     }
 }
 
@@ -433,8 +372,6 @@ mod tests {
         }
     }
 
-    const SPARE_FAILURES: (usize, Duration) = (3, Duration::from_mins(1));
-
     /// Spares kept, with `count` started, numbered from 1.
     fn kept(count: u64) -> Spares {
         let mut spares = Spares::default();
@@ -510,46 +447,6 @@ mod tests {
         assert!(spares.remove(OutpostId(1)));
         assert!(!spares.remove(OutpostId(1)), "removed once");
         assert_eq!(spares.wanted(2), 1);
-    }
-
-    #[test]
-    fn three_spare_failures_within_a_minute_stop_the_spares() {
-        let start = Instant::now();
-        let mut spares = kept(2);
-        assert_eq!(spares.failed(start, "one".to_owned(), SPARE_FAILURES), None);
-        // More than a minute after the first: two in the window, not three.
-        assert_eq!(
-            spares.failed(
-                start + Duration::from_secs(30),
-                "two".to_owned(),
-                SPARE_FAILURES
-            ),
-            None
-        );
-        assert_eq!(
-            spares.failed(
-                start + Duration::from_secs(70),
-                "three".to_owned(),
-                SPARE_FAILURES
-            ),
-            None
-        );
-        assert_eq!(spares.keeping(), Keeping::Kept);
-        assert_eq!(
-            spares.failed(
-                start + Duration::from_secs(80),
-                "four".to_owned(),
-                SPARE_FAILURES
-            ),
-            Some((
-                vec!["two".to_owned(), "three".to_owned(), "four".to_owned()],
-                vec![OutpostId(1), OutpostId(2)]
-            ))
-        );
-        assert_eq!(spares.keeping(), Keeping::Stopped);
-        assert_eq!(spares.wanted(2), 0);
-        assert_eq!(spares.take(start), None);
-        assert!(!spares.keep(), "stopped until Verbatim restarts");
     }
 
     #[test]

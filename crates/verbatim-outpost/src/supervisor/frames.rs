@@ -166,8 +166,9 @@ impl Frames {
     /// waited behind it, up to its next large frame. An outpost's end
     /// waits behind its frames too, and while it waits, so does everything
     /// about the same application that arrives after it: another outpost's
-    /// start, frames and end, and word that the application is not
-    /// watched, each handed on after the end, in the order it arrived.
+    /// start, frames and end, word that a failed spare's place went to
+    /// another incarnation, and word that the application is not watched,
+    /// each handed on after the end, in the order it arrived.
     pub fn arrived(&mut self, message: OutpostMessage, out: &mut Vec<OutpostMessage>) {
         if let Some(pid) = application_of(&message)
             && let Some(&held) = self.held_ends.get(&pid)
@@ -339,6 +340,7 @@ fn application_of(message: &OutpostMessage) -> Option<Pid> {
     match message {
         OutpostMessage::Started { target_pid, .. }
         | OutpostMessage::Ended { target_pid, .. }
+        | OutpostMessage::Reincarnated { target_pid, .. }
         | OutpostMessage::NotWatched { target_pid } => Some(*target_pid),
         OutpostMessage::Frame(frame) => Some(frame.pid),
         _ => None,

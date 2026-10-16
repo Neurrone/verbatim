@@ -69,7 +69,9 @@ The end-to-end harness's hooks (private `harness` module):
   the question is still in progress, and tells the reducer which outposts
   it asked (`OutpostMessage::IdleQueried`). Each child answers behind
   every message it sent before, and an outpost that ends counts as having
-  answered. When every answer is in, the reducer takes in what is already
+  answered, except a given spare that failed before its `Ready`, whose
+  place goes to the incarnation `OutpostMessage::Reincarnated` names,
+  which holds its facts and its query. When every answer is in, the reducer takes in what is already
   on its port and checks its own conditions: no outpost request
   outstanding, no outpost still starting, no focus wanted from an outpost
   being started (a crashed outpost's replacement), and no large frame

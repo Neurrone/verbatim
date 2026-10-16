@@ -1,6 +1,10 @@
 //! The real outpost binary, watching an application that exits: it tells
 //! Core its target exited (`TargetExited`), and, asked to shut down, closes
-//! its pipe and exits with code 0, as every clean shutdown does.
+//! its pipe and exits with code 0, as every clean shutdown does. Started as
+//! a spare (`--spare`), it says `SpareReady`, takes its application from
+//! `Assign` and says `Ready`; an application it cannot watch, a second
+//! `Assign`'s, it reports as a fault and exits with code 1, as it does when
+//! its hook cannot be installed.
 //!
 //! The application is this test binary run again as a stand-in, a process
 //! with no windows that runs until its standard input closes, so the test
@@ -13,6 +17,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
+use verbatim_model::Pid;
 use verbatim_outpost::protocol::{
     OutpostToSupervisor, SupervisorToOutpost, read_message, write_message,
 };
@@ -26,18 +31,30 @@ const TARGET: &str = "--stand-in-application";
 /// The longest any step waits.
 const WAIT: Duration = Duration::from_secs(30);
 
-fn an_outpost_whose_application_exits_says_so_and_shuts_down_cleanly() {
-    let mut application = Command::new(std::env::current_exe().expect("this binary's path"))
+/// Starts the stand-in application.
+fn application() -> std::process::Child {
+    Command::new(std::env::current_exe().expect("this binary's path"))
         .arg(TARGET)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .spawn()
-        .expect("the stand-in application starts");
-    let target_pid = application.id();
+        .expect("the stand-in application starts")
+}
 
+/// Launches the real outpost binary with `arguments` after its pipes, as
+/// the supervisor does: returns it, the writer to its commands, and the
+/// messages it sends, read on a thread of their own.
+fn launch(
+    arguments: String,
+    log_stem: &str,
+) -> (
+    verbatim_process::Contained,
+    BlockingWriter,
+    mpsc::Receiver<OutpostToSupervisor>,
+) {
     let exe = std::path::PathBuf::from(env!("CARGO_BIN_EXE_verbatim-outpost"));
     let arguments = move |pipe_in: usize, pipe_out: usize| {
-        format!("--pipe-in {pipe_in} --pipe-out {pipe_out} --target-pid {target_pid}")
+        format!("--pipe-in {pipe_in} --pipe-out {pipe_out} {arguments}")
     };
     // Overlapped ends on both sides, as the supervisor makes them.
     let (to_child, commands) =
@@ -48,7 +65,7 @@ fn an_outpost_whose_application_exits_says_so_and_shuts_down_cleanly() {
         &ChildSpec {
             exe: &exe,
             arguments: &arguments,
-            log_stem: "target-exit-test",
+            log_stem,
             memory_cap: None,
         },
         ChildEnds { commands, messages },
@@ -64,6 +81,24 @@ fn an_outpost_whose_application_exits_says_so_and_shuts_down_cleanly() {
             }
         }
     });
+    (
+        outpost,
+        BlockingWriter::new(to_child).expect("a writer"),
+        messages,
+    )
+}
+
+/// Sends the outpost `command`.
+fn send(to_child: &mut BlockingWriter, command: &SupervisorToOutpost) {
+    write_message(to_child, command).expect("the command is written");
+    to_child.flush().expect("the command is sent");
+}
+
+fn an_outpost_whose_application_exits_says_so_and_shuts_down_cleanly() {
+    let mut application = application();
+    let target_pid = application.id();
+    let (outpost, mut to_child, messages) =
+        launch(format!("--target-pid {target_pid}"), "target-exit-test");
     match messages.recv_timeout(WAIT) {
         Ok(OutpostToSupervisor::Ready { .. }) => {}
         other => panic!("the outpost said {other:?}, not Ready"),
@@ -78,9 +113,7 @@ fn an_outpost_whose_application_exits_says_so_and_shuts_down_cleanly() {
         "the outpost says its application exited"
     );
 
-    let mut to_child = BlockingWriter::new(to_child).expect("a writer");
-    write_message(&mut to_child, &SupervisorToOutpost::Shutdown).expect("Shutdown is written");
-    to_child.flush().expect("Shutdown is sent");
+    send(&mut to_child, &SupervisorToOutpost::Shutdown);
     assert_eq!(
         messages.recv_timeout(WAIT),
         Err(mpsc::RecvTimeoutError::Disconnected),
@@ -88,6 +121,50 @@ fn an_outpost_whose_application_exits_says_so_and_shuts_down_cleanly() {
     );
     assert!(outpost.wait_for_exit(WAIT), "the outpost exits");
     assert_eq!(outpost.exit_code(), Some(0), "it shut down cleanly");
+}
+
+fn a_spare_takes_its_application_from_assign_and_ends_on_one_it_cannot_watch() {
+    let mut application = application();
+    let target_pid = Pid(application.id());
+    let (outpost, mut to_child, messages) = launch("--spare 1".to_owned(), "spare-assign-test");
+    let outpost_pid = Pid(outpost.pid);
+    assert_eq!(
+        messages.recv_timeout(WAIT).ok(),
+        Some(OutpostToSupervisor::SpareReady { outpost_pid }),
+        "a spare says it is one"
+    );
+
+    send(&mut to_child, &SupervisorToOutpost::Assign { target_pid });
+    assert_eq!(
+        messages.recv_timeout(WAIT).ok(),
+        Some(OutpostToSupervisor::Ready {
+            outpost_pid,
+            target_pid
+        }),
+        "it watches the application it was given"
+    );
+
+    // A second application is one it cannot watch: it reports why, ends
+    // without a `Ready`, and exits with code 1.
+    send(&mut to_child, &SupervisorToOutpost::Assign { target_pid });
+    assert_eq!(
+        messages.recv_timeout(WAIT).ok(),
+        Some(OutpostToSupervisor::Fault {
+            detail: format!("the outpost already watches {target_pid}")
+        }),
+        "it reports why it cannot watch the application"
+    );
+    assert_eq!(
+        messages.recv_timeout(WAIT),
+        Err(mpsc::RecvTimeoutError::Disconnected),
+        "the outpost said nothing more and closed its pipe"
+    );
+    assert!(outpost.wait_for_exit(WAIT), "the outpost exits");
+    assert_eq!(outpost.exit_code(), Some(1), "it exited for the failure");
+
+    drop(application.stdin.take());
+    let status = application.wait().expect("the stand-in exits");
+    assert!(status.success(), "the stand-in exited with {status}");
 }
 
 fn main() {
@@ -98,4 +175,8 @@ fn main() {
     }
     an_outpost_whose_application_exits_says_so_and_shuts_down_cleanly();
     println!("test an_outpost_whose_application_exits_says_so_and_shuts_down_cleanly ... ok");
+    a_spare_takes_its_application_from_assign_and_ends_on_one_it_cannot_watch();
+    println!(
+        "test a_spare_takes_its_application_from_assign_and_ends_on_one_it_cannot_watch ... ok"
+    );
 }

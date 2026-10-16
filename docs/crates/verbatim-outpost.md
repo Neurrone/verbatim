@@ -237,7 +237,7 @@ never returns to the list, and its replacement starts once the outpost it
 became has answered its first idle query, which the supervisor asks behind
 the application's first facts (round 0, which the app never sees) unless
 the app's idle barrier asked one first, so the replacement's start does not
-compete with the first focus; a replacement still owed after ten seconds
+compete with the first focus; a replacement still owed after five seconds
 (`REPLACEMENT_LIMIT`, checked at the heartbeat) starts anyway, since the
 answer can wait behind a hung application's reads, each up to the
 worker's ten-second deadline, and behind a terminal read that waits for
@@ -246,15 +246,21 @@ idle rounds, sent end-of-reads markers, or retired, and are shut down with
 the rest. A spare that exits, is killed for missing its pings, fails to
 launch, or ends after `Assign` before its `Ready` (its hook failing
 included) is a spare's failure, not the application's crash: it is
-replaced, and a given one's application, unless it has exited, keeps its
-held facts for the next spare, or an outpost started for it when none is
-left, with no crash recorded against it; the app hears the failed
-incarnation's `Ended` with the reason exited. After three spare failures
-within a minute the supervisor logs an error with each failure's reason,
-ends the spares still waiting, says `SparesStopped`, and starts every
-outpost for its application directly until Verbatim restarts. A spare
-that fails after its `Ready` is its application's outpost failing,
-handled as any outpost's crash.
+replaced, always, and logged as an error with its reason, the last fault
+it sent included. A given one's application, unless it has exited, keeps
+its held facts, and any idle query held for it, for its next incarnation,
+the next spare, or an outpost started for it when none is left, with no
+crash recorded against it: the app hears `Reincarnated`, naming the
+failed incarnation and the next, then the failed one's `Ended` (exited,
+or killed when it missed its pings) if it heard it started, then the
+next one's `Started`. In an idle round that asked the failed one, the
+next answers in its place, and the app asks the application for no
+focus at that `Ended`, since nothing is lost. When the application has
+exited, the failure ends it as the application's exit. A spare that
+fails after its `Ready` is its application's outpost failing, handled as
+any outpost's crash. An outpost that cannot watch the application it is
+given, its hook failing or its having one already, reports why as a
+fault and exits with code 1 without `Ready`.
 
 ## Public API
 
@@ -775,8 +781,9 @@ handled as any outpost's crash.
   ended, through `OutpostMessage::ListenerReady`; that a spare is ready,
   with how many are ready and waiting, through `SpareReady` (Verbatim's
   readiness waits for `SPARES`, two, so every end-to-end scenario's
-  applications take a spare); that spares are no longer kept, through
-  `SparesStopped`; and of each incarnation
+  applications take a spare); that a given spare failed before its
+  `Ready` and which incarnation holds its application's facts, through
+  `Reincarnated`; and of each incarnation
   through
   `OutpostMessage`: `Started` before
   any of its messages, then its messages, and `Ended` with a reason

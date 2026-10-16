@@ -956,10 +956,14 @@ impl Outpost {
             .compare_exchange(0, target_pid, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
-            return Err(format!(
-                "the outpost already watches {}",
-                context.target_pid()
-            ));
+            let detail = format!("the outpost already watches {}", context.target_pid());
+            tracing::error!(
+                target_pid,
+                detail,
+                "the outpost cannot watch another application"
+            );
+            fault(context, detail.clone());
+            return Err(detail);
         }
         // Read before the hook is installed: no event raised before this
         // reaches it.

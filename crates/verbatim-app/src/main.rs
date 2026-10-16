@@ -949,6 +949,11 @@ struct ReducerThread<'a> {
     /// and the idle barrier's round through every child that answers them
     /// (`docs/design/communication.md`, section 6.7).
     barrier: idle::IdleBarrier<Sender<()>>,
+    /// Given spares that failed before their `Ready` and whose `Ended` is
+    /// still to come: their applications' held facts went to the next
+    /// incarnation ([`OutpostMessage::Reincarnated`]), so their end asks
+    /// for no focus.
+    reincarnated: HashSet<OutpostId>,
 }
 
 impl ReducerThread<'_> {
@@ -1007,7 +1012,12 @@ impl ReducerThread<'_> {
                 // replacing it after repeated crashes. A retired outpost,
                 // or one whose application exited, is not replaced. A
                 // console host's outpost reports for the console's client.
-                let replaced = !matches!(reason, EndReason::Retired | EndReason::TargetExited);
+                // A given spare that failed before its `Ready` loses
+                // nothing: its application's held facts went to the next
+                // incarnation, which reports them, so nothing is asked.
+                let reincarnated = self.reincarnated.remove(&outpost);
+                let replaced = !reincarnated
+                    && !matches!(reason, EndReason::Retired | EndReason::TargetExited);
                 let application = self.live.application_of(outpost).unwrap_or(target_pid);
                 if replaced
                     && (self.state.attention() == Some(application)
@@ -1031,15 +1041,24 @@ impl ReducerThread<'_> {
                     server.broadcast_outpost_ended(target_pid, reason.to_string());
                 }
             }
+            OutpostMessage::Reincarnated {
+                outpost,
+                next,
+                target_pid,
+            } => {
+                tracing::info!(%outpost, %next, %target_pid, "a given spare failed before it was ready; the next incarnation holds its application's facts");
+                self.barrier.handed_on(outpost, next);
+                // Its `Ended` follows only if the app heard it started.
+                if self.live.application_of(outpost).is_some() {
+                    self.reincarnated.insert(outpost);
+                }
+            }
             OutpostMessage::SpareReady { spare, waiting, .. } => {
                 tracing::debug!(%spare, waiting, "spare outpost ready");
                 if waiting >= verbatim_outpost::supervisor::SPARES {
                     self.context.readiness.spares_ready();
                 }
             }
-            // The supervisor logged why; outposts start for their
-            // applications directly from now on.
-            OutpostMessage::SparesStopped => self.context.readiness.spares_ready(),
             OutpostMessage::ListenerReady { replacement } => {
                 self.context.listener_ready.store(true, Ordering::Release);
                 self.context.readiness.notify();
@@ -1743,6 +1762,7 @@ fn reducer_loop(
         frames: context.supervisor.frames(),
         decoded: Vec::new(),
         barrier: idle::IdleBarrier::default(),
+        reincarnated: HashSet::new(),
     };
     // The settings come first, before anything they govern.
     thread.apply(Input::Settings(settings));

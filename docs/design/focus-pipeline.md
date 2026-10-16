@@ -923,7 +923,7 @@ A spare makes no call into any application, holds no process handle of one, and 
 
 As they reach a newly started outpost today; nothing new is buffered. When a fact that may start an outpost (`DeliveredFact::may_start_outpost`) arrives for a process that has no record and is not ignored, `start_outpost` opens the application's process as now, creates the record with the fact held, and takes the oldest spare instead of launching one, whether or not it has sent `SpareReady` yet (`Assign` waits in its pipe). The record's child is the spare, still not ready; the supervisor sends the spare `Assign { target_pid }`, then the app `Started { outpost, target_pid }`, on the same writer, so everything the app sends the outpost follows the assignment. Later facts for the application are held behind the first. When `Ready` arrives, `on_ready` runs unchanged: it releases the held facts in order, then the idle query, then tells the listener `HookInstalled`; the listener forwards the application's MSAA events until then, and the outpost's hand-over (section 12.4, "The MSAA hand-over, exactly") takes the overlap as now.
 
-Every path that starts an outpost takes a spare: a listener fact, and the app's `ensure_spawned` (a focus-now query, the replacement of a crashed attention application's outpost). Core's own outpost is started directly at Verbatim's start, as now (`warm_own_outpost`), because it must be ready before the first key. When no spare exists (three applications appeared within one start, or spares are off after failures, 19.5), the outpost is started for the application directly, as today.
+Every path that starts an outpost takes a spare: a listener fact, and the app's `ensure_spawned` (a focus-now query, the replacement of a crashed attention application's outpost). Core's own outpost is started directly at Verbatim's start, as now (`warm_own_outpost`), because it must be ready before the first key. When no spare exists (three applications appeared within one start, or the given spares' replacements are still owed, 19.4), the outpost is started for the application directly, as today.
 
 ### 19.4 The supervisor's changes
 
@@ -941,7 +941,7 @@ The supervisor's reading of a child's pipe is keyed today by the application's p
 
 - A spare that exits or is killed while waiting, or after `Assign` before its `Ready`, is a spare failure, not the application's crash: an assigned spare's record keeps its held facts and takes the next spare, or a direct start when none is left, and no crash is recorded against the application. Today's crash handling would instead drop the held facts and record a crash against an application that has not yet had attention, so its first focus would never be spoken; this rule is what prevents that.
 - A spare that misses its pings for three intervals is killed, as a wedged outpost is, and counts as a spare failure.
-- If three spares fail within one minute, the supervisor stops keeping spares, logs it as an error with each exit's reason, and starts outposts directly as today. The direct start is the existing path, and the error is the evidence to find the cause from (decision 19.8 item 3 says for how long).
+- A failed spare is always replaced, however often spares fail (decision 19.8 item 3). Each failure is logged as an error with its reason, the outpost's last fault included when it sent one, which is the evidence to find the cause from.
 - A spare that fails after its `Ready` is that application's outpost failing, handled as now.
 
 ### 19.6 Cost
@@ -954,7 +954,7 @@ Measured before and after, ten runs each, as `docs/tooling/measuring.md`, "Measu
 
 ### 19.7 Tests
 
-- Supervisor unit tests: a start takes the oldest spare, including one not yet ready, and the replacement starts after the assigned outpost's first idle answer; a given spare is never listed again; a fact that may not start an outpost, or one for an ignored process, takes no spare; a spare that dies waiting, or after `Assign` before `Ready`, is replaced, the application's held facts go to the next spare and no crash is recorded; three failures in a minute stop the spares. The stand-in child the supervisor tests run (`crates/verbatim-outpost/tests/target_gone.rs`) learns `--spare` and `Assign`.
+- Supervisor unit tests: a start takes the oldest spare, including one not yet ready, and the replacement starts after the assigned outpost's first idle answer; a given spare is never listed again; a fact that may not start an outpost, or one for an ignored process, takes no spare; a spare that dies waiting, or after `Assign` before `Ready`, is replaced, the application's held facts go to the next spare and no crash is recorded; a failed spare is always replaced. The stand-in child the supervisor tests run (`crates/verbatim-outpost/tests/target_gone.rs`) learns `--spare` and `Assign`.
 - Mockapp: a spare given to mockapp reports its first focus from the held facts, and its MSAA events from its own hook after the hand-over, each exactly once.
 - Scenarios, ten times each: `explorer_folder_window`, `second_application_and_verbatim_menu`, `settings_system_page`, and the new return-after-retirement scenario; and the start of every scenario, since Verbatim's start changes.
 
@@ -962,9 +962,9 @@ Documents and comments that say an outpost's application is fixed at spawn (`cra
 
 ### 19.8 Decisions (Dickson, 2026-10-16)
 
-1. The replacement spare starts once the assigned outpost has answered its first idle query, not at the assignment. If that answer can wait without bound behind a hung application's reads, the replacement also starts after a fixed upper limit.
+1. The replacement spare starts once the assigned outpost has answered its first idle query, not at the assignment. If that answer can wait without bound behind a hung application's reads, the replacement also starts after a fixed upper limit, five seconds (amended 2026-10-16).
 2. Verbatim's readiness waits for the two spares, so end-to-end runs always take a spare; a direct start is pinned by unit and mockapp tests.
-3. After three spare failures in one minute, spares stay off until Verbatim restarts, logged as an error.
+3. Spares are never stopped: a failed spare is always replaced, and each failure is logged as an error (amended 2026-10-16; the first decision stopped spares for everyone after three failures in a minute).
 4. Spares are built: 40 ms is at the threshold of being noticed.
 5. An outpost whose `WinEvent` hook fails to install reports the failure and exits instead of sending `Ready` (today it logs a warning and sends `Ready`, and the listener stops forwarding an application nothing then hooks); the supervisor handles it as an outpost that ended before `Ready`, under 19.5, and as the application's exit when the application has exited.
 
@@ -972,14 +972,15 @@ Documents and comments that say an outpost's application is fixed at spawn (`cra
 
 The choices the design left open:
 
-- The replacement's limit (decision 1). The first idle answer has a bound, but not a fixed one: it waits behind every entry queued ahead of it, each of which the worker may take up to its ten-second deadline to handle in a hung application before the watchdog abandons it; behind a UIA focus's marker until the listener's read, which its own watchdog ends past UIA's call timeout; and behind a caret key's watch and a terminal read owed to Core, the latter until the terminal's output settles, which continuous output can postpone indefinitely. So the replacement also starts after `REPLACEMENT_LIMIT`, ten seconds, one worker deadline, checked at the supervisor's heartbeat, so it starts within one ping interval after that.
+- The replacement's limit (decision 1). The first idle answer has a bound, but not a fixed one: it waits behind every entry queued ahead of it, each of which the worker may take up to its ten-second deadline to handle in a hung application before the watchdog abandons it; behind a UIA focus's marker until the listener's read, which its own watchdog ends past UIA's call timeout; and behind a caret key's watch and a terminal read owed to Core, the latter until the terminal's output settles, which continuous output can postpone indefinitely. So the replacement also starts after `REPLACEMENT_LIMIT`, five seconds (decision 1), checked at the supervisor's heartbeat, so it starts within one ping interval after that.
 - The first idle query. The app runs idle rounds only for the end-to-end harness, so the supervisor asks a given spare one of its own behind the application's first facts, round 0, which the app never numbers and never sees; when the app's barrier has a round held for the outpost, that round is asked instead, and any idle answer from it counts.
 - The spare's log is `outpost-spare-<launch>`, and its launch number is also its outpost id once given; the app hears `Started` with that id at the assignment.
 - A spare given while its launch was still at work is sent `Assign`, and the app `Started`, when the launch reports, so nothing the app sends reaches it before `Assign`.
-- The app hears each spare's readiness (`OutpostMessage::SpareReady`, with how many are ready) and the spares' stop (`SparesStopped`); Verbatim's readiness waits for two ready at once, or the stop.
-- After the stop, the spares still waiting are ended, and one still launching is ended as its launch reports.
+- The app hears each spare's readiness (`OutpostMessage::SpareReady`, with how many are ready); Verbatim's readiness waits for two ready at once.
+- A given spare's failure before its `Ready` reaches the app as `OutpostMessage::Reincarnated`, naming the failed incarnation and the one that takes the application's held facts and any idle query held for it, sent before the failed one's `Ended` (exited, or killed when it missed its pings) and the next one's `Started`. In an idle round that asked the failed one, the next one answers in its place, so the round cannot pass before the held facts are handled; and the app asks the application for no focus at that `Ended`, since nothing it held is lost.
+- The supervisor keeps a fault an outpost sends before it fails, a given spare's before its `Ready` or a waiting spare's, and logs it with the failure; the outpost reports as a fault every reason it cannot watch the application it is given, its hook failing or its having one already.
 - A spare's worker makes its UIA client as the spare starts; an outpost started for its application still makes it on its first read, as before.
-- The supervisor tests are a binary of their own, `crates/verbatim-outpost/tests/spares.rs`, whose stand-in outpost learns `--spare` and `Assign`; `target_gone.rs`'s stand-in is unchanged, since its tests never start Core's own outpost and so never start spares.
+- The supervisor tests are a binary of their own, `crates/verbatim-outpost/tests/spares.rs`, whose stand-in outpost learns `--spare` and `Assign`, and whose given spares fail as a test asks: exiting, reporting a failed hook and exiting, before or after the application exits, or going silent; `target_gone.rs`'s stand-in is unchanged, since its tests never start Core's own outpost and so never start spares. `target_exit.rs` runs the real outpost binary as a spare against a windowless stand-in: `SpareReady`, `Assign`, `Ready`, and a second `Assign` it cannot take, reported as a fault, ending it with exit code 1.
 
 Measured on 2026-10-16, debug build, as `docs/tooling/measuring.md` prescribes, ten runs before (5eae1b65) and after, at info level. The first event to its audio, minimum, P50, P95 (with ten runs, P95 and P99 are the maximum), maximum, in milliseconds:
 
