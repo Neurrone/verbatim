@@ -148,8 +148,8 @@ the trace to `C:\ProgramData\Verbatim\Traces\verbatim-<time>.etl` and
 names it in `last-trace.txt` there; that folder is readable by his account,
 and he may delete what is in it. `cargo xtask trace waits <trace.etl>
 [report] [process.exe ...]` reads a trace with `verbatim-trace-waits`, any
-of its reports (`--by-name`, `--wakers`, `--stacks`, `--samples`, with
-`--symbols <folder>` for the PDBs of binaries run from a copy, such as the
+of its reports (`--by-name`, `--wakers`, `--stacks`, `--samples`,
+`--blocked`, with `--symbols <folder>` for the PDBs of binaries run from a copy, such as the
 end-to-end harness's `target\e2e-stage`). Stacks and samples name kernel
 frames by the kernel's exported functions; add `--symbol-server` to fetch
 the PDBs of the system images they pass through from Microsoft's public
@@ -160,6 +160,14 @@ fetched, found in the cache, or could not get, and an image without a PDB
 falls back to its exports. Windows' own `tracerpt` does not
 decode context switches, and the Windows Performance Analyzer is not
 installed.
+
+`--blocked <process.exe>:*` lists the long blocked waits of any
+process's threads, an application's as well as Verbatim's, with the
+stacks each waited on and was readied from: what an application's UI
+thread, or a Verbatim thread waiting on it, was doing while it stalled.
+A stall at an application's start falls outside the window `cargo xtask
+trace scenario` allows, so trace it by hand: `cargo xtask trace start`,
+run the scenario, `cargo xtask trace stop`.
 
 ## Measuring the platform floor
 

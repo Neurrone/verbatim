@@ -69,6 +69,22 @@ report names it):
   when there is no PDB. A frame no image holds, or in an image that cannot
   be read, stays an address or a module and offset.
 
+`--blocked <thread> [<shortest ms>]` takes the same names, and also
+`<process.exe>:*` for every thread of that image, an application's
+included (`--blocked notepad.exe:*`). For each blocked wait of those
+threads of 100 ms or more, or of the milliseconds given, it prints, in
+the order the waits began, when the wait began and ended as UTC times of
+day to the microsecond (the times the logs give), the thread that readied
+it, the stack the thread waited on, and the stack that readied it. The
+waiting stack is the walk the trace recorded when the thread was next
+switched in, and the readying stack the walk of its ready event; the
+kernel logs a walk's kernel frames with its event and, when the thread
+was in user mode, its user frames later, as a second walk of the same
+thread with the same event time, and the two are joined. It says what a
+stalled thread was waiting for and what ended the wait: a timer's expiry,
+for instance, shows as a readying by the idle thread from
+`KiTimerExpiration`.
+
 `--symbol-server`, off by default, fetches the PDB of each image a report
 names a frame in, user-mode or the kernel's, from Microsoft's public symbol
 server, so system code is named by its real functions (`server.rs`). The
