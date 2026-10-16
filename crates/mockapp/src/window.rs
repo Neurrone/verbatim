@@ -27,7 +27,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA,
     GetMessageW, GetWindowLongPtrW, HMENU, MSG, OBJID_CLIENT, PostMessageW, PostQuitMessage,
     RegisterClassExW, SW_SHOW, SetWindowLongPtrW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE,
-    WM_APP, WM_DESTROY, WM_GETOBJECT, WM_KEYDOWN, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
+    WM_ACTIVATE, WM_APP, WM_DESTROY, WM_GETOBJECT, WM_KEYDOWN, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::{PCWSTR, w};
 use windows_core::Interface;
@@ -43,6 +43,17 @@ const CLASS_NAME: PCWSTR = w!("VerbatimMockAppWindow");
 /// command channel; carries no payload, so nothing crosses threads except
 /// the wake-up itself.
 const WM_APP_COMMAND_READY: u32 = WM_APP + 1;
+
+/// Posted to itself when the window is activated with commands armed by
+/// `on-activate`, so they run once the messages of the activation have
+/// been handled, rather than inside them, where a stall would also hold
+/// whichever thread activated the window.
+const WM_APP_ACTIVATE_ARMED: u32 = WM_APP + 5;
+
+thread_local! {
+    /// The commands `on-activate` armed, in order, for the window thread.
+    static ARMED: std::cell::RefCell<Vec<Command>> = const { std::cell::RefCell::new(Vec::new()) };
+}
 
 /// Everything the window procedure needs, reachable from `GWLP_USERDATA`.
 /// Intentionally leaked (`Box::leak`) for the process's lifetime: mockapp
@@ -294,6 +305,29 @@ unsafe extern "system" fn wnd_proc(
                 }
             }
         }
+        // Any activation, `WA_ACTIVE` or `WA_CLICKACTIVE`, not `WA_INACTIVE`;
+        // the focus is no trigger, since the window, restored from
+        // minimized and brought forward as the agent does it, was seen to
+        // take no keyboard focus.
+        WM_ACTIVATE => {
+            if wparam.0 & 0xFFFF != 0 && ARMED.with(|armed| !armed.borrow().is_empty()) {
+                // SAFETY: posting a payload-free message to this window.
+                unsafe {
+                    let _ = PostMessageW(Some(hwnd), WM_APP_ACTIVATE_ARMED, WPARAM(0), LPARAM(0));
+                }
+            }
+        }
+        WM_APP_ACTIVATE_ARMED => {
+            // SAFETY: see above.
+            if let Some(context) = unsafe { context_for(hwnd) } {
+                for command in ARMED.with(std::cell::RefCell::take) {
+                    if !apply(hwnd, context, command) {
+                        return LRESULT(0);
+                    }
+                }
+            }
+            return LRESULT(0);
+        }
         WM_APP_COMMAND_READY => {
             // SAFETY: see above.
             if let Some(context) = unsafe { context_for(hwnd) } {
@@ -390,56 +424,77 @@ fn handle_get_object(
 
 fn drain_commands(hwnd: HWND, context: &WindowContext) {
     while let Ok(command) = context.receiver.try_recv() {
-        if matches!(command, Command::Quit) {
-            // SAFETY: `hwnd` is this window's own live handle.
-            let _ = unsafe { DestroyWindow(hwnd) };
+        if !apply(hwnd, context, command) {
             return;
         }
-        if let Command::Stall(ms) = command {
-            // Acknowledged on stdout as it begins and as it ends, so a test
-            // waits for the stall itself rather than guessing when this
-            // thread takes it; the end carries the time it ended.
-            acknowledge("stall started");
-            std::thread::sleep(std::time::Duration::from_millis(ms));
-            acknowledge(&format!("stall ended {}", unix_micros()));
-            continue;
-        }
-        if let Command::Slow(ms) = command {
-            hits::set_delay(ms);
-            acknowledge("applied");
-            continue;
-        }
-        if let Command::SlowPatterns(ms) = command {
-            hits::set_pattern_delay(ms);
-            acknowledge("applied");
-            continue;
-        }
-        if let Command::RefuseText(refuse) = command {
-            uia::refuse_text(refuse);
-            acknowledge("applied");
-            continue;
-        }
-        if let Command::Hold = command {
-            hits::hold_next();
-            acknowledge("applied");
-            continue;
-        }
-        let applied = match command {
-            Command::Unrecognized(line) => Err(format!("unrecognized command: {line}")),
-            command => match context.backend {
-                Some(Backend::Uia) => uia::apply_command(&context.tree, hwnd, command),
-                Some(Backend::Msaa) => msaa::apply_command(&context.tree, hwnd, command),
-                None => Err("a plain Win32 window has no scripted tree".to_owned()),
-            },
-        };
-        // Acknowledged once it has taken effect, events raised, so a test
-        // that waits for the line knows; a command that cannot be applied,
-        // such as one naming a node the fixture lacks, says why instead.
-        match applied {
-            Ok(()) => acknowledge("applied"),
-            Err(reason) => acknowledge(&format!("rejected: {reason}")),
-        }
     }
+}
+
+/// Applies one command on the window thread and acknowledges it; false
+/// once the command closed the window.
+fn apply(hwnd: HWND, context: &WindowContext, command: Command) -> bool {
+    if matches!(command, Command::Quit) {
+        // SAFETY: `hwnd` is this window's own live handle.
+        let _ = unsafe { DestroyWindow(hwnd) };
+        return false;
+    }
+    if let Command::Stall(ms, inside) = command {
+        // Acknowledged on stdout as it begins and as it ends, so a test
+        // waits for the stall itself rather than guessing when this
+        // thread takes it; the end carries the time it ended.
+        acknowledge("stall started");
+        let started = std::time::Instant::now();
+        let length = std::time::Duration::from_millis(ms);
+        let mut open = true;
+        if let Some((at, inner)) = inside {
+            std::thread::sleep(std::time::Duration::from_millis(at).min(length));
+            open = apply(hwnd, context, *inner);
+        }
+        std::thread::sleep(length.saturating_sub(started.elapsed()));
+        acknowledge(&format!("stall ended {}", unix_micros()));
+        return open;
+    }
+    if let Command::OnActivate(armed) = command {
+        ARMED.with(|list| list.borrow_mut().push(*armed));
+        acknowledge("applied");
+        return true;
+    }
+    if let Command::Slow(ms) = command {
+        hits::set_delay(ms);
+        acknowledge("applied");
+        return true;
+    }
+    if let Command::SlowPatterns(ms) = command {
+        hits::set_pattern_delay(ms);
+        acknowledge("applied");
+        return true;
+    }
+    if let Command::RefuseText(refuse) = command {
+        uia::refuse_text(refuse);
+        acknowledge("applied");
+        return true;
+    }
+    if let Command::Hold = command {
+        hits::hold_next();
+        acknowledge("applied");
+        return true;
+    }
+    let applied = match command {
+        Command::Unrecognized(line) => Err(format!("unrecognized command: {line}")),
+        command => match context.backend {
+            Some(Backend::Uia) => uia::apply_command(&context.tree, hwnd, command),
+            Some(Backend::Msaa) => msaa::apply_command(&context.tree, hwnd, command),
+            None => Err("a plain Win32 window has no scripted tree".to_owned()),
+        },
+    };
+    // Acknowledged once it has taken effect, events raised, so a test
+    // that waits for the line knows; a command that cannot be applied,
+    // such as one naming a node the fixture lacks, says why instead.
+    match applied {
+        Ok(()) => acknowledge("applied"),
+        Err(reason) => acknowledge(&format!("rejected: {reason}")),
+    }
+    true
 }
 
 /// Writes one acknowledgement line to stdout, where `ready` went, and

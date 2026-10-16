@@ -165,7 +165,15 @@ the window waits, as with an application that is starting up or busy;
 the window thread prints `stall started` on stdout as it begins and
 `stall ended <us>`, the time in microseconds since the Unix epoch, as it
 ends, so a test waits for the stall itself rather than for a guessed
-time), `slow <ms>` (every provider call on either backend from then on is
+time; `stall <ms> <at> <command>` also applies the command `at`
+milliseconds into the stall, from the window thread and still taking no
+message, as a busy application raises an event from the middle of its
+work, its acknowledgement between the stall's two lines),
+`on-activate <command>` (the command is applied once the window is next
+activated, after the activation's own window messages have been handled,
+as an application starts work the moment it is activated; several run in
+the order given; acknowledged `applied` when armed and again when the
+command runs), `slow <ms>` (every provider call on either backend from then on is
 answered that many milliseconds late, as by an application busy building
 a window, until `slow 0`; acknowledged `applied`), `refuse-text on` and
 `refuse-text off` (while on, every request for a node's text pattern fails

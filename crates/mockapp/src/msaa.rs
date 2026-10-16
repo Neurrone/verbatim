@@ -249,7 +249,8 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::TakeRuntimeId(..) => {
             return Err("take-runtime-id is not supported on the msaa backend".into());
         }
-        Command::Stall(_)
+        Command::Stall(..)
+        | Command::OnActivate(_)
         | Command::Slow(_)
         | Command::SlowPatterns(_)
         | Command::RefuseText(_)

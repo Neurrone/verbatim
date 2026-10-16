@@ -229,7 +229,8 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take_runtime_id(&id, &from)?,
         // Handled by the window thread before dispatch.
-        Command::Stall(_)
+        Command::Stall(..)
+        | Command::OnActivate(_)
         | Command::Slow(_)
         | Command::SlowPatterns(_)
         | Command::RefuseText(_)

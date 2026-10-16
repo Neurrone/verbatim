@@ -7,7 +7,8 @@
 //! `text-changed <id>`,
 //! `notify <text>`,
 //! `active-text-position <id> <start> <end>`, `take-runtime-id <id> <from>`,
-//! `stall <ms>`, `slow <ms>`, `hold`, `release`, and `quit`.
+//! `stall <ms> [<at> <command>]`, `on-activate <command>`, `slow <ms>`, `hold`,
+//! `release`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
@@ -98,12 +99,22 @@ pub(crate) enum Command {
     /// MSAA backend reports it as unsupported, since MSAA has no
     /// notification event.
     Notify(String),
-    /// `stall <ms>`: blocks the window thread for that many milliseconds, so
-    /// every cross-process call into the window waits, as with an
-    /// application that is starting up or busy. The window thread prints
-    /// `stall started` on stdout as it begins, and `stall ended <us>`, with
-    /// the time in microseconds since the Unix epoch, as it ends.
-    Stall(u64),
+    /// `stall <ms> [<at> <command>]`: blocks the window thread for that many
+    /// milliseconds, so every cross-process call into the window waits, as
+    /// with an application that is starting up or busy. The window thread
+    /// prints `stall started` on stdout as it begins, and `stall ended <us>`,
+    /// with the time in microseconds since the Unix epoch, as it ends. With
+    /// `<at> <command>`, the window thread applies the command `at`
+    /// milliseconds into the stall, still taking no message, as a busy
+    /// application raises an event from the middle of its work, and
+    /// acknowledges it as usual between the two lines.
+    Stall(u64, Option<(u64, Box<Command>)>),
+    /// `on-activate <command>`: the command is applied once the window is
+    /// next activated, after the window messages of the activation have
+    /// been handled, as an application starts work the moment it is
+    /// activated; several are applied in the order given. Acknowledged
+    /// `applied` when armed, and again by the command itself when it runs.
+    OnActivate(Box<Command>),
     /// `slow <ms>`: every provider call from now on is answered that many
     /// milliseconds late, as by an application busy building a window; 0
     /// answers at once again. Applied on the window thread, so the calls
@@ -173,6 +184,31 @@ fn console_caret(rest: &str) -> Option<Command> {
     ))
 }
 
+/// `caret`'s arguments, a node's id, a start, and an optional end.
+fn caret(rest: &str) -> Option<Command> {
+    let mut parts = rest.split_whitespace();
+    let id = parts.next()?;
+    let start: usize = parts.next()?.parse().ok()?;
+    let end = match parts.next() {
+        Some(end) => end.parse().ok()?,
+        None => start,
+    };
+    Some(Command::Caret(id.to_owned(), start, end))
+}
+
+/// `stall`'s arguments: its length, and optionally when into it to apply
+/// which command.
+fn stall(rest: &str) -> Option<Command> {
+    let mut parts = rest.splitn(3, ' ');
+    let ms = parts.next()?.parse().ok()?;
+    let Some(at) = parts.next() else {
+        return Some(Command::Stall(ms, None));
+    };
+    let at = at.parse().ok()?;
+    let command = parse_command(parts.next()?)?;
+    Some(Command::Stall(ms, Some((at, Box::new(command)))))
+}
+
 /// `write-on-read`'s arguments, a node's id and the text to write.
 fn write_on_read(rest: &str) -> Option<Command> {
     let (id, text) = rest.split_once(' ')?;
@@ -201,7 +237,8 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "caret-event" if !rest.is_empty() => Some(Command::CaretEvent(rest.to_owned())),
         "text-changed" if !rest.is_empty() => Some(Command::TextChanged(rest.to_owned())),
         "console-caret" => console_caret(rest),
-        "stall" => rest.parse().ok().map(Command::Stall),
+        "stall" => stall(rest),
+        "on-activate" => parse_command(rest).map(|command| Command::OnActivate(Box::new(command))),
         "slow" => rest.parse().ok().map(Command::Slow),
         "slow-patterns" => rest.parse().ok().map(Command::SlowPatterns),
         "refuse-text" => match rest {
@@ -225,16 +262,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
             let end: usize = parts.next()?.parse().ok()?;
             Some(Command::ActiveTextPosition(id.to_owned(), start, end))
         }
-        "caret" => {
-            let mut parts = rest.split_whitespace();
-            let id = parts.next()?;
-            let start: usize = parts.next()?.parse().ok()?;
-            let end = match parts.next() {
-                Some(end) => end.parse().ok()?,
-                None => start,
-            };
-            Some(Command::Caret(id.to_owned(), start, end))
-        }
+        "caret" => caret(rest),
         "set-name" => {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
             (!id.is_empty()).then(|| Command::SetName(id.to_owned(), text.trim().to_owned()))
@@ -457,6 +485,33 @@ mod tests {
             _ => panic!("expected TakeRuntimeId"),
         }
         assert!(parse_command("take-runtime-id inner").is_none());
+    }
+
+    #[test]
+    fn parses_a_stall_with_a_command_inside_it() {
+        assert!(matches!(
+            parse_command("stall 8000"),
+            Some(Command::Stall(8000, None))
+        ));
+        match parse_command("stall 20000 8000 focus btn2") {
+            Some(Command::Stall(20000, Some((8000, command)))) => {
+                assert!(matches!(*command, Command::Focus(ref id) if id == "btn2"));
+            }
+            _ => panic!("expected Stall with a command"),
+        }
+        assert!(parse_command("stall 20000 8000").is_none());
+        assert!(parse_command("stall 20000 8000 frobnicate").is_none());
+    }
+
+    #[test]
+    fn parses_on_activate() {
+        match parse_command("on-activate stall 6000") {
+            Some(Command::OnActivate(command)) => {
+                assert!(matches!(*command, Command::Stall(6000, None)));
+            }
+            _ => panic!("expected OnActivate"),
+        }
+        assert!(parse_command("on-activate").is_none());
     }
 
     #[test]
