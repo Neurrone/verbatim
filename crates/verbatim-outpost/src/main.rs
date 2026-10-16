@@ -11,9 +11,15 @@
 //! - `--pipe-in <handle> --pipe-out <handle> --target-pid <pid>`: the
 //!   production mode, spawned by the Core supervisor with two inherited
 //!   overlapped pipe-handle values passed as decimal and the application this
-//!   outpost watches for its whole life (decision D9: fixed at spawn, never
+//!   outpost watches for its whole life (decision D9: set once, never
 //!   retargeted). Commands are read from `--pipe-in`, messages written to
 //!   `--pipe-out`.
+//! - `--pipe-in <handle> --pipe-out <handle> --spare <launch>`: the same,
+//!   as a spare the supervisor keeps waiting
+//!   (`docs/design/focus-pipeline.md`, section 19): it starts with no
+//!   application, and watches the one the supervisor's `Assign` names for
+//!   the rest of its life, set once as at spawn. `<launch>` is the
+//!   supervisor's number for this launch, which names its log.
 //! - `--listener --pipe-in <handle> --pipe-out <handle> [--ignore-pids
 //!   <pid,pid>] [--hooks-in <pid:outpost,pid:outpost>]`: the focus-listener
 //!   mode (decision D13), spawned by the same supervisor into its dedicated
@@ -128,6 +134,7 @@ fn main() -> ExitCode {
             report_error!(
                 "verbatim-outpost is spawned by verbatim.exe. Usage:\n  \
                  verbatim-outpost --pipe-in <handle> --pipe-out <handle> --target-pid <pid> [--classic-uia]\n  \
+                 verbatim-outpost --pipe-in <handle> --pipe-out <handle> --spare <launch> [--classic-uia]\n  \
                  verbatim-outpost --listener --pipe-in <handle> --pipe-out <handle> [--ignore-pids <pid,pid>] [--hooks-in <pid:outpost,pid:outpost>]\n  \
                  verbatim-outpost --attach <pid> [--classic-uia]   (dev mode: prints JSON to stdout)"
             );
@@ -178,7 +185,8 @@ enum Mode {
     Pipe {
         pipe_in: usize,
         pipe_out: usize,
-        target_pid: u32,
+        /// The application, or `None` for a spare.
+        target_pid: Option<u32>,
         options: OutpostOptions,
     },
     Listener {
@@ -204,6 +212,7 @@ fn parse_args(args: &[String]) -> Option<Mode> {
     let mut pipe_in = None;
     let mut pipe_out = None;
     let mut target_pid = None;
+    let mut spare = None::<u64>;
     let mut attach = None;
     let mut listener = false;
     let mut ignore_pids = String::new();
@@ -215,6 +224,7 @@ fn parse_args(args: &[String]) -> Option<Mode> {
             "--pipe-in" => pipe_in = args.get(index + 1).and_then(|v| v.parse().ok()),
             "--pipe-out" => pipe_out = args.get(index + 1).and_then(|v| v.parse().ok()),
             "--target-pid" => target_pid = args.get(index + 1).and_then(|v| v.parse().ok()),
+            "--spare" => spare = args.get(index + 1).and_then(|v| v.parse().ok()),
             "--attach" => attach = args.get(index + 1).and_then(|v| v.parse().ok()),
             "--ignore-pids" => ignore_pids = args.get(index + 1).cloned().unwrap_or_default(),
             "--hooks-in" => hooks_in = args.get(index + 1).cloned().unwrap_or_default(),
@@ -248,11 +258,17 @@ fn parse_args(args: &[String]) -> Option<Mode> {
             _ => None,
         };
     }
-    match (pipe_in, pipe_out, target_pid) {
-        (Some(pipe_in), Some(pipe_out), Some(target_pid)) => Some(Mode::Pipe {
+    match (pipe_in, pipe_out, target_pid, spare) {
+        (Some(pipe_in), Some(pipe_out), Some(target_pid), None) => Some(Mode::Pipe {
             pipe_in,
             pipe_out,
-            target_pid,
+            target_pid: Some(target_pid),
+            options,
+        }),
+        (Some(pipe_in), Some(pipe_out), None, Some(_)) => Some(Mode::Pipe {
+            pipe_in,
+            pipe_out,
+            target_pid: None,
             options,
         }),
         _ => None,

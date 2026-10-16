@@ -577,6 +577,11 @@ fn a_help_balloon_shown_is_spoken() {
 /// listener forwards for it with the thread that raised it and when, as a
 /// hook on this thread took it in.
 fn raise_focus(app: &mut common::MockApp) -> (DeliveredFact, WinEventStamp) {
+    raise_focus_on(app, "btn1")
+}
+
+/// [`raise_focus`], on the node `id`.
+fn raise_focus_on(app: &mut common::MockApp, id: &str) -> (DeliveredFact, WinEventStamp) {
     let seen = Arc::new(Mutex::new(None::<WinEvent>));
     let sink = Arc::clone(&seen);
     let hook = WinEventHook::install(
@@ -587,7 +592,7 @@ fn raise_focus(app: &mut common::MockApp) -> (DeliveredFact, WinEventStamp) {
         }),
     )
     .expect("WinEventHook::install");
-    app.send("focus btn1");
+    app.send(&format!("focus {id}"));
     let event = common::pump_until(|| *seen.lock().unwrap_or_else(PoisonError::into_inner));
     drop(hook);
     let fact =
@@ -642,6 +647,48 @@ fn a_focus_raised_before_the_outposts_hook_is_reported_from_the_listener() {
     app.quit();
 }
 
+/// A spare given to mockapp (`docs/design/focus-pipeline.md`, section 19)
+/// reports the focus raised before it was given from the listener's copy,
+/// which the supervisor held for it; during the hand-over's overlap it
+/// reports a focus its own hook took in once, the listener's twin dropped;
+/// and once the listener's forwarding has ended, a focus from its own hook,
+/// once.
+fn a_spare_given_to_an_application_reports_each_focus_once() {
+    use verbatim_outpost::Heard;
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-spare");
+    let mut app = common::spawn("small.json", "msaa", &title);
+    let outpost = OutpostUnderTest::spare(&app);
+
+    let (held, held_stamp) = raise_focus(&mut app);
+    outpost.assign(&app);
+    outpost.deliver_win_event(held, held_stamp);
+    let NormalizedEvent::FocusChanged { node, .. } = next_event(&outpost) else {
+        panic!("the outpost reported something other than the held focus");
+    };
+    assert_eq!(node.name.as_deref(), Some("Original Name"));
+    outpost.settled();
+
+    let (twin, twin_stamp) = raise_focus_on(&mut app, "slider1");
+    outpost.heard(&[Heard::Msaa(WinEventKind::Focus)]);
+    let NormalizedEvent::FocusChanged { node, .. } = next_event(&outpost) else {
+        panic!("the outpost reported something other than its own hook's focus");
+    };
+    assert_eq!(node.name.as_deref(), Some("Level"));
+    outpost.deliver_win_event(twin, twin_stamp);
+    outpost.settled();
+
+    outpost.forwarding_ended(twin_stamp.time);
+    raise_focus(&mut app);
+    outpost.heard(&[Heard::Msaa(WinEventKind::Focus)]);
+    let NormalizedEvent::FocusChanged { node, .. } = next_event(&outpost) else {
+        panic!("the outpost reported something other than its own hook's focus");
+    };
+    assert_eq!(node.name.as_deref(), Some("Original Name"));
+    outpost.settled();
+    app.quit();
+}
+
 /// A foreground event whose window is not the foreground window when the
 /// outpost handles it is dropped, not kept for a focus inside the window:
 /// once the window is in front, its focus is reported alone, with no
@@ -669,6 +716,10 @@ fn a_foreground_event_before_its_window_is_in_front_is_dropped() {
 
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_spare_given_to_an_application_reports_each_focus_once",
+            a_spare_given_to_an_application_reports_each_focus_once,
+        ),
         (
             "a_focus_the_outposts_own_hook_took_in_is_reported_once",
             a_focus_the_outposts_own_hook_took_in_is_reported_once,

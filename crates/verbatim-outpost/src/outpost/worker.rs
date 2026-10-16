@@ -399,9 +399,10 @@ pub(super) fn take_calls() -> CallCounts {
     verbatim_uia::calls::take() + verbatim_ia2::calls::take()
 }
 
-/// Starts the first worker and the watchdog.
-pub(super) fn start(context: &Arc<Context>) {
-    spawn_worker(Arc::clone(context), 0);
+/// Starts the first worker and the watchdog. With `warm`, the first worker
+/// creates its UIA client at once instead of on its first read.
+pub(super) fn start(context: &Arc<Context>, warm: bool) {
+    spawn_worker(Arc::clone(context), 0, warm);
     let watched = Arc::clone(context);
     let watchdog = thread::Builder::new()
         .name("verbatim-watchdog".to_owned())
@@ -414,11 +415,11 @@ pub(super) fn start(context: &Arc<Context>) {
         .unwrap_or_else(PoisonError::into_inner) = Some(watchdog);
 }
 
-fn spawn_worker(context: Arc<Context>, generation: u64) {
+fn spawn_worker(context: Arc<Context>, generation: u64, warm: bool) {
     let watch = Arc::clone(&context);
     let worker = thread::Builder::new()
         .name("verbatim-worker".to_owned())
-        .spawn(move || run(&context, generation))
+        .spawn(move || run(&context, generation, warm))
         .expect("spawn a worker");
     let mut workers = watch
         .watch
@@ -555,20 +556,20 @@ fn watchdog(context: &Arc<Context>) {
                 timing: EventTiming::default(),
             });
         }
-        spawn_worker(Arc::clone(context), generation);
+        spawn_worker(Arc::clone(context), generation, false);
     }
 }
 
 /// The worker's thread: its loop, then the release of the UIA objects
 /// `verbatim-uia` kept for this thread, before the thread exits rather than
 /// from its thread-local destructors under the loader lock.
-fn run(context: &Context, generation: u64) {
+fn run(context: &Context, generation: u64, warm: bool) {
     // Held objects are agile references, resolved in this apartment.
     let joined = verbatim_uia::init_mta();
     if let Err(error) = &joined {
         tracing::warn!(%error, "the worker could not join the multithreaded apartment");
     }
-    run_loop(context, generation);
+    run_loop(context, generation, warm);
     verbatim_uia::release_thread_state();
     if joined.is_ok() {
         verbatim_uia::leave_mta();
@@ -576,8 +577,14 @@ fn run(context: &Context, generation: u64) {
 }
 
 /// The worker's loop, until the intake closes or this worker is abandoned.
-fn run_loop(context: &Context, generation: u64) {
+/// With `warm`, the UIA client is created before the first entry: a spare's
+/// worker makes it while the spare waits for its application
+/// (`docs/design/focus-pipeline.md`, section 19.2).
+fn run_loop(context: &Context, generation: u64, warm: bool) {
     let mut client = Client::default();
+    if warm {
+        let _ = client.uia();
+    }
     while let Some((planned, batch)) = context.intake.next() {
         let mut run = |entry: Entry, menu: bool| {
             run_entry(context, &mut client, generation, batch, entry, menu)
@@ -1840,7 +1847,7 @@ impl Worker<'_> {
             observed_at_ms,
             backend,
             window: window.map(window_facts),
-            application: window.and_then(|hwnd| console_client(hwnd, self.context.target_pid)),
+            application: window.and_then(|hwnd| console_client(hwnd, self.context.target_pid())),
             timing: EventTiming {
                 published_at_us: now_us(),
                 calls: take_calls(),
@@ -3249,7 +3256,7 @@ impl Worker<'_> {
         } else {
             remote_window.or((focus_window != 0).then_some(focus_window))
         };
-        let judged = reported.or_else(|| focus_window_of(self.context.target_pid));
+        let judged = reported.or_else(|| focus_window_of(self.context.target_pid()));
         if judged.is_some_and(window_belongs_to_hidden_frame) {
             return Err(Dropped);
         }

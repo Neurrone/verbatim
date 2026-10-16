@@ -1,7 +1,10 @@
 //! The thread that installs MSAA `WinEvent` hooks and pumps messages so their
 //! out-of-context callbacks are delivered. Both a per-application outpost and
 //! the focus listener (decision D13) use it, differing only in their pid and
-//! subscription set. Its owner can also nudge it ([`Nudger`]): a message the
+//! subscription set. The thread starts with no hook, and installs its one
+//! set when its owner asks ([`EventThread::hook`]): a spare outpost starts
+//! it before it has an application (`docs/design/focus-pipeline.md`,
+//! section 19). Its owner can also nudge it ([`Nudger`]): a message the
 //! thread hands to the owner's nudge handler between events, on the thread
 //! that owns the hooks, which is how an outpost unhooks some of its kinds
 //! and hooks them again while it runs.
@@ -9,7 +12,7 @@
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 
-use crossbeam_channel::{Sender, unbounded};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -26,6 +29,9 @@ const WM_NUDGE: u32 = WM_APP;
 /// The thread message that marks every message posted before it handled
 /// ([`Nudger::sync`]), its ticket in its first word.
 const WM_SYNC: u32 = WM_APP + 1;
+/// The thread message that installs the hooks ([`EventThread::hook`]), the
+/// process id they are scoped to in its first word.
+const WM_HOOK: u32 = WM_APP + 2;
 
 /// What the event thread calls: the `WinEvent` callback its hooks deliver
 /// to, and, for an owner that nudges it, the handler of each nudge's two
@@ -43,30 +49,29 @@ pub(crate) type MakeHandlers = Arc<dyn Fn() -> EventHandlers + Send + Sync>;
 /// microseconds per wake (`docs/design/communication.md`, section 6.1).
 const EVENT_THREAD_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
-/// The event thread: installs the requested MSAA hooks once (scoped to the
-/// given pid, or global for pid zero), then pumps messages so the
-/// out-of-context callbacks are delivered. Both a per-application outpost and
-/// the focus listener (decision D13) use it, differing only in their pid and
-/// subscription set. [`EventThread::spawn`] returns once the hooks are
-/// installed, so its caller may report itself ready.
+/// The event thread: pumps messages so the out-of-context callbacks of its
+/// MSAA hooks are delivered, and installs the requested hooks once, when
+/// asked ([`EventThread::hook`]), scoped to the given pid, or global for pid
+/// zero. Both a per-application outpost and the focus listener (decision
+/// D13) use it, differing only in their pid and subscription set.
 pub(crate) struct EventThread {
     nudger: Nudger,
+    /// The outcome of installing the hooks, sent by the thread.
+    hooked: Receiver<Result<(), String>>,
     join: Option<JoinHandle<()>>,
 }
 
 impl EventThread {
-    pub(crate) fn spawn(
-        target_pid: u32,
-        kinds: &'static [WinEventKind],
-        make_handlers: MakeHandlers,
-    ) -> Self {
+    /// Starts the thread, with its message queue and handlers and no hook.
+    pub(crate) fn spawn(kinds: &'static [WinEventKind], make_handlers: MakeHandlers) -> Self {
         let (id_tx, id_rx) = unbounded::<u32>();
+        let (hooked_tx, hooked) = unbounded();
         let synced = Arc::new(Synced::default());
         let thread_synced = Arc::clone(&synced);
         let join = thread::Builder::new()
             .name("verbatim-event".to_owned())
             .spawn(move || {
-                event_thread_main(target_pid, kinds, &id_tx, &make_handlers, &thread_synced);
+                event_thread_main(kinds, (&id_tx, &hooked_tx), &make_handlers, &thread_synced);
             })
             .expect("spawn event thread");
         let thread_id = id_rx.recv().unwrap_or(0);
@@ -76,8 +81,30 @@ impl EventThread {
                 synced,
                 tickets: Arc::default(),
             },
+            hooked,
             join: Some(join),
         }
+    }
+
+    /// Installs the thread's hooks, scoped to `target_pid` (every process
+    /// for zero), on the thread, behind every nudge sent before, and
+    /// returns once they are in, so a caller that reports itself ready
+    /// after it really sees the events from then on. A thread has one set
+    /// of hooks for its whole life (decision D9).
+    ///
+    /// # Errors
+    ///
+    /// Returns why the hooks are not in: a hook failed to install, the
+    /// thread already has its hooks, or the thread has ended.
+    pub(crate) fn hook(&self, target_pid: u32) -> Result<(), String> {
+        let word = usize::try_from(target_pid).map_err(|error| error.to_string())?;
+        // SAFETY: posting a message with no pointer parameters; the call
+        // fails safely for a thread that has ended.
+        unsafe { PostThreadMessageW(self.nudger.thread_id, WM_HOOK, WPARAM(word), LPARAM(0)) }
+            .map_err(|error| format!("the event thread could not be asked to hook: {error}"))?;
+        self.hooked
+            .recv()
+            .map_err(|_| "the event thread ended before it hooked".to_owned())?
     }
 
     /// What nudges this thread, for any thread to keep.
@@ -175,9 +202,8 @@ impl Drop for EventThread {
 }
 
 fn event_thread_main(
-    target_pid: u32,
     kinds: &'static [WinEventKind],
-    id_tx: &Sender<u32>,
+    (id_tx, hooked_tx): (&Sender<u32>, &Sender<Result<(), String>>),
     make_handlers: &MakeHandlers,
     synced: &Synced,
 ) {
@@ -191,23 +217,9 @@ fn event_thread_main(
     // nothing.
     let _ = unsafe { PeekMessageW(&raw mut message, None, 0, 0, PM_NOREMOVE) };
     let EventHandlers { win_event, nudge } = make_handlers();
-    // Installed once, for the whole life of the process (decision D9): a
-    // second live hook set on the same thread while a first is still
-    // registered has been observed to permanently kill WinEvent delivery on
-    // that thread for the rest of the process, which is exactly why this
-    // pid is fixed at spawn instead of rebindable. Unhooking some of the
-    // set's kinds and hooking them again (`verbatim_ia2::suspend_kinds`)
-    // changes one raw event's hook at a time within this one set, as the
-    // keyboard hook thread hooks and unhooks the console's events.
-    let hook = match WinEventHook::install(target_pid, kinds, win_event) {
-        Ok(installed) => Some(installed),
-        Err(error) => {
-            tracing::warn!(error, target_pid, "failed to install WinEvent hooks");
-            None
-        }
-    };
-    // `spawn` returns only now, with the hooks installed, so a caller that
-    // reports itself ready after it really sees the events from then on.
+    // The callback, until the hooks are installed with it.
+    let mut win_event = Some(win_event);
+    let mut hook = None;
     let _ = id_tx.send(thread_id);
     loop {
         // SAFETY: standard message loop; `message` is fully owned here.
@@ -226,6 +238,28 @@ fn event_thread_main(
                 }
                 WM_SYNC => {
                     synced.reach(message.wParam.0 as u64);
+                    continue;
+                }
+                WM_HOOK => {
+                    // Installed once, for the whole life of the process
+                    // (decision D9): a second live hook set on the same
+                    // thread while a first is still registered has been
+                    // observed to permanently kill WinEvent delivery on
+                    // that thread for the rest of the process, which is
+                    // why the application is set once, at the outpost's
+                    // start or at its assignment, and never rebound.
+                    // Unhooking some of the set's kinds and hooking them
+                    // again (`verbatim_ia2::suspend_kinds`) changes one raw
+                    // event's hook at a time within this one set, as the
+                    // keyboard hook thread hooks and unhooks the console's
+                    // events.
+                    let target_pid = u32::try_from(message.wParam.0).unwrap_or(0);
+                    let outcome = match win_event.take() {
+                        Some(callback) => WinEventHook::install(target_pid, kinds, callback)
+                            .map(|installed| hook = Some(installed)),
+                        None => Err("this thread already has its WinEvent hooks".to_owned()),
+                    };
+                    let _ = hooked_tx.send(outcome);
                     continue;
                 }
                 _ => {}
@@ -285,7 +319,11 @@ mod tests {
                 })),
             }
         });
-        EventThread::spawn(std::process::id(), KINDS, make)
+        let thread = EventThread::spawn(KINDS, make);
+        thread
+            .hook(std::process::id())
+            .expect("the hooks are installed");
+        thread
     }
 
     #[test]

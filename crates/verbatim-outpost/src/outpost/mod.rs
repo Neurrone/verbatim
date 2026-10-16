@@ -1,5 +1,8 @@
 //! The per-application outpost (outpost redesign, "Inside an outpost";
-//! decision D9). One outpost watches one application for its whole life.
+//! decision D9). One outpost watches one application for its whole life:
+//! the application is set once, when the outpost starts, or, for a spare
+//! started before it had one, when the supervisor assigns it
+//! (`docs/design/focus-pipeline.md`, section 19), and never changes after.
 //! Its parts:
 //!
 //! 1. Intake ([`intake`]): the MSAA hook callbacks, the UIA subscription
@@ -124,7 +127,10 @@ mod caret_read_tests {
 
 /// What the outpost's threads share.
 pub(crate) struct Context {
-    target_pid: u32,
+    /// The application, set once ([`Outpost::assign`]); 0 until then, a
+    /// spare's value while it waits, which names no application: the
+    /// System Idle Process owns no window.
+    target_pid: AtomicU32,
     outbound: Outbound,
     intake: Intake,
     watch: Watch,
@@ -283,6 +289,11 @@ impl Default for OutpostOptions {
 }
 
 impl Context {
+    /// The application this outpost watches; 0 before it has one.
+    fn target_pid(&self) -> u32 {
+        self.target_pid.load(Ordering::Acquire)
+    }
+
     /// [`Outpost::failed_reads`].
     fn failed_reads(&self) -> u32 {
         let callbacks = self
@@ -678,10 +689,10 @@ impl Context {
 }
 
 /// The outpost: owns the context and the event thread for one target
-/// application, fixed for the outpost's whole life.
+/// application, set once and fixed for the rest of the outpost's life.
 pub struct Outpost {
     context: Arc<Context>,
-    _event_thread: EventThread,
+    event_thread: EventThread,
     finisher: Finisher,
 }
 
@@ -707,7 +718,7 @@ impl Outpost {
     /// # Panics
     ///
     /// Panics if a thread cannot be spawned, which means the process is out
-    /// of OS thread resources.
+    /// of OS thread resources, or the `WinEvent` hook cannot be installed.
     #[must_use]
     pub fn new(pipe: OwnedHandle, target_pid: u32) -> Self {
         Self::with_options(pipe, target_pid, OutpostOptions::default())
@@ -724,8 +735,8 @@ impl Outpost {
     /// # Panics
     ///
     /// Panics if a thread cannot be spawned, which means the process is out
-    /// of OS thread resources, or `pipe` cannot be used for overlapped
-    /// writes.
+    /// of OS thread resources, `pipe` cannot be used for overlapped
+    /// writes, or the `WinEvent` hook cannot be installed.
     #[must_use]
     pub fn with_options(pipe: OwnedHandle, target_pid: u32, options: OutpostOptions) -> Self {
         Self::with_focused_element_reader(pipe, target_pid, options, Arc::new(Uia::focused))
@@ -740,7 +751,7 @@ impl Outpost {
     /// # Panics
     ///
     /// Panics if a thread cannot be spawned, which means the process is out
-    /// of OS thread resources.
+    /// of OS thread resources, or the `WinEvent` hook cannot be installed.
     #[must_use]
     pub fn with_focused_element_reader(
         pipe: OwnedHandle,
@@ -753,29 +764,75 @@ impl Outpost {
                 prioritize_role("outpost outbound", IO_PRIORITY);
             })
             .expect("the outbound sender starts");
-        Self::build(
+        let outpost = Self::build(
             Outbound::new(sender),
             Finisher::Thread(finishing),
-            target_pid,
             options,
-            focused_element,
-        )
+            (focused_element, false),
+        );
+        if let Err(error) = outpost.assign(target_pid) {
+            panic!("the outpost could not watch {target_pid}: {error}");
+        }
+        outpost
     }
 
-    /// The outpost, sending through `outbound`, whose writes that pend
-    /// `finisher` finishes.
+    /// A spare outpost, with no application, in a test's own process
+    /// (`docs/design/focus-pipeline.md`, section 19.2): it does everything
+    /// of an outpost's start that needs no application, its worker's UIA
+    /// client included, writes [`OutpostToSupervisor::SpareReady`] to
+    /// `pipe`, and watches the application [`Outpost::assign`] gives it
+    /// from then on. It reads the keyboard focus for a focus-now query with
+    /// `focused_element`, as [`Outpost::with_focused_element_reader`] does.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread cannot be spawned, which means the process is out
+    /// of OS thread resources, or `pipe` cannot be used for overlapped
+    /// writes.
+    #[must_use]
+    pub fn spare(
+        pipe: OwnedHandle,
+        options: OutpostOptions,
+        focused_element: FocusedElementReader,
+    ) -> Self {
+        let (sender, finishing) =
+            Sender::start(pipe, Outbound::backlog(), "verbatim-outbound", || {
+                prioritize_role("outpost outbound", IO_PRIORITY);
+            })
+            .expect("the outbound sender starts");
+        let outpost = Self::build(
+            Outbound::new(sender),
+            Finisher::Thread(finishing),
+            options,
+            (focused_element, true),
+        );
+        outpost
+            .context
+            .outbound
+            .urgent(OutpostToSupervisor::SpareReady {
+                outpost_pid: Pid(std::process::id()),
+            });
+        outpost
+    }
+
+    /// The outpost, with no application yet ([`Outpost::assign`] gives it
+    /// one), sending through `outbound`, whose writes that pend `finisher`
+    /// finishes, and reading the keyboard focus with `focused_element`.
+    /// When `warm` is set, its worker creates its UIA client at once
+    /// rather than on its first read: a spare does, so the client is
+    /// ready before its application's first focus
+    /// (`docs/design/focus-pipeline.md`, section 19.2).
     fn build(
         outbound: Outbound,
         finisher: Finisher,
-        target_pid: u32,
         options: OutpostOptions,
-        focused_element: FocusedElementReader,
+        (focused_element, warm): (FocusedElementReader, bool),
     ) -> Self {
         let id_counter = Arc::new(AtomicU64::new(1));
         let anchor_counter = Arc::new(AtomicU64::new(0));
         let held_anchors = HeldAnchors::default();
         let context = Arc::new(Context {
-            target_pid,
+            target_pid: AtomicU32::new(0),
             outbound,
             intake: Intake::default(),
             watch: Watch::default(),
@@ -806,8 +863,7 @@ impl Outpost {
             foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
             requested_events: acceptance::RequestedEvents::default(),
             heard: OnceLock::new(),
-            // Read before the hook below is installed: no event raised
-            // before this reaches it.
+            // Read again as the hook is installed ([`Outpost::assign`]).
             handover: Mutex::new(handover::Handover::new(verbatim_ia2::event_clock())),
             focus_path: Mutex::new(None),
             failed_reads: AtomicU32::new(0),
@@ -818,14 +874,15 @@ impl Outpost {
             let _ = context.focus_events.set(registration);
         }
 
-        worker::start(&context);
+        worker::start(&context, warm);
 
-        // The MSAA hooks, process-scoped (decision D13): focus, foreground,
-        // menu opening, alert, and tooltip events, which the listener
-        // forwards only until it hears this hook is in
-        // (`docs/design/focus-pipeline.md`, section 12.4), and value, state,
-        // name, selection, and destroy events. A destroy is queued only for
-        // a window, the one kind of object whose end the outpost tracks.
+        // The MSAA hooks, process-scoped (decision D13), installed once the
+        // outpost has its application: focus, foreground, menu opening,
+        // alert, and tooltip events, which the listener forwards only until
+        // it hears this hook is in (`docs/design/focus-pipeline.md`,
+        // section 12.4), and value, state, name, selection, and destroy
+        // events. A destroy is queued only for a window, the one kind of
+        // object whose end the outpost tracks.
         let hook_context = Arc::clone(&context);
         let make_handlers: MakeHandlers = Arc::new(move || {
             // The event thread's own record of its windows and of the
@@ -867,22 +924,70 @@ impl Outpost {
                 })),
             }
         });
-        let event_thread = EventThread::spawn(target_pid, APP_SUBSCRIPTIONS, make_handlers);
+        let event_thread = EventThread::spawn(APP_SUBSCRIPTIONS, make_handlers);
         let _ = context.event_thread.set(event_thread.nudger());
-        // A verdict the worker kept before the line above nudged no event
-        // thread.
-        context.nudge_event_thread(narrowing::Nudge::Decide);
-
-        let outpost = Self {
+        Self {
             context,
-            _event_thread: event_thread,
+            event_thread,
             finisher,
-        };
-        outpost.context.outbound.urgent(OutpostToSupervisor::Ready {
+        }
+    }
+
+    /// Gives the outpost its application, `target_pid`, for the rest of
+    /// its life: the MSAA hand-over's clock is read, the process-scoped
+    /// `WinEvent` hook installed, and [`OutpostToSupervisor::Ready`] sent.
+    /// Called once: by [`run_pipe`] at the start of an outpost started for
+    /// an application, or for a spare's [`SupervisorToOutpost::Assign`];
+    /// by the constructors of an outpost in a test's own process; and by a
+    /// test for an [`Outpost::spare`].
+    ///
+    /// # Errors
+    ///
+    /// Returns why the outpost cannot watch the application: it already
+    /// has one, or its hook could not be installed. The failure is also
+    /// reported to Core ([`OutpostToSupervisor::Fault`]), and no `Ready` is
+    /// sent: the caller ends the outpost, since an application no hook
+    /// watches would have its `WinEvent`s handed over to nothing
+    /// (`docs/design/focus-pipeline.md`, section 19.8, item 5).
+    pub fn assign(&self, target_pid: u32) -> Result<(), String> {
+        let context = &self.context;
+        if context
+            .target_pid
+            .compare_exchange(0, target_pid, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(format!(
+                "the outpost already watches {}",
+                context.target_pid()
+            ));
+        }
+        // Read before the hook is installed: no event raised before this
+        // reaches it.
+        *context.handover() = handover::Handover::new(verbatim_ia2::event_clock());
+        if let Err(error) = self.event_thread.hook(target_pid) {
+            let detail = format!("the WinEvent hook could not be installed: {error}");
+            tracing::error!(
+                target_pid,
+                detail,
+                "the outpost cannot watch its application"
+            );
+            fault(context, detail.clone());
+            return Err(detail);
+        }
+        // A verdict the worker kept before the hook was in changed nothing.
+        context.nudge_event_thread(narrowing::Nudge::Decide);
+        tracing::info!(
+            target_pid,
+            image = crate::supervisor::image_stem(Pid(target_pid))
+                .as_deref()
+                .unwrap_or(""),
+            "watching its application"
+        );
+        context.outbound.urgent(OutpostToSupervisor::Ready {
             outpost_pid: Pid(std::process::id()),
             target_pid: Pid(target_pid),
         });
-        outpost
+        Ok(())
     }
 
     /// Waits until the worker has handled everything queued before this
@@ -947,7 +1052,7 @@ impl Outpost {
         let joined = verbatim_uia::init_mta();
         let Self {
             context,
-            _event_thread: event_thread,
+            event_thread,
             finisher,
         } = self;
         drop(context.intake.close());
@@ -977,7 +1082,7 @@ impl Outpost {
         }
         verbatim_uia::release_mta_usage();
         tracing::info!(
-            target_pid = context.target_pid,
+            target_pid = context.target_pid(),
             handlers_removed_ms = handlers_removed.as_millis(),
             calls_finished_ms = calls_finished.as_millis(),
             elapsed_ms = started.elapsed().as_millis(),
@@ -1116,9 +1221,11 @@ impl Outpost {
                     .set_terminal_lines((*lines).clamp(1, verbatim_model::MAX_TERMINAL_LINES));
             }
             // `run_pipe` ends its loop on `Shutdown` and calls `shutdown`,
-            // which takes the outpost; the hand-over's news of hooks is for
+            // which takes the outpost, and handles `Assign`, which ends the
+            // outpost when it fails; the hand-over's news of hooks is for
             // the listener alone.
             SupervisorToOutpost::Shutdown
+            | SupervisorToOutpost::Assign { .. }
             | SupervisorToOutpost::HookInstalled { .. }
             | SupervisorToOutpost::HookRemoved { .. }
             | SupervisorToOutpost::FocusQueued { .. } => {}
@@ -1312,13 +1419,17 @@ fn fault(context: &Context, detail: String) {
 }
 
 /// Runs an outpost driven by the Core pipes, watching `target_pid` for its
-/// whole life, on the transport's child side
+/// whole life, or, for `None`, as a spare (`docs/design/focus-pipeline.md`,
+/// section 19.2): it sends [`OutpostToSupervisor::SpareReady`] and watches
+/// the application Core's [`SupervisorToOutpost::Assign`] gives it from
+/// then on. It runs on the transport's child side
 /// (`docs/design/communication.md`, sections 4.6 and 6.4): the calling
 /// thread becomes the outpost's I/O thread, which reads commands from
 /// `pipe_in` and finishes the writes to `pipe_out` that pend, while every
 /// thread that sends Core a message writes it itself. It runs until Core
 /// asks the outpost to shut down ([`SupervisorToOutpost::Shutdown`]) or
-/// the command stream ends, then shuts it down cleanly
+/// the command stream ends, or its application cannot be watched
+/// ([`Outpost::assign`]), then shuts it down cleanly
 /// ([`Outpost::shutdown`]), waiting for every write in flight, and
 /// returns. When the target application exits, Core is told
 /// ([`OutpostToSupervisor::TargetExited`]) and asks for the shutdown. Both
@@ -1326,42 +1437,72 @@ fn fault(context: &Context, detail: String) {
 ///
 /// # Errors
 ///
-/// Returns the error of setting up the pipes, or any I/O error reading the
-/// command stream, after the shutdown.
+/// Returns the error of setting up the pipes, any I/O error reading the
+/// command stream, or why the application cannot be watched, after the
+/// shutdown.
 pub fn run_pipe(
     pipe_in: OwnedHandle,
     pipe_out: OwnedHandle,
-    target_pid: u32,
+    target_pid: Option<u32>,
     options: OutpostOptions,
 ) -> io::Result<()> {
     let (mut io, sender) = ChildIo::new(pipe_in, pipe_out, Outbound::backlog())?;
     let outpost = Outpost::build(
         Outbound::new(sender.clone()),
         Finisher::Io,
-        target_pid,
         options,
-        Arc::new(Uia::focused),
+        (Arc::new(Uia::focused), target_pid.is_none()),
     );
-    watch_target(&outpost.context);
+    // Why the outpost cannot watch its application, if it cannot.
+    let mut unwatched = None;
+    if let Some(target_pid) = target_pid {
+        match outpost.assign(target_pid) {
+            Ok(()) => watch_target(&outpost.context),
+            Err(error) => unwatched = Some(error),
+        }
+    } else {
+        tracing::info!("a spare, waiting for its application");
+        outpost
+            .context
+            .outbound
+            .urgent(OutpostToSupervisor::SpareReady {
+                outpost_pid: Pid(std::process::id()),
+            });
+    }
     // This thread is the outpost's I/O thread from here on.
     prioritize_role("outpost I/O", IO_PRIORITY);
-    let served = io.serve(&sender, |body| {
-        match decode_message::<SupervisorToOutpost>(body)? {
-            SupervisorToOutpost::Shutdown => return Ok(Serving::Stop),
-            command => outpost.handle_command(&command),
+    let served = if unwatched.is_some() {
+        Ok(Served::Stopped)
+    } else {
+        io.serve(&sender, |body| {
+            match decode_message::<SupervisorToOutpost>(body)? {
+                SupervisorToOutpost::Shutdown => return Ok(Serving::Stop),
+                SupervisorToOutpost::Assign { target_pid } => match outpost.assign(target_pid.0) {
+                    Ok(()) => watch_target(&outpost.context),
+                    Err(error) => {
+                        unwatched = Some(error);
+                        return Ok(Serving::Stop);
+                    }
+                },
+                command => outpost.handle_command(&command),
+            }
+            Ok(Serving::Continue)
+        })
+    };
+    let ended = match (served, unwatched) {
+        (_, Some(error)) => {
+            tracing::error!(error, "shutting down: the application cannot be watched");
+            Err(io::Error::other(error))
         }
-        Ok(Serving::Continue)
-    });
-    let ended = match served {
-        Ok(Served::Stopped) => {
+        (Ok(Served::Stopped), None) => {
             tracing::info!("shutting down, as Core asked");
             Ok(())
         }
-        Ok(Served::CommandsEnded) => {
+        (Ok(Served::CommandsEnded), None) => {
             tracing::warn!("Core's command pipe closed; shutting down");
             Ok(())
         }
-        Err(error) => Err(error),
+        (Err(error), None) => Err(error),
     };
     outpost.shut_down(Some(&mut io));
     ended
@@ -1375,9 +1516,9 @@ fn watch_target(context: &Arc<Context>) {
     let spawned = thread::Builder::new()
         .name("verbatim-target-watch".to_owned())
         .spawn(move || {
-            if window::wait_for_process_exit(context.target_pid) {
+            if window::wait_for_process_exit(context.target_pid()) {
                 tracing::info!(
-                    target_pid = context.target_pid,
+                    target_pid = context.target_pid(),
                     "the target application exited"
                 );
                 context.outbound.urgent(OutpostToSupervisor::TargetExited);

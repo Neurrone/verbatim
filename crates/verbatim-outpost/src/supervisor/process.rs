@@ -227,7 +227,7 @@ pub(super) fn application_is_hung(pid: Pid) -> bool {
 
 /// `pid`'s executable name without its extension, lower-cased, to name its
 /// outpost's log: `notepad` for Notepad. `None` when it cannot be read.
-fn image_stem(pid: Pid) -> Option<String> {
+pub(crate) fn image_stem(pid: Pid) -> Option<String> {
     let mut buffer = [0u16; 1024];
     let mut length = u32::try_from(buffer.len()).ok()?;
     // SAFETY: OpenProcess with a query-only right fails safely; the handle

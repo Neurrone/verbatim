@@ -739,7 +739,7 @@ fn dialog_text_of(context: &Context, node: &NodeSnapshot) -> Option<String> {
 /// and window, through the focus window's backend. `None` when the keyboard
 /// focus is not in this application, or is on Core's hidden frame.
 pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<FocusedControl> {
-    let hwnd = focus_window_of(context.target_pid)
+    let hwnd = focus_window_of(context.target_pid())
         .or_else(|| focus_window().filter(|&hwnd| hosts_console_window(context, client, hwnd)))?;
     if window_belongs_to_hidden_frame(hwnd) {
         return None;
@@ -780,7 +780,7 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
         })
     } else {
         let node =
-            verbatim_ia2::acquire::focused_snapshot(context.target_pid, &context.msaa_registry)?;
+            verbatim_ia2::acquire::focused_snapshot(context.target_pid(), &context.msaa_registry)?;
         let (ancestors, selected_child) = msaa_enrichment(context, client, &node, &[]);
         let ancestors = ancestors.unwrap_or_default();
         Some(FocusedControl {
@@ -825,7 +825,7 @@ fn console_text_area_in(node: &mut NodeSnapshot, window_class: impl FnOnce() -> 
 fn hosts_console_window(context: &Context, client: &mut Client, hwnd: isize) -> bool {
     if hwnd == 0
         || window_class_name(hwnd) != CONSOLE_WINDOW_CLASS
-        || window_owner(hwnd).1 == context.target_pid
+        || window_owner(hwnd).1 == context.target_pid()
     {
         return false;
     }
@@ -838,7 +838,7 @@ fn hosts_console_window(context: &Context, client: &mut Client, hwnd: isize) -> 
     uia.window_element(hwnd, &request)
         .ok()
         .and_then(|element| element.read().process_id)
-        == Some(context.target_pid)
+        == Some(context.target_pid())
 }
 
 /// The answer to a focus-now query: the application's foreground window, if
@@ -846,7 +846,7 @@ fn hosts_console_window(context: &Context, client: &mut Client, hwnd: isize) -> 
 /// is its console window ([`hosts_console_window`]).
 pub(super) fn focus_now(context: &Context, client: &mut Client) -> FocusNow {
     let observed_at_ms = now_ms();
-    let window = foreground_window_of(context.target_pid)
+    let window = foreground_window_of(context.target_pid())
         .or_else(|| {
             Some(foreground_window_handle())
                 .filter(|&hwnd| hosts_console_window(context, client, hwnd))
@@ -912,7 +912,7 @@ fn resolve_uia_element(
     // that failed, a timeout above all, may have missed a live element.
     // Nothing of a window's own element is read: it is searched under.
     let mut failed = None;
-    for hwnd in top_level_windows(context.target_pid) {
+    for hwnd in top_level_windows(context.target_pid()) {
         let Ok(root) = uia.window_live(hwnd) else {
             continue;
         };
@@ -1179,7 +1179,7 @@ fn activate_one(
 
 /// The application's tree from its top-level window.
 pub(super) fn dump_tree(context: &Context, client: &mut Client) -> Result<DumpedTree, ReadError> {
-    let hwnd = main_window_of(context.target_pid).ok_or_else(|| {
+    let hwnd = main_window_of(context.target_pid()).ok_or_else(|| {
         ReadError::Failed("the target application has no top-level window".to_owned())
     })?;
     if window_uses_uia(context, hwnd) {

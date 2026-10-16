@@ -562,9 +562,10 @@ pub enum FactKey {
 
 /// Messages from the Core-side supervisor to an outpost.
 ///
-/// An outpost's target application is fixed at spawn (decision D9: one
-/// outpost per application, for its whole life) and passed on its command
-/// line, not by any message here. Core ends an outpost by closing its job
+/// An outpost's target application is set once (decision D9: one
+/// outpost per application, for its whole life): passed on its command
+/// line, or, for a spare started before it had one, by
+/// [`SupervisorToOutpost::Assign`]. Core ends an outpost by closing its job
 /// handle; there is no shutdown message.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -737,6 +738,18 @@ pub enum SupervisorToOutpost {
     /// has not exited within its time limit. Nothing is answered: the pipe
     /// closing and the process exiting are the answer.
     Shutdown,
+    /// To a spare outpost (`docs/design/focus-pipeline.md`, section 19): the
+    /// application it watches from now on, for the rest of its life. It
+    /// installs its process-scoped `WinEvent` hook for that application,
+    /// starts waiting for its exit, and sends
+    /// [`OutpostToSupervisor::Ready`]; or, when the hook cannot be
+    /// installed, reports the failure ([`OutpostToSupervisor::Fault`]) and
+    /// exits without `Ready`. Sent once, before any other command but a
+    /// ping; an outpost started for an application is never sent it.
+    Assign {
+        /// The application.
+        target_pid: Pid,
+    },
 }
 
 impl SupervisorToOutpost {
@@ -890,7 +903,9 @@ pub struct FocusedControl {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum OutpostToSupervisor {
-    /// First message after startup.
+    /// The outpost has its application and its `WinEvent` hook is in: the
+    /// first message of an outpost started for an application, and the
+    /// answer to [`SupervisorToOutpost::Assign`] of a spare.
     Ready {
         /// The outpost's own process id.
         outpost_pid: Pid,
@@ -1021,6 +1036,13 @@ pub enum OutpostToSupervisor {
     /// ([`SupervisorToOutpost::Shutdown`]), as it has nothing left to
     /// watch.
     TargetExited,
+    /// A spare outpost has done everything of its start that needs no
+    /// application, and waits for [`SupervisorToOutpost::Assign`]
+    /// (`docs/design/focus-pipeline.md`, section 19.2). Its first message.
+    SpareReady {
+        /// The outpost's own process id.
+        outpost_pid: Pid,
+    },
     /// The answer to [`SupervisorToOutpost::IdleQuery`] for `round`, sent
     /// behind every message sent before it: never sent ahead as urgent,
     /// and nothing is merged across it.

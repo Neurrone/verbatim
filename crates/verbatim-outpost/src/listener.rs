@@ -836,7 +836,10 @@ impl Listener {
                 })),
             }
         });
-        let event_thread = EventThread::spawn(0, LISTENER_SUBSCRIPTIONS, make_handlers);
+        let event_thread = EventThread::spawn(LISTENER_SUBSCRIPTIONS, make_handlers);
+        if let Err(error) = event_thread.hook(0) {
+            tracing::warn!(error, "failed to install WinEvent hooks");
+        }
         let nudger = event_thread.nudger();
 
         // The listener has no target application; `target_pid` is a sentinel

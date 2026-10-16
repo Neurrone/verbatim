@@ -318,6 +318,49 @@ impl OutpostUnderTest {
     /// its write in flight, and what the outpost sends after it waiting
     /// in its backlog.
     pub fn with_pipe_buffer(app: &super::MockApp, options: OutpostOptions, buffer: u32) -> Self {
+        let under_test = Self::build(app, options, buffer, false);
+        assert_eq!(
+            under_test.next(),
+            OutpostToSupervisor::Ready {
+                outpost_pid: Pid(std::process::id()),
+                target_pid: Pid(app.pid()),
+            }
+        );
+        under_test
+    }
+
+    /// A spare outpost (`docs/design/focus-pipeline.md`, section 19), with
+    /// no application yet, which has said so and nothing else;
+    /// [`Self::assign`] gives it `app`. It reads `app`'s window as the
+    /// foreground window.
+    pub fn spare(app: &super::MockApp) -> Self {
+        let under_test = Self::build(app, OutpostOptions::default(), MESSAGES_PIPE_BUFFER, true);
+        assert_eq!(
+            under_test.next(),
+            OutpostToSupervisor::SpareReady {
+                outpost_pid: Pid(std::process::id()),
+            }
+        );
+        under_test
+    }
+
+    /// Gives this spare `app`, as the supervisor's `Assign` does, and
+    /// waits for its `Ready`.
+    pub fn assign(&self, app: &super::MockApp) {
+        self.outpost
+            .assign(app.pid())
+            .expect("the spare's hook is installed");
+        assert_eq!(
+            self.next(),
+            OutpostToSupervisor::Ready {
+                outpost_pid: Pid(std::process::id()),
+                target_pid: Pid(app.pid()),
+            }
+        );
+    }
+
+    /// An outpost for `app`, watching it from the start, or a spare.
+    fn build(app: &super::MockApp, options: OutpostOptions, buffer: u32, spare: bool) -> Self {
         let pid = app.pid();
         let (ours, theirs) =
             pipe(Flow::Inbound, buffer, End::Overlapped).expect("the outpost's pipe to Core");
@@ -339,7 +382,11 @@ impl OutpostUnderTest {
                 .resolve()?;
             Live::new(element).refresh(request)
         });
-        let outpost = Outpost::with_focused_element_reader(theirs, pid, options, read_focus);
+        let outpost = if spare {
+            Outpost::spare(theirs, options, read_focus)
+        } else {
+            Outpost::with_focused_element_reader(theirs, pid, options, read_focus)
+        };
         let time = Arc::new(Mutex::new(Instant::now()));
         let clock = Arc::clone(&time);
         outpost.set_arbitration_clock(Arc::new(move || {
@@ -369,7 +416,7 @@ impl OutpostUnderTest {
         reader.set_foreground_reader(Arc::new(move || {
             listener_foreground.load(Ordering::Relaxed)
         }));
-        let under_test = Self {
+        Self {
             outpost,
             messages,
             heard,
@@ -382,15 +429,7 @@ impl OutpostUnderTest {
             reader: RefCell::new(reader),
             last_accepted,
             failed_reads_taken: Cell::new(0),
-        };
-        assert_eq!(
-            under_test.next(),
-            OutpostToSupervisor::Ready {
-                outpost_pid: Pid(std::process::id()),
-                target_pid: Pid(pid),
-            }
-        );
-        under_test
+        }
     }
 
     /// Makes `hwnd` the window the outpost reads as the foreground from now
@@ -488,6 +527,14 @@ impl OutpostUnderTest {
                 fact,
                 win_event: Some(stamp),
             });
+    }
+
+    /// Tells the outpost, as the supervisor relays it, that the focus
+    /// listener forwards none of its application's `WinEvent`s raised after
+    /// `through`, an event clock time: the MSAA hand-over's end.
+    pub fn forwarding_ended(&self, through: u32) {
+        self.outpost
+            .handle_command(&SupervisorToOutpost::ForwardingEnded { through });
     }
 
     /// Hands the outpost `fact`, as the listener would, stamped with the
