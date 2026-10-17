@@ -205,12 +205,42 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   local run, since neither reproduces here.
 
 - The focus pipeline's follow-ups (2026-10-17):
-  - `conhost_two_windows` fails about 1 run in 20: the outpost's
-    `UiaHasServerSideProvider` on a console window created moments
-    earlier answers no after about 3 seconds while the console host is
-    still starting. The per-application lock is not the cause (1 failure
-    in 20 runs with it, 2 in 20 without); the cause is unknown. Evidence
-    is in `target/e2e-evidence/focus-followups/`.
+  - `conhost_two_windows` fails about 1 run in 20, its cause found and
+    its fix awaiting Dickson's decision. `UiaHasServerSideProvider`,
+    called by a fresh client on a console window created moments earlier,
+    answers no after about 3 seconds whenever any other process has a UIA
+    event handler registered: experiment e38 in
+    `target/e2e-evidence/launch-collision/collide/readme.md` saw it in 0 of
+    110 trials with no other handler and up to 10 of 30 with one, and a
+    single idle tooltip-opened handler is enough. The per-application lock
+    cannot prevent it. A raw `SendMessageTimeout` probe sending
+    `WM_GETOBJECT` with `UiaRootObjectId` answered correctly in all 360
+    trials, and the lookup that followed returned the console host's own
+    element. Replacing the probe (`crates/verbatim-uia/src/probe.rs` and
+    its callers) replaces the call NVDA makes, and NVDA would get the same
+    wrong answer (`nvda/source/UIAHandler/__init__.py`, lines 1279 to
+    1287), so it waits for Dickson.
+  - When a console window is read through MSAA, NVDA gives its client
+    object the legacy console overlay with the terminal role
+    (`nvda/source/NVDAObjects/IAccessible/__init__.py`, lines 731 to 733,
+    and `IAccessible/winConsole.py`); Verbatim says "pane".
+  - On a fresh GitHub runner, the first Verbatim start can say "Start
+    toggle button not pressed" instead of "Desktop list": shortly after
+    Verbatim's subscriptions are installed, the taskbar rehosts the Start
+    button in a new PopupHost window, raising a UIA focus on a topmost
+    window that reports keyboard focus (runs 39040893786 and 38980790680).
+    NVDA's checks would accept that focus too. Dickson chooses between a
+    throwaway warm-up start before the suite and an experiment to find
+    what triggers the rehosting. The local cause of the same utterance,
+    the agent's minimize activating the taskbar, is fixed (ace7858d).
+  - Notepad's "app not responding" sound played once in `notepad_editing`
+    on 2026-10-18, about 2 seconds after a right arrow, and the rerun
+    passed; investigate if it recurs.
+  - In File Explorer scenarios the listener's read once came 285
+    milliseconds late. The listener logs how long its nearest-window
+    lookup takes (f9fb32f7): locally most of the delay, about 230
+    milliseconds, is the first lookup waiting on a busy File Explorer.
+    Confirm the same on GitHub's runner.
   - Windows Terminal's terminal is sometimes said twice, or three times
     for a second window: in some launches Windows Terminal raises the
     terminal's focus under a second runtime id, the one starting 14,
@@ -229,12 +259,8 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     no lock ([focus pipeline](design/focus-pipeline.md), section 20.9).
   - One UIA focus event reached the listener 5 seconds late in a console
     host run on 2026-10-17; watch for it again.
-  - File Explorer's cleanup closes the windows it opened by their
-    original title, but an open Explorer window whose folder is deleted is
-    retitled ("e2e-stage - File Explorer", the origin of that window), so
-    it must be closed by its handle.
   - The trace tool's symbol lookup for ARM64X images, such as ntdll,
-    needs a follow-up.
+    needs a follow-up, which can be tested only on the ARM64 runner.
   - `line_key_flood` once read a half-written line on GitHub's runner;
     repeat it there.
 
