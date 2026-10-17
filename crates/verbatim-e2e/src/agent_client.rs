@@ -316,7 +316,11 @@ impl AgentClient {
     /// Launches the console program `command` with `args`, as
     /// [`AgentClient::launch_process`] does, its console window titled
     /// `title` from its first frame and opening minimized and inactive, for
-    /// the caller to bring forward once it is ready.
+    /// the caller to bring forward once it is ready. The console host is
+    /// not allowed the foreground: given the agent's right, it took the
+    /// foreground by itself before its shell had started, while its title
+    /// still had the "Administrator: " prefix on an elevated runner, and the
+    /// caller's bring-forward was then a repeat Verbatim did not announce.
     ///
     /// # Errors
     ///
@@ -336,7 +340,7 @@ impl AgentClient {
             stderr_to: None,
             console_title: Some(title.to_owned()),
             minimized: true,
-            withhold_foreground: false,
+            withhold_foreground: true,
             ignore_foreign_terminals: false,
             stdin_piped: false,
         })

@@ -365,8 +365,9 @@ and the input methods above:
   starts, which is then on screen before the window is announced;
   `launch_console(command, args, title, ready)` starts a console program with its
   console window titled from its first frame (the launch's console title),
-  which the console host scenarios use, opened minimized and inactive and
-  brought forward as `launch_titled_once` does; `require_absent(title)` fails
+  which the console host scenarios use, opened minimized and inactive,
+  without the agent's foreground right, and brought forward as
+  `launch_titled_once` does; `require_absent(title)` fails
   when a window so titled is already open, for a program whose title is
   not the run's own, such as msinfo32; `launched_children` lists what the
   last launched program started.

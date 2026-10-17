@@ -70,8 +70,14 @@ foreground (`AllowSetForegroundWindow`), which Windows permits while the
 agent injected the last input; every scenario's keys go through the agent,
 so within a run it does. After you type or click on the machine yourself,
 it does not until the agent has injected input again. No scenario needs
-the right. File Explorer (`Scenario::open_folder`) is launched
-without it (the launch's `withhold_foreground`): the desktop's shell,
+the right. The console host (`Scenario::launch_console`) is launched
+without it (the launch's `withhold_foreground`): with it, the console
+window opened minimized took the foreground by itself 300 to 500 ms
+before the harness brought it forward, before its shell had started and
+while its title still had the "Administrator: " prefix on GitHub's
+elevated runner, and the harness's own bring-forward was then a repeat
+Verbatim did not announce. File Explorer (`Scenario::open_folder`) is
+launched without it too: the desktop's shell,
 which holds the foreground as a scenario starts, opens the folder window
 in front by its own right, and when it does not, the window opens
 restored and inactive and is brought forward as msinfo32's is. It is not

@@ -210,8 +210,8 @@ and the reply says whether Windows let the agent allow it: it does while
 the agent injected the last input, which every end-to-end scenario's keys
 make so. A launch with `withhold_foreground` (protocol version 13) is
 never allowed it, for a program the caller brings forward itself, as
-File Explorer's folder window is. The agent never injects a key to become
-eligible; a launch whose
+File Explorer's folder window and the console host's window are. The
+agent never injects a key to become eligible; a launch whose
 window does not take the foreground fails the test. A console window
 opened under the foreground lock raised its focus events while refused
 the foreground, and Verbatim, which drops a refused window's events as
