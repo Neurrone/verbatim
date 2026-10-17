@@ -82,6 +82,37 @@ pub fn close_windows(title_contains: &str, timeout: Duration) -> u32 {
     u32::try_from(matching().len()).unwrap_or(u32::MAX)
 }
 
+/// Sends a close request to `window` while it is shown
+/// ([`shown_top_level_windows`]) and still owned by process `pid` with
+/// class `class`, and waits up to `timeout`, on window events
+/// ([`wait::until`]), for it to go. Its title is not checked: a window can
+/// change its title while it lives, as a File Explorer window does when it
+/// navigates. The process and class, which never change while the window
+/// lives, are checked instead, so a handle Windows has given another window
+/// since is never closed. Returns whether it has gone; a window that is
+/// closed and cloaked has, as for [`close_windows`].
+#[must_use]
+pub fn close_window(window: u64, pid: u32, class: &str, timeout: Duration) -> bool {
+    let window = HWND(usize::try_from(window).unwrap_or(0) as *mut c_void);
+    let is_open = || {
+        let mut owner = 0u32;
+        // SAFETY: tolerates any handle, writing 0 for an invalid one.
+        unsafe {
+            GetWindowThreadProcessId(window, Some(&raw mut owner));
+        }
+        owner == pid && class_name(window) == class && shown_top_level_windows().contains(&window)
+    };
+    if is_open() {
+        // SAFETY: PostMessageW carries no pointer and tolerates a window
+        // that has since gone; its owner and class were checked just above.
+        unsafe {
+            let _ = PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0));
+        }
+    }
+    wait::until(|| !is_open(), timeout);
+    !is_open()
+}
+
 /// Whether `condition` holds on the desktop now.
 #[must_use]
 pub fn holds(condition: &WindowCondition) -> bool {

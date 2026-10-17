@@ -427,7 +427,11 @@ and the input methods above:
 `clean_up` closes what the scenario opened, last first, and returns every
 problem as a failure of the run. A window is closed by its title and,
 when the scenario started its program, the process that owned it must
-exit. Windows 11 Notepad is closed only by closing its harness tabs, never
+exit. A File Explorer window (`open_folder`) is closed by its handle
+instead, recorded as it opened, since File Explorer retitles it as it
+navigates; it is closed, and waited for until it has gone, before the
+harness folders are deleted, so it is never left to navigate to the
+parent folder. Windows 11 Notepad is closed only by closing its harness tabs, never
 by closing its window, since Notepad keeps the tabs of a closed window for
 its next session; a Notepad process still running afterwards fails the run
 with the windows it still has. A program with no window of its own is

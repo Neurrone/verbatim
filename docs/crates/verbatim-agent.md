@@ -66,7 +66,10 @@ Public API:
     start names the window that kept the foreground rather than
     reporting windows left restored), `CloseWindows` (an ordinary close
     request to every visible window whose title contains some text, then a
-    wait for them to go), and `TakeForeignTerminalWindows` (every Windows
+    wait for them to go), `CloseWindow` (the same for one window by its
+    handle, while it is still owned by the process and class it was found
+    with, whatever its title has become, since protocol version 20), and
+    `TakeForeignTerminalWindows` (every Windows
     Terminal window shown since the last such request by a process outside
     the jobs of every process the agent launched, forgotten as it is
     reported: a console handed to the default terminal application, or

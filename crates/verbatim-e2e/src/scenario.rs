@@ -179,10 +179,16 @@ fn live_instance_lock() -> &'static Mutex<()> {
 /// One application a scenario launched, for cleanup.
 struct Launched {
     pid: u32,
-    /// The title of its window, which names it: it is closed by this title.
-    /// `None` for a program with no window of the scenario's own, which is
-    /// ended by its process id.
+    /// The title of its window, which names it: it is closed by this title,
+    /// unless it is closed by its handle (`window`). `None` for a program
+    /// with no window of the scenario's own, which is ended by its process
+    /// id.
     title: Option<String>,
+    /// The window it opened, found by its title, when it is closed by its
+    /// handle rather than its title: a File Explorer window, which takes
+    /// another title when it navigates to another folder, or when its
+    /// folder is deleted. `None` for a window closed by its title.
+    window: Option<WindowInfo>,
     /// The processes that owned its windows, recorded as each was waited
     /// for: they must exit once the windows close, when `owners_exit`.
     owners: Vec<u32>,
@@ -1083,7 +1089,7 @@ impl Scenario {
     ) -> io::Result<WindowInfo> {
         self.begin_action(&launch_action(command, title));
         let launch = self.agent.launch_minimized(command, args)?;
-        self.bring_forward(launch, title, owner_exits, ready)
+        self.bring_forward(launch, title, owner_exits, false, ready)
     }
 
     /// Records `launch` for cleanup, its window titled with `title` and its
@@ -1097,11 +1103,13 @@ impl Scenario {
         launch: AgentLaunch,
         title: &str,
         owner_exits: bool,
+        by_handle: bool,
         ready: Option<&str>,
     ) -> io::Result<WindowInfo> {
         self.launched.push(Launched {
             pid: launch.pid,
             title: Some(title.to_owned()),
+            window: None,
             owners: Vec::new(),
             owners_exit: owner_exits,
             document: None,
@@ -1126,6 +1134,9 @@ impl Scenario {
                     describe_foreground(&desktop)
                 ))
             })?;
+        if by_handle && let Some(launched) = self.launched.last_mut() {
+            launched.window = Some(window.clone());
+        }
         if let Some(ready) = ready
             && !self.agent.wait_for_file(ready, WINDOW_TIMEOUT)?
         {
@@ -1167,7 +1178,7 @@ impl Scenario {
         self.begin_action(&launch_action(command, title));
         let launch = self.agent.launch_minimized(command, args)?;
         let launched = launch.pid;
-        let window = self.bring_forward(launch, title, true, ready)?;
+        let window = self.bring_forward(launch, title, true, false, ready)?;
         if window.pid != launched {
             return Err(io::Error::other(format!(
                 "the window titled {title:?} belongs to {} (pid {}), not to the process the harness launched, pid {launched}: {}",
@@ -1208,7 +1219,7 @@ impl Scenario {
     ) -> io::Result<WindowInfo> {
         self.begin_action(&launch_action(command, title));
         let launch = self.agent.launch_console(command, args, title)?;
-        self.bring_forward(launch, title, true, ready)
+        self.bring_forward(launch, title, true, false, ready)
     }
 
     /// Brings the harness document `name`, which Notepad opened before
@@ -1318,8 +1329,9 @@ impl Scenario {
     /// folder window the shell opens minimized takes the foreground while
     /// minimized, and once restored its file list has no keyboard focus,
     /// in NVDA as in Verbatim (`docs/design/phase6-design.md`, "File Explorer opened
-    /// without the foreground right"). The window is closed by its title
-    /// at cleanup; `explorer.exe` is the shell, so its process stays.
+    /// without the foreground right"). The window is closed at cleanup by
+    /// its handle, recorded as it opened, since File Explorer retitles it
+    /// as it navigates; `explorer.exe` is the shell, so its process stays.
     /// Returns the folder's name, which is the window's title.
     ///
     /// # Errors
@@ -1338,7 +1350,7 @@ impl Scenario {
         let launch = self
             .agent
             .launch_without_foreground_right("explorer.exe", std::slice::from_ref(&folder))?;
-        self.bring_forward(launch, &marker, false, None)?;
+        self.bring_forward(launch, &marker, false, true, None)?;
         Ok(marker)
     }
 
@@ -2068,7 +2080,8 @@ impl Scenario {
     }
 
     /// Closes what the scenario opened, last opened first: each window by
-    /// its title (a Notepad harness tab as a tab), waiting for it to go and,
+    /// its title (a Notepad harness tab as a tab, a File Explorer window by
+    /// its handle, before its folder is deleted), waiting for it to go and,
     /// when the scenario started its program, for the process that owned
     /// it to exit; anything launched without a window of its own by its
     /// process id; then the harness documents, folders, and files. Last, it
@@ -2124,6 +2137,18 @@ impl Scenario {
                 // for its next session.
                 if let Err(error) = close_notepad_tabs(&mut self.agent, DOCUMENT_MARKER) {
                     problems.push(error.to_string());
+                }
+            } else if let Some(window) = &launched.window {
+                match self.agent.close_window(window, CLOSE_TIMEOUT) {
+                    Ok(true) => {}
+                    Ok(false) => problems.push(format!(
+                        "the window {} did not close within {CLOSE_TIMEOUT:?}",
+                        describe_window(window)
+                    )),
+                    Err(error) => problems.push(format!(
+                        "could not close {}: {error}",
+                        describe_window(window)
+                    )),
                 }
             } else {
                 match self.agent.close_windows(title, CLOSE_TIMEOUT) {
@@ -2388,6 +2413,7 @@ fn open_document(
     let mut launched = Launched {
         pid: launch.pid,
         title: Some(marker.clone()),
+        window: None,
         owners: Vec::new(),
         owners_exit: true,
         document: Some(path),

@@ -748,6 +748,32 @@ impl AgentClient {
         }
     }
 
+    /// Asks `window` to close by its handle, while it is still shown and
+    /// owned by the process and class it was found with, whatever its title
+    /// has become, waiting up to `timeout`, on window events, for it to go.
+    /// Returns whether it has gone.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn close_window(&mut self, window: &WindowInfo, timeout: Duration) -> io::Result<bool> {
+        match self.request_waiting(
+            Request::CloseWindow {
+                window: window.window,
+                pid: window.pid,
+                class: window.class.clone(),
+                timeout_ms: millis(timeout),
+            },
+            timeout,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::WindowsClosed { remaining },
+                ..
+            } => Ok(remaining == 0),
+            other => Err(unexpected("CloseWindow", &other)),
+        }
+    }
+
     /// Records every top-level window on the guest as the baseline of the
     /// scenario about to start, on this connection, and returns how many
     /// there are.

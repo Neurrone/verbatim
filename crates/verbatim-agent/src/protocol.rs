@@ -50,11 +50,14 @@ use serde::{Deserialize, Serialize};
 /// windows, such as a message box, in [`ForegroundInfo`] and judged them
 /// in every condition, so a scenario's starting state sees one left
 /// restored; version 19 added [`WindowInfo::no_activate`], so that check
-/// passes over a window Windows never brings to the foreground. A test
+/// passes over a window Windows never brings to the foreground; version 20
+/// added [`Request::CloseWindow`], so a window whose title has changed,
+/// such as a File Explorer window that has navigated, is closed by its
+/// handle. A test
 /// run against an older agent is refused at `Hello`
 /// instead of losing its connection mid-run, or running without the
 /// exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 19;
+pub const AGENT_PROTOCOL_VERSION: u32 = 20;
 
 /// The environment variable that names, to the Verbatim under test, the
 /// processes it ignores entirely (`ignore_foreign_terminals` in
@@ -321,6 +324,22 @@ pub enum Request {
         /// Text the windows' titles contain.
         title_contains: String,
         /// How long to wait for them to close, in milliseconds.
+        timeout_ms: u64,
+    },
+    /// Sends a close request to one window by its handle, while it is still
+    /// shown and still owned by process `pid` with class `class`, so a handle
+    /// Windows has given another window since is left alone, and waits up to
+    /// `timeout_ms` for it to go, whatever its title has become. Answered by
+    /// [`ReplyPayload::WindowsClosed`], `remaining` being 1 when it is still
+    /// shown.
+    CloseWindow {
+        /// The window's handle ([`WindowInfo::window`]).
+        window: u64,
+        /// The process that owned it when it was found.
+        pid: u32,
+        /// Its class name when it was found.
+        class: String,
+        /// How long to wait for it to close, in milliseconds.
         timeout_ms: u64,
     },
     /// Records every top-level window there is, shown, hidden, or cloaked,
@@ -632,7 +651,7 @@ pub enum ReplyPayload {
     },
     /// Answer to [`Request::ForegroundInfo`].
     ForegroundInfo(ForegroundInfo),
-    /// Answer to [`Request::CloseWindows`]: how many matching windows were
+    /// Answer to [`Request::CloseWindows`] and [`Request::CloseWindow`]: how many matching windows were
     /// still open when the wait ended; zero means every one closed.
     WindowsClosed {
         /// Windows still open.

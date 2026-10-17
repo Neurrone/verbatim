@@ -333,6 +333,7 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         },
         request @ (Request::ForegroundInfo
         | Request::CloseWindows { .. }
+        | Request::CloseWindow { .. }
         | Request::SetForeground { .. }
         | Request::WaitForWindow { .. }
         | Request::MinimizeAll { .. }
@@ -652,6 +653,22 @@ fn desktop_request(id: u64, request: Request) -> Frame {
                     &title_contains,
                     Duration::from_millis(timeout_ms),
                 ),
+            },
+        },
+        Request::CloseWindow {
+            window,
+            pid,
+            class,
+            timeout_ms,
+        } => Frame::Reply {
+            to: id,
+            payload: ReplyPayload::WindowsClosed {
+                remaining: u32::from(!desktop::close_window(
+                    window,
+                    pid,
+                    &class,
+                    Duration::from_millis(timeout_ms),
+                )),
             },
         },
         Request::SetForeground { window } => Frame::Reply {
