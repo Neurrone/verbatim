@@ -1880,7 +1880,8 @@ fn say_all_splits_a_paragraph_into_sentences_and_stops_on_a_key() {
 fn a_caret_key_after_say_all_starts_from_where_say_all_moved_the_caret() {
     // From `notepad_say_all`: Notepad last reported the caret on the first
     // line, say-all moves it to the second as playback reaches it, and a
-    // key stops say-all before Notepad reports that move. The key's watch
+    // key stops say-all; Notepad's report of the move was observed in the
+    // key's millisecond, so it may show the key's effect. The key's watch
     // starts from the second line's start, where say-all put the caret, as
     // NVDA's say-all sets the caret before a key reads it.
     let mut state = SrState::new();
@@ -1904,6 +1905,7 @@ fn a_caret_key_after_say_all_starts_from_where_say_all_moved_the_caret() {
             at_ms: KEY_PRESSED_AT - 2,
         },
     );
+    let _ = caret_event_at(&mut state, line("Two.\n", 102, 0), KEY_PRESSED_AT);
     let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, false));
     assert_eq!(
         request(&effects).op,

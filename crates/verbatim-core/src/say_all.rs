@@ -33,7 +33,7 @@
 use std::sync::Arc;
 
 use verbatim_model::{
-    CaretReport, Effect, NodeId, SayAllUnit, SegmentContent, SpeechMark, SpeechPriority, TextChunk,
+    Effect, NodeId, SayAllUnit, SegmentContent, SpeechMark, SpeechPriority, TextChunk,
     TextMovement, TextOp, TextPoint, TextPosition, TextReadAhead, TextReply, TextRequest, TextUnit,
     TraceId, Utterance, UtteranceSegment,
 };
@@ -383,10 +383,11 @@ fn pieces(
 /// A caret move is also taken as Core's caret, the unit read with the
 /// caret at its start, as NVDA's say-all sets the caret there before any
 /// key reads it (`docs/nvda/speech.md`, "Say-all"): a caret key pressed
-/// next finds the caret where say-all put it ([`editing::update_caret`]),
-/// not where the application last reported it. Requests to an outpost run
-/// in order, so the move is made before that key's watch starts, and the
-/// outpost, having moved the caret, judges the key from Core's caret.
+/// next finds the caret where say-all put it
+/// ([`editing::caret_moved_by_core`]), not where the application last
+/// reported it. Requests to an outpost run in order, so the move is made
+/// before that key's watch starts, and the outpost, having moved the
+/// caret, judges the key from Core's caret.
 pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect> {
     let Some(say_all) = state.say_all.as_mut() else {
         return Vec::new();
@@ -420,15 +421,7 @@ pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect>
                 offset: unit.offset,
                 ..TextChunk::clone(&unit.chunk)
             };
-            editing::update_caret(
-                state,
-                node,
-                CaretReport {
-                    line,
-                    selection: None,
-                },
-                0,
-            );
+            editing::caret_moved_by_core(state, node, line);
         } else if let Some(navigator) = state
             .navigator
             .as_mut()

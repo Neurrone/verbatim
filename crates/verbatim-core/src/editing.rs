@@ -728,6 +728,34 @@ pub(crate) fn update_caret(
     });
 }
 
+/// Takes a caret Core itself moved `node`'s caret to, `line` with the caret
+/// at its offset and nothing selected, as the focus's caret. It is also
+/// kept as a timed report observed at 0, before any key, so it stays the
+/// caret a later key found ([`caret_before`]) when the application's own
+/// report of the move was observed no earlier than that key.
+pub(crate) fn caret_moved_by_core(state: &mut SrState, node: NodeId, line: TextChunk) {
+    if !state.focus_matches(node) {
+        return;
+    }
+    update_caret(
+        state,
+        node,
+        CaretReport {
+            line,
+            selection: None,
+        },
+        0,
+    );
+    if let Some(caret) = &state.caret {
+        state.caret_history[CARET_HISTORY - 1] = Some(TimedCaret {
+            observed_at_ms: 0,
+            node,
+            line: Arc::clone(&caret.line),
+            selection: None,
+        });
+    }
+}
+
 /// Puts the review cursor at the caret of `node` when it follows the caret
 /// and the navigator is on that node: the next review command reads the
 /// line at the caret as the outpost finds it ([`ReviewText::Caret`]).

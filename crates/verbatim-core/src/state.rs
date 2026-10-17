@@ -519,7 +519,9 @@ pub struct SrState {
     /// The focus's latest caret reports whose time is known, oldest first,
     /// all for the node of `caret`: up to [`CARET_HISTORY`], held inline so
     /// a checkpoint copies them without allocating. A report whose time is
-    /// not known empties it, since its order among them is unknown.
+    /// not known empties it, since its order among them is unknown; a
+    /// caret Core moved itself is kept at time 0, before any key
+    /// (`editing::caret_moved_by_core`).
     #[serde(default)]
     pub(crate) caret_history: [Option<TimedCaret>; CARET_HISTORY],
     /// The focus whose text is still to be spoken.

@@ -444,7 +444,10 @@ key arrives may already show what the key did, since the application's
 caret event can reach Core before the key does. With no time for the
 key, or no timed report (a report without a time empties the history),
 the caret Core holds stands in; with timed reports but none from before
-the key, the caret before the key is not known. The caret Core holds is
+the key, the caret before the key is not known. A caret Core moved
+itself, as say-all does, is kept at time 0, before any key, so it stays
+the caret a key found when the application's report of the move was
+observed no earlier than the key. The caret Core holds is
 the newest by observed time, not the last to arrive: a timed report
 observed before it, such as a caret key's reply read before a caret
 event that reached Core first, only joins the history, and neither the
