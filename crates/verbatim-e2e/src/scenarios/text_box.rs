@@ -22,11 +22,15 @@ use crate::scenario::{Scenario, WINDOW_TIMEOUT, harness_marker};
 pub(crate) const BOX_NAME: &str = "Text";
 
 /// The script showing the text box's window, titled `title`, the box named
-/// `box_name`, its text read from `text`.
-fn script(title: &str, box_name: &str, text: &str) -> String {
+/// `box_name`, its text read from `text`. It writes the file `ready` from the
+/// form's Shown event, once Windows Forms has finished showing the window, so
+/// the window is brought forward only then: activated earlier, while
+/// `ShowDialog` was still showing it, the form put no focus on its text box.
+fn script(title: &str, box_name: &str, text: &str, ready: &str) -> String {
     let title = title.replace('\'', "''");
     let box_name = box_name.replace('\'', "''");
     let text = text.replace('\'', "''");
+    let ready = ready.replace('\'', "''");
     format!(
         "Add-Type -AssemblyName System.Windows.Forms\r\n\
          Add-Type -AssemblyName System.Drawing\r\n\
@@ -45,13 +49,15 @@ fn script(title: &str, box_name: &str, text: &str) -> String {
          $box.Text = [IO.File]::ReadAllText('{text}')\r\n\
          $box.Select(0, 0)\r\n\
          $form.Controls.Add($box)\r\n\
+         $form.Add_Shown({{ [IO.File]::WriteAllText('{ready}', '') }})\r\n\
          [void]$form.ShowDialog()\r\n"
     )
 }
 
 /// Writes `text` and the script into the run folder named for `name`, opens
 /// the text box's window, titled with [`harness_marker`] of `name`, its box
-/// named `box_name`, and waits for it to take the foreground. The window
+/// named `box_name`, brings it forward once the form has been shown, and
+/// waits for it to take the foreground. The window
 /// closes at cleanup, and Windows PowerShell, which owns it, exits then.
 /// Returns the process id of Windows PowerShell, the application Verbatim
 /// reads.
@@ -70,10 +76,11 @@ pub(crate) fn open(
     let directory = scenario.harness_folder(name);
     let text_path = format!(r"{directory}\text.txt");
     let script_path = format!(r"{directory}\text-box.ps1");
+    let ready = format!(r"{directory}\shown");
     scenario.write_agent_file(&text_path, text.as_bytes())?;
     scenario.write_agent_file(
         &script_path,
-        script(&title, box_name, &text_path).as_bytes(),
+        script(&title, box_name, &text_path, &ready).as_bytes(),
     )?;
     let args: Vec<String> = [
         "-NoProfile",
@@ -88,7 +95,7 @@ pub(crate) fn open(
     .map(str::to_owned)
     .collect();
     Ok(scenario
-        .launch_titled("powershell.exe", &args, &title, true)?
+        .launch_titled_once("powershell.exe", &args, &title, true, Some(&ready))?
         .pid)
 }
 
