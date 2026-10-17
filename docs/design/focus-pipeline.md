@@ -298,7 +298,7 @@ What stays:
 - Step 3's acceptance filter and step 4's cheaper reads.
 - Core's cross-outpost stale-focus drop (`is_stale_focus`), which gives NVDA's final outcome across parallel applications, and `FocusValidity` culling.
 - The outbound merging and the supervisor writer's cap (audit D11), recorded.
-- The foreground checks, the shell's staging windows (1a1bc32), and `report_foreign_window` for `ApplicationFrameHost` and Settings. edd0352 (a window announced once shown) is decided in step 7.
+- The foreground checks, the shell's staging windows (1a1bc32), and `report_foreign_window` for `ApplicationFrameHost` and Settings.
 - The focus-now query after a listener or outpost restart.
 
 ## 10. Audible changes, decisions, and the migration
@@ -788,7 +788,6 @@ The revision:
 - Core's special case for an unannounced foreground window (`unannounced_foreground_window`, `crates/verbatim-core/src/reduce.rs`) is replaced by the general step: when the focus's top-level window changes, cancel speech, then speak the entered ancestors outermost first, then the focus.
 - Where the ancestry is the only source of the title, it must be complete. The console text area's chain must include the console window element; step 3's first live run saw it arrive with no ancestors. The listener's read and its classic fallback for the windowless text area must keep that element.
 - To be checked against NVDA captures before the console scenarios' expectations are relied on: what NVDA says when the console window comes to the front about 400 ms after its text area's focus (NVDA would also drop that focus, and depends on a later one), and whether Windows 11 Notepad's top level is read through UIA ("title window") or MSAA ("title").
-- Whether `unshown_foreground` stays is Verbatim's own earlier decision for File Explorer's placeholder title and is not changed here.
 
 ### 16.5 The outpost's own element, found only when needed
 

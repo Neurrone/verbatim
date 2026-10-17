@@ -13,8 +13,8 @@
 //! moves to a window that is read through MSAA, or whose backend is not
 //! yet decided, they are hooked again. Everything else stays hooked for
 //! the outpost's life, since the worker uses it for UIA windows too: focus,
-//! foreground, a menu opening, alerts, tooltips, a top-level window shown,
-//! a window destroyed, and the console host's updates and caret.
+//! foreground, a menu opening, alerts, tooltips, a window destroyed, and
+//! the console host's updates and caret.
 //!
 //! The decision is the event thread's own, on the thread that owns the
 //! hooks: its focus and foreground windows are those of the focus,

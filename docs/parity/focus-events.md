@@ -151,8 +151,7 @@ cases listed last are not implemented.
   focus listener's hook already tested, as NVDA's show rule depends on
   the class alone. Core's own test stays. Outside the test, as in NVDA's
   callback: an object destroyed, and Verbatim's own events, the caret
-  and text selection of edit controls, the console host's updates, and a
-  top-level window shown.
+  and text selection of edit controls, and the console host's updates.
 - MSAA, after acceptance and in NVDA's order: an event is dropped when
   its own window is no window, has a ghost window standing in for it, or
   belongs to an application the system reports hung, then when its
@@ -211,14 +210,13 @@ cases listed last are not implemented.
   window is in front, and the system raises its own once it is), or
   those of Core's hidden frame, which the outpost drops whatever the
   foreground.
-- A foreground window that is in front but not yet shown is reported
-  once it is shown, its name read then, or just before a focus inside it
-  that comes first. This differs in timing, deliberately, to say the
-  same name: NVDA reads the name as it speaks, later than its event,
-  where Verbatim reads it as it reports it, and so would read File
-  Explorer's "File Explorer" where NVDA reads the folder's title
-  (`docs/design/phase6-design.md`, "File Explorer opened without the
-  foreground right").
+- A foreground fact whose window is in front is reported at once,
+  whether or not the window has been shown, as NVDA tests only that the
+  window is the foreground window. File Explorer's folder window, opened
+  in front, raises its one foreground event before it is in front, which
+  is dropped, and is announced from the focus's ancestry, its title by
+  then the folder's (`docs/design/phase6-design.md`, "File Explorer
+  opened without the foreground right").
 - A focus event is attended only when its window was in the system's
   foreground window when its outpost read it, topmost, or a
   `Windows.UI.Core` window under the input thread's active window, as

@@ -775,13 +775,6 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
             ..
         } => match kind {
             WinEventKind::Destroy => (None, Category::Exempt, *hwnd),
-            // A foreground window raised hidden is reported once it is shown,
-            // so its show is never dropped; one per window waits.
-            WinEventKind::WindowShown => (
-                Some(Key::Msaa(*kind as u8, *hwnd, 0, 0)),
-                Category::Exempt,
-                *hwnd,
-            ),
             // Each console update names the cells it changed, and each
             // console caret event the cell its cursor is in; only that the
             // window's text changed, or its cursor moved, matters, as both

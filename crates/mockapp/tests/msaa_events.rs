@@ -10,7 +10,9 @@
 //!
 //! A foreground event whose window is not yet in front is dropped and
 //! never kept, as NVDA drops it: the window is announced from the focus's
-//! ancestry instead (`docs/design/focus-pipeline.md`, section 16.4).
+//! ancestry instead (`docs/design/focus-pipeline.md`, section 16.4). One
+//! whose window is in front is reported at once, whether or not the window
+//! has been shown yet.
 //!
 //! mockapp's focus moves with `set-focus`, which raises no event; the
 //! test hands the outpost the focus itself, as `call_counts.rs` does.
@@ -714,8 +716,44 @@ fn a_foreground_event_before_its_window_is_in_front_is_dropped() {
     app.quit();
 }
 
+/// A foreground event whose window is in front is reported at once, as a
+/// focus on the window, though the window has not been shown: NVDA tests
+/// only that the window is the foreground window. mockapp's window is never
+/// shown in these tests.
+fn a_foreground_event_for_a_window_in_front_not_yet_shown_is_reported() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-hidden-foreground");
+    let app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    // SAFETY: IsWindowVisible tolerates any handle.
+    let shown = unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindowVisible(hwnd) };
+    assert!(!shown.as_bool(), "mockapp's window is hidden");
+    let outpost = OutpostUnderTest::new(&app);
+
+    outpost.set_foreground(hwnd);
+    outpost.deliver(DeliveredFact::Foreground {
+        hwnd: hwnd.0 as isize,
+    });
+    let NormalizedEvent::FocusChanged {
+        node, foreground, ..
+    } = next_event(&outpost)
+    else {
+        panic!("the foreground report is a focus");
+    };
+    assert_eq!(
+        (foreground, node.name.as_deref()),
+        (true, Some("Mockapp Counts Fixture"))
+    );
+    outpost.settled();
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_foreground_event_for_a_window_in_front_not_yet_shown_is_reported",
+            a_foreground_event_for_a_window_in_front_not_yet_shown_is_reported,
+        ),
         (
             "a_spare_given_to_an_application_reports_each_focus_once",
             a_spare_given_to_an_application_reports_each_focus_once,

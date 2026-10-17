@@ -175,8 +175,8 @@ Counts are for one traced window of 5 to 8 seconds.
     dropped it at the window's UIA test after its acceptance and state
     checks. Fixed: the event thread drops one whose window is already known
     to be read through UIA (the class lists or a kept verdict, no probe),
-    as NVDA drops it, keeping a window shown, a console's update and a
-    destroyed window, which the worker uses for UIA windows too. Over the
+    as NVDA drops it, keeping a console's update and a destroyed window,
+    which the worker uses for UIA windows too. Over the
     whole scenario the worker handled about 9,400 items instead of 38,000.
     The event thread still wakes for each event, which only filtering
     inside the application (D2's injection helper) avoids.
@@ -1104,8 +1104,8 @@ through UIA, those seven kinds are unhooked
 hook set, as the keyboard hook thread hooks the console's events); as soon
 as the focus, a menu opening, or the foreground is in a window read
 through MSAA, or not yet decided, they are hooked again, before that event
-is queued. Focus, foreground, menu opening, alert, tooltip, window shown,
-window destroyed and the console's updates and caret stay hooked: the
+is queued. Focus, foreground, menu opening, alert, tooltip, window
+destroyed and the console's updates and caret stay hooked: the
 worker uses them for UIA windows too. The event thread takes the focus
 and foreground windows from its own hook's events, and from the
 listener's routed facts until its hook delivers one; the worker nudges it

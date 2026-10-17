@@ -430,7 +430,7 @@ fault and exits with code 1 without `Ready`.
   - Intake (`outpost::intake`): the MSAA hook callbacks (`APP_SUBSCRIPTIONS`:
     focus, foreground, menu-popup, alert, and tooltip events, which become
     the same facts the listener forwards, value, state, name, selection,
-    destroy, and a top-level window shown, for its application's pid),
+    and destroy, for its application's pid),
     the focus-following UIA callbacks, and the reader's routed facts
     (the UIA focus's marker and read, the listener's desktop-wide selections, menus, and
     notifications, and the MSAA facts it forwards until the hand-over ends,
@@ -1034,14 +1034,8 @@ fault and exits with code 1 without `Ready`.
   its thread's other events as well as one of the focus events, as NVDA's
   limiter does, so the focus events an application raises after it do
   not crowd the system's event out (`docs/design/phase6-design.md`, "A foreground
-  event before its window is in front"). A foreground window not yet
-  shown waits for its show
-  event (`WinEventKind::WindowShown`, the outpost's own process-scoped
-  hook, never dropped by the limiter) and is reported then, its name read
-  then, or just before a focus inside it that comes first; a newer
-  foreground change replaces it (`Tracking::unshown_foreground`;
-  `docs/design/phase6-design.md`, "File Explorer opened without the foreground
-  right"). Otherwise a foreground fact is reported at once,
+  event before its window is in front"). Otherwise a foreground fact is
+  reported at once, whether or not its window has been shown yet,
   stamped with the time its window was confirmed as the foreground, after
   its name is read, rather than the time Windows raised the event,
   named or not, as a focus on the window, since the foreground change is what

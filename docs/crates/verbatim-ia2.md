@@ -25,10 +25,7 @@ Public API:
   the system caret NVDA follows in edit controls; every other object's
   location change, which windows raise constantly, is dropped at the hook)
   and text selection changes (`WinEventKind::TextSelectionChange`,
-  `EVENT_OBJECT_TEXTSELECTIONCHANGED`), and a top-level window shown
-  (`WinEventKind::WindowShown`: `EVENT_OBJECT_SHOW` on the window object
-  of a top-level window, every other object's show dropped at the hook),
-  for a foreground window raised before it is shown; and
+  `EVENT_OBJECT_TEXTSELECTIONCHANGED`); and
   `LISTENER_SUBSCRIPTIONS`, what the focus listener installs
   globally, forwarding an application's events only until its outpost's
   own hook is in — focus (`EVENT_OBJECT_FOCUS`), foreground
@@ -40,10 +37,7 @@ Public API:
   front, and a tooltip window shown (`WinEventKind::Show`:
   `EVENT_OBJECT_SHOW` from a `tooltips_class32` window on its client or a
   custom object, every other show event dropped at the hook, as NVDA
-  accepts no others from a standard control). The one raw event,
-  `EVENT_OBJECT_SHOW`, is hooked once and reported as each of `Show` and
-  `WindowShown` that the install asked for and that it is wanted as: a
-  tooltip window's own show event reaches an outpost as both. A popup menu opening announces the menu
+  accepts no others from a standard control). A popup menu opening announces the menu
   itself the moment it opens, NVDA's menu-start behavior — the app outpost
   emits it as focus on the menu's client object with no ancestry, the
   identical node its foreground-announce fallback produces for a menu-class

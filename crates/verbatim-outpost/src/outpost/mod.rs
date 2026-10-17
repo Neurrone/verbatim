@@ -542,8 +542,8 @@ impl Context {
     /// and the window's state, which have no effect but a log line, so it
     /// is dropped here instead, and the worker is not woken for it. NVDA
     /// drops a `WinEvent` from a UIA window the same way, and a console
-    /// flood raises them by the thousand. A window shown, a console's
-    /// update or caret event, and a destroyed window are kept: the worker
+    /// flood raises them by the thousand. A console's update or caret
+    /// event and a destroyed window are kept: the worker
     /// uses them for UIA windows too. Whether a window is known to be read through UIA is
     /// asked of `windows`, the event thread's own record, so a flood from
     /// one window costs one read of its classes.
@@ -567,8 +567,7 @@ impl Context {
         ) {
             if !matches!(
                 kind,
-                WinEventKind::WindowShown
-                    | WinEventKind::ConsoleUpdate
+                WinEventKind::ConsoleUpdate
                     | WinEventKind::ConsoleCaret
                     | WinEventKind::Destroy
             ) && windows.known_to_use_uia(

@@ -763,9 +763,7 @@ fn a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is() {
 /// a window (`docs/design/focus-pipeline.md`, section 16.4): the outpost
 /// says nothing for it, and the focus inside the window that follows is
 /// reported alone, the window first among its ancestors, with no
-/// foreground report before it. mockapp's window is not shown, so a
-/// foreground report waiting for it to be shown would be made just before
-/// that focus.
+/// foreground report before it.
 fn a_foreground_event_for_a_window_read_through_uia_is_dropped() {
     let title = common::unique_title("mockapp-uia-foreground");
     let mut app = common::spawn("small.json", "uia", &title);

@@ -55,8 +55,7 @@ The design of record is [the focus pipeline](design/focus-pipeline.md)
 
 - A fresh File Explorer evidence pass on the new pipeline: NVDA
   captures and Verbatim logs with raw event timings, ten runs locally, ten
-  in the VM and on GitHub. Dickson then decides what Explorer should say,
-  and whether announcing a window only once it is shown (edd0352) stays.
+  in the VM and on GitHub. Dickson then decides what Explorer should say.
   The open Explorer items it covers: the "Working on it..." placeholder
   that fails `explorer_folder_window` on GitHub (run 37974580973); the
   early foreground event; a file-list focus once 10 seconds late; the
