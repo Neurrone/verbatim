@@ -203,13 +203,21 @@ screen reader in both rendered and source form.
   longer reads the focused element for a focus event: it reports the
   listener's read and finds its own copy of the element afterwards, off
   the way to speech.
-  Amended 2026-10-17 (the adopted pipeline, section 12.3, and UIA's setup,
-  section 20 of the same document): the listener's per-application reading
-  threads, and no other of its threads, make calls into applications: the
-  judgment and read of each UIA focus (a remote operation,
-  `HasKeyboardFocus`, the nearest window, the provider probe) and UIA's
-  setup in an application before the supervisor gives it an outpost. A
-  slow or hung application holds only its own reading thread.
+  Amended 2026-10-17 (the adopted pipeline, section 12.3, and the lock per
+  application, section 20 of the same document): the listener's
+  per-application reading threads, and no other of its threads, make calls
+  into applications: the judgment and read of each UIA focus (a remote
+  operation, `HasKeyboardFocus`, the nearest window, the provider probe).
+  The listener and each outpost make every remote operation into an
+  application, and every connection by handle to a window whose provider
+  is that application, while holding that application's lock, an unnamed
+  mutex the supervisor creates and shares with them alone; the listener's
+  classic walk steps up into another application take that application's
+  lock. Not covered: other software's UIA calls, Verbatim's other UIA
+  clients (the tray dialog and the end-to-end agent), and an outpost's
+  connections and walks into a window of another application, such as the
+  Settings frame (section 20.9). A slow or hung application holds only the
+  threads that serve it.
 - **D14 — Attention follows focus; foreground is announced, not used as a
   gate.** The reducer tracks an attention record: the process and root
   window that most recently received a focus fact. It replaces the earlier
