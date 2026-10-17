@@ -129,17 +129,24 @@ fn a_held_search_ends_at_its_deadline() {
     app.quit();
 }
 
-/// A subscription moved onto a held window three times over, so that its
-/// move makes three calls that each wait out UIA's call timeout, longer in
-/// all than [`MOVE_DEADLINE`], is abandoned when settled once the deadline
-/// has passed, and replaced; closing the registration waits for the
-/// abandoned thread, which ends once the call is released. (One held call
-/// alone ends at the call timeout, within the deadline.)
+/// A subscription moved onto the subtrees of three held windows, each of a
+/// mockapp of its own, their elements looked up before the holds, so that
+/// its move makes three registrations that each wait out UIA's call
+/// timeout, longer in all than [`MOVE_DEADLINE`], is abandoned when settled
+/// once the deadline has passed, and replaced; closing the registration
+/// waits for the abandoned thread, which ends once the calls are released.
+/// (One held call alone ends at the call timeout, within the deadline.)
+/// The windows are three applications' because the move's own calls are
+/// its registrations, and registering on a second element of an
+/// application whose registration timed out makes no call there.
 fn a_held_subscription_move_is_abandoned_at_its_deadline() {
     common::init_com();
-    let title = common::unique_title("mockapp-held-move");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let hwnd = common::find_window(&title).0 as isize;
+    let mut apps: Vec<common::MockApp> = (0..3)
+        .map(|index| {
+            let title = common::unique_title(&format!("mockapp-held-move-{index}"));
+            common::spawn("small.json", "uia", &title)
+        })
+        .collect();
     let registration = Registration::with_parts(
         vec![Part::shaped::<PropertyEvent>(Subscription::Properties {
             properties: vec![UIA_NamePropertyId],
@@ -149,9 +156,21 @@ fn a_held_subscription_move_is_abandoned_at_its_deadline() {
     )
     .expect("a registration");
 
-    app.hold();
-    registration.retarget(Scope::Windows(vec![hwnd; 3]));
-    let held = app.held();
+    let elements = apps
+        .iter()
+        .flat_map(|app| {
+            let hwnd = common::find_window(app.title()).0 as isize;
+            let Scope::Subtrees(window) = common::window_subtree(hwnd) else {
+                unreachable!("a window's subtree")
+            };
+            window
+        })
+        .collect();
+    for app in &mut apps {
+        app.hold();
+    }
+    registration.retarget(Scope::Subtrees(elements));
+    let held = apps[0].held();
     let started = Instant::now();
     registration.settle();
     let elapsed = started.elapsed();
@@ -161,11 +180,18 @@ fn a_held_subscription_move_is_abandoned_at_its_deadline() {
         "the settle ended at the move's deadline: {elapsed:?}"
     );
     assert_eq!(registration.abandoned(), 1);
-    app.release();
+    // The abandoned move went on to the second and the third.
+    for app in &mut apps[1..] {
+        assert!(!app.held().is_empty(), "a call of the move was held");
+    }
+    for app in &mut apps {
+        app.release();
+    }
     registration.close();
-    app.quit();
+    for app in apps {
+        app.quit();
+    }
 }
-
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[

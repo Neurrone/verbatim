@@ -124,7 +124,8 @@ use crate::OutpostOptions;
 use crate::arbitration::window_class_name;
 use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use crate::focus_read::{
-    Arrival, FocusEvent, FocusReader, Judged, LastAccepted, Meta, READ_DEADLINE, Readers, Reading,
+    AppLocks, Arrival, FocusEvent, FocusReader, Judged, LastAccepted, Meta, READ_DEADLINE, Readers,
+    Reading,
 };
 use crate::outpost::now_ms;
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
@@ -714,6 +715,10 @@ struct Listener {
     /// The last focus any reading thread accepted, which Core's queued
     /// focuses supersede ([`SupervisorToOutpost::FocusQueued`]).
     last_accepted: LastAccepted,
+    /// The applications' locks the supervisor sends
+    /// (`docs/design/focus-pipeline.md`, section 20.4), which the reading
+    /// threads read with.
+    locks: Arc<AppLocks>,
     _registration: Option<Registration>,
     /// What nudges the `WinEvent` thread: the idle barrier's query goes
     /// through it, behind every event delivered to it before.
@@ -730,6 +735,9 @@ struct UiaFocusReading {
     outgoing: Arc<Outgoing>,
     /// The last focus any reading thread accepted, which they share.
     last_accepted: LastAccepted,
+    /// The applications' locks (`docs/design/focus-pipeline.md`, section
+    /// 20.4), for each reader's classic walk up into another application.
+    locks: Arc<AppLocks>,
 }
 
 impl Reading for UiaFocusReading {
@@ -746,9 +754,12 @@ impl Reading for UiaFocusReading {
     );
     type Reader = FocusReader;
 
-    fn reader(&self) -> Option<FocusReader> {
+    fn reader(&self, pid: Pid) -> Option<FocusReader> {
         match FocusReader::new(self.remote, self.last_accepted.clone()) {
-            Ok(reader) => Some(reader),
+            Ok(mut reader) => {
+                reader.set_app_locks(pid, Arc::clone(&self.locks));
+                Some(reader)
+            }
             Err(error) => {
                 tracing::warn!(%error, "a reading thread could not create a UIA client");
                 None
@@ -841,13 +852,16 @@ impl Listener {
             outgoing.hook_installed(pid, outpost, before_the_hook);
         }
         let last_accepted = LastAccepted::default();
-        let readers = Arc::new(Readers::new(
+        let locks = Arc::new(AppLocks::default());
+        let readers = Arc::new(Readers::with_locks(
             UiaFocusReading {
                 remote: options.remote_operations,
                 outgoing: Arc::clone(&outgoing),
                 last_accepted: last_accepted.clone(),
+                locks: Arc::clone(&locks),
             },
             READ_DEADLINE,
+            Some(Arc::clone(&locks)),
         ));
         let registration = install_desktop_subscriptions(
             &outgoing,
@@ -890,6 +904,7 @@ impl Listener {
             outgoing,
             readers,
             last_accepted,
+            locks,
             _registration: registration,
             nudger,
             _event_thread: event_thread,
@@ -912,6 +927,7 @@ impl Listener {
             outgoing,
             readers,
             last_accepted: _,
+            locks: _,
             _registration: registration,
             nudger: _,
             _event_thread: event_thread,
@@ -966,7 +982,38 @@ impl Listener {
                 ..
             } => self.last_accepted.queued(*trace_id, *observed_at_ms),
             SupervisorToOutpost::IdleQuery { round } => self.idle_query(*round),
+            SupervisorToOutpost::AppLock { pid, created, lock } => {
+                self.app_lock(*pid, *created, *lock);
+            }
+            SupervisorToOutpost::AppLockClosed { pid, created } => self.locks.close(*pid, *created),
             _ => {}
+        }
+    }
+
+    /// Takes `pid`'s lock, the handle `lock` the supervisor duplicated into
+    /// this process for the process created at `created`, into the table
+    /// the reading threads read with; or, with no lock, the supervisor's
+    /// answer that it gives the process no outpost.
+    fn app_lock(&self, pid: Pid, created: Option<u64>, lock: Option<u64>) {
+        let (Some(created), Some(handle)) = (created, lock) else {
+            self.locks.add_unlocked(pid, created);
+            return;
+        };
+        let taken = usize::try_from(handle)
+            .map_err(io::Error::other)
+            // SAFETY: the supervisor duplicated this handle into this
+            // process for `pid`'s lock, and sends each once.
+            .and_then(|handle| unsafe { verbatim_uia::lock::take_given(handle) });
+        match taken {
+            Ok(mutex) => self.locks.add(verbatim_uia::lock::AppLock::new(
+                pid.0,
+                created,
+                Arc::new(mutex),
+            )),
+            Err(error) => {
+                tracing::warn!(%pid, %error, "an application's lock could not be taken; its reads run unguarded");
+                self.locks.add_unlocked(pid, Some(created));
+            }
         }
     }
 

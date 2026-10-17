@@ -68,7 +68,11 @@ fn launch(
             log_stem,
             memory_cap: None,
         },
-        ChildEnds { commands, messages },
+        ChildEnds {
+            commands,
+            messages,
+            inherited: Vec::new(),
+        },
     )
     .expect("the outpost starts in its job");
 
@@ -134,7 +138,13 @@ fn a_spare_takes_its_application_from_assign_and_ends_on_one_it_cannot_watch() {
         "a spare says it is one"
     );
 
-    send(&mut to_child, &SupervisorToOutpost::Assign { target_pid });
+    send(
+        &mut to_child,
+        &SupervisorToOutpost::Assign {
+            target_pid,
+            lock: None,
+        },
+    );
     assert_eq!(
         messages.recv_timeout(WAIT).ok(),
         Some(OutpostToSupervisor::Ready {
@@ -146,7 +156,13 @@ fn a_spare_takes_its_application_from_assign_and_ends_on_one_it_cannot_watch() {
 
     // A second application is one it cannot watch: it reports why, ends
     // without a `Ready`, and exits with code 1.
-    send(&mut to_child, &SupervisorToOutpost::Assign { target_pid });
+    send(
+        &mut to_child,
+        &SupervisorToOutpost::Assign {
+            target_pid,
+            lock: None,
+        },
+    );
     assert_eq!(
         messages.recv_timeout(WAIT).ok(),
         Some(OutpostToSupervisor::Fault {

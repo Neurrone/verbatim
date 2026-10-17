@@ -133,6 +133,14 @@ abandoned worker's do. A dialog's text now pays one hand-over to that
 thread and back, tens of microseconds, and the first one in an outpost
 also creates the thread and its UIA client.
 
+The lock per application (`verbatim_uia::lock`;
+`docs/design/focus-pipeline.md`, section 20) adds no call: taking and
+releasing it are two kernel calls on a mutex, which never wait on the
+application, and a connection's check of its window's provider process
+reads the window manager's own state. Each taking is counted per thread
+beside the calls (`verbatim_uia::calls::take_locks`), and the ratchet pins
+the takings of the steady-state UIA focus change.
+
 UIA's connection and transaction timeouts are five seconds in every
 Verbatim process (`verbatim_uia::CALL_TIMEOUT`), set once by UIA's
 first-time setup, where they were UIA's default 20 seconds for a

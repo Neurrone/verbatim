@@ -26,7 +26,14 @@ pub fn has_server_side_provider(hwnd: isize) -> bool {
     let _ = crate::client::ensure_ready();
     // One `WM_GETOBJECT`, sent to the window.
     crate::calls::count(CallKind::WindowMessage);
-    // SAFETY: UiaHasServerSideProvider tolerates any window handle, returning
-    // false for invalid ones; the BOOL is converted, not assumed.
-    unsafe { UiaHasServerSideProvider(HWND(hwnd as *mut _)) }.as_bool()
+    // A new connection to the window by its handle, which answers "no"
+    // after about three seconds when it arrives while a remote operation
+    // from another process waits to be evaluated in the window's
+    // application: made holding that application's lock (`crate::lock`).
+    crate::lock::guarded_window("UiaHasServerSideProvider", hwnd, || {
+        // SAFETY: UiaHasServerSideProvider tolerates any window handle,
+        // returning false for invalid ones; the BOOL is converted, not
+        // assumed.
+        unsafe { UiaHasServerSideProvider(HWND(hwnd as *mut _)) }.as_bool()
+    })
 }

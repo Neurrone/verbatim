@@ -15,6 +15,7 @@ mod buttons;
 mod common_controls;
 mod edit;
 mod fixture;
+mod held;
 mod hits;
 mod list_view;
 mod msaa;

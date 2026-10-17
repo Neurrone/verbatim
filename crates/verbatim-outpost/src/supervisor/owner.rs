@@ -33,7 +33,7 @@ use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{FrameBody, Reading};
 
 use crate::protocol::{
-    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
+    DeliveredFact, EventTiming, ListenerFact, LockGrant, OutpostToSupervisor, SupervisorToOutpost,
     WinEventStamp, decode_message, hop_us, message_kind, now_us,
 };
 
@@ -318,10 +318,11 @@ struct Owner {
     generation: u64,
     records: HashMap<Pid, Record>,
     listener: Option<ListenerRecord>,
-    /// The target applications' processes, held open while an application
-    /// has a record, so the pid each is known by names that process and no
-    /// other ([`Target`]).
-    targets: HashMap<Pid, Target>,
+    /// The applications given a record, each until its process exits: the
+    /// process, held open so the pid it is known by names that process and
+    /// no other ([`Target`]), and its lock (`docs/design/focus-pipeline.md`,
+    /// section 20.4), which outlives the record.
+    apps: HashMap<Pid, App>,
     attention: Option<Pid>,
     holding: BTreeSet<OutpostId>,
     ping_seq: u64,
@@ -350,6 +351,21 @@ struct Owner {
     /// Every spare's process, by outpost id, from its launch until it is
     /// given or ends: `None` while its launch is at work.
     spare_children: HashMap<OutpostId, SpareChild>,
+}
+
+/// An application the supervisor has given a record, from its first record
+/// until its process exits, through any retirement and every outpost
+/// failure (`docs/design/focus-pipeline.md`, section 20.4).
+struct App {
+    /// Its process, held open.
+    target: Target,
+    /// The process's creation time, which with its id names it.
+    created: u64,
+    /// The mutex with no name made for it, which the listener and its
+    /// outposts take around the UIA calls that collide
+    /// (`verbatim_uia::lock`); `None` when it could not be made, when their
+    /// calls run unguarded.
+    lock: Option<Arc<OwnedHandle>>,
 }
 
 /// A spare outpost's process while it waits.
@@ -433,7 +449,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         generation: 0,
         records: HashMap::new(),
         listener: None,
-        targets: HashMap::new(),
+        apps: HashMap::new(),
         attention: None,
         holding: BTreeSet::new(),
         ping_seq: 0,
@@ -967,6 +983,17 @@ impl Owner {
         }
         if let Err(not_held) = self.hold_target(pid) {
             tracing::info!(%pid, %not_held, "no outpost is started for an application that is not running");
+            // The listener's reading thread for it reads without a lock:
+            // no outpost will call into it.
+            let created = match not_held {
+                process::NotHeld::Exited(created) => created,
+                process::NotHeld::Denied(_) => None,
+            };
+            self.tell_listener(SupervisorToOutpost::AppLock {
+                pid,
+                created,
+                lock: None,
+            });
             self.release_target(pid);
             self.not_watched(pid);
             return false;
@@ -1096,11 +1123,18 @@ impl Owner {
             return;
         };
         let outpost = record.outpost;
+        // The application's lock, duplicated into the spare as `Assign` is
+        // written: the spare sets it before it installs its hook.
+        let lock = record
+            .child
+            .as_ref()
+            .and_then(|child| self.grant_lock(pid, &child.process.contained.process));
         if let Some(child) = &record.child
             && let Err(error) = child
                 .writer
                 .push(Outgoing::HandOver(SupervisorToOutpost::Assign {
                     target_pid: pid,
+                    lock,
                 }))
         {
             // Its pipe's end follows, and is the spare's failure.
@@ -1296,18 +1330,38 @@ impl Owner {
     }
 
     /// Holds `pid`'s process, unless it is held already: the pid then names
-    /// that process for as long as it is held. Fails when the process has
-    /// exited, the one held included, or cannot be opened. A process that
-    /// has exited is let go.
+    /// that process for as long as it is held. Its lock is made with it, and
+    /// the listener is sent it ([`SupervisorToOutpost::AppLock`]). Fails
+    /// when the process has exited, the one held included, or cannot be
+    /// opened. A process that has exited is let go, and its lock closed.
     fn hold_target(&mut self, pid: Pid) -> Result<(), process::NotHeld> {
-        match self.targets.get(&pid) {
-            Some(target) if target.has_exited() => {
-                self.targets.remove(&pid);
-                Err(process::NotHeld::Exited)
+        match self.apps.get(&pid) {
+            Some(app) if app.target.has_exited() => {
+                let created = app.created;
+                self.forget_app(pid);
+                Err(process::NotHeld::Exited(Some(created)))
             }
             Some(_) => Ok(()),
             None => {
-                self.targets.insert(pid, Target::open(pid)?);
+                let target = Target::open(pid)?;
+                let created = target
+                    .created()
+                    .map_err(|error| process::NotHeld::Denied(windows::core::Error::from(error)))?;
+                let lock = verbatim_uia::lock::new_mutex()
+                    .inspect_err(|error| {
+                        tracing::error!(%pid, %error, "an application's lock could not be made; UIA calls into it run unguarded");
+                    })
+                    .ok()
+                    .map(Arc::new);
+                self.apps.insert(
+                    pid,
+                    App {
+                        target,
+                        created,
+                        lock,
+                    },
+                );
+                self.send_lock_to_listener(pid);
                 Ok(())
             }
         }
@@ -1315,14 +1369,80 @@ impl Owner {
 
     /// Whether `pid`'s process has exited, or is not held.
     fn has_exited(&self, pid: Pid) -> bool {
-        self.targets.get(&pid).is_none_or(Target::has_exited)
+        self.apps
+            .get(&pid)
+            .is_none_or(|app| app.target.has_exited())
     }
 
     /// Lets `pid`'s process go once nothing is kept for it: it has no
-    /// record.
+    /// record and it has exited. An application whose outpost retires keeps
+    /// its process held, and its lock, until it exits, which the sweep finds.
     fn release_target(&mut self, pid: Pid) {
-        if !self.records.contains_key(&pid) {
-            self.targets.remove(&pid);
+        if !self.records.contains_key(&pid) && self.has_exited(pid) {
+            self.forget_app(pid);
+        }
+    }
+
+    /// Forgets `pid`'s process, whose exit the supervisor has learned:
+    /// closes its handle and its lock, and tells the listener
+    /// ([`SupervisorToOutpost::AppLockClosed`]), whose reading threads keep
+    /// their own copies until they let them go.
+    fn forget_app(&mut self, pid: Pid) {
+        if let Some(app) = self.apps.remove(&pid) {
+            tracing::debug!(%pid, "an application's process exited; its lock is closed");
+            if app.lock.is_some() {
+                self.tell_listener(SupervisorToOutpost::AppLockClosed {
+                    pid,
+                    created: app.created,
+                });
+            }
+        }
+    }
+
+    /// `pid`'s lock as `process` is given it: a handle to the mutex
+    /// duplicated into that process with only the rights to wait and
+    /// release, and the application's creation time. `None` when the
+    /// application has no lock or the duplication fails, when that
+    /// process's calls run unguarded.
+    fn grant_lock(&self, pid: Pid, process: &OwnedHandle) -> Option<LockGrant> {
+        let app = self.apps.get(&pid)?;
+        let lock = app.lock.as_ref()?;
+        match verbatim_uia::lock::duplicate_into(lock, process) {
+            Ok(handle) => Some(LockGrant {
+                handle: handle as u64,
+                created: app.created,
+            }),
+            Err(error) => {
+                tracing::warn!(%pid, %error, "an application's lock could not be given to a process");
+                None
+            }
+        }
+    }
+
+    /// Sends the listener `pid`'s lock ([`SupervisorToOutpost::AppLock`]),
+    /// duplicated into its process, when it has one running; a listener
+    /// still launching is sent every lock once it has reported.
+    fn send_lock_to_listener(&self, pid: Pid) {
+        let Some(child) = self
+            .listener
+            .as_ref()
+            .and_then(|listener| listener.child.as_ref())
+        else {
+            return;
+        };
+        let Some(app) = self.apps.get(&pid) else {
+            return;
+        };
+        let lock = self
+            .grant_lock(pid, &child.process.contained.process)
+            .map(|grant| grant.handle);
+        let command = SupervisorToOutpost::AppLock {
+            pid,
+            created: Some(app.created),
+            lock,
+        };
+        if let Err(error) = child.writer.push(Outgoing::HandOver(command)) {
+            tracing::warn!(%error, %pid, "an application's lock could not be sent to the listener");
         }
     }
 
@@ -1412,6 +1532,21 @@ impl Owner {
             Role::Listener => crate::listener::format_hooks_in(&self.hooks_in()),
             Role::Outpost(_) | Role::Spare(_) => String::new(),
         };
+        // An outpost started for its application inherits the application's
+        // lock: a copy with only the rights to wait and release, made here
+        // and closed once the launch returns (section 20.4).
+        let lock = match role {
+            Role::Outpost(pid) => self.apps.get(&pid).and_then(|app| {
+                let lock = app.lock.as_ref()?;
+                verbatim_uia::lock::restricted_copy(lock)
+                    .inspect_err(|error| {
+                        tracing::warn!(%pid, %error, "an application's lock could not be copied for its outpost");
+                    })
+                    .ok()
+                    .map(|copy| (copy, app.created))
+            }),
+            Role::Spare(_) | Role::Listener => None,
+        };
         let exe_path = self.exe_path.clone();
         let options = self.options;
         let own_tx = self.own_tx.clone();
@@ -1423,8 +1558,7 @@ impl Owner {
                 let result = launch_child(
                     &exe_path,
                     (options, &ignored, &hooks_in),
-                    outpost,
-                    role,
+                    (outpost, role, lock),
                     (&writers, &commands),
                 );
                 let _ = own_tx.send(OwnerEvent::Launched { outpost, result });
@@ -1484,13 +1618,27 @@ impl Owner {
         {
             match result {
                 Ok(child) => {
-                    for command in listener.pending.drain(..) {
+                    let pending = std::mem::take(&mut listener.pending);
+                    listener.child = Some(child);
+                    listener.last_pong_at = Instant::now();
+                    // Every live lock first, Core's own among them, ahead of
+                    // every other command (section 20.4).
+                    let pids: Vec<Pid> = self.apps.keys().copied().collect();
+                    for pid in pids {
+                        self.send_lock_to_listener(pid);
+                    }
+                    let Some(child) = self
+                        .listener
+                        .as_ref()
+                        .and_then(|listener| listener.child.as_ref())
+                    else {
+                        return;
+                    };
+                    for command in pending {
                         if let Err(error) = child.writer.push(Outgoing::HandOver(command)) {
                             tracing::warn!(%error, "the hand-over could not be told to the listener");
                         }
                     }
-                    listener.child = Some(child);
-                    listener.last_pong_at = Instant::now();
                     if self.shutting_down.is_some() {
                         self.end_listener("Verbatim is exiting");
                     }
@@ -2162,6 +2310,17 @@ impl Owner {
         for pid in gone {
             self.target_exited(pid, "target exited while its outpost's replacement waited");
         }
+        // Applications whose records have ended, by retirement, and which
+        // have since exited: their locks are closed.
+        let exited: Vec<Pid> = self
+            .apps
+            .iter()
+            .filter(|(pid, app)| !self.records.contains_key(pid) && app.target.has_exited())
+            .map(|(pid, _)| *pid)
+            .collect();
+        for pid in exited {
+            self.forget_app(pid);
+        }
     }
 }
 
@@ -2202,11 +2361,10 @@ pub(super) fn deliver(writer: &WriterHandle, held: HeldFact) {
 fn launch_child(
     exe_path: &std::path::Path,
     (options, ignored, hooks_in): (crate::OutpostOptions, &str, &str),
-    outpost: OutpostId,
-    role: Role,
+    (outpost, role, lock): (OutpostId, Role, Option<(OwnedHandle, u64)>),
     (writers, commands): (&Writers, &CommandPipes),
 ) -> io::Result<Launch> {
-    let (launched, pipes) = process::launch(exe_path, role, options, (ignored, hooks_in))?;
+    let (launched, pipes) = process::launch(exe_path, role, options, (ignored, hooks_in), lock)?;
     tracing::info!(%outpost, process_id = %launched.process_id, ?role, "launched");
     // A failure from here drops the process's job, which kills it.
     let writer = commands.open(outpost, pipes.to_child)?;

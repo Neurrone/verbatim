@@ -22,14 +22,15 @@ use windows::Win32::UI::Accessibility::{
     UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId, UIA_ControllerForPropertyId,
     UIA_EditControlTypeId, UIA_GroupControlTypeId, UIA_HelpTextPropertyId,
     UIA_HyperlinkControlTypeId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
-    UIA_MenuBarControlTypeId, UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_NamePropertyId,
-    UIA_PROPERTY_ID, UIA_PaneControlTypeId, UIA_RadioButtonControlTypeId,
-    UIA_SelectionItem_ElementSelectedEventId, UIA_SliderControlTypeId, UIA_SpinnerControlTypeId,
-    UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
-    UIA_Text_TextChangedEventId, UIA_Text_TextSelectionChangedEventId, UIA_TextControlTypeId,
-    UIA_ToolBarControlTypeId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId,
-    UIA_ValueValuePropertyId, UIA_WindowControlTypeId, UiaRaiseActiveTextPositionChangedEvent,
-    UiaRaiseAutomationEvent, UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent,
+    UIA_MenuBarControlTypeId, UIA_MenuControlTypeId, UIA_MenuItemControlTypeId,
+    UIA_MenuOpenedEventId, UIA_NamePropertyId, UIA_PROPERTY_ID, UIA_PaneControlTypeId,
+    UIA_RadioButtonControlTypeId, UIA_SelectionItem_ElementSelectedEventId,
+    UIA_SliderControlTypeId, UIA_SpinnerControlTypeId, UIA_StatusBarControlTypeId,
+    UIA_TabControlTypeId, UIA_TabItemControlTypeId, UIA_Text_TextChangedEventId,
+    UIA_Text_TextSelectionChangedEventId, UIA_TextControlTypeId, UIA_ToolBarControlTypeId,
+    UIA_TreeControlTypeId, UIA_TreeItemControlTypeId, UIA_ValueValuePropertyId,
+    UIA_WindowControlTypeId, UiaRaiseActiveTextPositionChangedEvent, UiaRaiseAutomationEvent,
+    UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent,
 };
 use windows_core::Interface;
 
@@ -117,6 +118,18 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::Select(id) => {
             let index = select_node(tree, &id).ok_or_else(|| unknown(&id))?;
             raise_selection(tree, hwnd, index)?;
+        }
+        Command::MenuOpened(id) => {
+            let index = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .index_of(&id)
+                .ok_or_else(|| unknown(&id))?;
+            let fragment = props::provider_for(tree.clone(), hwnd, index);
+            let provider = simple(&fragment)?;
+            // SAFETY: `provider` is a live COM object for the node.
+            unsafe { UiaRaiseAutomationEvent(&provider, UIA_MenuOpenedEventId) }
+                .map_err(|error| format!("the menu opening could not be raised: {error}"))?;
         }
         Command::Notify(text) => raise_notification(tree, hwnd, &text)?,
         Command::SetDescription(id, text) => {
@@ -235,6 +248,8 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         | Command::SlowPatterns(_)
         | Command::RefuseText(_)
         | Command::Hold
+        | Command::HoldSetup
+        | Command::StallAfterFocusRead(_)
         | Command::Release
         | Command::Quit
         | Command::Unrecognized(_) => {}
@@ -737,6 +752,8 @@ mod props {
         } else if id == UIA_IsEnabledPropertyId.0 {
             bool_variant(!node.states.contains(State::Disabled))
         } else if id == UIA_HasKeyboardFocusPropertyId.0 {
+            // A test's stall after this read (`stall-after-focus-read`).
+            crate::held::focus_read(hwnd);
             bool_variant(node.states.contains(State::Focused))
         } else if id == UIA_IsKeyboardFocusablePropertyId.0 {
             bool_variant(node.states.contains(State::Focusable))

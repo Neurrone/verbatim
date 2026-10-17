@@ -87,7 +87,7 @@ fn property_changes(hwnd: HWND) -> (Registration, Receiver<PropertyChange>) {
                 });
             }),
         })],
-        Scope::Windows(vec![hwnd.0 as isize]),
+        common::window_subtree(hwnd.0 as isize),
     )
     .expect("Registration::with_parts");
     (registration, changes)
@@ -265,7 +265,7 @@ fn uia_select_raises_a_selection_event() {
                 }),
             }),
         ],
-        Scope::Windows(vec![hwnd.0 as isize]),
+        common::window_subtree(hwnd.0 as isize),
     )
     .expect("Registration::with_parts");
 
@@ -307,7 +307,7 @@ fn uia_notify_raises_a_notification_event() {
                 ));
             }),
         })],
-        Scope::Windows(vec![hwnd.0 as isize]),
+        common::window_subtree(hwnd.0 as isize),
     )
     .expect("Registration::with_parts");
 
@@ -375,7 +375,7 @@ fn uia_listener_reads_its_facts_with_no_failed_read() {
                 }),
             }),
         ],
-        Scope::Windows(vec![hwnd.0 as isize]),
+        common::window_subtree(hwnd.0 as isize),
     )
     .expect("Registration::with_parts");
 
@@ -435,7 +435,7 @@ fn uia_active_text_position_arrives_with_its_range() {
                 }),
             },
         )],
-        Scope::Windows(vec![hwnd.0 as isize]),
+        common::window_subtree(hwnd.0 as isize),
     )
     .expect("Registration::with_parts");
 
@@ -499,7 +499,7 @@ fn uia_one_group_delivers_each_of_its_subscriptions() {
                 callback: Arc::new(move |_, _, _, _, _| notification()),
             }),
         ],
-        Scope::Windows(vec![hwnd.0 as isize]),
+        common::window_subtree(hwnd.0 as isize),
     )
     .expect("Registration::with_parts");
 

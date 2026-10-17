@@ -220,6 +220,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         // MSAA has no notification event; `notify` is a UIA-backend command
         // (see crate::stdin::Command::Notify).
         Command::Notify(_) => return Err("notify is not supported on the msaa backend".into()),
+        Command::MenuOpened(_) => {
+            return Err("menu-opened is not supported on the msaa backend".into());
+        }
         Command::SetControllerFor(..) => {
             return Err("set-controller-for is not supported on the msaa backend".into());
         }
@@ -255,6 +258,8 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         | Command::SlowPatterns(_)
         | Command::RefuseText(_)
         | Command::Hold
+        | Command::HoldSetup
+        | Command::StallAfterFocusRead(_)
         | Command::Release
         | Command::Quit
         | Command::Unrecognized(_) => {}

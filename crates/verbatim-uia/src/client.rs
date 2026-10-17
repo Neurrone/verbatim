@@ -217,9 +217,17 @@ impl Uia {
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
         count(CallKind::Uia);
-        // SAFETY: `cache` is a live cache request from this client; the call is
-        // a normal cross-process fetch.
-        unsafe { self.client.GetFocusedElementBuildCache(cache) }
+        // A new connection to the focused application, which, like a
+        // connection by handle, may fail while a remote operation from
+        // another process waits there (one experiment of three, section
+        // 20.1): made holding the lock, which costs little, since an
+        // outpost asks for the focus only to answer a focus-now query
+        // (`crate::lock`).
+        crate::lock::guarded("GetFocusedElementBuildCache", || {
+            // SAFETY: `cache` is a live cache request from this client; the
+            // call is a normal cross-process fetch.
+            unsafe { self.client.GetFocusedElementBuildCache(cache) }
+        })
     }
 
     /// The element that has the keyboard focus, its cache filled by
@@ -300,12 +308,20 @@ impl Uia {
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
         count(CallKind::Uia);
-        // SAFETY: HWND wraps a caller-supplied handle; ElementFromHandleBuildCache
-        // tolerates an invalid handle by returning an error.
-        unsafe {
-            self.client
-                .ElementFromHandleBuildCache(HWND(hwnd as *mut _), cache)
-        }
+        // A new connection to the window by its handle, which returns UIA's
+        // client-side window proxy in place of the application's element
+        // when it arrives while a remote operation from another process
+        // waits to be evaluated there: made holding the window's
+        // application's lock (`crate::lock`).
+        crate::lock::guarded_window("ElementFromHandleBuildCache", hwnd, || {
+            // SAFETY: HWND wraps a caller-supplied handle;
+            // ElementFromHandleBuildCache tolerates an invalid handle by
+            // returning an error.
+            unsafe {
+                self.client
+                    .ElementFromHandleBuildCache(HWND(hwnd as *mut _), cache)
+            }
+        })
     }
 
     /// [`element_from_handle`](Self::element_from_handle), the element's
@@ -335,9 +351,13 @@ impl Uia {
     /// Returns the COM error if the handle has no UIA element or the call fails.
     pub fn window_live(&self, hwnd: isize) -> windows::core::Result<Live> {
         count(CallKind::Uia);
-        // SAFETY: HWND wraps a caller-supplied handle; ElementFromHandle
-        // tolerates an invalid handle by returning an error.
-        unsafe { self.client.ElementFromHandle(HWND(hwnd as *mut _)) }.map(Live::new)
+        // A new connection by handle, guarded as `element_from_handle` is.
+        crate::lock::guarded_window("ElementFromHandle", hwnd, || {
+            // SAFETY: HWND wraps a caller-supplied handle; ElementFromHandle
+            // tolerates an invalid handle by returning an error.
+            unsafe { self.client.ElementFromHandle(HWND(hwnd as *mut _)) }
+        })
+        .map(Live::new)
     }
 
     /// Re-finds the element `runtime_id` names inside `root`'s subtree, its

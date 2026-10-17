@@ -328,6 +328,11 @@ unsafe extern "system" fn wnd_proc(
             }
             return LRESULT(0);
         }
+        // A test's stall after a focus read (`crate::held`).
+        crate::held::WM_APP_STALL_UNTIL_RELEASE => {
+            crate::held::stall_until_release();
+            return LRESULT(0);
+        }
         WM_APP_COMMAND_READY => {
             // SAFETY: see above.
             if let Some(context) = unsafe { context_for(hwnd) } {
@@ -476,6 +481,18 @@ fn apply(hwnd: HWND, context: &WindowContext, command: Command) -> bool {
     }
     if let Command::Hold = command {
         hits::hold_next();
+        acknowledge("applied");
+        return true;
+    }
+    if let Command::HoldSetup = command {
+        match crate::held::arm_setup_hold(hwnd) {
+            Ok(()) => acknowledge("applied"),
+            Err(error) => acknowledge(&format!("rejected: {error}")),
+        }
+        return true;
+    }
+    if let Command::StallAfterFocusRead(reads) = command {
+        crate::held::arm_stall_after_focus_read(reads);
         acknowledge("applied");
         return true;
     }

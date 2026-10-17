@@ -333,8 +333,13 @@ Public API:
   objects are released, and its thread leaves the apartment and ends;
   moving or settling a closed registration does nothing, and dropping one
   closes it. An outpost closes its registration when it shuts down. The
-  `Scope` is nothing yet, the subtree of given top-level windows, the whole
-  desktop (the subtree of the root element), or exactly given elements.
+  `Scope` is nothing yet, the subtrees of given elements (`Subtrees`), the
+  whole desktop (the subtree of the root element), or exactly given
+  elements. The caller looks a window's element up itself, on a thread
+  that serves the window's application, so the registration's thread makes
+  no connection by handle, which would take the application's lock
+  (`lock`) and could wait for it; a registration thread never waits for
+  one (`docs/design/focus-pipeline.md`, section 20.5).
 - A registration registers its subscriptions as an event handler group
   (`IUIAutomationEventHandlerGroup`, from `IUIAutomation6`), as NVDA
   registers its handlers: each handler is added to the group, which is
@@ -366,9 +371,7 @@ Public API:
   is built once per thread and client, on first need, every part with its
   own shape's request, so the provider is asked for no more with each
   event than the part's callbacks read. The
-  element of each window in a scope of windows is fetched with nothing
-  cached, since it is only where the group is registered, and the
-  desktop's root with the first part's cache request.
+  desktop's root is fetched with the first part's cache request.
 - The outpost's one focus-following registration has four parts: the
   focus's property changes shaped as `PropertyEvent` (the base set
   without the details and focus context properties, since a change of
@@ -459,6 +462,42 @@ Public API:
   request, lazily built the first time a given thread calls it and reused
   after that, matching `Uia`'s one-client-per-thread rule so nothing COM
   here crosses a thread boundary.
+- `lock` — the lock per application around the UIA calls that collide
+  (`docs/design/focus-pipeline.md`, section 20; decision D13). It works
+  around a defect of UIA's: from the moment a remote operation from any
+  process arrives in an application until UIA begins evaluating it there,
+  every new UIA connection another process makes to that application fails
+  without an error, `UiaHasServerSideProvider` answering "no" after about
+  three seconds and `ElementFromHandle` and `ElementFromHandleBuildCache`
+  returning UIA's client-side window proxy after about two, and so does a
+  tree walker step up into that application from an element of another.
+  `AppLock` names the application (its process id and creation time) and
+  holds a reference-counted handle to the unnamed mutex the supervisor
+  made for it. An outpost sets its process's lock once
+  (`set_process_lock`) before it installs its hook; each of the listener's
+  reading threads sets its own (`set_thread_lock`, `thread_lock`). The
+  guarded calls take the thread's lock, else the process's, and run
+  unguarded with neither, as in Core's own clients and the tests that call
+  them directly: `guarded(name, call)` for a remote operation (the one
+  `Execute` in `verbatim-uia-rops` and `GetFocusedElementBuildCache`), and
+  `guarded_window(name, hwnd, call)` for a connection by handle (the probe,
+  `ElementFromHandleBuildCache` and `ElementFromHandle`), which takes the
+  lock only when the window's provider process (`provider_process`: its
+  owner, or for a console window its console host, read from the console's
+  client, the window's owner, since Windows names the client's thread for
+  a console window too) is the lock's application. `guarded_by(lock, name, call)` takes a
+  given lock, for the listener's classic walk step up into another
+  application's window. The lock is taken immediately before the call and
+  released immediately after it: a first wait with no timeout that finds
+  it free costs one kernel call and wakes nobody; one that blocks is
+  logged at debug with how long it waited, and every taking at trace. A
+  mutex whose holder ended holding it is taken and logged as abandoned.
+  Each taking is counted per thread (`calls::take_locks`) and in the
+  process (`taken_in_process`, for a test that counts another thread's).
+  Its helpers for the processes that hand a lock over: `new_mutex`,
+  `duplicate_into` and `restricted_copy`, each copy with only the rights to
+  wait and release (`LOCK_RIGHTS`), `take_given` for the handle a process
+  was given, `process_created`, and `open_process`.
 - `calls` — the count of the cross-process calls this crate makes, kept
   per thread: `calls::count(kind)` counts one, and `calls::take()` returns
   this thread's `CallCounts` since the last take and resets them;

@@ -129,8 +129,13 @@ pub const MOVE_DEADLINE: Duration = Duration::from_secs(10);
 pub enum Scope {
     /// Nowhere, until retargeted.
     Nothing,
-    /// The subtree of each of these top-level windows.
-    Windows(Vec<isize>),
+    /// The subtree of each of these elements, such as windows' elements.
+    /// The caller looks a window's element up itself, on a thread that
+    /// serves the window's application: the registration's thread makes
+    /// no connection by handle, which would take the application's lock
+    /// and could wait for it (`crate::lock`), and a registration thread
+    /// never waits for one (`docs/design/focus-pipeline.md`, section 20.5).
+    Subtrees(Vec<AgileReference<IUIAutomationElement>>),
     /// The whole desktop: the subtree of the root element.
     Desktop,
     /// Exactly these elements, not their descendants.
@@ -428,8 +433,7 @@ impl Registration {
     /// cache request, its elements given the base group ([`Group::Base`]),
     /// returning once registered. A later move can give a scope's elements
     /// the extended group instead ([`retarget_to`](Self::retarget_to)). The
-    /// elements of a scope of windows or the desktop are fetched with the
-    /// first part's cache request.
+    /// desktop's root is fetched with the first part's cache request.
     ///
     /// # Errors
     ///
@@ -1057,21 +1061,20 @@ impl Follower {
     }
 
     /// The elements of `scope`, and the tree scope a group registered on
-    /// them listens over. A window's element is fetched with nothing
-    /// cached, since nothing reads it: it is only where the group is
-    /// registered. The desktop's root is fetched with the first part's
-    /// cache request.
+    /// them listens over. The elements of a scope of elements or of their
+    /// subtrees are the caller's, resolved here, a local call. The
+    /// desktop's root is fetched with the first part's cache request, and
+    /// UIA serves it in this process.
     fn resolve(&self, scope: &Scope) -> (Vec<IUIAutomationElement>, TreeScope) {
         let Some(cache) = self.built.first().map(|built| &built.cache) else {
             return (Vec::new(), TreeScope_Element);
         };
         match scope {
             Scope::Nothing => (Vec::new(), TreeScope_Element),
-            Scope::Windows(hwnds) => (
-                hwnds
+            Scope::Subtrees(elements) => (
+                elements
                     .iter()
-                    .filter_map(|&hwnd| self.uia.window_live(hwnd).ok())
-                    .map(|window| window.element().clone())
+                    .filter_map(|agile| agile.resolve().ok())
                     .collect(),
                 TreeScope_Subtree,
             ),
@@ -1153,7 +1156,7 @@ fn plan_keep<P, E>(previous: &[P], element: &E, same: impl Fn(&P, &E) -> bool) -
 fn describe(scope: &Scope) -> String {
     match scope {
         Scope::Nothing => "nothing".to_owned(),
-        Scope::Windows(hwnds) => format!("the subtrees of windows {hwnds:?}"),
+        Scope::Subtrees(elements) => format!("the subtrees of {} elements", elements.len()),
         Scope::Desktop => "the desktop".to_owned(),
         Scope::Elements(elements) => format!("{} elements", elements.len()),
     }

@@ -21,6 +21,7 @@
 //! finds a terminal's new output by an anchored diff of its text
 //! (milestone M4 item 9).
 
+mod app_locks;
 pub mod arbitration;
 pub mod dialog_text;
 mod event_thread;
@@ -36,6 +37,6 @@ pub mod text;
 pub use listener::run_listener;
 pub use outpost::{
     FocusedElementReader, ForegroundReader, Heard, HeardObserver, Outpost, OutpostOptions,
-    run_attach, run_pipe,
+    run_attach, run_pipe, set_application_lock,
 };
 pub use supervisor::{EventSink, OutpostMessage, Supervisor, Undelivered};

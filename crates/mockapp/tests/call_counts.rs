@@ -151,6 +151,19 @@ impl Ratchet {
         }
     }
 
+    /// Compares the takings of mockapp's lock in a steady-state UIA focus
+    /// change read the `path` way, the listener's and the outpost's
+    /// (`verbatim_uia::lock`; `docs/design/focus-pipeline.md`, section
+    /// 20.6), with the ledger's.
+    fn check_locks(&mut self, path: &str, measured: (u32, u64), expected: (u32, u64)) {
+        if measured != expected {
+            self.mismatches.push(format!(
+                "UIA focus ({path}), steady state: the lock taken {} times by the listener and {} by the outpost",
+                measured.0, measured.1
+            ));
+        }
+    }
+
     /// [`check`](Self::check) for an operation whose provider is not
     /// mockapp's, so only the client's calls are compared.
     fn check_calls(&mut self, operation: &str, measured: CallCounts, expected: CallCounts) {
@@ -1045,12 +1058,14 @@ fn collect(
 /// both: the listener's calls and the outpost's until it reported the
 /// focus, and every provider call mockapp answered for either, the
 /// outpost's walk to its own copy of the element after the report
-/// included.
+/// included; and the times each took mockapp's lock, the listener on this
+/// thread and the outpost on its own (the process's takings less this
+/// thread's).
 fn measure_uia_focus(
     (app, under_test, hwnd): (&mut common::MockApp, &UiaUnderTest, HWND),
     outpost: &OutpostUnderTest,
     (id, name): (&str, &str),
-) -> (Reported, Cost) {
+) -> (Reported, Cost, (u32, u64)) {
     app.send(&format!("set-focus {id}"));
     let focused = under_test.focused(hwnd);
     assert_eq!(
@@ -1059,21 +1074,42 @@ fn measure_uia_focus(
         "the element mockapp reports focused"
     );
     common::reset_hits(hwnd);
+    let _ = verbatim_uia::calls::take_locks();
+    let taken_before = verbatim_uia::lock::taken_in_process();
     let reported = outpost.uia_focus(&focused);
+    let listener_locks = verbatim_uia::calls::take_locks();
+    let outpost_locks =
+        verbatim_uia::lock::taken_in_process() - taken_before - u64::from(listener_locks);
     let cost = Cost {
         calls: reported.calls,
         hits: common::read_hits(hwnd),
         failed_reads: reported.failed_reads,
     };
-    (reported, cost)
+    (reported, cost, (listener_locks, outpost_locks))
 }
 
 /// What each UIA focus change in [`uia_focus_changes`] is expected to cost.
 struct FocusCosts<'a> {
     cold: (CallCounts, u32, &'a [(&'a str, u32)]),
     steady: (CallCounts, u32, &'a [(&'a str, u32)]),
+    /// The steady state's takings of mockapp's lock: the listener's and
+    /// the outpost's.
+    steady_locks: (u32, u64),
     into_list: (CallCounts, u32, &'a [(&'a str, u32)]),
     next_item: (CallCounts, u32, &'a [(&'a str, u32)]),
+}
+
+/// Gives the test's readers `app`'s lock (`docs/design/focus-pipeline.md`,
+/// section 20): the in-process outpost's, as its process's, and the
+/// listener's reader's, which runs on this thread, as this thread's.
+fn lock_mockapp(app: &common::MockApp) {
+    let lock = verbatim_uia::lock::AppLock::new(
+        app.pid(),
+        0,
+        Arc::new(verbatim_uia::lock::new_mutex().expect("a mutex")),
+    );
+    verbatim_uia::lock::set_process_lock(lock.clone()).expect("the process has no lock yet");
+    verbatim_uia::lock::set_thread_lock(Some(lock));
 }
 
 /// The same focus changes, through an outpost reading them with remote
@@ -1086,6 +1122,7 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
     let hwnd = common::find_window(&title);
     let window = Some(WindowHandle(hwnd.0 as u64));
     let under_test = UiaUnderTest::new(hwnd);
+    lock_mockapp(&app);
     let outpost = OutpostUnderTest::with_options(
         &app,
         OutpostOptions {
@@ -1106,7 +1143,7 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
         );
     };
 
-    let (reported, cost) =
+    let (reported, cost, _) =
         measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("first", "First"));
     assert_eq!(
         reported.chain(),
@@ -1121,7 +1158,7 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
     assert_eq!(reported.window, window);
     check(&mut ratchet, "cold", &cost, &expected.cold);
 
-    let (reported, cost) = measure_uia_focus(
+    let (reported, cost, locks) = measure_uia_focus(
         (&mut app, &under_test, hwnd),
         &outpost,
         ("second", "Second"),
@@ -1137,8 +1174,9 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
     assert_eq!(reported.selected_child, None);
     assert_eq!(reported.window, window);
     check(&mut ratchet, "steady state", &cost, &expected.steady);
+    ratchet.check_locks(path, locks, expected.steady_locks);
 
-    let (reported, cost) =
+    let (reported, cost, _) =
         measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("list", "Options"));
     assert_eq!(
         reported.chain(),
@@ -1156,13 +1194,13 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
     assert_eq!(reported.window, window);
     check(&mut ratchet, "into a list", &cost, &expected.into_list);
 
-    let (reported, _) =
+    let (reported, _, _) =
         measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("item1", "One"));
     assert_eq!(
         reported.chain(),
         [Some("Mockapp Counts Fixture"), Some("Options"), Some("One")]
     );
-    let (reported, cost) =
+    let (reported, cost, _) =
         measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("item2", "Two"));
     assert_eq!(
         reported.chain(),
@@ -1240,6 +1278,10 @@ fn uia_focus_changes_cost_exactly_remote() {
                     ("FragmentRoot", 18),
                 ],
             ),
+            // The listener's `Execute`, its probe answered from the kept
+            // verdict; and the outpost's `focus_path::find`, its lookup of the
+            // route's window and its remote operation.
+            steady_locks: (1, 2),
             // The list's first selected item through `SelectionPattern2`.
             into_list: (
                 calls(4, 0, 0),
@@ -1316,6 +1358,10 @@ fn uia_focus_changes_cost_exactly_classic() {
             // `FirstSelectedItem`, fetched with the `Selection` pattern in
             // one call, and its cache, one more (6 calls and 143 provider
             // calls through the `Selection` pattern alone, before).
+            // The listener's `Execute`, its probe answered from the kept
+            // verdict, and none of the outpost's: its own copy of the element
+            // (`focus_path::find`) is a classic walk.
+            steady_locks: (0, 1),
             into_list: (
                 calls(8, 0, 0),
                 0,
@@ -1441,7 +1487,8 @@ fn uia_navigation_steps(remote: bool) -> [(NodeSnapshot, Cost); 2] {
         .handle_command(&SupervisorToOutpost::Fetches(
             Theme::builtin_default().fetches(),
         ));
-    let (first, _) = measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("first", "First"));
+    let (first, _, _) =
+        measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("first", "First"));
 
     common::reset_hits(hwnd);
     let (second, calls_made) = outpost.navigate(first.node.id, QueryKind::NextSibling);
@@ -1569,7 +1616,8 @@ fn uia_ancestors_with_descriptions_off_cost_exactly() {
             ..Fetches::default()
         }));
     let mut ratchet = Ratchet::default();
-    let (first, _) = measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("first", "First"));
+    let (first, _, _) =
+        measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("first", "First"));
 
     common::reset_hits(hwnd);
     let (ancestors, calls_made) = outpost.ancestors(first.node.id);

@@ -269,6 +269,55 @@ outpost that cannot watch the application it is
 given, its hook failing or its having one already, reports why as a
 fault and exits with code 1 without `Ready`.
 
+### The lock per application
+
+The listener and an application's outpost take one lock, the
+application's, around each UIA call that collides with the other's
+(`docs/design/focus-pipeline.md`, section 20; `verbatim_uia::lock` names
+the calls and the UIA defect they work around): a remote operation into
+the application, and a new connection to one of its windows by its
+handle. The supervisor makes the lock, an unnamed mutex, when it makes the
+application's first record, from whichever path (`Owner::hold_target`):
+with it, it holds the application's process open and reads its creation
+time. Its table of applications (`App`) keeps the process and the lock
+until it learns that the process has exited, through any retirement and
+every outpost failure, so a replacement, or the outpost started when the
+application returns, holds the same mutex. Each holder is given its own
+handle, with only the rights to wait and release:
+
+- the listener, in `SupervisorToOutpost::AppLock`, duplicated into its
+  process as the message is written; a listener, the first or a
+  replacement, is sent every live lock, Core's own included, as its launch
+  reports and ahead of every other command, and each new lock as it is
+  made. A process the supervisor gives no outpost, because it has exited
+  or cannot be opened, is answered with no lock and the creation time it
+  read, if any, which a reading thread takes as leave to read without one.
+  When the process exits, the listener is told `AppLockClosed`.
+- a spare, in `Assign`, duplicated into it as `Assign` is written; it sets
+  the lock as its process's before it installs its hook.
+- an outpost started for its application, Core's own included, by
+  inheritance: the supervisor makes a copy of the lock with the
+  restricted rights, has the launch inherit it with the pipes
+  (`ChildEnds::inherited`, inheritable for the `CreateProcessW` alone),
+  names it on the command line as `--app-lock <handle>:<created>`, and
+  closes it once the launch returns. The outpost sets it before its hook
+  goes in (`set_application_lock`).
+
+In the listener, the lock table (`app_locks::AppLocks`) keeps each lock as
+a reference-counted handle by process id and creation time. A reading
+thread opens its application's process as it starts, so its id is not
+reused while the thread serves it, and before each read takes the lock
+that names its process, the one it holds or the table's, waiting for it on
+the table's condition variable when it has not arrived; the wait is logged
+with its length, and the listener's shutdown ends it. A thread that cannot
+open its process reads without a lock. The thread's lock is its thread's
+(`set_thread_lock`), which the read's guarded calls take; its classic walk
+up into another application's window, as from the Settings page to its
+frame in `ApplicationFrameHost`, takes that application's lock for each
+step when the listener holds it (`FocusReader::lock_up_into`). The
+registrations take no lock and make no connection by handle: a scope of
+windows' subtrees is given as their elements (`Scope::Subtrees`).
+
 ## Public API
 
 ### The protocol
@@ -335,8 +384,14 @@ fault and exits with code 1 without `Ready`.
   `TextOp`, milestone M4's text protocol), `Cancel` (withdraws a query that
   has not started), `Ping`, `IdleQuery` (the harness's idle barrier's
   round, under "The idle barrier" below), `Shutdown` (shut down
-  cleanly and exit, under "Shutting down" below), and `Assign` (to a
-  spare: the application it watches from now on). `OutpostToSupervisor`:
+  cleanly and exit, under "Shutting down" below), `Assign` (to a
+  spare: the application it watches from now on, and its lock, a
+  `LockGrant` of a handle's value in the spare and the application's
+  creation time, under "The lock per application" above), and `AppLock`
+  and `AppLockClosed` (to the listener: an application's lock, or the
+  answer of no lock, and its process's exit). `LockGrant::ARG`,
+  `--app-lock`, names the lock an outpost started for its application
+  inherits. `OutpostToSupervisor`:
   `Ready` (the outpost has its application and its hook is in: the first
   message of an outpost started for an application, a spare's answer to
   `Assign`), `SpareReady` (a spare's first message: it waits for

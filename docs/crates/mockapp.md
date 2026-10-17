@@ -183,9 +183,22 @@ acknowledged `applied`), `hold` (the next
 provider call, whichever client makes it, prints `held <method>` on
 stdout as it begins and waits until `release`, so a test knows a client's
 call is in progress and decides when it ends; acknowledged `applied`),
-`release` (lets the held call go on; applied and acknowledged `applied` by
-the stdin thread itself, since the window thread is the one held), and
-`quit`.
+`hold-setup` (the window thread's next COM modal loop, the one UIA's
+one-time setup inside mockapp runs in when a client's first remote
+operation reaches it, prints `held modal-loop` and waits until `release`,
+dispatching only the messages other threads send; acknowledged `applied`
+when armed), `stall-after-focus-read <n>` (the `n`th read of a node's
+`HasKeyboardFocus` from now, once answered, stalls the window thread,
+which takes no message until `release`, printing `stall started` as it
+begins and `stall message arrived` once when the first message is posted
+or sent to it meanwhile; acknowledged `applied` when armed; the two holds
+are the lock tests' of `docs/design/focus-pipeline.md`, section 20.7),
+`menu-opened <id>` (raises UIA's `MenuOpened` event from the node, which
+the focus listener reads as a focus on it; an automation event, which UIA
+delivers on a desktop where no window has the keyboard focus, as it does
+not deliver a focus event; UIA-only), `release` (lets the held call, or
+either hold, go on; applied and acknowledged `applied` by the stdin thread
+itself, since the window thread is the one held), and `quit`.
 
 Every other command is acknowledged on stdout by the window thread once it
 has taken effect, events included: `applied`, or `rejected: <reason>` for a
@@ -566,10 +579,24 @@ with `UIA_E_TIMEOUT` after one `CALL_TIMEOUT` (five seconds, not UIA's
 default of twenty); a `FindFirst` search run on a `BoundedClient` is
 given up at its own one-second deadline, before any call timeout, its
 thread abandoned and waited for once the call is released; and a
-subscription moved onto the held window named three times, so that its
-move makes three calls each waiting out the call timeout, is abandoned and
-replaced when settled, once `MOVE_DEADLINE` has passed. (A move held at
-one call ends at the call timeout, within the deadline.)
+subscription moved onto the subtrees of three held windows, each of a
+mockapp of its own, their elements looked up before the holds, so that
+its move makes three registrations each waiting out the call timeout, is
+abandoned and replaced when settled, once `MOVE_DEADLINE` has passed. (A
+move held at one call ends at the call timeout, within the deadline.)
+`app_lock.rs` runs the real supervisor in the test process, which starts
+the test binary as its focus listener and mockapp's outposts, each taking
+mockapp's lock from the supervisor as `verbatim-outpost.exe` does and
+sending its lock's log to the test over a loopback connection
+(`docs/design/focus-pipeline.md`, section 20.7). The listener's remote
+operation reading a menu opening in mockapp is held, once in UIA's
+one-time setup (`hold-setup`) and once behind the busy window thread
+(`stall-after-focus-read 2`); the outpost the opening started is ended,
+and its replacement, which has seen none of mockapp's windows, is asked
+for mockapp's tree: its provider probe of the window, its only guarded
+call during the hold, waits for the lock and, once the hold is released,
+answers that the window has a provider, the tree is mockapp's own
+provider's, and the listener's read is reported once.
 `focus_reports.rs` runs a real outpost in the test process over
 `tests/fixtures/reuse.json` (two lists named alike, as a File Explorer
 folder and its subfolder), through `tests/common/outpost.rs`, the

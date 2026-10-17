@@ -251,3 +251,25 @@ read the agent log's `control tunnel closed` line first: this flake was
 seen once and never explained, and that line gives each direction's byte
 total and why it ended, telling a closed pipe from a stop and from an
 error.
+
+**A provider probe answers "no" after about three seconds, and the focus
+is read through MSAA, spoken as "pane", or announced twice.** The probe is
+`UiaHasServerSideProvider`, logged at debug by the listener and the
+outposts as `arbitration probed` with its `elapsed_ms`. UI Automation
+fails every new connection from one process to an application while a
+remote operation from another process waits to be evaluated there: the
+probe answers "no" after about 3,000 ms and `ElementFromHandle` returns
+UIA's window proxy after about 2,000 ms, without an error
+(`docs/design/focus-pipeline.md`, section 20.1). The listener's focus read
+is such an operation, and an outpost's first connection to a launching
+application such a connection, so they collided at first sight in about 3
+in 100 Windows Terminal launches and 1 in 25 Notepad openings. Verbatim
+now makes both under the application's lock (`verbatim_uia::lock`). A
+slow "no" that remains has another cause: a remote operation by other
+software, such as NVDA's, which no lock of Verbatim's covers; an
+operation of Verbatim's that timed out just before, whose request UIA
+still processes when the application wakes; or, for the Settings page's
+outpost, a connection to its frame in `ApplicationFrameHost`, whose lock
+the outpost does not hold (section 20.9). The lock's waits are logged at
+debug under `verbatim_uia::lock`, each with the call and how long it
+waited.

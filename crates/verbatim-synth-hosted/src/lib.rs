@@ -247,6 +247,7 @@ impl Host {
             ChildEnds {
                 commands: commands_end,
                 messages: messages_end,
+                inherited: Vec::new(),
             },
         )
         .map_err(unavailable)?;

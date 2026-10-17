@@ -491,7 +491,11 @@ fn launch_sync(role: &str, plan: Plan) -> io::Result<SyncChild> {
             log_stem: "relay-floor",
             memory_cap: None,
         },
-        ChildEnds { commands, messages },
+        ChildEnds {
+            commands,
+            messages,
+            inherited: Vec::new(),
+        },
     )?;
     Ok(SyncChild {
         process,
@@ -538,7 +542,11 @@ fn launch_overlapped(
             log_stem: "relay-floor",
             memory_cap: None,
         },
-        ChildEnds { commands, messages },
+        ChildEnds {
+            commands,
+            messages,
+            inherited: Vec::new(),
+        },
     )?;
     Ok(OverlappedChild {
         process,

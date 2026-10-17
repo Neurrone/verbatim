@@ -28,7 +28,7 @@ use verbatim_model::{CallCounts, NormalizedEvent, PropertyChange, StateSet};
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, UiaSnapshotFact};
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{
-    Cached, Fill, ListenerEvent, Live, Node, Part, Registration, Scope, Shape, Subscription, Uia,
+    Cached, Fill, ListenerEvent, Live, Node, Part, Registration, Shape, Subscription, Uia,
 };
 use verbatim_uia_rops::{ControlledQuery, Path, controlled_selection};
 use windows::Win32::System::Variant::VARIANT;
@@ -110,7 +110,7 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
                 let _ = selected_tx.send((element.read().name, element.runtime_id()));
             }),
         })],
-        Scope::Windows(vec![hwnd.0 as isize]),
+        common::window_subtree(hwnd.0 as isize),
     )
     .expect("Registration::with_parts");
 

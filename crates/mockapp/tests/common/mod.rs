@@ -241,6 +241,12 @@ impl MockApp {
             .unwrap_or_else(|error| panic!("mockapp did not take {line:?}: {error}"));
     }
 
+    /// The title its window was given.
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
     /// The child process id, for scoping a `WinEventHook` to this instance.
     #[must_use]
     pub fn pid(&self) -> u32 {
@@ -291,6 +297,20 @@ impl MockApp {
         self.send("release");
     }
 
+    /// Writes `line` to mockapp and returns at once, for a command whose
+    /// acknowledgements the test reads itself ([`Self::expect_line`]), such
+    /// as a stall's.
+    pub fn write(&mut self, line: &str) {
+        self.write_line(line);
+    }
+
+    /// Waits for mockapp's next line, which must be `expected`: the
+    /// evidence of a step of a hold or a stall (`crate::held` in mockapp).
+    pub fn expect_line(&self, expected: &str) {
+        let line = self.next_line(&format!("{expected:?}"), WAIT_TIMEOUT);
+        assert_eq!(line, expected, "mockapp's next line");
+    }
+
     /// The next line mockapp prints, waiting at most `timeout`.
     fn next_line(&self, what: &str, timeout: Duration) -> String {
         self.lines
@@ -328,6 +348,14 @@ pub fn spawn(fixture: &str, backend: &str, title: &str) -> MockApp {
 #[must_use]
 pub fn spawn_counting_registrations(fixture: &str, title: &str) -> MockApp {
     spawn_with(fixture, "uia", title, &["--count-registrations"])
+}
+
+/// [`spawn`], its window shown (`--show`): an application the focus
+/// listener's acceptance test can take a focus in, with its window made
+/// topmost ([`make_topmost`]).
+#[must_use]
+pub fn spawn_shown(fixture: &str, backend: &str, title: &str) -> MockApp {
+    spawn_with(fixture, backend, title, &["--show"])
 }
 
 fn spawn_with(fixture: &str, backend: &str, title: &str, extra: &[&str]) -> MockApp {
@@ -525,6 +553,18 @@ pub fn another_applications_window() -> HWND {
         )
     }
     .expect("a window of the test's own")
+}
+
+/// A registration's scope over the subtree of the window `hwnd`, whose
+/// element is looked up on this thread, as a registration's caller does
+/// (`verbatim_uia::Scope::Subtrees`).
+#[must_use]
+pub fn window_subtree(hwnd: isize) -> verbatim_uia::Scope {
+    let uia = verbatim_uia::Uia::new().expect("a UIA client");
+    let window = uia.window_live(hwnd).expect("the window's element");
+    verbatim_uia::Scope::Subtrees(vec![
+        windows::core::AgileReference::new(window.element()).expect("an agile reference"),
+    ])
 }
 
 /// The element mockapp reports as having the keyboard focus under its

@@ -753,7 +753,74 @@ pub enum SupervisorToOutpost {
     Assign {
         /// The application.
         target_pid: Pid,
+        /// The application's lock (`docs/design/focus-pipeline.md`, section
+        /// 20), duplicated into the spare as this is written, which the
+        /// spare sets as its process's before it installs its hook; `None`
+        /// when it could not be duplicated, and the spare's calls run
+        /// unguarded.
+        #[serde(default)]
+        lock: Option<LockGrant>,
     },
+    /// To the focus listener: `pid`'s lock (section 20.4), a handle to the
+    /// mutex duplicated into the listener's process as this is written, for
+    /// the process created at `created`; with no lock, the answer for a
+    /// process the supervisor gives no outpost, because it has exited or
+    /// cannot be opened, with the creation time it read, or none when it
+    /// could not open the process. A reading thread takes such an answer
+    /// as leave to read without a lock. Sent ahead of every other command,
+    /// and for each new lock as it is created.
+    AppLock {
+        /// The application.
+        pid: Pid,
+        /// Its process's creation time (`GetProcessTimes`), when read.
+        created: Option<u64>,
+        /// The handle's value in the listener's process.
+        lock: Option<u64>,
+    },
+    /// To the focus listener: `pid`'s process, created at `created`, has
+    /// exited, and its lock is closed in the supervisor: the listener's
+    /// table lets its reference go, while a thread still reading keeps its
+    /// own.
+    AppLockClosed {
+        /// The application.
+        pid: Pid,
+        /// Its process's creation time.
+        created: u64,
+    },
+}
+
+/// An application's lock as a process is given it
+/// (`docs/design/focus-pipeline.md`, section 20.4): the value of a handle
+/// to the mutex in the receiving process, which that process owns from
+/// then on, and the application's process creation time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LockGrant {
+    /// The handle's value in the receiving process.
+    pub handle: u64,
+    /// The application's process creation time (`GetProcessTimes`).
+    pub created: u64,
+}
+
+impl LockGrant {
+    /// The command-line argument an outpost started for its application
+    /// is given the lock it inherits by: `--app-lock <handle>:<created>`.
+    pub const ARG: &'static str = "--app-lock";
+
+    /// The argument's value.
+    #[must_use]
+    pub fn to_arg(self) -> String {
+        format!("{}:{}", self.handle, self.created)
+    }
+
+    /// The grant an `--app-lock` value names, `None` when it names none.
+    #[must_use]
+    pub fn parse_arg(value: &str) -> Option<Self> {
+        let (handle, created) = value.split_once(':')?;
+        Some(Self {
+            handle: handle.parse().ok()?,
+            created: created.parse().ok()?,
+        })
+    }
 }
 
 impl SupervisorToOutpost {

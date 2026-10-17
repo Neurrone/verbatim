@@ -1225,11 +1225,13 @@ impl Outpost {
             // `run_pipe` ends its loop on `Shutdown` and calls `shutdown`,
             // which takes the outpost, and handles `Assign`, which ends the
             // outpost when it fails; the hand-over's news of hooks is for
-            // the listener alone.
+            // the listener alone, as are the applications' locks.
             SupervisorToOutpost::Shutdown
             | SupervisorToOutpost::Assign { .. }
             | SupervisorToOutpost::HookInstalled { .. }
-            | SupervisorToOutpost::HookRemoved { .. } => {}
+            | SupervisorToOutpost::HookRemoved { .. }
+            | SupervisorToOutpost::AppLock { .. }
+            | SupervisorToOutpost::AppLockClosed { .. } => {}
             // Core queued a focus from another application after this one's.
             SupervisorToOutpost::FocusQueued { observed_at_ms, .. } => {
                 context.tracking().focus_queued_elsewhere(*observed_at_ms);
@@ -1482,13 +1484,22 @@ pub fn run_pipe(
         io.serve(&sender, |body| {
             match decode_message::<SupervisorToOutpost>(body)? {
                 SupervisorToOutpost::Shutdown => return Ok(Serving::Stop),
-                SupervisorToOutpost::Assign { target_pid } => match outpost.assign(target_pid.0) {
-                    Ok(()) => watch_target(&outpost.context),
-                    Err(error) => {
-                        unwatched = Some(error);
-                        return Ok(Serving::Stop);
+                SupervisorToOutpost::Assign { target_pid, lock } => {
+                    // The application's lock goes in before the hook, so no
+                    // event of the application reaches the outpost before it.
+                    if let Some(grant) = lock {
+                        // SAFETY: the supervisor duplicated this handle into
+                        // this process for the lock, once.
+                        unsafe { set_application_lock(target_pid, grant) };
                     }
-                },
+                    match outpost.assign(target_pid.0) {
+                        Ok(()) => watch_target(&outpost.context),
+                        Err(error) => {
+                            unwatched = Some(error);
+                            return Ok(Serving::Stop);
+                        }
+                    }
+                }
                 command => outpost.handle_command(&command),
             }
             Ok(Serving::Continue)
@@ -1511,6 +1522,37 @@ pub fn run_pipe(
     };
     outpost.shut_down(Some(&mut io));
     ended
+}
+
+/// Sets `grant`, the lock of the application `target_pid` that this
+/// process was given, as the process's lock, which every guarded UIA call
+/// of the outpost's takes (`verbatim_uia::lock`;
+/// `docs/design/focus-pipeline.md`, section 20.4). A grant whose handle
+/// cannot be taken is logged, and the outpost's calls run unguarded.
+///
+/// # Safety
+///
+/// `grant`'s handle must be one this process was given for the lock, owned
+/// by nothing else in it, and taken once.
+pub unsafe fn set_application_lock(target_pid: Pid, grant: crate::protocol::LockGrant) {
+    let taken = usize::try_from(grant.handle)
+        .map_err(io::Error::other)
+        // SAFETY: the caller's contract.
+        .and_then(|handle| unsafe { verbatim_uia::lock::take_given(handle) });
+    match taken {
+        Ok(mutex) => {
+            let lock =
+                verbatim_uia::lock::AppLock::new(target_pid.0, grant.created, Arc::new(mutex));
+            if verbatim_uia::lock::set_process_lock(lock).is_err() {
+                tracing::warn!(%target_pid, "the outpost has an application's lock already");
+            } else {
+                tracing::debug!(%target_pid, "the application's lock is set");
+            }
+        }
+        Err(error) => {
+            tracing::warn!(%target_pid, %error, "the application's lock could not be taken; UIA calls run unguarded");
+        }
+    }
 }
 
 /// Tells Core when the target application exits, from a thread of its own
