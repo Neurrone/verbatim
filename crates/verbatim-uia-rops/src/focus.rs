@@ -13,6 +13,7 @@ use windows::Win32::UI::Accessibility::{
     UIA_TabControlTypeId,
 };
 
+use verbatim_uia::lock::AppLock;
 use verbatim_uia::{
     Absent, Ancestor, Cached, Direction, ElementExt, Fill, FocusInput, LEFT_OUT_WHEN_UNSUPPORTED,
     Shape, Uia,
@@ -63,6 +64,17 @@ pub struct FocusQuery<'a> {
     /// when the focus is read, which the focus listener reports a focus
     /// with, as NVDA reads those afresh when it handles a focus event.
     pub refresh: bool,
+    /// For the classic walk, the lock of the application a step up from an
+    /// element reaches into, given the element's own window: `Some` when
+    /// that window's top-level window is another application's and the
+    /// caller holds that application's lock, as the focus listener holds
+    /// every application's (`docs/design/focus-pipeline.md`, section 20.3).
+    /// Asked for each element of the walk with a window of its own, the
+    /// focused element included, until it answers a lock, which that step
+    /// and every later one hold, since they are steps into or within the
+    /// other application. `None` takes no lock. The remote program does
+    /// not step out of its process and does not ask.
+    pub lock_up_from: Option<&'a dyn Fn(isize) -> Option<AppLock>>,
 }
 
 /// The answer to a [`FocusQuery`].
@@ -612,7 +624,8 @@ impl RemoteCache {
 /// pattern ([`Uia::selected`], as `Uia::selected_node` reads it), then one
 /// `GetParentElementBuildCache` round trip per ancestor over the raw view,
 /// the walk `Uia::ancestors` makes, every element filled by the query's
-/// fill's request. Stops where the remote program
+/// fill's request, the steps up into another application holding its
+/// lock ([`FocusQuery::lock_up_from`]). Stops where the remote program
 /// stops: at a known ancestor, at the depth limit, or below the desktop
 /// root; and at the query's deadline. The nearest window comes from the
 /// walked ancestors' caches, or, when the walk stopped before reaching
@@ -673,13 +686,31 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             .is_some_and(|deadline| Instant::now() >= deadline)
     };
     let mut current = live.clone();
+    let mut current_window = input.hwnd;
+    let mut step_lock: Option<AppLock> = None;
     let mut complete = false;
     loop {
         if out_of_time() {
             ancestry.out_of_time = true;
             break;
         }
-        let parent = match current.walk(&walker, Direction::Parent, request) {
+        // A step up into another application's window, as from the Settings
+        // page's content into its frame in `ApplicationFrameHost`, is
+        // exposed while a remote operation waits in that application
+        // (section 20.1), so it and every step after it hold that
+        // application's lock.
+        if step_lock.is_none()
+            && current_window != 0
+            && let Some(lock_up_from) = query.lock_up_from
+        {
+            step_lock = lock_up_from(current_window);
+        }
+        let step = || current.walk(&walker, Direction::Parent, request);
+        let stepped = match &step_lock {
+            Some(lock) => verbatim_uia::lock::guarded_by(lock, "a classic walk step up", step),
+            None => step(),
+        };
+        let parent = match stepped {
             Ok(parent) => parent,
             // A provider that did not answer in time has not said there is
             // no parent: the walk failed, and what it read is not the
@@ -700,8 +731,9 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             ancestry.depth_limited = true;
             break;
         }
+        current_window = parent.read().node.role.hwnd;
         if ancestry.window.is_none() {
-            ancestry.window = own_window(parent.read().node.role.hwnd);
+            ancestry.window = own_window(current_window);
         }
         current = parent.live().clone();
         ancestry.ancestors.push(parent);

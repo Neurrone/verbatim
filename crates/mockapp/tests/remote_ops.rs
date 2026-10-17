@@ -192,6 +192,7 @@ fn query<'a>(
         deadline: None,
         require_focus: true,
         refresh: false,
+        lock_up_from: None,
     }
 }
 
@@ -345,6 +346,50 @@ fn a_deep_chain_reads_the_same_both_ways() {
         let element = fixture.focus(id, name);
         both_agree(&fixture.uia, &query(&element, &[], &fixture.fill));
     }
+    fixture.app.quit();
+}
+
+/// The classic walk asks for the lock of each element with a window of its
+/// own, and holds the lock it is answered for that element's step up and
+/// every later one (`docs/design/focus-pipeline.md`, section 20.3): here
+/// the step from mockapp's window to the desktop root stands for the step
+/// from the Settings page's content up into its frame host.
+fn the_classic_walk_holds_the_lock_for_a_step_up_into_another_application() {
+    let mut fixture = Fixture::start("mockapp-rops-lock-up");
+    let deep = fixture.focus("deep", "Deep button");
+    let lock = verbatim_uia::lock::AppLock::new(
+        0,
+        0,
+        std::sync::Arc::new(verbatim_uia::lock::new_mutex().expect("a mutex")),
+    );
+    let asked = std::cell::RefCell::new(Vec::new());
+    let lock_up_from = |window: isize| {
+        asked.borrow_mut().push(window);
+        (window == fixture.hwnd).then(|| lock.clone())
+    };
+    let query = FocusQuery {
+        lock_up_from: Some(&lock_up_from),
+        ..query(&deep, &[], &fixture.fill)
+    };
+    let _ = verbatim_uia::calls::take_locks();
+    let ancestry = focused(focus_ancestry_classic(&fixture.uia, &query), "classic");
+    assert_eq!(
+        verbatim_uia::calls::take_locks(),
+        1,
+        "the lock is taken for the one step up from mockapp's window"
+    );
+    assert_eq!(*asked.borrow(), [fixture.hwnd], "the windows asked about");
+    assert_eq!(
+        names(&ancestry.ancestors),
+        [
+            "Inner group",
+            "Tools",
+            "Outer group",
+            "",
+            "Mockapp Ancestry Fixture"
+        ],
+        "the walk went on to the root after the step it held the lock for"
+    );
     fixture.app.quit();
 }
 
@@ -1113,6 +1158,10 @@ fn main() {
         (
             "a_deep_chain_reads_the_same_both_ways",
             a_deep_chain_reads_the_same_both_ways,
+        ),
+        (
+            "the_classic_walk_holds_the_lock_for_a_step_up_into_another_application",
+            the_classic_walk_holds_the_lock_for_a_step_up_into_another_application,
         ),
         (
             "a_remotely_read_element_without_validity_reads_valid_with_no_failed_read",

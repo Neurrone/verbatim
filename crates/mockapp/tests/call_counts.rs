@@ -1863,6 +1863,7 @@ fn uia_selected_children_cost_exactly() {
                     deadline: None,
                     require_focus: true,
                     refresh: false,
+                    lock_up_from: None,
                 },
                 true,
             )

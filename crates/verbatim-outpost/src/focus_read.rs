@@ -422,6 +422,14 @@ impl FocusReader {
         // theme decides which details are spoken. A request that cannot be
         // built is a read that failed.
         let input = sender.narrow::<FocusInput>();
+        // A classic walk's step up from a window inside another
+        // application's top-level window, as from the Settings page's
+        // content into its frame, holds that application's lock (section
+        // 20.3); a top-level window's step reaches the desktop root.
+        let lock_up_from = |window: isize| {
+            let top = top_level_of(window);
+            (top != window).then(|| self.lock_up_into(top)).flatten()
+        };
         let read = self
             .uia
             .request::<Ancestor>(Ancestor::all_on())
@@ -437,6 +445,7 @@ impl FocusReader {
                     deadline: Some(Instant::now() + READ_BUDGET),
                     require_focus: true,
                     refresh: true,
+                    lock_up_from: Some(&lock_up_from),
                 };
                 focus_ancestry(&self.uia, &query, remote)
             });

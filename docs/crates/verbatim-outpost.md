@@ -311,10 +311,13 @@ that names its process, the one it holds or the table's, waiting for it on
 the table's condition variable when it has not arrived; the wait is logged
 with its length, and the listener's shutdown ends it. A thread that cannot
 open its process reads without a lock. The thread's lock is its thread's
-(`set_thread_lock`), which the read's guarded calls take; its classic walk
-up into another application's window, as from the Settings page to its
-frame in `ApplicationFrameHost`, takes that application's lock for each
-step when the listener holds it (`FocusReader::lock_up_into`). The
+(`set_thread_lock`), which the read's guarded calls take; its classic
+walks up into another application's window, as from the Settings page to
+its frame in `ApplicationFrameHost`, the focus read's own
+(`FocusQuery::lock_up_from`) and the one that continues a remote read
+(`FocusReader::reach_the_top_level`), take that application's lock for
+each step into or within it when the listener holds it
+(`FocusReader::lock_up_into`). The
 registrations take no lock and make no connection by handle: a scope of
 windows' subtrees is given as their elements (`Scope::Subtrees`).
 
