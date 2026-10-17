@@ -17,8 +17,9 @@
 //! owner's that was hidden or cloaked then (an application kept in the
 //! notification area, a window on another virtual desktop) and is shown
 //! later is neither reported nor closed. The windows checked against it
-//! are the shown ones: visible, titled, unowned, and not cloaked, the
-//! windows every condition and close request of the agent judges by
+//! are the shown ones: visible, titled, and not cloaked, owned ones
+//! included, the windows every condition and close request of the agent
+//! judges by
 //! (`desktop::shown_top_level_windows`), so a window that is cloaked when
 //! it closes, as the Settings app keeps its closed window, has gone, as it
 //! has for [`desktop::close_windows`]. A window is identified by its

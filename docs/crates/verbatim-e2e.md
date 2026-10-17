@@ -80,7 +80,11 @@ every scenario, recorded or not, and recording changes nothing else:
    is that the taskbar skips a window it has not taken in yet); waits until
    every window that can be minimized is (cloaked windows, which are not
    shown, aside), and brings the desktop, Program Manager, to the
-   foreground, all through the agent and with no input injected.
+   foreground, all through the agent and with no input injected. It then
+   fails, naming the window, if any shown window other than the desktop,
+   owned windows such as a message box included, is not minimized: Show
+   Desktop does not minimize such a window, and it would take the
+   foreground whenever the window in front closed (`minimize_failure`).
 5. Starts the recording, when recording, and waits for ffmpeg to capture
    its first frame, then creates a named event through
    the agent, launches Verbatim with its name in `VERBATIM_READY_EVENT`,

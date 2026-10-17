@@ -1179,7 +1179,7 @@ impl Scenario {
         Ok(window)
     }
 
-    /// Every visible, titled, unowned top-level window, minimized and
+    /// Every visible, titled top-level window, owned, minimized, and
     /// cloaked ones included.
     ///
     /// # Errors
@@ -2869,11 +2869,18 @@ fn config_error(error: &verbatim_config::ConfigError) -> io::Error {
 /// The synthesizer every run selects.
 const ESPEAK_ID: &str = "espeak";
 
-/// `info` as one line: the foreground window, then the visible windows.
+/// The class of the desktop's window, Program Manager: the one window a
+/// scenario starts with shown and not minimized.
+const DESKTOP_CLASS: &str = "Progman";
+
 /// Why the start of a scenario, every window minimized and the desktop in
 /// front ([`AgentClient::minimize_all`]), did not happen: windows left
-/// restored, or a desktop that did not take the foreground, naming the
-/// window that kept it. `None` when both held.
+/// restored, a desktop that did not take the foreground, naming the window
+/// that kept it, or, once both held, a shown window other than the desktop
+/// that is not minimized, naming it. That last is a window Show Desktop
+/// does not minimize, such as a message box or another owned window,
+/// which takes the foreground whenever the window in front closes. `None`
+/// when every check held.
 fn minimize_failure(
     minimized: bool,
     desktop_in_front: bool,
@@ -2901,9 +2908,28 @@ fn minimize_failure(
             describe_foreground(desktop)
         ));
     }
+    let restored: Vec<String> = desktop
+        .windows
+        .iter()
+        .filter(|window| !window.cloaked && !window.minimized && window.class != DESKTOP_CLASS)
+        .map(|window| {
+            format!(
+                "{:?} of {} (pid {}, class {})",
+                window.title, window.image, window.pid, window.class
+            )
+        })
+        .collect();
+    if !restored.is_empty() {
+        return Some(format!(
+            "a window other than the desktop is still shown and not minimized, so it would take \
+             the foreground when a window in front closes: {}",
+            restored.join(", ")
+        ));
+    }
     None
 }
 
+/// `info` as one line: the foreground window, then the visible windows.
 fn describe_foreground(info: &ForegroundInfo) -> String {
     let describe = |window: &WindowInfo| {
         format!(
@@ -3053,6 +3079,38 @@ mod minimize_tests {
                 .expect("a failure")
                 .starts_with("not every window was minimized")
         );
+        assert_eq!(minimize_failure(true, true, &desktop), None);
+    }
+
+    /// A message box Show Desktop cannot minimize, as the paging-file one
+    /// GitHub's runner image shows at logon, fails the start, named; the
+    /// desktop, and windows that are minimized or cloaked, do not.
+    #[test]
+    fn a_shown_window_left_restored_besides_the_desktop_fails_the_start_naming_it() {
+        let mut desktop_window = window("Program Manager", "explorer.exe", 7644);
+        desktop_window.class = DESKTOP_CLASS.to_owned();
+        desktop_window.minimized = false;
+        let mut cloaked = window("Settings", "ApplicationFrameHost.exe", 4100);
+        cloaked.minimized = false;
+        cloaked.cloaked = true;
+        let mut message_box = window("System Properties", "SystemPropertiesPerformance.exe", 7692);
+        message_box.class = "#32770".to_owned();
+        message_box.minimized = false;
+        let terminal = window("verbatim-agent.exe", "WindowsTerminal.exe", 5564);
+        let mut desktop = ForegroundInfo {
+            foreground: Some(desktop_window.clone()),
+            windows: vec![terminal, cloaked, desktop_window, message_box],
+        };
+        assert_eq!(
+            minimize_failure(true, true, &desktop),
+            Some(
+                "a window other than the desktop is still shown and not minimized, so it would \
+                 take the foreground when a window in front closes: \"System Properties\" of \
+                 SystemPropertiesPerformance.exe (pid 7692, class #32770)"
+                    .to_owned()
+            )
+        );
+        desktop.windows.pop();
         assert_eq!(minimize_failure(true, true, &desktop), None);
     }
 }

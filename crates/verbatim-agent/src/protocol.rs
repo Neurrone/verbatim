@@ -46,10 +46,13 @@ use serde::{Deserialize, Serialize};
 /// [`Request::PressKey`] and [`Request::ReleaseKey`], so a key such as
 /// Control can be held while other keys are sent; version 17 added
 /// [`Request::SendKeysPaced`] and [`Request::TypeTextPaced`], for the
-/// measurement workloads' rate of key presses. A test run against an
-/// older agent is refused at `Hello` instead of losing its connection
-/// mid-run, or running without the exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 17;
+/// measurement workloads' rate of key presses; version 18 listed owned
+/// windows, such as a message box, in [`ForegroundInfo`] and judged them
+/// in every condition, so a scenario's starting state sees one left
+/// restored. A test run against an older agent is refused at `Hello`
+/// instead of losing its connection mid-run, or running without the
+/// exclusion.
+pub const AGENT_PROTOCOL_VERSION: u32 = 18;
 
 /// The environment variable that names, to the Verbatim under test, the
 /// processes it ignores entirely (`ignore_foreign_terminals` in
@@ -329,7 +332,7 @@ pub enum Request {
     RecordWindows,
     /// At a scenario's cleanup, after its own closing steps: waits up to
     /// `timeout_ms`, on window events, for every shown top-level window
-    /// (visible, titled, unowned, and not cloaked, as for
+    /// (visible, titled, and not cloaked, owned ones included, as for
     /// [`Request::CloseWindows`]) that is not in this connection's baseline
     /// to be gone, and reports those still shown, closing none. The
     /// baseline is forgotten when none is left; when some are, it is kept,
@@ -849,7 +852,8 @@ pub enum EventOutcome {
 pub struct ForegroundInfo {
     /// The foreground window, `None` when there is none.
     pub foreground: Option<WindowInfo>,
-    /// The visible, titled, unowned top-level windows, in Z order.
+    /// The visible, titled top-level windows, owned ones included, in Z
+    /// order.
     pub windows: Vec<WindowInfo>,
 }
 

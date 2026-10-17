@@ -28,9 +28,9 @@ use windows::Win32::System::Threading::{
     QueryFullProcessImageNameW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, FindWindowW, GW_OWNER, GWL_STYLE, GetClassNameW, GetForegroundWindow, GetWindow,
-    GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsHungAppWindow, IsIconic,
-    IsWindowVisible, PostMessageW, SMTO_ABORTIFHUNG, SW_MINIMIZE, SW_RESTORE, SendMessageTimeoutW,
+    EnumWindows, FindWindowW, GWL_STYLE, GetClassNameW, GetForegroundWindow, GetWindowLongPtrW,
+    GetWindowTextW, GetWindowThreadProcessId, IsHungAppWindow, IsIconic, IsWindowVisible,
+    PostMessageW, SMTO_ABORTIFHUNG, SW_MINIMIZE, SW_RESTORE, SendMessageTimeoutW,
     SetForegroundWindow, ShowWindow, ShowWindowAsync, WM_CLOSE, WM_COMMAND, WS_MINIMIZEBOX,
 };
 use windows::core::{BOOL, PWSTR, w};
@@ -38,8 +38,9 @@ use windows::core::{BOOL, PWSTR, w};
 use crate::protocol::{ForegroundInfo, WindowCondition, WindowInfo};
 use crate::wait;
 
-/// The foreground window and every visible, titled, unowned top-level
-/// window, each with its title, class, and image name.
+/// The foreground window and every visible, titled top-level window,
+/// owned ones such as dialogs included, each with its title, class, and
+/// image name.
 #[must_use]
 pub fn foreground_info() -> ForegroundInfo {
     // SAFETY: GetForegroundWindow has no preconditions.
@@ -353,17 +354,16 @@ pub(crate) fn shown_top_level_windows() -> Vec<HWND> {
         .collect()
 }
 
-/// The visible, titled, unowned top-level windows, in Z order.
+/// The visible, titled top-level windows, in Z order. Owned windows are
+/// included: a message box or dialog shown on its own, with its owner
+/// hidden, as the "System Properties" message box GitHub's runner image
+/// shows at logon is, would otherwise be on screen and in no report.
 fn top_level_windows() -> Vec<HWND> {
     all_top_level_windows()
         .into_iter()
         .filter(|&window| {
             // SAFETY: tolerates any handle.
-            let visible = unsafe { IsWindowVisible(window) }.as_bool();
-            // SAFETY: as above.
-            visible
-                && unsafe { GetWindow(window, GW_OWNER) }.is_err()
-                && !window_text(window).is_empty()
+            unsafe { IsWindowVisible(window) }.as_bool() && !window_text(window).is_empty()
         })
         .collect()
 }
@@ -533,8 +533,9 @@ mod tests {
         .expect("creates a window")
     }
 
-    /// The report lists exactly the visible, titled, unowned top-level
-    /// windows. The windows are made on a desktop of the test's own, which
+    /// The report lists exactly the visible, titled top-level windows,
+    /// owned ones included, in Z order, where an owned window is above its
+    /// owner. The windows are made on a desktop of the test's own, which
     /// holds nothing else and is never shown, so what is listed does not
     /// depend on the machine and the user's desktop is left alone.
     #[test]
@@ -557,7 +558,7 @@ mod tests {
         }
         .expect("creates a desktop");
         let handle = desktop.0 as usize;
-        let (info, listed) = thread::spawn(move || {
+        let (info, (listed, owned)) = thread::spawn(move || {
             // SAFETY: this new thread has no windows or hooks yet, and the
             // desktop stays open until the thread has ended.
             unsafe { SetThreadDesktop(HDESK(handle as *mut c_void)) }
@@ -570,18 +571,19 @@ mod tests {
             // SAFETY: a class with a valid window procedure and a static name.
             assert_ne!(unsafe { RegisterClassW(&raw const class) }, 0, "registers");
             let listed = make_window(w!("Listed"), WS_OVERLAPPEDWINDOW | WS_VISIBLE, None);
+            let owned = make_window(w!("Owned"), WS_POPUP | WS_VISIBLE, Some(listed));
             let windows = [
                 listed,
                 make_window(PCWSTR::null(), WS_OVERLAPPEDWINDOW | WS_VISIBLE, None),
                 make_window(w!("Hidden"), WS_OVERLAPPEDWINDOW, None),
-                make_window(w!("Owned"), WS_POPUP | WS_VISIBLE, Some(listed)),
+                owned,
             ];
             let info = foreground_info();
             for window in windows.into_iter().rev() {
                 // SAFETY: a window this thread made.
                 unsafe { DestroyWindow(window) }.expect("destroys the window");
             }
-            (info, listed.0 as u64)
+            (info, (listed.0 as u64, owned.0 as u64))
         })
         .join()
         .expect("the window thread ends");
@@ -598,16 +600,28 @@ mod tests {
             info,
             ForegroundInfo {
                 foreground: None,
-                windows: vec![WindowInfo {
-                    window: listed,
-                    pid: std::process::id(),
-                    title: "Listed".to_owned(),
-                    class: "VerbatimAgentDesktopTest".to_owned(),
-                    image,
-                    cloaked: false,
-                    minimized: false,
-                    hung: false,
-                }],
+                windows: vec![
+                    WindowInfo {
+                        window: owned,
+                        pid: std::process::id(),
+                        title: "Owned".to_owned(),
+                        class: "VerbatimAgentDesktopTest".to_owned(),
+                        image: image.clone(),
+                        cloaked: false,
+                        minimized: false,
+                        hung: false,
+                    },
+                    WindowInfo {
+                        window: listed,
+                        pid: std::process::id(),
+                        title: "Listed".to_owned(),
+                        class: "VerbatimAgentDesktopTest".to_owned(),
+                        image,
+                        cloaked: false,
+                        minimized: false,
+                        hung: false,
+                    },
+                ],
             }
         );
     }

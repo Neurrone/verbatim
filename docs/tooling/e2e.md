@@ -92,13 +92,23 @@ repeat=<n>`, the workflow runs only its `e2e` job, which runs that one
 scenario n times, each in its own test process, and uploads every run's
 copy from the history (below) as the `verbatim-e2e-history` artifact, so
 an intermittent failure on GitHub's runner can be measured without a push
-for each run.
+for each run. Before the suite, the job closes a message box the runner
+image shows at logon: image 20261007.264.1 shows "System Properties"
+(`SystemPropertiesPerformance.exe`, "Windows created a temporary paging
+file..."), which stays all run and takes the foreground when Verbatim's
+settings dialog closes. Closing it prepares the environment, as installing
+ffmpeg does; it is the image's dialog, not the harness's.
 
 Every scenario starts from the same desktop, recorded or not: the harness
 closes what an earlier run left (processes the agent launched, by their
 own handles; harness windows; Notepad's harness tabs, as tabs), minimizes
 every window as the taskbar's Show Desktop does, and brings the desktop
-forward, all without injecting input. It then asserts Verbatim's startup
+forward, all without injecting input. Every shown window other than the
+desktop, owned windows such as dialogs included, must then be minimized:
+a scenario fails at setup, naming the window, when one is not, because a
+window Show Desktop cannot minimize, such as a message box, takes the
+foreground whenever the window in front closes, and the scenario would
+fail later on what it announced instead. It then asserts Verbatim's startup
 speech and the desktop's announcement, which it reads independently
 through the agent. The run takes over the desktop while it lasts.
 

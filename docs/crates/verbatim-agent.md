@@ -82,9 +82,9 @@ Public API:
     never the scenario's, whatever its state, so a window of the owner's
     that was hidden or cloaked then and is shown later is neither reported
     nor closed. `WaitForNewWindowsGone`, at the scenario's cleanup, waits
-    on window events for every shown window (visible, titled, unowned, and
-    not cloaked, the windows every condition judges by, so the Settings
-    app's closed, cloaked window has gone) that is not in the baseline to
+    on window events for every shown window (visible, titled, and not
+    cloaked, owned ones included, the windows every condition judges by,
+    so the Settings app's closed, cloaked window has gone) that is not in the baseline to
     be gone, and answers `NewWindows` with those still shown, closing none.
     The baseline belongs to the connection that recorded it and lives in
     the agent, which outlives each test process. When that connection ends

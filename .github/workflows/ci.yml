@@ -143,6 +143,17 @@ jobs:
       # before the suite starts.
       - name: Download the pinned Windows Terminal
         run: cargo xtask windows-terminal
+      # Environment preparation, not a workaround in the harness: runner
+      # image 20261007.264.1 shows its own "System Properties" message box
+      # (SystemPropertiesPerformance.exe, "Windows created a temporary
+      # paging file...") at logon. It stays for the whole run, Show Desktop
+      # cannot minimize it, and it takes the foreground whenever the window
+      # in front closes, so it is closed before the suite. The suite's
+      # starting-state check fails, naming it, if such a window is left
+      # (docs/tooling/e2e.md).
+      - name: Close the runner image's paging-file message box
+        shell: pwsh
+        run: Get-Process SystemPropertiesPerformance -ErrorAction SilentlyContinue | Stop-Process
       # Every live test is #[ignore]d, so a plain `cargo test` lists it as
       # ignored rather than reporting a pass it never ran; this step runs
       # them with --ignored, and a missing agent fails them. The runner's
