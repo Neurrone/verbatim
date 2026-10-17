@@ -139,7 +139,12 @@ releasing it are two kernel calls on a mutex, which never wait on the
 application, and a connection's check of its window's provider process
 reads the window manager's own state. Each taking is counted per thread
 beside the calls (`verbatim_uia::calls::take_locks`), and the ratchet pins
-the takings of the steady-state UIA focus change.
+the takings of the steady-state UIA focus change. Measured before and
+after it (section 20.12): key-repeat latency in three lists unchanged
+(P50 within 1.2 ms, P95 within 0.4 ms), two waits in about 800 focuses,
+of 0.3 and 3.5 ms; at first sight, waits of a few milliseconds and the
+first held fact to `Ready` unchanged; idle wake-ups and processor time
+within the runs' own spread.
 
 UIA's connection and transaction timeouts are five seconds in every
 Verbatim process (`verbatim_uia::CALL_TIMEOUT`), set once by UIA's
@@ -392,6 +397,13 @@ verdict for the focus's window rather than asking the window again.
   its own copy of the element and the subscriptions' moves included.
 - Today, classic: 7 UIA calls: the same three checks before the read, and
   four for the classic read itself. 449 provider calls in all.
+- The application's lock (`verbatim_uia::lock`), taken around the calls
+  that collide, no call itself: with remote operations, three takings,
+  one in the listener, its `Execute`, the probe being answered from the
+  kept verdict, and two in the outpost, `focus_path::find`'s lookup of the
+  route's window and its remote operation; classic, one, the outpost's
+  lookup, its walk being steps from elements it holds. The ratchet pins
+  both (`uia_focus_changes_cost_exactly_remote` and `_classic`).
 - Target: the minimum, 4 for a windowless sender and 3 for a sender that
   is a window, which the remote path meets.
 
