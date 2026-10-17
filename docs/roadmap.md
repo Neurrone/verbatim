@@ -122,6 +122,22 @@ its measurements, with the corrections of
   The prototype also measures what holding a key costs and how often a
   key's effect is misjudged, the baseline the work order of 2026-10-10
   asked for.
+- The caret problems that share one cause, decided with the key-holding
+  question rather than fixed one by one (Dickson, 2026-10-17). NVDA keeps
+  no copy of the caret: its caret scripts read the caret from the
+  application when the key is pressed and wait for it to move from there.
+  Verbatim judges a key from Core's and the outpost's copies of the caret,
+  kept by events, so any caret change reported after the key leaves them
+  stale. Known cases: select then copy (Verbatim+F10) moves the caret but
+  neither Core nor the outpost records where, so a caret key pressed
+  before the application's report is judged from the caret before the
+  selection (Right speaks the character at the selection's end, Shift+Right
+  says the selection again; no test covers it); a say-all caret move the
+  application refuses still becomes Core's caret; and a selection reported
+  after the next key (Shift+Right followed at once by Right) leaves Core's
+  previous selection stale. The fix proposed for the first, deferred: the
+  outpost's reply to a select carries the caret it read after selecting,
+  and Core takes it as its caret.
 
 ### The audio step
 
