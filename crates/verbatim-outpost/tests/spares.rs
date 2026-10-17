@@ -762,6 +762,7 @@ fn a_start_takes_the_oldest_spare_and_its_replacement_starts_at_once() {
         clean: 6,
         exited: 0,
         killed: 0,
+        killed_on_failure: 0,
     });
     for application in [first, second] {
         end(application);
@@ -794,6 +795,7 @@ fn a_fact_that_may_not_start_an_outpost_or_an_ignored_processs_takes_no_spare() 
         clean: 5,
         exited: 0,
         killed: 0,
+        killed_on_failure: 0,
     });
     clear_env(FACTS);
     for application in [ignored, other, first] {
@@ -835,6 +837,7 @@ fn a_spare_that_dies_waiting_is_replaced() {
         clean: 5,
         exited: 1,
         killed: 0,
+        killed_on_failure: 0,
     });
     end(first);
 }
@@ -851,6 +854,7 @@ fn a_spare_that_misses_its_pings_while_it_waits_is_replaced() {
         clean: 5,
         exited: 0,
         killed: 0,
+        killed_on_failure: 0,
     });
     clear_env(MUTE_SPARE);
 }
@@ -882,6 +886,7 @@ fn a_spare_that_fails_after_it_is_given_hands_the_held_facts_to_the_next() {
         clean: 5,
         exited: 1,
         killed: 0,
+        killed_on_failure: 0,
     });
     clear_env(FACTS);
     failing.made(2).done();
@@ -926,6 +931,7 @@ fn a_round_that_asked_a_failed_spare_waits_for_the_next_incarnations_answer() {
         clean: 5,
         exited: 1,
         killed: 0,
+        killed_on_failure: 0,
     });
     failing.made(2).done();
     end(first);
@@ -960,6 +966,7 @@ fn an_outpost_that_crashes_after_its_ready_is_replaced_by_a_spare_at_once() {
         clean: 5,
         exited: 1,
         killed: 0,
+        killed_on_failure: 0,
     });
     clear_env(FACTS);
     end(first);
@@ -987,6 +994,7 @@ fn a_stuck_outpost_is_ended_and_replaced() {
         clean: 6,
         exited: 0,
         killed: 0,
+        killed_on_failure: 0,
     });
     failing.made(2).done();
     end(first);
@@ -1115,6 +1123,7 @@ fn a_queued_focus_is_told_to_the_outpost_it_supersedes_and_no_other() {
         clean: 6,
         exited: 0,
         killed: 0,
+        killed_on_failure: 0,
     });
     clear_env(FACTS);
     for application in [first, second] {
@@ -1151,6 +1160,7 @@ fn a_queued_focus_is_not_told_to_a_superseded_outpost_that_ended() {
         clean: 5,
         exited: 1,
         killed: 0,
+        killed_on_failure: 0,
     });
     clear_env(FACTS);
     end(first);
@@ -1211,6 +1221,7 @@ fn repeated_failures_are_spaced_by_the_backoff_until_a_foreground_change() {
         clean: 5,
         exited: 5,
         killed: 0,
+        killed_on_failure: 0,
     });
     clear_env(FACTS);
     end(first);
@@ -1241,6 +1252,7 @@ fn a_given_spare_whose_hook_fails_is_replaced() {
         clean: 5,
         exited: 1,
         killed: 0,
+        killed_on_failure: 0,
     });
     failing.made(2).done();
     end(first);
@@ -1264,6 +1276,7 @@ fn a_given_spare_whose_hook_fails_after_its_application_exited_ends_with_it() {
         clean: 4,
         exited: 1,
         killed: 0,
+        killed_on_failure: 0,
     });
     failing.made(1).done();
 }
@@ -1290,6 +1303,7 @@ fn a_given_spare_that_misses_its_pings_is_ended_as_killed() {
         clean: 6,
         exited: 0,
         killed: 0,
+        killed_on_failure: 0,
     });
     failing.made(2).done();
     end(first);

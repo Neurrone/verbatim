@@ -40,7 +40,7 @@ use std::{fs, io};
 
 use windows::Win32::Foundation::{
     GetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT, HANDLE_FLAGS, INVALID_HANDLE_VALUE,
-    SetHandleInformation, WAIT_OBJECT_0,
+    SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE,
@@ -80,6 +80,15 @@ pub struct ChildSpec<'a> {
 /// exception code such as `0xC0000005`).
 pub const KILLED_EXIT_CODE: u32 = 0x4B49_4C4C;
 
+/// How [`Contained::wait`] ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Waited {
+    /// The process exited.
+    Exited,
+    /// The time ran out with the process still running.
+    TimedOut,
+}
+
 /// A launched child: its job, which kills it when dropped.
 pub struct Contained {
     /// Held so the kernel kills the process when this handle closes. Every
@@ -104,14 +113,30 @@ impl Contained {
     }
 
     /// Waits up to `timeout` for the process to exit, and says whether it
-    /// has.
+    /// has: false when the time ran out or the wait failed.
     #[must_use]
     pub fn wait_for_exit(&self, timeout: std::time::Duration) -> bool {
+        matches!(self.wait(timeout), Ok(Waited::Exited))
+    }
+
+    /// Waits up to `timeout` for the process to exit, and says how the wait
+    /// ended.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error when the wait itself fails.
+    pub fn wait(&self, timeout: std::time::Duration) -> io::Result<Waited> {
         let milliseconds = overlapped::wait_milliseconds(timeout);
         // SAFETY: the process handle this value owns, open for its life.
         let state =
             unsafe { WaitForSingleObject(HANDLE(self.process.as_raw_handle()), milliseconds) };
-        state == WAIT_OBJECT_0
+        if state == WAIT_OBJECT_0 {
+            Ok(Waited::Exited)
+        } else if state == WAIT_TIMEOUT {
+            Ok(Waited::TimedOut)
+        } else {
+            Err(io::Error::last_os_error())
+        }
     }
 
     /// The process's exit code, once it has exited; `None` while it runs

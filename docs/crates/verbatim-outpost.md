@@ -777,7 +777,9 @@ fault and exits with code 1 without `Ready`.
   with a `ShutdownSummary`, how many of the children that ended during
   Verbatim's life, spares included, shut down cleanly, had already exited
   or exited with an
-  error, or had to be killed; `ensure_spawned(pid)` starts an outpost
+  error, were killed because their time limit passed, or were killed
+  because ending them cleanly failed (the wait for their exit failed, or
+  there was no thread to end them, or it panicked); `ensure_spawned(pid)` starts an outpost
   without asking it to report anything, giving it a spare when one waits
   (used at Core startup for Core's own pid, so its outpost is warm before
   the first gesture, and for a focus-now query of an application with
@@ -1830,7 +1832,9 @@ process for `SHUTDOWN_LIMIT`. A child that exits with code 0 shut down
 cleanly. One that has not exited by then is killed through its job
 (`Contained::kill`, with `verbatim_process::KILLED_EXIT_CODE`), and the
 kill is logged as a warning with why the child was being ended, and counted
-in the summary; so is an exit with another code. The end-to-end suite
+in the summary as `killed`; so is an exit with another code. A wait that
+fails, rather than running out, also ends in a kill, logged as an error
+and counted apart, as `killed_on_failure`. The end-to-end suite
 checks after every scenario that each outpost and the listener exited
 with code 0 before Verbatim did.
 
@@ -1896,8 +1900,10 @@ answers another client; and that a ping handed to the outpost while its
 worker is held in a call is answered with a pong at once.
 `crates/verbatim-outpost/tests/shutdown_fallback.rs`
 has a real supervisor launch a stand-in listener that never exits, and
-checks that it is killed once its time limit has passed and that the kill
-is reported in the shutdown's summary.
+checks that the shutdown's summary reports it killed because its time
+limit passed, not because the wait for its exit failed. It does not time
+the kill: the wait runs on the system timer tick and can return a few
+milliseconds before the limit.
 `crates/verbatim-outpost/tests/target_exit.rs` runs the real outpost
 binary against a stand-in application, which it ends, and checks that the
 outpost says `TargetExited` and, sent `Shutdown`, closes its pipe and

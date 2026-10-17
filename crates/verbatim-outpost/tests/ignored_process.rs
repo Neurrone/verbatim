@@ -209,6 +209,7 @@ fn an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere() {
             clean: 2,
             exited: 0,
             killed: 0,
+            killed_on_failure: 0,
         },
         "the listener and the other application's outpost shut down cleanly"
     );

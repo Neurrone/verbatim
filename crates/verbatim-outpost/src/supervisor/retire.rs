@@ -8,6 +8,8 @@
 
 use std::time::{Duration, Instant};
 
+use verbatim_process::Waited;
+
 use super::owner::Child;
 use super::writer::Outgoing;
 
@@ -42,6 +44,10 @@ pub(super) enum Ending {
     Exited(Option<u32>),
     /// It had not exited within the limit and was killed through its job.
     Killed,
+    /// It was killed through its job without its limit having passed: the
+    /// wait for its exit failed, or there was no thread to end it cleanly,
+    /// or that thread panicked.
+    KilledOnFailure,
 }
 
 /// Ends `child`: unless it has already exited, sends it the shutdown
@@ -63,7 +69,8 @@ pub(super) fn retire(child: Child, label: &str, why: &str, limit: Duration) -> E
     }
     let _ = writer.push(Outgoing::Shutdown);
     writer.close();
-    if contained.wait_for_exit(limit) {
+    let waited = contained.wait(limit);
+    if let Ok(Waited::Exited) = waited {
         let code = contained.exit_code();
         let elapsed_ms = started.elapsed().as_millis();
         if code == Some(0) {
@@ -73,17 +80,23 @@ pub(super) fn retire(child: Child, label: &str, why: &str, limit: Duration) -> E
         tracing::warn!(label, %process_id, why, elapsed_ms, ?code, "exited with an error while shutting down");
         return Ending::Exited(code);
     }
-    tracing::warn!(
-        label,
-        %process_id,
-        why,
-        limit_ms = limit.as_millis(),
-        "fell back to killing: it had not exited within the shutdown limit after the shutdown message, most likely still in a call into an application that does not answer"
-    );
+    let ending = if let Err(error) = waited {
+        tracing::error!(label, %process_id, why, %error, "killing it: the wait for its exit failed");
+        Ending::KilledOnFailure
+    } else {
+        tracing::warn!(
+            label,
+            %process_id,
+            why,
+            limit_ms = limit.as_millis(),
+            "fell back to killing: it had not exited within the shutdown limit after the shutdown message, most likely still in a call into an application that does not answer"
+        );
+        Ending::Killed
+    };
     if let Err(error) = contained.kill() {
         tracing::error!(label, %process_id, %error, "could not be killed; its job handle is closed instead");
     }
-    Ending::Killed
+    ending
 }
 
 /// How the children that ended during this Verbatim's life ended.
@@ -94,8 +107,13 @@ pub struct ShutdownSummary {
     /// Children that had already exited, or exited with an error, when
     /// they were ended.
     pub exited: usize,
-    /// Children that had to be killed: the fallback.
+    /// Children killed because they had not exited within their time
+    /// limit: the fallback.
     pub killed: usize,
+    /// Children killed without their time limit having passed, because
+    /// ending them cleanly failed: the wait for their exit failed, or
+    /// there was no thread to end them, or it panicked.
+    pub killed_on_failure: usize,
 }
 
 impl ShutdownSummary {
@@ -105,6 +123,7 @@ impl ShutdownSummary {
             Ending::Clean => self.clean += 1,
             Ending::Exited(_) => self.exited += 1,
             Ending::Killed => self.killed += 1,
+            Ending::KilledOnFailure => self.killed_on_failure += 1,
         }
     }
 }

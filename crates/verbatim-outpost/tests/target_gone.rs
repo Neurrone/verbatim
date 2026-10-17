@@ -176,6 +176,7 @@ fn an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited() 
             clean: 1,
             exited: 1,
             killed: 0,
+            killed_on_failure: 0,
         },
         "the listener shut down cleanly and the crashed outpost had exited"
     );
@@ -272,6 +273,7 @@ fn an_end_the_app_refuses_for_now_still_comes_before_its_replacement() {
             clean: 2,
             exited: 1,
             killed: 0,
+            killed_on_failure: 0,
         },
         "the listener and the replacement shut down cleanly and the crashed outpost had exited"
     );

@@ -1,7 +1,8 @@
 //! The supervisor's fallback: a child that does not exit within its time
 //! limit after the shutdown message is killed through its job, and the
-//! kill is reported in the shutdown's summary (and logged, with the
-//! reason).
+//! kill is reported in the shutdown's summary as one made because the
+//! limit passed, not because the wait for its exit failed (and logged,
+//! with the reason).
 //!
 //! The child is this test binary run again as a stand-in for the outpost
 //! binary, which the supervisor launches as its focus listener: it says it
@@ -12,7 +13,7 @@
 //! command line the supervisor gives it.
 
 use std::io::Write as _;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 
 use crossbeam_channel::unbounded;
@@ -81,7 +82,6 @@ fn a_child_that_does_not_exit_in_time_is_killed_and_the_kill_is_reported() {
         Ok(other) => panic!("the supervisor said {other:?} before the listener was ready"),
         Err(error) => panic!("the stand-in did not say it was ready: {error}"),
     }
-    let started = Instant::now();
     let summary = supervisor.shutdown();
     assert_eq!(
         summary,
@@ -89,13 +89,9 @@ fn a_child_that_does_not_exit_in_time_is_killed_and_the_kill_is_reported() {
             clean: 0,
             exited: 0,
             killed: 1,
+            killed_on_failure: 0,
         },
-        "the stand-in was killed, and the kill reported"
-    );
-    assert!(
-        started.elapsed() >= LIMIT,
-        "it was killed only once its time limit had passed, after {:?}",
-        started.elapsed()
+        "the stand-in was killed because its time limit passed, and the kill reported"
     );
 }
 

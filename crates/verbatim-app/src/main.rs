@@ -510,6 +510,7 @@ fn run(
             clean = summary.clean,
             exited = summary.exited,
             killed = summary.killed,
+            killed_on_failure = summary.killed_on_failure,
             "outposts and the focus listener have ended: how every one that ended while Verbatim ran ended"
         );
     } else {

@@ -487,6 +487,7 @@ fn a_frame_written_before_a_key_is_reduced_before_it_and_one_written_after_it_af
         clean: 2,
         exited: 0,
         killed: 0,
+        killed_on_failure: 0,
     });
     end(app);
 }
@@ -525,6 +526,7 @@ fn a_large_frame_delays_no_key_and_no_other_outposts_frame_and_its_outposts_next
         clean: 3,
         exited: 0,
         killed: 0,
+        killed_on_failure: 0,
     });
     end(first_app);
     end(second_app);
@@ -558,6 +560,7 @@ fn a_closed_pipe_reaches_the_app_after_every_frame_before_it() {
         clean: 2,
         exited: 1,
         killed: 0,
+        killed_on_failure: 0,
     });
     end(app);
 }
@@ -587,6 +590,7 @@ fn a_reducer_held_past_three_ping_intervals_ends_no_outpost_and_is_reported_as_i
         clean: 2,
         exited: 0,
         killed: 0,
+        killed_on_failure: 0,
     });
     end(app);
 }
@@ -618,6 +622,7 @@ fn while_the_reducer_is_held_the_relay_drains_every_frame_and_two_value_changes_
         clean: 2,
         exited: 0,
         killed: 0,
+        killed_on_failure: 0,
     });
     end(app);
 }
@@ -644,6 +649,7 @@ fn nothing_an_outpost_sent_after_a_frame_that_is_not_a_message_reaches_the_reduc
         clean: 3,
         exited: 0,
         killed: 0,
+        killed_on_failure: 0,
     });
     end(app);
 }
@@ -671,6 +677,7 @@ fn nothing_an_outpost_writes_after_the_supervisor_ended_it_reaches_the_reducer()
         clean: 3,
         exited: 0,
         killed: 0,
+        killed_on_failure: 0,
     });
     end(app);
 }

@@ -1812,7 +1812,7 @@ impl Owner {
                 // the report says as it drops.
                 let mut report = Retirement {
                     own_tx,
-                    ending: Ending::Killed,
+                    ending: Ending::KilledOnFailure,
                 };
                 report.ending = retire(child, &label, &why, limit);
             });
@@ -1822,7 +1822,7 @@ impl Owner {
             // handle, which killed it.
             Err(error) => {
                 tracing::error!(%error, "no thread to end a child cleanly; it was killed");
-                self.summary.count(Ending::Killed);
+                self.summary.count(Ending::KilledOnFailure);
             }
         }
     }
@@ -1893,6 +1893,7 @@ impl Owner {
             clean = summary.clean,
             exited = summary.exited,
             killed = summary.killed,
+            killed_on_failure = summary.killed_on_failure,
             "every outpost and the focus listener has ended"
         );
         if let Some(reply) = self.shutting_down.take() {

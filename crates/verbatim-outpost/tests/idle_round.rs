@@ -315,6 +315,7 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it() {
             clean: 4,
             exited: 0,
             killed: 0,
+            killed_on_failure: 0,
         },
         "both listeners and both outposts ended cleanly, the first listener once its pipe had closed"
     );
