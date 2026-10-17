@@ -134,6 +134,7 @@
 //! Verbatim's processes or drives Verbatim's own settings dialog, is marked
 //! [`Comparable::No`] with why, and compare mode refuses it.
 
+use std::fmt::Write as _;
 use std::io::{self, Write as _};
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Mutex, PoisonError};
@@ -1937,6 +1938,12 @@ fn run(def: &ScenarioDef) {
         )),
     }
     foreground.push(format!("after cleanup: {}", scenario.foreground_report()));
+    let optional_utterances: Vec<String> = scenario
+        .speech()
+        .optional_outcomes()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
     drop(scenario);
     if let Err(error) = write_foreground(&dir, &foreground) {
         problems.push(format!("could not write the foreground record: {error}"));
@@ -1944,8 +1951,10 @@ fn run(def: &ScenarioDef) {
 
     let passed = body_outcome.is_ok() && problems.is_empty();
     report_outpost_crashes(def.name, outpost_crashes.as_deref());
+    report_optional_utterances(def.name, &optional_utterances);
     let mut summary = ScenarioSummary::new(def.name, passed, latency.as_deref());
     summary.outpost_crashes = outpost_crashes;
+    summary.optional_utterances = optional_utterances;
     if let Err(error) = summary.write(&dir) {
         problems.push(format!("could not write the run summary: {error}"));
     }
@@ -2016,6 +2025,20 @@ fn report_outpost_crashes(name: &str, crashes: Option<&[OutpostCrash]>) {
         "scenario {name:?}: outpost crashes: {seen}; in this test run so far: {total} in {scenarios} scenario(s)\n"
     );
     let _ = io::stderr().write_all(line.as_bytes());
+}
+
+/// Writes one line to stderr for each optional utterance the scenario
+/// asserted (`crate::speech::optional`), saying what became of it: absent,
+/// heard in full, or cut off, and how many times when repeated, so a
+/// change in how often the application causes it stays visible. Like
+/// [`report_outpost_crashes`], it writes to the stderr handle itself, so
+/// the lines appear for a passing scenario too.
+fn report_optional_utterances(name: &str, outcomes: &[String]) {
+    let mut lines = String::new();
+    for outcome in outcomes {
+        let _ = writeln!(lines, "scenario {name:?}: optional utterance {outcome}");
+    }
+    let _ = io::stderr().write_all(lines.as_bytes());
 }
 
 /// How many latency timelines a scenario's summary is built from.

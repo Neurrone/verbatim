@@ -135,7 +135,21 @@ an utterance is named in its text.
   `STEP_TIMEOUT` (15 seconds, a bound on a hang).
 - `expect_sequence(expected)`: the same, with each ending given:
   `heard(text)` or `cut_off(text)`, for a step whose speech is
-  interrupted, such as the startup message.
+  interrupted, such as the startup message. An item may instead be an
+  optional utterance (`docs/testing.md`, "Optional utterances"):
+  `optional(text)` accepts, in its place, `text` heard in full, cut off,
+  or not said at all, and `optional_up_to(text, times)` the same up to
+  `times` times in a row. Nothing else is accepted in its place. An
+  optional utterance must be followed in the same sequence by an
+  utterance of other text said once, whose arrival shows that it was not
+  said; otherwise the assertion fails as a harness error. Where the same
+  text is expected once right after it, the run of that text is split
+  with the expected ones last, since a repeat cuts off the one before
+  it: `optional(t), heard(t), heard(u)` accepts `t u` and `t t u`, the
+  first `t` of two heard in full or cut off. What became of each
+  optional utterance, an `OptionalOutcome` (its text, the input its step
+  answers, and each time's ending, none when absent), is noted on the
+  timeline and kept in `optional_outcomes()`, which the registry reports.
 - `expect_within(texts, timeout)`: `expect` with a longer bound, for a
   terminal flood.
 - `expect_started(text)`: the next utterance is exactly `text` and its
@@ -150,11 +164,6 @@ an utterance is named in its text.
   naming `when`, not Verbatim's failure.
 - `take_until(until, timeout)` and `ending_of` hand over utterances whose
   text cannot be known before the step, for the caller to assert on.
-- `followed_before_end()`: whether speech was queued after the next
-  unmatched utterance before that utterance ended, read from the order of
-  the two frames in the speech stream, leaving the utterance for the
-  assertion that follows; `explorer_folder_window` uses it to decide
-  whether File Explorer's placeholder is expected cut off.
 - `expect_nothing_more(after_input)`: ends every scenario. The collector
   sends `AwaitIdle` on its own connection with the number of the last key
   the scenario injected; Verbatim answers once it has handled that input
@@ -251,9 +260,10 @@ inputs of two steps are never a repeated press for NVDA.
   stays open, and its texts and what NVDA queued are recorded with the
   next step's, as one unit whose input names both inputs, since NVDA's
   speech for a rapid double press cannot be told apart press by press.
-  `take_until`, `take_until_idle`, `take_all_queued` and
-  `followed_before_end` cannot keep their promises without Verbatim and
-  fail as a harness error.
+  `take_until`, `take_until_idle` and `take_all_queued` cannot keep their
+  promises without Verbatim and fail as a harness error. An optional
+  utterance is left out of the texts recorded, so NVDA's speech is
+  compared with what is always expected.
   `take_comparison` hands the steps to the registry.
 - The scenario. `Scenario::compare_with` does what `Scenario::launch_with`
   does up to opening the document, building and staging included, since
@@ -488,6 +498,15 @@ that scenario's crashes, and the running total of crashes and scenarios
 in this test process. The suite runs every scenario in one test process,
 so the last scenario's line holds the suite's total.
 
+Optional utterances are reported the same way, so a change in how often
+an application causes one stays visible: after every scenario the run
+writes one line to the stderr handle for each optional utterance the
+scenario asserted, such as `scenario "explorer_folder_window": optional
+utterance "Working on it..." after keys enter: cut off`, and records the
+same text in its summary as the field
+`ScenarioSummary::optional_utterances` (`optional_utterance:` lines),
+which `cargo xtask vm test` prints in its run summary.
+
 ### The user's Windows Terminal
 
 The suite runs on the owner's desktop, whose own Windows Terminal hosts
@@ -693,7 +712,13 @@ The groups:
   host's child. The shell writes its process id, which must exit at
   cleanup. Every body starts with `expect_prompt_read`, given the exact
   announcement: Windows Terminal names its text area with the tab's title
-  ("<title> terminal"), and the console host's has no name ("terminal"). `type_hearing(text, echo)` types one
+  ("<title> terminal"), and the console host's has no name ("terminal").
+  A Windows Terminal window's body uses
+  `expect_windows_terminal_prompt_read(state, repeats)` instead, which
+  builds that announcement with "<title> terminal" also an optional
+  utterance up to `repeats` times before the one heard in full
+  (`LAUNCH_REPEATS`, 1, as a window opens; `SECOND_WINDOW_REPEATS`, 2,
+  for a second window opened in the running Windows Terminal). `type_hearing(text, echo)` types one
   character at a time: with `Echo::Shown`, the echo is what the terminal
   shows, and a space at the end of a line cannot be told from padding
   until something follows it, so a space is typed with the next character

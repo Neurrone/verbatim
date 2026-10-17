@@ -26,18 +26,28 @@ Where a scenario exists for two targets, each target's scenario is its own code:
 
 ## Exact assertions
 
-- Speech is asserted as an exact sequence: every utterance in order, with its exact text, each heard in full, with nothing else in between and nothing after the last one. There is no substring matching, no "any of these", and no skipping of utterances that do not match.
+- Speech is asserted as an exact sequence: every utterance in order, with its exact text, each heard in full, with nothing else in between and nothing after the last one. There is no substring matching, no "any of these", and no skipping of utterances that do not match. The one allowance is an optional utterance, below, approved use by use.
 - Every utterance counts, an empty one and a sound played on its own included, and so does how it ended: heard in full, unless the step interrupts it, when the assertion says it was cut off. A step that interrupts speech first asserts that the utterance it interrupts has started to play.
 - Speech is never discarded unchecked. A scenario ends by asserting that nothing further was said: once Verbatim says it has handled the scenario's last input and is idle, nothing may have been queued that no assertion matched.
 - A scenario never moves on past speech it has not asserted. Injecting input while an utterance no assertion has matched is waiting is a harness error.
 - Startup speech is asserted at the start of every scenario, like any other speech.
 - One exception, decided by the owner: `rapid_tabbing_in_settings`, whose intent is the end state after a burst of focus changes. Which controls the burst passes through get announced depends on timing, as in NVDA, so that speech is asserted only to have been cut off, never heard in full; its text is not asserted. The burst ends on a different control from the one it started on, so its final announcement always comes; that announcement, everything after it, and the navigator are asserted exactly.
 - A second exception, decided by the owner (2026-10-15): the `*_control_flood` scenarios. Which bursts Verbatim reads a terminal flood in depends on timing, so the flood's speech before Control is asserted only by its first line, which must start to play, and its last line, which must be queued before Control is pressed; every utterance in between is taken unread. Its endings are asserted: in order, any heard in full before Control, then the rest cut off, the last line always among them. Everything after Control is asserted exactly.
-- A third exception, decided by the owner (2026-10-17): File Explorer's "Working on it..." placeholder in `explorer_folder_window`. Whether Explorer gives it the keyboard focus for a moment as a folder loads, and whether the next focus cuts it off, depend on how quickly the folder loads, so whether it is said, and whether it is cut off, are decided from the run's own evidence: when Core received a focus on the placeholder before the focus on the folder's item, "Working on it..." is expected immediately before the step's other speech, and otherwise it is expected absent. When it is said, it is expected cut off if the speech stream carries the next focus's speech before the placeholder's ending, and heard in full otherwise. Each run has one exact expectation; nothing else in the step is chosen this way.
 - A mismatch is reported with the expected and actual sequences, escaped, and the first utterance and character that differ.
 - Counts are exact numbers, not bounds. State is compared whole, not as a subset.
-- A test's expectation is fixed before it runs. It never reads Verbatim's answer to decide what to expect next, except as the third exception above says; when it needs the system's state, such as a lock key's, it reads that state independently first.
+- A test's expectation is fixed before it runs. It never reads Verbatim's answer to decide what to expect next; when it needs the system's state, such as a lock key's, it reads that state independently first.
 - Reducer tests assert every effect an input produces, not only the first.
+
+### Optional utterances
+
+Where an application's own timing decides whether some speech comes at all, or how many times, a scenario may declare an optional utterance at a fixed place in its expected sequence (decided by the owner, 2026-10-17). In that place the assertion accepts the utterance's exact text heard in full, cut off by later speech, or not said at all, and, where a repeat is declared, the same up to the declared number of times in a row. Nothing else may appear there: another text fails the assertion as any mismatch does, and there is no substring matching. Every other utterance in the sequence is asserted exactly.
+
+An optional utterance is only for speech whose presence or repetition the application's non-deterministic behaviour causes, never for a timing of Verbatim's own. Each use is approved by the owner and listed below with the reason. The run reports what became of each one: absent, heard in full, or cut off, and how many times when it was repeated. It is printed after the scenario, noted on its timeline, and written to its run summary, so a change in how often it comes stays visible.
+
+The approved uses:
+
+- File Explorer's "Working on it..." placeholder, after Enter in `explorer_folder_window`: as the subfolder loads, File Explorer gives the placeholder the keyboard focus for a moment or not, depending on how quickly the folder loads.
+- A Windows Terminal window's "<title> terminal", repeated before the one heard in full, as the window opens in every Windows Terminal scenario, up to once for a window opened on its own and up to twice for a second window opened in the running Windows Terminal: in some launches Windows Terminal raises the terminal's focus under a second runtime id besides the usual one, so the terminal is announced again.
 
 ## Waits are for evidence
 

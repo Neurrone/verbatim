@@ -353,8 +353,9 @@ fn print_scenario_list() {
 
 /// The one-line-per-scenario report `cargo xtask vm test` prints at the end
 /// of a multi-scenario run: pass or fail, how many of that scenario's
-/// latency timelines reached audio, when known, and its outpost crashes,
-/// each on a line of its own; then the run's total of outpost crashes.
+/// latency timelines reached audio, when known, its outpost crashes and
+/// what became of each optional utterance it asserted, each on a line of
+/// its own; then the run's total of outpost crashes.
 fn print_run_summary(results: &[(String, Option<ScenarioSummary>)]) {
     println!("xtask vm test: run summary");
     let mut crashes = 0;
@@ -390,6 +391,12 @@ fn print_run_summary(results: &[(String, Option<ScenarioSummary>)]) {
                 }
             }
             None => unknown += 1,
+        }
+        for outcome in summary
+            .iter()
+            .flat_map(|summary| &summary.optional_utterances)
+        {
+            println!("       optional utterance {outcome}");
         }
     }
     println!(

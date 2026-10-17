@@ -105,6 +105,11 @@ pub struct ScenarioSummary {
     /// when they could not be read. [`ScenarioSummary::new`] leaves it
     /// `None`; the run sets it once Verbatim has exited.
     pub outpost_crashes: Option<Vec<OutpostCrash>>,
+    /// What became of each optional utterance the run asserted, in order,
+    /// as [`crate::speech::OptionalOutcome`] displays it, such as
+    /// `"Working on it..." after keys enter: cut off`.
+    /// [`ScenarioSummary::new`] leaves it empty; the run sets it.
+    pub optional_utterances: Vec<String>,
 }
 
 /// One outpost (a `verbatim-outpost.exe` process, the focus listener
@@ -175,6 +180,7 @@ impl ScenarioSummary {
                     .max()
             }),
             outpost_crashes: None,
+            optional_utterances: Vec::new(),
         }
     }
 
@@ -225,6 +231,9 @@ impl ScenarioSummary {
             None => {
                 let _ = writeln!(text, "outpost_crashes: unknown");
             }
+        }
+        for outcome in &self.optional_utterances {
+            let _ = writeln!(text, "optional_utterance: {outcome}");
         }
         fs::write(dir.join(SUMMARY_FILE_NAME), text)
     }
@@ -515,6 +524,7 @@ fn parse_summary(text: &str) -> Option<ScenarioSummary> {
     let mut max_event_to_audio_ms = None;
     let mut outpost_crash_count: Option<Option<usize>> = None;
     let mut outpost_crashes = Vec::new();
+    let mut optional_utterances = Vec::new();
 
     for line in text.lines() {
         let (key, value) = line.split_once(": ")?;
@@ -541,6 +551,7 @@ fn parse_summary(text: &str) -> Option<ScenarioSummary> {
             "max_event_to_audio_ms" => max_event_to_audio_ms = parse_optional_u64(value),
             "outpost_crashes" => outpost_crash_count = Some(parse_optional_count(value)),
             "outpost_crash" => outpost_crashes.push(parse_outpost_crash(value)?),
+            "optional_utterance" => optional_utterances.push(value.to_owned()),
             _ => {}
         }
     }
@@ -564,6 +575,7 @@ fn parse_summary(text: &str) -> Option<ScenarioSummary> {
             Some(Some(_)) => return None,
             _ => None,
         },
+        optional_utterances,
     })
 }
 
@@ -757,6 +769,24 @@ mod tests {
             "outpost_crashes: 2\n",
             r"outpost_crash: pid 1234, code 0xC0000005, dump C:\artifacts\verbatim-outpost.exe.1234.dmp",
             "\noutpost_crash: pid 5678, code unknown, dump none\n",
+        )));
+        assert_eq!(ScenarioSummary::read(&dir).expect("reads it back"), summary);
+    }
+
+    #[test]
+    fn summary_round_trips_its_optional_utterances() {
+        let dir = temp_dir("round-trip-optional");
+        let mut summary = ScenarioSummary::new("explorer_folder_window", true, None);
+        summary.optional_utterances = vec![
+            "\"Working on it...\" after keys enter: cut off".to_owned(),
+            "\"Working on it...\" after keys enter: absent".to_owned(),
+        ];
+        summary.write(&dir).expect("writes the summary");
+
+        let text = fs::read_to_string(dir.join(SUMMARY_FILE_NAME)).expect("reads the file");
+        assert!(text.ends_with(concat!(
+            "optional_utterance: \"Working on it...\" after keys enter: cut off\n",
+            "optional_utterance: \"Working on it...\" after keys enter: absent\n",
         )));
         assert_eq!(ScenarioSummary::read(&dir).expect("reads it back"), summary);
     }

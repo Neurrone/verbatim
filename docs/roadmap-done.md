@@ -552,9 +552,8 @@ landed it.
   "Items View list" said before the item on Enter and Backspace, as NVDA
   says it, focus ancestors being compared by element id and by role and
   name only where ids cannot be compared, 57892230; the "Working on
-  it..." placeholder expected exactly when Core received its focus
-  (Dickson's decision, the testing standard's third exception),
-  5252f735; the early foreground event, a foreground window in front
+  it..." placeholder, now accepted as an optional utterance (the testing
+  standard's "Optional utterances"); the early foreground event, a foreground window in front
   now reported at once, shown or not, f5deada3; and the 3-second waits on
   a new Explorer window's provider probe, a UIA collision between
   processes, which the per-application lock below removes. The "pane"
