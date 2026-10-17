@@ -97,7 +97,7 @@ use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::io;
 use std::os::windows::io::OwnedHandle;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -155,6 +155,10 @@ struct Outgoing {
     ignored: IgnoredProcesses,
     /// Numbers the UIA focus events' markers.
     markers: AtomicU64,
+    /// Whether the desktop-wide UIA subscriptions have been installed, or
+    /// their installation has failed: until then every UIA event is dropped
+    /// ([`Self::uia_event_process`]).
+    uia_installed: AtomicBool,
     /// The clock the facts' stamps are read from.
     clock: Clock,
     /// The end of a menu or of the Alt+Tab switcher waiting for its grace.
@@ -519,6 +523,7 @@ impl Outgoing {
             sender,
             ignored,
             markers: AtomicU64::new(0),
+            uia_installed: AtomicBool::new(false),
             clock: Clock::default(),
             menu_end,
             grace,
@@ -562,6 +567,37 @@ impl Outgoing {
             (meta.trace, meta.observed_at_ms, meta.timing),
             None,
         );
+    }
+
+    /// Marks the desktop-wide UIA subscriptions as installed, or as failed:
+    /// UIA events are taken from then on.
+    fn uia_installation_ended(&self) {
+        self.uia_installed.store(true, Ordering::Release);
+    }
+
+    /// The process a UIA event from the process `process_id` is taken for,
+    /// or `None` when it is dropped: an event received before the
+    /// desktop-wide subscriptions were all installed, as NVDA's UIA
+    /// handlers ignore every event received before the handler's
+    /// initialization has finished, after its global handlers are
+    /// registered (`docs/design/focus-pipeline.md`, section 18). Such an
+    /// event is the focus UI Automation reports to a new focus
+    /// registration, which can be an element that only holds its own
+    /// framework's focus, such as the taskbar's Start button while the
+    /// desktop is in front; Verbatim's start asks the foreground
+    /// application's outpost for its focus instead, as NVDA sets its
+    /// initial focus when it took no focus event. An event with no
+    /// process, or from an ignored one, is dropped too.
+    fn uia_event_process(&self, process_id: Option<u32>) -> Option<Pid> {
+        if !self.uia_installed.load(Ordering::Acquire) {
+            tracing::debug!(
+                ?process_id,
+                "UIA event dropped: received before the listener's UIA subscriptions were installed"
+            );
+            return None;
+        }
+        let pid = process_id.filter(|&pid| pid != 0).map(Pid)?;
+        (!self.ignored.contains(pid)).then_some(pid)
     }
 
     /// A new marker's number.
@@ -819,6 +855,7 @@ impl Listener {
             focus_subscription(&outgoing, &readers),
             menu_subscription(&outgoing, &readers),
         );
+        outgoing.uia_installation_ended();
 
         let msaa_outgoing = Arc::clone(&outgoing);
         let idle_readers = Arc::clone(&readers);
@@ -1061,12 +1098,9 @@ fn queue_for_reading(
     kind: FocusEvent,
     fact: Option<DeliveredFact>,
 ) {
-    let Some(pid) = fields.process_id.filter(|&pid| pid != 0).map(Pid) else {
+    let Some(pid) = outgoing.uia_event_process(fields.process_id) else {
         return;
     };
-    if outgoing.ignored.contains(pid) {
-        return;
-    }
     let focus_window = focus_window_for(pid, fields.role.hwnd);
     let meta = Meta {
         marker: outgoing.next_marker(),
@@ -1693,6 +1727,14 @@ mod tests {
             panic!("one fact is sent, the other process's: {sent:?}");
         };
         assert_eq!(fact.pid, Pid(5));
+    }
+
+    #[test]
+    fn a_uia_event_received_before_the_subscriptions_are_installed_is_dropped() {
+        let (outgoing, _reader) = outgoing();
+        assert_eq!(outgoing.uia_event_process(Some(5)), None);
+        outgoing.uia_installation_ended();
+        assert_eq!(outgoing.uia_event_process(Some(5)), Some(Pid(5)));
     }
 
     #[test]
