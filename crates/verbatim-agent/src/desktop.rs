@@ -28,10 +28,11 @@ use windows::Win32::System::Threading::{
     QueryFullProcessImageNameW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, FindWindowW, GWL_STYLE, GetClassNameW, GetForegroundWindow, GetWindowLongPtrW,
-    GetWindowTextW, GetWindowThreadProcessId, IsHungAppWindow, IsIconic, IsWindowVisible,
-    PostMessageW, SMTO_ABORTIFHUNG, SW_MINIMIZE, SW_RESTORE, SendMessageTimeoutW,
-    SetForegroundWindow, ShowWindow, ShowWindowAsync, WM_CLOSE, WM_COMMAND, WS_MINIMIZEBOX,
+    EnumWindows, FindWindowW, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetForegroundWindow,
+    GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsHungAppWindow, IsIconic,
+    IsWindowVisible, PostMessageW, SMTO_ABORTIFHUNG, SW_MINIMIZE, SW_RESTORE, SendMessageTimeoutW,
+    SetForegroundWindow, ShowWindow, ShowWindowAsync, WM_CLOSE, WM_COMMAND, WS_EX_NOACTIVATE,
+    WS_MINIMIZEBOX,
 };
 use windows::core::{BOOL, PWSTR, w};
 
@@ -299,6 +300,14 @@ fn minimizable(window: HWND) -> bool {
     u32::try_from(style).is_ok_and(|style| style & WS_MINIMIZEBOX.0 != 0)
 }
 
+/// Whether `window` has the `WS_EX_NOACTIVATE` style, so Windows never
+/// brings it to the foreground.
+fn no_activate(window: HWND) -> bool {
+    // SAFETY: reads a window's extended style; 0 for an invalid handle.
+    let style = unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) };
+    u32::try_from(style).is_ok_and(|style| style & WS_EX_NOACTIVATE.0 != 0)
+}
+
 /// Whether `window` is cloaked: kept by the window manager but not shown,
 /// as a suspended app's window is.
 fn is_cloaked(window: HWND) -> bool {
@@ -338,6 +347,7 @@ pub(crate) fn window_info(window: HWND) -> WindowInfo {
         minimized: is_minimized(window),
         // SAFETY: tolerates any handle.
         hung: unsafe { IsHungAppWindow(window) }.as_bool(),
+        no_activate: no_activate(window),
     }
 }
 
@@ -610,6 +620,7 @@ mod tests {
                         cloaked: false,
                         minimized: false,
                         hung: false,
+                        no_activate: false,
                     },
                     WindowInfo {
                         window: listed,
@@ -620,6 +631,7 @@ mod tests {
                         cloaked: false,
                         minimized: false,
                         hung: false,
+                        no_activate: false,
                     },
                 ],
             }

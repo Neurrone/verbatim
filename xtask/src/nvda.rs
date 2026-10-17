@@ -983,6 +983,7 @@ mod tests {
             cloaked: false,
             minimized: false,
             hung,
+            no_activate: false,
         }
     }
 

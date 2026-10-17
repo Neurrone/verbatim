@@ -85,6 +85,8 @@ every scenario, recorded or not, and recording changes nothing else:
    owned windows such as a message box included, is not minimized: Show
    Desktop does not minimize such a window, and it would take the
    foreground whenever the window in front closed (`minimize_failure`).
+   A window with `WS_EX_NOACTIVATE`, such as the Widgets board's, never
+   takes the foreground, so it passes.
 5. Starts the recording, when recording, and waits for ffmpeg to capture
    its first frame, then creates a named event through
    the agent, launches Verbatim with its name in `VERBATIM_READY_EVENT`,

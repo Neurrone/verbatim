@@ -2877,10 +2877,12 @@ const DESKTOP_CLASS: &str = "Progman";
 /// front ([`AgentClient::minimize_all`]), did not happen: windows left
 /// restored, a desktop that did not take the foreground, naming the window
 /// that kept it, or, once both held, a shown window other than the desktop
-/// that is not minimized, naming it. That last is a window Show Desktop
-/// does not minimize, such as a message box or another owned window,
-/// which takes the foreground whenever the window in front closes. `None`
-/// when every check held.
+/// that is not minimized and can be activated, naming it. That last is a
+/// window Show Desktop does not minimize, such as a message box or another
+/// owned window, which takes the foreground whenever the window in front
+/// closes. A window with `WS_EX_NOACTIVATE` never does, so it passes, as
+/// Windows 11's Widgets board's window does when Windows shows it on its
+/// own. `None` when every check held.
 fn minimize_failure(
     minimized: bool,
     desktop_in_front: bool,
@@ -2911,7 +2913,12 @@ fn minimize_failure(
     let restored: Vec<String> = desktop
         .windows
         .iter()
-        .filter(|window| !window.cloaked && !window.minimized && window.class != DESKTOP_CLASS)
+        .filter(|window| {
+            !window.cloaked
+                && !window.minimized
+                && !window.no_activate
+                && window.class != DESKTOP_CLASS
+        })
         .map(|window| {
             format!(
                 "{:?} of {} (pid {}, class {})",
@@ -2933,13 +2940,18 @@ fn minimize_failure(
 fn describe_foreground(info: &ForegroundInfo) -> String {
     let describe = |window: &WindowInfo| {
         format!(
-            "{:?} ({} pid {}, class {}{}{})",
+            "{:?} ({} pid {}, class {}{}{}{})",
             window.title,
             window.image,
             window.pid,
             window.class,
             if window.cloaked { ", cloaked" } else { "" },
-            if window.minimized { ", minimized" } else { "" }
+            if window.minimized { ", minimized" } else { "" },
+            if window.no_activate {
+                ", no-activate"
+            } else {
+                ""
+            }
         )
     };
     let foreground = info
@@ -3054,6 +3066,7 @@ mod minimize_tests {
             cloaked: false,
             minimized: true,
             hung: false,
+            no_activate: false,
         }
     }
 
@@ -3084,7 +3097,8 @@ mod minimize_tests {
 
     /// A message box Show Desktop cannot minimize, as the paging-file one
     /// GitHub's runner image shows at logon, fails the start, named; the
-    /// desktop, and windows that are minimized or cloaked, do not.
+    /// desktop, windows that are minimized or cloaked, and a window Windows
+    /// never activates, as the Widgets board's, do not.
     #[test]
     fn a_shown_window_left_restored_besides_the_desktop_fails_the_start_naming_it() {
         let mut desktop_window = window("Program Manager", "explorer.exe", 7644);
@@ -3097,9 +3111,13 @@ mod minimize_tests {
         message_box.class = "#32770".to_owned();
         message_box.minimized = false;
         let terminal = window("verbatim-agent.exe", "WindowsTerminal.exe", 5564);
+        let mut widgets = window("Widgets", "msedgewebview2.exe", 13720);
+        widgets.class = "Chrome_WidgetWin_1".to_owned();
+        widgets.minimized = false;
+        widgets.no_activate = true;
         let mut desktop = ForegroundInfo {
             foreground: Some(desktop_window.clone()),
-            windows: vec![terminal, cloaked, desktop_window, message_box],
+            windows: vec![terminal, cloaked, widgets, desktop_window, message_box],
         };
         assert_eq!(
             minimize_failure(true, true, &desktop),

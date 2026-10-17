@@ -108,7 +108,11 @@ desktop, owned windows such as dialogs included, must then be minimized:
 a scenario fails at setup, naming the window, when one is not, because a
 window Show Desktop cannot minimize, such as a message box, takes the
 foreground whenever the window in front closes, and the scenario would
-fail later on what it announced instead. It then asserts Verbatim's startup
+fail later on what it announced instead. A window with the
+`WS_EX_NOACTIVATE` style is the exception, since Windows never brings it to
+the foreground: Windows 11 shows its Widgets board's window ("Widgets", of
+`msedgewebview2.exe`) on its own, with no input from the harness, and it
+stays shown for many minutes. It then asserts Verbatim's startup
 speech and the desktop's announcement, which it reads independently
 through the agent. The run takes over the desktop while it lasts.
 

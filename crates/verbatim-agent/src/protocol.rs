@@ -49,10 +49,12 @@ use serde::{Deserialize, Serialize};
 /// measurement workloads' rate of key presses; version 18 listed owned
 /// windows, such as a message box, in [`ForegroundInfo`] and judged them
 /// in every condition, so a scenario's starting state sees one left
-/// restored. A test run against an older agent is refused at `Hello`
+/// restored; version 19 added [`WindowInfo::no_activate`], so that check
+/// passes over a window Windows never brings to the foreground. A test
+/// run against an older agent is refused at `Hello`
 /// instead of losing its connection mid-run, or running without the
 /// exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 18;
+pub const AGENT_PROTOCOL_VERSION: u32 = 19;
 
 /// The environment variable that names, to the Verbatim under test, the
 /// processes it ignores entirely (`ignore_foreign_terminals` in
@@ -734,6 +736,10 @@ pub struct SessionInfo {
 
 /// A top-level window, as [`ForegroundInfo`] reports it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is an independent fact about the window"
+)]
 pub struct WindowInfo {
     /// The window's handle, for [`Request::SetForeground`].
     pub window: u64,
@@ -756,6 +762,12 @@ pub struct WindowInfo {
     /// are finally read, or when it closes.
     #[serde(default)]
     pub hung: bool,
+    /// Whether the window has the `WS_EX_NOACTIVATE` style, so Windows
+    /// never brings it to the foreground, neither when it is clicked nor
+    /// when the window in front is minimized or closed, as Windows 11's
+    /// Widgets board's window has.
+    #[serde(default)]
+    pub no_activate: bool,
 }
 
 /// What [`Request::WaitForWindow`] waits for. Titles are matched as
@@ -1029,6 +1041,7 @@ mod tests {
             cloaked: false,
             minimized: false,
             hung: false,
+            no_activate: false,
         };
         let messages = [
             Frame::Reply {

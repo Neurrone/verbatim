@@ -42,7 +42,7 @@ Public API:
     `ProcessStatus`.
   - The desktop: `ForegroundInfo` (the foreground window and the visible
     top-level windows, each with its handle, owning pid, title, class,
-    program, whether it is cloaked or minimized, and whether Windows judges it not responding, `hung`), `SetForeground`
+    program, whether it is cloaked or minimized, whether Windows judges it not responding, `hung`, and whether it has `WS_EX_NOACTIVATE`, so Windows never brings it to the foreground, `no_activate`), `SetForeground`
     (restoring a window from minimized, minimizing it first when it is
     restored and not in front, then `SetForegroundWindow`, injecting no
     input, so it works whatever input came last, and answering whether the
