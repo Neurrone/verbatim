@@ -77,12 +77,10 @@ pub(crate) fn lowered_limits(settings: &mut Settings) {
 /// The announcement as a terminal of this scenario takes the focus with
 /// nothing written yet, asserted with the first prompt.
 fn opened(scenario: &mut Scenario, state: &ScenarioState, windows_terminal: bool) {
-    let title = terminal::title(state).to_owned();
-    let window = format!("{title} window");
-    let named = format!("{title} terminal");
     if windows_terminal {
-        terminal::expect_prompt_read(scenario, state, &[&window, &named, "blank"]);
+        terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
     } else {
+        let window = format!("{} window", terminal::title(state));
         // The console host's text area has no name.
         terminal::expect_prompt_read(scenario, state, &[&window, "terminal", "blank"]);
     }

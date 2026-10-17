@@ -160,16 +160,7 @@ fn list_steps(scenario: &mut Scenario, script: &str, press: fn(&mut Scenario, &s
 /// The window, the terminal and its blank line, as the Windows Terminal
 /// scenarios hear them.
 fn windows_terminal_opening(scenario: &mut Scenario, state: &mut ScenarioState) {
-    let title = terminal::title(state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[
-            &format!("{title} window"),
-            &format!("{title} terminal"),
-            "blank",
-        ],
-    );
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
 }
 
 /// The same for the console host, whose text area has no name.

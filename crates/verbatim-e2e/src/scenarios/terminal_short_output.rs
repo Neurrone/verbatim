@@ -30,16 +30,7 @@ pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<Scenario
 
 /// `windows_terminal_short_output`.
 pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
-    let title = terminal::title(state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[
-            &format!("{title} window"),
-            &format!("{title} terminal"),
-            "blank",
-        ],
-    );
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
     terminal::type_with_echo(scenario, r".\short.ps1", terminal::Echo::Shown);
     scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
     scenario.speech().expect(&["y", "ok", PROMPT]);

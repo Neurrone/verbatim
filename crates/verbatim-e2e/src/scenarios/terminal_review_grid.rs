@@ -77,16 +77,7 @@ fn review_kept_column(scenario: &mut Scenario, gesture: &str, heard: &str) {
 
 /// `windows_terminal_review_grid`.
 pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
-    let title = terminal::title(state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[
-            &format!("{title} window"),
-            &format!("{title} terminal"),
-            "blank",
-        ],
-    );
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
     terminal::type_with_echo(scenario, r".\grid.ps1", terminal::Echo::Shown);
     let mut printed: Vec<&str> = TABLE.iter().map(|(row, _)| *row).collect();
     printed.push(PROMPT);

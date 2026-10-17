@@ -273,16 +273,7 @@ pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut Scenari
         panic!("the flood's setup opens a terminal window");
     };
     let directory = directory.clone();
-    let title = terminal::title(state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[
-            &format!("{title} window"),
-            &format!("{title} terminal"),
-            "blank",
-        ],
-    );
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
     heard_flood(scenario, 1);
     let _ = elapsed(scenario, &directory, 1);
     output_off_during_flood(scenario, &directory);

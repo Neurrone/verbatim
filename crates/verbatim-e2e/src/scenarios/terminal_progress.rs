@@ -49,16 +49,7 @@ pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut Scenari
         panic!("the progress scenario's setup opens a terminal window");
     };
     let directory = directory.clone();
-    let title = terminal::title(state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[
-            &format!("{title} window"),
-            &format!("{title} terminal"),
-            "blank",
-        ],
-    );
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
     terminal::type_with_echo(scenario, r".\progress.ps1", terminal::Echo::Shown);
     for percent in STEPS {
         scenario

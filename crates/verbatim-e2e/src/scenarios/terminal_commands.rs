@@ -87,16 +87,7 @@ fn type_password_character(scenario: &mut Scenario, character: &str, heard: &[&s
 
 /// `windows_terminal_commands`.
 pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
-    let title = terminal::title(state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[
-            &format!("{title} window"),
-            &format!("{title} terminal"),
-            "blank",
-        ],
-    );
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
     windows_terminal_steps(scenario);
 }
 
@@ -142,16 +133,7 @@ pub(crate) fn body_spoken_password_windows_terminal(
     scenario: &mut Scenario,
     state: &mut ScenarioState,
 ) {
-    let title = terminal::title(state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[
-            &format!("{title} window"),
-            &format!("{title} terminal"),
-            "blank",
-        ],
-    );
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
     terminal::type_with_echo(scenario, "echo hello", Echo::Typed);
     scenario.speech().expect(&["hello", PROMPT]);
     terminal::type_with_echo(scenario, r".\password.ps1", Echo::Typed);

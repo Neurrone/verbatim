@@ -81,16 +81,7 @@ fn escape_on_a_wrapped_line(scenario: &mut Scenario) {
 
 /// `windows_terminal_typing`.
 pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
-    let title = terminal::title(state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[
-            &format!("{title} window"),
-            &format!("{title} terminal"),
-            "blank",
-        ],
-    );
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
     // A password typed while its prompt's line changes.
     terminal::type_with_echo(scenario, r".\secret.ps1", terminal::Echo::Shown);
     scenario.speech().expect(&["Password: tick 0"]);

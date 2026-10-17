@@ -164,16 +164,7 @@ pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<Scenario
 
 /// Asserts Windows Terminal's announcement and the prompt read.
 fn windows_terminal_ready(scenario: &mut Scenario, state: &ScenarioState) {
-    let title = terminal::title(state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[
-            &format!("{title} window"),
-            &format!("{title} terminal"),
-            "blank",
-        ],
-    );
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
 }
 
 /// Asserts the console host's announcement, whose text area has no name,

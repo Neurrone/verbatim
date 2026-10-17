@@ -76,32 +76,17 @@ fn long_line(n: u32) -> String {
     )
 }
 
-/// The announcement as a terminal of this scenario takes the focus with
-/// nothing written yet: Windows Terminal's names its terminal for its tab,
-/// the console host's drops the name, and both say "blank" for the empty
-/// line.
-fn opening(title: &str, windows_terminal: bool) -> Vec<String> {
-    if windows_terminal {
-        vec![
-            format!("{title} window"),
-            format!("{title} terminal"),
-            "blank".to_owned(),
-        ]
-    } else {
-        vec![
-            format!("{title} window"),
-            "terminal".to_owned(),
-            "blank".to_owned(),
-        ]
-    }
-}
-
-/// Asserts the opening announcement and the first prompt.
+/// Asserts the announcement as a terminal of this scenario takes the focus
+/// with nothing written yet, and the first prompt: Windows Terminal's
+/// names its terminal for its tab, the console host's drops the name, and
+/// both say "blank" for the empty line.
 fn opened(scenario: &mut Scenario, state: &ScenarioState, windows_terminal: bool) {
-    let title = terminal::title(state).to_owned();
-    let opening = opening(&title, windows_terminal);
-    let opening: Vec<&str> = opening.iter().map(String::as_str).collect();
-    terminal::expect_prompt_read(scenario, state, &opening);
+    if windows_terminal {
+        terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
+    } else {
+        let window = format!("{} window", terminal::title(state));
+        terminal::expect_prompt_read(scenario, state, &[&window, "terminal", "blank"]);
+    }
 }
 
 /// The folder of the scenario's shell.

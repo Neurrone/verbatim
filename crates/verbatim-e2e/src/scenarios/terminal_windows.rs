@@ -255,26 +255,14 @@ pub(crate) fn body_leave_console_host(scenario: &mut Scenario, state: &mut Scena
 pub(crate) fn body_leave_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
     let first = terminal::title(state).to_owned();
     let directory = directory(state);
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[
-            &format!("{first} window"),
-            &format!("{first} terminal"),
-            "blank",
-        ],
-    );
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
     let second_state = terminal::open_windows_terminal_window(scenario, "leave-b", state)
         .expect("opens a second Windows Terminal window");
     let second = terminal::title(&second_state).to_owned();
-    terminal::expect_prompt_read(
+    terminal::expect_windows_terminal_prompt_read(
         scenario,
         &second_state,
-        &[
-            &format!("{second} window"),
-            &format!("{second} terminal"),
-            "blank",
-        ],
+        terminal::SECOND_WINDOW_REPEATS,
     );
     scenario
         .bring_window_forward(&first)
@@ -307,15 +295,7 @@ pub(crate) fn body_leave_windows_terminal(scenario: &mut Scenario, state: &mut S
 /// Control+Shift+W.
 pub(crate) fn body_close_tab(scenario: &mut Scenario, state: &mut ScenarioState) {
     let first = terminal::title(state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[
-            &format!("{first} window"),
-            &format!("{first} terminal"),
-            "blank",
-        ],
-    );
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
     let second_state = terminal::open_windows_terminal_tab(scenario, "close-tab-two", state)
         .expect("opens a second tab");
     let second = terminal::title(&second_state).to_owned();
@@ -372,26 +352,14 @@ pub(crate) fn body_two_console_host(scenario: &mut Scenario, state: &mut Scenari
 /// `windows_terminal_two_windows`.
 pub(crate) fn body_two_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
     let first = terminal::title(state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[
-            &format!("{first} window"),
-            &format!("{first} terminal"),
-            "blank",
-        ],
-    );
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
     let second_state = terminal::open_windows_terminal_window(scenario, "two-b", state)
         .expect("opens a second Windows Terminal window");
     let second = terminal::title(&second_state).to_owned();
-    terminal::expect_prompt_read(
+    terminal::expect_windows_terminal_prompt_read(
         scenario,
         &second_state,
-        &[
-            &format!("{second} window"),
-            &format!("{second} terminal"),
-            "blank",
-        ],
+        terminal::SECOND_WINDOW_REPEATS,
     );
     scenario
         .bring_window_forward(&first)
@@ -440,15 +408,7 @@ fn switch_tab(scenario: &mut Scenario, key: &str, title: &str, position: u32) {
 /// `windows_terminal_tabs`: a second tab is opened in the window.
 pub(crate) fn body_tabs(scenario: &mut Scenario, state: &mut ScenarioState) {
     let first = terminal::title(state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[
-            &format!("{first} window"),
-            &format!("{first} terminal"),
-            "blank",
-        ],
-    );
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
     let second_state = terminal::open_windows_terminal_tab(scenario, "tabs-two", state)
         .expect("opens a second tab");
     let second = terminal::title(&second_state).to_owned();

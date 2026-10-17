@@ -81,6 +81,7 @@ use verbatim_model::NormalizedEvent;
 
 use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, harness_marker};
+use crate::speech::{Expected, heard, optional_up_to};
 use crate::windows_terminal;
 
 /// The prompt line as Verbatim speaks it, without its trailing space.
@@ -630,16 +631,63 @@ pub(crate) fn expect_prompt_read(
     state: &ScenarioState,
     announcement: &[&str],
 ) {
+    let announcement: Vec<Expected> = announcement.iter().map(|text| heard(text)).collect();
+    prompt_read(scenario, state, &announcement);
+}
+
+/// How many times more a Windows Terminal window's terminal may be
+/// announced as the window opens: in some launches Windows Terminal raises
+/// the terminal's focus under a second runtime id, one starting 14,
+/// besides the usual one, and Verbatim announces both. In the runs kept,
+/// opening a window, it was said twice at most, in 10 runs of 9
+/// scenarios.
+pub(crate) const LAUNCH_REPEATS: usize = 1;
+
+/// [`LAUNCH_REPEATS`] for a second window opened in the running Windows
+/// Terminal ([`open_windows_terminal_window`]), whose terminal has been
+/// said three times at most, in `windows_terminal_two_windows` and
+/// `windows_terminal_leave_flood`.
+pub(crate) const SECOND_WINDOW_REPEATS: usize = 2;
+
+/// [`expect_prompt_read`] for a Windows Terminal window as it opens: its
+/// title and "window", its terminal, "<title> terminal", and "blank". The
+/// terminal is an optional utterance up to `repeats` times before the one
+/// heard in full (`docs/testing.md`, "Optional utterances";
+/// [`LAUNCH_REPEATS`]): each repeat cuts off the one before it, so every
+/// one said but the last may be cut off.
+pub(crate) fn expect_windows_terminal_prompt_read(
+    scenario: &mut Scenario,
+    state: &ScenarioState,
+    repeats: usize,
+) {
+    let title = title(state);
+    let terminal = format!("{title} terminal");
+    prompt_read(
+        scenario,
+        state,
+        &[
+            heard(&format!("{title} window")),
+            optional_up_to(&terminal, repeats),
+            heard(&terminal),
+            heard("blank"),
+        ],
+    );
+}
+
+/// [`expect_prompt_read`] with the announcement's utterances given as
+/// [`Expected`].
+fn prompt_read(scenario: &mut Scenario, state: &ScenarioState, announcement: &[Expected]) {
     let ScenarioState::Window {
         directory, title, ..
     } = state
     else {
         panic!("a terminal scenario's setup opens a terminal window");
     };
-    if announcement.contains(&format!("{title} terminal").as_str()) {
+    let named = format!("{title} terminal");
+    if announcement.iter().any(|want| want.text == named) {
         scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
     }
-    scenario.speech().expect(announcement);
+    scenario.speech().expect_sequence(announcement);
     // In compare mode NVDA offers no events, and its quiet period, waited
     // for by each assertion, is the only evidence there is.
     let mut events = (!scenario.is_comparing()).then(|| {

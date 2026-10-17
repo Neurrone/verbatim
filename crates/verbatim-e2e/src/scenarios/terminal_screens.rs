@@ -151,16 +151,7 @@ fn full_screen_steps(scenario: &mut Scenario) {
 
 /// `windows_terminal_long_lines`.
 pub(crate) fn body_long_lines_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
-    let title = terminal::title(state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[
-            &format!("{title} window"),
-            &format!("{title} terminal"),
-            "blank",
-        ],
-    );
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
     long_line_steps(scenario);
 }
 
@@ -181,16 +172,7 @@ pub(crate) fn body_full_screen_windows_terminal(
     scenario: &mut Scenario,
     state: &mut ScenarioState,
 ) {
-    let title = terminal::title(state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[
-            &format!("{title} window"),
-            &format!("{title} terminal"),
-            "blank",
-        ],
-    );
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
     full_screen_steps(scenario);
 }
 
