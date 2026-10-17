@@ -547,6 +547,32 @@ landed it.
   capture record); and NVDA's handling of a menu opening on the current
   focus ported ([focus pipeline](design/focus-pipeline.md), section 18),
   3137408e; 2026-10-17.
+- The File Explorer evidence pass on the new pipeline, with NVDA
+  captures, 30 local runs and GitHub's runs, 2026-10-17. Its items:
+  "Items View list" said before the item on Enter and Backspace, as NVDA
+  says it, focus ancestors being compared by element id and by role and
+  name only where ids cannot be compared, 57892230; the "Working on
+  it..." placeholder expected exactly when Core received its focus
+  (Dickson's decision, the testing standard's third exception),
+  5252f735; the early foreground event, a foreground window in front
+  now reported at once, shown or not, f5deada3; and the 3-second waits on
+  a new Explorer window's provider probe, a UIA collision between
+  processes, which the per-application lock below removes. The "pane"
+  announcement and the file-list focus 10 seconds late did not recur in
+  the pass's runs. The "e2e-stage - File Explorer" window was found to be
+  an open Explorer window retitled when its folder is deleted; closing it
+  by handle is an M4.1 follow-up.
+- UIA events the listener receives before its subscriptions are
+  installed are dropped, as NVDA drops them: 4008991b, 2026-10-17.
+- A lock per application around the UIA calls that collide between
+  processes ([focus pipeline](design/focus-pipeline.md), section 20):
+  14017eb1, with its measurements af302d90 and the frame host's lock for
+  the classic walk's step up c3c89540, 2026-10-17.
+- Say-all's caret move taken as the caret a later key starts from:
+  2ec69da9 and 8a9a0c18, 2026-10-17.
+- The harness's console host launched without the foreground right,
+  99ac8d36; the runner image's paging-file dialog closed and owned windows
+  checked at each scenario's start, 6623deff; 2026-10-17.
 
 ### The communication migration
 

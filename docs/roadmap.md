@@ -33,38 +33,21 @@ so far".
 Exit: Notepad editing and Terminal sessions are solid; terminal flood E2E
 shows bounded latency and no hang.
 
-M4 ends when the items in the three groups below land; the rest of the
+M4 ends when the items in the two groups below land; the rest of the
 open work found during M4 is scheduled in the milestones that follow. A
 Deferred list closes the section with items that are not M4's.
 
 What has landed is in [Completed milestones](roadmap-done.md), "M4,
-completed so far". The open work follows in three groups, each one session (Dickson,
-2026-10-15): the focus pipeline with its File Explorer evidence pass,
-the terminal redesign with the key-holding question, and the audio
-step; within a group, the items are in the order they are done
+completed so far". The open work was planned as three groups, each one
+session (Dickson, 2026-10-15). The first, the focus pipeline with its
+File Explorer evidence pass, landed on 2026-10-17, and its follow-ups are
+in M4.1. Two groups remain: the terminal redesign with the key-holding
+question, and the audio step; within a group, the items are in the order they are done
 (Dickson, 2026-10-10 and 2026-10-13). Each item is one change,
 checked with `cargo xtask ci` and its related scenarios ten times, with the
 full suite where every scenario is affected. A change in what is heard goes
 to Dickson first; while he is away, it follows NVDA where NVDA is clear,
 recorded as provisional.
-
-### The focus pipeline
-
-The design of record is [the focus pipeline](design/focus-pipeline.md)
-(section 12, the design adopted and built as of 8fe59b1b).
-
-- A fresh File Explorer evidence pass on the new pipeline: NVDA
-  captures and Verbatim logs with raw event timings, ten runs locally, ten
-  in the VM and on GitHub. Dickson then decides what Explorer should say.
-  The open Explorer items it covers: the "Working on it..." placeholder
-  that fails `explorer_folder_window` on GitHub (run 37974580973); the
-  early foreground event; a file-list focus once 10 seconds late; the
-  "e2e-stage - File Explorer" window of unknown origin; a 3-second wait
-  behind an MSAA focus; the 3 seconds `UiaHasServerSideProvider` took on
-  a new File Explorer window (2026-10-10), checked against fixed recordings; and the folder window announced with
-  "pane" where NVDA says "Items View list" (2 of 29 openings on
-  2026-10-12), from a UIA focus on the items view's DirectUIHWND element
-  that neither NVDA nor a bare UIA client received.
 
 ### The terminal redesign
 
@@ -220,6 +203,36 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   `explorer_folder_window` placeholder (80 of 83 passed). Root-cause each
   from the run logs (`gh run view <id> --log-failed`) rather than from a
   local run, since neither reproduces here.
+
+- The focus pipeline's follow-ups (2026-10-17):
+  - `conhost_two_windows` fails about 1 run in 20: the outpost's
+    `UiaHasServerSideProvider` on a console window created moments
+    earlier answers no after about 3 seconds while the console host is
+    still starting. The per-application lock is not the cause (1 failure
+    in 20 runs with it, 2 in 20 without); the cause is unknown. Evidence
+    is in `target/e2e-evidence/focus-followups/`.
+  - Windows Terminal's terminal is occasionally said twice: the listener
+    sometimes receives a focus event under the terminal's second runtime
+    id, the one starting 14, before the usual one, and both pass NVDA's
+    checks, while NVDA receives only one (it said "terminal" once in 40
+    of 40 openings). It has been seen only in full-suite runs, 2 of about
+    115. The suspected cause is the other UI Automation clients in
+    Verbatim's processes, such as the spare outposts, changing how events
+    are delivered. Count the receipts in a full-suite run and, if seen,
+    compare a run with the spares off. No drop rule specific to Windows
+    Terminal is added.
+  - An outpost's own ancestor and navigation walks into a frame host take
+    no lock ([focus pipeline](design/focus-pipeline.md), section 20.9).
+  - One UIA focus event reached the listener 5 seconds late in a console
+    host run on 2026-10-17; watch for it again.
+  - File Explorer's cleanup closes the windows it opened by their
+    original title, but an open Explorer window whose folder is deleted is
+    retitled ("e2e-stage - File Explorer", the origin of that window), so
+    it must be closed by its handle.
+  - The trace tool's symbol lookup for ARM64X images, such as ntdll,
+    needs a follow-up.
+  - `line_key_flood` once read a half-written line on GitHub's runner;
+    repeat it there.
 
 Exit: a week of Dickson's daily use without a crash or a stall, and the
 full suite ten times clean.
