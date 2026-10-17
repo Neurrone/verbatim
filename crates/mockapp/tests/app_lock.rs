@@ -8,12 +8,12 @@
 //! connection from another process to the application fails without an
 //! error: the provider probe answers "no" after about three seconds, and
 //! the element lookup returns UIA's window proxy. In each test the
-//! listener's remote operation that reads mockapp's focus is held there,
-//! once in UIA's one-time setup inside mockapp (`hold-setup`) and once
-//! behind its busy UI thread (`stall-after-focus-read`, after the
+//! listener's remote operation that reads mockapp's focus is held there
+//! behind mockapp's busy UI thread (`stall-after-focus-read`, after the
 //! listener's plain read of the focus, as Windows Terminal's busy thread
-//! held it), and an outpost then connects to mockapp's window by its
-//! handle: the provider probe of a new outpost, which has seen none of
+//! held it): once its first, which UIA's one-time setup inside mockapp
+//! waits for, as at an application's launch, and once a later one. An
+//! outpost then connects to mockapp's window by its handle: the provider probe of a new outpost, which has seen none of
 //! mockapp's windows, reading mockapp's tree. The probe must wait for
 //! mockapp's lock, which the listener holds in its remote operation, and
 //! answer "yes" once the hold is released, so the outpost reads mockapp's
@@ -248,6 +248,15 @@ impl Logs {
             .filter_map(|(_, line)| LockLine::parse(line))
             .filter(|line| line.pid == pid)
             .collect()
+    }
+
+    /// Every line the children have logged so far, by role, for a failure
+    /// message.
+    fn logged(&self) -> String {
+        while let Ok(line) = self.lines.try_recv() {
+            self.seen.borrow_mut().push(line);
+        }
+        format!("the children logged {:#?}", self.seen.borrow())
     }
 }
 
@@ -576,23 +585,29 @@ fn connect_during_the_hold(
 }
 
 /// The listener's first remote operation into mockapp, the read of its
-/// first focus, is held in UIA's one-time setup there; a new outpost's
+/// first focus, which sets UIA up there, waits behind mockapp's busy UI
+/// thread, which stopped taking messages once it answered the listener's
+/// plain read of the focus, as at an application's launch; a new outpost's
 /// probe of mockapp's window waits for mockapp's lock, its only guarded
-/// call during the hold, and answers "yes" once the hold ends.
-fn a_probe_waits_for_an_operation_held_in_uias_setup() {
+/// call during the stall, and answers "yes" once the thread is free.
+fn a_probe_waits_for_the_first_operation_behind_a_busy_ui_thread() {
     let logs = Logs::listen();
-    let title = common::unique_title("mockapp-lock-setup");
+    let title = common::unique_title("mockapp-lock-first");
     let mut app = common::spawn_shown("tree.json", "uia", &title);
     let hwnd = common::find_window(&title);
     common::make_topmost(hwnd);
     let pid = Pid(app.pid());
-    app.send("hold-setup");
     let run = Run::start();
 
+    // The second read of its keyboard focus from now: the first fills the
+    // menu opening's cache as UIA delivers it to the listener, the second
+    // is the listener's plain read before its first remote operation.
+    app.send("stall-after-focus-read 2");
     app.send("set-focus root");
     app.send("menu-opened root");
     let first = run.expect_given(pid);
-    app.expect_line("held modal-loop");
+    app.expect_line("stall started", || logs.logged());
+    app.expect_line("stall message arrived", || logs.logged());
     let _ = logs.wait_for("listener", pid.0, executes);
     connect_during_the_hold(
         run,
@@ -635,8 +650,8 @@ fn a_probe_waits_for_an_operation_behind_a_busy_ui_thread() {
     app.send("stall-after-focus-read 2");
     app.send("set-focus btn_ok");
     app.send("menu-opened btn_ok");
-    app.expect_line("stall started");
-    app.expect_line("stall message arrived");
+    app.expect_line("stall started", || logs.logged());
+    app.expect_line("stall message arrived", || logs.logged());
     connect_during_the_hold(run, (&logs, &mut app), (first, pid, hwnd.0 as isize), "OK");
     app.quit();
 }
@@ -648,8 +663,8 @@ fn main() {
     }
     harness::run_isolated(&[
         (
-            "a_probe_waits_for_an_operation_held_in_uias_setup",
-            a_probe_waits_for_an_operation_held_in_uias_setup,
+            "a_probe_waits_for_the_first_operation_behind_a_busy_ui_thread",
+            a_probe_waits_for_the_first_operation_behind_a_busy_ui_thread,
         ),
         (
             "a_probe_waits_for_an_operation_behind_a_busy_ui_thread",

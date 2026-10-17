@@ -258,7 +258,6 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         | Command::SlowPatterns(_)
         | Command::RefuseText(_)
         | Command::Hold
-        | Command::HoldSetup
         | Command::StallAfterFocusRead(_)
         | Command::Release
         | Command::Quit

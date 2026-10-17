@@ -8,8 +8,7 @@
 //! `notify <text>`,
 //! `active-text-position <id> <start> <end>`, `take-runtime-id <id> <from>`,
 //! `stall <ms> [<at> <command>]`, `on-activate <command>`, `slow <ms>`, `hold`,
-//! `hold-setup`, `stall-after-focus-read <n>`, `menu-opened <id>`, `release`,
-//! and `quit`.
+//! `stall-after-focus-read <n>`, `menu-opened <id>`, `release`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
@@ -172,20 +171,13 @@ pub(crate) enum Command {
     /// finishes. Applied on the window thread, so the calls before it are
     /// not held.
     Hold,
-    /// `hold-setup`: the window thread's next COM modal loop, the one UIA's
-    /// one-time setup inside mockapp runs in when a client's first remote
-    /// operation reaches it, prints `held modal-loop` on stdout and then
-    /// waits until `release`, dispatching only the messages other threads
-    /// send ([`crate::held`]; `docs/design/focus-pipeline.md`, section
-    /// 20.7). Applied on the window thread.
-    HoldSetup,
     /// `stall-after-focus-read <n>`: the `n`th read of a node's
     /// `HasKeyboardFocus` from now, once answered, stalls the window thread
     /// until `release`, which says when the stall begins and when the first
     /// message reaches the thread meanwhile ([`crate::held`]). Applied on
     /// the window thread.
     StallAfterFocusRead(u32),
-    /// `release`: lets the call `hold` held, or the hold of `hold-setup` or
+    /// `release`: lets the call `hold` held, or the stall of
     /// `stall-after-focus-read`, go on. Applied and acknowledged on the
     /// stdin thread, since the window thread is the one held.
     Release,
@@ -250,7 +242,6 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
     match verb {
         "quit" => Some(Command::Quit),
         "hold" => Some(Command::Hold),
-        "hold-setup" => Some(Command::HoldSetup),
         "stall-after-focus-read" => rest.parse().ok().map(Command::StallAfterFocusRead),
         "release" => Some(Command::Release),
         "focus" if !rest.is_empty() => Some(Command::Focus(rest.to_owned())),
@@ -541,10 +532,6 @@ mod tests {
 
     #[test]
     fn parses_the_holds_release_ends() {
-        assert!(matches!(
-            parse_command("hold-setup"),
-            Some(Command::HoldSetup)
-        ));
         assert!(matches!(
             parse_command("stall-after-focus-read 2"),
             Some(Command::StallAfterFocusRead(2))

@@ -484,13 +484,6 @@ fn apply(hwnd: HWND, context: &WindowContext, command: Command) -> bool {
         acknowledge("applied");
         return true;
     }
-    if let Command::HoldSetup = command {
-        match crate::held::arm_setup_hold(hwnd) {
-            Ok(()) => acknowledge("applied"),
-            Err(error) => acknowledge(&format!("rejected: {error}")),
-        }
-        return true;
-    }
     if let Command::StallAfterFocusRead(reads) = command {
         crate::held::arm_stall_after_focus_read(reads);
         acknowledge("applied");

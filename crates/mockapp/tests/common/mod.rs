@@ -305,9 +305,16 @@ impl MockApp {
     }
 
     /// Waits for mockapp's next line, which must be `expected`: the
-    /// evidence of a step of a hold or a stall (`crate::held` in mockapp).
-    pub fn expect_line(&self, expected: &str) {
-        let line = self.next_line(&format!("{expected:?}"), WAIT_TIMEOUT);
+    /// evidence of a step of a stall (`crate::held` in mockapp). When none
+    /// comes within [`WAIT_TIMEOUT`], fails with what `evidence` says, such
+    /// as the logs of the processes the test started.
+    pub fn expect_line(&self, expected: &str, evidence: impl FnOnce() -> String) {
+        let line = self.lines.recv_timeout(WAIT_TIMEOUT).unwrap_or_else(|_| {
+            panic!(
+                "mockapp did not acknowledge {expected:?} within {WAIT_TIMEOUT:?}; {}",
+                evidence()
+            )
+        });
         assert_eq!(line, expected, "mockapp's next line");
     }
 
