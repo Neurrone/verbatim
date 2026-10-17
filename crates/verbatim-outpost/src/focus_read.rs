@@ -863,8 +863,15 @@ impl FocusReader {
         hwnd: isize,
     ) -> Result<isize, &'static str> {
         let nearest = if hwnd == 0 {
-            verbatim_uia::nearest_window_handle(element)
-                .ok_or("it has no window above it, so NVDA makes no object for it")?
+            let started = Instant::now();
+            let nearest = verbatim_uia::nearest_window_handle(element);
+            let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+            tracing::debug!(
+                elapsed_us,
+                window = nearest,
+                "UIA focus sender's nearest window looked up"
+            );
+            nearest.ok_or("it has no window above it, so NVDA makes no object for it")?
         } else {
             hwnd
         };
