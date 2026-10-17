@@ -736,7 +736,7 @@ mod tests {
         }
     }
 
-    /// A console host the test starts, `conhost.exe` running `cmd.exe` in
+    /// A console host the test starts, `conhost.exe` running PowerShell in
     /// a hidden console window, in a job that ends both when dropped.
     struct Console {
         host: u32,
@@ -746,8 +746,11 @@ mod tests {
 
     impl Console {
         /// Starts the console and waits for the evidence that its client
-        /// runs in it: the window's title changed by the client's `title`
-        /// command, raised as a `WinEvent` from the console host.
+        /// runs in it: the window's title changed by the client, raised as a
+        /// `WinEvent` from the console host. The client is PowerShell, whose
+        /// `WindowTitle` sets the title exactly as given; `cmd.exe`'s `title`
+        /// command prefixes "Administrator: " when elevated, as GitHub's
+        /// runner is, so the title waited for never came there.
         fn start() -> Self {
             let title = format!("verbatim-lock-test-{}", std::process::id());
             TITLE.with(|cell| cell.borrow_mut().clone_from(&title));
@@ -768,10 +771,13 @@ mod tests {
                 )
             }
             .expect("the job's limit");
-            let mut command: Vec<u16> = format!("conhost.exe cmd.exe /k title {title}")
-                .encode_utf16()
-                .chain(Some(0))
-                .collect();
+            let mut command: Vec<u16> = format!(
+                "conhost.exe powershell.exe -NoLogo -NoProfile -NoExit -Command \
+                 $Host.UI.RawUI.WindowTitle='{title}'"
+            )
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
             let startup = STARTUPINFOW {
                 cb: u32::try_from(size_of::<STARTUPINFOW>()).unwrap_or(0),
                 dwFlags: STARTF_USESHOWWINDOW,
