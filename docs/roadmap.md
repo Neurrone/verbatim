@@ -103,6 +103,15 @@ its measurements, with the corrections of
 - An unsettled terminal read with nothing queued behind it is never
   retried; and `conhost_leave_flood` once never heard "blank" for an empty
   new console window, its first read giving nothing within 15 seconds.
+- A typed character Windows Terminal does not echo in about 5% of runs:
+  Windows Terminal sometimes raises no TextChanged event for it, only
+  caret moves, and Verbatim reads the screen only on a text change (NVDA
+  has the same dependency and would say the character late, with the next
+  change). First settle whether Windows Terminal or UIA loses the event,
+  with about 60 runs and a second, independent UIA client listening; the
+  proposed fix is that the outpost treats a caret row that differs from
+  its last screen read as a change (Dickson, 2026-10-17: part of this
+  redesign).
 
 - A throwaway prototype of holding keys, as NVDA holds a key with
   a script while it reads the caret, measured, with a written analysis;
