@@ -87,6 +87,9 @@ NVDA says, to decide what Verbatim should say.
     reading; adopted, not yet built.
   - [terminal-reading-review.md](design/terminal-reading-review.md) —
     the review of the terminal design; corrections pending its build.
+  - [windows-terminal-twin-focus.md](design/windows-terminal-twin-focus.md)
+    — the rule for Windows Terminal's second terminal identity; a design
+    for M5, not built.
   - [outpost-redesign.md](design/outpost-redesign.md) — the outposts,
     listener, and supervisor; adopted and built.
   - [phase6-design.md](design/phase6-design.md) — phase 6's decision

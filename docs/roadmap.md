@@ -219,9 +219,10 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     a race in Windows Terminal's startup: it happens in about 4% of
     launches locally and 13 to 20% on GitHub's runner, the first such
     event arrives before any Verbatim client contacts the terminal, and
-    it happens with spare outposts off too. Whether NVDA receives it as
-    well would be settled by NVDA's debug log beside Verbatim's listener
-    over about 100 launches. Evidence is in
+    it happens with spare outposts off too; NVDA receives it as well.
+    The rule that recognizes it is deferred to a Windows Terminal app
+    module in M5 (see M5, "Windows Terminal's second terminal
+    identity"). Evidence is in
     `target/e2e-evidence/full-suite-2026-10-17/` and
     `target/e2e-evidence/full-suite-2026-10-17-spares-off/`.
   - An outpost's own ancestor and navigation walks into a frame host take
@@ -369,6 +370,29 @@ platform-neutral crate's types.
   an extension — the Explorer cosmetic fixes deferred from M3 are the
   designated first candidate — and a trivial Wasm synth proves the
   `verbatim:synth` world.
+- Windows Terminal's second terminal identity, a candidate for a Windows
+  Terminal app module ([design](design/windows-terminal-twin-focus.md)):
+  Windows Terminal sometimes raises its terminal's focus under a second
+  runtime id starting 14 besides the usual one starting 42, and the
+  listener announces each as a new focus. The rule drops a 14 sender that
+  is the twin of a current 42 focus; a 42 sender that is the twin of a
+  current 14 focus is read and reported carrying the 14 id it replaces, so
+  the outpost reuses that node and follows the 42 element, which it cannot
+  find from the 14 id. Twins share a process, the class `TermControl`,
+  control type, the XAML framework, nearest window, and the 42 id's parts
+  after `[42, window]` as the 14 id's last parts; a failed
+  `CompareElements` means no twin. Its tests also check that the terminal
+  is followed afterwards and cover two panes in one window. Before
+  implementing, collect evidence that the runtime id's last part is never
+  reused (pane splits, pane moves, closing and reopening panes, new tabs).
+  Until then the tests accept one repeated "terminal" as an optional
+  utterance, which does not cover the late repeat ("window, terminal,
+  blank, terminal, terminal, blank", a 42 to 14 to 42 flip seen on
+  GitHub's slower runner), so that can still fail scenarios. Evidence:
+  `target/e2e-evidence/github-38988118089/`,
+  `target/e2e-evidence/github-39032739474/`, and
+  `target/e2e-evidence/wt-twin-identity/` (the judge's runs and logs,
+  `identity_judge.py`, `suffix.py`, and the scratch scenario's patch).
 
 Exit: an app module can be edited and hot-reloaded without restarting
 Verbatim; capability denial is enforced and tested. This milestone opens the
