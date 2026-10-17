@@ -3113,7 +3113,9 @@ fn a_foreground_change_to_another_window_announces_the_window_as_the_focus() {
 #[test]
 fn a_window_spoken_as_the_focus_is_not_repeated_when_its_control_takes_focus() {
     let source = Pid(1);
-    let window_node = node(1, Role::Window, Some("Notepad"), None, StateSet::new());
+    // A foreground report is read through MSAA.
+    let mut window_node = node(1, Role::Window, Some("Notepad"), None, StateSet::new());
+    window_node.backend = Backend::Msaa;
     let (state, _) = reduce(
         &SrState::new(),
         &foreground_in(source, window(10), window_node),
@@ -3137,6 +3139,47 @@ fn a_window_spoken_as_the_focus_is_not_repeated_when_its_control_takes_focus() {
                 UtteranceSegment::label("Text"),
                 role(Role::EditableText)
             ]]
+        )
+    );
+}
+
+#[test]
+fn a_list_replaced_by_a_new_one_of_the_same_name_is_entered_anew() {
+    // File Explorer opening a subfolder: the items view list is a new UI
+    // Automation element with the old one's role and name, in the same
+    // window, read by the same outpost.
+    let source = Pid(1);
+    let window_node = node(1, Role::Window, Some("Folder"), None, StateSet::new());
+    let list = |id| node(id, Role::List, Some("Items View"), None, StateSet::new());
+    let item = |id, name| node(id, Role::ListItem, Some(name), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(
+            source,
+            foreground_window(10),
+            item(3, "Inner"),
+            vec![window_node.clone(), list(2)],
+        ),
+    );
+
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(
+            source,
+            foreground_window(10),
+            item(5, "delta"),
+            vec![window_node, list(4)],
+        ),
+    );
+
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 5, &[1, 4], Some((OutpostId(1), 1))),
+            vec![
+                vec![UtteranceSegment::label("Items View"), role(Role::List)],
+                vec![UtteranceSegment::label("delta")],
+            ]
         )
     );
 }
@@ -5154,9 +5197,9 @@ fn explorer_item(
 /// Explorer selects it, then reports the same focus again. The outpost gives
 /// Inner a new node, since the element Explorer gave Inner's runtime id to
 /// before, delta.txt, is gone (`docs/parity/focus-events.md`, "Duplicate focus
-/// suppression"), so Inner is announced, without its list, which reads the
-/// same as the one left in the same window; the selection that follows
-/// says only "selected"; the repeated focus is silent.
+/// suppression"), so Inner is announced after its list, a new element, as
+/// NVDA says it; the selection that follows says only "selected"; the
+/// repeated focus is silent.
 #[test]
 fn a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows() {
     let app = Pid(1);
@@ -5205,16 +5248,19 @@ fn a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows() {
         heard(&effects),
         focus_heard(
             focus_now(OutpostId(1), 30, &[29], None),
-            vec![vec![
-                UtteranceSegment::label("Inner"),
-                not(State::Selected),
-                UtteranceSegment::new(SegmentContent::Position {
-                    position: 1,
-                    set_size: Some(4),
-                }),
-            ]]
+            vec![
+                vec![UtteranceSegment::label("Items View"), role(Role::List)],
+                vec![
+                    UtteranceSegment::label("Inner"),
+                    not(State::Selected),
+                    UtteranceSegment::new(SegmentContent::Position {
+                        position: 1,
+                        set_size: Some(4),
+                    }),
+                ],
+            ]
         ),
-        "a new list with the same name and role is not announced again"
+        "a new list with the same name and role is entered anew"
     );
 
     let inner_selected = explorer_item(30, "Inner", &selected, 1, 4);
@@ -5243,8 +5289,8 @@ fn a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows() {
 }
 
 /// The same return to the parent folder with the states the outpost reads
-/// when it handles the focus, after Explorer selected Inner: "Inner 1 of 4",
-/// as NVDA says it, and the selection and repeated focus that follow are
+/// when it handles the focus, after Explorer selected Inner: "Items View
+/// list", "Inner 1 of 4", as NVDA says it, and the selection and repeated focus that follow are
 /// silent, since Inner was announced selected.
 #[test]
 fn a_focus_read_after_its_item_was_selected_is_announced_without_the_selection() {
@@ -5271,13 +5317,16 @@ fn a_focus_read_after_its_item_was_selected_is_announced_without_the_selection()
         heard(&effects),
         focus_heard(
             focus_now(OutpostId(1), 30, &[29], None),
-            vec![vec![
-                UtteranceSegment::label("Inner"),
-                UtteranceSegment::new(SegmentContent::Position {
-                    position: 1,
-                    set_size: Some(4),
-                }),
-            ]]
+            vec![
+                vec![UtteranceSegment::label("Items View"), role(Role::List)],
+                vec![
+                    UtteranceSegment::label("Inner"),
+                    UtteranceSegment::new(SegmentContent::Position {
+                        position: 1,
+                        set_size: Some(4),
+                    }),
+                ],
+            ]
         )
     );
 

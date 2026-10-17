@@ -2085,12 +2085,20 @@ pub(crate) fn source_of(node: &NodeSnapshot) -> UtteranceSource {
 /// stays quiet about the dialog but entering it announces it.
 ///
 /// An ancestor counts as already entered when the previous focus or one of
-/// its ancestors is the same node. Node ids are comparable only within one
-/// outpost, and one top-level window can hold elements of two processes (a
-/// Settings page's frame belongs to `ApplicationFrameHost.exe`), so when the
-/// new focus is in the same top-level window as the previous one, a previous
-/// node with the same role and name also counts. A focus in a different
-/// top-level window, or with no previous focus, enters its whole chain.
+/// its ancestors is the same node. Two UI Automation nodes from one outpost
+/// are the same node only when their ids are equal, since the outpost gives
+/// one element one id, as NVDA compares UI Automation elements by their
+/// identity alone: an element replaced by a new one with the same role and
+/// name, such as File Explorer's items view list after a folder is opened,
+/// is entered anew (`docs/parity/focus-context.md`, "Focus-ancestry
+/// context"). Otherwise, when the new focus is in the same top-level window
+/// as the previous one, a previous node with the same role and name also
+/// counts: node ids are comparable only within one outpost, and one
+/// top-level window can hold elements of two processes (a Settings page's
+/// frame belongs to `ApplicationFrameHost.exe`), and an MSAA object reached
+/// by another path can have another id, where NVDA's MSAA comparison weighs
+/// the role and name as well. A focus in a different top-level window, or
+/// with no previous focus, enters its whole chain.
 ///
 /// Entered menu bars, menus, and menu items are never announced: NVDA
 /// cancels speech and stays silent for them. Only the presentable ones
@@ -2116,8 +2124,14 @@ fn entered_ancestors<'a>(
             .iter()
             .chain(std::iter::once(&previous.snapshot))
             .any(|old| {
+                let one_identity = old.id.outpost() == ancestor.id.outpost()
+                    && old.backend == Backend::Uia
+                    && ancestor.backend == Backend::Uia;
                 old.id == ancestor.id
-                    || (same_window && old.role == ancestor.role && old.name == ancestor.name)
+                    || (same_window
+                        && !one_identity
+                        && old.role == ancestor.role
+                        && old.name == ancestor.name)
             })
     };
     report

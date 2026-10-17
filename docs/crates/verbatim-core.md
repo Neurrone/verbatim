@@ -180,11 +180,16 @@ Implementation notes, `reduce`:
   control itself, so entering a dialog speaks the dialog and tabbing within
   it stays quiet about it. When the event says its ancestors are unknown
   (the outpost could not read them in time), no container is announced and
-  the previous chain is kept for the next focus. Node ids compare only within one outpost, and
-  one top-level window can hold elements of two processes (a Settings
-  page's frame belongs to `ApplicationFrameHost.exe`), so when the new focus
-  is in the same top-level window as the previous one, a previous node with
-  the same role and name also counts as already entered. The
+  the previous chain is kept for the next focus. Two UI Automation nodes
+  from one outpost are the same container only when their ids are equal,
+  as NVDA compares UI Automation elements by identity, so File Explorer's
+  new items view list after a folder is opened is announced again. Node
+  ids compare only within one outpost, and one top-level window can hold
+  elements of two processes (a Settings page's frame belongs to
+  `ApplicationFrameHost.exe`), and an MSAA object reached by another path
+  can have another id, so for any other pair, when the new focus is in
+  the same top-level window as the previous one, a previous node with the
+  same role and name also counts as already entered. The
   presentable-container filter (`is_presentable_container`) is at NVDA parity
   with `_get_isPresentableFocusAncestor` over `_get_presentationType`: it is
   exclusion-based, not an allowlist. Item and editable-text roles (`TreeItem`,
@@ -622,8 +627,10 @@ opening with the rest of a unit moves nothing. Utterances are handed to
 speech one at a time, two ahead of playback (the one playing and the
 next). A space stands for the line break between two units' text in one
 utterance. When playback reaches a unit's mark, say-all from the caret
-asks the outpost to move the caret to the unit's start (and the review
-cursor follows the caret as usual), say-all from the review cursor leaves
+asks the outpost to move the caret to the unit's start and takes the
+unit, with the caret at its start, as Core's caret, so a caret key
+pressed before the application reports the move starts its watch from
+there (the review cursor follows the caret as usual); say-all from the review cursor leaves
 the review cursor at that point, whose line the next review command
 reads; when it reaches an utterance's opening mark, the next utterance is
 handed on. The next batch is read once fewer than 10 utterances

@@ -12,7 +12,20 @@ Announce newly entered presentable containers before the control. NVDA:
 exclusions), and an entered container is spoken as NVDA speaks focus
 entered: as a focus, states and position included, without its value,
 level, or (except a list) keyboard shortcut. Top-level windows are the
-exception, in the next entry. **matched (unverified)**.
+exception, in the next entry. A container is already entered when it is
+the same object as one in the previous focus's chain, which NVDA judges
+for a UI Automation element by its identity alone (`CompareElements`),
+so a container replaced by a new element with the same role and name is
+entered anew: File Explorer's items view list after Enter opens a folder
+or Backspace goes up, where NVDA says "Items View list" before the item
+(10 of 10 captures, alpha-58022). Verbatim compares two UI Automation
+nodes from one outpost by node id alone, the outpost giving one element
+one id; it treats nodes from two outposts, or read through MSAA, in the
+same top-level window as the same when their role and name match, since
+their ids cannot be compared ("A window and its content in two
+processes" in [Windows and processes](windows-and-processes.md)).
+**matched (unverified)**: reducer tests, and `explorer_folder_window`
+asserts the Enter and Backspace cases.
 
 ### Top-level windows in the ancestry
 

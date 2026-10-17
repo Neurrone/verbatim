@@ -12,8 +12,11 @@
 //! window is announced by its title, the folder's name and "File
 //! Explorer", then "Items View list", and the first item, not yet
 //! selected, with its position; each arrow press the item and its
-//! position; Enter on the subfolder its first item; Backspace back to the
-//! subfolder's entry, selected again, with its position, as NVDA says it.
+//! position; Enter on the subfolder "Items View list" and its first item;
+//! Backspace "Items View list" and the subfolder's entry, selected again,
+//! with its position, as NVDA says it. Enter and Backspace each replace
+//! the items view list with a new element, so it is entered anew
+//! (`docs/parity/focus-context.md`, "Focus-ancestry context").
 
 use std::io;
 
@@ -40,8 +43,8 @@ pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
         ("downarrow", &["beta 3 of 4"]),
         ("uparrow", &["alpha 2 of 4"]),
         ("uparrow", &["Inner 1 of 4"]),
-        ("enter", &["delta not selected 1 of 1"]),
-        ("backspace", &["Inner 1 of 4"]),
+        ("enter", &["Items View list", "delta not selected 1 of 1"]),
+        ("backspace", &["Items View list", "Inner 1 of 4"]),
     ];
     for (key, heard) in steps {
         scenario.send_keys(&[key]).expect("sends the key");
