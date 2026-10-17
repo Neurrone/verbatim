@@ -112,7 +112,10 @@ harness found minimized when it appeared, so Windows Terminal needs no
 option of its own. `system_information_tree` launches msinfo32 through
 `launch_titled` too, but msinfo32 ignores the show state and opens its
 window restored and inactive. The agent's `SetForeground` therefore
-minimizes a window that is restored and not in front, waits on window
+minimizes a window that is restored and not in front, without
+activating another window (`SW_SHOWMINNOACTIVE`, since `SW_MINIMIZE`
+activates the next top-level window in Z order, which once was the
+taskbar, and Verbatim announced its Start button), waits on window
 events until it is minimized, and only then restores it and sets it as
 the foreground: `SetForegroundWindow` on a restored background window
 needs the agent's right, while a window restored from minimized takes the
@@ -228,7 +231,7 @@ the title sweep remains. A launch that fails after
 opening its Notepad document closes that tab and deletes the document
 before it reports the failure. Minimizing sends the taskbar's Minimize
 All and waits for the taskbar to handle it, then logs and minimizes
-directly each window still restored: once, a document opened just before
+directly, without activating another window, each window still restored: once, a document opened just before
 stayed restored, and the suspected cause, not confirmed, is that Minimize
 All skips a window the taskbar has not taken in yet. A stray guest-side process is
 also cleared by restoring a checkpoint (`cargo xtask vm restore`).

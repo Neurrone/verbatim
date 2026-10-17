@@ -30,9 +30,9 @@ use windows::Win32::System::Threading::{
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowW, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetForegroundWindow,
     GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsHungAppWindow, IsIconic,
-    IsWindowVisible, PostMessageW, SMTO_ABORTIFHUNG, SW_MINIMIZE, SW_RESTORE, SendMessageTimeoutW,
-    SetForegroundWindow, ShowWindow, ShowWindowAsync, WM_CLOSE, WM_COMMAND, WS_EX_NOACTIVATE,
-    WS_MINIMIZEBOX,
+    IsWindowVisible, PostMessageW, SMTO_ABORTIFHUNG, SW_RESTORE, SW_SHOWMINNOACTIVE,
+    SendMessageTimeoutW, SetForegroundWindow, ShowWindow, ShowWindowAsync, WM_CLOSE, WM_COMMAND,
+    WS_EX_NOACTIVATE, WS_MINIMIZEBOX,
 };
 use windows::core::{BOOL, PWSTR, w};
 
@@ -128,7 +128,9 @@ pub fn wait_for(condition: &WindowCondition, timeout: Duration) -> (bool, Foregr
 /// So the command is sent and waited for, and only each window still
 /// restored once the taskbar has handled it is logged, at info, with its
 /// class and how long its process has run, and then minimized directly
-/// (`ShowWindowAsync`, which never waits on the window's thread). Waits up to `timeout` for
+/// (`ShowWindowAsync`, which never waits on the window's thread), without
+/// activating another window (`SW_SHOWMINNOACTIVE`; `SW_MINIMIZE` activates
+/// the next top-level window in Z order, which can be the taskbar). Waits up to `timeout` for
 /// every window that can be minimized to be ([`WindowCondition::AllMinimized`]),
 /// and then for the desktop to hold the foreground. Returns whether each
 /// held, the second false when the first did not, as the desktop is then
@@ -168,7 +170,7 @@ pub fn minimize_all(timeout: Duration) -> (bool, bool, ForegroundInfo) {
         );
         // SAFETY: tolerates any handle; the minimize is posted to the
         // window's thread, and its answer is not waited for.
-        let _ = unsafe { ShowWindowAsync(window, SW_MINIMIZE) };
+        let _ = unsafe { ShowWindowAsync(window, SW_SHOWMINNOACTIVE) };
     }
     let (minimized, desktop) = wait_for(&WindowCondition::AllMinimized, timeout);
     if !minimized {
@@ -197,8 +199,11 @@ pub fn minimize_all(timeout: Duration) -> (bool, bool, ForegroundInfo) {
 /// A minimized window is restored and then set as the foreground with
 /// `SetForegroundWindow`; Windows gives a window it restores from
 /// minimized the foreground whatever input came last. A restored window
-/// that is not already in front is minimized first, and restored once it
-/// is: `SetForegroundWindow` alone succeeds only while the agent may set
+/// that is not already in front is minimized first, without activating
+/// another window (`SW_SHOWMINNOACTIVE`), and restored once it is.
+/// `SW_MINIMIZE` would activate the next top-level window in Z order: in a
+/// local run on 2026-10-17 that was the taskbar, whose Start button
+/// Verbatim then announced. `SetForegroundWindow` alone succeeds only while the agent may set
 /// the foreground, which it may only after injecting the last input
 /// (`docs/tooling/troubleshooting.md`, "Windows' foreground lock keeps launched
 /// applications behind"). msinfo32 is such a window: it ignores the
@@ -236,7 +241,7 @@ pub fn set_foreground(window: u64) -> bool {
         );
         // SAFETY: tolerates any handle; the return value is the window's
         // earlier visibility, not a failure.
-        let _ = unsafe { ShowWindow(window, SW_MINIMIZE) };
+        let _ = unsafe { ShowWindow(window, SW_SHOWMINNOACTIVE) };
         steps.minimize_requested = Some(started.elapsed());
         let minimized = wait::until(|| is_minimized(window), MINIMIZE_LIMIT);
         steps.minimized = minimized.then(|| started.elapsed());
