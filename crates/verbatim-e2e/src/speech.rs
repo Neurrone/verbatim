@@ -286,6 +286,10 @@ pub struct SpeechCollector {
     /// The trace ID behind each utterance that has one.
     traces: HashMap<UtteranceId, TraceId>,
     endings: HashMap<UtteranceId, UtteranceEnding>,
+    /// How many utterances had been queued, by [`Self::order`], when each
+    /// ended, so that whether speech came after it before its end is known
+    /// however late the two frames are read.
+    queued_at_ending: HashMap<UtteranceId, usize>,
     unended: BTreeSet<UtteranceId>,
     started: BTreeSet<UtteranceId>,
     /// Every utterance's timing, by id, and the order they came in.
@@ -387,6 +391,7 @@ impl SpeechCollector {
             texts: HashMap::new(),
             traces: HashMap::new(),
             endings: HashMap::new(),
+            queued_at_ending: HashMap::new(),
             unended: BTreeSet::new(),
             started: BTreeSet::new(),
             timings: HashMap::new(),
@@ -436,6 +441,7 @@ impl SpeechCollector {
             }
             Frame::SpeechEnded { utterance, ending } => {
                 self.unended.remove(&utterance);
+                self.queued_at_ending.insert(utterance, self.order.len());
                 self.endings.insert(utterance, ending);
                 Absorbed::Other
             }
@@ -902,6 +908,50 @@ impl SpeechCollector {
             });
             if last {
                 return taken;
+            }
+        }
+    }
+
+    /// Whether speech was queued after the next unmatched utterance before
+    /// that utterance ended, as the speech stream orders the two frames,
+    /// which it carries in the order Verbatim produced them: for a step
+    /// whose first utterance is cut off exactly when the speech after it
+    /// comes before it has finished (`docs/testing.md`, the third
+    /// exception). Waits up to [`STEP_TIMEOUT`] for the utterance and for
+    /// either frame, and leaves the utterance unmatched, for the assertion
+    /// that follows.
+    ///
+    /// # Panics
+    ///
+    /// Panics if nothing is queued, or the utterance neither ends nor is
+    /// followed, within [`STEP_TIMEOUT`], and in compare mode.
+    pub fn followed_before_end(&mut self) -> bool {
+        self.refuse_in_compare_mode("followed_before_end");
+        let deadline = Instant::now() + self.step_timeout;
+        loop {
+            if let Some(first) = self.pending.front().map(|got| got.utterance) {
+                // A sound played at once is not in `order`, and has ended
+                // as soon as it is read, with nothing after it.
+                let position = self.order.iter().rposition(|&id| id == first);
+                let followed = |queued: usize| position.is_some_and(|at| queued > at + 1);
+                if self.endings.contains_key(&first) {
+                    return self
+                        .queued_at_ending
+                        .get(&first)
+                        .is_some_and(|&queued| followed(queued));
+                }
+                if followed(self.order.len()) {
+                    return true;
+                }
+            }
+            if Instant::now() >= deadline {
+                self.fail(&format!(
+                    "no utterance was queued and then either ended or followed within {:?}",
+                    self.step_timeout
+                ));
+            }
+            if let Err(error) = self.read_by(deadline) {
+                self.fail(&format!("the speech connection failed: {error}"));
             }
         }
     }
@@ -1666,6 +1716,26 @@ mod tests {
         let playing = speech.expect_started("long line");
         speech.expect_ended(&playing, Ending::Cancelled);
         speech.expect_nothing_more(None);
+    }
+
+    #[test]
+    fn whether_speech_followed_an_utterance_before_it_ended_is_read_in_stream_order() {
+        let mut finished = collector(vec![
+            queued(1, "first"),
+            ended(1, UtteranceEnding::Completed),
+            queued(2, "second"),
+            ended(2, UtteranceEnding::Completed),
+        ]);
+        assert!(!finished.followed_before_end());
+        finished.expect(&["first", "second"]);
+        let mut followed = collector(vec![
+            queued(1, "first"),
+            queued(2, "second"),
+            ended(1, UtteranceEnding::Cancelled),
+            ended(2, UtteranceEnding::Completed),
+        ]);
+        assert!(followed.followed_before_end());
+        followed.expect_sequence(&[cut_off("first"), heard("second")]);
     }
 
     #[test]

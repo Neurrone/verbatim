@@ -150,6 +150,11 @@ an utterance is named in its text.
   naming `when`, not Verbatim's failure.
 - `take_until(until, timeout)` and `ending_of` hand over utterances whose
   text cannot be known before the step, for the caller to assert on.
+- `followed_before_end()`: whether speech was queued after the next
+  unmatched utterance before that utterance ended, read from the order of
+  the two frames in the speech stream, leaving the utterance for the
+  assertion that follows; `explorer_folder_window` uses it to decide
+  whether File Explorer's placeholder is expected cut off.
 - `expect_nothing_more(after_input)`: ends every scenario. The collector
   sends `AwaitIdle` on its own connection with the number of the last key
   the scenario injected; Verbatim answers once it has handled that input
@@ -246,8 +251,9 @@ inputs of two steps are never a repeated press for NVDA.
   stays open, and its texts and what NVDA queued are recorded with the
   next step's, as one unit whose input names both inputs, since NVDA's
   speech for a rapid double press cannot be told apart press by press.
-  `take_until`, `take_until_idle` and `take_all_queued` cannot keep their
-  promises without Verbatim and fail as a harness error.
+  `take_until`, `take_until_idle`, `take_all_queued` and
+  `followed_before_end` cannot keep their promises without Verbatim and
+  fail as a harness error.
   `take_comparison` hands the steps to the registry.
 - The scenario. `Scenario::compare_with` does what `Scenario::launch_with`
   does up to opening the document, building and staging included, since
