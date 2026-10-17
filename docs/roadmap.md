@@ -215,12 +215,14 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     sometimes receives a focus event under the terminal's second runtime
     id, the one starting 14, before the usual one, and both pass NVDA's
     checks, while NVDA receives only one (it said "terminal" once in 40
-    of 40 openings). It has been seen only in full-suite runs, 2 of about
-    115. The suspected cause is the other UI Automation clients in
-    Verbatim's processes, such as the spare outposts, changing how events
-    are delivered. Count the receipts in a full-suite run and, if seen,
-    compare a run with the spares off. No drop rule specific to Windows
-    Terminal is added.
+    of 40 openings). It has been seen only in full-suite runs, 3 of about
+    116. Spare outposts are not the only cause: a full suite on
+    2026-10-17 received the event 4 times with spares and 3 times
+    without. The next step is to isolate the listener from the other UI
+    Automation clients that remain, Verbatim's other outposts and the
+    test agent. Evidence is in `target/e2e-evidence/full-suite-2026-10-17/`
+    and `target/e2e-evidence/full-suite-2026-10-17-spares-off/`. No drop
+    rule specific to Windows Terminal is added.
   - An outpost's own ancestor and navigation walks into a frame host take
     no lock ([focus pipeline](design/focus-pipeline.md), section 20.9).
   - One UIA focus event reached the listener 5 seconds late in a console
