@@ -56,6 +56,11 @@ samples for the key stages. Compare runs of one build against each other
 before believing a difference, and give more weight to a change in the
 maximum or the 99.9th percentile that holds across runs.
 
+`cargo xtask measure` compiles and runs the working tree as it is,
+uncommitted edits included, so a "before" baseline is measured from a
+clean worktree of the commit being measured, never from a tree that
+already holds the change.
+
 ### Wake-ups and processor time: cargo xtask trace scenario
 
 `cargo xtask trace scenario <name> --after <seconds> --seconds <seconds>
