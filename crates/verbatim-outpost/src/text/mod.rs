@@ -795,7 +795,17 @@ pub fn perform<S: TextSource>(
             end,
             through,
         } => select_text(source, anchors, (*start, *end), *through),
-        TextOp::MoveCaret(point) => select(source, anchors, *point, None),
+        TextOp::MoveCaret(point) => {
+            let moved = select(source, anchors, *point, None);
+            // The carets reported before are no longer where the caret is,
+            // so a caret key's watch takes its baseline from Core, which
+            // takes the move as its caret (say-all's), or from a caret read
+            // after the move.
+            if matches!(moved, Ok(TextReply::Done)) {
+                anchors.anchors.carets.clear();
+            }
+            moved
+        }
         TextOp::Location(point) => location(source, anchors, *point),
         _ => Ok(TextReply::Unsupported),
     };
@@ -1394,7 +1404,8 @@ fn baseline<S: TextSource>(
     watch: &CaretWatch,
 ) -> TextResult<Baseline<S::Pos>> {
     // Where the caret was before the key: the newest caret this outpost
-    // reported from a read that finished before the key was pressed, which
+    // reported from a read that finished before the key was pressed and
+    // after the outpost last moved the caret itself (`TextOp::MoveCaret`), which
     // Core may not have had yet when the key came (a caret event from an
     // earlier key or a paste), else where Core knew it. A caret read once
     // the key was pressed may already show what the key did (the

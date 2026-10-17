@@ -115,12 +115,14 @@ its measurements, with the corrections of
 
 - A throwaway prototype of holding keys, as NVDA holds a key with
   a script while it reads the caret, measured, with a written analysis;
-  holding keys is Dickson's decision. Its first case is `notepad_say_all`,
-  a known failure, unchanged as its test (Dickson, 2026-10-11): a caret key
-  pressed within about 2 ms of say-all's caret move reaches the
-  application first and the wrong character is spoken. It also measures
-  what holding a key costs and how often a key's effect is misjudged, the
-  baseline the work order of 2026-10-10 asked for.
+  holding keys is Dickson's decision. Its first case is not chosen yet:
+  Dickson picks it. `notepad_say_all` is no longer a candidate, because
+  its failure was not a key reaching the application before say-all's
+  caret move: neither Core nor the outpost took that move as the caret,
+  so the key's watch compared against the line before, and both now do.
+  The prototype also measures what holding a key costs and how often a
+  key's effect is misjudged, the baseline the work order of 2026-10-10
+  asked for.
 
 ### The audio step
 

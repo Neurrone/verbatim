@@ -1543,7 +1543,9 @@ fault and exits with code 1 without `Ready`.
     baseline: the application's caret event for this very key can reach
     the outpost, and be reported, before Core's request does, and judging
     against it would find no evidence. The outpost remembers its last eight
-    reports per node for this. The characters matter because a provider's
+    reports per node for this, and forgets them when it moves the caret
+    itself (`TextOp::MoveCaret`, as say-all does), since Core takes such a
+    move as its caret. The characters matter because a provider's
     positions follow edits (a deleted character takes the known position
     with it) and the application may have handled the key before the
     request arrived; only the caret's neighbors count, since a line can

@@ -359,15 +359,38 @@ pub(crate) struct BufferedPiece {
     pub(crate) marked: bool,
 }
 
+/// The start of a unit say-all read: the chunk it is in and its byte
+/// offset there, which becomes Core's caret when say-all moves the caret
+/// there.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct UnitStart {
+    #[serde(
+        serialize_with = "serialize_chunk",
+        deserialize_with = "deserialize_chunk"
+    )]
+    pub(crate) chunk: SharedChunk,
+    pub(crate) offset: u32,
+}
+
+impl UnitStart {
+    /// Where the unit starts.
+    pub(crate) fn position(&self) -> TextPosition {
+        TextPosition {
+            anchor: self.chunk.start,
+            offset: self.offset,
+        }
+    }
+}
+
 /// An index mark say-all handed to speech and playback has not reached
 /// yet.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct QueuedMark {
     pub(crate) mark: SpeechMark,
     /// Where the cursor moves when playback reaches the mark: the start of
     /// the unit read that follows it, or `None` for the mark opening an
     /// utterance that starts with the rest of a unit already reached.
-    pub(crate) position: Option<TextPosition>,
+    pub(crate) unit: Option<UnitStart>,
     /// Whether the mark opens its utterance.
     pub(crate) opens: bool,
 }
@@ -749,8 +772,12 @@ impl SrState {
             if let Some((position, _)) = say_all.last_chunk {
                 insert(say_all.node, position);
             }
-            for position in say_all.queued.iter().filter_map(|queued| queued.position) {
-                insert(say_all.node, position);
+            for unit in say_all
+                .queued
+                .iter()
+                .filter_map(|queued| queued.unit.as_ref())
+            {
+                insert(say_all.node, unit.position());
             }
             for piece in say_all.buffer.iter().flatten().chain(&say_all.held) {
                 insert(say_all.node, TextPosition::at(piece.chunk.start));

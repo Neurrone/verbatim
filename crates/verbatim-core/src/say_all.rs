@@ -30,15 +30,19 @@
 //! at the start of the last unit playback reached, and the display is kept
 //! on while it reads.
 
+use std::sync::Arc;
+
 use verbatim_model::{
-    Effect, NodeId, SayAllUnit, SegmentContent, SpeechMark, SpeechPriority, TextChunk,
+    CaretReport, Effect, NodeId, SayAllUnit, SegmentContent, SpeechMark, SpeechPriority, TextChunk,
     TextMovement, TextOp, TextPoint, TextPosition, TextReadAhead, TextReply, TextRequest, TextUnit,
     TraceId, Utterance, UtteranceSegment,
 };
 use verbatim_text::Segmenter;
 
-use crate::editing::is_grid;
-use crate::state::{BufferedPiece, QueuedMark, ReviewText, SayAll, SharedChunk, SrState};
+use crate::editing::{self, is_grid};
+use crate::state::{
+    BufferedPiece, QueuedMark, ReviewText, SayAll, SharedChunk, SrState, UnitStart,
+};
 use crate::text;
 
 /// How many units each read asks for: a line or a sentence each, a batch
@@ -297,8 +301,8 @@ fn hand_out(state: &mut SrState) -> Vec<Effect> {
                 segments.push(UtteranceSegment::new(SegmentContent::Mark(mark)));
                 marks.push(QueuedMark {
                     mark,
-                    position: piece.marked.then_some(TextPosition {
-                        anchor: piece.chunk.start,
+                    unit: piece.marked.then(|| UnitStart {
+                        chunk: Arc::clone(&piece.chunk),
                         offset: piece.start,
                     }),
                     opens: index == 0,
@@ -375,6 +379,14 @@ fn pieces(
 /// cursor to the start of the unit it starts, hands speech the next
 /// utterance, reads on when little is left, and ends say-all after the
 /// last utterance.
+///
+/// A caret move is also taken as Core's caret, the unit read with the
+/// caret at its start, as NVDA's say-all sets the caret there before any
+/// key reads it (`docs/nvda/speech.md`, "Say-all"): a caret key pressed
+/// next finds the caret where say-all put it ([`editing::update_caret`]),
+/// not where the application last reported it. Requests to an outpost run
+/// in order, so the move is made before that key's watch starts, and the
+/// outpost, having moved the caret, judges the key from Core's caret.
 pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect> {
     let Some(say_all) = state.say_all.as_mut() else {
         return Vec::new();
@@ -383,16 +395,20 @@ pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect>
         return Vec::new();
     }
     let mut reached = None;
-    while let Some(&queued) = say_all.queued.front()
-        && queued.mark <= mark
+    while say_all
+        .queued
+        .front()
+        .is_some_and(|queued| queued.mark <= mark)
     {
-        say_all.queued.pop_front();
-        reached = queued.position.or(reached);
+        if let Some(unit) = say_all.queued.pop_front().and_then(|queued| queued.unit) {
+            reached = Some(unit);
+        }
     }
     let node = say_all.node;
     let moves_caret = say_all.moves_caret;
     let mut effects = Vec::new();
-    if let Some(position) = reached {
+    if let Some(unit) = reached {
+        let position = unit.position();
         if moves_caret {
             let query_id = state.allocate_query_id();
             effects.push(Effect::Text(TextRequest {
@@ -400,6 +416,19 @@ pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect>
                 node_id: node,
                 op: TextOp::MoveCaret(TextPoint::At(position)),
             }));
+            let line = TextChunk {
+                offset: unit.offset,
+                ..TextChunk::clone(&unit.chunk)
+            };
+            editing::update_caret(
+                state,
+                node,
+                CaretReport {
+                    line,
+                    selection: None,
+                },
+                0,
+            );
         } else if let Some(navigator) = state
             .navigator
             .as_mut()

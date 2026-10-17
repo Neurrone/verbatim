@@ -488,6 +488,50 @@ fn a_caret_reported_after_the_one_core_knew_is_the_baseline() {
 }
 
 #[test]
+fn a_caret_reported_before_the_outpost_moved_the_caret_is_not_the_baseline() {
+    // Say-all moved the caret to the second line, and Core took the move
+    // as its caret; the key has done nothing yet. The first line's caret,
+    // reported before the move, is not where the key found the caret.
+    let mut source = Fake::new("one\ntwo", 0);
+    let mut anchors = store();
+    let _ = report(&mut source, &mut anchors);
+    let TextReply::Read { chunk: second, .. } = perform(
+        &mut source,
+        &mut anchors.node(1),
+        &TextOp::Read(TextRead {
+            at: TextPoint::Caret,
+            movement: Some(TextMovement {
+                unit: TextUnit::Line,
+                count: 1,
+            }),
+            unit: TextUnit::Line,
+        }),
+    ) else {
+        panic!("the second line is read");
+    };
+    let moved_to = TextPosition::at(second.start);
+    assert_eq!(
+        perform(
+            &mut source,
+            &mut anchors.node(1),
+            &TextOp::MoveCaret(TextPoint::At(moved_to)),
+        ),
+        TextReply::Done
+    );
+    assert_eq!(source.caret, 4);
+    let watched = check(
+        &mut source,
+        &mut anchors,
+        &watch(Some(moved_to), TextUnit::Character),
+        &mut FakeSignal::new(),
+    );
+    assert!(
+        matches!(watched, Watched::Watching),
+        "the outpost's own move is not the key's: {watched:?}"
+    );
+}
+
+#[test]
 fn a_caret_reported_after_the_key_but_before_the_watch_is_not_the_baseline() {
     // Backspace after typing "x": the application handled the key and its
     // caret event reached the outpost, which reported the new caret, before

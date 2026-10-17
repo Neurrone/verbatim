@@ -1877,6 +1877,48 @@ fn say_all_splits_a_paragraph_into_sentences_and_stops_on_a_key() {
 }
 
 #[test]
+fn a_caret_key_after_say_all_starts_from_where_say_all_moved_the_caret() {
+    // From `notepad_say_all`: Notepad last reported the caret on the first
+    // line, say-all moves it to the second as playback reaches it, and a
+    // key stops say-all before Notepad reports that move. The key's watch
+    // starts from the second line's start, where say-all put the caret, as
+    // NVDA's say-all sets the caret before a key reads it.
+    let mut state = SrState::new();
+    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
+    let _ = caret_event_at(&mut state, line("One.\n", 100, 0), KEY_PRESSED_AT - 1_000);
+    let effects = say_all_by_line(
+        &mut state,
+        vec![line("One.\n", 100, 0), line("Two.\n", 101, 0)],
+    );
+    let pieces = say_all_pieces(&effects);
+    assert_eq!(pieces.len(), 2);
+    let _ = reduce(&mut state, &reached(pieces[0].0));
+    let effects = reduce(&mut state, &reached(pieces[1].0));
+    assert_eq!(
+        caret_move(&effects),
+        Some(TextPoint::At(TextPosition::at(TextAnchor(101))))
+    );
+    let _ = reduce(
+        &mut state,
+        &Input::SpeechCancelled {
+            at_ms: KEY_PRESSED_AT - 2,
+        },
+    );
+    let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, false));
+    assert_eq!(
+        request(&effects).op,
+        TextOp::AwaitCaret(CaretWatch {
+            landing: false,
+            since: Some(TextPosition::at(TextAnchor(101))),
+            pressed_at_ms: KEY_PRESSED_AT,
+            unit: TextUnit::Character,
+            compare: None,
+            previous_selection: None,
+        })
+    );
+}
+
+#[test]
 fn say_all_from_the_review_cursor_leaves_the_review_cursor_where_it_stopped() {
     let mut state = reviewing("one\n", 0);
     let effects = reduce(&mut state, &command(ReviewCommand::SayAllFromReview, 0));
