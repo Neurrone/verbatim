@@ -567,9 +567,7 @@ impl Context {
         ) {
             if !matches!(
                 kind,
-                WinEventKind::ConsoleUpdate
-                    | WinEventKind::ConsoleCaret
-                    | WinEventKind::Destroy
+                WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret | WinEventKind::Destroy
             ) && windows.known_to_use_uia(
                 (
                     &self.arbitrator,
