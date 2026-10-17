@@ -374,12 +374,14 @@ mod tests {
         IMAGEHLP_MODULEW64, SymCleanup, SymGetModuleInfoW64, SymInitializeW, SymLoadModuleExW,
     };
 
-    /// The `CodeView` record read from `ntdll.dll` on disk is the one
-    /// `DbgHelp` reports for the same image.
+    /// The `CodeView` record read from this test program's image on disk is
+    /// the one `DbgHelp` reports for the same image. The image is this
+    /// program's own, a plain image with its PDB beside it, because a system
+    /// DLL on Windows on Arm is an ARM64X image, which `DbgHelp` does not
+    /// load without its PDB.
     #[test]
     fn the_codeview_record_read_is_the_one_dbghelp_reports() {
-        let system = std::env::var("SystemRoot").unwrap();
-        let path = format!(r"{system}\System32\ntdll.dll");
+        let path = std::env::current_exe().unwrap().display().to_string();
         let read = read_codeview(Path::new(&path)).unwrap();
 
         let session = HANDLE(0x7_0000 as *mut c_void);
