@@ -61,10 +61,39 @@ const FAILED: u32 = 101;
 /// there. So each test runs as this binary again, started on a new desktop
 /// with `--isolated-test` and the test's name, and is the only client
 /// there; this process prints its result as libtest does.
+#[allow(
+    dead_code,
+    reason = "each test binary compiles this file whole, and one with ignored tests calls run_isolated_ignoring instead"
+)]
 pub fn run_isolated(tests: &[(&'static str, fn())]) -> ! {
+    run_isolated_ignoring(tests, &[])
+}
+
+/// A test that runs only when asked for with `--ignored` or
+/// `--include-ignored`, as one marked `#[ignore = "reason"]` does under
+/// libtest: its name, the recorded decision that keeps it out of a plain
+/// run, and its function.
+pub type Ignored = (&'static str, &'static str, fn());
+
+/// [`run_isolated`], with the tests `ignored` besides `tests`: a plain run
+/// reports each of them as ignored, with its reason, and runs none.
+pub fn run_isolated_ignoring(tests: &[(&'static str, fn())], ignored: &[Ignored]) -> ! {
     let options = Options::parse();
+    let all: Vec<Test> = tests
+        .iter()
+        .map(|&(name, run)| Test {
+            name,
+            run,
+            ignored: None,
+        })
+        .chain(ignored.iter().map(|&(name, reason, run)| Test {
+            name,
+            run,
+            ignored: Some(reason),
+        }))
+        .collect();
     if let Some(name) = &options.isolated {
-        let Some(&(_, test)) = tests.iter().find(|(test, _)| test == name) else {
+        let Some(&Test { run: test, .. }) = all.iter().find(|test| test.name == name) else {
             eprintln!("error: no test is named {name}");
             end(FAILED);
         };
@@ -75,40 +104,64 @@ pub fn run_isolated(tests: &[(&'static str, fn())]) -> ! {
         });
     }
     crate::common::contain_children();
-    run_with(&options, tests, |name, _| isolated::run(name))
+    run_with(&options, &all, |name, _| isolated::run(name))
+}
+
+/// One test the runner knows: its name, its function, and, for an ignored
+/// test, why it is ignored.
+#[derive(Clone, Copy)]
+struct Test {
+    name: &'static str,
+    run: fn(),
+    ignored: Option<&'static str>,
 }
 
 /// Runs the tests `options` selects, each with `execute`, which says
-/// whether it passed, printing libtest's lines, and ends the process.
+/// whether it passed, printing libtest's lines, and ends the process. An
+/// ignored test that the names select but `options` does not ask to run
+/// is reported as ignored, as libtest reports it.
 fn run_with(
     options: &Options,
-    tests: &[(&'static str, fn())],
+    tests: &[Test],
     execute: impl Fn(&'static str, fn()) -> bool + Sync,
 ) -> ! {
-    let selected: Vec<(&'static str, fn())> = tests
+    let named: Vec<Test> = tests
         .iter()
         .copied()
-        .filter(|(name, _)| options.selects(name))
+        .filter(|test| options.names(test.name))
         .collect();
     if options.list {
-        for (name, _) in &selected {
-            println!("{name}: test");
+        for test in &named {
+            println!("{}: test", test.name);
         }
         end(0);
     }
-    let filtered_out = tests.len() - selected.len();
+    let (selected, skipped): (Vec<Test>, Vec<Test>) = named
+        .iter()
+        .partition(|test| options.runs(test.ignored.is_some()));
+    let filtered_out = tests.len() - named.len();
     println!(
         "\nrunning {} test{}",
-        selected.len(),
-        if selected.len() == 1 { "" } else { "s" }
+        named.len(),
+        if named.len() == 1 { "" } else { "s" }
     );
+    for test in &skipped {
+        println!(
+            "test {} ... ignored, {}",
+            test.name,
+            test.ignored.unwrap_or_default()
+        );
+    }
     let started = Instant::now();
     let next = AtomicUsize::new(0);
     let failed = Mutex::new(Vec::new());
     std::thread::scope(|scope| {
         for _ in 0..options.threads.min(selected.len()).max(1) {
             scope.spawn(|| {
-                while let Some(&(name, test)) = selected.get(next.fetch_add(1, Ordering::Relaxed)) {
+                while let Some(&Test {
+                    name, run: test, ..
+                }) = selected.get(next.fetch_add(1, Ordering::Relaxed))
+                {
                     let passed = execute(name, test);
                     println!("test {name} ... {}", if passed { "ok" } else { "FAILED" });
                     if !passed {
@@ -131,10 +184,11 @@ fn run_with(
         }
     }
     println!(
-        "\ntest result: {}. {} passed; {} failed; 0 ignored; 0 measured; {filtered_out} filtered out; finished in {:.2}s\n",
+        "\ntest result: {}. {} passed; {} failed; {} ignored; 0 measured; {filtered_out} filtered out; finished in {:.2}s\n",
         if failed.is_empty() { "ok" } else { "FAILED" },
         selected.len() - failed.len(),
         failed.len(),
+        skipped.len(),
         started.elapsed().as_secs_f64(),
     );
     end(if failed.is_empty() { 0 } else { FAILED });
@@ -161,9 +215,9 @@ struct Options {
     skips: Vec<String>,
     exact: bool,
     list: bool,
-    /// `--ignored`: run only the ignored tests, of which these binaries
-    /// have none.
-    ignored_only: bool,
+    /// Which of the ignored tests run: none, unless `--ignored` asks for
+    /// them alone or `--include-ignored` for them as well.
+    ignored: IgnoredTests,
     threads: usize,
     /// `--isolated-test <name>`: this process is the one [`run_isolated`]
     /// started to run that test alone.
@@ -187,7 +241,7 @@ impl Options {
             skips: Vec::new(),
             exact: false,
             list: false,
-            ignored_only: false,
+            ignored: IgnoredTests::Skipped,
             threads: std::thread::available_parallelism().map_or(1, std::num::NonZero::get),
             isolated: None,
         };
@@ -208,10 +262,10 @@ impl Options {
             match flag.as_str() {
                 "--exact" => options.exact = true,
                 "--list" => options.list = true,
-                "--ignored" => options.ignored_only = true,
-                // Every test runs anyway, since none is ignored, and output
-                // is never captured, so these change nothing.
-                "--include-ignored" | "--nocapture" | "--show-output" | "--quiet" | "-q" => {}
+                "--ignored" => options.ignored = IgnoredTests::Only,
+                "--include-ignored" => options.ignored = IgnoredTests::Included,
+                // Output is never captured, so these change nothing.
+                "--nocapture" | "--show-output" | "--quiet" | "-q" => {}
                 "--test-threads" => {
                     let threads = value("--test-threads")?;
                     options.threads = threads
@@ -243,12 +297,33 @@ impl Options {
         }
     }
 
-    fn selects(&self, name: &str) -> bool {
-        !self.ignored_only
-            && (self.filters.is_empty()
-                || self.filters.iter().any(|filter| self.matches(name, filter)))
+    /// Whether the name filters and skips select the test `name`.
+    fn names(&self, name: &str) -> bool {
+        (self.filters.is_empty() || self.filters.iter().any(|filter| self.matches(name, filter)))
             && !self.skips.iter().any(|skip| self.matches(name, skip))
     }
+
+    /// Whether a test the names select is run: an ignored one only with
+    /// `--ignored` or `--include-ignored`, any other unless `--ignored`
+    /// asks for the ignored ones alone.
+    fn runs(&self, ignored: bool) -> bool {
+        match self.ignored {
+            IgnoredTests::Skipped => !ignored,
+            IgnoredTests::Only => ignored,
+            IgnoredTests::Included => true,
+        }
+    }
+}
+
+/// Which of the ignored tests a run includes.
+#[derive(Clone, Copy)]
+enum IgnoredTests {
+    /// None, as by default.
+    Skipped,
+    /// Those alone (`--ignored`).
+    Only,
+    /// Those as well as the rest (`--include-ignored`).
+    Included,
 }
 
 /// Running one test in a process of its own on a desktop of its own

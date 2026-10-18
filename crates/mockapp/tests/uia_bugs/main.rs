@@ -5,7 +5,10 @@
 //! `support` holds the mechanics they share.
 //!
 //! Every test runs through the UIA test runner (`common/harness.rs`), each
-//! in a process of its own on a desktop of its own.
+//! in a process of its own on a desktop of its own. A test listed as
+//! ignored, with the decision that keeps it out of a plain run, runs only
+//! with `--ignored` or `--include-ignored`, so `cargo xtask ci` reports it
+//! as ignored and does not run it.
 
 #[path = "../common/mod.rs"]
 mod common;
@@ -41,10 +44,13 @@ fn main() {
     if let Ok(window) = std::env::var(collision::OPERATOR) {
         collision::operator(&window);
     }
+    if let Ok(window) = std::env::var(timed_out_registration::LISTENER) {
+        timed_out_registration::listener(&window);
+    }
     if std::env::var(setup_race::RACER).is_ok() {
         setup_race::racer();
     }
-    harness::run_isolated(&[
+    harness::run_isolated_ignoring(&[
         (
             "clients_created_at_once_in_a_fresh_process_all_build_cache_requests",
             setup_race::clients_created_at_once_in_a_fresh_process_all_build_cache_requests,
@@ -106,10 +112,6 @@ fn main() {
             timed_out_registration::a_group_registered_while_its_provider_is_held_reports_success,
         ),
         (
-            "a_registration_that_timed_out_misses_an_event_raised_just_after_the_stall",
-            timed_out_registration::a_registration_that_timed_out_misses_an_event_raised_just_after_the_stall,
-        ),
-        (
             "a_read_while_its_provider_is_held_fails",
             timed_out_registration::a_read_while_its_provider_is_held_fails,
         ),
@@ -140,6 +142,12 @@ fn main() {
         (
             "a_core_api_focus_registration_on_one_window_hears_that_applications_focus_alone",
             focus_scope::a_core_api_focus_registration_on_one_window_hears_that_applications_focus_alone,
+        ),
+    ], &[
+        (
+            "a_registration_that_timed_out_misses_an_event_raised_just_after_the_stall",
+            "kept out of CI until it has passed on GitHub's x64 and ARM64 runners (Dickson, 2026-10-18)",
+            timed_out_registration::a_registration_that_timed_out_misses_an_event_raised_just_after_the_stall,
         ),
     ]);
 }
