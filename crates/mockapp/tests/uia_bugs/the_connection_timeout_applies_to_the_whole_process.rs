@@ -35,11 +35,11 @@ fn set_timeouts(client: &IUIAutomation, connection: u32, transaction: u32) {
     unsafe { client.SetTransactionTimeout(transaction) }.expect("the transaction timeout set");
 }
 
-/// A client on another thread sets the connection timeout to longer than
-/// the test's wait, and then a client on this thread sets it to 500 ms:
-/// the first client's lookup of a window whose thread hangs fails with
-/// `UIA_E_TIMEOUT` while the window still hangs, so it waited the 500 ms
-/// the other client set, not its own.
+/// A client on another thread sets both timeouts to twice the test's wait,
+/// and then a client on this thread sets only the connection timeout, to
+/// 500 ms: the first client's lookup of a window whose thread hangs fails
+/// with `UIA_E_TIMEOUT` while the window still hangs, so it waited the
+/// 500 ms the other client set, not either timeout of its own.
 pub fn a_lookup_waits_the_connection_timeout_another_client_set_last() {
     let (mut hung, hwnd) = support::mockapp("timeout-hung", "msaa");
     let (ready, set) = mpsc::channel();
@@ -48,7 +48,8 @@ pub fn a_lookup_waits_the_connection_timeout_another_client_set_last() {
     let hwnd_value = hwnd.0 as isize;
     let first = std::thread::spawn(move || {
         let uia = support::client();
-        support::set_connection_timeout(uia.client(), 2 * common::WAIT_TIMEOUT);
+        let longer = u32::try_from((2 * common::WAIT_TIMEOUT).as_millis()).expect("it fits");
+        set_timeouts(uia.client(), longer, longer);
         ready.send(()).expect("the test is waiting");
         gone.recv().expect("the test says go");
         let hwnd = windows::Win32::Foundation::HWND(hwnd_value as *mut _);

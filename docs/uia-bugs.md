@@ -208,7 +208,7 @@ NVDA leaves UIA's defaults (focus pipeline section 6.1), so it does not meet thi
 
 These are in `crates/mockapp/tests/uia_bugs/the_connection_timeout_applies_to_the_whole_process.rs`; each passed 20 of 20 runs:
 
-- `a_lookup_waits_the_connection_timeout_another_client_set_last` reproduces it, as `h5_main10000_other500` did: a lookup on a client that set the connection timeout longer than the test's wait fails with `UIA_E_TIMEOUT` while the window still hangs, once a client on another thread has set 500 ms.
+- `a_lookup_waits_the_connection_timeout_another_client_set_last` reproduces it, as `h5_main10000_other500` did: a lookup on a client that set both timeouts to twice the test's wait fails with `UIA_E_TIMEOUT` while the window still hangs, once a client on another thread has set only the connection timeout, to 500 ms. With that client's setting removed, it failed 20 of 20 runs.
 - `timeouts_set_through_one_client_are_read_by_another` reproduces E1: both timeouts set through one client are what a client made before, on another thread, reads.
 - `the_first_client_in_a_process_has_verbatims_timeouts` and `making_a_client_keeps_the_timeouts_another_set` show that Verbatim's workaround holds. With the setup's setting removed, the first failed 20 of 20 runs, reading UIA's defaults of 2,000 and 20,000 ms; with client creation setting the timeouts as well, the second failed 20 of 20.
 
