@@ -193,7 +193,9 @@ hold of `docs/design/focus-pipeline.md`, section 20.7),
 message until `release`, as a hung application's does, printing `stall
 started` as it begins and `stall message sent` each time a message is
 sent to it meanwhile, so a test sees each call a client makes to the hung
-window and waits on; the UIA fault tests' hung window),
+window and waits on; `stall-until-release posted` also prints `stall
+message posted` each time a message is posted to it, as UIA posts a
+remote operation's arrival; the UIA fault tests' hung and busy windows),
 `menu-opened <id>` (raises UIA's `MenuOpened` event from the node, which
 the focus listener reads as a focus on it; an automation event, which UIA
 delivers on a desktop where no window has the keyboard focus, as it does

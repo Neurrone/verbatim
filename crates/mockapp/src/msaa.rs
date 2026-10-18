@@ -259,7 +259,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         | Command::RefuseText(_)
         | Command::Hold
         | Command::StallAfterFocusRead(_)
-        | Command::StallUntilRelease
+        | Command::StallUntilRelease(_)
         | Command::Release
         | Command::Quit
         | Command::Unrecognized(_) => {}

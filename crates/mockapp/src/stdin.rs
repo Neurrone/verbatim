@@ -177,12 +177,12 @@ pub(crate) enum Command {
     /// message reaches the thread meanwhile ([`crate::held`]). Applied on
     /// the window thread.
     StallAfterFocusRead(u32),
-    /// `stall-until-release`: stalls the window thread now, until
+    /// `stall-until-release [posted]`: stalls the window thread now, until
     /// `release`, saying when the stall begins and each time a message is
-    /// sent to the thread meanwhile ([`crate::held`]), as a hung
-    /// application's UI thread takes no message. Applied on the window
-    /// thread.
-    StallUntilRelease,
+    /// sent to the thread meanwhile, and, with `posted`, each time one is
+    /// posted ([`crate::held`]), as a hung application's UI thread takes no
+    /// message. Applied on the window thread.
+    StallUntilRelease(bool),
     /// `release`: lets the call `hold` held, or the stall of
     /// `stall-after-focus-read` or `stall-until-release`, go on. Applied and acknowledged on the
     /// stdin thread, since the window thread is the one held.
@@ -249,7 +249,11 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "quit" => Some(Command::Quit),
         "hold" => Some(Command::Hold),
         "stall-after-focus-read" => rest.parse().ok().map(Command::StallAfterFocusRead),
-        "stall-until-release" => Some(Command::StallUntilRelease),
+        "stall-until-release" => match rest {
+            "" => Some(Command::StallUntilRelease(false)),
+            "posted" => Some(Command::StallUntilRelease(true)),
+            _ => None,
+        },
         "release" => Some(Command::Release),
         "focus" if !rest.is_empty() => Some(Command::Focus(rest.to_owned())),
         "set-focus" if !rest.is_empty() => Some(Command::SetFocus(rest.to_owned())),
@@ -546,7 +550,11 @@ mod tests {
         assert!(parse_command("stall-after-focus-read").is_none());
         assert!(matches!(
             parse_command("stall-until-release"),
-            Some(Command::StallUntilRelease)
+            Some(Command::StallUntilRelease(false))
+        ));
+        assert!(matches!(
+            parse_command("stall-until-release posted"),
+            Some(Command::StallUntilRelease(true))
         ));
     }
 

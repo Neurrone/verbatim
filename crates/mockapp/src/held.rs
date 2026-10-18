@@ -6,10 +6,12 @@
 //! the stall begins at once. The window thread takes no message
 //! meanwhile, as a busy or hung application's UI thread does. It prints
 //! `stall started` as it begins, and says when a client's call reaches the
-//! thread meanwhile and waits for it: after a focus read, `stall message
-//! arrived` once, when the first message is posted or sent to the thread;
-//! with `stall-until-release`, `stall message sent` each time a message is
-//! sent to it. Its end is `release`'s own acknowledgement.
+//! thread meanwhile: after a focus read, `stall message arrived` once, when
+//! the first message is posted or sent to the thread; with
+//! `stall-until-release`, `stall message sent` each time a message is sent
+//! to it, and with `stall-until-release posted`, also `stall message
+//! posted` each time one is posted. Its end is `release`'s own
+//! acknowledgement.
 
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::sync::OnceLock;
@@ -85,32 +87,44 @@ pub(crate) fn focus_read(hwnd: HWND) {
 /// The stall `stall-until-release` begins at once, on the window thread:
 /// it takes no message until `release`, saying each time a message is
 /// sent to the thread, as a hung window's callers send it one after
-/// another and wait. Posted messages, which no caller waits for, are not
-/// reported: the window's own posts land in the stall while the
-/// application is still starting.
-pub(crate) fn stall_now_until_release() {
+/// another and wait, and, with `posted`, each time one is posted to it, as
+/// UI Automation posts a remote operation's arrival. Posts are reported
+/// only when asked for: a tree view's window thread was once posted a
+/// message of unknown origin during the stall.
+pub(crate) fn stall_now_until_release(posted: bool) {
     arm_release();
     crate::window::acknowledge("stall started");
     let released = released_event();
+    let kinds = if posted {
+        QS_SENDMESSAGE | QS_POSTMESSAGE
+    } else {
+        QS_SENDMESSAGE
+    };
     // SAFETY: the release event, open for the process's life; wakes for it
-    // or for a message sent to this thread since the queue was last looked
-    // at, which is not taken.
+    // or for a message of `kinds` that reached this thread since the queue
+    // was last looked at, which is not taken.
     while unsafe {
         MsgWaitForMultipleObjectsEx(
             Some(&[released]),
             INFINITE,
-            QS_SENDMESSAGE,
+            kinds,
             MSG_WAIT_FOR_MULTIPLE_OBJECTS_EX_FLAGS(0),
         )
     } != WAIT_OBJECT_0
     {
-        crate::window::acknowledge("stall message sent");
-        // Marks the sent messages in the queue as looked at, taking none,
-        // so the next wait wakes only for one sent after them: without it,
-        // the waits went on waking at once once a caller had given up its
-        // call.
+        // The kinds of message that arrived since the queue was last
+        // looked at, in the low word, which the call then marks as looked
+        // at, taking none, so the next wait wakes only for one that arrives
+        // after them: without it, the waits went on waking at once once a
+        // caller had given up its call.
         // SAFETY: no preconditions.
-        let _ = unsafe { GetQueueStatus(QS_SENDMESSAGE) };
+        let arrived = unsafe { GetQueueStatus(kinds) } & 0xffff;
+        if arrived & QS_POSTMESSAGE.0 != 0 {
+            crate::window::acknowledge("stall message posted");
+        }
+        if arrived & QS_SENDMESSAGE.0 != 0 {
+            crate::window::acknowledge("stall message sent");
+        }
     }
 }
 

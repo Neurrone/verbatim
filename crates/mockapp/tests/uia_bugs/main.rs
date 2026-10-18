@@ -13,6 +13,7 @@ mod common;
 mod harness;
 
 mod a_hung_window_named_in_a_system_focus_event_holds_a_processs_uia_events;
+mod a_new_connection_fails_while_another_processs_remote_operation_is_queued;
 mod a_registration_that_times_out_reports_success;
 mod elements_cannot_be_passed_to_another_process;
 mod focus_events_cannot_be_limited_to_one_application;
@@ -21,6 +22,7 @@ mod support;
 mod the_connection_timeout_applies_to_the_whole_process;
 
 use a_hung_window_named_in_a_system_focus_event_holds_a_processs_uia_events as hung_focus;
+use a_new_connection_fails_while_another_processs_remote_operation_is_queued as collision;
 use a_registration_that_times_out_reports_success as timed_out_registration;
 use elements_cannot_be_passed_to_another_process as marshal;
 use focus_events_cannot_be_limited_to_one_application as focus_scope;
@@ -31,6 +33,9 @@ use the_connection_timeout_applies_to_the_whole_process as timeouts;
 fn main() {
     if let Ok(window) = std::env::var(marshal::OWNER) {
         marshal::owner(&window);
+    }
+    if let Ok(window) = std::env::var(collision::OPERATOR) {
+        collision::operator(&window);
     }
     harness::run_isolated(&[
         (
@@ -96,6 +101,10 @@ fn main() {
         (
             "a_read_while_its_provider_is_held_fails",
             timed_out_registration::a_read_while_its_provider_is_held_fails,
+        ),
+        (
+            "a_probe_during_another_processs_queued_operation_answers_no",
+            collision::a_probe_during_another_processs_queued_operation_answers_no,
         ),
     ]);
 }
