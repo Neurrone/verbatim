@@ -1,0 +1,23 @@
+# The operation waits for S's busy main UI thread; B probes a window of
+# S's second UI thread, which is idle.
+spawn S server
+wait S hwnd
+send S newthread
+wait S hwnd
+spawn L client $HWND L
+send L init
+wait L done
+send L efh
+wait L done
+send L rop
+wait L done 10000
+spawn B client $HWND2 B
+send B init
+wait B done
+send S busy 40
+wait S busy-begin
+send L async rop
+sleep 5
+send B probe
+wait B done 15000
+drain 300

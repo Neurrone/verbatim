@@ -1,0 +1,7 @@
+name: conhost_two_windows
+result: fail
+latency_records: 11
+latency_reached_audio: 4
+max_event_to_queue_ms: 3130
+max_event_to_audio_ms: 41
+outpost_crashes: 0

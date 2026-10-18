@@ -1,0 +1,20 @@
+# As e1, with B's probe queued before L's operation.
+spawn S server
+wait S hwnd
+spawn L client $HWND L
+send L init
+wait L done
+send L efh
+wait L done
+send L rop
+wait L done 10000
+spawn B client $HWND B
+send B init
+wait B done
+send S busy 40
+wait S busy-begin
+send B async probe
+sleep 5
+send L async rop
+wait B done 15000
+drain 300

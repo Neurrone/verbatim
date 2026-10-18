@@ -1,0 +1,162 @@
+=== run 1
+run 17:03:18.744199 hwnd 63833432 found
+run 17:03:18.744310 owner hwnd=63833432 pid=2640 tid=5824
+17:03:18.748862 run spawn L client 63833432 L
+17:03:18.748894 run send L init
+  L 17:03:18.754890 client-ready L
+  L 17:03:18.759168 done init L start=17:03:18.754923 ms=4.2 ok
+17:03:18.759249 run send L efh
+  L 17:03:18.767356 done efh L start=17:03:18.759280 ms=8.1 ok
+17:03:18.767454 run send L rop
+  L 17:03:18.768131 done rop L start=17:03:18.767482 ms=0.6 ok
+17:03:18.772461 run spawn B client 63833432 B
+17:03:18.772512 run send B init
+  B 17:03:18.778649 client-ready B
+  B 17:03:18.782798 done init B start=17:03:18.778678 ms=4.1 ok
+17:03:18.782874 run send B efh
+  B 17:03:18.790535 done efh B start=17:03:18.782903 ms=7.6 ok
+17:03:18.790626 run send B docchild
+  B 17:03:18.794429 done docchild B start=17:03:18.790658 ms=3.8 ok name="Text Area" hwnd=0 pid=7200 desc="[pid:7200,providerId:0x0 Main(parent link):Microsoft Console Host: Screen Information Text Area (unmanaged:conhost.exe)]"
+run 17:03:18.794504 stall-begin tid=8744 count=0
+17:03:18.794566 run send L async rop
+17:03:18.799605 run send B toplevel
+run 17:03:19.094974 stall-end count=1
+  L 17:03:19.095332 done async-rop L start=17:03:18.794749 ms=300.6 ok
+  B 17:03:19.099362 done toplevel B start=17:03:18.799650 ms=299.7 ok top name="collide-console" hwnd=63833432 pid=7200 desc="[pid:4400,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]" steps=[296.2ms->[name="collide-console" hwnd=63833432 pid=7200 desc="[pid:4400,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"]]
+17:03:19.099447 run send B info
+  B 17:03:19.099885 done info B start=17:03:19.099474 ms=0.4 ok name="collide-console"(0.1ms) hwnd=63833432(0.1ms) framework="Win32"(0.1ms) pid=7200(0.1ms) desc="[pid:4400,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.1ms)
+=== run 2
+run 17:03:19.842164 hwnd 63833432 found
+run 17:03:19.842276 owner hwnd=63833432 pid=2640 tid=5824
+17:03:19.846813 run spawn L client 63833432 L
+17:03:19.846844 run send L init
+  L 17:03:19.853926 client-ready L
+  L 17:03:19.858113 done init L start=17:03:19.853966 ms=4.1 ok
+17:03:19.858194 run send L efh
+  L 17:03:19.866013 done efh L start=17:03:19.858219 ms=7.8 ok
+17:03:19.866105 run send L rop
+  L 17:03:19.866820 done rop L start=17:03:19.866134 ms=0.7 ok
+17:03:19.870902 run spawn B client 63833432 B
+17:03:19.870929 run send B init
+  B 17:03:19.877097 client-ready B
+  B 17:03:19.880924 done init B start=17:03:19.877125 ms=3.8 ok
+17:03:19.880994 run send B efh
+  B 17:03:19.888242 done efh B start=17:03:19.881018 ms=7.2 ok
+17:03:19.888326 run send B docchild
+  B 17:03:19.892029 done docchild B start=17:03:19.888352 ms=3.7 ok name="Text Area" hwnd=0 pid=7200 desc="[pid:7200,providerId:0x0 Main(parent link):Microsoft Console Host: Screen Information Text Area (unmanaged:conhost.exe)]"
+run 17:03:19.892134 stall-begin tid=8744 count=0
+17:03:19.892192 run send L async rop
+17:03:19.897243 run send B toplevel
+run 17:03:20.192668 stall-end count=1
+  L 17:03:20.193027 done async-rop L start=17:03:19.892391 ms=300.6 ok
+  B 17:03:20.196714 done toplevel B start=17:03:19.897308 ms=299.4 ok top name="collide-console" hwnd=63833432 pid=7200 desc="[pid:5136,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]" steps=[296.2ms->[name="collide-console" hwnd=63833432 pid=7200 desc="[pid:5136,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"]]
+17:03:20.196853 run send B info
+  B 17:03:20.197295 done info B start=17:03:20.196881 ms=0.4 ok name="collide-console"(0.1ms) hwnd=63833432(0.0ms) framework="Win32"(0.1ms) pid=7200(0.1ms) desc="[pid:5136,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.1ms)
+=== run 3
+run 17:03:20.938525 hwnd 63833432 found
+run 17:03:20.938626 owner hwnd=63833432 pid=2640 tid=5824
+17:03:20.943206 run spawn L client 63833432 L
+17:03:20.943238 run send L init
+  L 17:03:20.949486 client-ready L
+  L 17:03:20.953421 done init L start=17:03:20.949518 ms=3.9 ok
+17:03:20.953488 run send L efh
+  L 17:03:20.961155 done efh L start=17:03:20.953512 ms=7.6 ok
+17:03:20.961251 run send L rop
+  L 17:03:20.961885 done rop L start=17:03:20.961277 ms=0.6 ok
+17:03:20.965993 run spawn B client 63833432 B
+17:03:20.966022 run send B init
+  B 17:03:20.972758 client-ready B
+  B 17:03:20.977100 done init B start=17:03:20.972790 ms=4.3 ok
+17:03:20.977214 run send B efh
+  B 17:03:20.986095 done efh B start=17:03:20.977244 ms=8.8 ok
+17:03:20.986200 run send B docchild
+  B 17:03:20.989837 done docchild B start=17:03:20.986229 ms=3.6 ok name="Text Area" hwnd=0 pid=7200 desc="[pid:7200,providerId:0x0 Main(parent link):Microsoft Console Host: Screen Information Text Area (unmanaged:conhost.exe)]"
+run 17:03:20.989912 stall-begin tid=8744 count=0
+17:03:20.989966 run send L async rop
+17:03:20.995003 run send B toplevel
+  L 17:03:21.291170 done async-rop L start=17:03:20.990158 ms=301.0 ok
+run 17:03:21.291946 stall-end count=1
+  B 17:03:21.294749 done toplevel B start=17:03:20.995038 ms=299.7 ok top name="collide-console" hwnd=63833432 pid=7200 desc="[pid:8440,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]" steps=[296.6ms->[name="collide-console" hwnd=63833432 pid=7200 desc="[pid:8440,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"]]
+17:03:21.294814 run send B info
+  B 17:03:21.295108 done info B start=17:03:21.294835 ms=0.3 ok name="collide-console"(0.1ms) hwnd=63833432(0.0ms) framework="Win32"(0.0ms) pid=7200(0.0ms) desc="[pid:8440,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.1ms)
+=== run 4
+run 17:03:22.043254 hwnd 63833432 found
+run 17:03:22.043353 owner hwnd=63833432 pid=2640 tid=5824
+17:03:22.047764 run spawn L client 63833432 L
+17:03:22.047797 run send L init
+  L 17:03:22.054111 client-ready L
+  L 17:03:22.058124 done init L start=17:03:22.054143 ms=4.0 ok
+17:03:22.058221 run send L efh
+  L 17:03:22.065750 done efh L start=17:03:22.058250 ms=7.5 ok
+17:03:22.065829 run send L rop
+  L 17:03:22.066493 done rop L start=17:03:22.065854 ms=0.6 ok
+17:03:22.070784 run spawn B client 63833432 B
+17:03:22.070818 run send B init
+  B 17:03:22.077347 client-ready B
+  B 17:03:22.081319 done init B start=17:03:22.077380 ms=3.9 ok
+17:03:22.081434 run send B efh
+  B 17:03:22.088812 done efh B start=17:03:22.081465 ms=7.3 ok
+17:03:22.088892 run send B docchild
+  B 17:03:22.092469 done docchild B start=17:03:22.088918 ms=3.5 ok name="Text Area" hwnd=0 pid=7200 desc="[pid:7200,providerId:0x0 Main(parent link):Microsoft Console Host: Screen Information Text Area (unmanaged:conhost.exe)]"
+run 17:03:22.092558 stall-begin tid=8744 count=0
+17:03:22.092637 run send L async rop
+17:03:22.097676 run send B toplevel
+  L 17:03:22.393714 done async-rop L start=17:03:22.092806 ms=300.9 ok
+run 17:03:22.394608 stall-end count=1
+  B 17:03:22.398032 done toplevel B start=17:03:22.097704 ms=300.3 ok top name="collide-console" hwnd=63833432 pid=7200 desc="[pid:17196,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]" steps=[296.5ms->[name="collide-console" hwnd=63833432 pid=7200 desc="[pid:17196,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"]]
+17:03:22.398108 run send B info
+  B 17:03:22.398533 done info B start=17:03:22.398160 ms=0.4 ok name="collide-console"(0.1ms) hwnd=63833432(0.0ms) framework="Win32"(0.1ms) pid=7200(0.1ms) desc="[pid:17196,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.1ms)
+=== run 5
+run 17:03:23.155892 hwnd 63833432 found
+run 17:03:23.155994 owner hwnd=63833432 pid=2640 tid=5824
+17:03:23.160131 run spawn L client 63833432 L
+17:03:23.160164 run send L init
+  L 17:03:23.166914 client-ready L
+  L 17:03:23.171130 done init L start=17:03:23.166969 ms=4.2 ok
+17:03:23.171204 run send L efh
+  L 17:03:23.178748 done efh L start=17:03:23.171231 ms=7.5 ok
+17:03:23.178822 run send L rop
+  L 17:03:23.179520 done rop L start=17:03:23.178847 ms=0.7 ok
+17:03:23.183758 run spawn B client 63833432 B
+17:03:23.183784 run send B init
+  B 17:03:23.190055 client-ready B
+  B 17:03:23.193977 done init B start=17:03:23.190092 ms=3.9 ok
+17:03:23.194041 run send B efh
+  B 17:03:23.201564 done efh B start=17:03:23.194071 ms=7.5 ok
+17:03:23.201648 run send B docchild
+  B 17:03:23.205633 done docchild B start=17:03:23.201678 ms=4.0 ok name="Text Area" hwnd=0 pid=7200 desc="[pid:7200,providerId:0x0 Main(parent link):Microsoft Console Host: Screen Information Text Area (unmanaged:conhost.exe)]"
+run 17:03:23.205729 stall-begin tid=8744 count=0
+17:03:23.205793 run send L async rop
+17:03:23.210841 run send B toplevel
+run 17:03:23.506484 stall-end count=1
+  L 17:03:23.506884 done async-rop L start=17:03:23.205985 ms=300.9 ok
+  B 17:03:23.510903 done toplevel B start=17:03:23.210882 ms=300.0 ok top name="collide-console" hwnd=63833432 pid=7200 desc="[pid:10952,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]" steps=[296.6ms->[name="collide-console" hwnd=63833432 pid=7200 desc="[pid:10952,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"]]
+17:03:23.510987 run send B info
+  B 17:03:23.511437 done info B start=17:03:23.511014 ms=0.4 ok name="collide-console"(0.1ms) hwnd=63833432(0.1ms) framework="Win32"(0.1ms) pid=7200(0.1ms) desc="[pid:10952,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.1ms)
+=== run 6
+run 17:03:24.277092 hwnd 63833432 found
+run 17:03:24.277201 owner hwnd=63833432 pid=2640 tid=5824
+17:03:24.282608 run spawn L client 63833432 L
+17:03:24.282665 run send L init
+  L 17:03:24.289500 client-ready L
+  L 17:03:24.293936 done init L start=17:03:24.289540 ms=4.4 ok
+17:03:24.294025 run send L efh
+  L 17:03:24.301769 done efh L start=17:03:24.294055 ms=7.7 ok
+17:03:24.301865 run send L rop
+  L 17:03:24.302684 done rop L start=17:03:24.301896 ms=0.8 ok
+17:03:24.307681 run spawn B client 63833432 B
+17:03:24.307720 run send B init
+  B 17:03:24.313965 client-ready B
+  B 17:03:24.318184 done init B start=17:03:24.313998 ms=4.2 ok
+17:03:24.318269 run send B efh
+  B 17:03:24.325974 done efh B start=17:03:24.318300 ms=7.7 ok
+17:03:24.326060 run send B docchild
+  B 17:03:24.330023 done docchild B start=17:03:24.326098 ms=3.9 ok name="Text Area" hwnd=0 pid=7200 desc="[pid:7200,providerId:0x0 Main(parent link):Microsoft Console Host: Screen Information Text Area (unmanaged:conhost.exe)]"
+run 17:03:24.330127 stall-begin tid=8744 count=0
+17:03:24.330188 run send L async rop
+17:03:24.335225 run send B toplevel
+run 17:03:24.637977 stall-end count=1
+  L 17:03:24.638608 done async-rop L start=17:03:24.330370 ms=308.2 ok
+  B 17:03:24.648258 done toplevel B start=17:03:24.335275 ms=313.0 ok top name="collide-console" hwnd=63833432 pid=7200 desc="[pid:12336,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]" steps=[303.9ms->[name="collide-console" hwnd=63833432 pid=7200 desc="[pid:12336,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"]]
+17:03:24.648376 run send B info
+  B 17:03:24.648718 done info B start=17:03:24.648398 ms=0.3 ok name="collide-console"(0.1ms) hwnd=63833432(0.0ms) framework="Win32"(0.0ms) pid=7200(0.0ms) desc="[pid:12336,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.1ms)

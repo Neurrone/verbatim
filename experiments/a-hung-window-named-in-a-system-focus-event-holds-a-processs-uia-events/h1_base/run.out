@@ -1,0 +1,28 @@
+[1792298892634661] holdTV: ondesk-child-pid 9868
+[1792298892668709] holdTV: ready
+[1792298892711290] tool find holdTV -> 18940888 ondesk-child-pid 14464
+[1792298892729503] holdB: ondesk-child-pid 18128
+[1792298892750608] holdB: ready
+[1792298892809215] tool find holdB -> 9109880 ondesk-child-pid 8300
+[1792298892847156] tool findchild 18940888 WindowsForms10.SysTreeView32.app.0.141b42a_r9_ad1 -> 40764378 ondesk-child-pid 17328
+tree view hwnd 40764378, TV pid 9868
+[1792298892863004] D: ondesk-child-pid 6364
+[1792298892897295] D: registered D desk:pid in 12.8ms
+[1792298892905185] D: registered D name:9109880 in 7.9ms
+[1792298892905274] D: client-ready D
+[1792298892905304] stacks 0_idle pid=6364 took 2055 ms -> C:\Users\Dickson\Desktop\projects\verbatim\target\e2e-evidence\hung-hold\h1_base\0_idle.stacks.txt
+[1792298894960951] >holdB: set-name btn1 Base
+[1792298894961375] holdB: applied
+[1792298894963079] D: ev D name:9109880 prop30005 t=1792298894963018 pid=18128 name="Base" hwnd=0
+=== TV stalled 8 s, then a focus WinEvent naming its tree view
+[1792298895263262] >holdTV: stall 8000
+[1792298895263469] holdTV: stall started
+[1792298895306243] tool winevent 40764378 8005 -4 0 -> winevent sent t=1792298895302276 ondesk-child-pid 10404
+[1792298895506559] >holdB: set-name btn1 During
+[1792298895506946] holdB: applied
+[1792298895863805] stacks 1_held_0.6s pid=6364 took 613 ms -> C:\Users\Dickson\Desktop\projects\verbatim\target\e2e-evidence\hung-hold\h1_base\1_held_0.6s.stacks.txt
+[1792298897263486] stacks 2_held_2.0s pid=6364 took 548 ms -> C:\Users\Dickson\Desktop\projects\verbatim\target\e2e-evidence\hung-hold\h1_base\2_held_2.0s.stacks.txt
+[1792298898563425] stacks 3_held_3.3s pid=6364 took 535 ms -> C:\Users\Dickson\Desktop\projects\verbatim\target\e2e-evidence\hung-hold\h1_base\3_held_3.3s.stacks.txt
+[1792298899313136] D: ev D name:9109880 prop30005 t=1792298899313073 pid=18128 name="During" hwnd=0
+[1792298900265149] stacks 4_after_5.0s pid=6364 took 589 ms -> C:\Users\Dickson\Desktop\projects\verbatim\target\e2e-evidence\hung-hold\h1_base\4_after_5.0s.stacks.txt
+[1792298903263903] holdTV: stall ended 1792298903263837

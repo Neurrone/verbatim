@@ -1,0 +1,41 @@
+20:53:48.975077 attach pid=8660
+20:53:48.975176 tid=16540 call hwnd=78185864 class=CollideServer msg=0x3d wparam=0xd983598d lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:53:48.979353 tid=16540 ret  hwnd=78185864 msg=0x3d wparam=0xd983598d lparam=0xffffffffffffffe7 lresult=0x10000
+20:53:48.980741 tid=16540 call hwnd=78185864 class=CollideServer msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:53:48.980860 tid=16540 ret  hwnd=78185864 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000
+20:53:48.981094 tid=16540 call hwnd=78185864 class=CollideServer msg=0xc199 wparam=0x3 lparam=0x0000000000000000 sameproc=1 insend=0x9
+20:53:48.981404 tid=16540 call hwnd=78185864 class=CollideServer msg=0xc199 wparam=0x3 lparam=0x0000000000000001 sameproc=1 insend=0x9
+20:53:49.282131 tid=16540 call hwnd=78185864 class=CollideServer msg=0x3d wparam=0xd983598e lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:53:49.282269 tid=16540 ret  hwnd=78185864 msg=0x3d wparam=0xd983598e lparam=0xffffffffffffffe7 lresult=0x10000
+20:53:49.282911 tid=16540 call hwnd=78185864 class=CollideServer msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:53:49.282980 tid=16540 ret  hwnd=78185864 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000
+20:53:49.283163 tid=16540 call hwnd=78185864 class=CollideServer msg=0xc199 wparam=0x3 lparam=0x0000000000000002 sameproc=1 insend=0x9
+20:53:49.283356 tid=16540 call hwnd=78185864 class=CollideServer msg=0xc199 wparam=0x3 lparam=0x0000000000000003 sameproc=1 insend=0x9
+20:53:49.593217 tid=16540 call hwnd=78185864 class=CollideServer msg=0x3d wparam=0xd9e1acf6 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:53:49.593360 tid=16540 ret  hwnd=78185864 msg=0x3d wparam=0xd9e1acf6 lparam=0xffffffffffffffe7 lresult=0x10000
+20:53:49.594110 tid=16540 call hwnd=78185864 class=CollideServer msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:53:49.594183 tid=16540 ret  hwnd=78185864 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000
+20:53:49.594366 tid=16540 call hwnd=78185864 class=CollideServer msg=0xc199 wparam=0x3 lparam=0x0000000000000004 sameproc=1 insend=0x9
+20:53:49.594587 tid=16540 call hwnd=78185864 class=CollideServer msg=0xc199 wparam=0x3 lparam=0x0000000000000005 sameproc=1 insend=0x9
+20:53:49.895558 tid=16540 call hwnd=78185864 class=CollideServer msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:53:49.895678 tid=16540 ret  hwnd=78185864 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000
+20:53:50.206930 tid=16540 call hwnd=78185864 class=CollideServer msg=0x3d wparam=0xda3f5c71 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:53:50.207079 tid=16540 ret  hwnd=78185864 msg=0x3d wparam=0xda3f5c71 lparam=0xffffffffffffffe7 lresult=0x10000
+20:53:50.207771 tid=16540 call hwnd=78185864 class=CollideServer msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:53:50.207842 tid=16540 ret  hwnd=78185864 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000
+20:53:50.208022 tid=16540 call hwnd=78185864 class=CollideServer msg=0xc199 wparam=0x3 lparam=0x0000000000000006 sameproc=1 insend=0x9
+20:53:50.208233 tid=16540 call hwnd=78185864 class=CollideServer msg=0xc199 wparam=0x3 lparam=0x0000000000000007 sameproc=1 insend=0x9
+20:53:50.517745 tid=16540 call hwnd=78185864 class=CollideServer msg=0x3d wparam=0xda6ead14 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:53:50.517884 tid=16540 ret  hwnd=78185864 msg=0x3d wparam=0xda6ead14 lparam=0xffffffffffffffe7 lresult=0x10000
+20:53:50.518604 tid=16540 call hwnd=78185864 class=CollideServer msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:53:50.518674 tid=16540 ret  hwnd=78185864 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000
+20:53:50.518845 tid=16540 call hwnd=78185864 class=CollideServer msg=0xc199 wparam=0x3 lparam=0x0000000000000008 sameproc=1 insend=0x9
+20:53:50.519064 tid=16540 call hwnd=78185864 class=CollideServer msg=0xc199 wparam=0x3 lparam=0x0000000000000009 sameproc=1 insend=0x9
+20:53:50.819493 tid=16540 call hwnd=78185864 class=CollideServer msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:53:50.819648 tid=16540 ret  hwnd=78185864 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000
+20:53:50.819784 tid=16540 call hwnd=78185864 class=CollideServer msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:53:50.819835 tid=16540 ret  hwnd=78185864 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000
+20:53:50.820006 tid=16540 call hwnd=78185864 class=CollideServer msg=0xc199 wparam=0x3 lparam=0x000000000000000a sameproc=1 insend=0x9
+20:53:50.820188 tid=16540 call hwnd=78185864 class=CollideServer msg=0xc199 wparam=0x3 lparam=0x000000000000000b sameproc=1 insend=0x9
+20:53:51.120505 tid=16540 call hwnd=78185864 class=CollideServer msg=0x3d wparam=0x0 lparam=0x00000000ffffffe7 sameproc=1 insend=0x1
+20:53:51.120616 tid=16540 ret  hwnd=78185864 msg=0x3d wparam=0x0 lparam=0x00000000ffffffe7 lresult=0x10000

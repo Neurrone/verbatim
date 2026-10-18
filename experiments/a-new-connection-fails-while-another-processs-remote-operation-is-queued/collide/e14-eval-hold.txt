@@ -1,0 +1,21 @@
+# After the setup, L's operation is held inside a provider callback during
+# its evaluation (the UI thread pumping sent messages); B probes then.
+spawn S server
+wait S hwnd
+spawn L client $HWND L
+send L init
+wait L done
+send L efh
+wait L done
+send L rop
+wait L done 10000
+spawn B client $HWND B
+send B init
+wait B done
+send S armprov 300 5
+wait S armed
+send L async ropname
+wait S held 3000
+send B probe
+wait B done 15000
+drain 300

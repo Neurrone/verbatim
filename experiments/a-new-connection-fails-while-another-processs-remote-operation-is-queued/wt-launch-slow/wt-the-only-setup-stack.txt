@@ -1,0 +1,39 @@
+windowsterminal.exe 11696 thread 15608 "" blocked 3 ms, from 21:53:16.755693 to 21:53:16.759023, woken by windowsterminal.exe 11696 thread 12392 ""
+  where it waited, in windowsterminal.exe 11696:
+    ntdll.dll!NtWaitForMultipleObjects
+    kernelbase.dll!WaitForMultipleObjectsEx
+    kernelbase.dll!WaitForMultipleObjects
+    uiautomationcore.dll!NavigationHelperProxyOneCore::Initialize
+    uiautomationcore.dll!NavigationHelperProxyOneCore::GetInstance
+    uiautomationcore.dll!NavigationHelperProxyOneCore::GetInstance
+    uiautomationcore.dll!ProviderEntryPoint::GetUiaNode
+    uiautomationcore.dll!ProviderEntryPoint::GetNativeUiaNode
+    uiautomationcore.dll!UiaNodeFactory::CompleteNodeInfo
+    uiautomationcore.dll!UiaNodeFactory::FromPartialNodeInfo
+    uiautomationcore.dll!UiaNodeFactory::FromLocalProvider
+    uiautomationcore.dll!UiaUtils::HydrateProviderNode
+    uiautomationcore.dll!RemoteOperationContext::HydrateSingleImportedElement
+    uiautomationcore.dll!RemoteOperationContext::HydrateImportedElements
+    uiautomationcore.dll!RemoteOperation::EvaluateOnCorrectThread
+    uiautomationcore.dll!<lambda_0ff94b35afe585fe48ec5b7a1c5ea129>::operator()
+    onecorecommonproxystub.dll!IServiceProvider_RemoteQueryService_Thunk
+    rpcrt4.dll!Ndr64StubWorker
+    rpcrt4.dll!NdrStubCall3
+    combase.dll!CStdStubBuffer_Invoke
+    rpcrt4.dll!CStdStubBuffer_Invoke
+    combase.dll!ObjectMethodExceptionHandlingAction<<lambda_c9f3956a20c9da92a64affc24fdd69ec> >
+    combase.dll!DefaultStubInvoke
+    combase.dll!StubInvoke
+    combase.dll!ServerCall::ContextInvoke
+    combase.dll!ReentrantSTAInvokeInApartment
+    combase.dll!ComInvokeWithLockAndIPID
+    combase.dll!ThreadDispatch
+    combase.dll!ThreadWndProc
+    user32.dll!UserCallWinProcCheckWow
+    user32.dll!DispatchMessageWorker
+    windowsterminal.exe!WindowEmperor::HandleCommandlineArgs
+    windowsterminal.exe!wWinMain
+    windowsterminal.exe!__scrt_common_main_seh
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+  where it was readied, in windowsterminal.exe 11696:

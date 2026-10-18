@@ -1,0 +1,24 @@
+22:10:32.694038 run spawn S server
+  S 22:10:32.706594 hwnd 17368754 pid 5496
+22:10:32.710720 run spawn L client 17368754 L
+22:10:32.710772 run send L init
+  S 22:10:32.706700 ready
+  L 22:10:32.717119 client-ready L
+  L 22:10:32.721280 done init L start=22:10:32.717153 ms=4.1 ok
+22:10:32.721390 run send L efh
+  L 22:10:32.730936 done efh L start=22:10:32.721426 ms=9.5 ok
+22:10:32.731123 run send L rop
+  L 22:10:32.738534 done rop L start=22:10:32.731149 ms=7.4 ok
+22:10:32.742828 run spawn B client 17368754 B
+22:10:32.742891 run send B init
+  B 22:10:32.749729 client-ready B
+  B 22:10:32.753947 done init B start=22:10:32.749765 ms=4.2 ok
+22:10:32.754034 run send B efh
+  B 22:10:32.762012 done efh B start=22:10:32.754068 ms=7.9 ok
+22:10:32.762085 run send S busy 40
+  S 22:10:32.762189 busy-begin
+22:10:32.762241 run send L async rop
+22:10:32.767278 run send B name
+  S 22:10:32.802201 busy-end
+  L 22:10:32.803069 done async-rop L start=22:10:32.762396 ms=40.7 ok
+  B 22:10:32.803083 done name B start=22:10:32.767316 ms=35.8 ok name="uia-provider"

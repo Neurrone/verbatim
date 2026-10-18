@@ -1,0 +1,159 @@
+=== run 1
+02:18:25.431708 run spawn S server
+  S 02:18:25.446979 hwnd 18155778 pid 8024
+02:18:25.447100 run send S newthread
+  S 02:18:25.447114 ready
+  S 02:18:25.448014 hwnd 57673760 pid 8024
+02:18:25.452735 run spawn L client 18155778 L
+02:18:25.452817 run send L init
+  L 02:18:25.462585 client-ready L
+  L 02:18:25.467269 done init L start=02:18:25.462622 ms=4.6 ok
+02:18:25.467397 run send L efh
+  S 02:18:25.475077 getobject-begin hwnd=18155778 objid=-25 wparam=0x7ff9e04 insend=0x1 in_hold=false
+  S 02:18:25.476339 getobject-end hwnd=18155778 objid=-25 lresult=0x10000 us=1268 in_hold=false
+  S 02:18:25.477538 getobject-begin hwnd=18155778 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:18:25.477569 getobject-end hwnd=18155778 objid=-25 lresult=0x10000 us=31 in_hold=false
+  L 02:18:25.478034 done efh L start=02:18:25.467439 ms=10.6 ok
+02:18:25.478096 run send L rop
+  S 02:18:25.485573 getobject-begin hwnd=18155778 objid=-25 wparam=0x8013dd8 insend=0x0 in_hold=false
+  S 02:18:25.485631 getobject-end hwnd=18155778 objid=-25 lresult=0x10000 us=62 in_hold=false
+  S 02:18:25.485837 getobject-begin hwnd=18155778 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:18:25.485874 getobject-end hwnd=18155778 objid=-25 lresult=0x10000 us=38 in_hold=false
+  L 02:18:25.486356 done rop L start=02:18:25.478126 ms=8.2 ok
+02:18:25.490698 run spawn B client 18155778 B
+02:18:25.490728 run send B init
+  B 02:18:25.497408 client-ready B
+  B 02:18:25.502365 done init B start=02:18:25.497439 ms=4.9 ok
+02:18:25.507255 run spawn C client 57673760 C
+02:18:25.507304 run send C init
+  C 02:18:25.515308 client-ready C
+  C 02:18:25.519623 done init C start=02:18:25.515342 ms=4.3 ok
+02:18:25.519710 run send C efh
+  S 02:18:25.526919 getobject-begin hwnd=57673760 objid=-25 wparam=0x8077858 insend=0x1 in_hold=false
+  S 02:18:25.527479 getobject-end hwnd=57673760 objid=-25 lresult=0x10000 us=563 in_hold=false
+  S 02:18:25.528241 getobject-begin hwnd=57673760 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:18:25.528279 getobject-end hwnd=57673760 objid=-25 lresult=0x10000 us=39 in_hold=false
+  C 02:18:25.528680 done efh C start=02:18:25.519740 ms=8.9 ok
+02:18:25.528740 run send C ropname
+  S 02:18:25.529170 getobject-begin hwnd=57673760 objid=-25 wparam=0x8013dd9 insend=0x0 in_hold=false
+  S 02:18:25.529229 getobject-end hwnd=57673760 objid=-25 lresult=0x10000 us=59 in_hold=false
+  S 02:18:25.529389 getobject-begin hwnd=57673760 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:18:25.529423 getobject-end hwnd=57673760 objid=-25 lresult=0x10000 us=35 in_hold=false
+  C 02:18:25.529765 done ropname C start=02:18:25.528770 ms=1.0 ok name=Ok(String("uia-provider"))
+02:18:25.529827 run send S busy 1000
+  S 02:18:25.529929 busy-begin
+02:18:25.529988 run send B async efhbc
+02:18:25.535047 run send C name
+  C 02:18:25.535424 done name C start=02:18:25.535102 ms=0.3 ok name="uia-provider"
+  S 02:18:26.529943 busy-end
+  S 02:18:26.530002 getobject-begin hwnd=18155778 objid=-25 wparam=0x8096072 insend=0x1 in_hold=false
+  S 02:18:26.530090 getobject-end hwnd=18155778 objid=-25 lresult=0x10000 us=89 in_hold=false
+  S 02:18:26.530891 getobject-begin hwnd=18155778 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:18:26.530920 getobject-end hwnd=18155778 objid=-25 lresult=0x10000 us=30 in_hold=false
+  B 02:18:26.531568 done async-efhbc B start=02:18:25.530229 ms=1001.3 ok name="uia-provider"
+=== run 2
+02:18:27.102788 run spawn S server
+  S 02:18:27.118625 hwnd 18221314 pid 15224
+02:18:27.118770 run send S newthread
+  S 02:18:27.118793 ready
+  S 02:18:27.119762 hwnd 34473406 pid 15224
+02:18:27.123915 run spawn L client 18221314 L
+02:18:27.123956 run send L init
+  L 02:18:27.130619 client-ready L
+  L 02:18:27.135112 done init L start=02:18:27.130655 ms=4.4 ok
+02:18:27.135221 run send L efh
+  S 02:18:27.142473 getobject-begin hwnd=18221314 objid=-25 wparam=0x8fe1cba insend=0x1 in_hold=false
+  S 02:18:27.143419 getobject-end hwnd=18221314 objid=-25 lresult=0x10000 us=945 in_hold=false
+  S 02:18:27.144538 getobject-begin hwnd=18221314 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:18:27.144590 getobject-end hwnd=18221314 objid=-25 lresult=0x10000 us=32 in_hold=false
+  L 02:18:27.145000 done efh L start=02:18:27.135259 ms=9.7 ok
+02:18:27.145071 run send L rop
+  S 02:18:27.151836 getobject-begin hwnd=18221314 objid=-25 wparam=0x8ff84e0 insend=0x0 in_hold=false
+  S 02:18:27.151904 getobject-end hwnd=18221314 objid=-25 lresult=0x10000 us=73 in_hold=false
+  S 02:18:27.152140 getobject-begin hwnd=18221314 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:18:27.152172 getobject-end hwnd=18221314 objid=-25 lresult=0x10000 us=34 in_hold=false
+  L 02:18:27.152617 done rop L start=02:18:27.145119 ms=7.5 ok
+02:18:27.156733 run spawn B client 18221314 B
+02:18:27.156764 run send B init
+  B 02:18:27.163020 client-ready B
+  B 02:18:27.167078 done init B start=02:18:27.163048 ms=4.0 ok
+02:18:27.171503 run spawn C client 34473406 C
+02:18:27.171544 run send C init
+  C 02:18:27.179520 client-ready C
+  C 02:18:27.183715 done init C start=02:18:27.179568 ms=4.1 ok
+02:18:27.183799 run send C efh
+  S 02:18:27.190584 getobject-begin hwnd=34473406 objid=-25 wparam=0x9055e29 insend=0x1 in_hold=false
+  S 02:18:27.191098 getobject-end hwnd=34473406 objid=-25 lresult=0x10000 us=519 in_hold=false
+  S 02:18:27.191830 getobject-begin hwnd=34473406 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:18:27.191860 getobject-end hwnd=34473406 objid=-25 lresult=0x10000 us=31 in_hold=false
+  C 02:18:27.192292 done efh C start=02:18:27.183827 ms=8.5 ok
+02:18:27.192356 run send C ropname
+  S 02:18:27.192759 getobject-begin hwnd=34473406 objid=-25 wparam=0x8ff84e1 insend=0x0 in_hold=false
+  S 02:18:27.192800 getobject-end hwnd=34473406 objid=-25 lresult=0x10000 us=42 in_hold=false
+  S 02:18:27.192944 getobject-begin hwnd=34473406 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:18:27.192970 getobject-end hwnd=34473406 objid=-25 lresult=0x10000 us=27 in_hold=false
+  C 02:18:27.193318 done ropname C start=02:18:27.192381 ms=0.9 ok name=Ok(String("uia-provider"))
+02:18:27.193371 run send S busy 1000
+  S 02:18:27.193445 busy-begin
+02:18:27.193502 run send B async efhbc
+02:18:27.198545 run send C name
+  C 02:18:27.198886 done name C start=02:18:27.198594 ms=0.3 ok name="uia-provider"
+  S 02:18:28.193460 busy-end
+  S 02:18:28.193516 getobject-begin hwnd=18221314 objid=-25 wparam=0x9070201 insend=0x1 in_hold=false
+  S 02:18:28.193613 getobject-end hwnd=18221314 objid=-25 lresult=0x10000 us=99 in_hold=false
+  S 02:18:28.194490 getobject-begin hwnd=18221314 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:18:28.194525 getobject-end hwnd=18221314 objid=-25 lresult=0x10000 us=37 in_hold=false
+  B 02:18:28.195246 done async-efhbc B start=02:18:27.193673 ms=1001.6 ok name="uia-provider"
+=== run 3
+02:18:28.738448 run spawn S server
+  S 02:18:28.752486 hwnd 18286850 pid 14564
+02:18:28.752608 run send S newthread
+  S 02:18:28.752583 ready
+  S 02:18:28.753566 hwnd 34538942 pid 14564
+02:18:28.757811 run spawn L client 18286850 L
+02:18:28.757841 run send L init
+  L 02:18:28.764725 client-ready L
+  L 02:18:28.769241 done init L start=02:18:28.764768 ms=4.5 ok
+02:18:28.769341 run send L efh
+  S 02:18:28.778819 getobject-begin hwnd=18286850 objid=-25 wparam=0x9f7a22a insend=0x1 in_hold=false
+  S 02:18:28.779965 getobject-end hwnd=18286850 objid=-25 lresult=0x10000 us=1151 in_hold=false
+  S 02:18:28.781158 getobject-begin hwnd=18286850 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:18:28.781194 getobject-end hwnd=18286850 objid=-25 lresult=0x10000 us=37 in_hold=false
+  L 02:18:28.781651 done efh L start=02:18:28.769370 ms=12.3 ok
+02:18:28.781730 run send L rop
+  S 02:18:28.789294 getobject-begin hwnd=18286850 objid=-25 wparam=0x9f94d0a insend=0x0 in_hold=false
+  S 02:18:28.789364 getobject-end hwnd=18286850 objid=-25 lresult=0x10000 us=75 in_hold=false
+  S 02:18:28.789582 getobject-begin hwnd=18286850 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:18:28.789610 getobject-end hwnd=18286850 objid=-25 lresult=0x10000 us=29 in_hold=false
+  L 02:18:28.790072 done rop L start=02:18:28.781762 ms=8.3 ok
+02:18:28.794432 run spawn B client 18286850 B
+02:18:28.794524 run send B init
+  B 02:18:28.801107 client-ready B
+  B 02:18:28.805146 done init B start=02:18:28.801137 ms=4.0 ok
+02:18:28.809249 run spawn C client 34538942 C
+02:18:28.809280 run send C init
+  C 02:18:28.815927 client-ready C
+  C 02:18:28.820031 done init C start=02:18:28.815959 ms=4.1 ok
+02:18:28.820110 run send C efh
+  S 02:18:28.828002 getobject-begin hwnd=34538942 objid=-25 wparam=0x9ff2d38 insend=0x1 in_hold=false
+  S 02:18:28.828578 getobject-end hwnd=34538942 objid=-25 lresult=0x10000 us=580 in_hold=false
+  S 02:18:28.829402 getobject-begin hwnd=34538942 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:18:28.829434 getobject-end hwnd=34538942 objid=-25 lresult=0x10000 us=33 in_hold=false
+  C 02:18:28.829908 done efh C start=02:18:28.820144 ms=9.8 ok
+02:18:28.830010 run send C ropname
+  S 02:18:28.830438 getobject-begin hwnd=34538942 objid=-25 wparam=0x9f94d0b insend=0x0 in_hold=false
+  S 02:18:28.830479 getobject-end hwnd=34538942 objid=-25 lresult=0x10000 us=42 in_hold=false
+  S 02:18:28.830626 getobject-begin hwnd=34538942 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:18:28.830652 getobject-end hwnd=34538942 objid=-25 lresult=0x10000 us=27 in_hold=false
+  C 02:18:28.831074 done ropname C start=02:18:28.830046 ms=1.0 ok name=Ok(String("uia-provider"))
+02:18:28.831142 run send S busy 1000
+  S 02:18:28.831247 busy-begin
+02:18:28.831320 run send B async efhbc
+02:18:28.836380 run send C name
+  C 02:18:28.836797 done name C start=02:18:28.836437 ms=0.3 ok name="uia-provider"
+  S 02:18:29.831262 busy-end
+  S 02:18:29.831313 getobject-begin hwnd=18286850 objid=-25 wparam=0xa010e62 insend=0x1 in_hold=false
+  S 02:18:29.831397 getobject-end hwnd=18286850 objid=-25 lresult=0x10000 us=85 in_hold=false
+  S 02:18:29.832243 getobject-begin hwnd=18286850 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:18:29.832270 getobject-end hwnd=18286850 objid=-25 lresult=0x10000 us=28 in_hold=false
+  B 02:18:29.832931 done async-efhbc B start=02:18:28.831520 ms=1001.4 ok name="uia-provider"

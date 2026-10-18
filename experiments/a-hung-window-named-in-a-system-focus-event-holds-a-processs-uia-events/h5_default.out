@@ -1,0 +1,15 @@
+[1792299797382533] holdTV: ondesk-child-pid 17868
+[1792299797405902] holdTV: ready
+[1792299797443515] tool find holdTV -> 85591030 ondesk-child-pid 10660
+[1792299797480266] tool findchild 85591030 WindowsForms10.SysTreeView32.app.0.141b42a_r9_ad1 -> 40961202 ondesk-child-pid 15552
+[1792299797496179] D: ondesk-child-pid 18212
+[1792299797517776] D: client-ready D
+[1792299797517860] >D: read 40961202
+[1792299797534214] D: readdone D took=16ms result=""
+RESULT default answering: readdone D took=16ms result=""
+[1792299797534329] >holdTV: stall 15000
+[1792299797534517] holdTV: stall started
+[1792299797534561] >D: read 40961202
+[1792299799548757] D: readdone D took=2014ms result=ERR0x80131505
+RESULT default stalled: readdone D took=2014ms result=ERR0x80131505
+[1792299812535083] holdTV: stall ended 1792299812534985

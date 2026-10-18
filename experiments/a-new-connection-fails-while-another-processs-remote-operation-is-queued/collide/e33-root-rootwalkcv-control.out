@@ -1,0 +1,76 @@
+=== run 1
+17:00:57.077220 run spawn S server
+  S 17:00:57.092322 hwnd 72090548 pid 17240
+17:00:57.092641 run send S showtopoff
+  S 17:00:57.092405 ready
+  S 17:00:57.094224 shown-off-screen
+run 17:00:57.097968 owner hwnd=72090548 pid=17240 tid=10592
+17:00:57.104451 run spawn L client 72090548 L
+17:00:57.104523 run send L init
+  L 17:00:57.114235 client-ready L
+  L 17:00:57.119613 done init L start=17:00:57.114277 ms=5.3 ok
+17:00:57.119746 run send L efh
+  S 17:00:57.129557 getobject-begin hwnd=72090548 objid=-25 wparam=0x51a4eb91 insend=0x1 in_hold=false
+  S 17:00:57.130682 getobject-end hwnd=72090548 objid=-25 lresult=0x10000 us=1140 in_hold=false
+  S 17:00:57.132031 getobject-begin hwnd=72090548 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:00:57.132081 getobject-end hwnd=72090548 objid=-25 lresult=0x10000 us=53 in_hold=false
+  L 17:00:57.132535 done efh L start=17:00:57.119790 ms=12.7 ok
+17:00:57.132627 run send L rop
+  S 17:00:57.144214 getobject-begin hwnd=72090548 objid=-25 wparam=0x51a71ea8 insend=0x0 in_hold=false
+  S 17:00:57.144352 getobject-end hwnd=72090548 objid=-25 lresult=0x10000 us=144 in_hold=false
+  S 17:00:57.144676 getobject-begin hwnd=72090548 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:00:57.144714 getobject-end hwnd=72090548 objid=-25 lresult=0x10000 us=40 in_hold=false
+  L 17:00:57.145311 done rop L start=17:00:57.132677 ms=12.6 ok
+17:00:57.150473 run spawn B client 72090548 B
+17:00:57.150522 run send B init
+  B 17:00:57.160699 client-ready B
+  B 17:00:57.165482 done init B start=17:00:57.160739 ms=4.7 ok
+17:00:57.165603 run send S busy 300
+  S 17:00:57.165693 busy-begin
+17:00:57.170813 run send B rootwalkcv
+  S 17:00:57.465708 busy-end
+  S 17:00:57.466005 getobject-begin hwnd=72090548 objid=-25 wparam=0x51acd0d7 insend=0x1 in_hold=false
+  S 17:00:57.466107 getobject-end hwnd=72090548 objid=-25 lresult=0x10000 us=104 in_hold=false
+  S 17:00:57.466575 getobject-begin hwnd=72090548 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:00:57.466623 getobject-end hwnd=72090548 objid=-25 lresult=0x10000 us=49 in_hold=false
+  B 17:00:57.467866 done rootwalkcv B start=17:00:57.170912 ms=296.9 ok found steps=3 last-step-ms=282.6 at=17:00:57.467757 name="uia-provider" hwnd=72090548 pid=17240 desc="[pid:16032,providerId:0x44C03B4 Main:Nested [pid:17240,providerId:0x44C03B4 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]" slow=[step3=282ms[name="uia-provider" hwnd=72090548 pid=17240 desc="[pid:16032,providerId:0x44C03B4 Main:Nested [pid:17240,providerId:0x44C03B4 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"]]
+17:00:57.467949 run send B info
+  B 17:00:57.468526 done info B start=17:00:57.467975 ms=0.5 ok name="uia-provider"(0.1ms) hwnd=72090548(0.1ms) framework="Win32"(0.1ms) pid=17240(0.1ms) desc="[pid:16032,providerId:0x44C03B4 Main:Nested [pid:17240,providerId:0x44C03B4 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.1ms)
+=== run 2
+17:00:58.252781 run spawn S server
+  S 17:00:58.266747 hwnd 72156084 pid 4928
+17:00:58.266937 run send S showtopoff
+  S 17:00:58.266823 ready
+  S 17:00:58.267787 shown-off-screen
+run 17:00:58.270728 owner hwnd=72156084 pid=4928 tid=7664
+17:00:58.275079 run spawn L client 72156084 L
+17:00:58.275127 run send L init
+  L 17:00:58.282669 client-ready L
+  L 17:00:58.287709 done init L start=17:00:58.282707 ms=5.0 ok
+17:00:58.287823 run send L efh
+  S 17:00:58.295850 getobject-begin hwnd=72156084 objid=-25 wparam=0x5256d7c3 insend=0x1 in_hold=false
+  S 17:00:58.296961 getobject-end hwnd=72156084 objid=-25 lresult=0x10000 us=1118 in_hold=false
+  S 17:00:58.298253 getobject-begin hwnd=72156084 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:00:58.298290 getobject-end hwnd=72156084 objid=-25 lresult=0x10000 us=39 in_hold=false
+  L 17:00:58.298804 done efh L start=17:00:58.287853 ms=10.9 ok
+17:00:58.298896 run send L rop
+  S 17:00:58.306736 getobject-begin hwnd=72156084 objid=-25 wparam=0x5258809d insend=0x0 in_hold=false
+  S 17:00:58.306803 getobject-end hwnd=72156084 objid=-25 lresult=0x10000 us=71 in_hold=false
+  S 17:00:58.307039 getobject-begin hwnd=72156084 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:00:58.307080 getobject-end hwnd=72156084 objid=-25 lresult=0x10000 us=42 in_hold=false
+  L 17:00:58.307502 done rop L start=17:00:58.298934 ms=8.6 ok
+17:00:58.312110 run spawn B client 72156084 B
+17:00:58.312170 run send B init
+  B 17:00:58.320252 client-ready B
+  B 17:00:58.324921 done init B start=17:00:58.320296 ms=4.6 ok
+17:00:58.325032 run send S busy 300
+  S 17:00:58.325126 busy-begin
+17:00:58.330223 run send B rootwalkcv
+  S 17:00:58.625143 busy-end
+  S 17:00:58.625426 getobject-begin hwnd=72156084 objid=-25 wparam=0x525dafbf insend=0x1 in_hold=false
+  S 17:00:58.625515 getobject-end hwnd=72156084 objid=-25 lresult=0x10000 us=91 in_hold=false
+  S 17:00:58.625986 getobject-begin hwnd=72156084 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:00:58.626020 getobject-end hwnd=72156084 objid=-25 lresult=0x10000 us=35 in_hold=false
+  B 17:00:58.627377 done rootwalkcv B start=17:00:58.330289 ms=297.1 ok found steps=3 last-step-ms=283.8 at=17:00:58.627247 name="uia-provider" hwnd=72156084 pid=4928 desc="[pid:17476,providerId:0x44D03B4 Main:Nested [pid:4928,providerId:0x44D03B4 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]" slow=[step3=283ms[name="uia-provider" hwnd=72156084 pid=4928 desc="[pid:17476,providerId:0x44D03B4 Main:Nested [pid:4928,providerId:0x44D03B4 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"]]
+17:00:58.627475 run send B info
+  B 17:00:58.628208 done info B start=17:00:58.627510 ms=0.7 ok name="uia-provider"(0.1ms) hwnd=72156084(0.1ms) framework="Win32"(0.1ms) pid=4928(0.1ms) desc="[pid:17476,providerId:0x44D03B4 Main:Nested [pid:4928,providerId:0x44D03B4 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.2ms)

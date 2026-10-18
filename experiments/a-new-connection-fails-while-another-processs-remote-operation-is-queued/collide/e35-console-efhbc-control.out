@@ -1,0 +1,42 @@
+=== run 1
+run 17:03:34.185305 hwnd 63833432 found
+run 17:03:34.185419 owner hwnd=63833432 pid=2640 tid=5824
+17:03:34.189721 run spawn L client 63833432 L
+17:03:34.189762 run send L init
+  L 17:03:34.196703 client-ready L
+  L 17:03:34.200960 done init L start=17:03:34.196735 ms=4.2 ok
+17:03:34.201067 run send L efh
+  L 17:03:34.209208 done efh L start=17:03:34.201120 ms=8.1 ok
+17:03:34.209304 run send L rop
+  L 17:03:34.209971 done rop L start=17:03:34.209337 ms=0.6 ok
+17:03:34.214052 run spawn B client 63833432 B
+17:03:34.214096 run send B init
+  B 17:03:34.221267 client-ready B
+  B 17:03:34.225559 done init B start=17:03:34.221300 ms=4.3 ok
+run 17:03:34.225643 stall-begin tid=8744 count=0
+17:03:34.230710 run send B efhbc
+run 17:03:34.525869 stall-end count=1
+  B 17:03:34.527110 done efhbc B start=17:03:34.230749 ms=296.4 ok name="collide-console"
+17:03:34.527182 run send B info
+  B 17:03:34.527664 done info B start=17:03:34.527207 ms=0.5 ok name="collide-console"(0.1ms) hwnd=63833432(0.1ms) framework="Win32"(0.1ms) pid=7200(0.1ms) desc="[pid:15980,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.1ms)
+=== run 2
+run 17:03:35.267655 hwnd 63833432 found
+run 17:03:35.267755 owner hwnd=63833432 pid=2640 tid=5824
+17:03:35.272080 run spawn L client 63833432 L
+17:03:35.272127 run send L init
+  L 17:03:35.278117 client-ready L
+  L 17:03:35.282764 done init L start=17:03:35.278161 ms=4.6 ok
+17:03:35.282848 run send L efh
+  L 17:03:35.290568 done efh L start=17:03:35.282887 ms=7.7 ok
+17:03:35.290672 run send L rop
+  L 17:03:35.291359 done rop L start=17:03:35.290701 ms=0.7 ok
+17:03:35.295600 run spawn B client 63833432 B
+17:03:35.295637 run send B init
+  B 17:03:35.301883 client-ready B
+  B 17:03:35.305776 done init B start=17:03:35.301912 ms=3.9 ok
+run 17:03:35.305856 stall-begin tid=8744 count=0
+17:03:35.310926 run send B efhbc
+run 17:03:35.606732 stall-end count=1
+  B 17:03:35.607453 done efhbc B start=17:03:35.310968 ms=296.5 ok name="collide-console"
+17:03:35.607514 run send B info
+  B 17:03:35.607913 done info B start=17:03:35.607535 ms=0.4 ok name="collide-console"(0.1ms) hwnd=63833432(0.0ms) framework="Win32"(0.0ms) pid=7200(0.0ms) desc="[pid:1488,providerId:0x3CE0558 Main:Nested [pid:7200,providerId:0x3CE0558 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.1ms)

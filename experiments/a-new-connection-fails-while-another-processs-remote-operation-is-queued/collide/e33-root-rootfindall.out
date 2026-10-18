@@ -1,0 +1,288 @@
+=== run 1
+17:01:46.793494 run spawn S server
+  S 17:01:46.807818 hwnd 21824310 pid 15872
+17:01:46.807955 run send S showtopoff
+  S 17:01:46.807903 ready
+  S 17:01:46.808998 shown-off-screen
+run 17:01:46.809086 owner hwnd=21824310 pid=15872 tid=14640
+17:01:46.814109 run spawn L client 21824310 L
+17:01:46.814156 run send L init
+  L 17:01:46.821934 client-ready L
+  L 17:01:46.826481 done init L start=17:01:46.821977 ms=4.5 ok
+17:01:46.826585 run send L efh
+  S 17:01:46.835834 getobject-begin hwnd=21824310 objid=-25 wparam=0x6f45955f insend=0x1 in_hold=false
+  S 17:01:46.836953 getobject-end hwnd=21824310 objid=-25 lresult=0x10000 us=1145 in_hold=false
+  S 17:01:46.838262 getobject-begin hwnd=21824310 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:46.838296 getobject-end hwnd=21824310 objid=-25 lresult=0x10000 us=35 in_hold=false
+  L 17:01:46.838730 done efh L start=17:01:46.826615 ms=12.1 ok
+17:01:46.838792 run send L rop
+  S 17:01:46.846587 getobject-begin hwnd=21824310 objid=-25 wparam=0x6f4739c4 insend=0x0 in_hold=false
+  S 17:01:46.846660 getobject-end hwnd=21824310 objid=-25 lresult=0x10000 us=78 in_hold=false
+  S 17:01:46.846880 getobject-begin hwnd=21824310 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:46.846907 getobject-end hwnd=21824310 objid=-25 lresult=0x10000 us=29 in_hold=false
+  L 17:01:46.847378 done rop L start=17:01:46.838830 ms=8.5 ok
+17:01:46.855672 run spawn B client 21824310 B
+17:01:46.855723 run send B init
+  B 17:01:46.863284 client-ready B
+  B 17:01:46.870661 done init B start=17:01:46.863329 ms=7.3 ok
+17:01:46.870763 run send S busy 300
+  S 17:01:46.870853 busy-begin
+17:01:46.870917 run send L async rop
+17:01:46.875964 run send B rootfindall
+  S 17:01:47.170876 busy-end
+  S 17:01:47.171278 getobject-begin hwnd=21824310 objid=-25 wparam=0x6f4739c5 insend=0x0 in_hold=false
+  S 17:01:47.171334 getobject-end hwnd=21824310 objid=-25 lresult=0x10000 us=58 in_hold=false
+  S 17:01:47.171437 getobject-begin hwnd=21824310 objid=-25 wparam=0x6f4d30fa insend=0x1 in_hold=false
+  S 17:01:47.171466 getobject-end hwnd=21824310 objid=-25 lresult=0x10000 us=30 in_hold=false
+  S 17:01:47.171552 getobject-begin hwnd=21824310 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:47.171596 getobject-end hwnd=21824310 objid=-25 lresult=0x10000 us=44 in_hold=false
+  L 17:01:47.172293 done async-rop L start=17:01:46.871104 ms=301.2 ok
+  S 17:01:47.172299 getobject-begin hwnd=21824310 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:47.172336 getobject-end hwnd=21824310 objid=-25 lresult=0x10000 us=39 in_hold=false
+  S 17:01:47.177231 getobject-begin hwnd=21824310 objid=0 wparam=0xca0 insend=0x1 in_hold=false
+  S 17:01:47.177447 getobject-end hwnd=21824310 objid=0 lresult=0x0 us=222 in_hold=false
+  S 17:01:47.177504 getobject-begin hwnd=21824310 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:47.177531 getobject-end hwnd=21824310 objid=-12 lresult=0x0 us=27 in_hold=false
+  B 17:01:47.189513 done rootfindall B start=17:01:46.876037 ms=313.5 ok found count=5 index=2 name="uia-provider" hwnd=21824310 pid=15872 desc="[pid:3232,providerId:0x14D0336 Main:Nested [pid:15872,providerId:0x14D0336 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]" others=["Activate Windows.Go to Settings to activate Windows."/pid8232, "Taskbar"/pid8232, "◑ focus pipeline"/pid10412, "Program Manager"/pid8232]
+17:01:47.189649 run send B info
+  B 17:01:47.190437 done info B start=17:01:47.189689 ms=0.7 ok name="uia-provider"(0.2ms) hwnd=21824310(0.1ms) framework="Win32"(0.1ms) pid=15872(0.1ms) desc="[pid:3232,providerId:0x14D0336 Main:Nested [pid:15872,providerId:0x14D0336 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.1ms)
+=== run 2
+17:01:47.974177 run spawn S server
+  S 17:01:47.989559 hwnd 56623890 pid 1084
+17:01:47.989740 run send S showtopoff
+  S 17:01:47.989668 ready
+  S 17:01:47.991772 shown-off-screen
+run 17:01:47.991859 owner hwnd=56623890 pid=1084 tid=11808
+17:01:47.996178 run spawn L client 56623890 L
+17:01:47.996225 run send L init
+  L 17:01:48.004456 client-ready L
+  L 17:01:48.009282 done init L start=17:01:48.004509 ms=4.8 ok
+17:01:48.009387 run send L efh
+  S 17:01:48.016904 getobject-begin hwnd=56623890 objid=-25 wparam=0x6ff9c386 insend=0x1 in_hold=false
+  S 17:01:48.019513 getobject-end hwnd=56623890 objid=-25 lresult=0x10000 us=2617 in_hold=false
+  S 17:01:48.021231 getobject-begin hwnd=56623890 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:48.021279 getobject-end hwnd=56623890 objid=-25 lresult=0x10000 us=51 in_hold=false
+  L 17:01:48.021835 done efh L start=17:01:48.009414 ms=12.4 ok
+17:01:48.021927 run send L rop
+  S 17:01:48.030617 getobject-begin hwnd=56623890 objid=-25 wparam=0x6ffbdc9a insend=0x0 in_hold=false
+  S 17:01:48.030703 getobject-end hwnd=56623890 objid=-25 lresult=0x10000 us=90 in_hold=false
+  S 17:01:48.030946 getobject-begin hwnd=56623890 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:48.030982 getobject-end hwnd=56623890 objid=-25 lresult=0x10000 us=37 in_hold=false
+  L 17:01:48.031479 done rop L start=17:01:48.021989 ms=9.5 ok
+17:01:48.036171 run spawn B client 56623890 B
+17:01:48.036233 run send B init
+  B 17:01:48.044228 client-ready B
+  B 17:01:48.048877 done init B start=17:01:48.044266 ms=4.6 ok
+17:01:48.049159 run send S busy 300
+  S 17:01:48.049246 busy-begin
+17:01:48.049317 run send L async rop
+17:01:48.054369 run send B rootfindall
+  S 17:01:48.349260 busy-end
+  S 17:01:48.349570 getobject-begin hwnd=56623890 objid=-25 wparam=0x6ffbdc9b insend=0x0 in_hold=false
+  S 17:01:48.349621 getobject-end hwnd=56623890 objid=-25 lresult=0x10000 us=53 in_hold=false
+  S 17:01:48.349721 getobject-begin hwnd=56623890 objid=-25 wparam=0x700114b6 insend=0x1 in_hold=false
+  S 17:01:48.349750 getobject-end hwnd=56623890 objid=-25 lresult=0x10000 us=29 in_hold=false
+  S 17:01:48.349829 getobject-begin hwnd=56623890 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:48.349864 getobject-end hwnd=56623890 objid=-25 lresult=0x10000 us=36 in_hold=false
+  L 17:01:48.350473 done async-rop L start=17:01:48.049514 ms=301.0 ok
+  S 17:01:48.350493 getobject-begin hwnd=56623890 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:48.350527 getobject-end hwnd=56623890 objid=-25 lresult=0x10000 us=34 in_hold=false
+  S 17:01:48.356205 getobject-begin hwnd=56623890 objid=0 wparam=0x170c insend=0x1 in_hold=false
+  S 17:01:48.356373 getobject-end hwnd=56623890 objid=0 lresult=0x0 us=169 in_hold=false
+  S 17:01:48.356423 getobject-begin hwnd=56623890 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:48.356449 getobject-end hwnd=56623890 objid=-12 lresult=0x0 us=26 in_hold=false
+  B 17:01:48.369523 done rootfindall B start=17:01:48.054438 ms=315.1 ok found count=5 index=2 name="uia-provider" hwnd=56623890 pid=1084 desc="[pid:5900,providerId:0x3600312 Main:Nested [pid:1084,providerId:0x3600312 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]" others=["Activate Windows.Go to Settings to activate Windows."/pid8232, "Taskbar"/pid8232, "◑ focus pipeline"/pid10412, "Program Manager"/pid8232]
+17:01:48.369614 run send B info
+  B 17:01:48.370314 done info B start=17:01:48.369645 ms=0.7 ok name="uia-provider"(0.2ms) hwnd=56623890(0.1ms) framework="Win32"(0.1ms) pid=1084(0.1ms) desc="[pid:5900,providerId:0x3600312 Main:Nested [pid:1084,providerId:0x3600312 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.2ms)
+=== run 3
+17:01:49.159460 run spawn S server
+  S 17:01:49.173641 hwnd 21955382 pid 18264
+17:01:49.173916 run send S showtopoff
+  S 17:01:49.173840 ready
+  S 17:01:49.179246 shown-off-screen
+run 17:01:49.179385 owner hwnd=21955382 pid=18264 tid=15816
+17:01:49.183841 run spawn L client 21955382 L
+17:01:49.183892 run send L init
+  L 17:01:49.194227 client-ready L
+  L 17:01:49.199414 done init L start=17:01:49.194273 ms=5.1 ok
+17:01:49.199523 run send L efh
+  S 17:01:49.208145 getobject-begin hwnd=21955382 objid=-25 wparam=0x70af7091 insend=0x1 in_hold=false
+  S 17:01:49.209760 getobject-end hwnd=21955382 objid=-25 lresult=0x10000 us=1623 in_hold=false
+  S 17:01:49.211286 getobject-begin hwnd=21955382 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:49.211352 getobject-end hwnd=21955382 objid=-25 lresult=0x10000 us=51 in_hold=false
+  L 17:01:49.211919 done efh L start=17:01:49.199563 ms=12.4 ok
+17:01:49.212027 run send L rop
+  S 17:01:49.221634 getobject-begin hwnd=21955382 objid=-25 wparam=0x70b19dc9 insend=0x0 in_hold=false
+  S 17:01:49.221730 getobject-end hwnd=21955382 objid=-25 lresult=0x10000 us=99 in_hold=false
+  S 17:01:49.222028 getobject-begin hwnd=21955382 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:49.222079 getobject-end hwnd=21955382 objid=-25 lresult=0x10000 us=53 in_hold=false
+  L 17:01:49.222617 done rop L start=17:01:49.212073 ms=10.5 ok
+17:01:49.228360 run spawn B client 21955382 B
+17:01:49.228407 run send B init
+  B 17:01:49.237681 client-ready B
+  B 17:01:49.243430 done init B start=17:01:49.237730 ms=5.7 ok
+17:01:49.243530 run send S busy 300
+  S 17:01:49.243610 busy-begin
+17:01:49.243683 run send L async rop
+17:01:49.248726 run send B rootfindall
+  S 17:01:49.543625 busy-end
+  S 17:01:49.543909 getobject-begin hwnd=21955382 objid=-25 wparam=0x70b19dca insend=0x0 in_hold=false
+  S 17:01:49.543957 getobject-end hwnd=21955382 objid=-25 lresult=0x10000 us=50 in_hold=false
+  S 17:01:49.544053 getobject-begin hwnd=21955382 objid=-25 wparam=0x70b74ac8 insend=0x1 in_hold=false
+  S 17:01:49.544088 getobject-end hwnd=21955382 objid=-25 lresult=0x10000 us=37 in_hold=false
+  S 17:01:49.544173 getobject-begin hwnd=21955382 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:49.544200 getobject-end hwnd=21955382 objid=-25 lresult=0x10000 us=28 in_hold=false
+  S 17:01:49.544774 getobject-begin hwnd=21955382 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:49.544804 getobject-end hwnd=21955382 objid=-25 lresult=0x10000 us=31 in_hold=false
+  L 17:01:49.544834 done async-rop L start=17:01:49.243875 ms=301.0 ok
+  S 17:01:49.549379 getobject-begin hwnd=21955382 objid=0 wparam=0x3790 insend=0x1 in_hold=false
+  S 17:01:49.549559 getobject-end hwnd=21955382 objid=0 lresult=0x0 us=184 in_hold=false
+  S 17:01:49.549604 getobject-begin hwnd=21955382 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:49.549623 getobject-end hwnd=21955382 objid=-12 lresult=0x0 us=19 in_hold=false
+  B 17:01:49.560416 done rootfindall B start=17:01:49.248778 ms=311.6 ok found count=5 index=2 name="uia-provider" hwnd=21955382 pid=18264 desc="[pid:14224,providerId:0x14F0336 Main:Nested [pid:18264,providerId:0x14F0336 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]" others=["Activate Windows.Go to Settings to activate Windows."/pid8232, "Taskbar"/pid8232, "◑ focus pipeline"/pid10412, "Program Manager"/pid8232]
+17:01:49.560537 run send B info
+  B 17:01:49.561174 done info B start=17:01:49.560562 ms=0.6 ok name="uia-provider"(0.1ms) hwnd=21955382(0.1ms) framework="Win32"(0.1ms) pid=18264(0.1ms) desc="[pid:14224,providerId:0x14F0336 Main:Nested [pid:18264,providerId:0x14F0336 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.2ms)
+=== run 4
+17:01:50.346722 run spawn S server
+  S 17:01:50.360255 hwnd 22020918 pid 2736
+17:01:50.360366 run send S showtopoff
+  S 17:01:50.360368 ready
+  S 17:01:50.361350 shown-off-screen
+run 17:01:50.363517 owner hwnd=22020918 pid=2736 tid=16236
+17:01:50.369402 run spawn L client 22020918 L
+17:01:50.369476 run send L init
+  L 17:01:50.379076 client-ready L
+  L 17:01:50.383813 done init L start=17:01:50.379114 ms=4.7 ok
+17:01:50.383930 run send L efh
+  S 17:01:50.392632 getobject-begin hwnd=22020918 objid=-25 wparam=0x71645559 insend=0x1 in_hold=false
+  S 17:01:50.393809 getobject-end hwnd=22020918 objid=-25 lresult=0x10000 us=1190 in_hold=false
+  S 17:01:50.395354 getobject-begin hwnd=22020918 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:50.395391 getobject-end hwnd=22020918 objid=-25 lresult=0x10000 us=40 in_hold=false
+  L 17:01:50.395932 done efh L start=17:01:50.383971 ms=12.0 ok
+17:01:50.396017 run send L rop
+  S 17:01:50.404596 getobject-begin hwnd=22020918 objid=-25 wparam=0x7165f961 insend=0x0 in_hold=false
+  S 17:01:50.404661 getobject-end hwnd=22020918 objid=-25 lresult=0x10000 us=70 in_hold=false
+  S 17:01:50.404896 getobject-begin hwnd=22020918 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:50.404924 getobject-end hwnd=22020918 objid=-25 lresult=0x10000 us=29 in_hold=false
+  L 17:01:50.405464 done rop L start=17:01:50.396055 ms=9.4 ok
+17:01:50.410917 run spawn B client 22020918 B
+17:01:50.410963 run send B init
+  B 17:01:50.419279 client-ready B
+  B 17:01:50.424342 done init B start=17:01:50.419316 ms=5.0 ok
+17:01:50.424445 run send S busy 300
+  S 17:01:50.424547 busy-begin
+17:01:50.424623 run send L async rop
+17:01:50.429675 run send B rootfindall
+  S 17:01:50.724570 busy-end
+  S 17:01:50.724869 getobject-begin hwnd=22020918 objid=-25 wparam=0x7165f962 insend=0x0 in_hold=false
+  S 17:01:50.724968 getobject-end hwnd=22020918 objid=-25 lresult=0x10000 us=99 in_hold=false
+  S 17:01:50.725116 getobject-begin hwnd=22020918 objid=-25 wparam=0x716b6b35 insend=0x1 in_hold=false
+  S 17:01:50.725180 getobject-end hwnd=22020918 objid=-25 lresult=0x10000 us=64 in_hold=false
+  S 17:01:50.725226 getobject-begin hwnd=22020918 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:50.725305 getobject-end hwnd=22020918 objid=-25 lresult=0x10000 us=79 in_hold=false
+  S 17:01:50.725959 getobject-begin hwnd=22020918 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:50.725997 getobject-end hwnd=22020918 objid=-25 lresult=0x10000 us=39 in_hold=false
+  L 17:01:50.726007 done async-rop L start=17:01:50.424876 ms=301.1 ok
+  S 17:01:50.731877 getobject-begin hwnd=22020918 objid=0 wparam=0x3eb4 insend=0x1 in_hold=false
+  S 17:01:50.732106 getobject-end hwnd=22020918 objid=0 lresult=0x0 us=233 in_hold=false
+  S 17:01:50.732172 getobject-begin hwnd=22020918 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:50.732205 getobject-end hwnd=22020918 objid=-12 lresult=0x0 us=34 in_hold=false
+  B 17:01:50.745851 done rootfindall B start=17:01:50.429742 ms=316.1 ok found count=5 index=2 name="uia-provider" hwnd=22020918 pid=2736 desc="[pid:16052,providerId:0x1500336 Main:Nested [pid:2736,providerId:0x1500336 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]" others=["Activate Windows.Go to Settings to activate Windows."/pid8232, "Taskbar"/pid8232, "◑ focus pipeline"/pid10412, "Program Manager"/pid8232]
+17:01:50.745966 run send B info
+  B 17:01:50.746783 done info B start=17:01:50.746005 ms=0.8 ok name="uia-provider"(0.2ms) hwnd=22020918(0.1ms) framework="Win32"(0.2ms) pid=2736(0.1ms) desc="[pid:16052,providerId:0x1500336 Main:Nested [pid:2736,providerId:0x1500336 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.2ms)
+=== run 5
+17:01:51.575187 run spawn S server
+  S 17:01:51.590428 hwnd 22086454 pid 9504
+17:01:51.590647 run send S showtopoff
+  S 17:01:51.590561 ready
+  S 17:01:51.593184 shown-off-screen
+run 17:01:51.597664 owner hwnd=22086454 pid=9504 tid=5308
+17:01:51.603034 run spawn L client 22086454 L
+17:01:51.603154 run send L init
+  L 17:01:51.612596 client-ready L
+  L 17:01:51.617511 done init L start=17:01:51.612637 ms=4.9 ok
+17:01:51.617622 run send L efh
+  S 17:01:51.625939 getobject-begin hwnd=22086454 objid=-25 wparam=0x72207bd1 insend=0x1 in_hold=false
+  S 17:01:51.627503 getobject-end hwnd=22086454 objid=-25 lresult=0x10000 us=1574 in_hold=false
+  S 17:01:51.628859 getobject-begin hwnd=22086454 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:51.628904 getobject-end hwnd=22086454 objid=-25 lresult=0x10000 us=52 in_hold=false
+  L 17:01:51.629388 done efh L start=17:01:51.617650 ms=11.7 ok
+17:01:51.629447 run send L rop
+  S 17:01:51.638121 getobject-begin hwnd=22086454 objid=-25 wparam=0x722269e8 insend=0x0 in_hold=false
+  S 17:01:51.638195 getobject-end hwnd=22086454 objid=-25 lresult=0x10000 us=79 in_hold=false
+  S 17:01:51.638460 getobject-begin hwnd=22086454 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:51.638488 getobject-end hwnd=22086454 objid=-25 lresult=0x10000 us=29 in_hold=false
+  L 17:01:51.639020 done rop L start=17:01:51.629483 ms=9.5 ok
+17:01:51.643757 run spawn B client 22086454 B
+17:01:51.643809 run send B init
+  B 17:01:51.650820 client-ready B
+  B 17:01:51.655665 done init B start=17:01:51.650856 ms=4.8 ok
+17:01:51.655775 run send S busy 300
+  S 17:01:51.655859 busy-begin
+17:01:51.655920 run send L async rop
+17:01:51.660981 run send B rootfindall
+  S 17:01:51.955874 busy-end
+  S 17:01:51.956163 getobject-begin hwnd=22086454 objid=-25 wparam=0x722269e9 insend=0x0 in_hold=false
+  S 17:01:51.956221 getobject-end hwnd=22086454 objid=-25 lresult=0x10000 us=60 in_hold=false
+  S 17:01:51.956332 getobject-begin hwnd=22086454 objid=-25 wparam=0x72270b50 insend=0x1 in_hold=false
+  S 17:01:51.956372 getobject-end hwnd=22086454 objid=-25 lresult=0x10000 us=41 in_hold=false
+  S 17:01:51.956446 getobject-begin hwnd=22086454 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:51.956484 getobject-end hwnd=22086454 objid=-25 lresult=0x10000 us=39 in_hold=false
+  S 17:01:51.957027 getobject-begin hwnd=22086454 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  L 17:01:51.957024 done async-rop L start=17:01:51.656082 ms=300.9 ok
+  S 17:01:51.957074 getobject-end hwnd=22086454 objid=-25 lresult=0x10000 us=49 in_hold=false
+  S 17:01:51.962803 getobject-begin hwnd=22086454 objid=0 wparam=0x342c insend=0x1 in_hold=false
+  S 17:01:51.962994 getobject-end hwnd=22086454 objid=0 lresult=0x0 us=195 in_hold=false
+  S 17:01:51.963052 getobject-begin hwnd=22086454 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:51.963124 getobject-end hwnd=22086454 objid=-12 lresult=0x0 us=73 in_hold=false
+  B 17:01:51.974437 done rootfindall B start=17:01:51.661046 ms=313.4 ok found count=5 index=2 name="uia-provider" hwnd=22086454 pid=9504 desc="[pid:13356,providerId:0x1510336 Main:Nested [pid:9504,providerId:0x1510336 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]" others=["Activate Windows.Go to Settings to activate Windows."/pid8232, "Taskbar"/pid8232, "◑ focus pipeline"/pid10412, "Program Manager"/pid8232]
+17:01:51.974542 run send B info
+  B 17:01:51.975131 done info B start=17:01:51.974578 ms=0.6 ok name="uia-provider"(0.1ms) hwnd=22086454(0.1ms) framework="Win32"(0.1ms) pid=9504(0.1ms) desc="[pid:13356,providerId:0x1510336 Main:Nested [pid:9504,providerId:0x1510336 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.1ms)
+=== run 6
+17:01:52.741425 run spawn S server
+  S 17:01:52.755080 hwnd 22151990 pid 3068
+17:01:52.755249 run send S showtopoff
+  S 17:01:52.755162 ready
+  S 17:01:52.758592 shown-off-screen
+run 17:01:52.758718 owner hwnd=22151990 pid=3068 tid=8476
+17:01:52.764238 run spawn L client 22151990 L
+17:01:52.764286 run send L init
+  L 17:01:52.774047 client-ready L
+  L 17:01:52.778920 done init L start=17:01:52.774093 ms=4.8 ok
+17:01:52.779043 run send L efh
+  S 17:01:52.787327 getobject-begin hwnd=22151990 objid=-25 wparam=0x72d19e80 insend=0x1 in_hold=false
+  S 17:01:52.788372 getobject-end hwnd=22151990 objid=-25 lresult=0x10000 us=1056 in_hold=false
+  S 17:01:52.789587 getobject-begin hwnd=22151990 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:52.789619 getobject-end hwnd=22151990 objid=-25 lresult=0x10000 us=33 in_hold=false
+  L 17:01:52.790073 done efh L start=17:01:52.779095 ms=11.0 ok
+17:01:52.790142 run send L rop
+  S 17:01:52.799160 getobject-begin hwnd=22151990 objid=-25 wparam=0x72d38109 insend=0x0 in_hold=false
+  S 17:01:52.799239 getobject-end hwnd=22151990 objid=-25 lresult=0x10000 us=85 in_hold=false
+  S 17:01:52.799485 getobject-begin hwnd=22151990 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:52.799517 getobject-end hwnd=22151990 objid=-25 lresult=0x10000 us=33 in_hold=false
+  L 17:01:52.799996 done rop L start=17:01:52.790175 ms=9.8 ok
+17:01:52.805283 run spawn B client 22151990 B
+17:01:52.805341 run send B init
+  B 17:01:52.812749 client-ready B
+  B 17:01:52.817300 done init B start=17:01:52.812788 ms=4.5 ok
+17:01:52.817415 run send S busy 300
+  S 17:01:52.817500 busy-begin
+17:01:52.817551 run send L async rop
+17:01:52.822675 run send B rootfindall
+  S 17:01:53.117514 busy-end
+  S 17:01:53.117805 getobject-begin hwnd=22151990 objid=-25 wparam=0x72d3810a insend=0x0 in_hold=false
+  S 17:01:53.117849 getobject-end hwnd=22151990 objid=-25 lresult=0x10000 us=45 in_hold=false
+  S 17:01:53.117942 getobject-begin hwnd=22151990 objid=-25 wparam=0x72d8aa37 insend=0x1 in_hold=false
+  S 17:01:53.117969 getobject-end hwnd=22151990 objid=-25 lresult=0x10000 us=28 in_hold=false
+  S 17:01:53.118036 getobject-begin hwnd=22151990 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:53.118086 getobject-end hwnd=22151990 objid=-25 lresult=0x10000 us=50 in_hold=false
+  L 17:01:53.118585 done async-rop L start=17:01:52.817884 ms=300.7 ok
+  S 17:01:53.118619 getobject-begin hwnd=22151990 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:53.118643 getobject-end hwnd=22151990 objid=-25 lresult=0x10000 us=25 in_hold=false
+  S 17:01:53.123285 getobject-begin hwnd=22151990 objid=0 wparam=0x1e8 insend=0x1 in_hold=false
+  S 17:01:53.123457 getobject-end hwnd=22151990 objid=0 lresult=0x0 us=176 in_hold=false
+  S 17:01:53.123504 getobject-begin hwnd=22151990 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:01:53.123522 getobject-end hwnd=22151990 objid=-12 lresult=0x0 us=18 in_hold=false
+  B 17:01:53.134945 done rootfindall B start=17:01:52.822743 ms=312.2 ok found count=5 index=2 name="uia-provider" hwnd=22151990 pid=3068 desc="[pid:488,providerId:0x1520336 Main:Nested [pid:3068,providerId:0x1520336 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]" others=["Activate Windows.Go to Settings to activate Windows."/pid8232, "Taskbar"/pid8232, "◑ focus pipeline"/pid10412, "Program Manager"/pid8232]
+17:01:53.135049 run send B info
+  B 17:01:53.135643 done info B start=17:01:53.135087 ms=0.6 ok name="uia-provider"(0.1ms) hwnd=22151990(0.1ms) framework="Win32"(0.1ms) pid=3068(0.1ms) desc="[pid:488,providerId:0x1520336 Main:Nested [pid:3068,providerId:0x1520336 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.1ms)

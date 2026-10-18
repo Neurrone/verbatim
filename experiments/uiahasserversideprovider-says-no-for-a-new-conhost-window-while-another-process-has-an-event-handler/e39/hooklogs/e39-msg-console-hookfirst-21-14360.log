@@ -1,0 +1,33 @@
+20:28:43.904898 attach pid=14360
+20:28:43.904972 tid=14364 call hwnd=57540634 class=ConsoleWindowClass msg=0x3d wparam=0x58591743 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:28:43.908195 tid=14364 ret  hwnd=57540634 msg=0x3d wparam=0x58591743 lparam=0xffffffffffffffe7 lresult=0x10000
+20:28:43.910439 tid=14364 call hwnd=57540634 class=ConsoleWindowClass msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:28:43.910573 tid=14364 ret  hwnd=57540634 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000
+20:28:43.911640 tid=14364 call hwnd=57540634 class=ConsoleWindowClass msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:28:43.911721 tid=14364 ret  hwnd=57540634 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000
+20:28:43.915385 tid=14364 call hwnd=57540634 class=ConsoleWindowClass msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:28:43.915465 tid=14364 ret  hwnd=57540634 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000
+20:28:43.919745 tid=14364 call hwnd=57540634 class=ConsoleWindowClass msg=0x3d wparam=0x3944 lparam=0x00000000fffffffb sameproc=1 insend=0x1
+20:28:43.919796 tid=14364 ret  hwnd=57540634 msg=0x3d wparam=0x3944 lparam=0x00000000fffffffb lresult=0x0
+20:28:43.920082 tid=14364 call hwnd=57540634 class=ConsoleWindowClass msg=0x3d wparam=0x3944 lparam=0x00000000fffffffb sameproc=1 insend=0x1
+20:28:43.920108 tid=14364 ret  hwnd=57540634 msg=0x3d wparam=0x3944 lparam=0x00000000fffffffb lresult=0x0
+20:28:43.920966 tid=14364 call hwnd=57540634 class=ConsoleWindowClass msg=0x3d wparam=0x3944 lparam=0x00000000fffffffb sameproc=1 insend=0x1
+20:28:43.920993 tid=14364 ret  hwnd=57540634 msg=0x3d wparam=0x3944 lparam=0x00000000fffffffb lresult=0x0
+20:28:43.921431 tid=14364 call hwnd=57540634 class=ConsoleWindowClass msg=0x3d wparam=0x3944 lparam=0x00000000fffffffa sameproc=1 insend=0x1
+20:28:43.921458 tid=14364 ret  hwnd=57540634 msg=0x3d wparam=0x3944 lparam=0x00000000fffffffa lresult=0x0
+20:28:43.921583 tid=14364 call hwnd=57540634 class=ConsoleWindowClass msg=0x3d wparam=0x3944 lparam=0x00000000fffffffe sameproc=1 insend=0x1
+20:28:43.921614 tid=14364 ret  hwnd=57540634 msg=0x3d wparam=0x3944 lparam=0x00000000fffffffe lresult=0x0
+20:28:43.921799 tid=14364 call hwnd=57540634 class=ConsoleWindowClass msg=0x3d wparam=0x3944 lparam=0x00000000fffffffd sameproc=1 insend=0x1
+20:28:43.921824 tid=14364 ret  hwnd=57540634 msg=0x3d wparam=0x3944 lparam=0x00000000fffffffd lresult=0x0
+20:28:43.921917 tid=14364 call hwnd=57540634 class=ConsoleWindowClass msg=0x3d wparam=0x3944 lparam=0x00000000fffffff9 sameproc=1 insend=0x1
+20:28:43.921948 tid=14364 ret  hwnd=57540634 msg=0x3d wparam=0x3944 lparam=0x00000000fffffff9 lresult=0x0
+20:28:43.922109 tid=14364 call hwnd=57540634 class=ConsoleWindowClass msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:28:43.922148 tid=14364 ret  hwnd=57540634 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000
+20:28:43.924340 tid=14364 call hwnd=57540634 class=ConsoleWindowClass msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:28:43.924387 tid=14364 ret  hwnd=57540634 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000
+20:28:43.925899 tid=14364 call hwnd=57540634 class=ConsoleWindowClass msg=0x3d wparam=0x586f32fa lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:28:43.925968 tid=14364 ret  hwnd=57540634 msg=0x3d wparam=0x586f32fa lparam=0xffffffffffffffe7 lresult=0x10000
+20:28:43.926928 tid=14364 call hwnd=57540634 class=ConsoleWindowClass msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:28:43.926974 tid=14364 ret  hwnd=57540634 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000
+20:28:43.927575 tid=14364 call hwnd=57540634 class=ConsoleWindowClass msg=0x3d wparam=0x586f32fb lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:28:43.927641 tid=14364 ret  hwnd=57540634 msg=0x3d wparam=0x586f32fb lparam=0xffffffffffffffe7 lresult=0x10000

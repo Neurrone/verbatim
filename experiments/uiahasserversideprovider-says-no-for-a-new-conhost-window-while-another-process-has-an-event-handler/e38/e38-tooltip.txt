@@ -1,0 +1,24 @@
+# e38 minimal-handler variant: as e38-listener, with L replaced by T, a
+# client that registers one automation event handler (ToolTipOpened, over
+# the desktop root's subtree) and does nothing else.
+spawn T client 0 T
+send T init
+wait T done
+send T root
+wait T done root
+send T events
+wait T done events
+spawn U client 0 U
+send U init
+wait U done
+spawn R client 0 R
+send R init
+wait R done
+fgright
+console ${TITLE}
+sleep ${DELAY}
+send R target $HWND | send U target $HWND | send R rawprobe | send U probe | send R efhbcd | send U efhbcd
+wait U done efhbcd 20000
+drain 1500
+closeconsole
+drain 200

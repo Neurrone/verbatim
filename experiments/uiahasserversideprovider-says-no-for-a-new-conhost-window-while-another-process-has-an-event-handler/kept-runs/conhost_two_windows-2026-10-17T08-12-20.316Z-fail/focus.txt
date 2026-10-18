@@ -1,0 +1,7 @@
+focus:
+NodeSnapshot { id: NodeId { outpost: OutpostId(5), number: 1 }, backend: Msaa, role: Pane, name: Some("verbatim-e2e-console-two-b-mvc4bxkk"), value: None, states: StateSet(3), details: NodeDetails { description: None, keyboard_shortcut: None, position_in_set: None, set_size: None, level: None, rect: Some(Rect { left: 86, top: 109, width: 960, height: 480 }), top_level_client: true } }
+
+ancestors, outermost first:
+
+navigator:
+NodeSnapshot { id: NodeId { outpost: OutpostId(5), number: 1 }, backend: Msaa, role: Pane, name: Some("verbatim-e2e-console-two-b-mvc4bxkk"), value: None, states: StateSet(3), details: NodeDetails { description: None, keyboard_shortcut: None, position_in_set: None, set_size: None, level: None, rect: Some(Rect { left: 86, top: 109, width: 960, height: 480 }), top_level_client: true } }

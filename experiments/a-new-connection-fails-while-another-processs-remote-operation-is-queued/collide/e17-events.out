@@ -1,0 +1,40 @@
+22:45:50.691234 run spawn S server
+  S 22:45:50.703787 hwnd 26543322 pid 14872
+22:45:50.708205 run spawn L client 26543322 L
+22:45:50.708265 run send L init
+  S 22:45:50.703888 ready
+  L 22:45:50.714430 client-ready L
+  L 22:45:50.718481 done init L start=22:45:50.714461 ms=4.0 ok
+22:45:50.718584 run send L efh
+  S 22:45:50.725553 getobject-begin hwnd=26543322 objid=-25 wparam=0x55934247 insend=0x1 in_hold=false
+  S 22:45:50.726577 getobject-end hwnd=26543322 objid=-25 lresult=0x10000 us=1031 in_hold=false
+  S 22:45:50.727864 getobject-begin hwnd=26543322 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:45:50.727894 getobject-end hwnd=26543322 objid=-25 lresult=0x10000 us=31 in_hold=false
+  L 22:45:50.728385 done efh L start=22:45:50.718625 ms=9.8 ok
+22:45:50.728513 run send L rop
+  S 22:45:50.735651 getobject-begin hwnd=26543322 objid=-25 wparam=0x5594e832 insend=0x0 in_hold=false
+  S 22:45:50.735703 getobject-end hwnd=26543322 objid=-25 lresult=0x10000 us=54 in_hold=false
+  S 22:45:50.735883 getobject-begin hwnd=26543322 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:45:50.735910 getobject-end hwnd=26543322 objid=-25 lresult=0x10000 us=28 in_hold=false
+  L 22:45:50.736300 done rop L start=22:45:50.728551 ms=7.7 ok
+22:45:50.740419 run spawn B client 26543322 B
+22:45:50.740454 run send B init
+  B 22:45:50.747407 client-ready B
+  B 22:45:50.751462 done init B start=22:45:50.747440 ms=4.0 ok
+22:45:50.751535 run send L efh
+  S 22:45:50.751755 getobject-begin hwnd=26543322 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:45:50.751813 getobject-end hwnd=26543322 objid=-25 lresult=0x10000 us=60 in_hold=false
+  S 22:45:50.751955 getobject-begin hwnd=26543322 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:45:50.751987 getobject-end hwnd=26543322 objid=-25 lresult=0x10000 us=33 in_hold=false
+  L 22:45:50.752392 done efh L start=22:45:50.751581 ms=0.8 ok
+22:45:50.752448 run send S busy 40
+  S 22:45:50.752578 busy-begin
+22:45:50.752627 run send L async events
+22:45:50.757663 run send B probe
+  S 22:45:50.792593 busy-end
+  S 22:45:50.792640 getobject-begin hwnd=26543322 objid=-25 wparam=0x5599e731 insend=0x1 in_hold=false
+  S 22:45:50.792719 getobject-end hwnd=26543322 objid=-25 lresult=0x10000 us=80 in_hold=false
+  S 22:45:50.793647 getobject-begin hwnd=26543322 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:45:50.793714 getobject-end hwnd=26543322 objid=-25 lresult=0x10000 us=68 in_hold=false
+  B 22:45:50.794249 done probe B start=22:45:50.757704 ms=36.5 result=true
+  L 22:45:50.796638 done async-events L start=22:45:50.752748 ms=43.9 ok

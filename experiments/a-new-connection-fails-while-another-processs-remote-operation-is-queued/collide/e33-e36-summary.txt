@@ -1,0 +1,108 @@
+## e33-root-efhbc-control
+  run 1: ; B.efhbc 296.7ms [] ok name="uia-provider" ; B.info 0.7ms [real] ok name="uia-provider" hwnd=71566260 framework="Win32" pid=17700 ; L.rop nonems
+  run 2: ; B.efhbc 296.7ms [] ok name="uia-provider" ; B.info 0.7ms [real] ok name="uia-provider" hwnd=71631796 framework="Win32" pid=9188 ; L.rop nonems
+## e33-root-efhbc
+  run 1: ; B.efhbc 2300.7ms [] ok name="collide" ; B.info 0.6ms [proxy] ok name="collide" hwnd=70386612 framework="Win32" pid=14780 ; L.rop 301.0ms
+  run 2: ; B.efhbc 2302.9ms [] ok name="collide" ; B.info 0.6ms [proxy] ok name="collide" hwnd=70452148 framework="Win32" pid=17544 ; L.rop 301.0ms
+  run 3: ; B.efhbc 2307.3ms [] ok name="collide" ; B.info 1.1ms [proxy] ok name="collide" hwnd=70517684 framework="Win32" pid=4212 ; L.rop 300.9ms
+  run 4: ; B.efhbc 2313.6ms [] ok name="collide" ; B.info 0.9ms [proxy] ok name="collide" hwnd=70583220 framework="Win32" pid=17396 ; L.rop 296.6ms
+  run 5: ; B.efhbc 2337.3ms [] ok name="collide" ; B.info 2.2ms [proxy] ok name="collide" hwnd=70648756 framework="Win32" pid=17588 ; L.rop 320.3ms
+  run 6: ; B.efhbc 2304.1ms [] ok name="collide" ; B.info 0.7ms [proxy] ok name="collide" hwnd=70714292 framework="Win32" pid=13532 ; L.rop 301.8ms
+## e33-root-rootfind-control
+  run 1: ; B.rootfind 296.9ms [real] ok found name="uia-provider" hwnd=71697332 pid=18128 ; B.info 0.6ms [real] ok name="uia-provider" hwnd=71697332 framework="Win32" pid=18128 ; L.rop nonems
+  run 2: ; B.rootfind 297.2ms [real] ok found name="uia-provider" hwnd=71762868 pid=13472 ; B.info 0.6ms [real] ok name="uia-provider" hwnd=71762868 framework="Win32" pid=13472 ; L.rop nonems
+## e33-root-rootfind
+  run 1: ; B.rootfind 297.6ms [real] ok found name="uia-provider" hwnd=33163778 pid=12704 ; B.info 0.6ms [real] ok name="uia-provider" hwnd=33163778 framework="Win32" pid=12704 ; L.rop 301.0ms
+  run 2: ; B.rootfind 297.4ms [real] ok found name="uia-provider" hwnd=33229314 pid=15732 ; B.info 0.6ms [real] ok name="uia-provider" hwnd=33229314 framework="Win32" pid=15732 ; L.rop 300.5ms
+  run 3: ; B.rootfind 297.4ms [real] ok found name="uia-provider" hwnd=33294850 pid=11620 ; B.info 0.5ms [real] ok name="uia-provider" hwnd=33294850 framework="Win32" pid=11620 ; L.rop 300.9ms
+  run 4: ; B.rootfind 297.4ms [real] ok found name="uia-provider" hwnd=33360386 pid=8836 ; B.info 0.5ms [real] ok name="uia-provider" hwnd=33360386 framework="Win32" pid=8836 ; L.rop 301.0ms
+  run 5: ; B.rootfind 297.3ms [real] ok found name="uia-provider" hwnd=33425922 pid=14880 ; B.info 0.5ms [real] ok name="uia-provider" hwnd=33425922 framework="Win32" pid=14880 ; L.rop 300.9ms
+  run 6: ; B.rootfind 297.3ms [real] ok found name="uia-provider" hwnd=33491458 pid=8724 ; B.info 0.6ms [real] ok name="uia-provider" hwnd=33491458 framework="Win32" pid=8724 ; L.rop 301.0ms
+## e33-root-rootfindall-control
+  run 1: ; B.rootfindall 310.0ms [real] ok found count=5 index=3 name="uia-provider" hwnd=63702360 pid=17620 others=["Activate Windows.Go to Settings to activate Windows."/pid8232, "Taskbar" ; B.info 0.6ms [real] ok name="uia-provider" hwnd=63702360 framework="Win32" pid=17620 ; L.rop nonems
+  run 2: ; B.rootfindall 310.2ms [real] ok found count=5 index=3 name="uia-provider" hwnd=63767896 pid=15132 others=["Activate Windows.Go to Settings to activate Windows."/pid8232, "Taskbar" ; B.info 0.7ms [real] ok name="uia-provider" hwnd=63767896 framework="Win32" pid=15132 ; L.rop nonems
+## e33-root-rootfindall
+  run 1: ; B.rootfindall 313.5ms [real] ok found count=5 index=2 name="uia-provider" hwnd=21824310 pid=15872 others=["Activate Windows.Go to Settings to activate Windows."/pid8232, "Taskbar" ; B.info 0.7ms [real] ok name="uia-provider" hwnd=21824310 framework="Win32" pid=15872 ; L.rop 301.2ms
+  run 2: ; B.rootfindall 315.1ms [real] ok found count=5 index=2 name="uia-provider" hwnd=56623890 pid=1084 others=["Activate Windows.Go to Settings to activate Windows."/pid8232, "Taskbar"/ ; B.info 0.7ms [real] ok name="uia-provider" hwnd=56623890 framework="Win32" pid=1084 ; L.rop 301.0ms
+  run 3: ; B.rootfindall 311.6ms [real] ok found count=5 index=2 name="uia-provider" hwnd=21955382 pid=18264 others=["Activate Windows.Go to Settings to activate Windows."/pid8232, "Taskbar" ; B.info 0.6ms [real] ok name="uia-provider" hwnd=21955382 framework="Win32" pid=18264 ; L.rop 301.0ms
+  run 4: ; B.rootfindall 316.1ms [real] ok found count=5 index=2 name="uia-provider" hwnd=22020918 pid=2736 others=["Activate Windows.Go to Settings to activate Windows."/pid8232, "Taskbar"/ ; B.info 0.8ms [real] ok name="uia-provider" hwnd=22020918 framework="Win32" pid=2736 ; L.rop 301.1ms
+  run 5: ; B.rootfindall 313.4ms [real] ok found count=5 index=2 name="uia-provider" hwnd=22086454 pid=9504 others=["Activate Windows.Go to Settings to activate Windows."/pid8232, "Taskbar"/ ; B.info 0.6ms [real] ok name="uia-provider" hwnd=22086454 framework="Win32" pid=9504 ; L.rop 300.9ms
+  run 6: ; B.rootfindall 312.2ms [real] ok found count=5 index=2 name="uia-provider" hwnd=22151990 pid=3068 others=["Activate Windows.Go to Settings to activate Windows."/pid8232, "Taskbar"/ ; B.info 0.6ms [real] ok name="uia-provider" hwnd=22151990 framework="Win32" pid=3068 ; L.rop 300.7ms
+## e33-root-rootwalk-control
+  run 1: ; B.rootwalk 296.7ms [real] ok found steps=3 last-step-ms=283.2 at=17:00:55.109784 name="uia-provider" hwnd=71959476 pid=18036 slow=[step3=283ms[name="uia-provider" hwnd=71959476 ; B.info 0.7ms [real] ok name="uia-provider" hwnd=71959476 framework="Win32" pid=18036 ; L.rop nonems
+  run 2: ; B.rootwalk 296.7ms [real] ok found steps=3 last-step-ms=284.9 at=17:00:56.265641 name="uia-provider" hwnd=72025012 pid=15040 slow=[step3=284ms[name="uia-provider" hwnd=72025012 ; B.info 0.6ms [real] ok name="uia-provider" hwnd=72025012 framework="Win32" pid=15040 ; L.rop nonems
+## e33-root-rootwalk
+  run 1: ; B.rootwalk 297.3ms [real] ok found steps=3 last-step-ms=283.9 at=16:59:25.775179 name="uia-provider" hwnd=16058318 pid=15708 slow=[step3=283ms[name="uia-provider" hwnd=16058318 ; B.info 0.6ms [real] ok name="uia-provider" hwnd=16058318 framework="Win32" pid=15708 ; L.rop 300.9ms
+  run 2: ; B.rootwalk 297.0ms [real] ok found steps=3 last-step-ms=285.0 at=16:59:26.960931 name="uia-provider" hwnd=16123854 pid=17580 slow=[step3=285ms[name="uia-provider" hwnd=16123854 ; B.info 0.6ms [real] ok name="uia-provider" hwnd=16123854 framework="Win32" pid=17580 ; L.rop 300.9ms
+  run 3: ; B.rootwalk 297.6ms [real] ok found steps=3 last-step-ms=283.2 at=16:59:28.168009 name="uia-provider" hwnd=32508418 pid=17324 slow=[step3=283ms[name="uia-provider" hwnd=32508418 ; B.info 0.8ms [real] ok name="uia-provider" hwnd=32508418 framework="Win32" pid=17324 ; L.rop 301.1ms
+  run 4: ; B.rootwalk 297.1ms [real] ok found steps=3 last-step-ms=282.8 at=16:59:29.371080 name="uia-provider" hwnd=32573954 pid=9576 slow=[step3=282ms[name="uia-provider" hwnd=32573954  ; B.info 0.7ms [real] ok name="uia-provider" hwnd=32573954 framework="Win32" pid=9576 ; L.rop 295.5ms
+  run 5: ; B.rootwalk 297.4ms [real] ok found steps=3 last-step-ms=283.7 at=16:59:30.503671 name="uia-provider" hwnd=32639490 pid=9868 slow=[step3=283ms[name="uia-provider" hwnd=32639490  ; B.info 0.8ms [real] ok name="uia-provider" hwnd=32639490 framework="Win32" pid=9868 ; L.rop 301.0ms
+  run 6: ; B.rootwalk 297.3ms [real] ok found steps=3 last-step-ms=281.9 at=16:59:31.651342 name="uia-provider" hwnd=32705026 pid=17156 slow=[step3=281ms[name="uia-provider" hwnd=32705026 ; B.info 0.6ms [real] ok name="uia-provider" hwnd=32705026 framework="Win32" pid=17156 ; L.rop 301.1ms
+## e33-root-rootwalkcv-control
+  run 1: ; B.rootwalkcv 296.9ms [real] ok found steps=3 last-step-ms=282.6 at=17:00:57.467757 name="uia-provider" hwnd=72090548 pid=17240 slow=[step3=282ms[name="uia-provider" hwnd=72090548 ; B.info 0.5ms [real] ok name="uia-provider" hwnd=72090548 framework="Win32" pid=17240 ; L.rop nonems
+  run 2: ; B.rootwalkcv 297.1ms [real] ok found steps=3 last-step-ms=283.8 at=17:00:58.627247 name="uia-provider" hwnd=72156084 pid=4928 slow=[step3=283ms[name="uia-provider" hwnd=72156084  ; B.info 0.7ms [real] ok name="uia-provider" hwnd=72156084 framework="Win32" pid=4928 ; L.rop nonems
+## e33-root-rootwalkcv
+  run 1: ; B.rootwalkcv 297.2ms [real] ok found steps=3 last-step-ms=282.7 at=16:59:32.796286 name="uia-provider" hwnd=32770562 pid=16084 slow=[step3=282ms[name="uia-provider" hwnd=32770562 ; B.info 0.6ms [real] ok name="uia-provider" hwnd=32770562 framework="Win32" pid=16084 ; L.rop 300.6ms
+  run 2: ; B.rootwalkcv 297.6ms [real] ok found steps=3 last-step-ms=284.3 at=16:59:33.943101 name="uia-provider" hwnd=32836098 pid=16848 slow=[step3=284ms[name="uia-provider" hwnd=32836098 ; B.info 0.5ms [real] ok name="uia-provider" hwnd=32836098 framework="Win32" pid=16848 ; L.rop 301.2ms
+  run 3: ; B.rootwalkcv 297.4ms [real] ok found steps=3 last-step-ms=284.9 at=16:59:35.088243 name="uia-provider" hwnd=32901634 pid=6836 slow=[step3=284ms[name="uia-provider" hwnd=32901634  ; B.info 0.6ms [real] ok name="uia-provider" hwnd=32901634 framework="Win32" pid=6836 ; L.rop 300.9ms
+  run 4: ; B.rootwalkcv 297.6ms [real] ok found steps=3 last-step-ms=283.3 at=16:59:36.295868 name="uia-provider" hwnd=32967170 pid=1276 slow=[step3=283ms[name="uia-provider" hwnd=32967170  ; B.info 0.9ms [real] ok name="uia-provider" hwnd=32967170 framework="Win32" pid=1276 ; L.rop 301.3ms
+  run 5: ; B.rootwalkcv 297.4ms [real] ok found steps=3 last-step-ms=283.0 at=16:59:37.433650 name="uia-provider" hwnd=33032706 pid=16496 slow=[step3=283ms[name="uia-provider" hwnd=33032706 ; B.info 0.7ms [real] ok name="uia-provider" hwnd=33032706 framework="Win32" pid=16496 ; L.rop 301.0ms
+  run 6: ; B.rootwalkcv 297.3ms [real] ok found steps=3 last-step-ms=284.9 at=16:59:38.594453 name="uia-provider" hwnd=33098242 pid=16204 slow=[step3=284ms[name="uia-provider" hwnd=33098242 ; B.info 0.5ms [real] ok name="uia-provider" hwnd=33098242 framework="Win32" pid=16204 ; L.rop 301.0ms
+## e34-rawprobe-control
+  run 1: ; B.rawprobe 295.1ms [] sent=1 lresult=0x10000 ; C.probe 296.4ms [] result=true ; B.rawprobe 0.1ms [] sent=1 lresult=0x0 ; C.probe 0.3ms [] result=false ; L.rop nonems
+  run 2: ; B.rawprobe 295.0ms [] sent=1 lresult=0x10000 ; C.probe 296.4ms [] result=true ; B.rawprobe 0.1ms [] sent=1 lresult=0x0 ; C.probe 0.2ms [] result=false ; L.rop nonems
+## e34-rawprobe
+  run 1: ; B.rawprobe 291.1ms [] sent=1 lresult=0x10000 ; C.probe 3300.4ms [] result=false ; B.rawprobe 0.2ms [] sent=1 lresult=0x0 ; C.probe 0.5ms [] result=false ; L.rop 296.6ms
+  run 2: ; B.rawprobe 295.0ms [] sent=1 lresult=0x10000 ; C.probe 3307.6ms [] result=false ; B.rawprobe 0.1ms [] sent=1 lresult=0x0 ; C.probe 0.2ms [] result=false ; L.rop 301.2ms
+  run 3: ; B.rawprobe 295.0ms [] sent=1 lresult=0x10000 ; C.probe 3302.3ms [] result=false ; B.rawprobe 0.1ms [] sent=1 lresult=0x0 ; C.probe 0.2ms [] result=false ; L.rop 301.0ms
+  run 4: ; B.rawprobe 295.0ms [] sent=1 lresult=0x10000 ; C.probe 3296.1ms [] result=false ; B.rawprobe 0.2ms [] sent=1 lresult=0x0 ; C.probe 0.3ms [] result=false ; L.rop 301.2ms
+  run 5: ; B.rawprobe 295.0ms [] sent=1 lresult=0x10000 ; C.probe 3299.3ms [] result=false ; B.rawprobe 0.1ms [] sent=1 lresult=0x0 ; C.probe 0.2ms [] result=false ; L.rop 301.2ms
+  run 6: ; B.rawprobe 295.0ms [] sent=1 lresult=0x10000 ; C.probe 3300.4ms [] result=false ; B.rawprobe 0.1ms [] sent=1 lresult=0x0 ; C.probe 0.2ms [] result=false ; L.rop 301.1ms
+## e35-console-efhbc-control
+  run 1: ; B.efhbc 296.4ms [] ok name="collide-console" ; B.info 0.5ms [real] ok name="collide-console" hwnd=63833432 framework="Win32" pid=7200 ; L.rop nonems
+  run 2: ; B.efhbc 296.5ms [] ok name="collide-console" ; B.info 0.4ms [real] ok name="collide-console" hwnd=63833432 framework="Win32" pid=7200 ; L.rop nonems
+## e35-console-efhbc
+  run 1: ; B.efhbc 296.6ms [] ok name="collide-console" ; B.info 0.5ms [real] ok name="collide-console" hwnd=63833432 framework="Win32" pid=7200 ; L.rop 300.6ms
+  run 2: ; B.efhbc 296.8ms [] ok name="collide-console" ; B.info 0.5ms [real] ok name="collide-console" hwnd=63833432 framework="Win32" pid=7200 ; L.rop 300.8ms
+  run 3: ; B.efhbc 297.1ms [] ok name="collide-console" ; B.info 0.4ms [real] ok name="collide-console" hwnd=63833432 framework="Win32" pid=7200 ; L.rop 301.1ms
+  run 4: ; B.efhbc 296.9ms [] ok name="collide-console" ; B.info 0.4ms [real] ok name="collide-console" hwnd=63833432 framework="Win32" pid=7200 ; L.rop 300.9ms
+  run 5: ; B.efhbc 296.8ms [] ok name="collide-console" ; B.info 0.5ms [real] ok name="collide-console" hwnd=63833432 framework="Win32" pid=7200 ; L.rop 300.8ms
+  run 6: ; B.efhbc 296.9ms [] ok name="collide-console" ; B.info 0.6ms [real] ok name="collide-console" hwnd=63833432 framework="Win32" pid=7200 ; L.rop 300.8ms
+## e35-console-up-control
+  run 1: ; B.toplevel 299.3ms [real] ok top name="collide-console" hwnd=63833432 pid=7200 steps=[295.7ms->[name="collide-console" hwnd=63833432 pid=7200]] ; B.info 0.5ms [real] ok name="collide-console" hwnd=63833432 framework="Win32" pid=7200 ; L.rop nonems
+  run 2: ; B.toplevel 299.4ms [real] ok top name="collide-console" hwnd=63833432 pid=7200 steps=[296.0ms->[name="collide-console" hwnd=63833432 pid=7200]] ; B.info 0.4ms [real] ok name="collide-console" hwnd=63833432 framework="Win32" pid=7200 ; L.rop nonems
+## e35-console-up
+  run 1: ; B.toplevel 299.7ms [real] ok top name="collide-console" hwnd=63833432 pid=7200 steps=[296.2ms->[name="collide-console" hwnd=63833432 pid=7200]] ; B.info 0.4ms [real] ok name="collide-console" hwnd=63833432 framework="Win32" pid=7200 ; L.rop 300.6ms
+  run 2: ; B.toplevel 299.4ms [real] ok top name="collide-console" hwnd=63833432 pid=7200 steps=[296.2ms->[name="collide-console" hwnd=63833432 pid=7200]] ; B.info 0.4ms [real] ok name="collide-console" hwnd=63833432 framework="Win32" pid=7200 ; L.rop 300.6ms
+  run 3: ; B.toplevel 299.7ms [real] ok top name="collide-console" hwnd=63833432 pid=7200 steps=[296.6ms->[name="collide-console" hwnd=63833432 pid=7200]] ; B.info 0.3ms [real] ok name="collide-console" hwnd=63833432 framework="Win32" pid=7200 ; L.rop 301.0ms
+  run 4: ; B.toplevel 300.3ms [real] ok top name="collide-console" hwnd=63833432 pid=7200 steps=[296.5ms->[name="collide-console" hwnd=63833432 pid=7200]] ; B.info 0.4ms [real] ok name="collide-console" hwnd=63833432 framework="Win32" pid=7200 ; L.rop 300.9ms
+  run 5: ; B.toplevel 300.0ms [real] ok top name="collide-console" hwnd=63833432 pid=7200 steps=[296.6ms->[name="collide-console" hwnd=63833432 pid=7200]] ; B.info 0.4ms [real] ok name="collide-console" hwnd=63833432 framework="Win32" pid=7200 ; L.rop 300.9ms
+  run 6: ; B.toplevel 313.0ms [real] ok top name="collide-console" hwnd=63833432 pid=7200 steps=[303.9ms->[name="collide-console" hwnd=63833432 pid=7200]] ; B.info 0.3ms [real] ok name="collide-console" hwnd=63833432 framework="Win32" pid=7200 ; L.rop 308.2ms
+## e35b-console-first-rop-efhbc
+  run 1: ; B.efhbc 296.5ms [] ok name="collide-fresh-1-17000" ; B.info 0.5ms [real] ok name="collide-fresh-1-17000" hwnd=57279250 framework="Win32" pid=16588 ; L.rop 300.5ms
+  run 2: ; B.efhbc 302.2ms [] ok name="collide-fresh-2-17000" ; B.info 1.3ms [real] ok name="collide-fresh-2-17000" hwnd=57344786 framework="Win32" pid=3776 ; L.rop 302.3ms
+  run 3: ; B.efhbc 296.7ms [] ok name="collide-fresh-3-17000" ; B.info 0.5ms [real] ok name="collide-fresh-3-17000" hwnd=94044836 framework="Win32" pid=6460 ; L.rop 300.7ms
+  run 4: ; B.efhbc 302.0ms [] ok name="collide-fresh-4-17000" ; B.info 0.5ms [real] ok name="collide-fresh-4-17000" hwnd=94110372 framework="Win32" pid=12416 ; L.rop 300.4ms
+  run 5: ; B.efhbc 298.3ms [] ok name="collide-fresh-5-17000" ; B.info 1.1ms [real] ok name="collide-fresh-5-17000" hwnd=94175908 framework="Win32" pid=8788 ; L.rop 301.0ms
+## e35b-console-first-rop-toplevel
+  run 1: ; B.toplevel 299.8ms [real] ok top name="collide-fresh-1-17000" hwnd=94241444 pid=7316 steps=[296.3ms->[name="collide-fresh-1-17000" hwnd=94241444 pid=7316]] ; B.info 0.4ms [real] ok name="collide-fresh-1-17000" hwnd=94241444 framework="Win32" pid=7316 ; L.rop 300.6ms
+  run 2: ; B.toplevel 299.6ms [real] ok top name="collide-fresh-2-17000" hwnd=94306980 pid=15384 steps=[296.2ms->[name="collide-fresh-2-17000" hwnd=94306980 pid=15384]] ; B.info 0.4ms [real] ok name="collide-fresh-2-17000" hwnd=94306980 framework="Win32" pid=15384 ; L.rop 300.6ms
+  run 3: ; B.toplevel 299.6ms [real] ok top name="collide-fresh-3-17000" hwnd=94372516 pid=7588 steps=[296.1ms->[name="collide-fresh-3-17000" hwnd=94372516 pid=7588]] ; B.info 0.4ms [real] ok name="collide-fresh-3-17000" hwnd=94372516 framework="Win32" pid=7588 ; L.rop 300.6ms
+  run 4: ; B.toplevel 299.8ms [real] ok top name="collide-fresh-4-17000" hwnd=94438052 pid=17160 steps=[296.3ms->[name="collide-fresh-4-17000" hwnd=94438052 pid=17160]] ; B.info 0.5ms [real] ok name="collide-fresh-4-17000" hwnd=94438052 framework="Win32" pid=17160 ; L.rop 300.8ms
+  run 5: ; B.toplevel 300.1ms [real] ok top name="collide-fresh-5-17000" hwnd=94503588 pid=13040 steps=[296.6ms->[name="collide-fresh-5-17000" hwnd=94503588 pid=13040]] ; B.info 0.5ms [real] ok name="collide-fresh-5-17000" hwnd=94503588 framework="Win32" pid=13040 ; L.rop 300.9ms
+## e35c-stall-method-s-efhbc
+  run 1: ; B.efhbc 2306.3ms [] ok name="collide" ; B.info 1.1ms [proxy] ok name="collide" hwnd=94569124 framework="Win32" pid=13052 ; L.rop 302.3ms
+  run 2: ; B.efhbc 2309.3ms [] ok name="collide" ; B.info 0.6ms [proxy] ok name="collide" hwnd=58000146 framework="Win32" pid=16040 ; L.rop 301.4ms
+  run 3: ; B.efhbc 2299.6ms [] ok name="collide" ; B.info 0.6ms [proxy] ok name="collide" hwnd=58065682 framework="Win32" pid=6756 ; L.rop 301.5ms
+  run 4: ; B.efhbc 2309.0ms [] ok name="collide" ; B.info 0.6ms [proxy] ok name="collide" hwnd=58131218 framework="Win32" pid=13800 ; L.rop 301.5ms
+  run 5: ; B.efhbc 2306.5ms [] ok name="collide" ; B.info 0.9ms [proxy] ok name="collide" hwnd=58196754 framework="Win32" pid=10540 ; L.rop 301.4ms
+## e36-own-up-control
+  run 1: ; B.toplevel 300.0ms [real] ok top name="uia-provider" hwnd=72352692 pid=5940 steps=[295.6ms->[name="uia-provider" hwnd=72352692 pid=5940]] ; B.info 0.7ms [real] ok name="uia-provider" hwnd=72352692 framework="Win32" pid=5940 ; L.rop nonems
+  run 2: ; B.toplevel 299.6ms [real] ok top name="uia-provider" hwnd=72418228 pid=4812 steps=[295.5ms->[name="uia-provider" hwnd=72418228 pid=4812]] ; B.info 0.6ms [real] ok name="uia-provider" hwnd=72418228 framework="Win32" pid=4812 ; L.rop nonems
+## e36-own-up
+  run 1: ; B.toplevel 301.7ms [real] ok top name="uia-provider" hwnd=71173044 pid=9468 steps=[296.8ms->[name="uia-provider" hwnd=71173044 pid=9468]] ; B.info 0.6ms [real] ok name="uia-provider" hwnd=71173044 framework="Win32" pid=9468 ; L.rop 301.1ms
+  run 2: ; B.toplevel 300.9ms [real] ok top name="uia-provider" hwnd=71238580 pid=1732 steps=[296.7ms->[name="uia-provider" hwnd=71238580 pid=1732]] ; B.info 0.7ms [real] ok name="uia-provider" hwnd=71238580 framework="Win32" pid=1732 ; L.rop 301.0ms
+  run 3: ; B.toplevel 300.8ms [real] ok top name="uia-provider" hwnd=71304116 pid=8168 steps=[296.7ms->[name="uia-provider" hwnd=71304116 pid=8168]] ; B.info 0.6ms [real] ok name="uia-provider" hwnd=71304116 framework="Win32" pid=8168 ; L.rop 301.0ms
+  run 4: ; B.toplevel 300.6ms [real] ok top name="uia-provider" hwnd=71369652 pid=12056 steps=[296.8ms->[name="uia-provider" hwnd=71369652 pid=12056]] ; B.info 0.8ms [real] ok name="uia-provider" hwnd=71369652 framework="Win32" pid=12056 ; L.rop 301.2ms
+  run 5: ; B.toplevel 300.7ms [real] ok top name="uia-provider" hwnd=71435188 pid=12724 steps=[296.7ms->[name="uia-provider" hwnd=71435188 pid=12724]] ; B.info 0.8ms [real] ok name="uia-provider" hwnd=71435188 framework="Win32" pid=12724 ; L.rop 301.0ms
+  run 6: ; B.toplevel 300.4ms [real] ok top name="uia-provider" hwnd=71500724 pid=16060 steps=[296.5ms->[name="uia-provider" hwnd=71500724 pid=16060]] ; B.info 0.6ms [real] ok name="uia-provider" hwnd=71500724 framework="Win32" pid=16060 ; L.rop 300.9ms

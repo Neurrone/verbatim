@@ -1,0 +1,9 @@
+[2m2026-10-17T08:13:33.094461Z[0m [34mDEBUG[0m [2mverbatim_uia::subscribe[0m[2m:[0m a UIA subscription moves [3mfrom[0m[2m=[0m[] [3mto[0m[2m=[0m"nothing" [3melements[0m[2m=[0m[] [3mgroup[0m[2m=[0mBase
+[2m2026-10-17T08:13:33.094913Z[0m [32m INFO[0m [2mverbatim_outpost::outpost[0m[2m:[0m a spare, waiting for its application
+[2m2026-10-17T08:13:39.318257Z[0m [34mDEBUG[0m [2mverbatim_outpost::outpost[0m[2m:[0m the application's lock is set [3mtarget_pid[0m[2m=[0m8328
+[2m2026-10-17T08:13:39.318474Z[0m [32m INFO[0m [2mverbatim_outpost::outpost[0m[2m:[0m watching its application [3mtarget_pid[0m[2m=[0m8328 [3mimage[0m[2m=[0m"powershell"
+[2m2026-10-17T08:13:39.319091Z[0m [34mDEBUG[0m [2mverbatim_outpost::outpost::intake[0m[2m:[0m intake pushed [3mtrace[0m[2m=[0m40544491274246 [3mkey[0m[2m=[0mNone [3mwaiting[0m[2m=[0m1 [3min_batch[0m[2m=[0m0 [3mbatch[0m[2m=[0m0
+[2m2026-10-17T08:13:39.324940Z[0m [34mDEBUG[0m [2mverbatim_outpost::outpost::intake[0m[2m:[0m a UIA focus's marker is dropped with its focus [3mmarker[0m[2m=[0m1
+[2m2026-10-17T08:13:44.747972Z[0m [32m INFO[0m [2mverbatim_outpost::outpost[0m[2m:[0m shutting down, as Core asked
+[2m2026-10-17T08:13:44.748325Z[0m [34mDEBUG[0m [2mverbatim_uia::subscribe[0m[2m:[0m a UIA subscription ends: RemoveAllEventHandlers [3mresult[0m[2m=[0mOk(())
+[2m2026-10-17T08:13:44.759161Z[0m [32m INFO[0m [2mverbatim_outpost::outpost[0m[2m:[0m the outpost shut down [3mtarget_pid[0m[2m=[0m8328 [3mhandlers_removed_ms[0m[2m=[0m0 [3mcalls_finished_ms[0m[2m=[0m0 [3melapsed_ms[0m[2m=[0m11 [3mworkers[0m[2m=[0m1 [3mbounded[0m[2m=[0m0 [3mobjects[0m[2m=[0m0 [3mfailed_reads[0m[2m=[0m0

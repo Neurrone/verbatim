@@ -1,0 +1,115 @@
+=== run 1 delay=2000.0
+18:53:13.064258 run spawn U client 0 U
+18:53:13.064317 run send U init
+  U 18:53:13.073653 client-ready U
+  U 18:53:13.078996 done init U start=18:53:13.073702 ms=5.3 ok
+18:53:13.083555 run spawn R client 0 R
+18:53:13.083592 run send R init
+  R 18:53:13.089929 client-ready R
+  R 18:53:13.094495 done init R start=18:53:13.089976 ms=4.5 ok
+run 18:53:13.121239 hwnd 42206420 found console conhost-pid=15336 launched=18:53:13.100938 after-launch-ms=20.3 visible=false
+18:53:15.121353 run send R target 42206420
+18:53:15.121398 run send U target 42206420
+18:53:15.121412 run send R rawprobe
+18:53:15.121422 run send U probe
+18:53:15.121432 run send R efhbcd
+18:53:15.121441 run send U efhbcd
+  R 18:53:15.121450 done target R
+  U 18:53:15.121518 done target U
+  R 18:53:15.124990 done rawprobe R start=18:53:15.121470 ms=3.5 sent=1 lresult=0x10000
+  U 18:53:15.131708 done probe U start=18:53:15.121528 ms=10.2 result=true
+  U 18:53:15.132734 done efhbcd U start=18:53:15.131726 ms=1.0 ok name="e37-parallel-control-1-16752" pid=15336 desc="[pid:15136,providerId:0x28404D4 Main:Nested [pid:15336,providerId:0x28404D4 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  R 18:53:15.133825 done efhbcd R start=18:53:15.125006 ms=8.8 ok name="e37-parallel-control-1-16752" pid=15336 desc="[pid:16040,providerId:0x28404D4 Main:Nested [pid:15336,providerId:0x28404D4 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 18:53:15.144894 console closed wait=0
+=== run 2 delay=2000.0
+18:53:16.087165 run spawn U client 0 U
+18:53:16.087214 run send U init
+  U 18:53:16.095529 client-ready U
+  U 18:53:16.099643 done init U start=18:53:16.095571 ms=4.1 ok
+18:53:16.103736 run spawn R client 0 R
+18:53:16.103765 run send R init
+  R 18:53:16.110567 client-ready R
+  R 18:53:16.114713 done init R start=18:53:16.110597 ms=4.1 ok
+run 18:53:16.139009 hwnd 52953130 found console conhost-pid=15064 launched=18:53:16.120224 after-launch-ms=18.8 visible=false
+18:53:18.139123 run send R target 52953130
+18:53:18.139186 run send U target 52953130
+18:53:18.139248 run send R rawprobe
+18:53:18.139266 run send U probe
+18:53:18.139279 run send R efhbcd
+18:53:18.139291 run send U efhbcd
+  R 18:53:18.139200 done target R
+  U 18:53:18.139253 done target U
+  R 18:53:18.143847 done rawprobe R start=18:53:18.139274 ms=4.6 sent=1 lresult=0x10000
+  U 18:53:18.149646 done probe U start=18:53:18.139310 ms=10.3 result=true
+  U 18:53:18.150875 done efhbcd U start=18:53:18.149662 ms=1.2 ok name="e37-parallel-control-2-16752" pid=15064 desc="[pid:16116,providerId:0x328002A Main:Nested [pid:15064,providerId:0x328002A Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  R 18:53:18.152286 done efhbcd R start=18:53:18.143864 ms=8.4 ok name="e37-parallel-control-2-16752" pid=15064 desc="[pid:4836,providerId:0x328002A Main:Nested [pid:15064,providerId:0x328002A Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 18:53:18.173551 console closed wait=0
+=== run 3 delay=2000.0
+18:53:19.114383 run spawn U client 0 U
+18:53:19.114438 run send U init
+  U 18:53:19.128986 client-ready U
+  U 18:53:19.135109 done init U start=18:53:19.129050 ms=6.1 ok
+18:53:19.138960 run spawn R client 0 R
+18:53:19.138994 run send R init
+  R 18:53:19.146760 client-ready R
+  R 18:53:19.150986 done init R start=18:53:19.146811 ms=4.2 ok
+run 18:53:19.196653 hwnd 53018666 found console conhost-pid=16048 launched=18:53:19.175939 after-launch-ms=20.7 visible=false
+18:53:21.196780 run send R target 53018666
+18:53:21.196844 run send U target 53018666
+18:53:21.196893 run send R rawprobe
+18:53:21.196925 run send U probe
+18:53:21.197393 run send R efhbcd
+18:53:21.197416 run send U efhbcd
+  R 18:53:21.196851 done target R
+  U 18:53:21.196895 done target U
+  R 18:53:21.201351 done rawprobe R start=18:53:21.196924 ms=4.4 sent=1 lresult=0x10000
+  U 18:53:21.207142 done probe U start=18:53:21.196951 ms=10.2 result=true
+  U 18:53:21.208105 done efhbcd U start=18:53:21.207160 ms=0.9 ok name="e37-parallel-control-3-16752" pid=16048 desc="[pid:6256,providerId:0x329002A Main:Nested [pid:16048,providerId:0x329002A Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  R 18:53:21.209110 done efhbcd R start=18:53:21.201370 ms=7.7 ok name="e37-parallel-control-3-16752" pid=16048 desc="[pid:17000,providerId:0x329002A Main:Nested [pid:16048,providerId:0x329002A Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 18:53:21.221359 console closed wait=0
+=== run 4 delay=2000.0
+18:53:22.164843 run spawn U client 0 U
+18:53:22.164920 run send U init
+  U 18:53:22.171659 client-ready U
+  U 18:53:22.175860 done init U start=18:53:22.171708 ms=4.1 ok
+18:53:22.180622 run spawn R client 0 R
+18:53:22.180667 run send R init
+  R 18:53:22.188923 client-ready R
+  R 18:53:22.192939 done init R start=18:53:22.188962 ms=4.0 ok
+run 18:53:22.217218 hwnd 53084202 found console conhost-pid=18252 launched=18:53:22.198693 after-launch-ms=18.5 visible=false
+18:53:24.217333 run send R target 53084202
+18:53:24.217417 run send U target 53084202
+18:53:24.217455 run send R rawprobe
+18:53:24.217498 run send U probe
+18:53:24.217969 run send R efhbcd
+18:53:24.218004 run send U efhbcd
+  R 18:53:24.217395 done target R
+  U 18:53:24.217464 done target U
+  R 18:53:24.221981 done rawprobe R start=18:53:24.217498 ms=4.5 sent=1 lresult=0x10000
+  U 18:53:24.227726 done probe U start=18:53:24.217525 ms=10.2 result=true
+  U 18:53:24.228933 done efhbcd U start=18:53:24.227749 ms=1.2 ok name="e37-parallel-control-4-16752" pid=18252 desc="[pid:15204,providerId:0x32A002A Main:Nested [pid:18252,providerId:0x32A002A Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  R 18:53:24.229683 done efhbcd R start=18:53:24.222001 ms=7.7 ok name="e37-parallel-control-4-16752" pid=18252 desc="[pid:1068,providerId:0x32A002A Main:Nested [pid:18252,providerId:0x32A002A Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 18:53:24.239660 console closed wait=0
+=== run 5 delay=2000.0
+18:53:25.173010 run spawn U client 0 U
+18:53:25.173077 run send U init
+  U 18:53:25.180140 client-ready U
+  U 18:53:25.184513 done init U start=18:53:25.180186 ms=4.3 ok
+18:53:25.188516 run spawn R client 0 R
+18:53:25.188540 run send R init
+  R 18:53:25.195543 client-ready R
+  R 18:53:25.199451 done init R start=18:53:25.195571 ms=3.9 ok
+run 18:53:25.223820 hwnd 53149738 found console conhost-pid=17232 launched=18:53:25.205138 after-launch-ms=18.7 visible=false
+18:53:27.223939 run send R target 53149738
+18:53:27.224005 run send U target 53149738
+18:53:27.224034 run send R rawprobe
+18:53:27.224107 run send U probe
+18:53:27.224658 run send R efhbcd
+18:53:27.224687 run send U efhbcd
+  R 18:53:27.224029 done target R
+  U 18:53:27.224071 done target U
+  R 18:53:27.228773 done rawprobe R start=18:53:27.224075 ms=4.7 sent=1 lresult=0x10000
+  U 18:53:27.235285 done probe U start=18:53:27.224137 ms=11.1 result=true
+  U 18:53:27.236525 done efhbcd U start=18:53:27.235304 ms=1.2 ok name="e37-parallel-control-5-16752" pid=17232 desc="[pid:11700,providerId:0x32B002A Main:Nested [pid:17232,providerId:0x32B002A Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  R 18:53:27.237916 done efhbcd R start=18:53:27.228795 ms=9.1 ok name="e37-parallel-control-5-16752" pid=17232 desc="[pid:13640,providerId:0x32B002A Main:Nested [pid:17232,providerId:0x32B002A Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 18:53:27.248408 console closed wait=0

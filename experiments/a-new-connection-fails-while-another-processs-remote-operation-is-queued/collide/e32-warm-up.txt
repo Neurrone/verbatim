@@ -1,0 +1,871 @@
+# Section 20.10's warm-up. Each iteration starts three fresh client
+# processes, in a rotating order: one that makes its UIA client and then
+# probes and looks up S's window (cold, tags C); one that first probes and
+# looks up a window of another process, W (warm-other, tags X); one that
+# first probes and looks up a hidden window of its own (warm-own, tags N).
+# The figures are the first probe of S's window and the lookup after it.
+spawn S server
+wait S hwnd
+spawn W server
+wait W hwnd
+spawn C0 client $HWND C0
+send C0 init
+wait C0 done
+send C0 probe
+wait C0 done
+send C0 efh
+wait C0 done
+send C0 quit
+sleep 50
+spawn X0 client $HWND X0
+send X0 init
+wait X0 done
+send X0 target $HWND2
+wait X0 done
+send X0 probe
+wait X0 done
+send X0 efh
+wait X0 done
+send X0 target $HWND
+wait X0 done
+send X0 probe
+wait X0 done
+send X0 efh
+wait X0 done
+send X0 quit
+sleep 50
+spawn N0 client $HWND N0
+send N0 init
+wait N0 done
+send N0 ownwindow
+wait N0 done
+send N0 probe
+wait N0 done
+send N0 efh
+wait N0 done
+send N0 target $HWND
+wait N0 done
+send N0 probe
+wait N0 done
+send N0 efh
+wait N0 done
+send N0 quit
+sleep 50
+spawn X1 client $HWND X1
+send X1 init
+wait X1 done
+send X1 target $HWND2
+wait X1 done
+send X1 probe
+wait X1 done
+send X1 efh
+wait X1 done
+send X1 target $HWND
+wait X1 done
+send X1 probe
+wait X1 done
+send X1 efh
+wait X1 done
+send X1 quit
+sleep 50
+spawn N1 client $HWND N1
+send N1 init
+wait N1 done
+send N1 ownwindow
+wait N1 done
+send N1 probe
+wait N1 done
+send N1 efh
+wait N1 done
+send N1 target $HWND
+wait N1 done
+send N1 probe
+wait N1 done
+send N1 efh
+wait N1 done
+send N1 quit
+sleep 50
+spawn C1 client $HWND C1
+send C1 init
+wait C1 done
+send C1 probe
+wait C1 done
+send C1 efh
+wait C1 done
+send C1 quit
+sleep 50
+spawn N2 client $HWND N2
+send N2 init
+wait N2 done
+send N2 ownwindow
+wait N2 done
+send N2 probe
+wait N2 done
+send N2 efh
+wait N2 done
+send N2 target $HWND
+wait N2 done
+send N2 probe
+wait N2 done
+send N2 efh
+wait N2 done
+send N2 quit
+sleep 50
+spawn C2 client $HWND C2
+send C2 init
+wait C2 done
+send C2 probe
+wait C2 done
+send C2 efh
+wait C2 done
+send C2 quit
+sleep 50
+spawn X2 client $HWND X2
+send X2 init
+wait X2 done
+send X2 target $HWND2
+wait X2 done
+send X2 probe
+wait X2 done
+send X2 efh
+wait X2 done
+send X2 target $HWND
+wait X2 done
+send X2 probe
+wait X2 done
+send X2 efh
+wait X2 done
+send X2 quit
+sleep 50
+spawn C3 client $HWND C3
+send C3 init
+wait C3 done
+send C3 probe
+wait C3 done
+send C3 efh
+wait C3 done
+send C3 quit
+sleep 50
+spawn X3 client $HWND X3
+send X3 init
+wait X3 done
+send X3 target $HWND2
+wait X3 done
+send X3 probe
+wait X3 done
+send X3 efh
+wait X3 done
+send X3 target $HWND
+wait X3 done
+send X3 probe
+wait X3 done
+send X3 efh
+wait X3 done
+send X3 quit
+sleep 50
+spawn N3 client $HWND N3
+send N3 init
+wait N3 done
+send N3 ownwindow
+wait N3 done
+send N3 probe
+wait N3 done
+send N3 efh
+wait N3 done
+send N3 target $HWND
+wait N3 done
+send N3 probe
+wait N3 done
+send N3 efh
+wait N3 done
+send N3 quit
+sleep 50
+spawn X4 client $HWND X4
+send X4 init
+wait X4 done
+send X4 target $HWND2
+wait X4 done
+send X4 probe
+wait X4 done
+send X4 efh
+wait X4 done
+send X4 target $HWND
+wait X4 done
+send X4 probe
+wait X4 done
+send X4 efh
+wait X4 done
+send X4 quit
+sleep 50
+spawn N4 client $HWND N4
+send N4 init
+wait N4 done
+send N4 ownwindow
+wait N4 done
+send N4 probe
+wait N4 done
+send N4 efh
+wait N4 done
+send N4 target $HWND
+wait N4 done
+send N4 probe
+wait N4 done
+send N4 efh
+wait N4 done
+send N4 quit
+sleep 50
+spawn C4 client $HWND C4
+send C4 init
+wait C4 done
+send C4 probe
+wait C4 done
+send C4 efh
+wait C4 done
+send C4 quit
+sleep 50
+spawn N5 client $HWND N5
+send N5 init
+wait N5 done
+send N5 ownwindow
+wait N5 done
+send N5 probe
+wait N5 done
+send N5 efh
+wait N5 done
+send N5 target $HWND
+wait N5 done
+send N5 probe
+wait N5 done
+send N5 efh
+wait N5 done
+send N5 quit
+sleep 50
+spawn C5 client $HWND C5
+send C5 init
+wait C5 done
+send C5 probe
+wait C5 done
+send C5 efh
+wait C5 done
+send C5 quit
+sleep 50
+spawn X5 client $HWND X5
+send X5 init
+wait X5 done
+send X5 target $HWND2
+wait X5 done
+send X5 probe
+wait X5 done
+send X5 efh
+wait X5 done
+send X5 target $HWND
+wait X5 done
+send X5 probe
+wait X5 done
+send X5 efh
+wait X5 done
+send X5 quit
+sleep 50
+spawn C6 client $HWND C6
+send C6 init
+wait C6 done
+send C6 probe
+wait C6 done
+send C6 efh
+wait C6 done
+send C6 quit
+sleep 50
+spawn X6 client $HWND X6
+send X6 init
+wait X6 done
+send X6 target $HWND2
+wait X6 done
+send X6 probe
+wait X6 done
+send X6 efh
+wait X6 done
+send X6 target $HWND
+wait X6 done
+send X6 probe
+wait X6 done
+send X6 efh
+wait X6 done
+send X6 quit
+sleep 50
+spawn N6 client $HWND N6
+send N6 init
+wait N6 done
+send N6 ownwindow
+wait N6 done
+send N6 probe
+wait N6 done
+send N6 efh
+wait N6 done
+send N6 target $HWND
+wait N6 done
+send N6 probe
+wait N6 done
+send N6 efh
+wait N6 done
+send N6 quit
+sleep 50
+spawn X7 client $HWND X7
+send X7 init
+wait X7 done
+send X7 target $HWND2
+wait X7 done
+send X7 probe
+wait X7 done
+send X7 efh
+wait X7 done
+send X7 target $HWND
+wait X7 done
+send X7 probe
+wait X7 done
+send X7 efh
+wait X7 done
+send X7 quit
+sleep 50
+spawn N7 client $HWND N7
+send N7 init
+wait N7 done
+send N7 ownwindow
+wait N7 done
+send N7 probe
+wait N7 done
+send N7 efh
+wait N7 done
+send N7 target $HWND
+wait N7 done
+send N7 probe
+wait N7 done
+send N7 efh
+wait N7 done
+send N7 quit
+sleep 50
+spawn C7 client $HWND C7
+send C7 init
+wait C7 done
+send C7 probe
+wait C7 done
+send C7 efh
+wait C7 done
+send C7 quit
+sleep 50
+spawn N8 client $HWND N8
+send N8 init
+wait N8 done
+send N8 ownwindow
+wait N8 done
+send N8 probe
+wait N8 done
+send N8 efh
+wait N8 done
+send N8 target $HWND
+wait N8 done
+send N8 probe
+wait N8 done
+send N8 efh
+wait N8 done
+send N8 quit
+sleep 50
+spawn C8 client $HWND C8
+send C8 init
+wait C8 done
+send C8 probe
+wait C8 done
+send C8 efh
+wait C8 done
+send C8 quit
+sleep 50
+spawn X8 client $HWND X8
+send X8 init
+wait X8 done
+send X8 target $HWND2
+wait X8 done
+send X8 probe
+wait X8 done
+send X8 efh
+wait X8 done
+send X8 target $HWND
+wait X8 done
+send X8 probe
+wait X8 done
+send X8 efh
+wait X8 done
+send X8 quit
+sleep 50
+spawn C9 client $HWND C9
+send C9 init
+wait C9 done
+send C9 probe
+wait C9 done
+send C9 efh
+wait C9 done
+send C9 quit
+sleep 50
+spawn X9 client $HWND X9
+send X9 init
+wait X9 done
+send X9 target $HWND2
+wait X9 done
+send X9 probe
+wait X9 done
+send X9 efh
+wait X9 done
+send X9 target $HWND
+wait X9 done
+send X9 probe
+wait X9 done
+send X9 efh
+wait X9 done
+send X9 quit
+sleep 50
+spawn N9 client $HWND N9
+send N9 init
+wait N9 done
+send N9 ownwindow
+wait N9 done
+send N9 probe
+wait N9 done
+send N9 efh
+wait N9 done
+send N9 target $HWND
+wait N9 done
+send N9 probe
+wait N9 done
+send N9 efh
+wait N9 done
+send N9 quit
+sleep 50
+spawn X10 client $HWND X10
+send X10 init
+wait X10 done
+send X10 target $HWND2
+wait X10 done
+send X10 probe
+wait X10 done
+send X10 efh
+wait X10 done
+send X10 target $HWND
+wait X10 done
+send X10 probe
+wait X10 done
+send X10 efh
+wait X10 done
+send X10 quit
+sleep 50
+spawn N10 client $HWND N10
+send N10 init
+wait N10 done
+send N10 ownwindow
+wait N10 done
+send N10 probe
+wait N10 done
+send N10 efh
+wait N10 done
+send N10 target $HWND
+wait N10 done
+send N10 probe
+wait N10 done
+send N10 efh
+wait N10 done
+send N10 quit
+sleep 50
+spawn C10 client $HWND C10
+send C10 init
+wait C10 done
+send C10 probe
+wait C10 done
+send C10 efh
+wait C10 done
+send C10 quit
+sleep 50
+spawn N11 client $HWND N11
+send N11 init
+wait N11 done
+send N11 ownwindow
+wait N11 done
+send N11 probe
+wait N11 done
+send N11 efh
+wait N11 done
+send N11 target $HWND
+wait N11 done
+send N11 probe
+wait N11 done
+send N11 efh
+wait N11 done
+send N11 quit
+sleep 50
+spawn C11 client $HWND C11
+send C11 init
+wait C11 done
+send C11 probe
+wait C11 done
+send C11 efh
+wait C11 done
+send C11 quit
+sleep 50
+spawn X11 client $HWND X11
+send X11 init
+wait X11 done
+send X11 target $HWND2
+wait X11 done
+send X11 probe
+wait X11 done
+send X11 efh
+wait X11 done
+send X11 target $HWND
+wait X11 done
+send X11 probe
+wait X11 done
+send X11 efh
+wait X11 done
+send X11 quit
+sleep 50
+spawn C12 client $HWND C12
+send C12 init
+wait C12 done
+send C12 probe
+wait C12 done
+send C12 efh
+wait C12 done
+send C12 quit
+sleep 50
+spawn X12 client $HWND X12
+send X12 init
+wait X12 done
+send X12 target $HWND2
+wait X12 done
+send X12 probe
+wait X12 done
+send X12 efh
+wait X12 done
+send X12 target $HWND
+wait X12 done
+send X12 probe
+wait X12 done
+send X12 efh
+wait X12 done
+send X12 quit
+sleep 50
+spawn N12 client $HWND N12
+send N12 init
+wait N12 done
+send N12 ownwindow
+wait N12 done
+send N12 probe
+wait N12 done
+send N12 efh
+wait N12 done
+send N12 target $HWND
+wait N12 done
+send N12 probe
+wait N12 done
+send N12 efh
+wait N12 done
+send N12 quit
+sleep 50
+spawn X13 client $HWND X13
+send X13 init
+wait X13 done
+send X13 target $HWND2
+wait X13 done
+send X13 probe
+wait X13 done
+send X13 efh
+wait X13 done
+send X13 target $HWND
+wait X13 done
+send X13 probe
+wait X13 done
+send X13 efh
+wait X13 done
+send X13 quit
+sleep 50
+spawn N13 client $HWND N13
+send N13 init
+wait N13 done
+send N13 ownwindow
+wait N13 done
+send N13 probe
+wait N13 done
+send N13 efh
+wait N13 done
+send N13 target $HWND
+wait N13 done
+send N13 probe
+wait N13 done
+send N13 efh
+wait N13 done
+send N13 quit
+sleep 50
+spawn C13 client $HWND C13
+send C13 init
+wait C13 done
+send C13 probe
+wait C13 done
+send C13 efh
+wait C13 done
+send C13 quit
+sleep 50
+spawn N14 client $HWND N14
+send N14 init
+wait N14 done
+send N14 ownwindow
+wait N14 done
+send N14 probe
+wait N14 done
+send N14 efh
+wait N14 done
+send N14 target $HWND
+wait N14 done
+send N14 probe
+wait N14 done
+send N14 efh
+wait N14 done
+send N14 quit
+sleep 50
+spawn C14 client $HWND C14
+send C14 init
+wait C14 done
+send C14 probe
+wait C14 done
+send C14 efh
+wait C14 done
+send C14 quit
+sleep 50
+spawn X14 client $HWND X14
+send X14 init
+wait X14 done
+send X14 target $HWND2
+wait X14 done
+send X14 probe
+wait X14 done
+send X14 efh
+wait X14 done
+send X14 target $HWND
+wait X14 done
+send X14 probe
+wait X14 done
+send X14 efh
+wait X14 done
+send X14 quit
+sleep 50
+spawn C15 client $HWND C15
+send C15 init
+wait C15 done
+send C15 probe
+wait C15 done
+send C15 efh
+wait C15 done
+send C15 quit
+sleep 50
+spawn X15 client $HWND X15
+send X15 init
+wait X15 done
+send X15 target $HWND2
+wait X15 done
+send X15 probe
+wait X15 done
+send X15 efh
+wait X15 done
+send X15 target $HWND
+wait X15 done
+send X15 probe
+wait X15 done
+send X15 efh
+wait X15 done
+send X15 quit
+sleep 50
+spawn N15 client $HWND N15
+send N15 init
+wait N15 done
+send N15 ownwindow
+wait N15 done
+send N15 probe
+wait N15 done
+send N15 efh
+wait N15 done
+send N15 target $HWND
+wait N15 done
+send N15 probe
+wait N15 done
+send N15 efh
+wait N15 done
+send N15 quit
+sleep 50
+spawn X16 client $HWND X16
+send X16 init
+wait X16 done
+send X16 target $HWND2
+wait X16 done
+send X16 probe
+wait X16 done
+send X16 efh
+wait X16 done
+send X16 target $HWND
+wait X16 done
+send X16 probe
+wait X16 done
+send X16 efh
+wait X16 done
+send X16 quit
+sleep 50
+spawn N16 client $HWND N16
+send N16 init
+wait N16 done
+send N16 ownwindow
+wait N16 done
+send N16 probe
+wait N16 done
+send N16 efh
+wait N16 done
+send N16 target $HWND
+wait N16 done
+send N16 probe
+wait N16 done
+send N16 efh
+wait N16 done
+send N16 quit
+sleep 50
+spawn C16 client $HWND C16
+send C16 init
+wait C16 done
+send C16 probe
+wait C16 done
+send C16 efh
+wait C16 done
+send C16 quit
+sleep 50
+spawn N17 client $HWND N17
+send N17 init
+wait N17 done
+send N17 ownwindow
+wait N17 done
+send N17 probe
+wait N17 done
+send N17 efh
+wait N17 done
+send N17 target $HWND
+wait N17 done
+send N17 probe
+wait N17 done
+send N17 efh
+wait N17 done
+send N17 quit
+sleep 50
+spawn C17 client $HWND C17
+send C17 init
+wait C17 done
+send C17 probe
+wait C17 done
+send C17 efh
+wait C17 done
+send C17 quit
+sleep 50
+spawn X17 client $HWND X17
+send X17 init
+wait X17 done
+send X17 target $HWND2
+wait X17 done
+send X17 probe
+wait X17 done
+send X17 efh
+wait X17 done
+send X17 target $HWND
+wait X17 done
+send X17 probe
+wait X17 done
+send X17 efh
+wait X17 done
+send X17 quit
+sleep 50
+spawn C18 client $HWND C18
+send C18 init
+wait C18 done
+send C18 probe
+wait C18 done
+send C18 efh
+wait C18 done
+send C18 quit
+sleep 50
+spawn X18 client $HWND X18
+send X18 init
+wait X18 done
+send X18 target $HWND2
+wait X18 done
+send X18 probe
+wait X18 done
+send X18 efh
+wait X18 done
+send X18 target $HWND
+wait X18 done
+send X18 probe
+wait X18 done
+send X18 efh
+wait X18 done
+send X18 quit
+sleep 50
+spawn N18 client $HWND N18
+send N18 init
+wait N18 done
+send N18 ownwindow
+wait N18 done
+send N18 probe
+wait N18 done
+send N18 efh
+wait N18 done
+send N18 target $HWND
+wait N18 done
+send N18 probe
+wait N18 done
+send N18 efh
+wait N18 done
+send N18 quit
+sleep 50
+spawn X19 client $HWND X19
+send X19 init
+wait X19 done
+send X19 target $HWND2
+wait X19 done
+send X19 probe
+wait X19 done
+send X19 efh
+wait X19 done
+send X19 target $HWND
+wait X19 done
+send X19 probe
+wait X19 done
+send X19 efh
+wait X19 done
+send X19 quit
+sleep 50
+spawn N19 client $HWND N19
+send N19 init
+wait N19 done
+send N19 ownwindow
+wait N19 done
+send N19 probe
+wait N19 done
+send N19 efh
+wait N19 done
+send N19 target $HWND
+wait N19 done
+send N19 probe
+wait N19 done
+send N19 efh
+wait N19 done
+send N19 quit
+sleep 50
+spawn C19 client $HWND C19
+send C19 init
+wait C19 done
+send C19 probe
+wait C19 done
+send C19 efh
+wait C19 done
+send C19 quit
+sleep 50
+drain 300

@@ -1,0 +1,95 @@
+21:53:16.739971 to 21:53:16.740920 (6) idle in GetMessage
+21:53:16.740950 to 21:53:16.740967 (1) UIA hook message (cross-process call on UI thread)
+21:53:16.741059 to 21:53:16.742234 (17) idle in GetMessage
+21:53:16.742255 to 21:53:16.742255 (1) other: ?
+21:53:16.742415 to 21:53:16.742613 (4) idle in GetMessage
+21:53:16.742635 to 21:53:16.742636 (1) UIA hook message (cross-process call on UI thread)
+21:53:16.742671 to 21:53:16.743933 (13) idle in GetMessage
+21:53:16.744000 to 21:53:16.744149 (3) UIA hook message (cross-process call on UI thread)
+21:53:16.744388 to 21:53:16.745310 (9) idle in GetMessage
+21:53:16.745352 to 21:53:16.745364 (1) UiaReturnRawElementProvider
+21:53:16.745415 to 21:53:16.745432 (1) UIA ComInvoker
+21:53:16.745523 to 21:53:16.746134 (7) idle in GetMessage
+21:53:16.746224 to 21:53:16.746231 (1) UIA ComInvoker
+21:53:16.746253 to 21:53:16.746253 (1) other: ?
+21:53:16.746271 to 21:53:16.746284 (1) UIA ComInvoker
+21:53:16.746330 to 21:53:16.746637 (6) idle in GetMessage
+21:53:16.746673 to 21:53:16.746816 (1) UiaReturnRawElementProvider
+21:53:16.746878 to 21:53:16.747168 (3) idle in GetMessage
+21:53:16.747254 to 21:53:16.747254 (1) UIA hook message (cross-process call on UI thread)
+21:53:16.747299 to 21:53:16.747496 (5) idle in GetMessage
+21:53:16.748362 to 21:53:16.748372 (1) UIA HwndInvoker
+21:53:16.748616 to 21:53:16.748740 (3) idle in GetMessage
+21:53:16.748850 to 21:53:16.748862 (1) other: ?
+21:53:16.748876 to 21:53:16.748876 (1) idle in GetMessage
+21:53:16.748915 to 21:53:16.748961 (1) UIA hook message (cross-process call on UI thread)
+21:53:16.749011 to 21:53:16.750344 (10) idle in GetMessage
+21:53:16.750387 to 21:53:16.750396 (1) UiaReturnRawElementProvider
+21:53:16.750439 to 21:53:16.750440 (1) UIA ComInvoker
+21:53:16.750470 to 21:53:16.752254 (17) idle in GetMessage
+21:53:16.752318 to 21:53:16.752324 (1) UIA ComInvoker
+21:53:16.752423 to 21:53:16.752737 (5) idle in GetMessage
+21:53:16.752813 to 21:53:16.752853 (1) other: ?
+21:53:16.752873 to 21:53:16.753188 (5) idle in GetMessage
+21:53:16.753249 to 21:53:16.753269 (1) UIA ComInvoker
+21:53:16.753370 to 21:53:16.753938 (6) idle in GetMessage
+21:53:16.753965 to 21:53:16.753978 (1) UIA hook message (cross-process call on UI thread)
+21:53:16.754032 to 21:53:16.755325 (8) idle in GetMessage
+21:53:16.755693 to 21:53:16.759023 (1) setup: NavigationHelperProxyOneCore::Initialize
+21:53:16.759687 to 21:53:16.762851 (9) setup: EndpointStateNotifier CoCreateInstance (modal loop)
+21:53:16.763245 to 21:53:16.763245 (1) COM call dispatch
+21:53:16.763581 to 21:53:16.763824 (4) idle in GetMessage
+21:53:16.763938 to 21:53:16.763940 (1) UIA ComInvoker
+21:53:16.764054 to 21:53:16.765272 (5) idle in GetMessage
+21:53:16.765329 to 21:53:16.765476 (1) UiaReturnRawElementProvider
+21:53:16.765531 to 21:53:16.765619 (1) UIA ComInvoker
+21:53:16.765658 to 21:53:16.767212 (6) idle in GetMessage
+21:53:16.767242 to 21:53:16.767242 (1) other: ?
+21:53:16.767253 to 21:53:16.767403 (1) idle in GetMessage
+21:53:16.767472 to 21:53:16.767490 (1) UIA ComInvoker
+21:53:16.767583 to 21:53:16.769115 (6) idle in GetMessage
+21:53:16.769187 to 21:53:16.769335 (1) UIA hook message (cross-process call on UI thread)
+21:53:16.769386 to 21:53:16.770222 (6) idle in GetMessage
+21:53:16.770243 to 21:53:16.770243 (1) other: ?
+21:53:16.770273 to 21:53:16.770933 (7) idle in GetMessage
+21:53:16.771241 to 21:53:16.771241 (1) UIA ComInvoker
+21:53:16.771417 to 21:53:16.773816 (25) idle in GetMessage
+21:53:16.773858 to 21:53:16.773858 (1) other: ?
+21:53:16.773895 to 21:53:16.775579 (18) idle in GetMessage
+21:53:16.775679 to 21:53:16.775858 (3) UIA hook message (cross-process call on UI thread)
+21:53:16.775975 to 21:53:16.777164 (12) idle in GetMessage
+21:53:16.777209 to 21:53:16.777251 (1) UIA hook message (cross-process call on UI thread)
+21:53:16.777345 to 21:53:16.777969 (7) idle in GetMessage
+21:53:16.778097 to 21:53:16.778097 (1) other: ?
+21:53:16.778113 to 21:53:16.778855 (7) idle in GetMessage
+21:53:16.778864 to 21:53:16.778918 (1) other: ?
+21:53:16.778972 to 21:53:16.779446 (5) idle in GetMessage
+21:53:16.779481 to 21:53:16.779481 (1) other: ?
+21:53:16.779496 to 21:53:16.779529 (1) idle in GetMessage
+21:53:16.779591 to 21:53:16.779601 (1) UIA ComInvoker
+21:53:16.779695 to 21:53:16.780348 (7) idle in GetMessage
+21:53:16.780444 to 21:53:16.780460 (1) UIA ComInvoker
+21:53:16.780581 to 21:53:16.780752 (3) idle in GetMessage
+21:53:16.780871 to 21:53:16.780893 (1) UIA hook message (cross-process call on UI thread)
+21:53:16.780938 to 21:53:16.782172 (13) idle in GetMessage
+21:53:16.782265 to 21:53:16.782314 (2) UIA HwndInvoker
+21:53:16.782359 to 21:53:16.782998 (5) idle in GetMessage
+21:53:16.783054 to 21:53:16.783065 (1) other: ?
+21:53:16.783092 to 21:53:16.783225 (2) idle in GetMessage
+21:53:16.783264 to 21:53:16.783441 (2) UIA hook message (cross-process call on UI thread)
+21:53:16.783690 to 21:53:16.784052 (6) idle in GetMessage
+21:53:16.784085 to 21:53:16.784101 (1) UIA hook message (cross-process call on UI thread)
+21:53:16.784171 to 21:53:16.784193 (1) UIA HwndInvoker
+21:53:16.785092 to 21:53:16.791927 (5) idle in GetMessage
+21:53:16.792469 to 21:53:16.794465 (3) UIA ComInvoker
+21:53:16.794879 to 21:53:16.794959 (2) idle in GetMessage
+21:53:16.795087 to 21:53:16.795100 (1) UiaReturnRawElementProvider
+21:53:16.795187 to 21:53:16.797381 (20) idle in GetMessage
+21:53:16.797560 to 21:53:16.797613 (2) UIA hook message (cross-process call on UI thread)
+21:53:16.797802 to 21:53:16.798462 (2) idle in GetMessage
+21:53:16.799462 to 21:53:16.799462 (1) other: ?
+21:53:16.799540 to 21:53:16.800434 (7) idle in GetMessage
+21:53:16.800460 to 21:53:16.800460 (1) other: ?
+21:53:16.800470 to 21:53:16.802281 (22) idle in GetMessage
+21:53:16.802439 to 21:53:16.802445 (1) UIA HwndInvoker
+21:53:16.802537 to 21:53:16.813512 (2) idle in GetMessage

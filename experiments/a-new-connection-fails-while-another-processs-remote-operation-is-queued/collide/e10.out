@@ -1,0 +1,27 @@
+22:10:05.867854 run spawn S server
+  S 22:10:05.881473 hwnd 15926598 pid 5072
+22:10:05.885731 run spawn L client 15926598 L
+22:10:05.885788 run send L init
+  S 22:10:05.881548 ready
+  L 22:10:05.892606 client-ready L
+  L 22:10:05.896758 done init L start=22:10:05.892642 ms=4.1 ok
+22:10:05.896878 run send L efh
+  L 22:10:05.907033 done efh L start=22:10:05.896911 ms=10.1 ok
+22:10:05.907654 run send L rop
+  L 22:10:05.915590 done rop L start=22:10:05.907690 ms=7.9 ok
+22:10:05.919768 run spawn B client 15926598 B
+22:10:05.919806 run send B efh
+
+thread 'main' (16164) panicked at crates\collide\src\client.rs:164:42:
+called `Option::unwrap()` on a `None` value
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+  B 22:10:05.926425 client-ready B
+22:10:20.935386 run timeout waiting B done
+22:10:20.935455 run send S busy 40
+  S 22:10:20.935588 busy-begin
+22:10:20.941329 run send L async rop
+22:10:20.946881 run send B name
+
+thread 'main' (8404) panicked at crates\collide\src\run.rs:61:35:
+called `Result::unwrap()` on an `Err` value: Os { code: 232, kind: BrokenPipe, message: "The pipe is being closed." }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

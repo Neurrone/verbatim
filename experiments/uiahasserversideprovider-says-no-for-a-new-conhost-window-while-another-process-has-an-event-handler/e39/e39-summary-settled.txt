@@ -1,0 +1,81 @@
+## e39-lookup-settled
+  run  1 at 2000.3 ; lookup 9.9ms native ; sum 9.9ms
+  run  2 at 2000.3 ; lookup 9.2ms native ; sum 9.2ms
+  run  3 at 2000.3 ; lookup 8.9ms native ; sum 8.9ms
+  run  4 at 2000.3 ; lookup 8.8ms native ; sum 8.8ms
+  run  5 at 2000.3 ; lookup 8.8ms native ; sum 8.8ms
+  run  6 at 2000.4 ; lookup 9.9ms native ; sum 9.9ms
+  run  7 at 2000.3 ; lookup 8.9ms native ; sum 8.9ms
+  run  8 at 2000.3 ; lookup 9.1ms native ; sum 9.1ms
+  run  9 at 2000.3 ; lookup 11.1ms native ; sum 11.1ms
+  run 10 at 2000.3 ; lookup 8.9ms native ; sum 8.9ms
+  run 11 at 2000.3 ; lookup 8.8ms native ; sum 8.8ms
+  run 12 at 2000.3 ; lookup 10.0ms native ; sum 10.0ms
+  run 13 at 2000.3 ; lookup 9.9ms native ; sum 9.9ms
+  run 14 at 2000.3 ; lookup 10.8ms native ; sum 10.8ms
+  run 15 at 2000.3 ; lookup 9.1ms native ; sum 9.1ms
+  run 16 at 2000.3 ; lookup 9.1ms native ; sum 9.1ms
+  run 17 at 2000.3 ; lookup 9.0ms native ; sum 9.0ms
+  run 18 at 2000.3 ; lookup 8.9ms native ; sum 8.9ms
+  run 19 at 2000.3 ; lookup 8.9ms native ; sum 8.9ms
+  run 20 at 2000.3 ; lookup 9.1ms native ; sum 9.1ms
+### e39-lookup-settled: outcomes
+  lookup native: 20
+  first call's start after the window was found: n=20 min 2000.3 median 2000.3 p90 2000.3 max 2000.4
+  probe ms: -
+  lookup ms: n=20 min 8.8 median 9.1 p90 10.0 max 11.1
+  sum ms: n=20 min 8.8 median 9.1 p90 10.0 max 11.1
+## e39-uia-settled
+  run  1 at 2000.3 ; probe 9.0ms result=true ; lookup 1.2ms native ; sum 10.2ms
+  run  2 at 2000.3 ; probe 9.4ms result=true ; lookup 1.3ms native ; sum 10.7ms
+  run  3 at 2000.3 ; probe 8.0ms result=true ; lookup 1.2ms native ; sum 9.2ms
+  run  4 at 2000.3 ; probe 9.2ms result=true ; lookup 1.3ms native ; sum 10.5ms
+  run  5 at 2000.3 ; probe 10.6ms result=true ; lookup 1.3ms native ; sum 11.9ms
+  run  6 at 2000.3 ; probe 8.2ms result=true ; lookup 1.2ms native ; sum 9.4ms
+  run  7 at 2000.3 ; probe 9.8ms result=true ; lookup 1.4ms native ; sum 11.2ms
+  run  8 at 2000.3 ; probe 9.0ms result=true ; lookup 1.3ms native ; sum 10.3ms
+  run  9 at 2000.3 ; probe 8.3ms result=true ; lookup 1.2ms native ; sum 9.5ms
+  run 10 at 2000.4 ; probe 8.2ms result=true ; lookup 1.2ms native ; sum 9.4ms
+  run 11 at 2000.3 ; probe 8.6ms result=true ; lookup 1.2ms native ; sum 9.8ms
+  run 12 at 2000.4 ; probe 10.7ms result=true ; lookup 1.5ms native ; sum 12.2ms
+  run 13 at 2000.3 ; probe 9.0ms result=true ; lookup 1.2ms native ; sum 10.2ms
+  run 14 at 2000.3 ; probe 8.1ms result=true ; lookup 1.2ms native ; sum 9.3ms
+  run 15 at 2000.3 ; probe 10.7ms result=true ; lookup 1.2ms native ; sum 11.9ms
+  run 16 at 2000.3 ; probe 8.2ms result=true ; lookup 1.1ms native ; sum 9.3ms
+  run 17 at 2000.3 ; probe 8.3ms result=true ; lookup 1.2ms native ; sum 9.5ms
+  run 18 at 2000.4 ; probe 9.1ms result=true ; lookup 1.4ms native ; sum 10.5ms
+  run 19 at 2000.3 ; probe 9.7ms result=true ; lookup 1.2ms native ; sum 10.9ms
+  run 20 at 2000.3 ; probe 8.5ms result=true ; lookup 1.4ms native ; sum 9.9ms
+### e39-uia-settled: outcomes
+  probe yes, lookup native: 20
+  first call's start after the window was found: n=20 min 2000.3 median 2000.3 p90 2000.4 max 2000.4
+  probe ms: n=20 min 8.0 median 9.0 p90 10.6 max 10.7
+  lookup ms: n=20 min 1.1 median 1.2 p90 1.4 max 1.5
+  sum ms: n=20 min 9.2 median 10.2 p90 11.9 max 12.2
+## e39-raw-settled
+  run  1 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 9.7ms native ; sum 9.8ms
+  run  2 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 10.8ms native ; sum 10.9ms
+  run  3 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 9.0ms native ; sum 9.1ms
+  run  4 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 8.9ms native ; sum 9.0ms
+  run  5 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 9.3ms native ; sum 9.4ms
+  run  6 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 9.1ms native ; sum 9.2ms
+  run  7 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 8.6ms native ; sum 8.7ms
+  run  8 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 9.2ms native ; sum 9.3ms
+  run  9 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 8.9ms native ; sum 9.0ms
+  run 10 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 10.6ms native ; sum 10.7ms
+  run 11 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 12.3ms native ; sum 12.4ms
+  run 12 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 9.1ms native ; sum 9.2ms
+  run 13 at 2000.4 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 10.2ms native ; sum 10.3ms
+  run 14 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 9.6ms native ; sum 9.7ms
+  run 15 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 9.3ms native ; sum 9.4ms
+  run 16 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 9.9ms native ; sum 10.0ms
+  run 17 at 2000.4 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 10.8ms native ; sum 10.9ms
+  run 18 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 8.8ms native ; sum 8.9ms
+  run 19 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 10.1ms native ; sum 10.2ms
+  run 20 at 2000.3 ; raw 0.1ms sent=1 lresult=0x10000 err=0 ; lookup 17.1ms native ; sum 17.2ms
+### e39-raw-settled: outcomes
+  probe yes, lookup native: 20
+  first call's start after the window was found: n=20 min 2000.3 median 2000.3 p90 2000.3 max 2000.4
+  probe ms: n=20 min 0.1 median 0.1 p90 0.1 max 0.1
+  lookup ms: n=20 min 8.6 median 9.4 p90 10.8 max 17.1
+  sum ms: n=20 min 8.7 median 9.6 p90 10.9 max 17.2

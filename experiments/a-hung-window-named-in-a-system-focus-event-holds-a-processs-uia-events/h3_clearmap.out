@@ -1,0 +1,24 @@
+[1792299553616475] holdTV: ondesk-child-pid 2232
+[1792299553643438] holdTV: ready
+[1792299553679385] tool find holdTV -> 42599386 ondesk-child-pid 17688
+[1792299553695066] holdB: ondesk-child-pid 1092
+[1792299553714802] holdB: ready
+[1792299553752051] tool find holdB -> 40174770 ondesk-child-pid 15056
+[1792299553790058] tool findchild 42599386 WindowsForms10.SysTreeView32.app.0.141b42a_r9_ad1 -> 82052488 ondesk-child-pid 7140
+[1792299553807520] D: ondesk-child-pid 18080
+[1792299553833039] D: mapping cleared, entries 0
+[1792299553843746] D: registered D desk:pid in 10.7ms
+[1792299553853003] D: registered D name:40174770 in 9.2ms
+[1792299553853072] D: client-ready D
+[1792299554153616] >holdB: set-name btn1 Base
+[1792299554154180] holdB: applied
+[1792299554155309] D: ev D name:40174770 prop30005 t=1792299554155264 pid=1092 name="Base" hwnd=0
+RESULT clearmap baseline name after 1.7 ms
+[1792299554463373] >holdTV: stall 8000
+[1792299554463646] holdTV: stall started
+[1792299554519487] tool winevent 82052488 8005 -4 0 -> winevent sent t=1792299554515784 ondesk-child-pid 17600
+[1792299554719603] >holdB: set-name btn1 During
+[1792299554719939] holdB: applied
+[1792299556531666] D: ev D name:40174770 prop30005 t=1792299556531594 pid=1092 name="During" hwnd=0
+RESULT clearmap held name after 1812 ms; 2068 ms into the 8000 ms stall; WinEvent at 0 ms
+[1792299562463976] holdTV: stall ended 1792299562463883

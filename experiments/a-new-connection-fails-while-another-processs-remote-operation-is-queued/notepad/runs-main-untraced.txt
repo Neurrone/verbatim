@@ -1,0 +1,15 @@
+﻿notepad_typed_words 1 ok=True probe=fast first="verbatim-e2e-typed-words-mvbjmh33.txt - Notepad" etl=
+notepad_typed_words 2 ok=True probe=fast first="verbatim-e2e-typed-words-mvbjmynp.txt - Notepad" etl=
+notepad_typed_words 3 ok=True probe=fast first="verbatim-e2e-typed-words-mvbjnftl.txt - Notepad" etl=
+notepad_typed_words 4 ok=True probe=fast first="verbatim-e2e-typed-words-mvbjnxcj.txt - Notepad" etl=
+notepad_typed_words 5 ok=True probe=fast first="verbatim-e2e-typed-words-mvbjojnx.txt - Notepad" etl=
+notepad_typed_words 6 ok=True probe=fast first="verbatim-e2e-typed-words-mvbjp188.txt - Notepad" etl=
+notepad_typed_words 7 ok=True probe=fast first="verbatim-e2e-typed-words-mvbjpiqn.txt - Notepad" etl=
+notepad_typed_words 8 ok=True probe=fast first="verbatim-e2e-typed-words-mvbjpztc.txt - Notepad" etl=
+notepad_typed_words 9 ok=True probe=fast first="verbatim-e2e-typed-words-mvbjqhci.txt - Notepad" etl=
+notepad_typed_words 10 ok=True probe=fast first="verbatim-e2e-typed-words-mvbjqyxo.txt - Notepad" etl=
+notepad_typed_words 11 ok=True probe=fast first="verbatim-e2e-typed-words-mvbjrgns.txt - Notepad" etl=
+notepad_typed_words 12 ok=True probe=fast first="verbatim-e2e-typed-words-mvbjry7s.txt - Notepad" etl=
+notepad_typed_words 13 ok=True probe=fast first="verbatim-e2e-typed-words-mvbjsfp1.txt - Notepad" etl=
+notepad_typed_words 14 ok=True probe=fast first="verbatim-e2e-typed-words-mvbjsx92.txt - Notepad" etl=
+notepad_typed_words 15 ok=False probe=SLOW first="verbatim-e2e-typed-words-mvbjtere.txt - Notepad" etl=

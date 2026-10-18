@@ -1,0 +1,30 @@
+# e35: a conhost console (cmd.exe as its client, titled
+# collide-console, started before the run). B holds the console's
+# text area (efh on the window, then the document under it) and walks
+# up, parent by parent, to the element under the desktop root while
+# L's remote operation into the console waits for the console's
+# window thread (conhost's, given as CONSOLE_TID; the window itself
+# reports cmd.exe as its owner), suspended for the purpose (control: no operation).
+findwindow collide-console
+owner $HWND
+spawn L client $HWND L
+send L init
+wait L done
+send L efh
+wait L done
+send L rop
+wait L done 10000
+spawn B client $HWND B
+send B init
+wait B done
+send B efh
+wait B done
+send B docchild
+wait B done
+stall tid:${CONSOLE_TID} 300
+sleep 5
+send B toplevel
+wait B done 15000
+send B info
+wait B done 15000
+drain 500

@@ -1,0 +1,255 @@
+=== run 1
+17:04:57.200078 run spawn S server
+  S 17:04:57.213390 hwnd 94569124 pid 13052
+17:04:57.213535 run send S showtopoff
+  S 17:04:57.213477 ready
+  S 17:04:57.214576 shown-off-screen
+run 17:04:57.214670 owner hwnd=94569124 pid=13052 tid=3080
+17:04:57.219992 run spawn L client 94569124 L
+17:04:57.220056 run send L init
+  L 17:04:57.228416 client-ready L
+  L 17:04:57.232657 done init L start=17:04:57.228455 ms=4.2 ok
+17:04:57.232777 run send L efh
+  S 17:04:57.241494 getobject-begin hwnd=94569124 objid=-25 wparam=0xe0c31937 insend=0x1 in_hold=false
+  S 17:04:57.242644 getobject-end hwnd=94569124 objid=-25 lresult=0x10000 us=1160 in_hold=false
+  S 17:04:57.243986 getobject-begin hwnd=94569124 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:04:57.244021 getobject-end hwnd=94569124 objid=-25 lresult=0x10000 us=38 in_hold=false
+  L 17:04:57.244471 done efh L start=17:04:57.232815 ms=11.7 ok
+17:04:57.244540 run send L rop
+  S 17:04:57.251979 getobject-begin hwnd=94569124 objid=-25 wparam=0xe0c4bc18 insend=0x0 in_hold=false
+  S 17:04:57.252047 getobject-end hwnd=94569124 objid=-25 lresult=0x10000 us=73 in_hold=false
+  S 17:04:57.252310 getobject-begin hwnd=94569124 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:04:57.252342 getobject-end hwnd=94569124 objid=-25 lresult=0x10000 us=34 in_hold=false
+  L 17:04:57.252784 done rop L start=17:04:57.244566 ms=8.2 ok
+17:04:57.257142 run spawn B client 94569124 B
+17:04:57.257192 run send B init
+  B 17:04:57.263953 client-ready B
+  B 17:04:57.268196 done init B start=17:04:57.263987 ms=4.2 ok
+run 17:04:57.268310 stall-begin tid=3080 count=0
+17:04:57.268373 run send L async rop
+17:04:57.273432 run send B efhbc
+run 17:04:57.569541 stall-end count=1
+  S 17:04:57.569641 getobject-begin hwnd=94569124 objid=-25 wparam=0xe0c93220 insend=0x1 in_hold=false
+  L 17:04:57.570829 done async-rop L start=17:04:57.268534 ms=302.3 ok
+  S 17:04:57.569733 getobject-end hwnd=94569124 objid=-25 lresult=0x10000 us=94 in_hold=false
+  S 17:04:57.569933 getobject-begin hwnd=94569124 objid=-25 wparam=0xe0c4bc19 insend=0x0 in_hold=false
+  S 17:04:57.569959 getobject-end hwnd=94569124 objid=-25 lresult=0x10000 us=26 in_hold=false
+  S 17:04:57.570400 getobject-begin hwnd=94569124 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:04:57.570423 getobject-end hwnd=94569124 objid=-25 lresult=0x10000 us=24 in_hold=false
+  S 17:04:59.576854 getobject-begin hwnd=94569124 objid=-4 wparam=0xffffffff insend=0x1 in_hold=false
+  S 17:04:59.576911 getobject-begin hwnd=94569124 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:04:59.577017 getobject-end hwnd=94569124 objid=-12 lresult=0x0 us=106 in_hold=false
+  S 17:04:59.577090 getobject-begin hwnd=94569124 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:04:59.577130 getobject-end hwnd=94569124 objid=-12 lresult=0x0 us=42 in_hold=false
+  S 17:04:59.578071 getobject-end hwnd=94569124 objid=-4 lresult=0xc0b3 us=1220 in_hold=false
+  S 17:04:59.578183 getobject-begin hwnd=94569124 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:04:59.578207 getobject-end hwnd=94569124 objid=-12 lresult=0x0 us=24 in_hold=false
+  S 17:04:59.578779 getobject-begin hwnd=94569124 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:04:59.578816 getobject-end hwnd=94569124 objid=-25 lresult=0x10000 us=38 in_hold=false
+  B 17:04:59.579817 done efhbc B start=17:04:57.273493 ms=2306.3 ok name="collide"
+17:04:59.579925 run send B info
+  B 17:04:59.581074 done info B start=17:04:59.579961 ms=1.1 ok name="collide"(0.2ms) hwnd=94569124(0.2ms) framework="Win32"(0.2ms) pid=13052(0.2ms) desc="[pid:6188,providerId:0x5A302A4 Main:Nested [pid:13052,providerId:0x5A302A4 Annotation(parent link):Microsoft: Annotation Proxy (unmanaged:uiautomationcore.dll); Main:Microsoft: MSAA Proxy (unmanaged:uiautomationcore.dll)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.4ms)
+=== run 2
+17:05:00.353414 run spawn S server
+  S 17:05:00.369106 hwnd 58000146 pid 16040
+17:05:00.369319 run send S showtopoff
+  S 17:05:00.369224 ready
+  S 17:05:00.372770 shown-off-screen
+run 17:05:00.374361 owner hwnd=58000146 pid=16040 tid=17824
+17:05:00.379367 run spawn L client 58000146 L
+17:05:00.379416 run send L init
+  L 17:05:00.387627 client-ready L
+  L 17:05:00.392206 done init L start=17:05:00.387674 ms=4.5 ok
+17:05:00.392304 run send L efh
+  S 17:05:00.399822 getobject-begin hwnd=58000146 objid=-25 wparam=0xe2a50405 insend=0x1 in_hold=false
+  S 17:05:00.401035 getobject-end hwnd=58000146 objid=-25 lresult=0x10000 us=1236 in_hold=false
+  S 17:05:00.402289 getobject-begin hwnd=58000146 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:00.402324 getobject-end hwnd=58000146 objid=-25 lresult=0x10000 us=38 in_hold=false
+  L 17:05:00.402771 done efh L start=17:05:00.392340 ms=10.4 ok
+17:05:00.402857 run send L rop
+  S 17:05:00.411134 getobject-begin hwnd=58000146 objid=-25 wparam=0xe2a6e5aa insend=0x0 in_hold=false
+  S 17:05:00.411200 getobject-end hwnd=58000146 objid=-25 lresult=0x10000 us=71 in_hold=false
+  S 17:05:00.411441 getobject-begin hwnd=58000146 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:00.411470 getobject-end hwnd=58000146 objid=-25 lresult=0x10000 us=30 in_hold=false
+  L 17:05:00.411928 done rop L start=17:05:00.402896 ms=9.0 ok
+17:05:00.416397 run spawn B client 58000146 B
+17:05:00.416433 run send B init
+  B 17:05:00.423724 client-ready B
+  B 17:05:00.428425 done init B start=17:05:00.423763 ms=4.7 ok
+run 17:05:00.428552 stall-begin tid=17824 count=0
+17:05:00.428620 run send L async rop
+17:05:00.433706 run send B efhbc
+run 17:05:00.729026 stall-end count=1
+  S 17:05:00.729075 getobject-begin hwnd=58000146 objid=-25 wparam=0xe2ab5c8f insend=0x1 in_hold=false
+  S 17:05:00.729215 getobject-end hwnd=58000146 objid=-25 lresult=0x10000 us=152 in_hold=false
+  S 17:05:00.729458 getobject-begin hwnd=58000146 objid=-25 wparam=0xe2a6e5ab insend=0x0 in_hold=false
+  S 17:05:00.729508 getobject-end hwnd=58000146 objid=-25 lresult=0x10000 us=51 in_hold=false
+  S 17:05:00.729728 getobject-begin hwnd=58000146 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:00.729754 getobject-end hwnd=58000146 objid=-25 lresult=0x10000 us=27 in_hold=false
+  L 17:05:00.730235 done async-rop L start=17:05:00.428862 ms=301.4 ok
+  S 17:05:02.740800 getobject-begin hwnd=58000146 objid=-4 wparam=0xffffffff insend=0x1 in_hold=false
+  S 17:05:02.740840 getobject-begin hwnd=58000146 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:02.740920 getobject-end hwnd=58000146 objid=-12 lresult=0x0 us=79 in_hold=false
+  S 17:05:02.740948 getobject-begin hwnd=58000146 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:02.740959 getobject-end hwnd=58000146 objid=-12 lresult=0x0 us=11 in_hold=false
+  S 17:05:02.741780 getobject-end hwnd=58000146 objid=-4 lresult=0xc0b3 us=984 in_hold=false
+  S 17:05:02.741849 getobject-begin hwnd=58000146 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:02.741866 getobject-end hwnd=58000146 objid=-12 lresult=0x0 us=17 in_hold=false
+  S 17:05:02.742336 getobject-begin hwnd=58000146 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:02.742360 getobject-end hwnd=58000146 objid=-25 lresult=0x10000 us=26 in_hold=false
+  B 17:05:02.743090 done efhbc B start=17:05:00.433769 ms=2309.3 ok name="collide"
+17:05:02.743155 run send B info
+  B 17:05:02.743761 done info B start=17:05:02.743176 ms=0.6 ok name="collide"(0.1ms) hwnd=58000146(0.1ms) framework="Win32"(0.1ms) pid=16040(0.1ms) desc="[pid:1228,providerId:0x3750312 Main:Nested [pid:16040,providerId:0x3750312 Annotation(parent link):Microsoft: Annotation Proxy (unmanaged:uiautomationcore.dll); Main:Microsoft: MSAA Proxy (unmanaged:uiautomationcore.dll)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.2ms)
+=== run 3
+17:05:03.537388 run spawn S server
+  S 17:05:03.553101 hwnd 58065682 pid 6756
+17:05:03.553381 run send S showtopoff
+  S 17:05:03.553187 ready
+  S 17:05:03.554650 shown-off-screen
+run 17:05:03.554759 owner hwnd=58065682 pid=6756 tid=10724
+17:05:03.558971 run spawn L client 58065682 L
+17:05:03.559020 run send L init
+  L 17:05:03.576660 client-ready L
+  L 17:05:03.582718 done init L start=17:05:03.576697 ms=6.0 ok
+17:05:03.582824 run send L efh
+  S 17:05:03.590585 getobject-begin hwnd=58065682 objid=-25 wparam=0xe48c03a5 insend=0x1 in_hold=false
+  S 17:05:03.592028 getobject-end hwnd=58065682 objid=-25 lresult=0x10000 us=1456 in_hold=false
+  S 17:05:03.593214 getobject-begin hwnd=58065682 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:03.593245 getobject-end hwnd=58065682 objid=-25 lresult=0x10000 us=33 in_hold=false
+  L 17:05:03.593668 done efh L start=17:05:03.582853 ms=10.8 ok
+17:05:03.593745 run send L rop
+  S 17:05:03.601139 getobject-begin hwnd=58065682 objid=-25 wparam=0xe48d6f9d insend=0x0 in_hold=false
+  S 17:05:03.601222 getobject-end hwnd=58065682 objid=-25 lresult=0x10000 us=93 in_hold=false
+  S 17:05:03.601449 getobject-begin hwnd=58065682 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:03.601486 getobject-end hwnd=58065682 objid=-25 lresult=0x10000 us=37 in_hold=false
+  L 17:05:03.601886 done rop L start=17:05:03.593774 ms=8.1 ok
+17:05:03.624504 run spawn B client 58065682 B
+17:05:03.624550 run send B init
+  B 17:05:03.631354 client-ready B
+  B 17:05:03.635498 done init B start=17:05:03.631389 ms=4.1 ok
+run 17:05:03.635596 stall-begin tid=10724 count=0
+17:05:03.635667 run send L async rop
+17:05:03.640707 run send B efhbc
+run 17:05:03.936196 stall-end count=1
+  S 17:05:03.936219 getobject-begin hwnd=58065682 objid=-25 wparam=0xe494b887 insend=0x1 in_hold=false
+  S 17:05:03.936323 getobject-end hwnd=58065682 objid=-25 lresult=0x10000 us=109 in_hold=false
+  S 17:05:03.936577 getobject-begin hwnd=58065682 objid=-25 wparam=0xe48d6f9e insend=0x0 in_hold=false
+  S 17:05:03.936634 getobject-end hwnd=58065682 objid=-25 lresult=0x10000 us=57 in_hold=false
+  S 17:05:03.936844 getobject-begin hwnd=58065682 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:03.936875 getobject-end hwnd=58065682 objid=-25 lresult=0x10000 us=32 in_hold=false
+  L 17:05:03.937341 done async-rop L start=17:05:03.635819 ms=301.5 ok
+  S 17:05:05.938014 getobject-begin hwnd=58065682 objid=-4 wparam=0xffffffff insend=0x1 in_hold=false
+  S 17:05:05.938052 getobject-begin hwnd=58065682 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:05.938141 getobject-end hwnd=58065682 objid=-12 lresult=0x0 us=89 in_hold=false
+  S 17:05:05.938170 getobject-begin hwnd=58065682 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:05.938181 getobject-end hwnd=58065682 objid=-12 lresult=0x0 us=11 in_hold=false
+  S 17:05:05.938999 getobject-end hwnd=58065682 objid=-4 lresult=0xc0b3 us=989 in_hold=false
+  S 17:05:05.939064 getobject-begin hwnd=58065682 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:05.939080 getobject-end hwnd=58065682 objid=-12 lresult=0x0 us=17 in_hold=false
+  S 17:05:05.939550 getobject-begin hwnd=58065682 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:05.939575 getobject-end hwnd=58065682 objid=-25 lresult=0x10000 us=25 in_hold=false
+  B 17:05:05.940319 done efhbc B start=17:05:03.640750 ms=2299.6 ok name="collide"
+17:05:05.940375 run send B info
+  B 17:05:05.940975 done info B start=17:05:05.940396 ms=0.6 ok name="collide"(0.1ms) hwnd=58065682(0.1ms) framework="Win32"(0.1ms) pid=6756(0.1ms) desc="[pid:17284,providerId:0x3760312 Main:Nested [pid:6756,providerId:0x3760312 Annotation(parent link):Microsoft: Annotation Proxy (unmanaged:uiautomationcore.dll); Main:Microsoft: MSAA Proxy (unmanaged:uiautomationcore.dll)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.2ms)
+=== run 4
+17:05:06.694043 run spawn S server
+  S 17:05:06.707014 hwnd 58131218 pid 13800
+17:05:06.707200 run send S showtopoff
+  S 17:05:06.707093 ready
+  S 17:05:06.708092 shown-off-screen
+run 17:05:06.708258 owner hwnd=58131218 pid=13800 tid=16628
+17:05:06.715732 run spawn L client 58131218 L
+17:05:06.715796 run send L init
+  L 17:05:06.723167 client-ready L
+  L 17:05:06.727601 done init L start=17:05:06.723203 ms=4.4 ok
+17:05:06.727735 run send L efh
+  S 17:05:06.736057 getobject-begin hwnd=58131218 objid=-25 wparam=0xe66bf724 insend=0x1 in_hold=false
+  S 17:05:06.737214 getobject-end hwnd=58131218 objid=-25 lresult=0x10000 us=1168 in_hold=false
+  S 17:05:06.738459 getobject-begin hwnd=58131218 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:06.738492 getobject-end hwnd=58131218 objid=-25 lresult=0x10000 us=35 in_hold=false
+  L 17:05:06.738940 done efh L start=17:05:06.727767 ms=11.2 ok
+17:05:06.739005 run send L rop
+  S 17:05:06.746296 getobject-begin hwnd=58131218 objid=-25 wparam=0xe66d5ec9 insend=0x0 in_hold=false
+  S 17:05:06.746364 getobject-end hwnd=58131218 objid=-25 lresult=0x10000 us=73 in_hold=false
+  S 17:05:06.746570 getobject-begin hwnd=58131218 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:06.746597 getobject-end hwnd=58131218 objid=-25 lresult=0x10000 us=29 in_hold=false
+  L 17:05:06.747012 done rop L start=17:05:06.739042 ms=8.0 ok
+17:05:06.751479 run spawn B client 58131218 B
+17:05:06.751525 run send B init
+  B 17:05:06.758210 client-ready B
+  B 17:05:06.762297 done init B start=17:05:06.758245 ms=4.0 ok
+run 17:05:06.762403 stall-begin tid=16628 count=0
+17:05:06.762451 run send L async rop
+17:05:06.767492 run send B efhbc
+run 17:05:07.063014 stall-end count=1
+  S 17:05:07.063044 getobject-begin hwnd=58131218 objid=-25 wparam=0xe671d8be insend=0x1 in_hold=false
+  S 17:05:07.063171 getobject-end hwnd=58131218 objid=-25 lresult=0x10000 us=132 in_hold=false
+  S 17:05:07.063394 getobject-begin hwnd=58131218 objid=-25 wparam=0xe66d5eca insend=0x0 in_hold=false
+  S 17:05:07.063426 getobject-end hwnd=58131218 objid=-25 lresult=0x10000 us=33 in_hold=false
+  S 17:05:07.063634 getobject-begin hwnd=58131218 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:07.063672 getobject-end hwnd=58131218 objid=-25 lresult=0x10000 us=39 in_hold=false
+  L 17:05:07.064154 done async-rop L start=17:05:06.762614 ms=301.5 ok
+  S 17:05:09.074225 getobject-begin hwnd=58131218 objid=-4 wparam=0xffffffff insend=0x1 in_hold=false
+  S 17:05:09.074266 getobject-begin hwnd=58131218 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:09.074345 getobject-end hwnd=58131218 objid=-12 lresult=0x0 us=79 in_hold=false
+  S 17:05:09.074373 getobject-begin hwnd=58131218 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:09.074384 getobject-end hwnd=58131218 objid=-12 lresult=0x0 us=11 in_hold=false
+  S 17:05:09.075215 getobject-end hwnd=58131218 objid=-4 lresult=0xc0b3 us=993 in_hold=false
+  S 17:05:09.075306 getobject-begin hwnd=58131218 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:09.075323 getobject-end hwnd=58131218 objid=-12 lresult=0x0 us=17 in_hold=false
+  S 17:05:09.075786 getobject-begin hwnd=58131218 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:09.075811 getobject-end hwnd=58131218 objid=-25 lresult=0x10000 us=26 in_hold=false
+  B 17:05:09.076544 done efhbc B start=17:05:06.767549 ms=2309.0 ok name="collide"
+17:05:09.076601 run send B info
+  B 17:05:09.077240 done info B start=17:05:09.076622 ms=0.6 ok name="collide"(0.1ms) hwnd=58131218(0.1ms) framework="Win32"(0.1ms) pid=13800(0.1ms) desc="[pid:4392,providerId:0x3770312 Main:Nested [pid:13800,providerId:0x3770312 Annotation(parent link):Microsoft: Annotation Proxy (unmanaged:uiautomationcore.dll); Main:Microsoft: MSAA Proxy (unmanaged:uiautomationcore.dll)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.2ms)
+=== run 5
+17:05:09.850162 run spawn S server
+  S 17:05:09.865415 hwnd 58196754 pid 10540
+17:05:09.865623 run send S showtopoff
+  S 17:05:09.865674 ready
+  S 17:05:09.866997 shown-off-screen
+run 17:05:09.867081 owner hwnd=58196754 pid=10540 tid=6000
+17:05:09.872841 run spawn L client 58196754 L
+17:05:09.872903 run send L init
+  L 17:05:09.881292 client-ready L
+  L 17:05:09.885921 done init L start=17:05:09.881330 ms=4.6 ok
+17:05:09.886025 run send L efh
+  S 17:05:09.893663 getobject-begin hwnd=58196754 objid=-25 wparam=0xe84db6a7 insend=0x1 in_hold=false
+  S 17:05:09.894743 getobject-end hwnd=58196754 objid=-25 lresult=0x10000 us=1102 in_hold=false
+  S 17:05:09.896166 getobject-begin hwnd=58196754 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:09.896203 getobject-end hwnd=58196754 objid=-25 lresult=0x10000 us=39 in_hold=false
+  L 17:05:09.896798 done efh L start=17:05:09.886054 ms=10.7 ok
+17:05:09.896886 run send L rop
+  S 17:05:09.904443 getobject-begin hwnd=58196754 objid=-25 wparam=0xe84f5f4d insend=0x0 in_hold=false
+  S 17:05:09.904508 getobject-end hwnd=58196754 objid=-25 lresult=0x10000 us=69 in_hold=false
+  S 17:05:09.904727 getobject-begin hwnd=58196754 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:09.904755 getobject-end hwnd=58196754 objid=-25 lresult=0x10000 us=29 in_hold=false
+  L 17:05:09.905372 done rop L start=17:05:09.896910 ms=8.5 ok
+17:05:09.909508 run spawn B client 58196754 B
+17:05:09.909538 run send B init
+  B 17:05:09.916068 client-ready B
+  B 17:05:09.920217 done init B start=17:05:09.916098 ms=4.1 ok
+run 17:05:09.920314 stall-begin tid=6000 count=0
+17:05:09.920364 run send L async rop
+17:05:09.925400 run send B efhbc
+run 17:05:10.220670 stall-end count=1
+  S 17:05:10.220696 getobject-begin hwnd=58196754 objid=-25 wparam=0xe853b704 insend=0x1 in_hold=false
+  S 17:05:10.220842 getobject-end hwnd=58196754 objid=-25 lresult=0x10000 us=151 in_hold=false
+  S 17:05:10.221134 getobject-begin hwnd=58196754 objid=-25 wparam=0xe84f5f4e insend=0x0 in_hold=false
+  S 17:05:10.221175 getobject-end hwnd=58196754 objid=-25 lresult=0x10000 us=42 in_hold=false
+  S 17:05:10.221369 getobject-begin hwnd=58196754 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:10.221403 getobject-end hwnd=58196754 objid=-25 lresult=0x10000 us=35 in_hold=false
+  L 17:05:10.221920 done async-rop L start=17:05:09.920521 ms=301.4 ok
+  S 17:05:12.229651 getobject-begin hwnd=58196754 objid=-4 wparam=0xffffffff insend=0x1 in_hold=false
+  S 17:05:12.229718 getobject-begin hwnd=58196754 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:12.229813 getobject-end hwnd=58196754 objid=-12 lresult=0x0 us=94 in_hold=false
+  S 17:05:12.229847 getobject-begin hwnd=58196754 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:12.229862 getobject-end hwnd=58196754 objid=-12 lresult=0x0 us=16 in_hold=false
+  S 17:05:12.230683 getobject-end hwnd=58196754 objid=-4 lresult=0xc0b3 us=1037 in_hold=false
+  S 17:05:12.230754 getobject-begin hwnd=58196754 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:12.230775 getobject-end hwnd=58196754 objid=-12 lresult=0x0 us=21 in_hold=false
+  S 17:05:12.231244 getobject-begin hwnd=58196754 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 17:05:12.231287 getobject-end hwnd=58196754 objid=-25 lresult=0x10000 us=44 in_hold=false
+  B 17:05:12.231932 done efhbc B start=17:05:09.925460 ms=2306.5 ok name="collide"
+17:05:12.231995 run send B info
+  B 17:05:12.232929 done info B start=17:05:12.232020 ms=0.9 ok name="collide"(0.2ms) hwnd=58196754(0.2ms) framework="Win32"(0.1ms) pid=10540(0.1ms) desc="[pid:16596,providerId:0x3780312 Main:Nested [pid:10540,providerId:0x3780312 Annotation(parent link):Microsoft: Annotation Proxy (unmanaged:uiautomationcore.dll); Main:Microsoft: MSAA Proxy (unmanaged:uiautomationcore.dll)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"(0.3ms)

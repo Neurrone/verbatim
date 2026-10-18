@@ -1,0 +1,19 @@
+[1792299946332720] holdM: ondesk-child-pid 3672
+[1792299946353314] holdM: ready
+[1792299946386694] tool find holdM -> 41485490 ondesk-child-pid 4928
+[1792299946401060] D: ondesk-child-pid 12308
+[1792299946432814] D: registered D desk:min in 10.8ms
+[1792299946432920] D: client-ready D
+[1792299946733433] >holdM: focus item1
+[1792299946733947] holdM: applied
+[1792299946744100] D: ev D desk:min focus t=1792299946744044 pid=3672 name="First" hwnd=0
+RESULT default answering: focus after 11 ms: ev D desk:min focus t=1792299946744044 pid=3672 name="First" hwnd=0
+[1792299946744303] >holdM: stall 3000 0 focus item2
+[1792299946744373] holdM: stall started
+[1792299946744460] holdM: applied
+[1792299949744784] holdM: stall ended 1792299949744699
+RESULT default raised inside a 3 s stall: no focus event in 8 s
+[1792299955048758] >holdM: focus item1
+[1792299955048962] holdM: applied
+[1792299955050804] D: ev D desk:min focus t=1792299955050740 pid=3672 name="First" hwnd=0
+RESULT default answering again: focus after 2 ms: ev D desk:min focus t=1792299955050740 pid=3672 name="First" hwnd=0

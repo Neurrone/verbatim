@@ -1,0 +1,420 @@
+=== run 1 delay=2000.0
+20:47:35.791585 run spawn L listen L e39- passive
+  L 20:47:35.831538 listening L mode=passive ms=33.0
+20:47:35.836751 run spawn V client 0 V
+20:47:35.836797 run send V init
+  V 20:47:35.843539 client-ready V
+  V 20:47:35.848408 done init V start=20:47:35.843572 ms=4.8 ok
+run 20:47:35.878918 fgright sent=1 allowed=true
+run 20:47:35.905742 hwnd 68943898 found console conhost-pid=3192 launched=20:47:35.885283 after-launch-ms=20.5 visible=false
+20:47:37.905941 run send V target 68943898
+20:47:37.906069 run send V probe
+20:47:37.906433 run send V lookup
+run 20:47:35.914573 console-foreground after-found-ms=8.8
+run 20:47:35.925513 console-visible after-found-ms=19.8
+  L 20:47:35.942270 L focus-event rid=[42, 68943898, 4, -1] hwnd=68943898 pid=Some(3192)
+  L 20:47:35.946358 L focus-event rid=[42, 68943898] hwnd=68943898 pid=Some(3192)
+  L 20:47:35.950539 L focus-event rid=[42, 68943898, 4, -1] hwnd=68943898 pid=Some(3192)
+  V 20:47:37.906034 done target V
+  V 20:47:37.915132 done probe V start=20:47:37.906089 ms=9.0 result=true
+  V 20:47:37.916325 done lookup V start=20:47:37.915153 ms=1.2 ok kind=native pid=3192 desc="[pid:5756,providerId:0x41C001A Main:Nested [pid:3192,providerId:0x41C001A Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:47:38.446665 console closed wait=0
+=== run 2 delay=2000.0
+20:47:46.601407 run spawn L listen L e39- passive
+  L 20:47:46.639684 listening L mode=passive ms=31.2
+20:47:46.644254 run spawn V client 0 V
+20:47:46.644285 run send V init
+  V 20:47:46.650774 client-ready V
+  V 20:47:46.655602 done init V start=20:47:46.650812 ms=4.8 ok
+run 20:47:46.686242 fgright sent=1 allowed=true
+run 20:47:46.712759 hwnd 69140506 found console conhost-pid=8628 launched=20:47:46.692379 after-launch-ms=20.4 visible=false
+20:47:48.712948 run send V target 69140506
+20:47:48.712999 run send V probe
+20:47:48.713024 run send V lookup
+run 20:47:46.721749 console-foreground after-found-ms=9.0
+run 20:47:46.733078 console-visible after-found-ms=20.3
+  L 20:47:46.738550 L focus-event rid=[42, 69140506, 4, -1] hwnd=69140506 pid=Some(8628)
+  L 20:47:46.743150 L focus-event rid=[42, 69140506] hwnd=69140506 pid=Some(8628)
+  L 20:47:46.752917 L focus-event rid=[42, 69140506, 4, -1] hwnd=69140506 pid=Some(8628)
+  V 20:47:48.713030 done target V
+  V 20:47:48.722440 done probe V start=20:47:48.713045 ms=9.4 result=true
+  V 20:47:48.723723 done lookup V start=20:47:48.722469 ms=1.3 ok kind=native pid=8628 desc="[pid:17956,providerId:0x41F001A Main:Nested [pid:8628,providerId:0x41F001A Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:47:49.324869 console closed wait=0
+=== run 3 delay=2000.0
+20:47:57.536377 run spawn L listen L e39- passive
+  L 20:47:57.578154 listening L mode=passive ms=34.7
+20:47:57.583730 run spawn V client 0 V
+20:47:57.583774 run send V init
+  V 20:47:57.592023 client-ready V
+  V 20:47:57.598617 done init V start=20:47:57.592061 ms=6.6 ok
+run 20:47:57.628944 fgright sent=1 allowed=true
+run 20:47:57.658236 hwnd 53412676 found console conhost-pid=18224 launched=20:47:57.635610 after-launch-ms=22.6 visible=false
+20:47:59.658466 run send V target 53412676
+20:47:59.658535 run send V probe
+20:47:59.658557 run send V lookup
+run 20:47:57.667810 console-foreground after-found-ms=9.6
+run 20:47:57.678833 console-visible after-found-ms=20.6
+  L 20:47:57.695206 L focus-event rid=[42, 53412676, 4, -1] hwnd=53412676 pid=Some(18224)
+  L 20:47:57.696613 L focus-event rid=[42, 53412676] hwnd=53412676 pid=Some(18224)
+  L 20:47:57.702125 L focus-event rid=[42, 53412676, 4, -1] hwnd=53412676 pid=Some(18224)
+  V 20:47:59.658543 done target V
+  V 20:47:59.666571 done probe V start=20:47:59.658567 ms=8.0 result=true
+  V 20:47:59.667745 done lookup V start=20:47:59.666591 ms=1.2 ok kind=native pid=18224 desc="[pid:15612,providerId:0x32F0344 Main:Nested [pid:18224,providerId:0x32F0344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:48:00.264292 console closed wait=0
+=== run 4 delay=2000.0
+20:48:08.474214 run spawn L listen L e39- passive
+  L 20:48:08.513333 listening L mode=passive ms=32.2
+20:48:08.517807 run spawn V client 0 V
+20:48:08.517844 run send V init
+  V 20:48:08.524354 client-ready V
+  V 20:48:08.529294 done init V start=20:48:08.524415 ms=4.9 ok
+run 20:48:08.559613 fgright sent=1 allowed=true
+run 20:48:08.586245 hwnd 53609284 found console conhost-pid=11684 launched=20:48:08.565760 after-launch-ms=20.5 visible=false
+20:48:10.586414 run send V target 53609284
+20:48:10.586527 run send V probe
+20:48:10.586861 run send V lookup
+run 20:48:08.595207 console-foreground after-found-ms=9.0
+run 20:48:08.606015 console-visible after-found-ms=19.8
+  L 20:48:08.614145 L focus-event rid=[42, 53609284, 4, -1] hwnd=53609284 pid=Some(11684)
+  L 20:48:08.617103 L focus-event rid=[42, 53609284] hwnd=53609284 pid=Some(11684)
+  L 20:48:08.626892 L focus-event rid=[42, 53609284, 4, -1] hwnd=53609284 pid=Some(11684)
+  V 20:48:10.586495 done target V
+  V 20:48:10.595757 done probe V start=20:48:10.586546 ms=9.2 result=true
+  V 20:48:10.597090 done lookup V start=20:48:10.595782 ms=1.3 ok kind=native pid=11684 desc="[pid:7540,providerId:0x3320344 Main:Nested [pid:11684,providerId:0x3320344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:48:11.129527 console closed wait=0
+=== run 5 delay=2000.0
+20:48:19.391917 run spawn L listen L e39- passive
+  L 20:48:19.435717 listening L mode=passive ms=35.2
+20:48:19.440152 run spawn V client 0 V
+20:48:19.440189 run send V init
+  V 20:48:19.447219 client-ready V
+  V 20:48:19.452399 done init V start=20:48:19.447256 ms=5.1 ok
+run 20:48:19.482799 fgright sent=1 allowed=true
+run 20:48:19.512207 hwnd 53805892 found console conhost-pid=17448 launched=20:48:19.489445 after-launch-ms=22.8 visible=false
+20:48:21.512379 run send V target 53805892
+20:48:21.512490 run send V probe
+20:48:21.512825 run send V lookup
+run 20:48:19.522134 console-foreground after-found-ms=9.9
+run 20:48:19.530867 console-visible after-found-ms=18.7
+  L 20:48:19.540476 L focus-event rid=[42, 53805892, 4, -1] hwnd=53805892 pid=Some(17448)
+  L 20:48:19.544385 L focus-event rid=[42, 53805892] hwnd=53805892 pid=Some(17448)
+  L 20:48:19.545882 L focus-event rid=[42, 53805892, 4, -1] hwnd=53805892 pid=Some(17448)
+  V 20:48:21.512459 done target V
+  V 20:48:21.523111 done probe V start=20:48:21.512510 ms=10.6 result=true
+  V 20:48:21.524500 done lookup V start=20:48:21.523165 ms=1.3 ok kind=native pid=17448 desc="[pid:10884,providerId:0x3350344 Main:Nested [pid:17448,providerId:0x3350344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:48:22.137517 console closed wait=0
+=== run 6 delay=2000.0
+20:48:30.361410 run spawn L listen L e39- passive
+  L 20:48:30.409863 listening L mode=passive ms=35.0
+20:48:30.414557 run spawn V client 0 V
+20:48:30.414609 run send V init
+  V 20:48:30.422924 client-ready V
+  V 20:48:30.427983 done init V start=20:48:30.422959 ms=5.0 ok
+run 20:48:30.458600 fgright sent=1 allowed=true
+run 20:48:30.485709 hwnd 54002500 found console conhost-pid=17292 launched=20:48:30.464870 after-launch-ms=20.8 visible=false
+20:48:32.485915 run send V target 54002500
+20:48:32.485963 run send V probe
+20:48:32.485976 run send V lookup
+run 20:48:30.494778 console-foreground after-found-ms=9.1
+  L 20:48:30.513446 L focus-event rid=[42, 54002500, 4, -1] hwnd=54002500 pid=Some(17292)
+  L 20:48:30.515425 L focus-event rid=[42, 54002500] hwnd=54002500 pid=Some(17292)
+run 20:48:30.518130 console-visible after-found-ms=32.4
+  L 20:48:30.526209 L focus-event rid=[42, 54002500, 4, -1] hwnd=54002500 pid=Some(17292)
+  V 20:48:32.485993 done target V
+  V 20:48:32.494181 done probe V start=20:48:32.486008 ms=8.2 result=true
+  V 20:48:32.495365 done lookup V start=20:48:32.494200 ms=1.2 ok kind=native pid=17292 desc="[pid:17692,providerId:0x3380344 Main:Nested [pid:17292,providerId:0x3380344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:48:33.056288 console closed wait=0
+=== run 7 delay=2000.0
+20:48:41.359729 run spawn L listen L e39- passive
+  L 20:48:41.398206 listening L mode=passive ms=31.5
+20:48:41.402841 run spawn V client 0 V
+20:48:41.402875 run send V init
+  V 20:48:41.409332 client-ready V
+  V 20:48:41.414214 done init V start=20:48:41.409365 ms=4.8 ok
+run 20:48:41.444572 fgright sent=1 allowed=true
+run 20:48:41.469961 hwnd 54199108 found console conhost-pid=2512 launched=20:48:41.450689 after-launch-ms=19.3 visible=false
+20:48:43.470135 run send V target 54199108
+20:48:43.470181 run send V probe
+20:48:43.470194 run send V lookup
+run 20:48:41.479802 console-foreground after-found-ms=9.9
+run 20:48:41.489046 console-visible after-found-ms=19.1
+  L 20:48:41.507974 L focus-event rid=[42, 54199108, 4, -1] hwnd=54199108 pid=Some(2512)
+  L 20:48:41.510088 L focus-event rid=[42, 54199108] hwnd=54199108 pid=Some(2512)
+  L 20:48:41.513807 L focus-event rid=[42, 54199108, 4, -1] hwnd=54199108 pid=Some(2512)
+  V 20:48:43.470226 done target V
+  V 20:48:43.480088 done probe V start=20:48:43.470244 ms=9.8 result=true
+  V 20:48:43.481491 done lookup V start=20:48:43.480106 ms=1.4 ok kind=native pid=2512 desc="[pid:16300,providerId:0x33B0344 Main:Nested [pid:2512,providerId:0x33B0344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:48:44.060806 console closed wait=0
+=== run 8 delay=2000.0
+20:48:52.318300 run spawn L listen L e39- passive
+  L 20:48:52.369140 listening L mode=passive ms=36.2
+20:48:52.373500 run spawn V client 0 V
+20:48:52.373529 run send V init
+  V 20:48:52.380965 client-ready V
+  V 20:48:52.386136 done init V start=20:48:52.380998 ms=5.1 ok
+run 20:48:52.416659 fgright sent=1 allowed=true
+run 20:48:52.444918 hwnd 54395716 found console conhost-pid=7436 launched=20:48:52.422810 after-launch-ms=22.1 visible=false
+20:48:54.445093 run send V target 54395716
+20:48:54.445148 run send V probe
+20:48:54.445175 run send V lookup
+run 20:48:52.453912 console-foreground after-found-ms=9.0
+run 20:48:52.466171 console-visible after-found-ms=21.3
+  L 20:48:52.472689 L focus-event rid=[42, 54395716, 4, -1] hwnd=54395716 pid=Some(7436)
+  L 20:48:52.476594 L focus-event rid=[42, 54395716] hwnd=54395716 pid=Some(7436)
+  L 20:48:52.482735 L focus-event rid=[42, 54395716, 4, -1] hwnd=54395716 pid=Some(7436)
+  V 20:48:54.445169 done target V
+  V 20:48:54.454234 done probe V start=20:48:54.445192 ms=9.0 result=true
+  V 20:48:54.455537 done lookup V start=20:48:54.454255 ms=1.3 ok kind=native pid=7436 desc="[pid:6440,providerId:0x33E0344 Main:Nested [pid:7436,providerId:0x33E0344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:48:54.984056 console closed wait=0
+=== run 9 delay=2000.0
+20:49:03.162007 run spawn L listen L e39- passive
+  L 20:49:03.207853 listening L mode=passive ms=38.5
+20:49:03.232280 run spawn V client 0 V
+20:49:03.232325 run send V init
+  V 20:49:03.238963 client-ready V
+  V 20:49:03.243972 done init V start=20:49:03.238996 ms=5.0 ok
+run 20:49:03.274511 fgright sent=1 allowed=true
+run 20:49:03.304512 hwnd 54592324 found console conhost-pid=7236 launched=20:49:03.281039 after-launch-ms=23.5 visible=false
+20:49:05.304690 run send V target 54592324
+20:49:05.304755 run send V probe
+20:49:05.304818 run send V lookup
+run 20:49:03.313628 console-foreground after-found-ms=9.1
+run 20:49:03.326150 console-visible after-found-ms=21.6
+  L 20:49:03.333039 L focus-event rid=[42, 54592324, 4, -1] hwnd=54592324 pid=Some(7236)
+  L 20:49:03.335793 L focus-event rid=[42, 54592324] hwnd=54592324 pid=Some(7236)
+  L 20:49:03.343554 L focus-event rid=[42, 54592324, 4, -1] hwnd=54592324 pid=Some(7236)
+  V 20:49:05.304769 done target V
+  V 20:49:05.313131 done probe V start=20:49:05.304794 ms=8.3 result=true
+  V 20:49:05.314372 done lookup V start=20:49:05.313152 ms=1.2 ok kind=native pid=7236 desc="[pid:17112,providerId:0x3410344 Main:Nested [pid:7236,providerId:0x3410344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:49:05.916387 console closed wait=0
+=== run 10 delay=2000.0
+20:49:14.100451 run spawn L listen L e39- passive
+  L 20:49:14.143522 listening L mode=passive ms=34.1
+20:49:14.148244 run spawn V client 0 V
+20:49:14.148292 run send V init
+  V 20:49:14.155453 client-ready V
+  V 20:49:14.160689 done init V start=20:49:14.155487 ms=5.2 ok
+run 20:49:14.191149 fgright sent=1 allowed=true
+run 20:49:14.222083 hwnd 54788932 found console conhost-pid=15956 launched=20:49:14.198063 after-launch-ms=24.0 visible=false
+20:49:16.222346 run send V target 54788932
+20:49:16.222437 run send V probe
+20:49:16.222483 run send V lookup
+run 20:49:14.232437 console-foreground after-found-ms=10.4
+run 20:49:14.247082 console-visible after-found-ms=25.0
+  L 20:49:14.254006 L focus-event rid=[42, 54788932, 4, -1] hwnd=54788932 pid=Some(15956)
+  L 20:49:14.256661 L focus-event rid=[42, 54788932] hwnd=54788932 pid=Some(15956)
+  L 20:49:14.262962 L focus-event rid=[42, 54788932, 4, -1] hwnd=54788932 pid=Some(15956)
+  V 20:49:16.222412 done target V
+  V 20:49:16.230702 done probe V start=20:49:16.222468 ms=8.2 result=true
+  V 20:49:16.231919 done lookup V start=20:49:16.230721 ms=1.2 ok kind=native pid=15956 desc="[pid:6904,providerId:0x3440344 Main:Nested [pid:15956,providerId:0x3440344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:49:16.812121 console closed wait=0
+=== run 11 delay=2000.0
+20:49:25.070410 run spawn L listen L e39- passive
+  L 20:49:25.110283 listening L mode=passive ms=32.2
+20:49:25.114626 run spawn V client 0 V
+20:49:25.114674 run send V init
+  V 20:49:25.121828 client-ready V
+  V 20:49:25.128457 done init V start=20:49:25.121871 ms=6.6 ok
+run 20:49:25.159112 fgright sent=1 allowed=true
+run 20:49:25.184631 hwnd 54985540 found console conhost-pid=16968 launched=20:49:25.165266 after-launch-ms=19.4 visible=false
+20:49:27.184837 run send V target 54985540
+20:49:27.184891 run send V probe
+20:49:27.184905 run send V lookup
+run 20:49:25.192998 console-foreground after-found-ms=8.4
+run 20:49:25.203893 console-visible after-found-ms=19.3
+  L 20:49:25.211243 L focus-event rid=[42, 54985540, 4, -1] hwnd=54985540 pid=Some(16968)
+  L 20:49:25.213912 L focus-event rid=[42, 54985540] hwnd=54985540 pid=Some(16968)
+  L 20:49:25.223699 L focus-event rid=[42, 54985540, 4, -1] hwnd=54985540 pid=Some(16968)
+  V 20:49:27.184914 done target V
+  V 20:49:27.193514 done probe V start=20:49:27.184929 ms=8.6 result=true
+  V 20:49:27.194749 done lookup V start=20:49:27.193535 ms=1.2 ok kind=native pid=16968 desc="[pid:2012,providerId:0x3470344 Main:Nested [pid:16968,providerId:0x3470344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:49:27.757575 console closed wait=0
+=== run 12 delay=2000.0
+20:49:35.975750 run spawn L listen L e39- passive
+  L 20:49:36.024238 listening L mode=passive ms=40.1
+20:49:36.028862 run spawn V client 0 V
+20:49:36.028895 run send V init
+  V 20:49:36.035890 client-ready V
+  V 20:49:36.041022 done init V start=20:49:36.035922 ms=5.1 ok
+run 20:49:36.071390 fgright sent=1 allowed=true
+run 20:49:36.098255 hwnd 55182148 found console conhost-pid=14448 launched=20:49:36.078110 after-launch-ms=20.1 visible=false
+20:49:38.098492 run send V target 55182148
+20:49:38.098646 run send V probe
+20:49:38.099095 run send V lookup
+run 20:49:36.107475 console-foreground after-found-ms=9.2
+run 20:49:36.117863 console-visible after-found-ms=19.6
+  L 20:49:36.131575 L focus-event rid=[42, 55182148, 4, -1] hwnd=55182148 pid=Some(14448)
+  L 20:49:36.133305 L focus-event rid=[42, 55182148] hwnd=55182148 pid=Some(14448)
+  L 20:49:36.139007 L focus-event rid=[42, 55182148, 4, -1] hwnd=55182148 pid=Some(14448)
+  V 20:49:38.098593 done target V
+  V 20:49:38.109366 done probe V start=20:49:38.098689 ms=10.7 result=true
+  V 20:49:38.110896 done lookup V start=20:49:38.109388 ms=1.5 ok kind=native pid=14448 desc="[pid:10348,providerId:0x34A0344 Main:Nested [pid:14448,providerId:0x34A0344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:49:38.706783 console closed wait=0
+=== run 13 delay=2000.0
+20:49:46.951081 run spawn L listen L e39- passive
+  L 20:49:46.990457 listening L mode=passive ms=32.2
+20:49:46.994948 run spawn V client 0 V
+20:49:46.994987 run send V init
+  V 20:49:47.001501 client-ready V
+  V 20:49:47.006521 done init V start=20:49:47.001538 ms=5.0 ok
+run 20:49:47.037096 fgright sent=1 allowed=true
+run 20:49:47.063152 hwnd 55378756 found console conhost-pid=10480 launched=20:49:47.043349 after-launch-ms=19.8 visible=false
+20:49:49.063333 run send V target 55378756
+20:49:49.063475 run send V probe
+20:49:49.063844 run send V lookup
+run 20:49:47.072116 console-foreground after-found-ms=9.0
+run 20:49:47.086415 console-visible after-found-ms=23.3
+  L 20:49:47.092455 L focus-event rid=[42, 55378756, 4, -1] hwnd=55378756 pid=Some(10480)
+  L 20:49:47.099438 L focus-event rid=[42, 55378756] hwnd=55378756 pid=Some(10480)
+  L 20:49:47.106961 L focus-event rid=[42, 55378756, 4, -1] hwnd=55378756 pid=Some(10480)
+  V 20:49:49.063439 done target V
+  V 20:49:49.072459 done probe V start=20:49:49.063500 ms=9.0 result=true
+  V 20:49:49.073700 done lookup V start=20:49:49.072484 ms=1.2 ok kind=native pid=10480 desc="[pid:16896,providerId:0x34D0344 Main:Nested [pid:10480,providerId:0x34D0344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:49:49.598310 console closed wait=0
+=== run 14 delay=2000.0
+20:49:57.832186 run spawn L listen L e39- passive
+  L 20:49:57.872823 listening L mode=passive ms=31.9
+20:49:57.877377 run spawn V client 0 V
+20:49:57.877430 run send V init
+  V 20:49:57.884937 client-ready V
+  V 20:49:57.890224 done init V start=20:49:57.884975 ms=5.2 ok
+run 20:49:57.920760 fgright sent=1 allowed=true
+run 20:49:57.948459 hwnd 55575364 found console conhost-pid=7820 launched=20:49:57.928214 after-launch-ms=20.2 visible=false
+20:49:59.948632 run send V target 55575364
+20:49:59.948677 run send V probe
+20:49:59.948690 run send V lookup
+run 20:49:57.959150 console-foreground after-found-ms=10.7
+run 20:49:57.970646 console-visible after-found-ms=22.2
+  L 20:49:57.978513 L focus-event rid=[42, 55575364, 4, -1] hwnd=55575364 pid=Some(7820)
+  L 20:49:57.986255 L focus-event rid=[42, 55575364] hwnd=55575364 pid=Some(7820)
+  L 20:49:57.994002 L focus-event rid=[42, 55575364, 4, -1] hwnd=55575364 pid=Some(7820)
+  V 20:49:59.948715 done target V
+  V 20:49:59.956816 done probe V start=20:49:59.948729 ms=8.1 result=true
+  V 20:49:59.958068 done lookup V start=20:49:59.956838 ms=1.2 ok kind=native pid=7820 desc="[pid:412,providerId:0x3500344 Main:Nested [pid:7820,providerId:0x3500344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:50:00.539985 console closed wait=0
+=== run 15 delay=2000.0
+20:50:08.824612 run spawn L listen L e39- passive
+  L 20:50:08.865479 listening L mode=passive ms=33.1
+20:50:08.870217 run spawn V client 0 V
+20:50:08.870272 run send V init
+  V 20:50:08.878230 client-ready V
+  V 20:50:08.883076 done init V start=20:50:08.878265 ms=4.8 ok
+run 20:50:08.913741 fgright sent=1 allowed=true
+run 20:50:08.939639 hwnd 55771972 found console conhost-pid=18008 launched=20:50:08.920249 after-launch-ms=19.4 visible=false
+20:50:10.939833 run send V target 55771972
+20:50:10.939950 run send V probe
+20:50:10.940264 run send V lookup
+run 20:50:08.949834 console-foreground after-found-ms=10.2
+run 20:50:08.961820 console-visible after-found-ms=22.2
+  L 20:50:08.973945 L focus-event rid=[42, 55771972, 4, -1] hwnd=55771972 pid=Some(18008)
+  L 20:50:08.975724 L focus-event rid=[42, 55771972] hwnd=55771972 pid=Some(18008)
+  L 20:50:08.977314 L focus-event rid=[42, 55771972, 4, -1] hwnd=55771972 pid=Some(18008)
+  V 20:50:10.939918 done target V
+  V 20:50:10.950681 done probe V start=20:50:10.939970 ms=10.7 result=true
+  V 20:50:10.951926 done lookup V start=20:50:10.950741 ms=1.2 ok kind=native pid=18008 desc="[pid:13164,providerId:0x3530344 Main:Nested [pid:18008,providerId:0x3530344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:50:11.525672 console closed wait=0
+=== run 16 delay=2000.0
+20:50:19.818819 run spawn L listen L e39- passive
+  L 20:50:19.858587 listening L mode=passive ms=32.1
+20:50:19.863650 run spawn V client 0 V
+20:50:19.863690 run send V init
+  V 20:50:19.870901 client-ready V
+  V 20:50:19.876331 done init V start=20:50:19.870932 ms=5.4 ok
+run 20:50:19.906696 fgright sent=1 allowed=true
+run 20:50:19.933044 hwnd 55968580 found console conhost-pid=8896 launched=20:50:19.913121 after-launch-ms=19.9 visible=false
+20:50:21.933264 run send V target 55968580
+20:50:21.933372 run send V probe
+20:50:21.933694 run send V lookup
+run 20:50:19.941363 console-foreground after-found-ms=8.3
+run 20:50:19.953131 console-visible after-found-ms=20.1
+  L 20:50:19.961041 L focus-event rid=[42, 55968580, 4, -1] hwnd=55968580 pid=Some(8896)
+  L 20:50:19.964721 L focus-event rid=[42, 55968580] hwnd=55968580 pid=Some(8896)
+  L 20:50:19.977290 L focus-event rid=[42, 55968580, 4, -1] hwnd=55968580 pid=Some(8896)
+  V 20:50:21.933341 done target V
+  V 20:50:21.941555 done probe V start=20:50:21.933392 ms=8.2 result=true
+  V 20:50:21.942720 done lookup V start=20:50:21.941576 ms=1.1 ok kind=native pid=8896 desc="[pid:14856,providerId:0x3560344 Main:Nested [pid:8896,providerId:0x3560344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:50:22.478002 console closed wait=0
+=== run 17 delay=2000.0
+20:50:30.704804 run spawn L listen L e39- passive
+  L 20:50:30.752509 listening L mode=passive ms=35.5
+20:50:30.757056 run spawn V client 0 V
+20:50:30.757092 run send V init
+  V 20:50:30.764042 client-ready V
+  V 20:50:30.769107 done init V start=20:50:30.764074 ms=5.0 ok
+run 20:50:30.799522 fgright sent=1 allowed=true
+run 20:50:30.826439 hwnd 56165188 found console conhost-pid=17912 launched=20:50:30.806256 after-launch-ms=20.2 visible=false
+20:50:32.826609 run send V target 56165188
+20:50:32.826678 run send V probe
+20:50:32.826701 run send V lookup
+run 20:50:30.838286 console-foreground after-found-ms=11.8
+run 20:50:30.850573 console-visible after-found-ms=24.1
+  L 20:50:30.858350 L focus-event rid=[42, 56165188, 4, -1] hwnd=56165188 pid=Some(17912)
+  L 20:50:30.860802 L focus-event rid=[42, 56165188] hwnd=56165188 pid=Some(17912)
+  L 20:50:30.868282 L focus-event rid=[42, 56165188, 4, -1] hwnd=56165188 pid=Some(17912)
+  V 20:50:32.826687 done target V
+  V 20:50:32.834986 done probe V start=20:50:32.826714 ms=8.3 result=true
+  V 20:50:32.836193 done lookup V start=20:50:32.835006 ms=1.2 ok kind=native pid=17912 desc="[pid:15820,providerId:0x3590344 Main:Nested [pid:17912,providerId:0x3590344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:50:33.403027 console closed wait=0
+=== run 18 delay=2000.0
+20:50:41.688530 run spawn L listen L e39- passive
+  L 20:50:41.727221 listening L mode=passive ms=30.3
+20:50:41.731474 run spawn V client 0 V
+20:50:41.731511 run send V init
+  V 20:50:41.738102 client-ready V
+  V 20:50:41.742964 done init V start=20:50:41.738133 ms=4.8 ok
+run 20:50:41.773258 fgright sent=1 allowed=true
+run 20:50:41.799095 hwnd 56361796 found console conhost-pid=16724 launched=20:50:41.779420 after-launch-ms=19.7 visible=false
+20:50:43.799308 run send V target 56361796
+20:50:43.799446 run send V probe
+20:50:43.799774 run send V lookup
+run 20:50:41.808134 console-foreground after-found-ms=9.0
+run 20:50:41.820348 console-visible after-found-ms=21.3
+  L 20:50:41.826912 L focus-event rid=[42, 56361796, 4, -1] hwnd=56361796 pid=Some(16724)
+  L 20:50:41.829869 L focus-event rid=[42, 56361796] hwnd=56361796 pid=Some(16724)
+  L 20:50:41.838101 L focus-event rid=[42, 56361796, 4, -1] hwnd=56361796 pid=Some(16724)
+  V 20:50:43.799413 done target V
+  V 20:50:43.808567 done probe V start=20:50:43.799466 ms=9.1 result=true
+  V 20:50:43.809952 done lookup V start=20:50:43.808597 ms=1.4 ok kind=native pid=16724 desc="[pid:16736,providerId:0x35C0344 Main:Nested [pid:16724,providerId:0x35C0344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:50:44.386839 console closed wait=0
+=== run 19 delay=2000.0
+20:50:52.635721 run spawn L listen L e39- passive
+  L 20:50:52.675962 listening L mode=passive ms=32.0
+20:50:52.680345 run spawn V client 0 V
+20:50:52.680376 run send V init
+  V 20:50:52.687111 client-ready V
+  V 20:50:52.692046 done init V start=20:50:52.687146 ms=4.9 ok
+run 20:50:52.722548 fgright sent=1 allowed=true
+run 20:50:52.748312 hwnd 56558404 found console conhost-pid=18228 launched=20:50:52.729151 after-launch-ms=19.2 visible=false
+20:50:54.748489 run send V target 56558404
+20:50:54.748563 run send V probe
+20:50:54.748587 run send V lookup
+run 20:50:52.757282 console-foreground after-found-ms=9.0
+run 20:50:52.769707 console-visible after-found-ms=21.4
+  L 20:50:52.776635 L focus-event rid=[42, 56558404, 4, -1] hwnd=56558404 pid=Some(18228)
+  L 20:50:52.785970 L focus-event rid=[42, 56558404] hwnd=56558404 pid=Some(18228)
+  L 20:50:52.792059 L focus-event rid=[42, 56558404, 4, -1] hwnd=56558404 pid=Some(18228)
+  V 20:50:54.748572 done target V
+  V 20:50:54.758313 done probe V start=20:50:54.748605 ms=9.7 result=true
+  V 20:50:54.759527 done lookup V start=20:50:54.758333 ms=1.2 ok kind=native pid=18228 desc="[pid:4296,providerId:0x35F0344 Main:Nested [pid:18228,providerId:0x35F0344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:50:55.330635 console closed wait=0
+=== run 20 delay=2000.0
+20:51:03.591695 run spawn L listen L e39- passive
+  L 20:51:03.636555 listening L mode=passive ms=37.6
+20:51:03.641225 run spawn V client 0 V
+20:51:03.641278 run send V init
+  V 20:51:03.649075 client-ready V
+  V 20:51:03.654429 done init V start=20:51:03.649112 ms=5.3 ok
+run 20:51:03.685042 fgright sent=1 allowed=true
+run 20:51:03.712876 hwnd 56755012 found console conhost-pid=17972 launched=20:51:03.691733 after-launch-ms=21.1 visible=false
+20:51:05.713088 run send V target 56755012
+20:51:05.713153 run send V probe
+20:51:05.713166 run send V lookup
+run 20:51:03.722378 console-foreground after-found-ms=9.5
+run 20:51:03.733275 console-visible after-found-ms=20.4
+  L 20:51:03.740471 L focus-event rid=[42, 56755012, 4, -1] hwnd=56755012 pid=Some(17972)
+  L 20:51:03.749873 L focus-event rid=[42, 56755012] hwnd=56755012 pid=Some(17972)
+  L 20:51:03.754617 L focus-event rid=[42, 56755012, 4, -1] hwnd=56755012 pid=Some(17972)
+  V 20:51:05.713165 done target V
+  V 20:51:05.721677 done probe V start=20:51:05.713190 ms=8.5 result=true
+  V 20:51:05.723090 done lookup V start=20:51:05.721696 ms=1.4 ok kind=native pid=17972 desc="[pid:13580,providerId:0x3620344 Main:Nested [pid:17972,providerId:0x3620344 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 20:51:06.299351 console closed wait=0

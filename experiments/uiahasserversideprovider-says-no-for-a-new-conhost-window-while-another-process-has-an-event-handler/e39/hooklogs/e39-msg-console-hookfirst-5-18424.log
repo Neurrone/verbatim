@@ -1,0 +1,19 @@
+20:28:00.977999 attach pid=18424
+20:28:00.978071 tid=16568 call hwnd=60098072 class=ConsoleWindowClass msg=0x3d wparam=0x45b8 lparam=0x00000000fffffffa sameproc=1 insend=0x1
+20:28:00.978151 tid=16568 ret  hwnd=60098072 msg=0x3d wparam=0x45b8 lparam=0x00000000fffffffa lresult=0x0
+20:28:00.978362 tid=16568 call hwnd=60098072 class=ConsoleWindowClass msg=0x3d wparam=0x45b8 lparam=0x00000000fffffffe sameproc=1 insend=0x1
+20:28:00.978427 tid=16568 ret  hwnd=60098072 msg=0x3d wparam=0x45b8 lparam=0x00000000fffffffe lresult=0x0
+20:28:00.978603 tid=16568 call hwnd=60098072 class=ConsoleWindowClass msg=0x3d wparam=0x45b8 lparam=0x00000000fffffffd sameproc=1 insend=0x1
+20:28:00.978669 tid=16568 ret  hwnd=60098072 msg=0x3d wparam=0x45b8 lparam=0x00000000fffffffd lresult=0x0
+20:28:00.979238 tid=16568 call hwnd=60098072 class=ConsoleWindowClass msg=0x3d wparam=0x45b8 lparam=0x00000000fffffff9 sameproc=1 insend=0x1
+20:28:00.979324 tid=16568 ret  hwnd=60098072 msg=0x3d wparam=0x45b8 lparam=0x00000000fffffff9 lresult=0x0
+20:28:00.979667 tid=16568 call hwnd=60098072 class=ConsoleWindowClass msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:28:00.979725 tid=16568 ret  hwnd=60098072 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000
+20:28:00.980316 tid=16568 call hwnd=60098072 class=ConsoleWindowClass msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:28:00.980357 tid=16568 ret  hwnd=60098072 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000
+20:28:00.982250 tid=16568 call hwnd=60098072 class=ConsoleWindowClass msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:28:00.982302 tid=16568 ret  hwnd=60098072 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000
+20:28:00.985485 tid=16568 call hwnd=60098072 class=ConsoleWindowClass msg=0x3d wparam=0x3ed6c612 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:28:00.985562 tid=16568 ret  hwnd=60098072 msg=0x3d wparam=0x3ed6c612 lparam=0xffffffffffffffe7 lresult=0x10000
+20:28:00.986448 tid=16568 call hwnd=60098072 class=ConsoleWindowClass msg=0x3d wparam=0x3ed6c613 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:28:00.986501 tid=16568 ret  hwnd=60098072 msg=0x3d wparam=0x3ed6c613 lparam=0xffffffffffffffe7 lresult=0x10000

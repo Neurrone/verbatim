@@ -1,0 +1,27 @@
+# e35c: method check for e35: S's UI thread suspended (as e35 suspends
+# conhost's window thread) in place of S's busy loop; B, a new process,
+# calls efhbc during L's queued operation. Does suspension reproduce the
+# collision in S?
+spawn S server
+wait S hwnd
+send S showtopoff
+wait S shown
+owner $HWND
+spawn L client $HWND L
+send L init
+wait L done
+send L efh
+wait L done
+send L rop
+wait L done 10000
+spawn B client $HWND B
+send B init
+wait B done
+stall $HWND 300
+send L async rop
+sleep 5
+send B efhbc
+wait B done 15000
+send B info
+wait B done 15000
+drain 500

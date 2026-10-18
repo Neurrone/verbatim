@@ -1,0 +1,32 @@
+22:45:39.957994 run spawn S server
+  S 22:45:39.970760 hwnd 26150106 pid 4468
+22:45:39.987734 run spawn L client 26150106 L
+22:45:39.987799 run send L init
+  S 22:45:39.970831 ready
+  L 22:45:39.994307 client-ready L
+  L 22:45:39.998402 done init L start=22:45:39.994340 ms=4.1 ok
+22:45:39.998492 run send L efh
+  S 22:45:40.005562 getobject-begin hwnd=26150106 objid=-25 wparam=0x4f2f8100 insend=0x1 in_hold=false
+  S 22:45:40.006584 getobject-end hwnd=26150106 objid=-25 lresult=0x10000 us=1030 in_hold=false
+  S 22:45:40.007857 getobject-begin hwnd=26150106 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:45:40.007890 getobject-end hwnd=26150106 objid=-25 lresult=0x10000 us=42 in_hold=false
+  L 22:45:40.008390 done efh L start=22:45:39.998530 ms=9.8 ok
+22:45:40.008999 run send L rop
+  S 22:45:40.015997 getobject-begin hwnd=26150106 objid=-25 wparam=0x4f3125b7 insend=0x0 in_hold=false
+  S 22:45:40.016062 getobject-end hwnd=26150106 objid=-25 lresult=0x10000 us=68 in_hold=false
+  S 22:45:40.016287 getobject-begin hwnd=26150106 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:45:40.016319 getobject-end hwnd=26150106 objid=-25 lresult=0x10000 us=35 in_hold=false
+  L 22:45:40.016692 done rop L start=22:45:40.009033 ms=7.7 ok
+22:45:40.020679 run spawn B client 26150106 B
+22:45:40.020707 run send B init
+  B 22:45:40.027408 client-ready B
+  B 22:45:40.031625 done init B start=22:45:40.027448 ms=4.2 ok
+22:45:40.031698 run send S busy 40
+  S 22:45:40.031809 busy-begin
+22:45:40.036880 run send B probe
+  S 22:45:40.071827 busy-end
+  S 22:45:40.071886 getobject-begin hwnd=26150106 objid=-25 wparam=0x4f359de1 insend=0x1 in_hold=false
+  S 22:45:40.071970 getobject-end hwnd=26150106 objid=-25 lresult=0x10000 us=85 in_hold=false
+  S 22:45:40.072780 getobject-begin hwnd=26150106 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:45:40.072812 getobject-end hwnd=26150106 objid=-25 lresult=0x10000 us=33 in_hold=false
+  B 22:45:40.073274 done probe B start=22:45:40.036937 ms=36.3 result=true

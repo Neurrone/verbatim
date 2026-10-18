@@ -1,0 +1,17 @@
+[1792299212286102] holdTV: ondesk-child-pid 3396
+[1792299212315607] holdTV: ready
+[1792299212358040] tool find holdTV -> 80741768 ondesk-child-pid 4500
+[1792299212398640] tool findchild 80741768 SysTreeView32 -> 0 ondesk-child-pid 2192
+[1792299212398681] >holdTV: stall 9000
+[1792299212398905] holdTV: stall started
+RESULT 0.0s IsHungAppWindow(top)=0 (tree)=0
+RESULT 1.0s IsHungAppWindow(top)=0 (tree)=0
+RESULT 2.0s IsHungAppWindow(top)=0 (tree)=0
+RESULT 3.0s IsHungAppWindow(top)=0 (tree)=0
+RESULT 4.0s IsHungAppWindow(top)=0 (tree)=0
+RESULT 5.0s IsHungAppWindow(top)=0 (tree)=0
+RESULT 6.0s IsHungAppWindow(top)=0 (tree)=0
+RESULT 7.0s IsHungAppWindow(top)=0 (tree)=0
+RESULT 8.0s IsHungAppWindow(top)=0 (tree)=0
+[1792299221399385] holdTV: stall ended 1792299221399303
+RESULT 9.0s IsHungAppWindow(top)=0 (tree)=0

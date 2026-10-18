@@ -1,0 +1,36 @@
+[1792297372961820] protoM: ondesk-child-pid 6992
+[1792297372981394] protoM: ready
+[1792297373013416] tool find protoM -> 53150546 ondesk-child-pid 14712
+[1792297373027445] C0: ondesk-child-pid 12392
+[1792297373058165] C0: registered C0 desk:pid in 10.4ms
+[1792297373058267] C0: client-ready C0
+[1792297373558648] >protoM: focus btn1
+[1792297373559057] protoM: applied
+[1792297373569323] C0: ev C0 desk:pid focus t=1792297373568974 pid=6992 name="?" hwnd=-1
+[1792297373709645] >protoM: focus item2
+[1792297373709851] protoM: applied
+[1792297373711547] C0: ev C0 desk:pid focus t=1792297373711406 pid=6992 name="?" hwnd=-1
+[1792297373860713] >protoM: focus btn1
+[1792297373860901] protoM: applied
+[1792297373862832] C0: ev C0 desk:pid focus t=1792297373862635 pid=6992 name="?" hwnd=-1
+[1792297374011345] >protoM: focus item2
+[1792297374011571] protoM: applied
+[1792297374013493] C0: ev C0 desk:pid focus t=1792297374013341 pid=6992 name="?" hwnd=-1
+[1792297374162442] >protoM: focus btn1
+[1792297374162685] protoM: applied
+[1792297374164488] C0: ev C0 desk:pid focus t=1792297374164338 pid=6992 name="?" hwnd=-1
+[1792297374313461] >protoM: focus item2
+[1792297374313689] protoM: applied
+[1792297374315527] C0: ev C0 desk:pid focus t=1792297374315372 pid=6992 name="?" hwnd=-1
+[1792297374464438] >protoM: focus btn1
+[1792297374464672] protoM: applied
+[1792297374466440] C0: ev C0 desk:pid focus t=1792297374466326 pid=6992 name="?" hwnd=-1
+[1792297374615384] >protoM: focus item2
+[1792297374615634] protoM: applied
+[1792297374617512] C0: ev C0 desk:pid focus t=1792297374617392 pid=6992 name="?" hwnd=-1
+[1792297374766001] >protoM: focus btn1
+[1792297374766196] protoM: applied
+[1792297374767986] C0: ev C0 desk:pid focus t=1792297374767865 pid=6992 name="?" hwnd=-1
+[1792297374916299] >protoM: focus item2
+[1792297374916584] protoM: applied
+[1792297374918218] C0: ev C0 desk:pid focus t=1792297374918094 pid=6992 name="?" hwnd=-1

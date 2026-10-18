@@ -1,0 +1,28 @@
+[1792297413855068] charmap: ondesk-child-pid 6760
+[1792297413891135] tool find Character Map -> 53347154 ondesk-child-pid 16468
+[1792297413907849] C0: ondesk-child-pid 13856
+[1792297413945438] C0: registered C0 desk:pid in 12.2ms
+[1792297413945552] C0: client-ready C0
+[1792297413960243] C1: ondesk-child-pid 12728
+[1792297413995096] C1: registered C1 desk:pid in 12.2ms
+[1792297413995186] C1: client-ready C1
+[1792297414010961] C2: ondesk-child-pid 6452
+[1792297414050519] C2: registered C2 desk:pid in 14.4ms
+[1792297414050627] C2: client-ready C2
+[1792297414069075] C3: ondesk-child-pid 15816
+[1792297414105386] C3: registered C3 desk:pid in 13.3ms
+[1792297414105495] C3: client-ready C3
+[1792297414155560] C1: ev C1 desk:pid focus t=1792297414155185 pid=6760 name="?" hwnd=-1
+[1792297414162834] C2: ev C2 desk:pid focus t=1792297414162457 pid=6760 name="?" hwnd=-1
+[1792297414165914] C0: ev C0 desk:pid focus t=1792297414165382 pid=6760 name="?" hwnd=-1
+[1792297414166477] C3: ev C3 desk:pid focus t=1792297414166074 pid=6760 name="?" hwnd=-1
+[1792297414647798] tool winevent 53347154 8005 -4 0 -> winevent sent t=1792297414642798 ondesk-child-pid 15440
+[1792297414829170] tool winevent 53347154 8005 -4 0 -> winevent sent t=1792297414825172 ondesk-child-pid 2164
+[1792297415031070] tool winevent 53347154 8005 -4 0 -> winevent sent t=1792297415026500 ondesk-child-pid 4488
+[1792297415225361] tool winevent 53347154 8005 -4 0 -> winevent sent t=1792297415220108 ondesk-child-pid 2784
+[1792297415405865] tool winevent 53347154 8005 -4 0 -> winevent sent t=1792297415402128 ondesk-child-pid 1640
+[1792297415589633] tool winevent 53347154 8005 -4 0 -> winevent sent t=1792297415584788 ondesk-child-pid 17116
+[1792297415771675] tool winevent 53347154 8005 -4 0 -> winevent sent t=1792297415766758 ondesk-child-pid 13996
+[1792297415957626] tool winevent 53347154 8005 -4 0 -> winevent sent t=1792297415953020 ondesk-child-pid 6180
+[1792297416147494] tool winevent 53347154 8005 -4 0 -> winevent sent t=1792297416142287 ondesk-child-pid 8252
+[1792297416355155] tool winevent 53347154 8005 -4 0 -> winevent sent t=1792297416350033 ondesk-child-pid 10016

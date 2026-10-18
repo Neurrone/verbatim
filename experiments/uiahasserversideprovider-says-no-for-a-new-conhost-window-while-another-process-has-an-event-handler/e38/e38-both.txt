@@ -1,0 +1,31 @@
+# e38 conditions 1 and 2 together: L listening, console A with O attached,
+# U a spare-like process that hooks B's console host and probes, R the
+# raw probe.
+spawn L listen L e38-
+wait L listening 20000
+spawn U client 0 U
+send U init
+wait U done
+send U spare
+wait U done spare
+spawn R client 0 R
+send R init
+wait R done
+fgright
+console ${TITLE}-a
+spawn O client 0 O
+send O init
+wait O done
+send O target $HWND
+wait O done target
+send O outpost
+wait O done outpost 20000
+sleep 1000
+fgright
+console ${TITLE}
+sleep ${DELAY}
+send R target $HWND2 | send U target $HWND2 | send U hookpid $CONPID2 | send R rawprobe | send U probe | send R efhbcd | send U efhbcd
+wait U done efhbcd 20000
+drain 1500
+closeconsole
+drain 200

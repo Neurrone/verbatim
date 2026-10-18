@@ -1,0 +1,22 @@
+# L sets UIA up in S; S's UI thread is then busy without pumping while L's
+# second remote operation and B's first probe wait for it, the probe's
+# WM_GETOBJECT queued after the operation's COM call.
+spawn S server
+wait S hwnd
+spawn L client $HWND L
+send L init
+wait L done
+send L efh
+wait L done
+send L rop
+wait L done 10000
+spawn B client $HWND B
+send B init
+wait B done
+send S busy 40
+wait S busy-begin
+send L async rop
+sleep 5
+send B probe
+wait B done 15000
+drain 300

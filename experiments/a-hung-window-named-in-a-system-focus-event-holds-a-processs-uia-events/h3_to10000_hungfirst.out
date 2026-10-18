@@ -1,0 +1,23 @@
+[1792299175436831] holdTV: ondesk-child-pid 6752
+[1792299175461138] holdTV: ready
+[1792299175499204] tool find holdTV -> 36832414 ondesk-child-pid 18180
+[1792299175537806] holdB: ondesk-child-pid 15476
+[1792299175558828] holdB: ready
+[1792299175596044] tool find holdB -> 41223130 ondesk-child-pid 412
+[1792299175632033] tool findchild 36832414 WindowsForms10.SysTreeView32.app.0.141b42a_r9_ad1 -> 54395730 ondesk-child-pid 15540
+[1792299175648345] D: ondesk-child-pid 16108
+[1792299175690155] D: registered D desk:pid in 13.7ms
+[1792299175697642] D: registered D name:41223130 in 7.5ms
+[1792299175697733] D: client-ready D
+[1792299175998310] >holdB: set-name btn1 Base
+[1792299175998795] holdB: applied
+[1792299176000232] D: ev D name:41223130 prop30005 t=1792299176000178 pid=15476 name="Base" hwnd=0
+RESULT to10000_hungfirst baseline name after 1.9 ms
+[1792299176300442] >holdTV: stall 20000
+[1792299176300726] holdTV: stall started
+[1792299182344680] tool winevent 54395730 8005 -4 0 -> winevent sent t=1792299182341265 ondesk-child-pid 15096
+[1792299182545236] >holdB: set-name btn1 During
+[1792299182545659] holdB: applied
+[1792299196301008] holdTV: stall ended 1792299196300914
+[1792299196310106] D: ev D name:41223130 prop30005 t=1792299196310034 pid=15476 name="During" hwnd=0
+RESULT to10000_hungfirst held name after 13765 ms; 20010 ms into the 20000 ms stall; WinEvent at 6000 ms

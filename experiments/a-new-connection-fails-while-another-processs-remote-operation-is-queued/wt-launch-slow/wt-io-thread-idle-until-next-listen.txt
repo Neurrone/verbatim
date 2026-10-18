@@ -1,0 +1,34 @@
+    windowsterminal.exe!__scrt_common_main_seh
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+windowsterminal.exe 11696 thread 724 "" blocked 2849.260 ms, from 21:53:16.968408 to 21:53:19.817669, woken by windowsterminal.exe 11696 thread 15608 ""
+  where it waited:
+    ntdll.dll!NtWaitForMultipleObjects
+    kernelbase.dll!WaitForMultipleObjectsEx
+    kernelbase.dll!WaitForMultipleObjects
+    uiautomationcore.dll!OverlappedIOManager::IoThreadProc
+    uiautomationcore.dll!OverlappedIOManager::StaticIoThreadProc
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+  where it was readied:
+    ntdll.dll!NtSetEvent
+    kernelbase.dll!SetEvent
+    uiautomationcore.dll!OverlappedIOManager::AddChannel_AnyThread
+    uiautomationcore.dll!OverlappedIOManager::AddListenEvent
+    uiautomationcore.dll!ChannelBasedServerConnectionManager::SetupConnectionEvents
+    uiautomationcore.dll!UiaReturnRawElementProvider
+    windows.ui.dll!Windows::UI::Core::DesktopWindowContentBridge::IslandWindowProc
+    user32.dll!UserCallWinProcCheckWow
+    user32.dll!DispatchClientMessage
+    user32.dll!_fnDWORD
+    ntdll.dll!KiUserCallbackDispatcherContinue
+    win32u.dll!NtUserGetMessage
+    user32.dll!GetMessageW
+    windowsterminal.exe!WindowEmperor::HandleCommandlineArgs
+    windowsterminal.exe!wWinMain
+    windowsterminal.exe!__scrt_common_main_seh
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+windowsterminal.exe 11696 thread 724 "" blocked 0.097 ms, from 21:53:19.817709 to 21:53:19.817807, woken by verbatim-outpost.exe 13040 thread 15012 "verbatim-worker"
+  where it waited:
+    ntdll.dll!NtWaitForMultipleObjects

@@ -1,0 +1,1506 @@
+02:20:37.559833 run spawn S server
+  S 02:20:37.574249 hwnd 57607108 pid 15300
+02:20:37.577165 run spawn W server
+  S 02:20:37.574368 ready
+  W 02:20:37.590447 hwnd 24839584 pid 15440
+02:20:37.595077 run spawn C0 client 57607108 C0
+02:20:37.595113 run send C0 init
+  W 02:20:37.590518 ready
+ C0 02:20:37.601556 client-ready C0
+ C0 02:20:37.605804 done init C0 start=02:20:37.601588 ms=4.2 ok
+02:20:37.605886 run send C0 probe
+  S 02:20:37.613608 getobject-begin hwnd=57607108 objid=-25 wparam=0x56c2857e insend=0x1 in_hold=false
+  S 02:20:37.614675 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=1072 in_hold=false
+  S 02:20:37.615897 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:37.615930 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=35 in_hold=false
+ C0 02:20:37.616419 done probe C0 start=02:20:37.605920 ms=10.5 result=true
+02:20:37.616498 run send C0 efh
+  S 02:20:37.616633 getobject-begin hwnd=57607108 objid=-25 wparam=0x56c2857f insend=0x1 in_hold=false
+  S 02:20:37.616686 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=54 in_hold=false
+  S 02:20:37.617176 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:37.617208 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=33 in_hold=false
+ C0 02:20:37.617630 done efh C0 start=02:20:37.616528 ms=1.1 ok
+02:20:37.617691 run send C0 quit
+02:20:37.672757 run spawn X0 client 57607108 X0
+02:20:37.672808 run send X0 init
+ X0 02:20:37.683639 client-ready X0
+ X0 02:20:37.690557 done init X0 start=02:20:37.683684 ms=6.9 ok
+02:20:37.690661 run send X0 target 24839584
+ X0 02:20:37.690694 done target X0
+02:20:37.690752 run send X0 probe
+  W 02:20:37.698318 getobject-begin hwnd=24839584 objid=-25 wparam=0x56cf73de insend=0x1 in_hold=false
+  W 02:20:37.699471 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=1163 in_hold=false
+  W 02:20:37.700615 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:37.700648 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=40 in_hold=false
+ X0 02:20:37.701175 done probe X0 start=02:20:37.690777 ms=10.4 result=true
+02:20:37.701248 run send X0 efh
+  W 02:20:37.701426 getobject-begin hwnd=24839584 objid=-25 wparam=0x56cf73df insend=0x1 in_hold=false
+  W 02:20:37.701468 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=43 in_hold=false
+  W 02:20:37.701941 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:37.701981 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=41 in_hold=false
+ X0 02:20:37.702425 done efh X0 start=02:20:37.701292 ms=1.1 ok
+02:20:37.702482 run send X0 target 57607108
+ X0 02:20:37.702651 done target X0
+02:20:37.702725 run send X0 probe
+  S 02:20:37.702913 getobject-begin hwnd=57607108 objid=-25 wparam=0x56cf73e0 insend=0x1 in_hold=false
+  S 02:20:37.702986 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=75 in_hold=false
+  S 02:20:37.703473 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:37.703503 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+ X0 02:20:37.703843 done probe X0 start=02:20:37.702751 ms=1.1 result=true
+02:20:37.703895 run send X0 efh
+  S 02:20:37.704025 getobject-begin hwnd=57607108 objid=-25 wparam=0x56cf73e1 insend=0x1 in_hold=false
+  S 02:20:37.704068 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=44 in_hold=false
+  S 02:20:37.704483 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:37.704510 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=27 in_hold=false
+ X0 02:20:37.704859 done efh X0 start=02:20:37.703920 ms=0.9 ok
+02:20:37.704909 run send X0 quit
+02:20:37.761068 run spawn N0 client 57607108 N0
+02:20:37.761135 run send N0 init
+ N0 02:20:37.771074 client-ready N0
+ N0 02:20:37.775285 done init N0 start=02:20:37.771111 ms=4.2 ok
+02:20:37.775384 run send N0 ownwindow
+ N0 02:20:37.776975 done ownwindow N0 hwnd=22612330
+02:20:37.777046 run send N0 probe
+ N0 02:20:37.784401 done probe N0 start=02:20:37.777073 ms=7.3 result=false
+02:20:37.784519 run send N0 efh
+ N0 02:20:37.784904 done efh N0 start=02:20:37.784550 ms=0.4 ok
+02:20:37.784970 run send N0 target 57607108
+ N0 02:20:37.785058 done target N0
+02:20:37.785123 run send N0 probe
+  S 02:20:37.785262 getobject-begin hwnd=57607108 objid=-25 wparam=0x56dc60c4 insend=0x1 in_hold=false
+  S 02:20:37.785334 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=74 in_hold=false
+  S 02:20:37.786093 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:37.786127 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=36 in_hold=false
+ N0 02:20:37.786527 done probe N0 start=02:20:37.785148 ms=1.4 result=true
+02:20:37.786575 run send N0 efh
+  S 02:20:37.786738 getobject-begin hwnd=57607108 objid=-25 wparam=0x56dc60c5 insend=0x1 in_hold=false
+  S 02:20:37.786783 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=46 in_hold=false
+  S 02:20:37.787236 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:37.787264 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+ N0 02:20:37.787616 done efh N0 start=02:20:37.786627 ms=1.0 ok
+02:20:37.787665 run send N0 quit
+02:20:37.845497 run spawn X1 client 57607108 X1
+02:20:37.845554 run send X1 init
+ X1 02:20:37.852392 client-ready X1
+ X1 02:20:37.856894 done init X1 start=02:20:37.852431 ms=4.5 ok
+02:20:37.857078 run send X1 target 24839584
+ X1 02:20:37.857110 done target X1
+02:20:37.857157 run send X1 probe
+  W 02:20:37.864856 getobject-begin hwnd=24839584 objid=-25 wparam=0x56e8c50d insend=0x1 in_hold=false
+  W 02:20:37.864975 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=126 in_hold=false
+  W 02:20:37.865726 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:37.865765 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=40 in_hold=false
+ X1 02:20:37.866230 done probe X1 start=02:20:37.857177 ms=9.0 result=true
+02:20:37.866294 run send X1 efh
+  W 02:20:37.866423 getobject-begin hwnd=24839584 objid=-25 wparam=0x56e8c50e insend=0x1 in_hold=false
+  W 02:20:37.866467 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=45 in_hold=false
+  W 02:20:37.866896 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:37.866925 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=29 in_hold=false
+ X1 02:20:37.867328 done efh X1 start=02:20:37.866319 ms=1.0 ok
+02:20:37.867386 run send X1 target 57607108
+ X1 02:20:37.867519 done target X1
+02:20:37.867576 run send X1 probe
+  S 02:20:37.867703 getobject-begin hwnd=57607108 objid=-25 wparam=0x56e8c50f insend=0x1 in_hold=false
+  S 02:20:37.867768 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=67 in_hold=false
+  S 02:20:37.868216 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:37.868247 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=32 in_hold=false
+ X1 02:20:37.868542 done probe X1 start=02:20:37.867601 ms=0.9 result=true
+02:20:37.868590 run send X1 efh
+  S 02:20:37.868720 getobject-begin hwnd=57607108 objid=-25 wparam=0x56e8c510 insend=0x1 in_hold=false
+  S 02:20:37.868765 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=46 in_hold=false
+  S 02:20:37.869163 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:37.869192 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+ X1 02:20:37.869489 done efh X1 start=02:20:37.868614 ms=0.9 ok
+02:20:37.869537 run send X1 quit
+02:20:37.924275 run spawn N1 client 57607108 N1
+02:20:37.924329 run send N1 init
+ N1 02:20:37.930781 client-ready N1
+ N1 02:20:37.935240 done init N1 start=02:20:37.930823 ms=4.4 ok
+02:20:37.935334 run send N1 ownwindow
+ N1 02:20:37.937374 done ownwindow N1 hwnd=22677866
+02:20:37.937500 run send N1 probe
+ N1 02:20:37.945952 done probe N1 start=02:20:37.937535 ms=8.4 result=false
+02:20:37.946075 run send N1 efh
+ N1 02:20:37.946568 done efh N1 start=02:20:37.946106 ms=0.5 ok
+02:20:37.946634 run send N1 target 57607108
+ N1 02:20:37.946675 done target N1
+02:20:37.946731 run send N1 probe
+  S 02:20:37.946875 getobject-begin hwnd=57607108 objid=-25 wparam=0x56f51b5a insend=0x1 in_hold=false
+  S 02:20:37.946961 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=89 in_hold=false
+  S 02:20:37.947719 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:37.947754 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=36 in_hold=false
+ N1 02:20:37.948196 done probe N1 start=02:20:37.946756 ms=1.4 result=true
+02:20:37.948272 run send N1 efh
+  S 02:20:37.948405 getobject-begin hwnd=57607108 objid=-25 wparam=0x56f51b5b insend=0x1 in_hold=false
+  S 02:20:37.948448 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=43 in_hold=false
+  S 02:20:37.948969 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:37.948999 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=34 in_hold=false
+ N1 02:20:37.949323 done efh N1 start=02:20:37.948308 ms=1.0 ok
+02:20:37.949375 run send N1 quit
+02:20:38.003793 run spawn C1 client 57607108 C1
+02:20:38.003833 run send C1 init
+ C1 02:20:38.010442 client-ready C1
+ C1 02:20:38.014353 done init C1 start=02:20:38.010475 ms=3.9 ok
+02:20:38.014428 run send C1 probe
+  S 02:20:38.023448 getobject-begin hwnd=57607108 objid=-25 wparam=0x570100b8 insend=0x1 in_hold=false
+  S 02:20:38.023527 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=85 in_hold=false
+  S 02:20:38.027228 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.027321 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=101 in_hold=false
+ C1 02:20:38.027972 done probe C1 start=02:20:38.014456 ms=13.5 result=true
+02:20:38.028177 run send C1 efh
+  S 02:20:38.028342 getobject-begin hwnd=57607108 objid=-25 wparam=0x570100b9 insend=0x1 in_hold=false
+  S 02:20:38.028385 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=45 in_hold=false
+  S 02:20:38.029727 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.029757 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=32 in_hold=false
+ C1 02:20:38.030047 done efh C1 start=02:20:38.028202 ms=1.8 ok
+02:20:38.030108 run send C1 quit
+02:20:38.084386 run spawn N2 client 57607108 N2
+02:20:38.084424 run send N2 init
+ N2 02:20:38.090731 client-ready N2
+ N2 02:20:38.094801 done init N2 start=02:20:38.090763 ms=4.0 ok
+02:20:38.094883 run send N2 ownwindow
+ N2 02:20:38.096481 done ownwindow N2 hwnd=22743402
+02:20:38.096604 run send N2 probe
+ N2 02:20:38.104656 done probe N2 start=02:20:38.096635 ms=8.0 result=false
+02:20:38.104758 run send N2 efh
+ N2 02:20:38.105173 done efh N2 start=02:20:38.104785 ms=0.4 ok
+02:20:38.105240 run send N2 target 57607108
+ N2 02:20:38.105286 done target N2
+02:20:38.105339 run send N2 probe
+  S 02:20:38.105464 getobject-begin hwnd=57607108 objid=-25 wparam=0x570d577f insend=0x1 in_hold=false
+  S 02:20:38.105537 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=74 in_hold=false
+  S 02:20:38.106266 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.106295 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+ N2 02:20:38.106699 done probe N2 start=02:20:38.105358 ms=1.3 result=true
+02:20:38.106752 run send N2 efh
+  S 02:20:38.106895 getobject-begin hwnd=57607108 objid=-25 wparam=0x570d5780 insend=0x1 in_hold=false
+  S 02:20:38.106938 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=43 in_hold=false
+  S 02:20:38.107436 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.107464 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+ N2 02:20:38.107794 done efh N2 start=02:20:38.106782 ms=1.0 ok
+02:20:38.107858 run send N2 quit
+02:20:38.162358 run spawn C2 client 57607108 C2
+02:20:38.162402 run send C2 init
+ C2 02:20:38.168718 client-ready C2
+ C2 02:20:38.173026 done init C2 start=02:20:38.168749 ms=4.3 ok
+02:20:38.173127 run send C2 probe
+  S 02:20:38.180186 getobject-begin hwnd=57607108 objid=-25 wparam=0x5718d6f2 insend=0x1 in_hold=false
+  S 02:20:38.180266 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=86 in_hold=false
+  S 02:20:38.180925 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.180963 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=39 in_hold=false
+ C2 02:20:38.181374 done probe C2 start=02:20:38.173159 ms=8.2 result=true
+02:20:38.181434 run send C2 efh
+  S 02:20:38.181582 getobject-begin hwnd=57607108 objid=-25 wparam=0x5718d6f3 insend=0x1 in_hold=false
+  S 02:20:38.181637 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=56 in_hold=false
+  S 02:20:38.182127 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.182155 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+ C2 02:20:38.182509 done efh C2 start=02:20:38.181466 ms=1.0 ok
+02:20:38.182562 run send C2 quit
+02:20:38.236855 run spawn X2 client 57607108 X2
+02:20:38.236892 run send X2 init
+ X2 02:20:38.243577 client-ready X2
+ X2 02:20:38.248072 done init X2 start=02:20:38.243617 ms=4.4 ok
+02:20:38.248149 run send X2 target 24839584
+ X2 02:20:38.248177 done target X2
+02:20:38.248236 run send X2 probe
+  W 02:20:38.255051 getobject-begin hwnd=24839584 objid=-25 wparam=0x572454ef insend=0x1 in_hold=false
+  W 02:20:38.255148 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=102 in_hold=false
+  W 02:20:38.255941 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:38.255980 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=40 in_hold=false
+ X2 02:20:38.256445 done probe X2 start=02:20:38.248260 ms=8.2 result=true
+02:20:38.256513 run send X2 efh
+  W 02:20:38.256663 getobject-begin hwnd=24839584 objid=-25 wparam=0x572454f0 insend=0x1 in_hold=false
+  W 02:20:38.256709 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=46 in_hold=false
+  W 02:20:38.257209 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:38.257239 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=31 in_hold=false
+ X2 02:20:38.257649 done efh X2 start=02:20:38.256543 ms=1.1 ok
+02:20:38.257705 run send X2 target 57607108
+ X2 02:20:38.257828 done target X2
+02:20:38.257878 run send X2 probe
+  S 02:20:38.258014 getobject-begin hwnd=57607108 objid=-25 wparam=0x572454f1 insend=0x1 in_hold=false
+  S 02:20:38.258080 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=69 in_hold=false
+  S 02:20:38.258492 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.258520 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+ X2 02:20:38.258836 done probe X2 start=02:20:38.257902 ms=0.9 result=true
+02:20:38.258893 run send X2 efh
+  S 02:20:38.259025 getobject-begin hwnd=57607108 objid=-25 wparam=0x572454f2 insend=0x1 in_hold=false
+  S 02:20:38.259088 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=69 in_hold=false
+  S 02:20:38.259503 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.259541 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=38 in_hold=false
+ X2 02:20:38.259849 done efh X2 start=02:20:38.258914 ms=0.9 ok
+02:20:38.259891 run send X2 quit
+02:20:38.314024 run spawn C3 client 57607108 C3
+02:20:38.314066 run send C3 init
+ C3 02:20:38.321355 client-ready C3
+ C3 02:20:38.325609 done init C3 start=02:20:38.321392 ms=4.2 ok
+02:20:38.325685 run send C3 probe
+  S 02:20:38.332569 getobject-begin hwnd=57607108 objid=-25 wparam=0x57302d3d insend=0x1 in_hold=false
+  S 02:20:38.332650 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=86 in_hold=false
+  S 02:20:38.333322 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.333352 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+ C3 02:20:38.333783 done probe C3 start=02:20:38.325713 ms=8.1 result=true
+02:20:38.333847 run send C3 efh
+  S 02:20:38.333987 getobject-begin hwnd=57607108 objid=-25 wparam=0x57302d3e insend=0x1 in_hold=false
+  S 02:20:38.334052 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=65 in_hold=false
+  S 02:20:38.334488 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.334519 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=32 in_hold=false
+ C3 02:20:38.334889 done efh C3 start=02:20:38.333873 ms=1.0 ok
+02:20:38.334951 run send C3 quit
+02:20:38.389076 run spawn X3 client 57607108 X3
+02:20:38.389112 run send X3 init
+ X3 02:20:38.395266 client-ready X3
+ X3 02:20:38.399328 done init X3 start=02:20:38.395300 ms=4.0 ok
+02:20:38.399414 run send X3 target 24839584
+ X3 02:20:38.399444 done target X3
+02:20:38.399495 run send X3 probe
+  W 02:20:38.407618 getobject-begin hwnd=24839584 objid=-25 wparam=0x573ba418 insend=0x1 in_hold=false
+  W 02:20:38.407716 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=107 in_hold=false
+  W 02:20:38.408578 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:38.408612 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=36 in_hold=false
+ X3 02:20:38.409073 done probe X3 start=02:20:38.399516 ms=9.6 result=true
+02:20:38.409393 run send X3 efh
+  W 02:20:38.409610 getobject-begin hwnd=24839584 objid=-25 wparam=0x573ba419 insend=0x1 in_hold=false
+  W 02:20:38.409663 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=53 in_hold=false
+  W 02:20:38.410221 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:38.410255 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=34 in_hold=false
+ X3 02:20:38.410658 done efh X3 start=02:20:38.409438 ms=1.2 ok
+02:20:38.410718 run send X3 target 57607108
+ X3 02:20:38.410858 done target X3
+02:20:38.410910 run send X3 probe
+  S 02:20:38.411055 getobject-begin hwnd=57607108 objid=-25 wparam=0x573ba41a insend=0x1 in_hold=false
+  S 02:20:38.411132 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=79 in_hold=false
+  S 02:20:38.411632 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.411661 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+ X3 02:20:38.412005 done probe X3 start=02:20:38.410937 ms=1.1 result=true
+02:20:38.412068 run send X3 efh
+  S 02:20:38.412200 getobject-begin hwnd=57607108 objid=-25 wparam=0x573ba41b insend=0x1 in_hold=false
+  S 02:20:38.412244 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=45 in_hold=false
+  S 02:20:38.412678 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.412706 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+ X3 02:20:38.413007 done efh X3 start=02:20:38.412093 ms=0.9 ok
+02:20:38.413071 run send X3 quit
+02:20:38.467415 run spawn N3 client 57607108 N3
+02:20:38.467466 run send N3 init
+ N3 02:20:38.474049 client-ready N3
+ N3 02:20:38.478476 done init N3 start=02:20:38.474084 ms=4.4 ok
+02:20:38.478551 run send N3 ownwindow
+ N3 02:20:38.479925 done ownwindow N3 hwnd=22808938
+02:20:38.480003 run send N3 probe
+ N3 02:20:38.486801 done probe N3 start=02:20:38.480038 ms=6.8 result=false
+02:20:38.486890 run send N3 efh
+ N3 02:20:38.487331 done efh N3 start=02:20:38.486921 ms=0.4 ok
+02:20:38.487409 run send N3 target 57607108
+ N3 02:20:38.487460 done target N3
+02:20:38.487502 run send N3 probe
+  S 02:20:38.487655 getobject-begin hwnd=57607108 objid=-25 wparam=0x5747a29e insend=0x1 in_hold=false
+  S 02:20:38.487749 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=97 in_hold=false
+  S 02:20:38.488593 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.488633 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=40 in_hold=false
+ N3 02:20:38.489092 done probe N3 start=02:20:38.487523 ms=1.6 result=true
+02:20:38.489148 run send N3 efh
+  S 02:20:38.489284 getobject-begin hwnd=57607108 objid=-25 wparam=0x5747a29f insend=0x1 in_hold=false
+  S 02:20:38.489328 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=45 in_hold=false
+  S 02:20:38.489752 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.489778 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=27 in_hold=false
+ N3 02:20:38.490099 done efh N3 start=02:20:38.489185 ms=0.9 ok
+02:20:38.490157 run send N3 quit
+02:20:38.544515 run spawn X4 client 57607108 X4
+02:20:38.544555 run send X4 init
+ X4 02:20:38.551093 client-ready X4
+ X4 02:20:38.555656 done init X4 start=02:20:38.551135 ms=4.5 ok
+02:20:38.555743 run send X4 target 24839584
+ X4 02:20:38.555773 done target X4
+02:20:38.555816 run send X4 probe
+  W 02:20:38.564624 getobject-begin hwnd=24839584 objid=-25 wparam=0x5753774d insend=0x1 in_hold=false
+  W 02:20:38.564726 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=108 in_hold=false
+  W 02:20:38.565473 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:38.565503 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=30 in_hold=false
+ X4 02:20:38.565925 done probe X4 start=02:20:38.555835 ms=10.1 result=true
+02:20:38.565998 run send X4 efh
+  W 02:20:38.566126 getobject-begin hwnd=24839584 objid=-25 wparam=0x5753774e insend=0x1 in_hold=false
+  W 02:20:38.566170 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=45 in_hold=false
+  W 02:20:38.566585 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:38.566612 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=27 in_hold=false
+ X4 02:20:38.566934 done efh X4 start=02:20:38.566024 ms=0.9 ok
+02:20:38.566991 run send X4 target 57607108
+ X4 02:20:38.567179 done target X4
+02:20:38.567227 run send X4 probe
+  S 02:20:38.567365 getobject-begin hwnd=57607108 objid=-25 wparam=0x5753774f insend=0x1 in_hold=false
+  S 02:20:38.567447 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=85 in_hold=false
+  S 02:20:38.567921 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.567956 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=36 in_hold=false
+ X4 02:20:38.568290 done probe X4 start=02:20:38.567249 ms=1.0 result=true
+02:20:38.568346 run send X4 efh
+  S 02:20:38.568478 getobject-begin hwnd=57607108 objid=-25 wparam=0x57537750 insend=0x1 in_hold=false
+  S 02:20:38.568524 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=47 in_hold=false
+  S 02:20:38.568931 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.568964 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=34 in_hold=false
+ X4 02:20:38.569276 done efh X4 start=02:20:38.568371 ms=0.9 ok
+02:20:38.569330 run send X4 quit
+02:20:38.642230 run spawn N4 client 57607108 N4
+02:20:38.642266 run send N4 init
+ N4 02:20:38.649700 client-ready N4
+ N4 02:20:38.654058 done init N4 start=02:20:38.649730 ms=4.3 ok
+02:20:38.654149 run send N4 ownwindow
+ N4 02:20:38.655374 done ownwindow N4 hwnd=22874474
+02:20:38.655594 run send N4 probe
+ N4 02:20:38.665412 done probe N4 start=02:20:38.655625 ms=9.8 result=false
+02:20:38.665508 run send N4 efh
+ N4 02:20:38.665940 done efh N4 start=02:20:38.665531 ms=0.4 ok
+02:20:38.666002 run send N4 target 57607108
+ N4 02:20:38.666037 done target N4
+02:20:38.666086 run send N4 probe
+  S 02:20:38.666232 getobject-begin hwnd=57607108 objid=-25 wparam=0x5762d8d7 insend=0x1 in_hold=false
+  S 02:20:38.666308 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=79 in_hold=false
+  S 02:20:38.667190 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.667221 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=32 in_hold=false
+ N4 02:20:38.667599 done probe N4 start=02:20:38.666112 ms=1.5 result=true
+02:20:38.667655 run send N4 efh
+  S 02:20:38.667795 getobject-begin hwnd=57607108 objid=-25 wparam=0x5762d8d8 insend=0x1 in_hold=false
+  S 02:20:38.667834 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=40 in_hold=false
+  S 02:20:38.668271 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.668299 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+ N4 02:20:38.668588 done efh N4 start=02:20:38.667680 ms=0.9 ok
+02:20:38.668645 run send N4 quit
+02:20:38.722994 run spawn C4 client 57607108 C4
+02:20:38.723055 run send C4 init
+ C4 02:20:38.729588 client-ready C4
+ C4 02:20:38.733832 done init C4 start=02:20:38.729620 ms=4.2 ok
+02:20:38.733904 run send C4 probe
+  S 02:20:38.740737 getobject-begin hwnd=57607108 objid=-25 wparam=0x576e5029 insend=0x1 in_hold=false
+  S 02:20:38.740840 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=106 in_hold=false
+  S 02:20:38.741552 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.741585 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=34 in_hold=false
+ C4 02:20:38.742025 done probe C4 start=02:20:38.733928 ms=8.1 result=true
+02:20:38.742078 run send C4 efh
+  S 02:20:38.742256 getobject-begin hwnd=57607108 objid=-25 wparam=0x576e502a insend=0x1 in_hold=false
+  S 02:20:38.742310 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=55 in_hold=false
+  S 02:20:38.742756 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.742785 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+ C4 02:20:38.743174 done efh C4 start=02:20:38.742098 ms=1.1 ok
+02:20:38.743230 run send C4 quit
+02:20:38.797701 run spawn N5 client 57607108 N5
+02:20:38.797738 run send N5 init
+ N5 02:20:38.805041 client-ready N5
+ N5 02:20:38.809200 done init N5 start=02:20:38.805078 ms=4.1 ok
+02:20:38.809289 run send N5 ownwindow
+ N5 02:20:38.810830 done ownwindow N5 hwnd=22940010
+02:20:38.810891 run send N5 probe
+ N5 02:20:38.820826 done probe N5 start=02:20:38.810914 ms=9.9 result=false
+02:20:38.820938 run send N5 efh
+ N5 02:20:38.821326 done efh N5 start=02:20:38.820975 ms=0.3 ok
+02:20:38.821375 run send N5 target 57607108
+ N5 02:20:38.821419 done target N5
+02:20:38.821459 run send N5 probe
+  S 02:20:38.821579 getobject-begin hwnd=57607108 objid=-25 wparam=0x577ab366 insend=0x1 in_hold=false
+  S 02:20:38.821647 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=70 in_hold=false
+  S 02:20:38.822378 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.822409 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=32 in_hold=false
+ N5 02:20:38.822828 done probe N5 start=02:20:38.821478 ms=1.3 result=true
+02:20:38.822887 run send N5 efh
+  S 02:20:38.823016 getobject-begin hwnd=57607108 objid=-25 wparam=0x577ab367 insend=0x1 in_hold=false
+  S 02:20:38.823080 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=65 in_hold=false
+  S 02:20:38.823584 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.823612 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+ N5 02:20:38.823916 done efh N5 start=02:20:38.822913 ms=1.0 ok
+02:20:38.823972 run send N5 quit
+02:20:38.879491 run spawn C5 client 57607108 C5
+02:20:38.879544 run send C5 init
+ C5 02:20:38.885889 client-ready C5
+ C5 02:20:38.890194 done init C5 start=02:20:38.885922 ms=4.3 ok
+02:20:38.890308 run send C5 probe
+  S 02:20:38.897416 getobject-begin hwnd=57607108 objid=-25 wparam=0x5786683a insend=0x1 in_hold=false
+  S 02:20:38.897497 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=87 in_hold=false
+  S 02:20:38.898167 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.898203 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=37 in_hold=false
+ C5 02:20:38.898658 done probe C5 start=02:20:38.890341 ms=8.3 result=true
+02:20:38.898730 run send C5 efh
+  S 02:20:38.898891 getobject-begin hwnd=57607108 objid=-25 wparam=0x5786683b insend=0x1 in_hold=false
+  S 02:20:38.898933 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=42 in_hold=false
+  S 02:20:38.899404 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.899432 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+ C5 02:20:38.899785 done efh C5 start=02:20:38.898759 ms=1.0 ok
+02:20:38.899836 run send C5 quit
+02:20:38.954517 run spawn X5 client 57607108 X5
+02:20:38.954559 run send X5 init
+ X5 02:20:38.961519 client-ready X5
+ X5 02:20:38.965637 done init X5 start=02:20:38.961554 ms=4.1 ok
+02:20:38.965720 run send X5 target 24839584
+ X5 02:20:38.965758 done target X5
+02:20:38.965810 run send X5 probe
+  W 02:20:38.972590 getobject-begin hwnd=24839584 objid=-25 wparam=0x5791e860 insend=0x1 in_hold=false
+  W 02:20:38.972678 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=92 in_hold=false
+  W 02:20:38.973394 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:38.973434 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=39 in_hold=false
+ X5 02:20:38.973899 done probe X5 start=02:20:38.965831 ms=8.1 result=true
+02:20:38.973968 run send X5 efh
+  W 02:20:38.974147 getobject-begin hwnd=24839584 objid=-25 wparam=0x5791e861 insend=0x1 in_hold=false
+  W 02:20:38.974199 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=52 in_hold=false
+  W 02:20:38.974625 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:38.974655 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=31 in_hold=false
+ X5 02:20:38.975051 done efh X5 start=02:20:38.973997 ms=1.0 ok
+02:20:38.975130 run send X5 target 57607108
+ X5 02:20:38.975266 done target X5
+02:20:38.975327 run send X5 probe
+  S 02:20:38.975449 getobject-begin hwnd=57607108 objid=-25 wparam=0x5791e862 insend=0x1 in_hold=false
+  S 02:20:38.975515 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=68 in_hold=false
+  S 02:20:38.976017 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.976050 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=34 in_hold=false
+ X5 02:20:38.976359 done probe X5 start=02:20:38.975355 ms=1.0 result=true
+02:20:38.976416 run send X5 efh
+  S 02:20:38.976545 getobject-begin hwnd=57607108 objid=-25 wparam=0x5791e863 insend=0x1 in_hold=false
+  S 02:20:38.976588 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=44 in_hold=false
+  S 02:20:38.977028 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:38.977059 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=32 in_hold=false
+ X5 02:20:38.977401 done efh X5 start=02:20:38.976446 ms=1.0 ok
+02:20:38.977453 run send X5 quit
+02:20:39.033678 run spawn C6 client 57607108 C6
+02:20:39.033730 run send C6 init
+ C6 02:20:39.040737 client-ready C6
+ C6 02:20:39.045052 done init C6 start=02:20:39.040773 ms=4.3 ok
+02:20:39.045146 run send C6 probe
+  S 02:20:39.052561 getobject-begin hwnd=57607108 objid=-25 wparam=0x579df7d0 insend=0x1 in_hold=false
+  S 02:20:39.052677 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=122 in_hold=false
+  S 02:20:39.053491 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.053532 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=42 in_hold=false
+ C6 02:20:39.053993 done probe C6 start=02:20:39.045175 ms=8.8 result=true
+02:20:39.054071 run send C6 efh
+  S 02:20:39.054214 getobject-begin hwnd=57607108 objid=-25 wparam=0x579df7d1 insend=0x1 in_hold=false
+  S 02:20:39.054265 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=53 in_hold=false
+  S 02:20:39.054767 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.054799 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=32 in_hold=false
+ C6 02:20:39.055218 done efh C6 start=02:20:39.054103 ms=1.1 ok
+02:20:39.055275 run send C6 quit
+02:20:39.109656 run spawn X6 client 57607108 X6
+02:20:39.109709 run send X6 init
+ X6 02:20:39.117123 client-ready X6
+ X6 02:20:39.121430 done init X6 start=02:20:39.117159 ms=4.2 ok
+02:20:39.121531 run send X6 target 24839584
+ X6 02:20:39.121565 done target X6
+02:20:39.121624 run send X6 probe
+  W 02:20:39.129150 getobject-begin hwnd=24839584 objid=-25 wparam=0x57a9c4b1 insend=0x1 in_hold=false
+  W 02:20:39.129232 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=88 in_hold=false
+  W 02:20:39.129968 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:39.129998 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=31 in_hold=false
+ X6 02:20:39.130422 done probe X6 start=02:20:39.121646 ms=8.8 result=true
+02:20:39.130487 run send X6 efh
+  W 02:20:39.130619 getobject-begin hwnd=24839584 objid=-25 wparam=0x57a9c4b2 insend=0x1 in_hold=false
+  W 02:20:39.130667 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=49 in_hold=false
+  W 02:20:39.131095 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:39.131129 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=35 in_hold=false
+ X6 02:20:39.131482 done efh X6 start=02:20:39.130518 ms=1.0 ok
+02:20:39.131538 run send X6 target 57607108
+ X6 02:20:39.131665 done target X6
+02:20:39.131716 run send X6 probe
+  S 02:20:39.131832 getobject-begin hwnd=57607108 objid=-25 wparam=0x57a9c4b3 insend=0x1 in_hold=false
+  S 02:20:39.131893 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=63 in_hold=false
+  S 02:20:39.132318 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.132346 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+ X6 02:20:39.132700 done probe X6 start=02:20:39.131739 ms=1.0 result=true
+02:20:39.132749 run send X6 efh
+  S 02:20:39.132889 getobject-begin hwnd=57607108 objid=-25 wparam=0x57a9c4b4 insend=0x1 in_hold=false
+  S 02:20:39.132931 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=43 in_hold=false
+  S 02:20:39.133398 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.133426 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+ X6 02:20:39.133726 done efh X6 start=02:20:39.132775 ms=0.9 ok
+02:20:39.133784 run send X6 quit
+02:20:39.188262 run spawn N6 client 57607108 N6
+02:20:39.188299 run send N6 init
+ N6 02:20:39.195900 client-ready N6
+ N6 02:20:39.200043 done init N6 start=02:20:39.195934 ms=4.1 ok
+02:20:39.200130 run send N6 ownwindow
+ N6 02:20:39.201509 done ownwindow N6 hwnd=23005546
+02:20:39.201619 run send N6 probe
+ N6 02:20:39.209037 done probe N6 start=02:20:39.201652 ms=7.4 result=false
+02:20:39.209128 run send N6 efh
+ N6 02:20:39.209525 done efh N6 start=02:20:39.209160 ms=0.4 ok
+02:20:39.209570 run send N6 target 57607108
+ N6 02:20:39.209612 done target N6
+02:20:39.209642 run send N6 probe
+  S 02:20:39.209763 getobject-begin hwnd=57607108 objid=-25 wparam=0x57b5d9a5 insend=0x1 in_hold=false
+  S 02:20:39.209825 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=65 in_hold=false
+  S 02:20:39.210492 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.210516 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=25 in_hold=false
+ N6 02:20:39.210886 done probe N6 start=02:20:39.209666 ms=1.2 result=true
+02:20:39.211080 run send N6 efh
+  S 02:20:39.211184 getobject-begin hwnd=57607108 objid=-25 wparam=0x57b5d9a6 insend=0x1 in_hold=false
+  S 02:20:39.211215 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=32 in_hold=false
+  S 02:20:39.211603 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.211626 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=24 in_hold=false
+ N6 02:20:39.211862 done efh N6 start=02:20:39.211108 ms=0.8 ok
+02:20:39.211971 run send N6 quit
+02:20:39.266257 run spawn X7 client 57607108 X7
+02:20:39.266295 run send X7 init
+ X7 02:20:39.272542 client-ready X7
+ X7 02:20:39.276629 done init X7 start=02:20:39.272579 ms=4.0 ok
+02:20:39.276741 run send X7 target 24839584
+ X7 02:20:39.276769 done target X7
+02:20:39.276811 run send X7 probe
+  W 02:20:39.285665 getobject-begin hwnd=24839584 objid=-25 wparam=0x57c18060 insend=0x1 in_hold=false
+  W 02:20:39.285753 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=93 in_hold=false
+  W 02:20:39.286512 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:39.286544 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=32 in_hold=false
+ X7 02:20:39.287015 done probe X7 start=02:20:39.276836 ms=10.2 result=true
+02:20:39.287083 run send X7 efh
+  W 02:20:39.287244 getobject-begin hwnd=24839584 objid=-25 wparam=0x57c18061 insend=0x1 in_hold=false
+  W 02:20:39.287297 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=53 in_hold=false
+  W 02:20:39.287764 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:39.287801 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=30 in_hold=false
+ X7 02:20:39.288208 done efh X7 start=02:20:39.287121 ms=1.1 ok
+02:20:39.288272 run send X7 target 57607108
+ X7 02:20:39.288410 done target X7
+02:20:39.288466 run send X7 probe
+  S 02:20:39.288590 getobject-begin hwnd=57607108 objid=-25 wparam=0x57c18062 insend=0x1 in_hold=false
+  S 02:20:39.288655 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=68 in_hold=false
+  S 02:20:39.289209 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.289238 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+ X7 02:20:39.289556 done probe X7 start=02:20:39.288492 ms=1.1 result=true
+02:20:39.289618 run send X7 efh
+  S 02:20:39.289745 getobject-begin hwnd=57607108 objid=-25 wparam=0x57c18063 insend=0x1 in_hold=false
+  S 02:20:39.289786 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=42 in_hold=false
+  S 02:20:39.290207 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.290235 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+ X7 02:20:39.290661 done efh X7 start=02:20:39.289649 ms=1.0 ok
+02:20:39.290716 run send X7 quit
+02:20:39.346021 run spawn N7 client 57607108 N7
+02:20:39.346090 run send N7 init
+ N7 02:20:39.353854 client-ready N7
+ N7 02:20:39.358096 done init N7 start=02:20:39.353897 ms=4.2 ok
+02:20:39.358175 run send N7 ownwindow
+ N7 02:20:39.359572 done ownwindow N7 hwnd=23071082
+02:20:39.359647 run send N7 probe
+ N7 02:20:39.366784 done probe N7 start=02:20:39.359682 ms=7.1 result=false
+02:20:39.366896 run send N7 efh
+ N7 02:20:39.367326 done efh N7 start=02:20:39.366930 ms=0.4 ok
+02:20:39.367379 run send N7 target 57607108
+ N7 02:20:39.367419 done target N7
+02:20:39.367460 run send N7 probe
+  S 02:20:39.367612 getobject-begin hwnd=57607108 objid=-25 wparam=0x57cdddb0 insend=0x1 in_hold=false
+  S 02:20:39.367715 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=107 in_hold=false
+  S 02:20:39.368466 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.368496 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+ N7 02:20:39.368923 done probe N7 start=02:20:39.367481 ms=1.4 result=true
+02:20:39.369000 run send N7 efh
+  S 02:20:39.369116 getobject-begin hwnd=57607108 objid=-25 wparam=0x57cdddb1 insend=0x1 in_hold=false
+  S 02:20:39.369165 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=49 in_hold=false
+  S 02:20:39.369603 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.369632 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+ N7 02:20:39.369943 done efh N7 start=02:20:39.369030 ms=0.9 ok
+02:20:39.370018 run send N7 quit
+02:20:39.424794 run spawn C7 client 57607108 C7
+02:20:39.424843 run send C7 init
+ C7 02:20:39.431984 client-ready C7
+ C7 02:20:39.436759 done init C7 start=02:20:39.432026 ms=4.7 ok
+02:20:39.436866 run send C7 probe
+  S 02:20:39.444588 getobject-begin hwnd=57607108 objid=-25 wparam=0x57d9e683 insend=0x1 in_hold=false
+  S 02:20:39.444684 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=103 in_hold=false
+  S 02:20:39.445427 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.445460 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=34 in_hold=false
+ C7 02:20:39.445991 done probe C7 start=02:20:39.436896 ms=9.1 result=true
+02:20:39.446071 run send C7 efh
+  S 02:20:39.446215 getobject-begin hwnd=57607108 objid=-25 wparam=0x57d9e684 insend=0x1 in_hold=false
+  S 02:20:39.446258 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=44 in_hold=false
+  S 02:20:39.446692 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.446721 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+ C7 02:20:39.447183 done efh C7 start=02:20:39.446100 ms=1.1 ok
+02:20:39.447251 run send C7 quit
+02:20:39.501834 run spawn N8 client 57607108 N8
+02:20:39.501899 run send N8 init
+ N8 02:20:39.511347 client-ready N8
+ N8 02:20:39.516156 done init N8 start=02:20:39.511400 ms=4.7 ok
+02:20:39.516260 run send N8 ownwindow
+ N8 02:20:39.518071 done ownwindow N8 hwnd=23136618
+02:20:39.518199 run send N8 probe
+ N8 02:20:39.528710 done probe N8 start=02:20:39.518223 ms=10.4 result=false
+02:20:39.528810 run send N8 efh
+ N8 02:20:39.529206 done efh N8 start=02:20:39.528838 ms=0.4 ok
+02:20:39.529283 run send N8 target 57607108
+ N8 02:20:39.529324 done target N8
+02:20:39.529373 run send N8 probe
+  S 02:20:39.529505 getobject-begin hwnd=57607108 objid=-25 wparam=0x57e6a333 insend=0x1 in_hold=false
+  S 02:20:39.529574 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=72 in_hold=false
+  S 02:20:39.530235 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.530284 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=50 in_hold=false
+ N8 02:20:39.530624 done probe N8 start=02:20:39.529398 ms=1.2 result=true
+02:20:39.530678 run send N8 efh
+  S 02:20:39.530799 getobject-begin hwnd=57607108 objid=-25 wparam=0x57e6a334 insend=0x1 in_hold=false
+  S 02:20:39.530836 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=38 in_hold=false
+  S 02:20:39.531285 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.531314 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+ N8 02:20:39.531603 done efh N8 start=02:20:39.530702 ms=0.9 ok
+02:20:39.531652 run send N8 quit
+02:20:39.586306 run spawn C8 client 57607108 C8
+02:20:39.586350 run send C8 init
+ C8 02:20:39.594698 client-ready C8
+ C8 02:20:39.598809 done init C8 start=02:20:39.594736 ms=4.1 ok
+02:20:39.598897 run send C8 probe
+  S 02:20:39.605580 getobject-begin hwnd=57607108 objid=-25 wparam=0x57f24683 insend=0x1 in_hold=false
+  S 02:20:39.605667 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=92 in_hold=false
+  S 02:20:39.606291 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.606321 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+ C8 02:20:39.606730 done probe C8 start=02:20:39.598925 ms=7.8 result=true
+02:20:39.606783 run send C8 efh
+  S 02:20:39.606904 getobject-begin hwnd=57607108 objid=-25 wparam=0x57f24684 insend=0x1 in_hold=false
+  S 02:20:39.606951 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=48 in_hold=false
+  S 02:20:39.607415 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.607444 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+ C8 02:20:39.607877 done efh C8 start=02:20:39.606810 ms=1.1 ok
+02:20:39.607937 run send C8 quit
+02:20:39.662348 run spawn X8 client 57607108 X8
+02:20:39.662389 run send X8 init
+ X8 02:20:39.669077 client-ready X8
+ X8 02:20:39.673277 done init X8 start=02:20:39.669112 ms=4.2 ok
+02:20:39.673369 run send X8 target 24839584
+ X8 02:20:39.673397 done target X8
+02:20:39.673446 run send X8 probe
+  W 02:20:39.682433 getobject-begin hwnd=24839584 objid=-25 wparam=0x57fe14b6 insend=0x1 in_hold=false
+  W 02:20:39.682523 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=96 in_hold=false
+  W 02:20:39.683284 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:39.683320 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=37 in_hold=false
+ X8 02:20:39.683770 done probe X8 start=02:20:39.673466 ms=10.3 result=true
+02:20:39.683862 run send X8 efh
+  W 02:20:39.684032 getobject-begin hwnd=24839584 objid=-25 wparam=0x57fe14b7 insend=0x1 in_hold=false
+  W 02:20:39.684078 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=47 in_hold=false
+  W 02:20:39.684519 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:39.684548 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=29 in_hold=false
+ X8 02:20:39.684904 done efh X8 start=02:20:39.683898 ms=1.0 ok
+02:20:39.684978 run send X8 target 57607108
+ X8 02:20:39.685125 done target X8
+02:20:39.685191 run send X8 probe
+  S 02:20:39.685325 getobject-begin hwnd=57607108 objid=-25 wparam=0x57fe14b8 insend=0x1 in_hold=false
+  S 02:20:39.685391 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=69 in_hold=false
+  S 02:20:39.685836 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.685863 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=28 in_hold=false
+ X8 02:20:39.686190 done probe X8 start=02:20:39.685220 ms=1.0 result=true
+02:20:39.686246 run send X8 efh
+  S 02:20:39.686380 getobject-begin hwnd=57607108 objid=-25 wparam=0x57fe14b9 insend=0x1 in_hold=false
+  S 02:20:39.686432 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=52 in_hold=false
+  S 02:20:39.686851 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.686881 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+ X8 02:20:39.687307 done efh X8 start=02:20:39.686276 ms=1.0 ok
+02:20:39.687376 run send X8 quit
+02:20:39.741591 run spawn C9 client 57607108 C9
+02:20:39.741625 run send C9 init
+ C9 02:20:39.748993 client-ready C9
+ C9 02:20:39.753230 done init C9 start=02:20:39.749032 ms=4.2 ok
+02:20:39.753329 run send C9 probe
+  S 02:20:39.762460 getobject-begin hwnd=57607108 objid=-25 wparam=0x580a43e1 insend=0x1 in_hold=false
+  S 02:20:39.762547 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=94 in_hold=false
+  S 02:20:39.763328 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.763358 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+ C9 02:20:39.763776 done probe C9 start=02:20:39.753358 ms=10.4 result=true
+02:20:39.763851 run send C9 efh
+  S 02:20:39.764012 getobject-begin hwnd=57607108 objid=-25 wparam=0x580a43e2 insend=0x1 in_hold=false
+  S 02:20:39.764065 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=54 in_hold=false
+  S 02:20:39.764539 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.764564 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=27 in_hold=false
+ C9 02:20:39.764905 done efh C9 start=02:20:39.763881 ms=1.0 ok
+02:20:39.764964 run send C9 quit
+02:20:39.820908 run spawn X9 client 57607108 X9
+02:20:39.820989 run send X9 init
+ X9 02:20:39.827832 client-ready X9
+ X9 02:20:39.832160 done init X9 start=02:20:39.827870 ms=4.3 ok
+02:20:39.832251 run send X9 target 24839584
+ X9 02:20:39.832281 done target X9
+02:20:39.832332 run send X9 probe
+  W 02:20:39.839389 getobject-begin hwnd=24839584 objid=-25 wparam=0x58161142 insend=0x1 in_hold=false
+  W 02:20:39.839496 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=113 in_hold=false
+  W 02:20:39.840223 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:39.840255 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=32 in_hold=false
+ X9 02:20:39.840728 done probe X9 start=02:20:39.832353 ms=8.4 result=true
+02:20:39.840811 run send X9 efh
+  W 02:20:39.840934 getobject-begin hwnd=24839584 objid=-25 wparam=0x58161143 insend=0x1 in_hold=false
+  W 02:20:39.840991 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=56 in_hold=false
+  W 02:20:39.841419 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:39.841448 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=30 in_hold=false
+ X9 02:20:39.841829 done efh X9 start=02:20:39.840838 ms=1.0 ok
+02:20:39.841890 run send X9 target 57607108
+ X9 02:20:39.842032 done target X9
+02:20:39.842096 run send X9 probe
+  S 02:20:39.842249 getobject-begin hwnd=57607108 objid=-25 wparam=0x58161144 insend=0x1 in_hold=false
+  S 02:20:39.842323 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=76 in_hold=false
+  S 02:20:39.842794 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.842824 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+ X9 02:20:39.843184 done probe X9 start=02:20:39.842141 ms=1.0 result=true
+02:20:39.843242 run send X9 efh
+  S 02:20:39.843359 getobject-begin hwnd=57607108 objid=-25 wparam=0x58161145 insend=0x1 in_hold=false
+  S 02:20:39.843403 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=44 in_hold=false
+  S 02:20:39.843826 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.843853 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=28 in_hold=false
+ X9 02:20:39.844207 done efh X9 start=02:20:39.843272 ms=0.9 ok
+02:20:39.844260 run send X9 quit
+02:20:39.900384 run spawn N9 client 57607108 N9
+02:20:39.900435 run send N9 init
+ N9 02:20:39.906907 client-ready N9
+ N9 02:20:39.911090 done init N9 start=02:20:39.906953 ms=4.1 ok
+02:20:39.911179 run send N9 ownwindow
+ N9 02:20:39.912661 done ownwindow N9 hwnd=23202154
+02:20:39.912725 run send N9 probe
+ N9 02:20:39.920525 done probe N9 start=02:20:39.912747 ms=7.8 result=false
+02:20:39.920641 run send N9 efh
+ N9 02:20:39.921033 done efh N9 start=02:20:39.920674 ms=0.4 ok
+02:20:39.921106 run send N9 target 57607108
+ N9 02:20:39.921159 done target N9
+02:20:39.921216 run send N9 probe
+  S 02:20:39.921350 getobject-begin hwnd=57607108 objid=-25 wparam=0x58226e00 insend=0x1 in_hold=false
+  S 02:20:39.921419 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=71 in_hold=false
+  S 02:20:39.922134 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.922162 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+ N9 02:20:39.922602 done probe N9 start=02:20:39.921240 ms=1.4 result=true
+02:20:39.922668 run send N9 efh
+  S 02:20:39.922823 getobject-begin hwnd=57607108 objid=-25 wparam=0x58226e01 insend=0x1 in_hold=false
+  S 02:20:39.922866 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=44 in_hold=false
+  S 02:20:39.923346 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.923374 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+ N9 02:20:39.923708 done efh N9 start=02:20:39.922700 ms=1.0 ok
+02:20:39.923784 run send N9 quit
+02:20:39.978406 run spawn X10 client 57607108 X10
+02:20:39.978446 run send X10 init
+X10 02:20:39.985279 client-ready X10
+X10 02:20:39.989361 done init X10 start=02:20:39.985311 ms=4.0 ok
+02:20:39.989438 run send X10 target 24839584
+X10 02:20:39.989471 done target X10
+02:20:39.989527 run send X10 probe
+  W 02:20:39.996569 getobject-begin hwnd=24839584 objid=-25 wparam=0x582dec29 insend=0x1 in_hold=false
+  W 02:20:39.996664 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=102 in_hold=false
+  W 02:20:39.997364 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:39.997414 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=50 in_hold=false
+X10 02:20:39.997824 done probe X10 start=02:20:39.989549 ms=8.3 result=true
+02:20:39.997886 run send X10 efh
+  W 02:20:39.998035 getobject-begin hwnd=24839584 objid=-25 wparam=0x582dec2a insend=0x1 in_hold=false
+  W 02:20:39.998077 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=43 in_hold=false
+  W 02:20:39.998529 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:39.998559 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=31 in_hold=false
+X10 02:20:39.998953 done efh X10 start=02:20:39.997913 ms=1.0 ok
+02:20:39.999087 run send X10 target 57607108
+X10 02:20:39.999230 done target X10
+02:20:39.999297 run send X10 probe
+  S 02:20:39.999423 getobject-begin hwnd=57607108 objid=-25 wparam=0x582dec2b insend=0x1 in_hold=false
+  S 02:20:39.999482 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=61 in_hold=false
+  S 02:20:39.999914 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:39.999951 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+X10 02:20:40.000246 done probe X10 start=02:20:39.999322 ms=0.9 result=true
+02:20:40.000290 run send X10 efh
+  S 02:20:40.000410 getobject-begin hwnd=57607108 objid=-25 wparam=0x582dec2c insend=0x1 in_hold=false
+  S 02:20:40.000453 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=44 in_hold=false
+  S 02:20:40.000882 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.000910 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+X10 02:20:40.001233 done efh X10 start=02:20:40.000312 ms=0.9 ok
+02:20:40.001293 run send X10 quit
+02:20:40.055774 run spawn N10 client 57607108 N10
+02:20:40.055816 run send N10 init
+N10 02:20:40.061968 client-ready N10
+N10 02:20:40.066056 done init N10 start=02:20:40.062006 ms=4.0 ok
+02:20:40.066132 run send N10 ownwindow
+N10 02:20:40.067483 done ownwindow N10 hwnd=23267690
+02:20:40.067540 run send N10 probe
+N10 02:20:40.074717 done probe N10 start=02:20:40.067566 ms=7.1 result=false
+02:20:40.074817 run send N10 efh
+N10 02:20:40.075242 done efh N10 start=02:20:40.074845 ms=0.4 ok
+02:20:40.075302 run send N10 target 57607108
+N10 02:20:40.075342 done target N10
+02:20:40.075391 run send N10 probe
+  S 02:20:40.075515 getobject-begin hwnd=57607108 objid=-25 wparam=0x5839f021 insend=0x1 in_hold=false
+  S 02:20:40.075583 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=70 in_hold=false
+  S 02:20:40.076278 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.076308 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+N10 02:20:40.076744 done probe N10 start=02:20:40.075413 ms=1.3 result=true
+02:20:40.076801 run send N10 efh
+  S 02:20:40.076918 getobject-begin hwnd=57607108 objid=-25 wparam=0x5839f022 insend=0x1 in_hold=false
+  S 02:20:40.076969 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=51 in_hold=false
+  S 02:20:40.077379 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.077405 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=27 in_hold=false
+N10 02:20:40.077710 done efh N10 start=02:20:40.076835 ms=0.9 ok
+02:20:40.077755 run send N10 quit
+02:20:40.132446 run spawn C10 client 57607108 C10
+02:20:40.132484 run send C10 init
+C10 02:20:40.139403 client-ready C10
+C10 02:20:40.143642 done init C10 start=02:20:40.139437 ms=4.2 ok
+02:20:40.143723 run send C10 probe
+  S 02:20:40.150972 getobject-begin hwnd=57607108 objid=-25 wparam=0x5845b5ed insend=0x1 in_hold=false
+  S 02:20:40.151064 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=98 in_hold=false
+  S 02:20:40.151728 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.151766 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=39 in_hold=false
+C10 02:20:40.152208 done probe C10 start=02:20:40.143749 ms=8.5 result=true
+02:20:40.152282 run send C10 efh
+  S 02:20:40.152423 getobject-begin hwnd=57607108 objid=-25 wparam=0x5845b5ee insend=0x1 in_hold=false
+  S 02:20:40.152486 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=64 in_hold=false
+  S 02:20:40.152935 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.152968 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=35 in_hold=false
+C10 02:20:40.153321 done efh C10 start=02:20:40.152311 ms=1.0 ok
+02:20:40.153380 run send C10 quit
+02:20:40.208810 run spawn N11 client 57607108 N11
+02:20:40.208902 run send N11 init
+N11 02:20:40.217064 client-ready N11
+N11 02:20:40.221353 done init N11 start=02:20:40.217099 ms=4.2 ok
+02:20:40.221435 run send N11 ownwindow
+N11 02:20:40.222819 done ownwindow N11 hwnd=23333226
+02:20:40.222884 run send N11 probe
+N11 02:20:40.230215 done probe N11 start=02:20:40.222913 ms=7.3 result=false
+02:20:40.230316 run send N11 efh
+N11 02:20:40.230703 done efh N11 start=02:20:40.230348 ms=0.4 ok
+02:20:40.230764 run send N11 target 57607108
+N11 02:20:40.230813 done target N11
+02:20:40.230857 run send N11 probe
+  S 02:20:40.231015 getobject-begin hwnd=57607108 objid=-25 wparam=0x5851c624 insend=0x1 in_hold=false
+  S 02:20:40.231088 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=76 in_hold=false
+  S 02:20:40.231794 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.231822 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+N11 02:20:40.232230 done probe N11 start=02:20:40.230883 ms=1.3 result=true
+02:20:40.232299 run send N11 efh
+  S 02:20:40.232436 getobject-begin hwnd=57607108 objid=-25 wparam=0x5851c625 insend=0x1 in_hold=false
+  S 02:20:40.232490 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=54 in_hold=false
+  S 02:20:40.232922 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.232960 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=39 in_hold=false
+N11 02:20:40.233284 done efh N11 start=02:20:40.232338 ms=0.9 ok
+02:20:40.233336 run send N11 quit
+02:20:40.287747 run spawn C11 client 57607108 C11
+02:20:40.287783 run send C11 init
+C11 02:20:40.294912 client-ready C11
+C11 02:20:40.300114 done init C11 start=02:20:40.294960 ms=5.1 ok
+02:20:40.300192 run send C11 probe
+  S 02:20:40.307098 getobject-begin hwnd=57607108 objid=-25 wparam=0x585d5051 insend=0x1 in_hold=false
+  S 02:20:40.307177 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=85 in_hold=false
+  S 02:20:40.307812 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.307840 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+C11 02:20:40.308302 done probe C11 start=02:20:40.300225 ms=8.1 result=true
+02:20:40.308359 run send C11 efh
+  S 02:20:40.308501 getobject-begin hwnd=57607108 objid=-25 wparam=0x585d5052 insend=0x1 in_hold=false
+  S 02:20:40.308544 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=44 in_hold=false
+  S 02:20:40.309029 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.309057 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+C11 02:20:40.309401 done efh C11 start=02:20:40.308392 ms=1.0 ok
+02:20:40.309445 run send C11 quit
+02:20:40.371750 run spawn X11 client 57607108 X11
+02:20:40.371798 run send X11 init
+X11 02:20:40.377816 client-ready X11
+X11 02:20:40.381939 done init X11 start=02:20:40.377848 ms=4.1 ok
+02:20:40.382020 run send X11 target 24839584
+X11 02:20:40.382046 done target X11
+02:20:40.382087 run send X11 probe
+  W 02:20:40.388936 getobject-begin hwnd=24839584 objid=-25 wparam=0x5869e74d insend=0x1 in_hold=false
+  W 02:20:40.389054 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=123 in_hold=false
+  W 02:20:40.389795 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:40.389830 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=36 in_hold=false
+X11 02:20:40.390319 done probe X11 start=02:20:40.382112 ms=8.2 result=true
+02:20:40.390391 run send X11 efh
+  W 02:20:40.390520 getobject-begin hwnd=24839584 objid=-25 wparam=0x5869e74e insend=0x1 in_hold=false
+  W 02:20:40.390563 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=43 in_hold=false
+  W 02:20:40.390988 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:40.391019 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=31 in_hold=false
+X11 02:20:40.391347 done efh X11 start=02:20:40.390416 ms=0.9 ok
+02:20:40.391400 run send X11 target 57607108
+X11 02:20:40.391520 done target X11
+02:20:40.391574 run send X11 probe
+  S 02:20:40.391700 getobject-begin hwnd=57607108 objid=-25 wparam=0x5869e74f insend=0x1 in_hold=false
+  S 02:20:40.391762 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=65 in_hold=false
+  S 02:20:40.392229 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.392258 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+X11 02:20:40.392561 done probe X11 start=02:20:40.391595 ms=1.0 result=true
+02:20:40.392644 run send X11 efh
+  S 02:20:40.392752 getobject-begin hwnd=57607108 objid=-25 wparam=0x5869e750 insend=0x1 in_hold=false
+  S 02:20:40.392795 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=44 in_hold=false
+  S 02:20:40.393232 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.393260 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+X11 02:20:40.393611 done efh X11 start=02:20:40.392670 ms=0.9 ok
+02:20:40.393657 run send X11 quit
+02:20:40.448218 run spawn C12 client 57607108 C12
+02:20:40.448275 run send C12 init
+C12 02:20:40.455002 client-ready C12
+C12 02:20:40.459138 done init C12 start=02:20:40.455037 ms=4.1 ok
+02:20:40.459246 run send C12 probe
+  S 02:20:40.466641 getobject-begin hwnd=57607108 objid=-25 wparam=0x5875dc2c insend=0x1 in_hold=false
+  S 02:20:40.466737 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=101 in_hold=false
+  S 02:20:40.467507 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.467537 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+C12 02:20:40.468008 done probe C12 start=02:20:40.459275 ms=8.7 result=true
+02:20:40.468086 run send C12 efh
+  S 02:20:40.468243 getobject-begin hwnd=57607108 objid=-25 wparam=0x5875dc2d insend=0x1 in_hold=false
+  S 02:20:40.468298 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=55 in_hold=false
+  S 02:20:40.468773 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.468811 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=38 in_hold=false
+C12 02:20:40.469281 done efh C12 start=02:20:40.468119 ms=1.2 ok
+02:20:40.469334 run send C12 quit
+02:20:40.524272 run spawn X12 client 57607108 X12
+02:20:40.524337 run send X12 init
+X12 02:20:40.531633 client-ready X12
+X12 02:20:40.536407 done init X12 start=02:20:40.531679 ms=4.7 ok
+02:20:40.536516 run send X12 target 24839584
+X12 02:20:40.536554 done target X12
+02:20:40.536606 run send X12 probe
+  W 02:20:40.545378 getobject-begin hwnd=24839584 objid=-25 wparam=0x5881aa24 insend=0x1 in_hold=false
+  W 02:20:40.545472 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=99 in_hold=false
+  W 02:20:40.546317 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:40.546364 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=46 in_hold=false
+X12 02:20:40.546871 done probe X12 start=02:20:40.536630 ms=10.2 result=true
+02:20:40.546971 run send X12 efh
+  W 02:20:40.547115 getobject-begin hwnd=24839584 objid=-25 wparam=0x5881aa25 insend=0x1 in_hold=false
+  W 02:20:40.547163 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=49 in_hold=false
+  W 02:20:40.547642 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:40.547678 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=37 in_hold=false
+X12 02:20:40.548091 done efh X12 start=02:20:40.547002 ms=1.1 ok
+02:20:40.548150 run send X12 target 57607108
+X12 02:20:40.548291 done target X12
+02:20:40.548348 run send X12 probe
+  S 02:20:40.548477 getobject-begin hwnd=57607108 objid=-25 wparam=0x5881aa26 insend=0x1 in_hold=false
+  S 02:20:40.548539 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=64 in_hold=false
+  S 02:20:40.549032 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.549059 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=28 in_hold=false
+X12 02:20:40.549439 done probe X12 start=02:20:40.548371 ms=1.1 result=true
+02:20:40.549487 run send X12 efh
+  S 02:20:40.549621 getobject-begin hwnd=57607108 objid=-25 wparam=0x5881aa27 insend=0x1 in_hold=false
+  S 02:20:40.549664 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=44 in_hold=false
+  S 02:20:40.550108 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.550135 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=27 in_hold=false
+X12 02:20:40.550455 done efh X12 start=02:20:40.549512 ms=0.9 ok
+02:20:40.550500 run send X12 quit
+02:20:40.604894 run spawn N12 client 57607108 N12
+02:20:40.604931 run send N12 init
+N12 02:20:40.611662 client-ready N12
+N12 02:20:40.615888 done init N12 start=02:20:40.611699 ms=4.2 ok
+02:20:40.615994 run send N12 ownwindow
+N12 02:20:40.617346 done ownwindow N12 hwnd=39061518
+02:20:40.617459 run send N12 probe
+N12 02:20:40.624740 done probe N12 start=02:20:40.617489 ms=7.2 result=false
+02:20:40.624855 run send N12 efh
+N12 02:20:40.625247 done efh N12 start=02:20:40.624887 ms=0.4 ok
+02:20:40.625309 run send N12 target 57607108
+N12 02:20:40.625365 done target N12
+02:20:40.625414 run send N12 probe
+  S 02:20:40.625569 getobject-begin hwnd=57607108 objid=-25 wparam=0x588de0e8 insend=0x1 in_hold=false
+  S 02:20:40.625653 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=87 in_hold=false
+  S 02:20:40.626402 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.626435 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=34 in_hold=false
+N12 02:20:40.626913 done probe N12 start=02:20:40.625438 ms=1.5 result=true
+02:20:40.626977 run send N12 efh
+  S 02:20:40.627097 getobject-begin hwnd=57607108 objid=-25 wparam=0x588de0e9 insend=0x1 in_hold=false
+  S 02:20:40.627166 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=70 in_hold=false
+  S 02:20:40.627605 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.627637 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=33 in_hold=false
+N12 02:20:40.627982 done efh N12 start=02:20:40.627010 ms=1.0 ok
+02:20:40.628039 run send N12 quit
+02:20:40.684832 run spawn X13 client 57607108 X13
+02:20:40.684884 run send X13 init
+X13 02:20:40.691357 client-ready X13
+X13 02:20:40.695488 done init X13 start=02:20:40.691398 ms=4.1 ok
+02:20:40.695572 run send X13 target 24839584
+X13 02:20:40.695604 done target X13
+02:20:40.695653 run send X13 probe
+  W 02:20:40.702598 getobject-begin hwnd=24839584 objid=-25 wparam=0x5899c9db insend=0x1 in_hold=false
+  W 02:20:40.702701 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=110 in_hold=false
+  W 02:20:40.703495 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:40.703533 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=39 in_hold=false
+X13 02:20:40.704048 done probe X13 start=02:20:40.695677 ms=8.4 result=true
+02:20:40.704111 run send X13 efh
+  W 02:20:40.704248 getobject-begin hwnd=24839584 objid=-25 wparam=0x5899c9dc insend=0x1 in_hold=false
+  W 02:20:40.704290 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=43 in_hold=false
+  W 02:20:40.704765 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:40.704797 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=32 in_hold=false
+X13 02:20:40.705195 done efh X13 start=02:20:40.704138 ms=1.1 ok
+02:20:40.705243 run send X13 target 57607108
+X13 02:20:40.705375 done target X13
+02:20:40.705426 run send X13 probe
+  S 02:20:40.705552 getobject-begin hwnd=57607108 objid=-25 wparam=0x5899c9dd insend=0x1 in_hold=false
+  S 02:20:40.705616 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=66 in_hold=false
+  S 02:20:40.706049 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.706078 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+X13 02:20:40.706376 done probe X13 start=02:20:40.705452 ms=0.9 result=true
+02:20:40.706433 run send X13 efh
+  S 02:20:40.706573 getobject-begin hwnd=57607108 objid=-25 wparam=0x5899c9de insend=0x1 in_hold=false
+  S 02:20:40.706613 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=41 in_hold=false
+  S 02:20:40.707068 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.707099 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=32 in_hold=false
+X13 02:20:40.707413 done efh X13 start=02:20:40.706463 ms=0.9 ok
+02:20:40.707467 run send X13 quit
+02:20:40.761973 run spawn N13 client 57607108 N13
+02:20:40.762018 run send N13 init
+N13 02:20:40.768278 client-ready N13
+N13 02:20:40.772376 done init N13 start=02:20:40.768309 ms=4.1 ok
+02:20:40.772446 run send N13 ownwindow
+N13 02:20:40.773880 done ownwindow N13 hwnd=39127054
+02:20:40.774032 run send N13 probe
+N13 02:20:40.781995 done probe N13 start=02:20:40.774073 ms=7.9 result=false
+02:20:40.782105 run send N13 efh
+N13 02:20:40.782519 done efh N13 start=02:20:40.782136 ms=0.4 ok
+02:20:40.782571 run send N13 target 57607108
+N13 02:20:40.782611 done target N13
+02:20:40.782654 run send N13 probe
+  S 02:20:40.782775 getobject-begin hwnd=57607108 objid=-25 wparam=0x58a5de74 insend=0x1 in_hold=false
+  S 02:20:40.782848 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=75 in_hold=false
+  S 02:20:40.783503 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.783531 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+N13 02:20:40.783974 done probe N13 start=02:20:40.782674 ms=1.3 result=true
+02:20:40.784039 run send N13 efh
+  S 02:20:40.784163 getobject-begin hwnd=57607108 objid=-25 wparam=0x58a5de75 insend=0x1 in_hold=false
+  S 02:20:40.784213 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=51 in_hold=false
+  S 02:20:40.784641 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.784670 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+N13 02:20:40.784985 done efh N13 start=02:20:40.784067 ms=0.9 ok
+02:20:40.785046 run send N13 quit
+02:20:40.839665 run spawn C13 client 57607108 C13
+02:20:40.839719 run send C13 init
+C13 02:20:40.846111 client-ready C13
+C13 02:20:40.850396 done init C13 start=02:20:40.846147 ms=4.2 ok
+02:20:40.850473 run send C13 probe
+  S 02:20:40.857989 getobject-begin hwnd=57607108 objid=-25 wparam=0x58b1715c insend=0x1 in_hold=false
+  S 02:20:40.858113 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=128 in_hold=false
+  S 02:20:40.858942 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.859014 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=72 in_hold=false
+C13 02:20:40.859526 done probe C13 start=02:20:40.850503 ms=9.0 result=true
+02:20:40.859608 run send C13 efh
+  S 02:20:40.859734 getobject-begin hwnd=57607108 objid=-25 wparam=0x58b1715d insend=0x1 in_hold=false
+  S 02:20:40.859781 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=48 in_hold=false
+  S 02:20:40.860273 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.860301 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+C13 02:20:40.860678 done efh C13 start=02:20:40.859640 ms=1.0 ok
+02:20:40.860743 run send C13 quit
+02:20:40.915590 run spawn N14 client 57607108 N14
+02:20:40.915629 run send N14 init
+N14 02:20:40.921888 client-ready N14
+N14 02:20:40.925932 done init N14 start=02:20:40.921923 ms=4.0 ok
+02:20:40.926023 run send N14 ownwindow
+N14 02:20:40.927383 done ownwindow N14 hwnd=39192590
+02:20:40.927465 run send N14 probe
+N14 02:20:40.934459 done probe N14 start=02:20:40.927493 ms=7.0 result=false
+02:20:40.934560 run send N14 efh
+N14 02:20:40.935004 done efh N14 start=02:20:40.934592 ms=0.4 ok
+02:20:40.935073 run send N14 target 57607108
+N14 02:20:40.935119 done target N14
+02:20:40.935164 run send N14 probe
+  S 02:20:40.935311 getobject-begin hwnd=57607108 objid=-25 wparam=0x58bd2e32 insend=0x1 in_hold=false
+  S 02:20:40.935387 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=79 in_hold=false
+  S 02:20:40.936147 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.936182 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=37 in_hold=false
+N14 02:20:40.936619 done probe N14 start=02:20:40.935187 ms=1.4 result=true
+02:20:40.936675 run send N14 efh
+  S 02:20:40.936804 getobject-begin hwnd=57607108 objid=-25 wparam=0x58bd2e33 insend=0x1 in_hold=false
+  S 02:20:40.936847 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=44 in_hold=false
+  S 02:20:40.937287 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:40.937314 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+N14 02:20:40.937629 done efh N14 start=02:20:40.936703 ms=0.9 ok
+02:20:40.937674 run send N14 quit
+02:20:40.992129 run spawn C14 client 57607108 C14
+02:20:40.992223 run send C14 init
+C14 02:20:40.999080 client-ready C14
+C14 02:20:41.003778 done init C14 start=02:20:40.999141 ms=4.6 ok
+02:20:41.003892 run send C14 probe
+  S 02:20:41.012766 getobject-begin hwnd=57607108 objid=-25 wparam=0x58c91076 insend=0x1 in_hold=false
+  S 02:20:41.012853 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=93 in_hold=false
+  S 02:20:41.013534 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.013562 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=28 in_hold=false
+C14 02:20:41.013998 done probe C14 start=02:20:41.003923 ms=10.1 result=true
+02:20:41.014072 run send C14 efh
+  S 02:20:41.014218 getobject-begin hwnd=57607108 objid=-25 wparam=0x58c91077 insend=0x1 in_hold=false
+  S 02:20:41.014260 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=43 in_hold=false
+  S 02:20:41.014682 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.014708 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=27 in_hold=false
+C14 02:20:41.015067 done efh C14 start=02:20:41.014102 ms=1.0 ok
+02:20:41.015134 run send C14 quit
+02:20:41.069423 run spawn X14 client 57607108 X14
+02:20:41.069466 run send X14 init
+X14 02:20:41.076188 client-ready X14
+X14 02:20:41.080433 done init X14 start=02:20:41.076223 ms=4.2 ok
+02:20:41.080545 run send X14 target 24839584
+X14 02:20:41.080574 done target X14
+02:20:41.080627 run send X14 probe
+  W 02:20:41.089766 getobject-begin hwnd=24839584 objid=-25 wparam=0x58d4c8ff insend=0x1 in_hold=false
+  W 02:20:41.089855 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=94 in_hold=false
+  W 02:20:41.090585 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:41.090619 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=34 in_hold=false
+X14 02:20:41.091049 done probe X14 start=02:20:41.080652 ms=10.4 result=true
+02:20:41.091114 run send X14 efh
+  W 02:20:41.091279 getobject-begin hwnd=24839584 objid=-25 wparam=0x58d4c900 insend=0x1 in_hold=false
+  W 02:20:41.091335 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=57 in_hold=false
+  W 02:20:41.091832 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:41.091860 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=29 in_hold=false
+X14 02:20:41.092219 done efh X14 start=02:20:41.091156 ms=1.1 ok
+02:20:41.092269 run send X14 target 57607108
+X14 02:20:41.092394 done target X14
+02:20:41.092439 run send X14 probe
+  S 02:20:41.092591 getobject-begin hwnd=57607108 objid=-25 wparam=0x58d4c901 insend=0x1 in_hold=false
+  S 02:20:41.092663 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=74 in_hold=false
+  S 02:20:41.093097 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.093125 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+X14 02:20:41.093438 done probe X14 start=02:20:41.092464 ms=1.0 result=true
+02:20:41.093504 run send X14 efh
+  S 02:20:41.093600 getobject-begin hwnd=57607108 objid=-25 wparam=0x58d4c902 insend=0x1 in_hold=false
+  S 02:20:41.093638 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=39 in_hold=false
+  S 02:20:41.094050 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.094084 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=35 in_hold=false
+X14 02:20:41.094393 done efh X14 start=02:20:41.093528 ms=0.9 ok
+02:20:41.094434 run send X14 quit
+02:20:41.150472 run spawn C15 client 57607108 C15
+02:20:41.150522 run send C15 init
+C15 02:20:41.157507 client-ready C15
+C15 02:20:41.161851 done init C15 start=02:20:41.157546 ms=4.3 ok
+02:20:41.161959 run send C15 probe
+  S 02:20:41.168721 getobject-begin hwnd=57607108 objid=-25 wparam=0x58e0f4bf insend=0x1 in_hold=false
+  S 02:20:41.168811 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=94 in_hold=false
+  S 02:20:41.169515 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.169552 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=38 in_hold=false
+C15 02:20:41.170030 done probe C15 start=02:20:41.161992 ms=8.0 result=true
+02:20:41.170101 run send C15 efh
+  S 02:20:41.170252 getobject-begin hwnd=57607108 objid=-25 wparam=0x58e0f4c0 insend=0x1 in_hold=false
+  S 02:20:41.170294 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=43 in_hold=false
+  S 02:20:41.170700 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.170734 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=35 in_hold=false
+C15 02:20:41.171131 done efh C15 start=02:20:41.170135 ms=1.0 ok
+02:20:41.171187 run send C15 quit
+02:20:41.225571 run spawn X15 client 57607108 X15
+02:20:41.225608 run send X15 init
+X15 02:20:41.231877 client-ready X15
+X15 02:20:41.235908 done init X15 start=02:20:41.231910 ms=4.0 ok
+02:20:41.236000 run send X15 target 24839584
+X15 02:20:41.236031 done target X15
+02:20:41.236080 run send X15 probe
+  W 02:20:41.243070 getobject-begin hwnd=24839584 objid=-25 wparam=0x58ec4676 insend=0x1 in_hold=false
+  W 02:20:41.243163 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=99 in_hold=false
+  W 02:20:41.243828 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:41.243860 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=32 in_hold=false
+X15 02:20:41.244396 done probe X15 start=02:20:41.236100 ms=8.3 result=true
+02:20:41.244458 run send X15 efh
+  W 02:20:41.244584 getobject-begin hwnd=24839584 objid=-25 wparam=0x58ec4677 insend=0x1 in_hold=false
+  W 02:20:41.244627 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=44 in_hold=false
+  W 02:20:41.245072 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:41.245100 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=28 in_hold=false
+X15 02:20:41.245459 done efh X15 start=02:20:41.244489 ms=1.0 ok
+02:20:41.245520 run send X15 target 57607108
+X15 02:20:41.245662 done target X15
+02:20:41.245707 run send X15 probe
+  S 02:20:41.245828 getobject-begin hwnd=57607108 objid=-25 wparam=0x58ec4678 insend=0x1 in_hold=false
+  S 02:20:41.245889 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=62 in_hold=false
+  S 02:20:41.246392 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.246421 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+X15 02:20:41.246736 done probe X15 start=02:20:41.245731 ms=1.0 result=true
+02:20:41.246801 run send X15 efh
+  S 02:20:41.246929 getobject-begin hwnd=57607108 objid=-25 wparam=0x58ec4679 insend=0x1 in_hold=false
+  S 02:20:41.246988 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=58 in_hold=false
+  S 02:20:41.247445 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.247473 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+X15 02:20:41.247806 done efh X15 start=02:20:41.246833 ms=1.0 ok
+02:20:41.247866 run send X15 quit
+02:20:41.302449 run spawn N15 client 57607108 N15
+02:20:41.302487 run send N15 init
+N15 02:20:41.308718 client-ready N15
+N15 02:20:41.312864 done init N15 start=02:20:41.308752 ms=4.1 ok
+02:20:41.312956 run send N15 ownwindow
+N15 02:20:41.314316 done ownwindow N15 hwnd=39258126
+02:20:41.314445 run send N15 probe
+N15 02:20:41.321723 done probe N15 start=02:20:41.314482 ms=7.2 result=false
+02:20:41.321826 run send N15 efh
+N15 02:20:41.322233 done efh N15 start=02:20:41.321855 ms=0.4 ok
+02:20:41.322303 run send N15 target 57607108
+N15 02:20:41.322349 done target N15
+02:20:41.322401 run send N15 probe
+  S 02:20:41.322547 getobject-begin hwnd=57607108 objid=-25 wparam=0x58f85a52 insend=0x1 in_hold=false
+  S 02:20:41.322617 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=73 in_hold=false
+  S 02:20:41.323668 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.323714 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=48 in_hold=false
+N15 02:20:41.324088 done probe N15 start=02:20:41.322426 ms=1.7 result=true
+02:20:41.324144 run send N15 efh
+  S 02:20:41.324253 getobject-begin hwnd=57607108 objid=-25 wparam=0x58f85a53 insend=0x1 in_hold=false
+  S 02:20:41.324296 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=44 in_hold=false
+  S 02:20:41.324747 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.324781 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=35 in_hold=false
+N15 02:20:41.325083 done efh N15 start=02:20:41.324176 ms=0.9 ok
+02:20:41.325134 run send N15 quit
+02:20:41.379780 run spawn X16 client 57607108 X16
+02:20:41.379819 run send X16 init
+X16 02:20:41.386210 client-ready X16
+X16 02:20:41.390553 done init X16 start=02:20:41.386250 ms=4.3 ok
+02:20:41.390654 run send X16 target 24839584
+X16 02:20:41.390691 done target X16
+02:20:41.390741 run send X16 probe
+  W 02:20:41.397550 getobject-begin hwnd=24839584 objid=-25 wparam=0x5903e0cc insend=0x1 in_hold=false
+  W 02:20:41.397630 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=85 in_hold=false
+  W 02:20:41.398325 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:41.398355 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=30 in_hold=false
+X16 02:20:41.398804 done probe X16 start=02:20:41.390765 ms=8.0 result=true
+02:20:41.398874 run send X16 efh
+  W 02:20:41.399066 getobject-begin hwnd=24839584 objid=-25 wparam=0x5903e0cd insend=0x1 in_hold=false
+  W 02:20:41.399147 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=82 in_hold=false
+  W 02:20:41.399672 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:41.399712 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=39 in_hold=false
+X16 02:20:41.400108 done efh X16 start=02:20:41.398910 ms=1.2 ok
+02:20:41.400167 run send X16 target 57607108
+X16 02:20:41.400313 done target X16
+02:20:41.400362 run send X16 probe
+  S 02:20:41.400487 getobject-begin hwnd=57607108 objid=-25 wparam=0x5903e0ce insend=0x1 in_hold=false
+  S 02:20:41.400552 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=67 in_hold=false
+  S 02:20:41.401005 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.401034 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+X16 02:20:41.401340 done probe X16 start=02:20:41.400389 ms=0.9 result=true
+02:20:41.401392 run send X16 efh
+  S 02:20:41.401490 getobject-begin hwnd=57607108 objid=-25 wparam=0x5903e0cf insend=0x1 in_hold=false
+  S 02:20:41.401532 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=43 in_hold=false
+  S 02:20:41.401981 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.402022 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=42 in_hold=false
+X16 02:20:41.402304 done efh X16 start=02:20:41.401415 ms=0.9 ok
+02:20:41.402355 run send X16 quit
+02:20:41.456753 run spawn N16 client 57607108 N16
+02:20:41.456792 run send N16 init
+N16 02:20:41.463042 client-ready N16
+N16 02:20:41.467223 done init N16 start=02:20:41.463079 ms=4.1 ok
+02:20:41.467309 run send N16 ownwindow
+N16 02:20:41.468669 done ownwindow N16 hwnd=39323662
+02:20:41.468727 run send N16 probe
+N16 02:20:41.475529 done probe N16 start=02:20:41.468750 ms=6.8 result=false
+02:20:41.475618 run send N16 efh
+N16 02:20:41.475997 done efh N16 start=02:20:41.475647 ms=0.3 ok
+02:20:41.476047 run send N16 target 57607108
+N16 02:20:41.476087 done target N16
+02:20:41.476127 run send N16 probe
+  S 02:20:41.476253 getobject-begin hwnd=57607108 objid=-25 wparam=0x590f9b75 insend=0x1 in_hold=false
+  S 02:20:41.476339 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=89 in_hold=false
+  S 02:20:41.477068 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.477107 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=41 in_hold=false
+N16 02:20:41.477510 done probe N16 start=02:20:41.476148 ms=1.4 result=true
+02:20:41.477561 run send N16 efh
+  S 02:20:41.477669 getobject-begin hwnd=57607108 objid=-25 wparam=0x590f9b76 insend=0x1 in_hold=false
+  S 02:20:41.477713 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=44 in_hold=false
+  S 02:20:41.478134 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.478163 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+N16 02:20:41.478530 done efh N16 start=02:20:41.477587 ms=0.9 ok
+02:20:41.478590 run send N16 quit
+02:20:41.534762 run spawn C16 client 57607108 C16
+02:20:41.534839 run send C16 init
+C16 02:20:41.550375 client-ready C16
+C16 02:20:41.554464 done init C16 start=02:20:41.550412 ms=4.0 ok
+02:20:41.554566 run send C16 probe
+  S 02:20:41.561992 getobject-begin hwnd=57607108 objid=-25 wparam=0x591cfbbf insend=0x1 in_hold=false
+  S 02:20:41.562084 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=99 in_hold=false
+  S 02:20:41.562759 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.562789 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+C16 02:20:41.563179 done probe C16 start=02:20:41.554593 ms=8.6 result=true
+02:20:41.563255 run send C16 efh
+  S 02:20:41.563398 getobject-begin hwnd=57607108 objid=-25 wparam=0x591cfbc0 insend=0x1 in_hold=false
+  S 02:20:41.563439 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=42 in_hold=false
+  S 02:20:41.563792 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.563820 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+C16 02:20:41.564137 done efh C16 start=02:20:41.563292 ms=0.8 ok
+02:20:41.564177 run send C16 quit
+02:20:41.622519 run spawn N17 client 57607108 N17
+02:20:41.622575 run send N17 init
+N17 02:20:41.637405 client-ready N17
+N17 02:20:41.652204 done init N17 start=02:20:41.637436 ms=14.8 ok
+02:20:41.652325 run send N17 ownwindow
+N17 02:20:41.658758 done ownwindow N17 hwnd=50726246
+02:20:41.658854 run send N17 probe
+N17 02:20:41.669683 done probe N17 start=02:20:41.658879 ms=10.8 result=false
+02:20:41.669794 run send N17 efh
+N17 02:20:41.670229 done efh N17 start=02:20:41.669827 ms=0.4 ok
+02:20:41.670287 run send N17 target 57607108
+N17 02:20:41.670334 done target N17
+02:20:41.670394 run send N17 probe
+  S 02:20:41.670518 getobject-begin hwnd=57607108 objid=-25 wparam=0x592d6748 insend=0x1 in_hold=false
+  S 02:20:41.670590 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=74 in_hold=false
+  S 02:20:41.671521 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.671555 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=35 in_hold=false
+N17 02:20:41.672000 done probe N17 start=02:20:41.670415 ms=1.6 result=true
+02:20:41.672070 run send N17 efh
+  S 02:20:41.672200 getobject-begin hwnd=57607108 objid=-25 wparam=0x592d6749 insend=0x1 in_hold=false
+  S 02:20:41.672245 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=45 in_hold=false
+  S 02:20:41.672690 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.672720 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=32 in_hold=false
+N17 02:20:41.673076 done efh N17 start=02:20:41.672103 ms=1.0 ok
+02:20:41.673128 run send N17 quit
+02:20:41.727894 run spawn C17 client 57607108 C17
+02:20:41.728001 run send C17 init
+C17 02:20:41.735132 client-ready C17
+C17 02:20:41.739684 done init C17 start=02:20:41.735169 ms=4.5 ok
+02:20:41.739791 run send C17 probe
+  S 02:20:41.750772 getobject-begin hwnd=57607108 objid=-25 wparam=0x59399e63 insend=0x1 in_hold=false
+  S 02:20:41.750878 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=111 in_hold=false
+  S 02:20:41.751713 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.751749 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=38 in_hold=false
+C17 02:20:41.752260 done probe C17 start=02:20:41.739829 ms=12.4 result=true
+02:20:41.752349 run send C17 efh
+  S 02:20:41.752504 getobject-begin hwnd=57607108 objid=-25 wparam=0x59399e64 insend=0x1 in_hold=false
+  S 02:20:41.752582 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=78 in_hold=false
+  S 02:20:41.753098 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.753131 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=34 in_hold=false
+C17 02:20:41.753521 done efh C17 start=02:20:41.752396 ms=1.1 ok
+02:20:41.753579 run send C17 quit
+02:20:41.807736 run spawn X17 client 57607108 X17
+02:20:41.807782 run send X17 init
+X17 02:20:41.814771 client-ready X17
+X17 02:20:41.818973 done init X17 start=02:20:41.814807 ms=4.2 ok
+02:20:41.819086 run send X17 target 24839584
+X17 02:20:41.819131 done target X17
+02:20:41.819184 run send X17 probe
+  W 02:20:41.828721 getobject-begin hwnd=24839584 objid=-25 wparam=0x5945a9e9 insend=0x1 in_hold=false
+  W 02:20:41.828812 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=95 in_hold=false
+  W 02:20:41.829579 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:41.829610 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=32 in_hold=false
+X17 02:20:41.830083 done probe X17 start=02:20:41.819211 ms=10.9 result=true
+02:20:41.830183 run send X17 efh
+  W 02:20:41.830352 getobject-begin hwnd=24839584 objid=-25 wparam=0x5945a9ea insend=0x1 in_hold=false
+  W 02:20:41.830398 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=47 in_hold=false
+  W 02:20:41.830891 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:41.830923 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=32 in_hold=false
+X17 02:20:41.831351 done efh X17 start=02:20:41.830222 ms=1.1 ok
+02:20:41.831410 run send X17 target 57607108
+X17 02:20:41.831541 done target X17
+02:20:41.831601 run send X17 probe
+  S 02:20:41.831729 getobject-begin hwnd=57607108 objid=-25 wparam=0x5945a9eb insend=0x1 in_hold=false
+  S 02:20:41.831797 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=71 in_hold=false
+  S 02:20:41.832237 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.832267 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+X17 02:20:41.832561 done probe X17 start=02:20:41.831625 ms=0.9 result=true
+02:20:41.832615 run send X17 efh
+  S 02:20:41.832741 getobject-begin hwnd=57607108 objid=-25 wparam=0x5945a9ec insend=0x1 in_hold=false
+  S 02:20:41.832812 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=71 in_hold=false
+  S 02:20:41.833227 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.833256 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+X17 02:20:41.833572 done efh X17 start=02:20:41.832641 ms=0.9 ok
+02:20:41.833623 run send X17 quit
+02:20:41.891765 run spawn C18 client 57607108 C18
+02:20:41.891820 run send C18 init
+C18 02:20:41.898456 client-ready C18
+C18 02:20:41.902472 done init C18 start=02:20:41.898508 ms=4.0 ok
+02:20:41.902545 run send C18 probe
+  S 02:20:41.909154 getobject-begin hwnd=57607108 objid=-25 wparam=0x5951e2a1 insend=0x1 in_hold=false
+  S 02:20:41.909250 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=102 in_hold=false
+  S 02:20:41.909983 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.910035 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=53 in_hold=false
+C18 02:20:41.910467 done probe C18 start=02:20:41.902569 ms=7.9 result=true
+02:20:41.910519 run send C18 efh
+  S 02:20:41.910644 getobject-begin hwnd=57607108 objid=-25 wparam=0x5951e2a2 insend=0x1 in_hold=false
+  S 02:20:41.910687 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=43 in_hold=false
+  S 02:20:41.911127 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.911157 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+C18 02:20:41.911496 done efh C18 start=02:20:41.910548 ms=0.9 ok
+02:20:41.911546 run send C18 quit
+02:20:41.966103 run spawn X18 client 57607108 X18
+02:20:41.966140 run send X18 init
+X18 02:20:41.973300 client-ready X18
+X18 02:20:41.977827 done init X18 start=02:20:41.973334 ms=4.5 ok
+02:20:41.977922 run send X18 target 24839584
+X18 02:20:41.977969 done target X18
+02:20:41.978031 run send X18 probe
+  W 02:20:41.984971 getobject-begin hwnd=24839584 objid=-25 wparam=0x595d71cf insend=0x1 in_hold=false
+  W 02:20:41.985074 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=110 in_hold=false
+  W 02:20:41.985746 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:41.985779 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=33 in_hold=false
+X18 02:20:41.986182 done probe X18 start=02:20:41.978063 ms=8.1 result=true
+02:20:41.986254 run send X18 efh
+  W 02:20:41.986403 getobject-begin hwnd=24839584 objid=-25 wparam=0x595d71d0 insend=0x1 in_hold=false
+  W 02:20:41.986447 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=45 in_hold=false
+  W 02:20:41.986870 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:41.986906 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=36 in_hold=false
+X18 02:20:41.987291 done efh X18 start=02:20:41.986291 ms=1.0 ok
+02:20:41.987358 run send X18 target 57607108
+X18 02:20:41.987515 done target X18
+02:20:41.987580 run send X18 probe
+  S 02:20:41.987719 getobject-begin hwnd=57607108 objid=-25 wparam=0x595d71d1 insend=0x1 in_hold=false
+  S 02:20:41.987783 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=67 in_hold=false
+  S 02:20:41.988241 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.988271 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+X18 02:20:41.988590 done probe X18 start=02:20:41.987609 ms=1.0 result=true
+02:20:41.988654 run send X18 efh
+  S 02:20:41.988778 getobject-begin hwnd=57607108 objid=-25 wparam=0x595d71d2 insend=0x1 in_hold=false
+  S 02:20:41.988821 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=44 in_hold=false
+  S 02:20:41.989244 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:41.989271 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+X18 02:20:41.989560 done efh X18 start=02:20:41.988691 ms=0.9 ok
+02:20:41.989658 run send X18 quit
+02:20:42.044136 run spawn N18 client 57607108 N18
+02:20:42.044183 run send N18 init
+N18 02:20:42.050904 client-ready N18
+N18 02:20:42.054997 done init N18 start=02:20:42.050939 ms=4.1 ok
+02:20:42.055110 run send N18 ownwindow
+N18 02:20:42.056479 done ownwindow N18 hwnd=50791782
+02:20:42.056557 run send N18 probe
+N18 02:20:42.065937 done probe N18 start=02:20:42.056581 ms=9.3 result=false
+02:20:42.066062 run send N18 efh
+N18 02:20:42.066454 done efh N18 start=02:20:42.066095 ms=0.4 ok
+02:20:42.066526 run send N18 target 57607108
+N18 02:20:42.066571 done target N18
+02:20:42.066617 run send N18 probe
+  S 02:20:42.066788 getobject-begin hwnd=57607108 objid=-25 wparam=0x5969ca44 insend=0x1 in_hold=false
+  S 02:20:42.066861 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=75 in_hold=false
+  S 02:20:42.067606 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:42.067635 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+N18 02:20:42.068104 done probe N18 start=02:20:42.066638 ms=1.5 result=true
+02:20:42.068187 run send N18 efh
+  S 02:20:42.068343 getobject-begin hwnd=57607108 objid=-25 wparam=0x5969ca45 insend=0x1 in_hold=false
+  S 02:20:42.068387 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=45 in_hold=false
+  S 02:20:42.068823 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:42.068852 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=31 in_hold=false
+N18 02:20:42.069206 done efh N18 start=02:20:42.068229 ms=1.0 ok
+02:20:42.069266 run send N18 quit
+02:20:42.123873 run spawn X19 client 57607108 X19
+02:20:42.123916 run send X19 init
+X19 02:20:42.130078 client-ready X19
+X19 02:20:42.134415 done init X19 start=02:20:42.130113 ms=4.3 ok
+02:20:42.134497 run send X19 target 24839584
+X19 02:20:42.134530 done target X19
+02:20:42.134574 run send X19 probe
+  W 02:20:42.141728 getobject-begin hwnd=24839584 objid=-25 wparam=0x59757418 insend=0x1 in_hold=false
+  W 02:20:42.141814 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=93 in_hold=false
+  W 02:20:42.142529 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:42.142570 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=41 in_hold=false
+X19 02:20:42.142987 done probe X19 start=02:20:42.134596 ms=8.4 result=true
+02:20:42.143077 run send X19 efh
+  W 02:20:42.143218 getobject-begin hwnd=24839584 objid=-25 wparam=0x59757419 insend=0x1 in_hold=false
+  W 02:20:42.143260 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=43 in_hold=false
+  W 02:20:42.143701 getobject-begin hwnd=24839584 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  W 02:20:42.143730 getobject-end hwnd=24839584 objid=-25 lresult=0x10000 us=29 in_hold=false
+X19 02:20:42.144113 done efh X19 start=02:20:42.143103 ms=1.0 ok
+02:20:42.144165 run send X19 target 57607108
+X19 02:20:42.144291 done target X19
+02:20:42.144346 run send X19 probe
+  S 02:20:42.144468 getobject-begin hwnd=57607108 objid=-25 wparam=0x5975741a insend=0x1 in_hold=false
+  S 02:20:42.144530 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=64 in_hold=false
+  S 02:20:42.145048 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:42.145082 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=35 in_hold=false
+X19 02:20:42.145430 done probe X19 start=02:20:42.144372 ms=1.1 result=true
+02:20:42.145495 run send X19 efh
+  S 02:20:42.145599 getobject-begin hwnd=57607108 objid=-25 wparam=0x5975741b insend=0x1 in_hold=false
+  S 02:20:42.145641 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=43 in_hold=false
+  S 02:20:42.146062 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:42.146091 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=30 in_hold=false
+X19 02:20:42.146420 done efh X19 start=02:20:42.145522 ms=0.9 ok
+02:20:42.146466 run send X19 quit
+02:20:42.201986 run spawn N19 client 57607108 N19
+02:20:42.202053 run send N19 init
+N19 02:20:42.210690 client-ready N19
+N19 02:20:42.215347 done init N19 start=02:20:42.210730 ms=4.6 ok
+02:20:42.215457 run send N19 ownwindow
+N19 02:20:42.217091 done ownwindow N19 hwnd=50857318
+02:20:42.217174 run send N19 probe
+N19 02:20:42.225111 done probe N19 start=02:20:42.217210 ms=7.9 result=false
+02:20:42.225225 run send N19 efh
+N19 02:20:42.225654 done efh N19 start=02:20:42.225260 ms=0.4 ok
+02:20:42.225717 run send N19 target 57607108
+N19 02:20:42.225768 done target N19
+02:20:42.225816 run send N19 probe
+  S 02:20:42.225961 getobject-begin hwnd=57607108 objid=-25 wparam=0x598205d5 insend=0x1 in_hold=false
+  S 02:20:42.226056 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=98 in_hold=false
+  S 02:20:42.226766 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:42.226799 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=33 in_hold=false
+N19 02:20:42.227307 done probe N19 start=02:20:42.225846 ms=1.5 result=true
+02:20:42.227375 run send N19 efh
+  S 02:20:42.227511 getobject-begin hwnd=57607108 objid=-25 wparam=0x598205d6 insend=0x1 in_hold=false
+  S 02:20:42.227551 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=41 in_hold=false
+  S 02:20:42.228044 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:42.228070 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=27 in_hold=false
+N19 02:20:42.228381 done efh N19 start=02:20:42.227412 ms=1.0 ok
+02:20:42.228463 run send N19 quit
+02:20:42.282752 run spawn C19 client 57607108 C19
+02:20:42.282792 run send C19 init
+C19 02:20:42.290186 client-ready C19
+C19 02:20:42.295882 done init C19 start=02:20:42.290259 ms=5.6 ok
+02:20:42.295990 run send C19 probe
+  S 02:20:42.302898 getobject-begin hwnd=57607108 objid=-25 wparam=0x598deac3 insend=0x1 in_hold=false
+  S 02:20:42.302990 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=96 in_hold=false
+  S 02:20:42.303699 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:42.303727 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=29 in_hold=false
+C19 02:20:42.304228 done probe C19 start=02:20:42.296022 ms=8.2 result=true
+02:20:42.304301 run send C19 efh
+  S 02:20:42.304436 getobject-begin hwnd=57607108 objid=-25 wparam=0x598deac4 insend=0x1 in_hold=false
+  S 02:20:42.304481 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=46 in_hold=false
+  S 02:20:42.304955 getobject-begin hwnd=57607108 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 02:20:42.304982 getobject-end hwnd=57607108 objid=-25 lresult=0x10000 us=27 in_hold=false
+C19 02:20:42.305319 done efh C19 start=02:20:42.304330 ms=1.0 ok
+02:20:42.305377 run send C19 quit

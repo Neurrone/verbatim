@@ -1,0 +1,282 @@
+=== run 1
+01:57:38.049591 run spawn S server
+  S 01:57:38.064402 hwnd 32311522 pid 240
+01:57:38.064566 run send S showoff
+  S 01:57:38.064496 ready
+  S 01:57:38.065885 shown-off-screen
+01:57:38.065982 run send S child
+  S 01:57:38.066371 hwnd 26413620 pid 240 child-of 32311522
+01:57:38.071415 run spawn L client 32311522 L
+01:57:38.071501 run send L init
+  L 01:57:38.081422 client-ready L
+  L 01:57:38.086683 done init L start=01:57:38.081467 ms=5.2 ok
+01:57:38.086815 run send L efh
+  S 01:57:38.095483 getobject-begin hwnd=32311522 objid=-25 wparam=0x2080a5cf insend=0x1 in_hold=false
+  S 01:57:38.096771 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=1291 in_hold=false
+  S 01:57:38.098128 getobject-begin hwnd=32311522 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:38.098168 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=42 in_hold=false
+  L 01:57:38.098658 done efh L start=01:57:38.086853 ms=11.8 ok
+01:57:38.098733 run send L rop
+  S 01:57:38.106672 getobject-begin hwnd=32311522 objid=-25 wparam=0x20825284 insend=0x0 in_hold=false
+  S 01:57:38.106750 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=83 in_hold=false
+  S 01:57:38.106970 getobject-begin hwnd=32311522 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:38.106998 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=29 in_hold=false
+  L 01:57:38.107487 done rop L start=01:57:38.098762 ms=8.7 ok
+01:57:38.111770 run spawn B client 26413620 B
+01:57:38.111824 run send B init
+  B 01:57:38.119045 client-ready B
+  B 01:57:38.123490 done init B start=01:57:38.119088 ms=4.4 ok
+01:57:38.123602 run send B efh
+  S 01:57:38.131899 getobject-begin hwnd=26413620 objid=-25 wparam=0x20864e63 insend=0x1 in_hold=false
+  S 01:57:38.132005 getobject-end hwnd=26413620 objid=-25 lresult=0x10000 us=113 in_hold=false
+  S 01:57:38.132708 getobject-begin hwnd=26413620 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:38.132743 getobject-end hwnd=26413620 objid=-25 lresult=0x10000 us=37 in_hold=false
+  S 01:57:38.132933 getobject-begin hwnd=32311522 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:38.132961 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=28 in_hold=false
+  B 01:57:38.133240 done efh B start=01:57:38.123634 ms=9.6 ok
+01:57:38.133311 run send S busy 40
+  S 01:57:38.133370 busy-begin
+01:57:38.133421 run send L async rop
+01:57:38.138456 run send B normalize
+  S 01:57:38.173389 busy-end
+  S 01:57:38.173692 getobject-begin hwnd=32311522 objid=-25 wparam=0x20825285 insend=0x0 in_hold=false
+  S 01:57:38.173743 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=54 in_hold=false
+  S 01:57:38.173925 getobject-begin hwnd=32311522 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:38.173959 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=35 in_hold=false
+  L 01:57:38.174914 done async-rop L start=01:57:38.133618 ms=41.3 ok
+  S 01:57:38.175404 getobject-begin hwnd=32311522 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:38.175449 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=47 in_hold=false
+  S 01:57:38.175564 getobject-begin hwnd=32311522 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:38.175603 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=41 in_hold=false
+  B 01:57:38.176380 done normalize B start=01:57:38.138497 ms=37.9 ok name="uia-provider" hwnd=32311522
+  S 01:57:39.701390 getobject-begin hwnd=32311522 objid=-25 wparam=0x2172de92 insend=0x1 in_hold=false
+  S 01:57:39.701482 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=98 in_hold=false
+  S 01:57:39.701901 getobject-begin hwnd=32311522 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:39.701933 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=33 in_hold=false
+  S 01:57:39.702610 getobject-begin hwnd=32311522 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:39.702649 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=39 in_hold=false
+  S 01:57:39.702719 getobject-begin hwnd=26413620 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:39.702752 getobject-end hwnd=26413620 objid=-25 lresult=0x10000 us=34 in_hold=false
+  S 01:57:39.703076 getobject-begin hwnd=26413620 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:39.703108 getobject-end hwnd=26413620 objid=-25 lresult=0x10000 us=34 in_hold=false
+  S 01:57:39.703335 getobject-begin hwnd=32311522 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:39.703378 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=44 in_hold=false
+  S 01:57:39.727642 getobject-begin hwnd=32311522 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:39.727712 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=76 in_hold=false
+  S 01:57:39.727898 getobject-begin hwnd=26413620 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:39.727973 getobject-end hwnd=26413620 objid=-25 lresult=0x10000 us=75 in_hold=false
+  S 01:57:49.125922 getobject-begin hwnd=32311522 objid=-25 wparam=0x270fe5f0 insend=0x1 in_hold=false
+  S 01:57:49.126006 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=91 in_hold=false
+  S 01:57:49.126580 getobject-begin hwnd=32311522 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:49.126616 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=38 in_hold=false
+  S 01:57:49.127499 getobject-begin hwnd=32311522 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:49.127572 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=74 in_hold=false
+  S 01:57:49.127850 getobject-begin hwnd=26413620 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:49.127894 getobject-end hwnd=26413620 objid=-25 lresult=0x10000 us=45 in_hold=false
+  S 01:57:49.128143 getobject-begin hwnd=26413620 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:49.128184 getobject-end hwnd=26413620 objid=-25 lresult=0x10000 us=41 in_hold=false
+  S 01:57:49.128482 getobject-begin hwnd=32311522 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:49.128510 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=29 in_hold=false
+  S 01:57:49.144356 getobject-begin hwnd=32311522 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:49.144419 getobject-end hwnd=32311522 objid=-25 lresult=0x10000 us=68 in_hold=false
+  S 01:57:49.144473 getobject-begin hwnd=26413620 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:49.144505 getobject-end hwnd=26413620 objid=-25 lresult=0x10000 us=32 in_hold=false
+01:57:53.191537 run timeout waiting L done
+=== run 2
+01:57:53.763697 run spawn S server
+  S 01:57:53.780400 hwnd 32377058 pid 9036
+01:57:53.780541 run send S showoff
+  S 01:57:53.780516 ready
+  S 01:57:53.781876 shown-off-screen
+01:57:53.781938 run send S child
+  S 01:57:53.781896 getobject-begin hwnd=32377058 objid=-25 wparam=0x2877d399 insend=0x1 in_hold=false
+  S 01:57:53.783078 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=1178 in_hold=false
+  S 01:57:53.783137 getobject-begin hwnd=32377058 objid=-25 wparam=0x270fe621 insend=0x1 in_hold=false
+  S 01:57:53.783204 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=68 in_hold=false
+  S 01:57:53.783794 hwnd 26479156 pid 9036 child-of 32377058
+01:57:53.788771 run spawn L client 32377058 L
+01:57:53.788809 run send L init
+  S 01:57:53.784564 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.784610 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=48 in_hold=false
+  S 01:57:53.785146 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.785176 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=31 in_hold=false
+  S 01:57:53.785536 getobject-begin hwnd=26479156 objid=-25 wparam=0x2877d39a insend=0x1 in_hold=false
+  S 01:57:53.785582 getobject-end hwnd=26479156 objid=-25 lresult=0x10000 us=47 in_hold=false
+  S 01:57:53.786820 getobject-begin hwnd=26479156 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.786856 getobject-end hwnd=26479156 objid=-25 lresult=0x10000 us=41 in_hold=false
+  S 01:57:53.787234 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.787260 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=28 in_hold=false
+  S 01:57:53.788132 getobject-begin hwnd=26479156 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.788173 getobject-end hwnd=26479156 objid=-25 lresult=0x10000 us=44 in_hold=false
+  S 01:57:53.788507 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.788539 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=35 in_hold=false
+  S 01:57:53.788632 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.788661 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=30 in_hold=false
+  S 01:57:53.792136 getobject-begin hwnd=26479156 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.792194 getobject-end hwnd=26479156 objid=-25 lresult=0x10000 us=64 in_hold=false
+  S 01:57:53.792309 getobject-begin hwnd=26479156 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.792330 getobject-end hwnd=26479156 objid=-25 lresult=0x10000 us=22 in_hold=false
+  S 01:57:53.792453 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.792474 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=23 in_hold=false
+  S 01:57:53.793126 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.793163 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=41 in_hold=false
+  S 01:57:53.793312 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.793345 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=34 in_hold=false
+  S 01:57:53.794894 getobject-begin hwnd=32377058 objid=-5 wparam=0x4074 insend=0x1 in_hold=false
+  S 01:57:53.795019 getobject-end hwnd=32377058 objid=-5 lresult=0x0 us=129 in_hold=false
+  S 01:57:53.795334 getobject-begin hwnd=32377058 objid=-6 wparam=0x4074 insend=0x1 in_hold=false
+  S 01:57:53.795359 getobject-end hwnd=32377058 objid=-6 lresult=0x0 us=26 in_hold=false
+  S 01:57:53.795413 getobject-begin hwnd=32377058 objid=-2 wparam=0x4074 insend=0x1 in_hold=false
+  S 01:57:53.795429 getobject-end hwnd=32377058 objid=-2 lresult=0x0 us=16 in_hold=false
+  S 01:57:53.795559 getobject-begin hwnd=32377058 objid=-3 wparam=0x4074 insend=0x1 in_hold=false
+  S 01:57:53.795576 getobject-end hwnd=32377058 objid=-3 lresult=0x0 us=19 in_hold=false
+  S 01:57:53.795673 getobject-begin hwnd=32377058 objid=-7 wparam=0x4074 insend=0x1 in_hold=false
+  S 01:57:53.795690 getobject-end hwnd=32377058 objid=-7 lresult=0x0 us=19 in_hold=false
+  S 01:57:53.795938 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.795991 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=55 in_hold=false
+  S 01:57:53.796125 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.796155 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=31 in_hold=false
+  S 01:57:53.796689 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.796717 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=29 in_hold=false
+  S 01:57:53.798062 getobject-begin hwnd=26479156 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.798101 getobject-end hwnd=26479156 objid=-25 lresult=0x10000 us=43 in_hold=false
+  S 01:57:53.798320 getobject-begin hwnd=26479156 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.798357 getobject-end hwnd=26479156 objid=-25 lresult=0x10000 us=38 in_hold=false
+  L 01:57:53.798399 client-ready L
+  S 01:57:53.798509 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.798536 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=27 in_hold=false
+  S 01:57:53.799731 getobject-begin hwnd=26479156 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.799765 getobject-end hwnd=26479156 objid=-25 lresult=0x10000 us=36 in_hold=false
+  S 01:57:53.799864 getobject-begin hwnd=26479156 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.799891 getobject-end hwnd=26479156 objid=-25 lresult=0x10000 us=28 in_hold=false
+  S 01:57:53.800038 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.800067 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=30 in_hold=false
+  S 01:57:53.800629 getobject-begin hwnd=26479156 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.800659 getobject-end hwnd=26479156 objid=-25 lresult=0x10000 us=31 in_hold=false
+  S 01:57:53.800805 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.800845 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=41 in_hold=false
+  L 01:57:53.803254 done init L start=01:57:53.798429 ms=4.8 ok
+01:57:53.803348 run send L efh
+  S 01:57:53.813735 getobject-begin hwnd=32377058 objid=-25 wparam=0x29def519 insend=0x1 in_hold=false
+  S 01:57:53.813848 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=119 in_hold=false
+  S 01:57:53.814610 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.814645 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=38 in_hold=false
+  L 01:57:53.815200 done efh L start=01:57:53.803377 ms=11.8 ok
+01:57:53.815278 run send L rop
+  S 01:57:53.824245 getobject-begin hwnd=32377058 objid=-25 wparam=0x29e09df1 insend=0x0 in_hold=false
+  S 01:57:53.824311 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=71 in_hold=false
+  S 01:57:53.824521 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.824553 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=34 in_hold=false
+  L 01:57:53.824973 done rop L start=01:57:53.815310 ms=9.7 ok
+01:57:53.829878 run spawn B client 26479156 B
+01:57:53.829930 run send B init
+  B 01:57:53.836358 client-ready B
+  B 01:57:53.840798 done init B start=01:57:53.836393 ms=4.4 ok
+01:57:53.840898 run send B efh
+  S 01:57:53.849284 getobject-begin hwnd=26479156 objid=-25 wparam=0x29e49a73 insend=0x1 in_hold=false
+  S 01:57:53.849376 getobject-end hwnd=26479156 objid=-25 lresult=0x10000 us=102 in_hold=false
+  S 01:57:53.850071 getobject-begin hwnd=26479156 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.850104 getobject-end hwnd=26479156 objid=-25 lresult=0x10000 us=36 in_hold=false
+  S 01:57:53.850288 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.850315 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=28 in_hold=false
+  B 01:57:53.850545 done efh B start=01:57:53.840928 ms=9.6 ok
+01:57:53.850610 run send S busy 40
+  S 01:57:53.850661 busy-begin
+01:57:53.850717 run send L async rop
+01:57:53.855755 run send B normalize
+  S 01:57:53.890677 busy-end
+  S 01:57:53.891046 getobject-begin hwnd=32377058 objid=-25 wparam=0x29e09df2 insend=0x0 in_hold=false
+  S 01:57:53.891095 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=51 in_hold=false
+  S 01:57:53.891285 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.891311 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=28 in_hold=false
+  L 01:57:53.891908 done async-rop L start=01:57:53.850884 ms=41.0 ok
+  S 01:57:53.892501 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.892535 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=35 in_hold=false
+  S 01:57:53.892624 getobject-begin hwnd=32377058 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:57:53.892648 getobject-end hwnd=32377058 objid=-25 lresult=0x10000 us=25 in_hold=false
+  B 01:57:53.893322 done normalize B start=01:57:53.855796 ms=37.5 ok name="uia-provider" hwnd=32377058
+01:58:08.894350 run timeout waiting L done
+=== run 3
+01:58:09.479904 run spawn S server
+  S 01:58:09.494779 hwnd 32442594 pid 3776
+01:58:09.494913 run send S showoff
+  S 01:58:09.494854 ready
+  S 01:58:09.496878 shown-off-screen
+01:58:09.496974 run send S child
+  S 01:58:09.497379 hwnd 28051892 pid 3776 child-of 32442594
+01:58:09.502431 run spawn L client 32442594 L
+01:58:09.502618 run send L init
+  L 01:58:09.512006 client-ready L
+  L 01:58:09.520992 done init L start=01:58:09.512085 ms=8.9 ok
+01:58:09.521131 run send L efh
+  S 01:58:09.532569 getobject-begin hwnd=32442594 objid=-25 wparam=0x333d823e insend=0x1 in_hold=false
+  S 01:58:09.534096 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=1541 in_hold=false
+  S 01:58:09.535520 getobject-begin hwnd=32442594 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:09.535577 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=60 in_hold=false
+  L 01:58:09.536087 done efh L start=01:58:09.521164 ms=14.9 ok
+01:58:09.536185 run send L rop
+  S 01:58:09.544822 getobject-begin hwnd=32442594 objid=-25 wparam=0x333f788c insend=0x0 in_hold=false
+  S 01:58:09.544900 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=85 in_hold=false
+  S 01:58:09.545155 getobject-begin hwnd=32442594 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:09.545184 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=31 in_hold=false
+  L 01:58:09.545616 done rop L start=01:58:09.536217 ms=9.4 ok
+01:58:09.550478 run spawn B client 28051892 B
+01:58:09.550529 run send B init
+  B 01:58:09.559859 client-ready B
+  B 01:58:09.565543 done init B start=01:58:09.559898 ms=5.6 ok
+01:58:09.565654 run send B efh
+  S 01:58:09.573904 getobject-begin hwnd=28051892 objid=-25 wparam=0x3343fe5a insend=0x1 in_hold=false
+  S 01:58:09.574004 getobject-end hwnd=28051892 objid=-25 lresult=0x10000 us=106 in_hold=false
+  S 01:58:09.574685 getobject-begin hwnd=28051892 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:09.574722 getobject-end hwnd=28051892 objid=-25 lresult=0x10000 us=39 in_hold=false
+  S 01:58:09.574909 getobject-begin hwnd=32442594 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:09.574940 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=31 in_hold=false
+  B 01:58:09.575206 done efh B start=01:58:09.565691 ms=9.5 ok
+01:58:09.575277 run send S busy 40
+  S 01:58:09.575333 busy-begin
+01:58:09.575403 run send L async rop
+01:58:09.580466 run send B normalize
+  S 01:58:09.615363 busy-end
+  S 01:58:09.615637 getobject-begin hwnd=32442594 objid=-25 wparam=0x333f788d insend=0x0 in_hold=false
+  S 01:58:09.615683 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=48 in_hold=false
+  S 01:58:09.615854 getobject-begin hwnd=32442594 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:09.615880 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=28 in_hold=false
+  L 01:58:09.616409 done async-rop L start=01:58:09.575577 ms=40.8 ok
+  S 01:58:09.617045 getobject-begin hwnd=32442594 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:09.617081 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=37 in_hold=false
+  S 01:58:09.617203 getobject-begin hwnd=32442594 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:09.617257 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=54 in_hold=false
+  B 01:58:09.618485 done normalize B start=01:58:09.580534 ms=37.9 ok name="uia-provider" hwnd=32442594
+  S 01:58:12.445306 getobject-begin hwnd=32442594 objid=-25 wparam=0x34f7477d insend=0x1 in_hold=false
+  S 01:58:12.445408 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=107 in_hold=false
+  S 01:58:12.445851 getobject-begin hwnd=32442594 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:12.445892 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=43 in_hold=false
+  S 01:58:12.446604 getobject-begin hwnd=32442594 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:12.446639 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=36 in_hold=false
+  S 01:58:12.446691 getobject-begin hwnd=28051892 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:12.446718 getobject-end hwnd=28051892 objid=-25 lresult=0x10000 us=28 in_hold=false
+  S 01:58:12.447058 getobject-begin hwnd=28051892 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:12.447090 getobject-end hwnd=28051892 objid=-25 lresult=0x10000 us=33 in_hold=false
+  S 01:58:12.447327 getobject-begin hwnd=32442594 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:12.447520 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=195 in_hold=false
+  S 01:58:12.465314 getobject-begin hwnd=32442594 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:12.465396 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=88 in_hold=false
+  S 01:58:12.465596 getobject-begin hwnd=28051892 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:12.465625 getobject-end hwnd=28051892 objid=-25 lresult=0x10000 us=29 in_hold=false
+  S 01:58:21.867421 getobject-begin hwnd=32442594 objid=-25 wparam=0x3a953cfa insend=0x1 in_hold=false
+  S 01:58:21.867534 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=119 in_hold=false
+  S 01:58:21.868097 getobject-begin hwnd=32442594 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:21.868142 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=47 in_hold=false
+  S 01:58:21.868824 getobject-begin hwnd=32442594 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:21.868861 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=40 in_hold=false
+  S 01:58:21.868914 getobject-begin hwnd=28051892 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:21.868941 getobject-end hwnd=28051892 objid=-25 lresult=0x10000 us=28 in_hold=false
+  S 01:58:21.869227 getobject-begin hwnd=28051892 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:21.869260 getobject-end hwnd=28051892 objid=-25 lresult=0x10000 us=34 in_hold=false
+  S 01:58:21.869489 getobject-begin hwnd=32442594 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:21.869524 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=37 in_hold=false
+  S 01:58:21.888950 getobject-begin hwnd=32442594 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:21.889032 getobject-end hwnd=32442594 objid=-25 lresult=0x10000 us=87 in_hold=false
+  S 01:58:21.889166 getobject-begin hwnd=28051892 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 01:58:21.889214 getobject-end hwnd=28051892 objid=-25 lresult=0x10000 us=50 in_hold=false
+01:58:24.631906 run timeout waiting L done

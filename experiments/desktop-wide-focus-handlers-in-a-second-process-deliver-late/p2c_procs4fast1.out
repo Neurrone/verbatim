@@ -1,0 +1,75 @@
+[1792297335772093] protoM: ondesk-child-pid 12324
+[1792297335795098] protoM: ready
+[1792297335828328] tool find protoM -> 37423708 ondesk-child-pid 13044
+[1792297335841725] C0: ondesk-child-pid 18016
+[1792297335872909] C0: registered C0 desk:pid in 10.6ms
+[1792297335873000] C0: client-ready C0
+[1792297335886892] C1: ondesk-child-pid 8628
+[1792297335938735] C1: registered C1 desk:pid in 10.6ms
+[1792297335938821] C1: client-ready C1
+[1792297335953184] C2: ondesk-child-pid 3296
+[1792297335985311] C2: registered C2 desk:pid in 11.1ms
+[1792297335985401] C2: client-ready C2
+[1792297335999432] C3: ondesk-child-pid 5764
+[1792297336029984] C3: registered C3 desk:pid in 10.3ms
+[1792297336030076] C3: client-ready C3
+[1792297336530463] >protoM: focus btn1
+[1792297336530800] protoM: applied
+[1792297336546113] C3: ev C3 desk:pid focus t=1792297336545729 pid=12324 name="?" hwnd=-1
+[1792297336546169] C2: ev C2 desk:pid focus t=1792297336545885 pid=12324 name="?" hwnd=-1
+[1792297336546391] C1: ev C1 desk:pid focus t=1792297336546115 pid=12324 name="?" hwnd=-1
+[1792297336546508] C0: ev C0 desk:pid focus t=1792297336546262 pid=12324 name="?" hwnd=-1
+[1792297336681152] >protoM: focus item2
+[1792297336681369] protoM: applied
+[1792297336684761] C2: ev C2 desk:pid focus t=1792297336684636 pid=12324 name="?" hwnd=-1
+[1792297336684969] C0: ev C0 desk:pid focus t=1792297336684866 pid=12324 name="?" hwnd=-1
+[1792297336831817] >protoM: focus btn1
+[1792297336832092] protoM: applied
+[1792297336834902] C0: ev C0 desk:pid focus t=1792297336834770 pid=12324 name="?" hwnd=-1
+[1792297336834989] C2: ev C2 desk:pid focus t=1792297336834886 pid=12324 name="?" hwnd=-1
+[1792297336982335] >protoM: focus item2
+[1792297336982591] protoM: applied
+[1792297336985260] C0: ev C0 desk:pid focus t=1792297336985135 pid=12324 name="?" hwnd=-1
+[1792297336985416] C2: ev C2 desk:pid focus t=1792297336985307 pid=12324 name="?" hwnd=-1
+[1792297337132686] >protoM: focus btn1
+[1792297337132913] protoM: applied
+[1792297337135558] C0: ev C0 desk:pid focus t=1792297337135402 pid=12324 name="?" hwnd=-1
+[1792297337135735] C2: ev C2 desk:pid focus t=1792297337135616 pid=12324 name="?" hwnd=-1
+[1792297337283309] >protoM: focus item2
+[1792297337283621] protoM: applied
+[1792297337285567] C0: ev C0 desk:pid focus t=1792297337285420 pid=12324 name="?" hwnd=-1
+[1792297337434713] >protoM: focus btn1
+[1792297337434946] protoM: applied
+[1792297337437178] C0: ev C0 desk:pid focus t=1792297337437052 pid=12324 name="?" hwnd=-1
+[1792297337585100] >protoM: focus item2
+[1792297337585407] protoM: applied
+[1792297337587259] C0: ev C0 desk:pid focus t=1792297337587128 pid=12324 name="?" hwnd=-1
+[1792297337736031] >protoM: focus btn1
+[1792297337736289] protoM: applied
+[1792297337738252] C0: ev C0 desk:pid focus t=1792297337738141 pid=12324 name="?" hwnd=-1
+[1792297337886772] >protoM: focus item2
+[1792297337887058] protoM: applied
+[1792297337888938] C0: ev C0 desk:pid focus t=1792297337888813 pid=12324 name="?" hwnd=-1
+[1792297338697946] C1: ev C1 desk:pid focus t=1792297338697731 pid=12324 name="?" hwnd=-1
+[1792297338698236] C3: ev C3 desk:pid focus t=1792297338698087 pid=12324 name="?" hwnd=-1
+[1792297338701365] C1: ev C1 desk:pid focus t=1792297338701250 pid=12324 name="?" hwnd=-1
+[1792297338701575] C3: ev C3 desk:pid focus t=1792297338701482 pid=12324 name="?" hwnd=-1
+[1792297338704355] C1: ev C1 desk:pid focus t=1792297338704255 pid=12324 name="?" hwnd=-1
+[1792297338704553] C3: ev C3 desk:pid focus t=1792297338704460 pid=12324 name="?" hwnd=-1
+[1792297338708395] C1: ev C1 desk:pid focus t=1792297338708260 pid=12324 name="?" hwnd=-1
+[1792297338708631] C3: ev C3 desk:pid focus t=1792297338708531 pid=12324 name="?" hwnd=-1
+[1792297338711478] C1: ev C1 desk:pid focus t=1792297338711380 pid=12324 name="?" hwnd=-1
+[1792297338711665] C3: ev C3 desk:pid focus t=1792297338711573 pid=12324 name="?" hwnd=-1
+[1792297338714331] C1: ev C1 desk:pid focus t=1792297338714237 pid=12324 name="?" hwnd=-1
+[1792297338714517] C3: ev C3 desk:pid focus t=1792297338714425 pid=12324 name="?" hwnd=-1
+[1792297338716944] C1: ev C1 desk:pid focus t=1792297338716870 pid=12324 name="?" hwnd=-1
+[1792297338717274] C3: ev C3 desk:pid focus t=1792297338717173 pid=12324 name="?" hwnd=-1
+[1792297338719196] C1: ev C1 desk:pid focus t=1792297338719071 pid=12324 name="?" hwnd=-1
+[1792297338719649] C3: ev C3 desk:pid focus t=1792297338719532 pid=12324 name="?" hwnd=-1
+[1792297338721212] C1: ev C1 desk:pid focus t=1792297338721113 pid=12324 name="?" hwnd=-1
+[1792297338721629] C3: ev C3 desk:pid focus t=1792297338721555 pid=12324 name="?" hwnd=-1
+[1792297339295754] C2: ev C2 desk:pid focus t=1792297339295587 pid=12324 name="?" hwnd=-1
+[1792297339297538] C2: ev C2 desk:pid focus t=1792297339297434 pid=12324 name="?" hwnd=-1
+[1792297339298982] C2: ev C2 desk:pid focus t=1792297339298882 pid=12324 name="?" hwnd=-1
+[1792297339300432] C2: ev C2 desk:pid focus t=1792297339300341 pid=12324 name="?" hwnd=-1
+[1792297339301835] C2: ev C2 desk:pid focus t=1792297339301752 pid=12324 name="?" hwnd=-1

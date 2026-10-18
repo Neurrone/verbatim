@@ -1,0 +1,16 @@
+[1792299782084883] holdTV: ondesk-child-pid 5280
+[1792299782107767] holdTV: ready
+[1792299782143885] tool find holdTV -> 85525494 ondesk-child-pid 10628
+[1792299782177394] tool findchild 85525494 WindowsForms10.SysTreeView32.app.0.141b42a_r9_ad1 -> 32834258 ondesk-child-pid 5872
+[1792299782191298] D: ondesk-child-pid 3328
+[1792299782213304] D: refused D name:0 hr=0x80040201 msg="An event was unable to invoke any of the subscribers"
+[1792299782213401] D: client-ready D
+[1792299782213441] >D: read 32834258
+[1792299782226988] D: readdone D took=13ms result=""
+RESULT main10000_other500 answering: readdone D took=13ms result=""
+[1792299782227088] >holdTV: stall 15000
+[1792299782227237] holdTV: stall started
+[1792299782227269] >D: read 32834258
+[1792299782735774] D: readdone D took=508ms result=ERR0x80131505
+RESULT main10000_other500 stalled: readdone D took=508ms result=ERR0x80131505
+[1792299797227364] holdTV: stall ended 1792299797227284

@@ -1,0 +1,24 @@
+22:15:49.646145 run spawn S server
+  S 22:15:49.664542 hwnd 12519990 pid 16452
+22:15:49.669420 run spawn L client 12519990 L
+22:15:49.669501 run send L init
+  S 22:15:49.664725 ready
+  L 22:15:49.678657 client-ready L
+  L 22:15:49.685150 done init L start=22:15:49.678705 ms=6.4 ok
+22:15:49.685341 run send L efh
+  L 22:15:49.700837 done efh L start=22:15:49.685405 ms=15.4 ok
+22:15:49.700976 run send L rop
+  L 22:15:49.713043 done rop L start=22:15:49.701026 ms=12.0 ok
+22:15:49.717661 run spawn B client 12519990 B
+22:15:49.717699 run send B init
+  B 22:15:49.726285 client-ready B
+  B 22:15:49.733123 done init B start=22:15:49.726335 ms=6.8 ok
+22:15:49.733283 run send S armprov 300 5
+  S 22:15:49.733486 armed
+22:15:49.733602 run send L async ropname
+  S 22:15:49.734494 provider-hold
+  S 22:15:49.734522 held
+22:15:49.734591 run send B probe
+  S 22:15:49.759986 released why=after-getobject
+  L 22:15:49.761596 done async-ropname L start=22:15:49.733834 ms=27.8 ok
+  B 22:15:49.762884 done probe B start=22:15:49.734627 ms=28.3 result=true

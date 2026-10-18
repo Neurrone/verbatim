@@ -1,0 +1,8 @@
+focus:
+NodeSnapshot { id: NodeId { outpost: OutpostId(5), number: 2 }, backend: Uia, role: Terminal, name: None, value: None, states: StateSet(3), details: NodeDetails { description: None, keyboard_shortcut: None, position_in_set: None, set_size: None, level: None, rect: Some(Rect { left: -32000, top: -32000, width: 129, height: 28 }), top_level_client: false } }
+
+ancestors, outermost first:
+NodeSnapshot { id: NodeId { outpost: OutpostId(5), number: 3 }, backend: Uia, role: Window, name: Some("verbatim-e2e-console-two-b-mvc41usc"), value: None, states: StateSet(3), details: NodeDetails { description: None, keyboard_shortcut: None, position_in_set: None, set_size: None, level: None, rect: Some(Rect { left: -32000, top: -32000, width: 129, height: 28 }), top_level_client: false } }
+
+navigator:
+NodeSnapshot { id: NodeId { outpost: OutpostId(5), number: 2 }, backend: Uia, role: Terminal, name: None, value: None, states: StateSet(3), details: NodeDetails { description: None, keyboard_shortcut: None, position_in_set: None, set_size: None, level: None, rect: Some(Rect { left: -32000, top: -32000, width: 129, height: 28 }), top_level_client: false } }

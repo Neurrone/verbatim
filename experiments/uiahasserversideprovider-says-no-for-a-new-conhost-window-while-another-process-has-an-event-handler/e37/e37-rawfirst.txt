@@ -1,0 +1,13 @@
+# e37 (raw first): V, one fresh client process, sends the raw probe, then
+# calls UiaHasServerSideProvider, then ElementFromHandleBuildCache with the
+# provider description cached, DELAY ms after the fresh console's window
+# exists.
+spawn V client 0 V
+send V init
+wait V done
+console ${TITLE}
+sleep ${DELAY}
+send V target $HWND | send V rawprobe | send V probe | send V efhbcd
+wait V done efhbcd 20000
+closeconsole
+drain 200

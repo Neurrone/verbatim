@@ -1,0 +1,30 @@
+[1792297792566360] protoA: ondesk-child-pid 5764
+[1792297792588410] protoA: ready
+[1792297792625945] tool find protoA -> 40633306 ondesk-child-pid 15072
+[1792297792639993] protoM: ondesk-child-pid 1160
+[1792297792658734] protoM: ready
+[1792297792692032] tool find protoM -> 8978808 ondesk-child-pid 14848
+[1792297792706736] CA: ondesk-child-pid 16224
+[1792297792740350] CA: node Ok(())
+[1792297792740677] CA: registered CA core
+[1792297792740731] CA: client-ready CA
+[1792297792754887] CM: ondesk-child-pid 14808
+[1792297792788694] CM: node Ok(())
+[1792297792789678] CM: registered CM core
+[1792297792789743] CM: client-ready CM
+[1792297792824805] CR: ondesk-child-pid 5548
+[1792297792853249] CR: node Ok(())
+[1792297792855550] CR: registered CR core
+[1792297792855652] CR: client-ready CR
+=== A raises two UIA focus events
+[1792297793355791] >protoA: focus btn1
+[1792297793356309] protoA: applied
+[1792297793357566] CA: ev CA core event20005 t=1792297793357531
+[1792297793756896] >protoA: focus item1
+[1792297793757245] protoA: applied
+[1792297793758244] CA: ev CA core event20005 t=1792297793758210
+=== M raises two MSAA focus events
+[1792297794157521] >protoM: focus btn1
+[1792297794157818] protoM: applied
+[1792297794758294] >protoM: focus item2
+[1792297794758506] protoM: applied

@@ -1,0 +1,22 @@
+22:10:33.427231 run spawn S server
+  S 22:10:33.440541 hwnd 17434290 pid 8676
+22:10:33.445164 run spawn L client 17434290 L
+22:10:33.445233 run send L init
+  S 22:10:33.440636 ready
+  L 22:10:33.451985 client-ready L
+  L 22:10:33.456469 done init L start=22:10:33.452015 ms=4.4 ok
+22:10:33.456563 run send L efh
+  L 22:10:33.466502 done efh L start=22:10:33.456603 ms=9.9 ok
+22:10:33.466588 run send L rop
+  L 22:10:33.474215 done rop L start=22:10:33.466615 ms=7.6 ok
+22:10:33.478269 run spawn B client 17434290 B
+22:10:33.478305 run send B init
+  B 22:10:33.485045 client-ready B
+  B 22:10:33.489251 done init B start=22:10:33.485074 ms=4.2 ok
+22:10:33.489334 run send S busy 40
+  S 22:10:33.489460 busy-begin
+22:10:33.489531 run send L async rop
+22:10:33.494571 run send B efhbc
+  S 22:10:33.529475 busy-end
+  L 22:10:33.530583 done async-rop L start=22:10:33.489706 ms=40.9 ok
+  B 22:10:35.543644 done efhbc B start=22:10:33.494603 ms=2049.0 ok name="collide"

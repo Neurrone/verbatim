@@ -1,0 +1,29 @@
+# e28's probe with B making no call into S before it (e16 with a
+# 1000 ms busy period). S has a second, idle UI thread. L's remote operation into S's main
+# window waits for the main thread, busy 1000 ms; B, holding the
+# second thread's window's element, calls probe on it.
+spawn S server
+wait S hwnd
+send S newthread
+wait S hwnd
+
+spawn L client $HWND L
+send L init
+wait L done
+send L efh
+wait L done
+send L rop
+wait L done 10000
+
+spawn B client $HWND2 B
+send B init
+wait B done
+
+send S busy 1000
+wait S busy-begin
+send L async rop
+sleep 5
+send B probe
+wait B done 15000
+wait L done 15000
+drain 300

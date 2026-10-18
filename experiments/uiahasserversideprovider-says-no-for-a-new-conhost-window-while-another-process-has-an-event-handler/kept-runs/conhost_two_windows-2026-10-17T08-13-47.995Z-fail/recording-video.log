@@ -1,0 +1,33 @@
+[in#0 @ 000002011e173f40] Capturing whole desktop as 1280x800x32 at (0,0)
+[in#0/gdigrab @ 000002011e173f40] Stream #0: not enough frames to estimate rate; consider increasing probesize
+Input #0, gdigrab, from 'desktop':
+  Duration: N/A, start: 1792224811.625766, bitrate: 491526 kb/s
+  Stream #0:0: Video: bmp, bgra, 1280x800, 491526 kb/s, 15 fps, 1000k tbr, 1000k tbn, start 1792224811.625766
+Stream mapping:
+  Stream #0:0 -> #0:0 (bmp (native) -> h264 (libx264))
+Press [q] to stop, [?] for help
+[libx264 @ 000002011e17b400] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[libx264 @ 000002011e17b400] profile Constrained Baseline, level 3.2, 4:2:0, 8-bit
+[libx264 @ 000002011e17b400] 264 - core 165 r3223 0480cb0 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=0 ref=1 deblock=0:0:0 analyse=0:0 me=dia subme=0 psy=1 psy_rd=1.00:0.00 mixed_ref=0 me_range=16 chroma_me=1 trellis=0 8x8dct=0 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=0 threads=12 lookahead_threads=12 sliced_threads=1 slices=12 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=0 weightp=0 keyint=15 keyint_min=1 scenecut=0 intra_refresh=0 rc=crf mbtree=0 crf=28.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=0
+Output #0, mp4, to 'C:\Users\Dickson\Desktop\projects\verbatim\target\e2e-stage\recording-video.mp4':
+  Metadata:
+    encoder         : Lavf63.1.102
+  Stream #0:0: Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1280x800, q=2-31, 15 fps, 16k tbn
+    Metadata:
+      encoder         : Lavc63.1.102 libx264
+    Side data:
+      CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+
+
+[q] command received. Exiting.
+
+[out#0/mp4 @ 000002011e173900] video:3925KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.182726%
+frame=  234 fps= 15 q=19.0 Lsize=    3932KiB time=00:00:15.53 bitrate=2073.5kbits/s speed=0.999x elapsed=0:00:15.54    
+[libx264 @ 000002011e17b400] frame I:16    Avg QP:15.94  size:206123
+[libx264 @ 000002011e17b400] frame P:218   Avg QP:18.77  size:  3305
+[libx264 @ 000002011e17b400] mb I  I16..4: 100.0%  0.0%  0.0%
+[libx264 @ 000002011e17b400] mb P  I16..4:  1.0%  0.0%  0.0%  P16..4:  5.6%  0.0%  0.0%  0.0%  0.0%    skip:93.4%
+[libx264 @ 000002011e17b400] coded y,uvDC,uvAC intra: 54.7% 50.9% 42.9% inter: 2.5% 3.5% 0.8%
+[libx264 @ 000002011e17b400] i16 v,h,dc,p: 34% 31% 24% 11%
+[libx264 @ 000002011e17b400] i8c dc,h,v,p: 58% 28%  6%  8%
+[libx264 @ 000002011e17b400] kb/s:2060.78

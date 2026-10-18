@@ -1,0 +1,35 @@
+# Downward crossing between processes: S's child window is under T's
+# main window. B holds T's element and calls cachechildren, reaching S's
+# child's provider, while L's remote operation into S waits for S's
+# busy UI thread.
+spawn S server
+wait S hwnd
+spawn T server
+wait T hwnd
+send T showoff
+wait T shown
+send S childof $HWND2
+wait S hwnd
+
+spawn L client $HWND L
+send L init
+wait L done
+send L efh
+wait L done
+send L rop
+wait L done 10000
+
+spawn B client $HWND2 B
+send B init
+wait B done
+send B efh
+wait B done
+
+send S busy 40
+wait S busy-begin
+send L async rop
+sleep 5
+send B cachechildren
+wait B done 15000
+wait L done 15000
+drain 300

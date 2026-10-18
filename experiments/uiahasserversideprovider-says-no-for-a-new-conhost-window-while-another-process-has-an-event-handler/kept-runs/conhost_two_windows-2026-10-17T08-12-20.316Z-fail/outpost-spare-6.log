@@ -1,0 +1,5 @@
+[2m2026-10-17T08:12:11.937404Z[0m [34mDEBUG[0m [2mverbatim_uia::subscribe[0m[2m:[0m a UIA subscription moves [3mfrom[0m[2m=[0m[] [3mto[0m[2m=[0m"nothing" [3melements[0m[2m=[0m[] [3mgroup[0m[2m=[0mBase
+[2m2026-10-17T08:12:11.937754Z[0m [32m INFO[0m [2mverbatim_outpost::outpost[0m[2m:[0m a spare, waiting for its application
+[2m2026-10-17T08:12:17.327790Z[0m [32m INFO[0m [2mverbatim_outpost::outpost[0m[2m:[0m shutting down, as Core asked
+[2m2026-10-17T08:12:17.328200Z[0m [34mDEBUG[0m [2mverbatim_uia::subscribe[0m[2m:[0m a UIA subscription ends: RemoveAllEventHandlers [3mresult[0m[2m=[0mOk(())
+[2m2026-10-17T08:12:17.341479Z[0m [32m INFO[0m [2mverbatim_outpost::outpost[0m[2m:[0m the outpost shut down [3mtarget_pid[0m[2m=[0m0 [3mhandlers_removed_ms[0m[2m=[0m1 [3mcalls_finished_ms[0m[2m=[0m1 [3melapsed_ms[0m[2m=[0m13 [3mworkers[0m[2m=[0m1 [3mbounded[0m[2m=[0m0 [3mobjects[0m[2m=[0m0 [3mfailed_reads[0m[2m=[0m0

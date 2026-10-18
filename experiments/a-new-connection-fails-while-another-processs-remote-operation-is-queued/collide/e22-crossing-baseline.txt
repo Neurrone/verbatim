@@ -1,0 +1,34 @@
+# Baseline for the crossing experiments, nothing busy and no operation
+# queued: S has a main window and a child window of its own, each with
+# its own provider, the main window shown off screen without activation. B holds the child's element and walks up; then holds
+# the main window's element and walks down.
+spawn S server
+wait S hwnd
+send S showoff
+wait S shown
+send S child
+wait S hwnd
+spawn B client $HWND2 B
+send B init
+wait B done
+send B efh
+wait B done
+send B parent
+wait B done
+send B normalize
+wait B done
+send B target $HWND
+wait B done
+send B efh
+wait B done
+send B firstchild
+wait B done
+send B walk
+wait B done
+send B children
+wait B done
+send B cachechildren
+wait B done
+send B descendants
+wait B done
+drain 300

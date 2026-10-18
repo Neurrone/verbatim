@@ -1,0 +1,62 @@
+2026-10-16T22:37:56.164757Z DEBUG verbatim_uia::subscribe: a UIA subscription moves from=[] to="nothing" elements=[] group=Base
+2026-10-16T22:37:56.165229Z  INFO verbatim_outpost::outpost: a spare, waiting for its application
+2026-10-16T22:37:57.334771Z  INFO verbatim_outpost::outpost: watching its application target_pid=3296 image="notepad"
+2026-10-16T22:37:57.335168Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=4672924418054 key=Some(Foreground(39781640)) waiting=1 in_batch=0 batch=0
+2026-10-16T22:37:57.338027Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=1 taken=1 planned=1
+2026-10-16T22:37:57.373668Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=15533816 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-16T22:37:57.402386Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=66932770340865 key=Some(MsaaFocus(15533816, -4, 0)) waiting=1 in_batch=0 batch=1
+2026-10-16T22:37:57.470053Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=15533816 id_object=-8 id_child=0 raised_ms_ago=0
+2026-10-16T22:37:57.471474Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=39781640 class="Notepad" is_uia=false elapsed_ms=133
+2026-10-16T22:37:57.473834Z DEBUG verbatim_outpost::outpost::worker: focus reported role=Pane name=Some("verbatim-e2e-typed-words-mvbjtere.txt - Notepad") foreground=true backend=Msaa ancestors_unknown=false
+2026-10-16T22:37:57.474175Z DEBUG verbatim_outpost::outpost::worker: handled trace=4672924418054 item="fact Some(Foreground(39781640))" elapsed_us=136105 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0 } failed_reads=0
+2026-10-16T22:37:57.474257Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=2 taken=1 planned=1
+2026-10-16T22:37:57.474539Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=4672924418056 key=None waiting=1 in_batch=0 batch=2
+2026-10-16T22:37:57.477916Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=15533816 id_object=-8 id_child=0 raised_ms_ago=0
+2026-10-16T22:37:57.482153Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=15533816 id_object=-8 id_child=0 raised_ms_ago=0
+2026-10-16T22:37:57.482671Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=39781640 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-16T22:37:57.482967Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=66932770340866 key=Some(MsaaFocus(39781640, -4, 0)) waiting=2 in_batch=0 batch=2
+2026-10-16T22:37:57.485334Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=15533816 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-16T22:37:57.485418Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=66932770340867 key=Some(MsaaFocus(15533816, -4, 0)) waiting=3 in_batch=0 batch=2
+2026-10-16T22:37:57.501654Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=4672924418059 key=None waiting=4 in_batch=0 batch=2
+2026-10-16T22:37:57.501754Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=66932770340868 key=Some(NodesHeld) waiting=5 in_batch=0 batch=2
+2026-10-16T22:37:57.505309Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=4672924418060 key=None waiting=6 in_batch=0 batch=2
+2026-10-16T22:37:57.505398Z DEBUG verbatim_outpost::outpost::intake: a UIA focus's marker is dropped with its focus marker=5
+2026-10-16T22:37:57.519538Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=4672924418056 key=Some(UiaFocus([42, 15533816])) waiting=6 in_batch=0 batch=2
+2026-10-16T22:37:57.531371Z DEBUG verbatim_outpost::outpost::intake: a UIA focus's marker is dropped with its focus marker=6
+2026-10-16T22:37:57.534240Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=4672924418061 key=None waiting=5 in_batch=0 batch=2
+2026-10-16T22:37:57.534841Z DEBUG verbatim_outpost::outpost::intake: a UIA focus's marker is dropped with its focus marker=7
+2026-10-16T22:37:57.535620Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=4672924418062 key=None waiting=5 in_batch=0 batch=2
+2026-10-16T22:37:57.535971Z DEBUG verbatim_outpost::outpost::intake: a UIA focus's marker is dropped with its focus marker=8
+2026-10-16T22:38:00.486424Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=15533816 class="RichEditD2DPT" is_uia=false elapsed_ms=3011
+2026-10-16T22:38:00.496154Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=20449332 class="NotepadTextBox" is_uia=false elapsed_ms=0
+2026-10-16T22:38:00.498790Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=39781640 class="Notepad" is_uia=false elapsed_ms=0
+2026-10-16T22:38:00.502085Z DEBUG verbatim_outpost::outpost::worker: focus reported role=EditableText name=None foreground=false backend=Msaa ancestors_unknown=false
+2026-10-16T22:38:00.502273Z DEBUG verbatim_outpost::outpost::worker: the focus-following subscription already follows this focus; it is not moved wanted=None
+2026-10-16T22:38:00.502353Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=66932770340865 key=Some(CaretOf(2)) waiting=5 in_batch=0 batch=2
+2026-10-16T22:38:00.502378Z DEBUG verbatim_outpost::outpost::worker: handled trace=66932770340865 item="fact Some(MsaaFocus(15533816, -4, 0))" elapsed_us=3028098 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0 } failed_reads=0
+2026-10-16T22:38:00.502438Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=3 taken=5 planned=4
+2026-10-16T22:38:00.502949Z DEBUG verbatim_outpost::outpost::read: UIA ancestors continued through MSAA hwnd=20449332 elapsed_us=404
+2026-10-16T22:38:00.502982Z DEBUG verbatim_outpost::outpost::worker: UIA focus reported from the listener's read trace=4672924418056 enrichment_us=505
+2026-10-16T22:38:00.503003Z DEBUG verbatim_outpost::outpost::worker: focus reported role=Document name=Some("Text editor") foreground=false backend=Uia ancestors_unknown=false
+2026-10-16T22:38:00.503120Z DEBUG verbatim_outpost::outpost::worker: the focus-following subscription already follows this focus; it is not moved wanted=None
+2026-10-16T22:38:00.503140Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=4672924418056 key=Some(CaretOf(7)) waiting=1 in_batch=3 batch=3
+2026-10-16T22:38:00.509558Z DEBUG verbatim_outpost::outpost::worker: the focus's own element looked for by its path found=true elapsed_us=6394
+2026-10-16T22:38:00.509627Z DEBUG verbatim_outpost::outpost::worker: the focus-following subscription is moved from=None to=Some((NodeId { outpost: OutpostId(0), number: 7 }, Extended)) runtime_id=Some([42, 15533816])
+2026-10-16T22:38:00.509679Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=4672924418056 key=Some(CaretOf(7)) waiting=1 in_batch=3 batch=3
+2026-10-16T22:38:00.509743Z DEBUG verbatim_outpost::outpost::worker: the focus's element was found; its changes are followed
+2026-10-16T22:38:00.509770Z DEBUG verbatim_outpost::outpost::worker: handled trace=4672924418056 item="UIA focus read 4" elapsed_us=7308 unpublished=CallCounts { uia: 1, msaa: 0, window_messages: 0 } failed_reads=0
+2026-10-16T22:38:00.509838Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: UIA owns the window hwnd=15533816
+2026-10-16T22:38:00.509852Z DEBUG verbatim_outpost::outpost::worker: handled trace=66932770340867 item="fact Some(MsaaFocus(15533816, -4, 0))" elapsed_us=54 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0 } failed_reads=0
+2026-10-16T22:38:00.510282Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: nothing has the focused state hwnd=39781640 id_object=-4 id_child=0
+2026-10-16T22:38:00.510310Z DEBUG verbatim_outpost::outpost::worker: handled trace=66932770340866 item="fact Some(MsaaFocus(39781640, -4, 0))" elapsed_us=442 unpublished=CallCounts { uia: 0, msaa: 15, window_messages: 0 } failed_reads=0
+2026-10-16T22:38:00.510344Z DEBUG verbatim_outpost::outpost::worker: releasing the nodes Core no longer holds held={1} acknowledged=1 position=3 released=None
+2026-10-16T22:38:00.510362Z DEBUG verbatim_outpost::outpost::worker: handled trace=66932770340868 item="nodes held (1)" elapsed_us=29 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0 } failed_reads=0
+2026-10-16T22:38:00.510384Z DEBUG verbatim_outpost::outpost::worker: handled trace=66932770340865 item="caret of NodeId { outpost: OutpostId(0), number: 2 }" elapsed_us=5 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0 } failed_reads=0
+2026-10-16T22:38:00.510418Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=4 taken=1 planned=1
+2026-10-16T22:38:00.511853Z DEBUG verbatim_outpost::outpost::worker: caret read timing elapsed_us=1415 after_focus=true
+2026-10-16T22:38:00.511970Z DEBUG verbatim_outpost::outpost::worker: handled trace=4672924418056 item="caret of NodeId { outpost: OutpostId(0), number: 7 }" elapsed_us=1536 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0 } failed_reads=0
+2026-10-16T22:38:00.512122Z DEBUG verbatim_uia::subscribe: a UIA subscription moves from=[] to="1 elements" elements=[[42, 15533816]] group=Extended
+2026-10-16T22:38:00.532326Z  INFO verbatim_outpost::outpost: shutting down, as Core asked
+2026-10-16T22:38:00.557693Z DEBUG verbatim_uia::subscribe: AddEventHandlerGroup runtime_id=[42, 15533816] result=Ok(())
+2026-10-16T22:38:00.559644Z DEBUG verbatim_uia::subscribe: a UIA subscription ends: RemoveAllEventHandlers result=Ok(())
+2026-10-16T22:38:00.560655Z  INFO verbatim_outpost::outpost: the outpost shut down target_pid=3296 handlers_removed_ms=27 calls_finished_ms=27 elapsed_ms=28 workers=1 bounded=0 objects=7 failed_reads=0

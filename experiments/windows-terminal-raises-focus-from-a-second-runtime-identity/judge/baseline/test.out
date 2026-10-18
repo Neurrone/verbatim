@@ -1,0 +1,10 @@
+
+running 1 test
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.31s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+scenario "measure_terminal_identities": outpost crashes: 0; in this test run so far: 0 in 1 scenario(s)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 105 filtered out; finished in 680.51s
+
+rc=0

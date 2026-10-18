@@ -1,0 +1,15 @@
+# As e38-alone, run with every delay 0 ms (the phase-2 reference).
+spawn U client 0 U
+send U init
+wait U done
+spawn R client 0 R
+send R init
+wait R done
+fgright
+console ${TITLE}
+sleep ${DELAY}
+send R target $HWND | send U target $HWND | send R rawprobe | send U probe | send R efhbcd | send U efhbcd
+wait U done efhbcd 20000
+drain 1500
+closeconsole
+drain 200

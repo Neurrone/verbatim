@@ -1,0 +1,50 @@
+[1792297546736112] protoA: ondesk-child-pid 16440
+[1792297546757477] protoA: ready
+[1792297546790951] tool find protoA -> 3997730 ondesk-child-pid 1520
+[1792297546805120] S: ondesk-child-pid 15316
+[1792297546864334] S: registered S group:3997730:base in 16.9ms
+[1792297546864432] S: client-ready S
+[1792297547164588] >protoA: focus btn1
+[1792297547165269] protoA: applied
+[1792297547166949] S: ev S group:3997730:base focus t=1792297547166881 pid=16440 name="Original Name" hwnd=0
+[1792297547465797] >protoA: focus item1
+[1792297547466212] protoA: applied
+[1792297547467188] S: ev S group:3997730:base focus t=1792297547467145 pid=16440 name="First" hwnd=0
+=== read at about 0 s
+[1792297547767648] >S: held
+[1792297547767767] S: held S count=2
+[1792297547768440] S: heldread S #0 age=0.6s took=0.66ms name="Original Name" focus=false pid=16440 [group:3997730:base pid=16440 name="Original Name" hwnd=0]
+[1792297547768906] S: heldread S #1 age=0.3s took=0.45ms name="First" focus=true pid=16440 [group:3997730:base pid=16440 name="First" hwnd=0]
+=== read at about 30 s
+[1792297578268422] >S: held
+[1792297578268596] S: held S count=2
+[1792297578269041] S: heldread S #0 age=31.1s took=0.50ms name="Original Name" focus=false pid=16440 [group:3997730:base pid=16440 name="Original Name" hwnd=0]
+[1792297578269302] S: heldread S #1 age=30.8s took=0.26ms name="First" focus=true pid=16440 [group:3997730:base pid=16440 name="First" hwnd=0]
+=== read at about 120 s
+[1792297698769992] >S: held
+[1792297698770148] S: held S count=2
+[1792297698770615] S: heldread S #0 age=151.6s took=0.50ms name="Original Name" focus=false pid=16440 [group:3997730:base pid=16440 name="Original Name" hwnd=0]
+[1792297698770920] S: heldread S #1 age=151.3s took=0.32ms name="First" focus=true pid=16440 [group:3997730:base pid=16440 name="First" hwnd=0]
+=== focus moved on (slider1), then read
+[1792297699271346] >protoA: focus slider1
+[1792297699271762] protoA: applied
+[1792297699272861] S: ev S group:3997730:base focus t=1792297699272818 pid=16440 name="Level" hwnd=0
+[1792297699573404] >S: held
+[1792297699573559] S: held S count=3
+[1792297699574005] S: heldread S #0 age=152.4s took=0.47ms name="Original Name" focus=false pid=16440 [group:3997730:base pid=16440 name="Original Name" hwnd=0]
+[1792297699574319] S: heldread S #1 age=152.1s took=0.30ms name="First" focus=false pid=16440 [group:3997730:base pid=16440 name="First" hwnd=0]
+[1792297699574559] S: heldread S #2 age=0.3s took=0.25ms name="Level" focus=true pid=16440 [group:3997730:base pid=16440 name="Level" hwnd=0]
+=== btn1's runtime id given to item2 (take-runtime-id), then read
+[1792297700075133] >protoA: take-runtime-id item2 btn1
+[1792297700075309] protoA: applied
+[1792297700375589] >S: held
+[1792297700375765] S: held S count=3
+[1792297700377039] S: heldread S #0 age=153.2s took=1.30ms name=ERR0x80040201 focus=ERR0x80040201 pid=ERR0x80040201 [group:3997730:base pid=16440 name="Original Name" hwnd=0]
+[1792297700377326] S: heldread S #1 age=152.9s took=0.28ms name="First" focus=false pid=16440 [group:3997730:base pid=16440 name="First" hwnd=0]
+[1792297700377546] S: heldread S #2 age=1.1s took=0.22ms name="Level" focus=true pid=16440 [group:3997730:base pid=16440 name="Level" hwnd=0]
+=== A exits, then read
+[1792297701396587] >S: held
+[1792297701397621] S: held S count=3
+[1792297701397664] S: heldread S #0 age=154.2s took=0.52ms name=ERR0x80040201 focus=ERR0x80040201 pid=ERR0x80040201 [group:3997730:base pid=16440 name="Original Name" hwnd=0]
+[1792297701397676] S: heldread S #1 age=153.9s took=0.17ms name=ERR0x80040201 focus=ERR0x80040201 pid=ERR0x80040201 [group:3997730:base pid=16440 name="First" hwnd=0]
+[1792297701397683] S: heldread S #2 age=2.1s took=0.16ms name=ERR0x80040201 focus=ERR0x80040201 pid=ERR0x80040201 [group:3997730:base pid=16440 name="Level" hwnd=0]

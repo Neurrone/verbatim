@@ -1,0 +1,28 @@
+﻿windows_terminal_commands 1 ok=True probe=fast first="verbatim-e2e-commands-mvbhm2uk window" etl=C:\ProgramData\Verbatim\Traces\verbatim-20261017-053627.etl
+0
+windows_terminal_commands 2 ok=True probe=fast first="verbatim-e2e-commands-mvbhn8zy window" etl=C:\ProgramData\Verbatim\Traces\verbatim-20261017-053721.etl
+0
+windows_terminal_commands 3 ok=True probe=fast first="verbatim-e2e-commands-mvbhy880 window" etl=C:\ProgramData\Verbatim\Traces\verbatim-20261017-054554.etl
+0
+windows_terminal_commands 4 ok=True probe=fast first="verbatim-e2e-commands-mvbhzbfx window" etl=C:\ProgramData\Verbatim\Traces\verbatim-20261017-054645.etl
+0
+windows_terminal_commands 5 ok=True probe=fast first="verbatim-e2e-commands-mvbi09uu window" etl=C:\ProgramData\Verbatim\Traces\verbatim-20261017-054729.etl
+0
+windows_terminal_commands 6 ok=True probe=fast first="verbatim-e2e-commands-mvbi17ht window" etl=C:\ProgramData\Verbatim\Traces\verbatim-20261017-054813.etl
+0
+windows_terminal_commands 7 ok=True probe=fast first="verbatim-e2e-commands-mvbi25nd window" etl=C:\ProgramData\Verbatim\Traces\verbatim-20261017-054856.etl
+0
+windows_terminal_commands 8 ok=True probe=fast first="verbatim-e2e-commands-mvbi33yg window" etl=C:\ProgramData\Verbatim\Traces\verbatim-20261017-054941.etl
+0
+windows_terminal_commands 9 ok=True probe=fast first="verbatim-e2e-commands-mvbi41db window" etl=C:\ProgramData\Verbatim\Traces\verbatim-20261017-055024.etl
+0
+windows_terminal_commands 10 ok=True probe=fast first="verbatim-e2e-commands-mvbi4yqb window" etl=C:\ProgramData\Verbatim\Traces\verbatim-20261017-055107.etl
+0
+windows_terminal_commands 11 ok=True probe=fast first="verbatim-e2e-commands-mvbi5zo9 window" etl=C:\ProgramData\Verbatim\Traces\verbatim-20261017-055155.etl
+0
+windows_terminal_commands 12 ok=True probe=fast first="verbatim-e2e-commands-mvbi71kh window" etl=C:\ProgramData\Verbatim\Traces\verbatim-20261017-055245.etl
+0
+windows_terminal_commands 13 ok=False probe=fast first="verbatim-e2e-commands-mvbi7zno window" etl=C:\ProgramData\Verbatim\Traces\verbatim-20261017-055322.etl
+0
+windows_terminal_commands 14 ok=True probe=fast first="verbatim-e2e-commands-mvbi8pc1 window" etl=C:\ProgramData\Verbatim\Traces\verbatim-20261017-055401.etl
+0

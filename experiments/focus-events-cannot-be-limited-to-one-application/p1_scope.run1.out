@@ -1,0 +1,54 @@
+[1792297129303568] protoA: ondesk-child-pid 13560
+[1792297129330180] protoA: ready
+[1792297129362917] tool find protoA -> 39060442 ondesk-child-pid 9528
+[1792297129376379] protoB: ondesk-child-pid 7928
+[1792297129397332] protoB: ready
+[1792297129432172] tool find protoB -> 48825660 ondesk-child-pid 5492
+[1792297129447847] protoM: ondesk-child-pid 16328
+[1792297129470477] protoM: ready
+[1792297129506263] tool find protoM -> 42665240 ondesk-child-pid 5308
+[1792297129521271] D: ondesk-child-pid 16204
+[1792297129558416] D: registered D desk:min in 13.5ms
+[1792297129558513] D: client-ready D
+[1792297129574700] RG: ondesk-child-pid 17480
+[1792297129607702] RG: registered RG rootgroup:min in 11.1ms
+[1792297129607797] RG: client-ready RG
+[1792297129622029] GA: ondesk-child-pid 10888
+[1792297129659800] GA: registered GA group:39060442:min in 16.8ms
+[1792297129659896] GA: client-ready GA
+[1792297129695519] GB: ondesk-child-pid 5804
+[1792297129734390] GB: registered GB group:48825660:min in 16.8ms
+[1792297129734495] GB: client-ready GB
+[1792297129749100] GM: ondesk-child-pid 14712
+[1792297129790127] GM: registered GM group:42665240:min in 19.8ms
+[1792297129790223] GM: client-ready GM
+[1792297129804472] X: ondesk-child-pid 6648
+[1792297129835792] X: refused X direct:39060442:min hr=0x80070057 msg="Focus events must be registered using IUIAutomation::AddFocusChangedEventHandler"
+[1792297129835888] X: client-ready X
+=== A raises three focus events
+[1792297130336490] >protoA: focus btn1
+[1792297130337172] protoA: applied
+[1792297130339292] GA: ev GA group:39060442:min focus t=1792297130339229 pid=13560 name="Original Name" hwnd=0
+[1792297130738013] >protoA: focus item1
+[1792297130738483] protoA: applied
+[1792297130739372] GA: ev GA group:39060442:min focus t=1792297130739321 pid=13560 name="First" hwnd=0
+[1792297131139759] >protoA: focus slider1
+[1792297131140185] protoA: applied
+[1792297131141223] GA: ev GA group:39060442:min focus t=1792297131141173 pid=13560 name="Level" hwnd=0
+=== B raises two
+[1792297131541920] >protoB: focus btn1
+[1792297131542731] protoB: applied
+[1792297131544849] GB: ev GB group:48825660:min focus t=1792297131544798 pid=7928 name="Original Name" hwnd=0
+[1792297131943479] >protoB: focus item2
+[1792297131943905] protoB: applied
+[1792297131944965] GB: ev GB group:48825660:min focus t=1792297131944921 pid=7928 name="Second" hwnd=0
+=== M (MSAA backend, UIA's proxy) raises two
+[1792297132345437] >protoM: focus btn1
+[1792297132345908] protoM: applied
+[1792297132350867] D: ev D desk:min focus t=1792297132350818 pid=16328 name="Original Name" hwnd=0
+[1792297132359591] RG: ev RG rootgroup:min focus t=1792297132359548 pid=16328 name="Original Name" hwnd=0
+[1792297132946936] >protoM: focus item2
+[1792297132947169] protoM: applied
+[1792297132949706] D: ev D desk:min focus t=1792297132949635 pid=16328 name="Second" hwnd=0
+[1792297132949866] RG: ev RG rootgroup:min focus t=1792297132949820 pid=16328 name="Second" hwnd=0
+=== done

@@ -1,0 +1,36 @@
+[info] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'C:\Users\Dickson\Desktop\projects\verbatim\target\e2e-stage\recording-video.mp4':
+[info]   Metadata:
+[info]     major_brand     : iso5
+[info]     minor_version   : 512
+[info]     compatible_brands: iso5iso6mp41
+[info]     encoder         : Lavf63.1.102
+[info]   Duration: 00:00:10.40, start: 0.000000, bitrate: 2692 kb/s
+[info]   Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1280x800, 2690 kb/s, 14.90 fps, 14.99 tbr, 16k tbn (default)
+[info]     Metadata:
+[info]       handler_name    : VideoHandler
+[info]       encoder         : Lavc63.1.102 libx264
+[aist#1:0/pcm_s16le @ 000001b941b62900] [warning] Guessed Channel Layout: stereo
+[info] Input #1, wav, from 'C:\Users\Dickson\Desktop\projects\verbatim\target\e2e-stage\recording-audio.wav':
+[info]   Duration: 00:00:08.93, bitrate: 1536 kb/s
+[info]   Stream #1:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 48000 Hz, stereo, s16, 1536 kb/s
+[info] Stream mapping:
+[info]   Stream #0:0 -> #0:0 (copy)
+[info]   Stream #1:0 -> #0:1 (pcm_s16le (native) -> aac (native))
+[info] Press [q] to stop, [?] for help
+[info] Output #0, mp4, to 'C:\Users\Dickson\Desktop\projects\verbatim\target\e2e-stage\recording.mp4':
+[info]   Metadata:
+[info]     major_brand     : iso5
+[info]     minor_version   : 512
+[info]     compatible_brands: iso5iso6mp41
+[info]     encoder         : Lavf63.1.102
+[info]   Stream #0:0(und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1280x800, q=2-31, 2690 kb/s, 14.90 fps, 14.99 tbr, 16k tbn (default)
+[info]     Metadata:
+[info]       handler_name    : VideoHandler
+[info]       encoder         : Lavc63.1.102 libx264
+[info]   Stream #0:1: Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s
+[info]     Metadata:
+[info]       encoder         : Lavc63.1.102 aac
+[mp4 @ 000001b9400cecc0] [info] Starting second pass: moving the moov atom to the beginning of the file
+[out#0/mp4 @ 000001b940003e40] [info] video:3417KiB audio:86KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.180953%
+[info] frame=  155 fps=0.0 q=-1.0 Lsize=    3509KiB time=00:00:10.40 bitrate=2762.6kbits/s speed=48.6x elapsed=0:00:00.21    
+[aac @ 000001b940071200] [info] Qavg: 28352.729

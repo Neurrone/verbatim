@@ -1,0 +1,28 @@
+# e33: B, a new process that has never connected to S, reaches
+# S's top-level window by rootwalkcv from the desktop root while
+# L's remote operation waits in S's busy UI thread (control: no operation), then reads
+# the element found (info). efhbc is the known-failing call, as a
+# positive control for the collision under these timings.
+spawn S server
+wait S hwnd
+send S showtopoff
+wait S shown
+owner $HWND
+spawn L client $HWND L
+send L init
+wait L done
+send L efh
+wait L done
+send L rop
+wait L done 10000
+spawn B client $HWND B
+send B init
+wait B done
+send S busy 300
+wait S busy-begin
+sleep 5
+send B rootwalkcv
+wait B done 15000
+send B info
+wait B done 15000
+drain 500

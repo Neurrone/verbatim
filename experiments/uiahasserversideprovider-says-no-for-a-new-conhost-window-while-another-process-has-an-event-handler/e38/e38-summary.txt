@@ -1,0 +1,516 @@
+## e38-alone
+  run  1 delay=61.3 ; actual=61.6 ; found+19.4ms ; vis+20.5 fg+9.7 ; R.rawprobe 4.2ms s1/0x10000 ; U.probe 25.6ms true ; U.efhbcd 1.8ms real ; R.efhbcd 24.4ms real
+  run  2 delay=72.7 ; actual=73.0 ; found+21.8ms ; vis+18.3 fg+8.9 ; R.rawprobe 4.5ms s1/0x10000 ; U.probe 31.6ms true ; U.efhbcd 2.7ms real ; R.efhbcd 38.1ms real
+  run  3 delay=22.3 ; actual=31.8 ; found+20.9ms ; vis+32.4 fg+32.4 ; R.rawprobe 3.0ms s1/0x10000 ; U.probe 22.9ms true ; U.efhbcd 7.9ms real ; R.efhbcd 29.6ms real
+  run  4 delay=26.7 ; actual=27.1 ; found+21.7ms ; vis+38.4 fg+11.0 ; R.rawprobe 3.4ms s1/0x10000 ; R.efhbcd 30.9ms real ; U.probe 37.4ms true ; U.efhbcd 3.3ms real
+  run  5 delay=1.2 ; actual=1.7 ; found+21.7ms ; vis+25.1 fg+16.9 ; R.rawprobe 22.8ms s1/0x10000 ; U.probe 31.9ms true ; U.efhbcd 2.5ms real ; R.efhbcd 21.3ms real
+  run  6 delay=17 ; actual=18.4 ; found+23.1ms ; vis+20.9 fg+9.5 ; R.rawprobe 5.5ms s1/0x10000 ; U.probe 22.5ms true ; R.efhbcd 16.8ms real ; U.efhbcd 1.1ms real
+  run  7 delay=69.8 ; actual=70.1 ; found+21.1ms ; vis+21.1 fg+9.2 ; R.rawprobe 3.3ms s1/0x10000 ; U.probe 8.7ms true ; U.efhbcd 1.1ms real ; R.efhbcd 8.5ms real
+  run  8 delay=72.4 ; actual=72.8 ; found+25.6ms ; vis+31.6 fg+11.5 ; R.rawprobe 3.5ms s1/0x10000 ; U.probe 9.9ms true ; U.efhbcd 1.1ms real ; R.efhbcd 10.1ms real
+  run  9 delay=47.3 ; actual=47.6 ; found+18.8ms ; vis+20.7 fg+9.4 ; R.rawprobe 3.6ms s1/0x10000 ; U.probe 9.8ms true ; U.efhbcd 1.1ms real ; R.efhbcd 9.0ms real
+  run 10 delay=0 ; actual=0.2 ; found+24.2ms ; vis+21.4 fg+15.5 ; R.rawprobe 27.8ms s1/0x10000 ; U.probe 51.2ms true ; U.efhbcd 1.6ms real ; R.efhbcd 30.5ms real
+  run 11 delay=8.7 ; actual=10.1 ; found+21.5ms ; vis+21.8 fg+11.2 ; R.rawprobe 10.9ms s1/0x10000 ; U.probe 18.3ms true ; U.efhbcd 6.3ms real ; R.efhbcd 17.2ms real
+  run 12 delay=0 ; actual=0.3 ; found+21.1ms ; vis+26.6 fg+11.9 ; R.rawprobe 28.4ms s1/0x10000 ; U.probe 42.5ms true ; U.efhbcd 1.1ms real ; R.efhbcd 16.3ms real
+  run 13 delay=0 ; actual=0.3 ; found+18.5ms ; vis+18.6 fg+10.5 ; R.rawprobe 23.2ms s1/0x10000 ; U.probe 36.4ms true ; U.efhbcd 1.3ms real ; R.efhbcd 22.1ms real
+  run 14 delay=60.8 ; actual=61.1 ; found+55.9ms ; vis+31.0 fg+12.3 ; R.rawprobe 4.3ms s1/0x10000 ; U.probe 14.1ms true ; U.efhbcd 2.2ms real ; R.efhbcd 14.5ms real
+  run 15 delay=47.6 ; actual=47.9 ; found+20.8ms ; vis+18.3 fg+9.7 ; R.rawprobe 3.6ms s1/0x10000 ; U.probe 11.7ms true ; U.efhbcd 1.5ms real ; R.efhbcd 10.8ms real
+  run 16 delay=0 ; actual=0.2 ; found+19.2ms ; vis+18.6 fg+8.8 ; R.rawprobe 23.2ms s1/0x10000 ; U.probe 36.6ms true ; U.efhbcd 2.9ms real ; R.efhbcd 21.8ms real
+  run 17 delay=0 ; actual=0.2 ; found+20.8ms ; vis+22.2 fg+10.6 ; R.rawprobe 22.4ms s1/0x10000 ; U.probe 37.6ms true ; U.efhbcd 2.0ms real ; R.efhbcd 20.9ms real
+  run 18 delay=42.9 ; actual=43.2 ; found+19.6ms ; vis+18.0 fg+7.4 ; R.rawprobe 3.7ms s1/0x10000 ; U.probe 9.3ms true ; U.efhbcd 1.1ms real ; R.efhbcd 9.2ms real
+  run 19 delay=96.3 ; actual=96.6 ; found+22.8ms ; vis+20.6 fg+8.3 ; R.rawprobe 3.4ms s1/0x10000 ; U.probe 8.9ms true ; U.efhbcd 1.1ms real ; R.efhbcd 8.1ms real
+  run 20 delay=95.9 ; actual=96.2 ; found+19.8ms ; vis+18.4 fg+11.2 ; R.rawprobe 3.5ms s1/0x10000 ; U.probe 11.2ms true ; U.efhbcd 1.1ms real ; R.efhbcd 9.8ms real
+  run 21 delay=61.5 ; actual=61.9 ; found+43.7ms ; vis+21.7 fg+9.2 ; R.rawprobe 3.5ms s1/0x10000 ; U.probe 10.9ms true ; U.efhbcd 1.2ms real ; R.efhbcd 9.7ms real
+  run 22 delay=0 ; actual=0.3 ; found+24.0ms ; vis+21.2 fg+15.5 ; R.rawprobe 25.5ms s1/0x10000 ; U.probe 39.8ms true ; U.efhbcd 8.4ms real ; R.efhbcd 26.1ms real
+  run 23 delay=0 ; actual=0.3 ; found+21.8ms ; vis+26.1 fg+14.4 ; R.rawprobe 25.9ms s1/0x10000 ; U.probe 41.9ms true ; U.efhbcd 7.3ms real ; R.efhbcd 27.3ms real
+  run 24 delay=74.7 ; actual=75.0 ; found+20.2ms ; vis+18.4 fg+7.7 ; R.rawprobe 4.1ms s1/0x10000 ; U.probe 10.4ms true ; U.efhbcd 1.4ms real ; R.efhbcd 10.1ms real
+  run 25 delay=2.5 ; actual=2.8 ; found+22.9ms ; vis+22.8 fg+9.6 ; R.rawprobe 24.6ms s1/0x10000 ; U.probe 26.5ms true ; U.efhbcd 7.4ms real ; R.efhbcd 13.5ms real
+  run 26 delay=53.6 ; actual=54.0 ; found+22.0ms ; vis+19.1 fg+10.2 ; R.rawprobe 4.7ms s1/0x10000 ; U.probe 9.8ms true ; U.efhbcd 1.2ms real ; R.efhbcd 9.0ms real
+  run 27 delay=52.7 ; actual=53.0 ; found+26.3ms ; vis+20.8 fg+9.1 ; R.rawprobe 3.5ms s1/0x10000 ; U.probe 11.4ms true ; U.efhbcd 1.5ms real ; R.efhbcd 10.3ms real
+  run 28 delay=25 ; actual=29.8 ; found+20.1ms ; vis+29.2 fg+11.8 ; R.rawprobe 3.6ms s1/0x10000 ; U.probe 21.2ms true ; R.efhbcd 17.9ms real ; U.efhbcd 1.3ms real
+  run 29 delay=63.9 ; actual=64.3 ; found+22.3ms ; vis+23.9 fg+9.9 ; R.rawprobe 5.2ms s1/0x10000 ; U.probe 11.9ms true ; U.efhbcd 1.2ms real ; R.efhbcd 11.3ms real
+  run 30 delay=37.5 ; actual=37.9 ; found+20.3ms ; vis+18.2 fg+9.6 ; R.rawprobe 4.1ms s1/0x10000 ; U.probe 13.2ms true ; R.efhbcd 9.5ms real ; U.efhbcd 0.9ms real
+  run 31 delay=0 ; actual=0.3 ; found+27.0ms ; vis+19.5 fg+13.8 ; R.rawprobe 23.8ms s1/0x10000 ; U.probe 39.6ms true ; U.efhbcd 1.6ms real ; R.efhbcd 18.2ms real
+  run 32 delay=34.5 ; actual=34.8 ; found+18.5ms ; vis+18.5 fg+9.6 ; R.rawprobe 3.4ms s1/0x10000 ; U.probe 10.4ms true ; U.efhbcd 1.4ms real ; R.efhbcd 11.1ms real
+  run 33 delay=89.4 ; actual=89.7 ; found+21.9ms ; vis+22.3 fg+9.0 ; R.rawprobe 3.9ms s1/0x10000 ; U.probe 11.0ms true ; U.efhbcd 1.1ms real ; R.efhbcd 11.3ms real
+  run 34 delay=68.6 ; actual=68.9 ; found+20.4ms ; vis+17.9 fg+12.3 ; R.rawprobe 3.5ms s1/0x10000 ; U.probe 11.9ms true ; U.efhbcd 1.1ms real ; R.efhbcd 10.6ms real
+  run 35 delay=14.1 ; actual=15.1 ; found+20.1ms ; vis+35.2 fg+18.0 ; R.rawprobe 12.0ms s1/0x10000 ; U.probe 25.3ms true ; U.efhbcd 1.3ms real ; R.efhbcd 19.3ms real
+  run 36 delay=37.4 ; actual=38.9 ; found+23.3ms ; vis+17.6 fg+12.7 ; R.rawprobe 4.5ms s1/0x10000 ; U.probe 16.7ms true ; R.efhbcd 14.8ms real ; U.efhbcd 2.3ms real
+  run 37 delay=58.3 ; actual=58.8 ; found+24.5ms ; vis+17.9 fg+8.3 ; R.rawprobe 3.8ms s1/0x10000 ; U.probe 12.6ms true ; U.efhbcd 1.1ms real ; R.efhbcd 12.1ms real
+  run 38 delay=6.6 ; actual=7.0 ; found+19.8ms ; vis+19.4 fg+12.0 ; R.rawprobe 17.6ms s1/0x10000 ; U.probe 28.9ms true ; U.efhbcd 1.7ms real ; R.efhbcd 17.7ms real
+  run 39 delay=32.9 ; actual=33.3 ; found+23.4ms ; vis+18.6 fg+12.3 ; R.rawprobe 3.4ms s1/0x10000 ; U.probe 18.0ms true ; R.efhbcd 16.6ms real ; U.efhbcd 1.7ms real
+  run 40 delay=52.8 ; actual=53.2 ; found+23.8ms ; vis+33.1 fg+10.0 ; R.rawprobe 3.6ms s1/0x10000 ; U.probe 13.2ms true ; U.efhbcd 1.2ms real ; R.efhbcd 12.0ms real
+### e38-alone: 40 trials, 0 odd; answer: count, min-max ms
+  R.efhbcd real: 40, 8.1-38.1
+  R.rawprobe s1/0x10000: 40, 3.0-28.4
+  U.efhbcd real: 40, 0.9-8.4
+  U.probe true: 40, 8.7-51.2
+## e38-listener
+  run  1 delay=59.9 ; actual=60.2 ; found+19.0ms ; vis+23.5 fg+9.5 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 9.9ms true ; R.efhbcd 10.2ms real ; U.efhbcd 0.9ms real ; L.probe@37 0.6ms true ; L.reads 4 first@41 max 2.7ms focused
+  run  2 delay=18.5 ; actual=18.8 ; found+18.6ms ; vis+18.4 fg+11.2 ; R.rawprobe 6.5ms s1/0x10000 ; U.probe 27.9ms true ; R.efhbcd 22.7ms real ; U.efhbcd 1.2ms real ; L.probe@32 1.6ms true ; L.reads 4 first@43 max 1.8ms focused
+  run  3 delay=44.3 ; actual=44.6 ; found+19.9ms ; vis+23.2 fg+9.1 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 9.1ms true ; R.efhbcd 9.4ms real ; U.efhbcd 0.9ms real ; L.probe@29 0.9ms true ; L.reads 4 first@41 max 1.6ms focused
+  run  4 delay=25.2 ; actual=34.7 ; found+20.4ms ; vis+36.4 fg+8.4 ; R.rawprobe 0.4ms s1/0x10000 ; U.probe 18.0ms true ; U.efhbcd 4.2ms real ; R.efhbcd 21.9ms real ; L.probe@33 2.2ms true ; L.reads 4 first@48 max 2.3ms focused
+  run  5 delay=77.3 ; actual=77.6 ; found+26.1ms ; vis+21.3 fg+9.0 ; R.rawprobe 0.1ms s1/0x10000 ; R.efhbcd 9.9ms real ; U.probe 3022.3ms false ; U.efhbcd 1.3ms real ; L.probe@28 0.3ms true ; L.reads 4 first@41 max 3.7ms focused ; ODD
+  run  6 delay=0 ; actual=0.2 ; found+21.1ms ; vis+19.7 fg+10.7 ; R.rawprobe 24.4ms s1/0x10000 ; R.efhbcd 31.7ms real ; U.probe 3027.3ms false ; U.efhbcd 2.1ms real ; L.probe@28 1.9ms true ; L.reads 4 first@40 max 2.1ms focused ; ODD
+  run  7 delay=53 ; actual=53.4 ; found+22.6ms ; vis+21.7 fg+9.2 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 10.0ms true ; R.efhbcd 10.3ms real ; U.efhbcd 0.9ms real ; L.probe@29 2.5ms true ; L.reads 4 first@40 max 3.2ms focused
+  run  8 delay=87.2 ; actual=87.5 ; found+19.7ms ; vis+19.8 fg+9.0 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 9.7ms true ; R.efhbcd 10.0ms real ; U.efhbcd 0.9ms real ; L.probe@26 1.2ms true ; L.reads 4 first@31 max 5.0ms focused
+  run  9 delay=9.4 ; actual=10.8 ; found+22.3ms ; vis+40.5 fg+8.8 ; R.rawprobe 16.5ms s1/0x10000 ; U.probe 33.5ms true ; U.efhbcd 3.5ms real ; R.efhbcd 25.3ms real ; L.reads 0
+  run 10 delay=44.3 ; actual=44.6 ; found+20.7ms ; vis+19.8 fg+9.0 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 9.3ms true ; R.efhbcd 9.7ms real ; U.efhbcd 1.0ms real ; L.probe@28 0.5ms true ; L.reads 4 first@34 max 3.6ms focused
+  run 11 delay=19.6 ; actual=19.9 ; found+19.2ms ; vis+20.6 fg+10.2 ; R.rawprobe 7.7ms s1/0x10000 ; U.probe 27.7ms true ; R.efhbcd 21.1ms real ; U.efhbcd 2.1ms real ; L.probe@31 9.4ms true ; L.reads 4 first@45 max 1.6ms focused
+  run 12 delay=0.6 ; actual=0.9 ; found+20.9ms ; vis+23.6 fg+16.4 ; R.rawprobe 27.4ms s1/0x10000 ; U.probe 43.4ms true ; U.efhbcd 5.6ms real ; R.efhbcd 24.7ms real ; L.probe@31 3.8ms true ; L.reads 4 first@50 max 2.2ms focused
+  run 13 delay=37.6 ; actual=38.7 ; found+21.7ms ; vis+19.3 fg+11.8 ; R.rawprobe 0.2ms s1/0x10000 ; U.probe 13.8ms true ; R.efhbcd 14.8ms real ; U.efhbcd 1.1ms real ; L.probe@29 1.6ms true ; L.reads 4 first@37 max 2.6ms focused
+  run 14 delay=0 ; actual=0.3 ; found+20.7ms ; vis+19.8 fg+9.3 ; R.rawprobe 26.7ms s1/0x10000 ; U.probe 40.7ms true ; U.efhbcd 5.7ms real ; R.efhbcd 20.4ms real ; L.probe@31 1.5ms true ; L.reads 4 first@39 max 3.4ms focused
+  run 15 delay=0 ; actual=0.2 ; found+44.8ms ; vis+22.3 fg+8.9 ; R.rawprobe 27.5ms s1/0x10000 ; U.probe 37.3ms true ; U.efhbcd 6.7ms real ; R.efhbcd 20.6ms real ; L.probe@30 2.1ms true ; L.reads 4 first@38 max 2.5ms focused
+  run 16 delay=92.8 ; actual=93.1 ; found+49.6ms ; vis+21.5 fg+9.2 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 9.2ms true ; R.efhbcd 9.5ms real ; U.efhbcd 0.9ms real ; L.probe@30 3.3ms true ; L.reads 4 first@44 max 1.7ms focused
+  run 17 delay=28.3 ; actual=28.8 ; found+20.6ms ; vis+20.2 fg+9.7 ; R.rawprobe 0.2ms s1/0x10000 ; R.efhbcd 19.3ms real ; U.probe 26.5ms true ; U.efhbcd 1.0ms real ; L.probe@37 0.7ms true ; L.reads 4 first@42 max 2.8ms focused
+  run 18 delay=0 ; actual=0.3 ; found+20.6ms ; vis+20.2 fg+9.4 ; R.rawprobe 25.0ms s1/0x10000 ; U.probe 36.4ms true ; U.efhbcd 8.1ms real ; R.efhbcd 21.7ms real ; L.probe@30 2.2ms true ; L.reads 4 first@43 max 1.4ms focused
+  run 19 delay=90.7 ; actual=91.0 ; found+21.7ms ; vis+32.3 fg+9.9 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 9.7ms true ; R.efhbcd 10.0ms real ; U.efhbcd 0.9ms real ; L.probe@31 0.5ms true ; L.reads 4 first@38 max 4.4ms focused
+  run 20 delay=71 ; actual=71.3 ; found+18.7ms ; vis+20.1 fg+9.0 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 9.8ms true ; R.efhbcd 10.2ms real ; U.efhbcd 1.2ms real ; L.probe@27 1.2ms true ; L.reads 4 first@34 max 3.1ms focused
+  run 21 delay=68.5 ; actual=68.8 ; found+20.5ms ; vis+21.5 fg+9.1 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 12.1ms true ; R.efhbcd 12.5ms real ; U.efhbcd 1.2ms real ; L.probe@32 1.0ms true ; L.reads 4 first@47 max 2.0ms focused
+  run 22 delay=67.9 ; actual=68.2 ; found+19.0ms ; vis+37.0 fg+10.2 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 9.8ms true ; R.efhbcd 10.3ms real ; U.efhbcd 1.0ms real ; L.probe@29 0.9ms true ; L.reads 4 first@41 max 2.2ms focused
+  run 23 delay=6.5 ; actual=6.8 ; found+21.4ms ; vis+21.3 fg+8.7 ; R.rawprobe 19.4ms s1/0x10000 ; U.probe 21.4ms true ; U.efhbcd 3.2ms real ; R.efhbcd 20.2ms real ; L.probe@31 6.8ms true ; L.reads 4 first@45 max 2.3ms focused
+  run 24 delay=37.7 ; actual=38.1 ; found+20.0ms ; vis+20.1 fg+11.3 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 16.0ms true ; R.efhbcd 16.6ms real ; U.efhbcd 1.1ms real ; L.probe@39 0.4ms true ; L.reads 4 first@49 max 2.1ms focused
+  run 25 delay=54.7 ; actual=55.0 ; found+22.3ms ; vis+32.2 fg+10.1 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 9.2ms true ; R.efhbcd 9.7ms real ; U.efhbcd 0.9ms real ; L.probe@28 1.5ms true ; L.reads 4 first@36 max 3.9ms focused
+  run 26 delay=0 ; actual=0.3 ; found+21.0ms ; vis+22.1 fg+9.7 ; R.rawprobe 26.2ms s1/0x10000 ; R.efhbcd 18.3ms real ; U.probe 3035.9ms false ; U.efhbcd 1.2ms real ; L.probe@31 1.7ms true ; L.reads 4 first@46 max 2.0ms focused ; ODD
+  run 27 delay=34.1 ; actual=34.4 ; found+22.6ms ; vis+18.6 fg+11.4 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 12.9ms true ; U.efhbcd 1.0ms real ; R.efhbcd 14.2ms real ; L.probe@26 1.5ms true ; L.reads 4 first@36 max 2.9ms focused
+  run 28 delay=53.5 ; actual=53.7 ; found+23.0ms ; vis+20.1 fg+9.0 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 11.3ms true ; R.efhbcd 11.6ms real ; U.efhbcd 1.0ms real ; L.probe@37 1.1ms true ; L.reads 4 first@45 max 1.8ms focused
+  run 29 delay=4.7 ; actual=5.1 ; found+52.7ms ; vis+26.5 fg+14.3 ; R.rawprobe 28.7ms s1/0x10000 ; U.probe 31.4ms true ; U.efhbcd 6.3ms real ; R.efhbcd 19.9ms real ; L.probe@37 2.7ms true ; L.reads 4 first@46 max 4.6ms focused
+  run 30 delay=0 ; actual=0.2 ; found+21.3ms ; vis+20.4 fg+9.9 ; R.rawprobe 26.0ms s1/0x10000 ; R.efhbcd 26.3ms real ; U.probe 3035.7ms false ; U.efhbcd 2.1ms real ; L.probe@34 0.2ms true ; L.reads 4 first@49 max 1.5ms focused ; ODD
+  run 31 delay=0 ; actual=0.2 ; found+18.4ms ; vis+33.7 fg+7.4 ; R.rawprobe 22.2ms s1/0x10000 ; U.probe 34.9ms true ; U.efhbcd 11.1ms real ; R.efhbcd 27.8ms real ; L.probe@32 1.4ms true ; L.reads 4 first@47 max 1.6ms focused
+  run 32 delay=73.1 ; actual=73.4 ; found+20.3ms ; vis+21.5 fg+10.7 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 10.4ms true ; R.efhbcd 10.6ms real ; U.efhbcd 1.0ms real ; L.probe@38 0.7ms true ; L.reads 4 first@47 max 1.5ms focused
+  run 33 delay=99.1 ; actual=99.4 ; found+22.9ms ; vis+22.0 fg+9.4 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 9.8ms true ; R.efhbcd 10.1ms real ; U.efhbcd 0.9ms real ; L.probe@38 1.3ms true ; L.reads 4 first@48 max 1.6ms focused
+  run 34 delay=13.4 ; actual=13.7 ; found+19.1ms ; vis+33.7 fg+11.6 ; R.rawprobe 9.7ms s1/0x10000 ; U.probe 27.3ms true ; U.efhbcd 8.1ms real ; R.efhbcd 25.7ms real ; L.probe@29 0.4ms true ; L.reads 4 first@42 max 2.1ms focused
+  run 35 delay=55.1 ; actual=55.4 ; found+19.4ms ; vis+19.4 fg+10.5 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 9.7ms true ; R.efhbcd 10.1ms real ; U.efhbcd 0.9ms real ; L.probe@35 3.2ms true ; L.reads 4 first@44 max 1.7ms focused
+  run 36 delay=90.4 ; actual=90.7 ; found+19.8ms ; vis+34.2 fg+9.1 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 9.6ms true ; R.efhbcd 9.9ms real ; U.efhbcd 1.0ms real ; L.probe@30 1.1ms true ; L.reads 4 first@40 max 2.2ms focused
+  run 37 delay=46.2 ; actual=46.8 ; found+20.7ms ; vis+22.0 fg+9.5 ; R.rawprobe 1.7ms s1/0x10000 ; R.efhbcd 12.2ms real ; U.probe 3024.7ms false ; U.efhbcd 1.4ms real ; L.probe@42 1.3ms true ; L.reads 4 first@57 max 1.5ms focused ; ODD
+  run 38 delay=0 ; actual=0.2 ; found+19.2ms ; vis+19.6 fg+10.6 ; R.rawprobe 26.3ms s1/0x10000 ; U.probe 43.2ms true ; U.efhbcd 9.0ms real ; R.efhbcd 27.6ms real ; L.probe@38 0.3ms true ; L.reads 4 first@46 max 3.6ms focused
+  run 39 delay=85.2 ; actual=85.5 ; found+20.2ms ; vis+25.0 fg+9.0 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 10.5ms true ; R.efhbcd 10.9ms real ; U.efhbcd 1.0ms real ; L.probe@34 1.3ms true ; L.reads 4 first@41 max 2.4ms focused
+  run 40 delay=73.3 ; actual=73.6 ; found+20.2ms ; vis+19.7 fg+10.2 ; R.rawprobe 0.1ms s1/0x10000 ; U.probe 9.5ms true ; R.efhbcd 9.8ms real ; U.efhbcd 0.9ms real ; L.probe@30 0.4ms true ; L.reads 4 first@46 max 1.4ms focused
+### e38-listener: 40 trials, 5 odd; answer: count, min-max ms
+  L.probe true: 39, 0.2-9.4
+  L.read focused: 156, 0.7-5.0
+  R.efhbcd real: 40, 9.4-31.7
+  R.rawprobe s1/0x10000: 40, 0.1-28.7
+  U.efhbcd real: 40, 0.9-11.1
+  U.probe false: 5, 3022.3-3035.9
+  U.probe true: 35, 9.1-43.4
+## e38-outpost
+  run  1 delay=0 ; actual=0.4 ; found+33.1ms ; vis+17.5 fg+11.6 ; U.hookpid 0.9ms ok ; R.rawprobe 23.0ms s1/0x10000 ; U.probe 34.8ms true ; U.efhbcd 1.5ms real ; R.efhbcd 21.6ms real
+  run  2 delay=63.5 ; actual=63.9 ; found+18.9ms ; vis+33.5 fg+33.5 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.3ms ok ; U.probe 10.4ms true ; R.efhbcd 11.2ms real ; U.efhbcd 0.9ms real
+  run  3 delay=38.5 ; actual=39.0 ; found+24.7ms ; vis+17.4 fg+10.3 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 2.4ms ok ; U.probe 12.0ms true ; R.efhbcd 14.3ms real ; U.efhbcd 0.9ms real
+  run  4 delay=27.1 ; actual=28.4 ; found+44.6ms ; vis+17.2 fg+6.4 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 6.2ms ok ; U.probe 15.9ms true ; U.efhbcd 1.2ms real ; R.efhbcd NO-ANSWER-IN-TRIAL ; ODD
+  run  5 delay=43.1 ; actual=43.6 ; found+25.7ms ; vis+27.2 fg+13.7 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.3ms ok ; U.probe 10.3ms true ; R.efhbcd 10.9ms real ; U.efhbcd 1.1ms real
+  run  6 delay=90.4 ; actual=90.9 ; found+20.3ms ; vis+31.7 fg+11.8 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.3ms ok ; U.probe 11.7ms true ; R.efhbcd 12.5ms real ; U.efhbcd 1.1ms real
+  run  7 delay=74.1 ; actual=74.5 ; found+29.5ms ; vis+18.5 fg+10.7 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.4ms ok ; U.probe 11.1ms true ; R.efhbcd 11.8ms real ; U.efhbcd 0.8ms real
+  run  8 delay=27.5 ; actual=34.4 ; found+80.3ms ; vis+14.6 fg+11.6 ; R.rawprobe 3.5ms s1/0x10000 ; U.hookpid 12.2ms ok ; U.probe 11.6ms true ; R.efhbcd 20.4ms real ; U.efhbcd 1.4ms real
+  run  9 delay=94 ; actual=94.4 ; found+39.5ms ; vis+22.6 fg+10.1 ; R.rawprobe 0.2ms s1/0x10000 ; U.hookpid 0.3ms ok ; U.probe 9.1ms true ; R.efhbcd 9.8ms real ; U.efhbcd 0.9ms real
+  run 10 delay=0 ; actual=0.3 ; found+33.6ms ; vis+34.2 fg+20.0 ; U.hookpid 4.3ms ok ; R.rawprobe 37.0ms s1/0x10000 ; U.probe 46.3ms true ; U.efhbcd 2.4ms real ; R.efhbcd 22.9ms real
+  run 11 delay=91.7 ; actual=92.1 ; found+27.6ms ; vis+59.6 fg+20.1 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 1.5ms ok ; U.probe 8.6ms true ; R.efhbcd 10.4ms real ; U.efhbcd 0.9ms real
+  run 12 delay=15.4 ; actual=32.7 ; found+46.0ms ; vis+29.2 fg+29.3 ; R.rawprobe 4.0ms s1/0x10000 ; U.hookpid 13.1ms ok ; U.probe 13.8ms true ; R.efhbcd 20.9ms real ; U.efhbcd 2.3ms real
+  run 13 delay=63.5 ; actual=68.1 ; found+67.2ms ; vis+36.1 fg+13.1 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 6.3ms ok ; R.efhbcd 113.7ms real ; U.probe 121.9ms true ; U.efhbcd 3.1ms real
+  run 14 delay=97 ; actual=97.3 ; found+40.8ms ; vis+13.3 fg+9.2 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.3ms ok ; U.probe 9.1ms true ; R.efhbcd 9.7ms real ; U.efhbcd 0.9ms real
+  run 15 delay=58.3 ; actual=58.7 ; found+62.7ms ; vis+30.4 fg+30.4 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.9ms ok ; R.efhbcd 13.7ms real ; U.probe 13.9ms true ; U.efhbcd 1.0ms real
+  run 16 delay=99.2 ; actual=99.5 ; found+25.4ms ; vis+19.9 fg+8.6 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.6ms ok ; U.probe 10.3ms true ; R.efhbcd 11.5ms real ; U.efhbcd 1.1ms real
+  run 17 delay=0 ; actual=0.3 ; found+23.7ms ; vis+19.2 fg+8.3 ; U.hookpid 0.3ms ok ; R.rawprobe 25.8ms s1/0x10000 ; R.efhbcd 22.7ms real ; U.probe 3028.2ms false ; U.efhbcd 2.5ms real ; ODD
+  run 18 delay=13.4 ; actual=20.4 ; found+31.5ms ; vis+30.2 fg+19.4 ; R.rawprobe 6.9ms s1/0x10000 ; U.hookpid 21.0ms ok ; R.efhbcd 29.1ms real ; U.probe 18.2ms true ; U.efhbcd 0.9ms real
+  run 19 delay=20.1 ; actual=30.8 ; found+28.8ms ; vis+30.3 fg+10.1 ; R.rawprobe 3.4ms s1/0x10000 ; U.hookpid 7.8ms ok ; R.efhbcd 22.7ms real ; U.probe 18.8ms true ; U.efhbcd 0.9ms real
+  run 20 delay=76.2 ; actual=76.7 ; found+27.0ms ; vis+38.2 fg+10.7 ; R.rawprobe 0.3ms s1/0x10000 ; U.hookpid 1.0ms ok ; U.probe 9.7ms true ; U.efhbcd 1.1ms real ; R.efhbcd 11.6ms real
+  run 21 delay=26 ; actual=29.9 ; found+33.4ms ; vis+29.7 fg+10.9 ; R.rawprobe 3.3ms s1/0x10000 ; U.hookpid 7.1ms ok ; R.efhbcd 15.3ms real ; U.probe 14.9ms true ; U.efhbcd 1.1ms real
+  run 22 delay=62.7 ; actual=63.0 ; found+19.0ms ; vis+37.9 fg+9.1 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.2ms ok ; U.probe 8.7ms true ; R.efhbcd 9.3ms real ; U.efhbcd 0.9ms real
+  run 23 delay=0 ; actual=0.5 ; found+46.2ms ; vis+22.7 fg+14.9 ; U.hookpid 1.6ms ok ; R.rawprobe 27.7ms s1/0x10000 ; R.efhbcd 21.1ms real ; U.probe 3039.3ms false ; U.efhbcd 1.7ms real ; ODD
+  run 24 delay=100 ; actual=100.6 ; found+25.8ms ; vis+32.0 fg+8.2 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.9ms ok ; U.probe 10.9ms true ; R.efhbcd 12.0ms real ; U.efhbcd 1.0ms real
+  run 25 delay=93.9 ; actual=94.2 ; found+26.5ms ; vis+18.2 fg+9.8 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.4ms ok ; R.efhbcd 10.7ms real ; U.probe 10.6ms true ; U.efhbcd 0.9ms real
+  run 26 delay=95.6 ; actual=95.9 ; found+19.5ms ; vis+18.6 fg+9.6 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.2ms ok ; U.probe 8.8ms true ; R.efhbcd 9.6ms real ; U.efhbcd 1.2ms real
+  run 27 delay=85.8 ; actual=86.1 ; found+27.9ms ; vis+35.3 fg+10.5 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.3ms ok ; U.probe 8.9ms true ; R.efhbcd 9.6ms real ; U.efhbcd 0.9ms real
+  run 28 delay=26.4 ; actual=28.4 ; found+23.1ms ; vis+29.7 fg+10.6 ; R.rawprobe 7.6ms s1/0x10000 ; U.hookpid 13.5ms ok ; R.efhbcd 16.8ms real ; U.probe 14.0ms true ; U.efhbcd 1.0ms real
+  run 29 delay=44.7 ; actual=45.0 ; found+26.3ms ; vis+30.0 fg+10.8 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.3ms ok ; U.probe 10.7ms true ; R.efhbcd 11.4ms real ; U.efhbcd 0.9ms real
+  run 30 delay=0 ; actual=0.5 ; found+29.1ms ; vis+37.6 fg+37.8 ; U.hookpid 3.5ms ok ; R.rawprobe 25.0ms s1/0x10000 ; U.probe 37.1ms true ; U.efhbcd 1.7ms real ; R.efhbcd 25.3ms real
+  run 31 delay=0 ; actual=0.5 ; found+60.3ms ; vis+5.7 fg+5.7 ; R.rawprobe 3.4ms s1/0x10000 ; U.hookpid 5.3ms ok ; R.efhbcd 16.7ms real ; U.probe 15.1ms true ; U.efhbcd 0.9ms real
+  run 32 delay=53.1 ; actual=54.0 ; found+44.1ms ; vis+46.1 fg+9.3 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 1.0ms ok ; R.efhbcd 11.6ms real ; U.probe 11.7ms true ; U.efhbcd 1.0ms real
+  run 33 delay=57.9 ; actual=58.3 ; found+46.9ms ; vis+19.7 fg+0.5 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.3ms ok ; U.probe 9.1ms true ; R.efhbcd 9.8ms real ; U.efhbcd 1.0ms real
+  run 34 delay=10.2 ; actual=10.7 ; found+21.4ms ; vis+27.0 fg+11.0 ; U.hookpid 3.3ms ok ; R.rawprobe 21.6ms s1/0x10000 ; U.probe 25.2ms true ; U.efhbcd 3.1ms real ; R.efhbcd 13.5ms real
+  run 35 delay=5.6 ; actual=6.0 ; found+31.5ms ; vis+27.0 fg+13.0 ; U.hookpid 1.8ms ok ; R.rawprobe 18.9ms s1/0x10000 ; U.probe 26.4ms true ; U.efhbcd 1.7ms real ; R.efhbcd 20.8ms real
+  run 36 delay=18.1 ; actual=18.6 ; found+22.1ms ; vis+24.2 fg+16.6 ; U.hookpid 2.1ms ok ; R.rawprobe 17.4ms s1/0x10000 ; U.probe 34.2ms true ; U.efhbcd 2.2ms real ; R.efhbcd 28.2ms real
+  run 37 delay=25.2 ; actual=33.8 ; found+31.5ms ; vis+33.1 fg+13.9 ; R.rawprobe 3.7ms s1/0x10000 ; U.hookpid 10.4ms ok ; R.efhbcd 24.0ms real ; U.probe 17.4ms true ; U.efhbcd 0.8ms real
+  run 38 delay=0 ; actual=0.4 ; found+23.8ms ; vis+22.6 fg+14.9 ; U.hookpid 1.4ms ok ; R.rawprobe 27.8ms s1/0x10000 ; U.probe 47.3ms true ; U.efhbcd 3.0ms real ; R.efhbcd 27.7ms real
+  run 39 delay=0 ; actual=0.4 ; found+38.5ms ; vis+30.7 fg+30.7 ; U.hookpid 1.3ms ok ; R.rawprobe 30.0ms s1/0x10000 ; U.probe 48.1ms true ; U.efhbcd 3.0ms real ; R.efhbcd 24.7ms real
+  run 40 delay=12.5 ; actual=15.5 ; found+24.3ms ; vis+39.5 fg+14.2 ; U.hookpid 0.7ms ok ; R.rawprobe 9.6ms s1/0x10000 ; U.probe 25.8ms true ; U.efhbcd 1.4ms real ; R.efhbcd 27.4ms real
+### e38-outpost: 40 trials, 3 odd; answer: count, min-max ms
+  R.efhbcd no answer within the trial: 1, 0.0-0.0
+  R.efhbcd real: 39, 9.3-113.7
+  R.rawprobe s1/0x10000: 40, 0.1-37.0
+  U.efhbcd real: 40, 0.8-3.1
+  U.hookpid ok: 40, 0.2-21.0
+  U.probe false: 2, 3028.2-3039.3
+  U.probe true: 38, 8.6-121.9
+## e38-both
+  run  1 delay=19.1 ; actual=44.6 ; found+77.0ms ; vis+48.2 fg+10.6 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 6.5ms ok ; R.efhbcd 20.8ms real ; U.probe 17.0ms true ; U.efhbcd 1.1ms real ; L.probe@42 0.5ms true ; L.reads 4 first@46 max 1.4ms focused
+  run  2 delay=0 ; actual=0.4 ; found+24.9ms ; vis+31.1 fg+12.9 ; U.hookpid 12.7ms ok ; R.rawprobe 31.3ms s1/0x10000 ; U.probe 36.2ms true ; U.efhbcd 2.5ms real ; R.efhbcd 27.8ms real ; L.reads 0
+  run  3 delay=0 ; actual=0.4 ; found+67.7ms ; vis+57.1 fg+8.8 ; U.hookpid 7.7ms ok ; R.rawprobe 22.0ms s1/0x10000 ; U.probe 52.5ms true ; U.efhbcd 1.5ms real ; R.efhbcd 47.8ms real ; L.probe@48 1.2ms true ; L.reads 4 first@53 max 1.7ms focused
+  run  4 delay=0 ; actual=0.4 ; found+26.0ms ; vis+22.9 fg+12.1 ; U.hookpid 1.9ms ok ; R.rawprobe 27.1ms s1/0x10000 ; U.probe 28.7ms true ; U.efhbcd 10.7ms real ; R.efhbcd 19.9ms real ; L.probe@31 0.6ms true ; L.reads 4 first@42 max 1.4ms focused
+  run  5 delay=76.7 ; actual=77.1 ; found+21.5ms ; vis+21.7 fg+8.4 ; R.rawprobe 0.4ms s1/0x10000 ; U.hookpid 1.0ms ok ; U.probe 11.0ms true ; R.efhbcd 12.9ms real ; U.efhbcd 1.6ms real ; L.reads 0
+  run  6 delay=64.8 ; actual=65.1 ; found+22.8ms ; vis+22.8 fg+12.2 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.4ms ok ; U.probe 9.3ms true ; R.efhbcd 10.0ms real ; U.efhbcd 0.9ms real ; L.probe@39 0.5ms true ; L.reads 4 first@42 max 1.8ms focused
+  run  7 delay=1.1 ; actual=1.6 ; found+24.8ms ; vis+29.9 fg+19.0 ; U.hookpid 18.0ms ok ; R.rawprobe 27.7ms s1/0x10000 ; U.probe 30.9ms true ; U.efhbcd 5.9ms real ; R.efhbcd 28.9ms real ; L.probe@35 0.2ms true ; L.reads 4 first@42 max 1.6ms focused
+  run  8 delay=79.1 ; actual=79.5 ; found+35.0ms ; vis+34.6 fg+9.9 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.5ms ok ; U.probe 9.6ms true ; R.efhbcd 10.3ms real ; U.efhbcd 0.9ms real ; L.probe@32 1.0ms true ; L.reads 4 first@39 max 1.5ms focused
+  run  9 delay=25.6 ; actual=35.0 ; found+24.6ms ; vis+42.8 fg+42.9 ; R.rawprobe 3.3ms s1/0x10000 ; U.hookpid 8.3ms ok ; R.efhbcd 22.8ms real ; U.probe 21.0ms true ; U.efhbcd 1.0ms real ; L.probe@40 0.6ms true ; L.reads 4 first@44 max 2.9ms focused
+  run 10 delay=32 ; actual=32.5 ; found+28.8ms ; vis+24.9 fg+9.1 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 26.4ms ok ; U.probe 16.1ms true ; R.efhbcd 43.0ms real ; U.efhbcd 1.5ms real ; L.probe@46 1.5ms true ; L.reads 4 first@52 max 2.0ms focused
+  run 11 delay=0 ; actual=0.3 ; found+19.4ms ; vis+24.6 fg+9.7 ; U.hookpid 0.2ms ok ; R.rawprobe 26.2ms s1/0x10000 ; U.probe 37.5ms true ; U.efhbcd 2.8ms real ; R.efhbcd 19.0ms real ; L.probe@32 0.5ms true ; L.reads 4 first@40 max 1.3ms focused
+  run 12 delay=18.2 ; actual=26.5 ; found+24.6ms ; vis+67.1 fg+26.7 ; U.hookpid 1.2ms ok ; R.rawprobe 15.4ms s1/0x10000 ; U.probe 46.2ms true ; U.efhbcd 9.0ms real ; R.efhbcd 42.8ms real ; L.probe@62 0.8ms true ; L.reads 4 first@66 max 1.6ms focused
+  run 13 delay=50.2 ; actual=51.0 ; found+69.3ms ; vis+37.3 fg+15.1 ; R.rawprobe 0.9ms s1/0x10000 ; U.hookpid 21.9ms ok ; R.efhbcd 67.7ms real ; U.probe 85.8ms true ; U.efhbcd 24.6ms real ; L.probe@54 3.5ms true ; L.reads 4 first@64 max 2.8ms focused
+  run 14 delay=65.5 ; actual=65.8 ; found+21.8ms ; vis+21.1 fg+8.5 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.3ms ok ; U.probe 9.5ms true ; R.efhbcd 10.0ms real ; U.efhbcd 0.9ms real ; L.probe@31 1.4ms true ; L.reads 4 first@40 max 2.2ms focused
+  run 15 delay=1.6 ; actual=2.0 ; found+28.9ms ; vis+25.1 fg+9.4 ; U.hookpid 0.2ms ok ; R.rawprobe 28.7ms s1/0x10000 ; U.probe 30.3ms true ; U.efhbcd 8.1ms real ; R.efhbcd 17.1ms real ; L.probe@34 2.4ms true ; L.reads 4 first@47 max 3.8ms focused
+  run 16 delay=1.1 ; actual=1.6 ; found+36.2ms ; vis+21.2 fg+11.0 ; U.hookpid 0.8ms ok ; R.rawprobe 24.9ms s1/0x10000 ; U.probe 49.8ms true ; U.efhbcd 2.0ms real ; R.efhbcd 28.6ms real ; L.probe@36 0.4ms true ; L.reads 4 first@43 max 5.6ms focused
+  run 17 delay=52.4 ; actual=52.8 ; found+48.8ms ; vis+20.1 fg+14.2 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 1.2ms ok ; R.efhbcd 14.1ms real ; U.probe 15.2ms true ; U.efhbcd 1.0ms real ; L.probe@37 0.9ms true ; L.reads 4 first@48 max 1.2ms focused
+  run 18 delay=0 ; actual=0.3 ; found+22.6ms ; vis+20.4 fg+15.4 ; U.hookpid 0.6ms ok ; R.rawprobe 28.7ms s1/0x10000 ; R.efhbcd 35.9ms real ; U.probe 3046.0ms false ; U.efhbcd 1.5ms real ; L.probe@44 1.0ms true ; L.reads 4 first@48 max 1.2ms focused ; ODD
+  run 19 delay=50.7 ; actual=51.2 ; found+20.1ms ; vis+32.8 fg+10.9 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 2.4ms ok ; U.probe 8.6ms true ; R.efhbcd 11.4ms real ; U.efhbcd 1.0ms real ; L.probe@30 0.8ms true ; L.reads 4 first@40 max 1.4ms focused
+  run 20 delay=0.3 ; actual=0.5 ; found+19.5ms ; vis+22.4 fg+8.6 ; U.hookpid 0.4ms ok ; R.rawprobe 26.3ms s1/0x10000 ; R.efhbcd 22.1ms real ; U.probe 3040.2ms false ; U.efhbcd 1.2ms real ; L.reads 0 ; ODD
+  run 21 delay=75.1 ; actual=75.4 ; found+22.2ms ; vis+21.4 fg+13.1 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.3ms ok ; U.probe 10.2ms true ; R.efhbcd 10.9ms real ; U.efhbcd 1.0ms real ; L.reads 0
+  run 22 delay=86.6 ; actual=87.0 ; found+27.3ms ; vis+27.4 fg+8.5 ; R.rawprobe 0.2ms s1/0x10000 ; U.hookpid 0.3ms ok ; U.probe 10.9ms true ; R.efhbcd 11.6ms real ; U.efhbcd 1.1ms real ; L.probe@43 0.6ms true ; L.reads 4 first@48 max 1.7ms focused
+  run 23 delay=17 ; actual=48.2 ; found+56.2ms ; vis+46.5 fg+46.5 ; R.rawprobe 0.0ms s1/0x10000 ; U.hookpid 2.1ms ok ; U.probe 17.0ms true ; U.efhbcd 1.0ms real ; R.efhbcd 20.0ms real ; L.probe@33 1.3ms true ; L.reads 4 first@38 max 3.3ms focused
+  run 24 delay=96.2 ; actual=96.5 ; found+29.8ms ; vis+40.6 fg+13.2 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.4ms ok ; U.probe 8.9ms true ; R.efhbcd 9.6ms real ; U.efhbcd 0.8ms real ; L.probe@37 1.3ms true ; L.reads 4 first@44 max 1.3ms focused
+  run 25 delay=7.6 ; actual=8.0 ; found+22.3ms ; vis+51.9 fg+23.9 ; U.hookpid 5.4ms ok ; R.rawprobe 28.3ms s1/0x10000 ; R.efhbcd 27.7ms real ; U.probe 3035.5ms false ; U.efhbcd 1.2ms real ; L.probe@49 0.4ms true ; L.reads 4 first@54 max 1.3ms focused ; ODD
+  run 26 delay=42.8 ; actual=44.4 ; found+27.7ms ; vis+44.3 fg+12.2 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 5.3ms ok ; R.efhbcd 19.1ms real ; U.probe 14.6ms true ; U.efhbcd 0.9ms real ; L.probe@38 2.4ms true ; L.reads 4 first@46 max 1.4ms focused
+  run 27 delay=99.8 ; actual=100.1 ; found+22.4ms ; vis+23.7 fg+9.9 ; R.rawprobe 0.2ms s1/0x10000 ; U.hookpid 0.3ms ok ; U.probe 8.6ms true ; R.efhbcd 9.1ms real ; U.efhbcd 0.8ms real ; L.probe@40 0.7ms true ; L.reads 4 first@42 max 2.7ms focused
+  run 28 delay=76.7 ; actual=77.0 ; found+33.5ms ; vis+35.7 fg+10.7 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.5ms ok ; U.probe 8.7ms true ; R.efhbcd 9.5ms real ; U.efhbcd 1.0ms real ; L.probe@32 2.7ms true ; L.reads 4 first@43 max 1.1ms focused
+  run 29 delay=75.5 ; actual=75.8 ; found+28.9ms ; vis+32.9 fg+15.6 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.5ms ok ; U.probe 9.5ms true ; R.efhbcd 10.2ms real ; U.efhbcd 0.9ms real ; L.probe@31 0.7ms true ; L.reads 4 first@37 max 4.1ms focused
+  run 30 delay=26.5 ; actual=35.6 ; found+29.2ms ; vis+46.4 fg+10.2 ; R.rawprobe 3.4ms s1/0x10000 ; U.hookpid 16.0ms ok ; U.probe 14.7ms true ; R.efhbcd 56.4ms real ; U.efhbcd 29.3ms real ; L.probe@43 0.9ms true ; L.reads 4 first@47 max 1.2ms focused
+  run 31 delay=0 ; actual=61.9 ; found+52.4ms ; vis+60.8 fg+60.8 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 4.8ms ok ; U.probe 13.0ms true ; R.efhbcd 18.2ms real ; U.efhbcd 1.1ms real ; L.probe@46 0.2ms true ; L.reads 4 first@48 max 1.1ms focused
+  run 32 delay=0 ; actual=0.3 ; found+31.3ms ; vis+19.5 fg+12.2 ; U.hookpid 0.6ms ok ; R.rawprobe 25.3ms s1/0x10000 ; R.efhbcd 27.3ms real ; U.probe 3034.8ms false ; U.efhbcd 1.5ms real ; L.probe@31 0.2ms true ; L.reads 4 first@37 max 1.5ms focused ; ODD
+  run 33 delay=0 ; actual=0.4 ; found+36.4ms ; vis+24.3 fg+9.0 ; U.hookpid 0.5ms ok ; R.rawprobe 24.6ms s1/0x10000 ; U.probe 39.7ms true ; U.efhbcd 2.3ms real ; R.efhbcd 23.4ms real ; L.probe@35 0.8ms true ; L.reads 4 first@39 max 1.3ms focused
+  run 34 delay=65.6 ; actual=66.0 ; found+33.4ms ; vis+47.0 fg+13.6 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 0.4ms ok ; U.probe 10.7ms true ; R.efhbcd 11.5ms real ; U.efhbcd 1.2ms real ; L.reads 0
+  run 35 delay=44.7 ; actual=53.5 ; found+55.8ms ; vis+17.4 fg+8.8 ; R.rawprobe 0.0ms s1/0x10000 ; U.hookpid 7.2ms ok ; U.probe 13.6ms true ; R.efhbcd 20.6ms real ; U.efhbcd 1.4ms real ; L.probe@50 0.6ms true ; L.reads 4 first@53 max 1.4ms focused
+  run 36 delay=82 ; actual=82.4 ; found+42.5ms ; vis+41.9 fg+9.6 ; R.rawprobe 0.2ms s1/0x10000 ; U.hookpid 0.6ms ok ; U.probe 11.1ms true ; R.efhbcd 11.9ms real ; U.efhbcd 1.0ms real ; L.probe@35 3.7ms true ; L.reads 4 first@43 max 1.4ms focused
+  run 37 delay=51.2 ; actual=51.5 ; found+20.3ms ; vis+22.8 fg+9.9 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 2.7ms ok ; U.probe 10.2ms true ; R.efhbcd 12.8ms real ; U.efhbcd 1.0ms real ; L.probe@32 0.5ms true ; L.reads 4 first@41 max 1.5ms focused
+  run 38 delay=44.2 ; actual=47.4 ; found+61.2ms ; vis+35.9 fg+8.2 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 2.6ms ok ; U.probe 13.3ms true ; U.efhbcd 1.1ms real ; R.efhbcd 16.9ms real ; L.probe@35 0.4ms true ; L.reads 4 first@39 max 4.1ms focused
+  run 39 delay=43 ; actual=43.5 ; found+27.1ms ; vis+25.7 fg+12.3 ; R.rawprobe 0.1ms s1/0x10000 ; U.hookpid 1.4ms ok ; U.probe 8.2ms true ; R.efhbcd 9.9ms real ; U.efhbcd 1.9ms real ; L.reads 0
+  run 40 delay=14.8 ; actual=39.0 ; found+37.4ms ; vis+38.3 fg+38.4 ; R.rawprobe 0.2ms s1/0x10000 ; U.hookpid 1.2ms ok ; R.efhbcd 17.3ms real ; U.probe 16.6ms true ; U.efhbcd 0.9ms real ; L.probe@36 0.2ms true ; L.reads 4 first@41 max 4.5ms focused
+### e38-both: 40 trials, 4 odd; answer: count, min-max ms
+  L.probe true: 34, 0.2-3.7
+  L.read focused: 136, 0.7-5.6
+  R.efhbcd real: 40, 9.1-67.7
+  R.rawprobe s1/0x10000: 40, 0.0-31.3
+  U.efhbcd real: 40, 0.8-29.3
+  U.hookpid ok: 40, 0.2-26.4
+  U.probe false: 4, 3034.8-3046.0
+  U.probe true: 36, 8.2-85.8
+## e38-alone-zero
+  run  1 delay=0 ; actual=0.3 ; found+20.5ms ; vis+21.7 fg+9.1 ; R.rawprobe 27.7ms s1/0x10000 ; U.probe 31.2ms true ; U.efhbcd 6.1ms real ; R.efhbcd 13.5ms real
+  run  2 delay=0 ; actual=0.4 ; found+28.4ms ; vis+30.1 fg+17.1 ; R.rawprobe 28.6ms s1/0x10000 ; U.probe 42.8ms true ; U.efhbcd 5.3ms real ; R.efhbcd 22.7ms real
+  run  3 delay=0 ; actual=0.3 ; found+22.7ms ; vis+19.0 fg+10.2 ; R.rawprobe 23.0ms s1/0x10000 ; U.probe 37.2ms true ; R.efhbcd 16.7ms real ; U.efhbcd 2.4ms real
+  run  4 delay=0 ; actual=0.3 ; found+21.1ms ; vis+21.5 fg+9.0 ; R.rawprobe 25.7ms s1/0x10000 ; U.probe 27.6ms true ; U.efhbcd 2.8ms real ; R.efhbcd 12.5ms real
+  run  5 delay=0 ; actual=0.3 ; found+31.3ms ; vis+20.8 fg+9.7 ; R.rawprobe 26.1ms s1/0x10000 ; U.probe 29.9ms true ; U.efhbcd 9.1ms real ; R.efhbcd 16.7ms real
+  run  6 delay=0 ; actual=0.3 ; found+23.4ms ; vis+20.7 fg+10.7 ; R.rawprobe 25.9ms s1/0x10000 ; U.probe 28.7ms true ; U.efhbcd 6.8ms real ; R.efhbcd 20.4ms real
+  run  7 delay=0 ; actual=0.3 ; found+20.1ms ; vis+26.9 fg+9.2 ; R.rawprobe 25.2ms s1/0x10000 ; U.probe 42.3ms true ; U.efhbcd 1.8ms real ; R.efhbcd 22.2ms real
+  run  8 delay=0 ; actual=0.2 ; found+21.1ms ; vis+20.4 fg+10.6 ; R.rawprobe 25.4ms s1/0x10000 ; U.probe 36.6ms true ; U.efhbcd 1.4ms real ; R.efhbcd 18.9ms real
+  run  9 delay=0 ; actual=0.3 ; found+22.2ms ; vis+19.3 fg+10.5 ; R.rawprobe 23.6ms s1/0x10000 ; U.probe 37.3ms true ; U.efhbcd 1.3ms real ; R.efhbcd 15.5ms real
+  run 10 delay=0 ; actual=0.2 ; found+23.1ms ; vis+40.7 fg+15.2 ; R.rawprobe 27.4ms s1/0x10000 ; U.probe 48.4ms true ; U.efhbcd 3.3ms real ; R.efhbcd 25.0ms real
+  run 11 delay=0 ; actual=0.2 ; found+19.9ms ; vis+19.6 fg+8.8 ; R.rawprobe 25.0ms s1/0x10000 ; U.probe 42.2ms true ; U.efhbcd 1.3ms real ; R.efhbcd 23.1ms real
+  run 12 delay=0 ; actual=0.3 ; found+22.0ms ; vis+20.5 fg+9.2 ; R.rawprobe 25.3ms s1/0x10000 ; U.probe 29.2ms true ; U.efhbcd 4.7ms real ; R.efhbcd 16.1ms real
+  run 13 delay=0 ; actual=0.3 ; found+22.4ms ; vis+27.0 fg+10.8 ; R.rawprobe 27.4ms s1/0x10000 ; U.probe 37.7ms true ; U.efhbcd 11.9ms real ; R.efhbcd 25.4ms real
+  run 14 delay=0 ; actual=0.2 ; found+23.0ms ; vis+21.7 fg+13.8 ; R.rawprobe 25.2ms s1/0x10000 ; U.probe 41.4ms true ; U.efhbcd 5.8ms real ; R.efhbcd 26.2ms real
+  run 15 delay=0 ; actual=0.3 ; found+20.2ms ; vis+22.4 fg+14.9 ; R.rawprobe 27.0ms s1/0x10000 ; U.probe 43.3ms true ; U.efhbcd 2.0ms real ; R.efhbcd 24.5ms real
+  run 16 delay=0 ; actual=0.3 ; found+18.3ms ; vis+18.2 fg+8.8 ; R.rawprobe 23.1ms s1/0x10000 ; U.probe 25.1ms true ; U.efhbcd 8.9ms real ; R.efhbcd 12.9ms real
+  run 17 delay=0 ; actual=0.2 ; found+20.0ms ; vis+21.8 fg+9.3 ; R.rawprobe 23.7ms s1/0x10000 ; U.probe 35.5ms true ; U.efhbcd 1.4ms real ; R.efhbcd 23.1ms real
+  run 18 delay=0 ; actual=0.3 ; found+25.6ms ; vis+42.6 fg+15.8 ; R.rawprobe 30.3ms s1/0x10000 ; U.probe 55.2ms true ; U.efhbcd 5.0ms real ; R.efhbcd 37.1ms real
+  run 19 delay=0 ; actual=0.3 ; found+21.6ms ; vis+27.9 fg+14.0 ; R.rawprobe 25.4ms s1/0x10000 ; U.probe 41.2ms true ; U.efhbcd 3.1ms real ; R.efhbcd 21.2ms real
+  run 20 delay=0 ; actual=0.4 ; found+23.4ms ; vis+24.1 fg+16.8 ; R.rawprobe 28.6ms s1/0x10000 ; U.probe 47.5ms true ; U.efhbcd 1.8ms real ; R.efhbcd 24.5ms real
+  run 21 delay=0 ; actual=0.3 ; found+21.4ms ; vis+28.0 fg+28.0 ; R.rawprobe 30.1ms s1/0x10000 ; U.probe 45.5ms true ; U.efhbcd 1.2ms real ; R.efhbcd 18.6ms real
+  run 22 delay=0 ; actual=0.3 ; found+19.5ms ; vis+18.3 fg+8.9 ; R.rawprobe 23.5ms s1/0x10000 ; U.probe 35.7ms true ; U.efhbcd 6.2ms real ; R.efhbcd 20.7ms real
+  run 23 delay=0 ; actual=0.3 ; found+21.1ms ; vis+37.1 fg+15.1 ; R.rawprobe 27.7ms s1/0x10000 ; U.probe 57.6ms true ; U.efhbcd 3.2ms real ; R.efhbcd 36.4ms real
+  run 24 delay=0 ; actual=0.3 ; found+21.1ms ; vis+22.5 fg+15.1 ; R.rawprobe 27.3ms s1/0x10000 ; U.probe 51.0ms true ; U.efhbcd 2.2ms real ; R.efhbcd 28.2ms real
+  run 25 delay=0 ; actual=0.3 ; found+20.5ms ; vis+19.0 fg+8.5 ; R.rawprobe 23.6ms s1/0x10000 ; U.probe 35.1ms true ; U.efhbcd 2.4ms real ; R.efhbcd 21.2ms real
+  run 26 delay=0 ; actual=0.3 ; found+19.7ms ; vis+18.6 fg+12.9 ; R.rawprobe 22.8ms s1/0x10000 ; U.probe 33.5ms true ; U.efhbcd 1.4ms real ; R.efhbcd 16.2ms real
+  run 27 delay=0 ; actual=0.2 ; found+22.3ms ; vis+17.7 fg+7.9 ; R.rawprobe 22.0ms s1/0x10000 ; U.probe 33.7ms true ; U.efhbcd 2.8ms real ; R.efhbcd 19.0ms real
+  run 28 delay=0 ; actual=0.3 ; found+24.3ms ; vis+32.0 fg+20.0 ; R.rawprobe 34.3ms s1/0x10000 ; U.probe 44.8ms true ; U.efhbcd 1.3ms real ; R.efhbcd 15.8ms real
+  run 29 delay=0 ; actual=0.2 ; found+19.7ms ; vis+20.4 fg+8.9 ; R.rawprobe 24.8ms s1/0x10000 ; U.probe 38.9ms true ; U.efhbcd 2.2ms real ; R.efhbcd 24.3ms real
+  run 30 delay=0 ; actual=0.3 ; found+23.8ms ; vis+25.1 fg+15.6 ; R.rawprobe 26.1ms s1/0x10000 ; U.probe 44.2ms true ; U.efhbcd 8.9ms real ; R.efhbcd 34.7ms real
+### e38-alone-zero: 30 trials, 0 odd; answer: count, min-max ms
+  R.efhbcd real: 30, 12.5-37.1
+  R.rawprobe s1/0x10000: 30, 22.0-34.3
+  U.efhbcd real: 30, 1.2-11.9
+  U.probe true: 30, 25.1-57.6
+## e38-listener-zero
+  run  1 delay=0 ; actual=0.3 ; found+19.4ms ; vis+22.7 fg+10.3 ; R.rawprobe 28.7ms s1/0x10000 ; U.probe 31.7ms true ; U.efhbcd 7.6ms real ; R.efhbcd 20.7ms real ; L.probe@32 2.4ms true ; L.reads 4 first@44 max 3.1ms focused
+  run  2 delay=0 ; actual=0.3 ; found+19.3ms ; vis+21.3 fg+8.9 ; R.rawprobe 26.7ms s1/0x10000 ; U.probe 37.9ms true ; U.efhbcd 7.2ms real ; R.efhbcd 20.6ms real ; L.probe@29 0.5ms true ; L.reads 4 first@45 max 1.8ms focused
+  run  3 delay=0 ; actual=0.3 ; found+20.4ms ; vis+21.0 fg+8.9 ; R.rawprobe 25.1ms s1/0x10000 ; U.probe 43.3ms true ; U.efhbcd 5.6ms real ; R.efhbcd 26.6ms real ; L.probe@38 1.2ms true ; L.reads 4 first@47 max 1.6ms focused
+  run  4 delay=0 ; actual=23.6 ; found+49.6ms ; vis+56.8 fg+56.9 ; R.rawprobe 6.5ms s1/0x10000 ; U.probe 61.5ms true ; U.efhbcd 3.3ms real ; R.efhbcd 58.4ms real ; L.probe@66 0.7ms true ; L.reads 4 first@69 max 1.5ms focused
+  run  5 delay=0 ; actual=0.3 ; found+19.6ms ; vis+21.4 fg+10.2 ; R.rawprobe 25.5ms s1/0x10000 ; R.efhbcd 24.1ms real ; U.probe 3039.2ms false ; U.efhbcd 1.3ms real ; L.probe@33 1.3ms true ; L.reads 4 first@42 max 3.1ms focused ; ODD
+  run  6 delay=0 ; actual=0.2 ; found+19.9ms ; vis+23.8 fg+11.4 ; R.rawprobe 25.8ms s1/0x10000 ; U.probe 44.7ms true ; U.efhbcd 6.2ms real ; R.efhbcd 32.5ms real ; L.probe@41 1.1ms true ; L.reads 4 first@46 max 2.5ms focused
+  run  7 delay=0 ; actual=0.3 ; found+19.7ms ; vis+20.3 fg+9.8 ; R.rawprobe 25.2ms s1/0x10000 ; U.probe 43.6ms true ; U.efhbcd 2.1ms real ; R.efhbcd 27.4ms real ; L.probe@32 1.0ms true ; L.reads 4 first@37 max 2.1ms focused
+  run  8 delay=0 ; actual=0.2 ; found+18.6ms ; vis+38.3 fg+9.4 ; R.rawprobe 26.8ms s1/0x10000 ; U.probe 47.7ms true ; U.efhbcd 3.5ms real ; R.efhbcd 26.0ms real ; L.probe@36 0.4ms true ; L.reads 4 first@46 max 1.6ms focused
+  run  9 delay=0 ; actual=0.3 ; found+19.6ms ; vis+18.4 fg+8.7 ; R.rawprobe 23.0ms s1/0x10000 ; U.probe 36.7ms true ; U.efhbcd 3.2ms real ; R.efhbcd 27.1ms real ; L.probe@33 0.6ms true ; L.reads 4 first@39 max 3.5ms focused
+  run 10 delay=0 ; actual=0.2 ; found+20.9ms ; vis+22.3 fg+9.3 ; R.rawprobe 23.2ms s1/0x10000 ; U.probe 39.6ms true ; U.efhbcd 4.6ms real ; R.efhbcd 27.0ms real ; L.probe@31 0.8ms true ; L.reads 4 first@41 max 2.8ms focused
+  run 11 delay=0 ; actual=0.2 ; found+19.8ms ; vis+21.3 fg+10.0 ; R.rawprobe 25.7ms s1/0x10000 ; U.probe 32.2ms true ; U.efhbcd 11.4ms real ; R.efhbcd 20.6ms real ; L.probe@29 2.3ms true ; L.reads 4 first@41 max 2.3ms focused
+  run 12 delay=0 ; actual=0.3 ; found+20.3ms ; vis+27.4 fg+11.3 ; R.rawprobe 27.2ms s1/0x10000 ; U.probe 34.7ms true ; U.efhbcd 4.8ms real ; R.efhbcd 23.8ms real ; L.probe@33 0.9ms true ; L.reads 4 first@44 max 3.7ms focused
+  run 13 delay=0 ; actual=0.2 ; found+23.7ms ; vis+21.6 fg+9.3 ; R.rawprobe 26.8ms s1/0x10000 ; U.probe 41.8ms true ; U.efhbcd 4.5ms real ; R.efhbcd 24.0ms real ; L.probe@37 0.7ms true ; L.reads 4 first@46 max 1.8ms focused
+  run 14 delay=0 ; actual=0.3 ; found+19.6ms ; vis+21.3 fg+9.1 ; R.rawprobe 25.5ms s1/0x10000 ; U.probe 36.1ms true ; U.efhbcd 2.5ms real ; R.efhbcd 26.8ms real ; L.probe@32 0.4ms true ; L.reads 4 first@46 max 2.6ms focused
+  run 15 delay=0 ; actual=0.3 ; found+18.7ms ; vis+22.1 fg+9.5 ; R.rawprobe 25.7ms s1/0x10000 ; R.efhbcd 20.8ms real ; U.probe 3028.3ms false ; U.efhbcd 1.6ms real ; L.probe@29 2.7ms true ; L.reads 4 first@42 max 1.7ms focused ; ODD
+  run 16 delay=0 ; actual=0.3 ; found+19.2ms ; vis+23.2 fg+10.8 ; R.rawprobe 29.2ms s1/0x10000 ; U.probe 37.7ms true ; U.efhbcd 4.6ms real ; R.efhbcd 22.5ms real ; L.probe@32 3.1ms true ; L.reads 4 first@47 max 1.6ms focused
+  run 17 delay=0 ; actual=0.3 ; found+18.9ms ; vis+23.2 fg+8.9 ; R.rawprobe 28.5ms s1/0x10000 ; U.probe 36.0ms true ; R.efhbcd 18.0ms real ; U.efhbcd 2012.1ms proxy ; L.probe@38 5.3ms true ; L.reads 4 first@50 max 1.7ms focused ; ODD
+  run 18 delay=0 ; actual=0.3 ; found+19.8ms ; vis+22.0 fg+9.7 ; R.rawprobe 27.0ms s1/0x10000 ; U.probe 30.8ms true ; U.efhbcd 10.0ms real ; R.efhbcd 19.3ms real ; L.probe@33 3.9ms true ; L.reads 4 first@48 max 1.4ms focused
+  run 19 delay=0 ; actual=0.3 ; found+22.1ms ; vis+25.0 fg+12.9 ; R.rawprobe 29.8ms s1/0x10000 ; U.probe 43.7ms true ; U.efhbcd 4.5ms real ; R.efhbcd 33.4ms real ; L.probe@35 4.2ms true ; L.reads 4 first@48 max 2.8ms focused
+  run 20 delay=0 ; actual=0.2 ; found+20.1ms ; vis+24.0 fg+10.1 ; R.rawprobe 25.3ms s1/0x10000 ; U.probe 27.5ms true ; U.efhbcd 6.9ms real ; R.efhbcd 16.1ms real ; L.probe@28 1.1ms true ; L.reads 4 first@41 max 2.0ms focused
+  run 21 delay=0 ; actual=0.3 ; found+19.1ms ; vis+18.8 fg+13.0 ; R.rawprobe 23.7ms s1/0x10000 ; U.probe 33.9ms true ; U.efhbcd 10.1ms real ; R.efhbcd 21.6ms real ; L.probe@28 0.6ms true ; L.reads 4 first@42 max 1.6ms focused
+  run 22 delay=0 ; actual=0.3 ; found+22.5ms ; vis+19.9 fg+9.5 ; R.rawprobe 23.7ms s1/0x10000 ; U.probe 38.8ms true ; U.efhbcd 8.4ms real ; R.efhbcd 26.1ms real ; L.probe@33 1.9ms true ; L.reads 4 first@43 max 1.9ms focused
+  run 23 delay=0 ; actual=0.3 ; found+20.5ms ; vis+20.2 fg+9.4 ; R.rawprobe 25.7ms s1/0x10000 ; R.efhbcd 15.0ms real ; U.probe 3029.4ms false ; U.efhbcd 2.0ms real ; L.probe@31 2.8ms true ; L.reads 4 first@42 max 1.4ms focused ; ODD
+  run 24 delay=0 ; actual=0.2 ; found+22.1ms ; vis+19.4 fg+9.4 ; R.rawprobe 27.2ms s1/0x10000 ; U.probe 38.9ms true ; U.efhbcd 3.5ms real ; R.efhbcd 28.6ms real ; L.probe@34 3.1ms true ; L.reads 4 first@49 max 1.6ms focused
+  run 25 delay=0 ; actual=0.2 ; found+20.5ms ; vis+20.8 fg+8.1 ; R.rawprobe 24.5ms s1/0x10000 ; U.probe 36.5ms true ; U.efhbcd 3.6ms real ; R.efhbcd 25.7ms real ; L.probe@33 0.7ms true ; L.reads 4 first@39 max 3.1ms focused
+  run 26 delay=0 ; actual=0.3 ; found+21.4ms ; vis+20.1 fg+9.5 ; R.rawprobe 24.6ms s1/0x10000 ; U.probe 31.5ms true ; U.efhbcd 8.1ms real ; R.efhbcd 18.4ms real ; L.probe@28 1.3ms true ; L.reads 4 first@40 max 1.8ms focused
+  run 27 delay=0 ; actual=0.2 ; found+20.4ms ; vis+23.2 fg+10.5 ; R.rawprobe 27.4ms s1/0x10000 ; U.probe 29.3ms true ; U.efhbcd 2.7ms real ; R.efhbcd 13.8ms real ; L.probe@31 1.7ms true ; L.reads 4 first@43 max 2.7ms focused
+  run 28 delay=0 ; actual=0.3 ; found+19.4ms ; vis+22.7 fg+10.7 ; R.rawprobe 24.8ms s1/0x10000 ; U.probe 39.4ms true ; U.efhbcd 8.5ms real ; R.efhbcd 23.6ms real ; L.probe@36 0.9ms true ; L.reads 4 first@41 max 3.1ms focused
+  run 29 delay=0 ; actual=0.2 ; found+19.9ms ; vis+20.3 fg+9.2 ; R.rawprobe 24.9ms s1/0x10000 ; U.probe 42.7ms true ; U.efhbcd 6.1ms real ; R.efhbcd 26.3ms real ; L.probe@28 3.6ms true ; L.reads 4 first@44 max 1.9ms focused
+  run 30 delay=0 ; actual=0.2 ; found+18.9ms ; vis+19.4 fg+8.4 ; R.rawprobe 23.7ms s1/0x10000 ; R.efhbcd 26.6ms real ; U.probe 3034.5ms false ; U.efhbcd 1.6ms real ; L.probe@27 8.2ms true ; L.reads 4 first@40 max 1.9ms focused ; ODD
+### e38-listener-zero: 30 trials, 5 odd; answer: count, min-max ms
+  L.probe true: 30, 0.4-8.2
+  L.read focused: 120, 0.7-3.7
+  R.efhbcd real: 30, 13.8-58.4
+  R.rawprobe s1/0x10000: 30, 6.5-29.8
+  U.efhbcd proxy: 1, 2012.1-2012.1
+  U.efhbcd real: 29, 1.3-11.4
+  U.probe false: 4, 3028.3-3039.2
+  U.probe true: 26, 27.5-61.5
+## e38-tooltip
+  run  1 delay=0 ; actual=0.3 ; found+20.9ms ; vis+22.2 fg+9.8 ; R.rawprobe 27.2ms s1/0x10000 ; R.efhbcd 25.8ms real ; U.probe 3038.6ms false ; U.efhbcd 1.3ms real ; ODD
+  run  2 delay=0 ; actual=0.4 ; found+25.9ms ; vis+23.8 fg+11.2 ; R.rawprobe 30.0ms s1/0x10000 ; U.probe 33.9ms true ; U.efhbcd 5.7ms real ; R.efhbcd 18.0ms real
+  run  3 delay=0 ; actual=0.3 ; found+19.3ms ; vis+22.2 fg+11.6 ; R.rawprobe 27.0ms s1/0x10000 ; U.probe 41.2ms true ; U.efhbcd 3.0ms real ; R.efhbcd 20.9ms real
+  run  4 delay=0 ; actual=0.2 ; found+21.0ms ; vis+20.3 fg+9.5 ; R.rawprobe 26.2ms s1/0x10000 ; R.efhbcd 10.8ms real ; U.probe 3032.6ms false ; U.efhbcd 1.3ms real ; ODD
+  run  5 delay=0 ; actual=0.2 ; found+20.2ms ; vis+20.8 fg+10.2 ; R.rawprobe 25.9ms s1/0x10000 ; U.probe 30.8ms true ; U.efhbcd 7.6ms real ; R.efhbcd 16.2ms real
+  run  6 delay=0 ; actual=0.6 ; found+20.5ms ; vis+21.9 fg+10.2 ; R.rawprobe 26.1ms s1/0x10000 ; U.probe 29.1ms true ; U.efhbcd 9.1ms real ; R.efhbcd 14.4ms real
+  run  7 delay=0 ; actual=0.2 ; found+21.2ms ; vis+21.9 fg+10.1 ; R.rawprobe 23.6ms s1/0x10000 ; U.probe 39.9ms true ; U.efhbcd 3.1ms real ; R.efhbcd 24.4ms real
+  run  8 delay=0 ; actual=0.3 ; found+21.6ms ; vis+20.0 fg+9.6 ; R.rawprobe 24.5ms s1/0x10000 ; U.probe 27.3ms true ; U.efhbcd 4.5ms real ; R.efhbcd 14.9ms real
+  run  9 delay=0 ; actual=0.2 ; found+20.8ms ; vis+19.2 fg+8.3 ; R.rawprobe 23.6ms s1/0x10000 ; U.probe 35.5ms true ; U.efhbcd 1.6ms real ; R.efhbcd 23.6ms real
+  run 10 delay=0 ; actual=0.2 ; found+20.3ms ; vis+19.1 fg+9.4 ; R.rawprobe 24.6ms s1/0x10000 ; R.efhbcd 23.7ms real ; U.probe 3033.0ms false ; U.efhbcd 1.2ms real ; ODD
+  run 11 delay=0 ; actual=0.3 ; found+25.3ms ; vis+21.5 fg+9.7 ; R.rawprobe 26.3ms s1/0x10000 ; U.probe 37.5ms true ; U.efhbcd 2.6ms real ; R.efhbcd 18.0ms real
+  run 12 delay=0 ; actual=0.3 ; found+18.9ms ; vis+30.3 fg+8.9 ; R.rawprobe 23.8ms s1/0x10000 ; U.probe 31.1ms true ; U.efhbcd 2.8ms real ; R.efhbcd 19.5ms real
+  run 13 delay=0 ; actual=0.4 ; found+21.6ms ; vis+18.3 fg+9.7 ; R.rawprobe 22.8ms s1/0x10000 ; R.efhbcd 17.5ms real ; U.probe 3026.4ms false ; U.efhbcd 1.7ms real ; ODD
+  run 14 delay=0 ; actual=0.2 ; found+20.5ms ; vis+20.7 fg+9.6 ; R.rawprobe 26.3ms s1/0x10000 ; U.probe 28.9ms true ; U.efhbcd 9.4ms real ; R.efhbcd 13.5ms real
+  run 15 delay=0 ; actual=0.2 ; found+22.2ms ; vis+19.1 fg+10.6 ; R.rawprobe 24.0ms s1/0x10000 ; U.probe 35.5ms true ; U.efhbcd 2.3ms real ; R.efhbcd 18.4ms real
+  run 16 delay=0 ; actual=0.2 ; found+18.9ms ; vis+33.1 fg+9.8 ; R.rawprobe 26.9ms s1/0x10000 ; U.probe 40.6ms true ; U.efhbcd 4.4ms real ; R.efhbcd 23.0ms real
+  run 17 delay=0 ; actual=0.3 ; found+19.3ms ; vis+22.9 fg+8.0 ; R.rawprobe 24.8ms s1/0x10000 ; R.efhbcd 17.2ms real ; U.probe 3031.1ms false ; U.efhbcd 1.2ms real ; ODD
+  run 18 delay=0 ; actual=0.3 ; found+18.7ms ; vis+23.8 fg+8.9 ; R.rawprobe 23.5ms s1/0x10000 ; U.probe 37.5ms true ; U.efhbcd 3.0ms real ; R.efhbcd 19.9ms real
+  run 19 delay=0 ; actual=0.3 ; found+20.7ms ; vis+19.1 fg+8.2 ; R.rawprobe 23.1ms s1/0x10000 ; U.probe 38.3ms true ; U.efhbcd 2.4ms real ; R.efhbcd 24.2ms real
+  run 20 delay=0 ; actual=0.5 ; found+19.4ms ; vis+22.7 fg+11.0 ; R.rawprobe 27.0ms s1/0x10000 ; U.probe 32.4ms true ; U.efhbcd 13.6ms real ; R.efhbcd 22.7ms real
+  run 21 delay=0 ; actual=0.3 ; found+20.0ms ; vis+20.7 fg+9.8 ; R.rawprobe 25.0ms s1/0x10000 ; U.probe 36.0ms true ; U.efhbcd 1.5ms real ; R.efhbcd 20.9ms real
+  run 22 delay=0 ; actual=0.2 ; found+23.2ms ; vis+20.9 fg+9.9 ; R.rawprobe 25.0ms s1/0x10000 ; R.efhbcd 18.7ms real ; U.probe 3030.6ms false ; U.efhbcd 1.8ms real ; ODD
+  run 23 delay=0 ; actual=0.3 ; found+21.9ms ; vis+22.5 fg+10.1 ; R.rawprobe 26.8ms s1/0x10000 ; U.probe 43.2ms true ; U.efhbcd 2.6ms real ; R.efhbcd 30.9ms real
+  run 24 delay=0 ; actual=0.2 ; found+19.7ms ; vis+19.0 fg+11.1 ; R.rawprobe 23.3ms s1/0x10000 ; U.probe 33.9ms true ; U.efhbcd 2.2ms real ; R.efhbcd 19.2ms real
+  run 25 delay=0 ; actual=0.3 ; found+20.5ms ; vis+18.4 fg+8.2 ; R.rawprobe 23.0ms s1/0x10000 ; U.probe 40.0ms true ; U.efhbcd 3.2ms real ; R.efhbcd 23.4ms real
+  run 26 delay=0 ; actual=0.3 ; found+19.4ms ; vis+19.8 fg+8.8 ; R.rawprobe 24.8ms s1/0x10000 ; U.probe 26.9ms true ; U.efhbcd 3.3ms real ; R.efhbcd 15.1ms real
+  run 27 delay=0 ; actual=0.2 ; found+21.7ms ; vis+19.1 fg+8.3 ; R.rawprobe 23.3ms s1/0x10000 ; U.probe 31.1ms true ; U.efhbcd 6.9ms real ; R.efhbcd 16.7ms real
+  run 28 delay=0 ; actual=0.2 ; found+20.7ms ; vis+21.5 fg+10.7 ; R.rawprobe 26.6ms s1/0x10000 ; U.probe 29.7ms true ; U.efhbcd 8.3ms real ; R.efhbcd 20.6ms real
+  run 29 delay=0 ; actual=0.3 ; found+20.5ms ; vis+20.2 fg+7.9 ; R.rawprobe 24.3ms s1/0x10000 ; R.efhbcd 18.2ms real ; U.probe 3031.2ms false ; U.efhbcd 1.4ms real ; ODD
+  run 30 delay=0 ; actual=0.3 ; found+19.7ms ; vis+19.7 fg+8.7 ; R.rawprobe 24.0ms s1/0x10000 ; U.probe 36.4ms true ; U.efhbcd 3.4ms real ; R.efhbcd 16.0ms real
+### e38-tooltip: 30 trials, 7 odd; answer: count, min-max ms
+  R.efhbcd real: 30, 10.8-30.9
+  R.rawprobe s1/0x10000: 30, 22.8-30.0
+  U.efhbcd real: 30, 1.2-13.6
+  U.probe false: 7, 3026.4-3038.6
+  U.probe true: 23, 26.9-43.2
+## e38-listener-passive
+  run  1 delay=0 ; actual=0.3 ; found+21.2ms ; vis+20.8 fg+7.9 ; R.rawprobe 25.6ms s1/0x10000 ; U.probe 38.8ms true ; U.efhbcd 2.3ms real ; R.efhbcd 22.3ms real ; L.reads 0
+  run  2 delay=0 ; actual=0.3 ; found+18.7ms ; vis+20.7 fg+10.7 ; R.rawprobe 25.7ms s1/0x10000 ; U.probe 36.9ms true ; U.efhbcd 6.4ms real ; R.efhbcd 21.3ms real ; L.reads 0
+  run  3 delay=0 ; actual=0.3 ; found+19.8ms ; vis+20.7 fg+9.6 ; R.rawprobe 24.8ms s1/0x10000 ; U.probe 34.2ms true ; U.efhbcd 8.4ms real ; R.efhbcd 20.1ms real ; L.reads 0
+  run  4 delay=0 ; actual=0.3 ; found+18.8ms ; vis+21.1 fg+9.7 ; R.rawprobe 25.1ms s1/0x10000 ; U.probe 37.9ms true ; U.efhbcd 2.3ms real ; R.efhbcd 21.0ms real ; L.reads 0
+  run  5 delay=0 ; actual=0.4 ; found+25.8ms ; vis+23.0 fg+11.9 ; R.rawprobe 27.6ms s1/0x10000 ; U.probe 32.1ms true ; U.efhbcd 7.0ms real ; R.efhbcd 27.9ms real ; L.reads 0
+  run  6 delay=0 ; actual=0.5 ; found+26.5ms ; vis+24.1 fg+12.5 ; R.rawprobe 29.6ms s1/0x10000 ; R.efhbcd 15.2ms real ; U.probe 3039.2ms false ; U.efhbcd 1.6ms real ; L.reads 0 ; ODD
+  run  7 delay=0 ; actual=0.3 ; found+18.9ms ; vis+20.8 fg+10.5 ; R.rawprobe 25.6ms s1/0x10000 ; U.probe 38.2ms true ; U.efhbcd 3.7ms real ; R.efhbcd 23.3ms real ; L.reads 0
+  run  8 delay=0 ; actual=0.2 ; found+22.9ms ; vis+19.1 fg+10.0 ; R.rawprobe 23.9ms s1/0x10000 ; U.probe 31.7ms true ; U.efhbcd 6.8ms real ; R.efhbcd 18.9ms real ; L.reads 0
+  run  9 delay=0 ; actual=0.2 ; found+20.4ms ; vis+18.6 fg+7.6 ; R.rawprobe 23.5ms s1/0x10000 ; U.probe 33.8ms true ; U.efhbcd 2.7ms real ; R.efhbcd 20.3ms real ; L.reads 0
+  run 10 delay=0 ; actual=0.3 ; found+19.6ms ; vis+22.2 fg+10.2 ; R.rawprobe 27.1ms s1/0x10000 ; U.probe 42.8ms true ; U.efhbcd 1.1ms real ; R.efhbcd 26.9ms real ; L.reads 0
+  run 11 delay=0 ; actual=0.2 ; found+20.7ms ; vis+28.4 fg+11.6 ; R.rawprobe 29.2ms s1/0x10000 ; U.probe 39.6ms true ; U.efhbcd 3.9ms real ; R.efhbcd 20.0ms real ; L.reads 0
+  run 12 delay=0 ; actual=0.2 ; found+20.4ms ; vis+21.1 fg+10.1 ; R.rawprobe 27.1ms s1/0x10000 ; R.efhbcd 19.9ms real ; U.probe 3040.6ms false ; U.efhbcd 1.2ms real ; L.reads 0 ; ODD
+  run 13 delay=0 ; actual=0.2 ; found+21.3ms ; vis+22.6 fg+10.0 ; R.rawprobe 27.6ms s1/0x10000 ; U.probe 44.9ms true ; U.efhbcd 2.2ms real ; R.efhbcd 25.4ms real ; L.reads 0
+  run 14 delay=0 ; actual=0.3 ; found+19.4ms ; vis+22.1 fg+12.6 ; R.rawprobe 27.8ms s1/0x10000 ; R.efhbcd 23.6ms real ; U.probe 3039.1ms false ; U.efhbcd 1.9ms real ; L.reads 0 ; ODD
+  run 15 delay=0 ; actual=0.3 ; found+20.4ms ; vis+36.5 fg+10.3 ; R.rawprobe 25.0ms s1/0x10000 ; U.probe 38.0ms true ; U.efhbcd 1.4ms real ; R.efhbcd 22.9ms real ; L.reads 0
+  run 16 delay=0 ; actual=0.5 ; found+21.4ms ; vis+25.1 fg+10.5 ; R.rawprobe 25.2ms s1/0x10000 ; R.efhbcd 19.0ms real ; U.probe 3038.1ms false ; U.efhbcd 1.9ms real ; L.reads 0 ; ODD
+  run 17 delay=0 ; actual=0.2 ; found+22.7ms ; vis+21.3 fg+10.9 ; R.rawprobe 26.0ms s1/0x10000 ; U.probe 31.4ms true ; U.efhbcd 17.8ms real ; R.efhbcd 31.7ms real ; L.reads 0
+  run 18 delay=0 ; actual=0.2 ; found+24.6ms ; vis+38.0 fg+10.0 ; R.rawprobe 23.8ms s1/0x10000 ; U.probe 38.4ms true ; U.efhbcd 3.7ms real ; R.efhbcd 23.8ms real ; L.reads 0
+  run 19 delay=0 ; actual=0.2 ; found+19.7ms ; vis+21.3 fg+8.8 ; R.rawprobe 26.7ms s1/0x10000 ; R.efhbcd 24.0ms real ; U.probe 3040.2ms false ; U.efhbcd 1.6ms real ; L.reads 0 ; ODD
+  run 20 delay=0 ; actual=0.3 ; found+20.6ms ; vis+28.2 fg+12.2 ; R.rawprobe 34.9ms s1/0x10000 ; U.probe 46.9ms true ; U.efhbcd 6.5ms real ; R.efhbcd 23.2ms real ; L.reads 0
+  run 21 delay=0 ; actual=0.2 ; found+19.9ms ; vis+37.5 fg+8.3 ; R.rawprobe 25.0ms s1/0x10000 ; R.efhbcd 22.6ms real ; U.probe 3031.2ms false ; U.efhbcd 1.3ms real ; L.reads 0 ; ODD
+  run 22 delay=0 ; actual=0.2 ; found+21.0ms ; vis+19.9 fg+9.2 ; R.rawprobe 25.3ms s1/0x10000 ; R.efhbcd 25.9ms real ; U.probe 3039.3ms false ; U.efhbcd 1.4ms real ; L.reads 0 ; ODD
+  run 23 delay=0 ; actual=0.3 ; found+19.9ms ; vis+34.9 fg+8.5 ; R.rawprobe 24.5ms s1/0x10000 ; U.probe 37.6ms true ; U.efhbcd 3.6ms real ; R.efhbcd 21.4ms real ; L.reads 0
+  run 24 delay=0 ; actual=0.3 ; found+23.5ms ; vis+25.1 fg+9.5 ; R.rawprobe 25.8ms s1/0x10000 ; R.efhbcd 27.6ms real ; U.probe 3039.3ms false ; U.efhbcd 1.2ms real ; L.reads 0 ; ODD
+  run 25 delay=0 ; actual=0.2 ; found+19.7ms ; vis+37.1 fg+9.2 ; R.rawprobe 42.9ms s1/0x10000 ; R.efhbcd 20.8ms real ; U.probe 3058.4ms false ; U.efhbcd 1.5ms real ; L.reads 0 ; ODD
+  run 26 delay=0 ; actual=0.3 ; found+21.4ms ; vis+22.4 fg+10.0 ; R.rawprobe 28.9ms s1/0x10000 ; R.efhbcd 22.6ms real ; U.probe 3033.6ms false ; U.efhbcd 1.7ms real ; L.reads 0 ; ODD
+  run 27 delay=0 ; actual=0.3 ; found+22.6ms ; vis+21.3 fg+12.4 ; R.rawprobe 25.0ms s1/0x10000 ; U.probe 33.6ms true ; U.efhbcd 3.0ms real ; R.efhbcd 20.4ms real ; L.reads 0
+  run 28 delay=0 ; actual=0.3 ; found+21.3ms ; vis+26.0 fg+11.4 ; R.rawprobe 27.2ms s1/0x10000 ; U.probe 29.9ms true ; U.efhbcd 7.0ms real ; R.efhbcd 21.2ms real ; L.reads 0
+  run 29 delay=0 ; actual=0.3 ; found+25.1ms ; vis+22.4 fg+10.0 ; R.rawprobe 26.8ms s1/0x10000 ; U.probe 28.5ms true ; U.efhbcd 12.4ms real ; R.efhbcd 17.0ms real ; L.reads 0
+  run 30 delay=0 ; actual=0.3 ; found+18.7ms ; vis+19.1 fg+8.3 ; R.rawprobe 23.7ms s1/0x10000 ; U.probe 40.3ms true ; U.efhbcd 5.3ms real ; R.efhbcd 29.2ms real ; L.reads 0
+### e38-listener-passive: 30 trials, 10 odd; answer: count, min-max ms
+  R.efhbcd real: 30, 15.2-31.7
+  R.rawprobe s1/0x10000: 30, 23.5-42.9
+  U.efhbcd real: 30, 1.1-17.8
+  U.probe false: 10, 3031.2-3058.4
+  U.probe true: 20, 28.5-46.9
+## e38-listener-uonly
+  run  1 delay=0 ; actual=0.2 ; found+20.1ms ; vis+23.1 fg+11.2 ; U.probe 45.4ms true ; U.efhbcd 3.4ms real ; L.probe@38 0.7ms true ; L.reads 4 first@46 max 2.0ms focused
+  run  2 delay=0 ; actual=0.2 ; found+22.0ms ; vis+27.2 fg+11.2 ; U.probe 42.6ms true ; U.efhbcd 1.8ms real ; L.probe@37 1.2ms true ; L.reads 4 first@48 max 1.9ms focused
+  run  3 delay=0 ; actual=0.2 ; found+23.1ms ; vis+23.4 fg+11.0 ; U.probe 42.7ms true ; U.efhbcd 2.3ms real ; L.probe@31 1.5ms true ; L.reads 4 first@41 max 3.4ms focused
+  run  4 delay=0 ; actual=0.2 ; found+19.5ms ; vis+19.1 fg+10.4 ; U.probe 40.3ms true ; U.efhbcd 3.5ms real ; L.probe@35 0.5ms true ; L.reads 4 first@46 max 1.5ms focused
+  run  5 delay=0 ; actual=0.2 ; found+19.9ms ; vis+21.9 fg+9.4 ; U.probe 30.9ms true ; U.efhbcd 2.3ms real ; L.probe@31 2.9ms true ; L.reads 4 first@44 max 2.7ms focused
+  run  6 delay=0 ; actual=0.2 ; found+20.3ms ; vis+25.1 fg+13.4 ; U.probe 32.9ms true ; U.efhbcd 5.0ms real ; L.probe@27 3.0ms true ; L.reads 4 first@40 max 1.9ms focused
+  run  7 delay=0 ; actual=0.3 ; found+19.8ms ; vis+23.6 fg+11.0 ; U.probe 42.4ms true ; U.efhbcd 2.0ms real ; L.probe@40 0.3ms true ; L.reads 4 first@48 max 1.8ms focused
+  run  8 delay=0 ; actual=0.3 ; found+21.4ms ; vis+27.6 fg+11.9 ; U.probe 31.1ms true ; U.efhbcd 3.6ms real ; L.probe@29 1.9ms true ; L.reads 4 first@42 max 1.9ms focused
+  run  9 delay=0 ; actual=0.2 ; found+18.7ms ; vis+19.2 fg+8.4 ; U.probe 26.1ms true ; U.efhbcd 6.8ms real ; L.probe@27 3.2ms true ; L.reads 4 first@43 max 1.4ms focused
+  run 10 delay=0 ; actual=0.3 ; found+20.9ms ; vis+20.5 fg+9.7 ; U.probe 29.9ms true ; U.efhbcd 7.8ms real ; L.probe@31 1.5ms true ; L.reads 4 first@44 max 1.5ms focused
+  run 11 delay=0 ; actual=0.2 ; found+22.3ms ; vis+22.6 fg+11.7 ; U.probe 39.5ms true ; U.efhbcd 3.2ms real ; L.probe@35 1.5ms true ; L.reads 4 first@45 max 1.8ms focused
+  run 12 delay=0 ; actual=0.2 ; found+22.5ms ; vis+20.6 fg+9.6 ; U.probe 42.9ms true ; U.efhbcd 5.2ms real ; L.probe@36 0.9ms true ; L.reads 4 first@41 max 3.5ms focused
+  run 13 delay=0 ; actual=0.2 ; found+19.4ms ; vis+18.4 fg+9.6 ; U.probe 40.9ms true ; U.efhbcd 5.7ms real ; L.probe@35 0.5ms true ; L.reads 4 first@42 max 2.0ms focused
+  run 14 delay=0 ; actual=0.3 ; found+25.8ms ; vis+24.0 fg+12.9 ; U.probe 31.9ms true ; U.efhbcd 13.4ms real ; L.probe@32 8.2ms true ; L.reads 4 first@49 max 1.4ms focused
+  run 15 delay=0 ; actual=0.2 ; found+21.5ms ; vis+23.5 fg+12.7 ; U.probe 41.9ms true ; U.efhbcd 3.7ms real ; L.probe@33 4.5ms true ; L.reads 4 first@47 max 1.7ms focused
+  run 16 delay=0 ; actual=0.2 ; found+19.2ms ; vis+21.4 fg+8.9 ; U.probe 28.4ms true ; U.efhbcd 3.3ms real ; L.probe@30 1.1ms true ; L.reads 4 first@43 max 1.5ms focused
+  run 17 delay=0 ; actual=0.2 ; found+19.5ms ; vis+20.5 fg+9.5 ; U.probe 38.6ms true ; U.efhbcd 3.9ms real ; L.probe@29 3.2ms true ; L.reads 4 first@40 max 1.6ms focused
+  run 18 delay=0 ; actual=0.2 ; found+19.9ms ; vis+37.7 fg+11.0 ; U.probe 3031.3ms false ; U.efhbcd 1.6ms real ; L.probe@37 0.6ms true ; L.reads 4 first@46 max 1.6ms focused ; ODD
+  run 19 delay=0 ; actual=0.3 ; found+20.9ms ; vis+20.3 fg+9.3 ; U.probe 37.4ms true ; U.efhbcd 1.9ms real ; L.probe@34 1.6ms true ; L.reads 4 first@47 max 1.4ms focused
+  run 20 delay=0 ; actual=0.3 ; found+19.4ms ; vis+19.8 fg+8.9 ; U.probe 26.6ms true ; U.efhbcd 4.1ms real ; L.probe@28 2.1ms true ; L.reads 4 first@38 max 1.9ms focused
+  run 21 delay=0 ; actual=0.2 ; found+20.3ms ; vis+22.0 fg+9.6 ; U.probe 38.2ms true ; U.efhbcd 3.3ms real ; L.probe@31 0.4ms true ; L.reads 4 first@40 max 1.9ms focused
+  run 22 delay=0 ; actual=0.2 ; found+19.4ms ; vis+40.6 fg+9.7 ; U.probe 41.7ms true ; U.efhbcd 4.6ms real ; L.probe@38 2.2ms true ; L.reads 4 first@49 max 1.6ms focused
+  run 23 delay=0 ; actual=0.3 ; found+19.6ms ; vis+22.1 fg+9.5 ; U.probe 37.5ms true ; U.efhbcd 8.2ms real ; L.probe@31 1.1ms true ; L.reads 4 first@39 max 2.5ms focused
+  run 24 delay=0 ; actual=0.3 ; found+22.0ms ; vis+21.6 fg+10.6 ; U.probe 28.7ms true ; U.efhbcd 4.2ms real ; L.probe@30 0.4ms true ; L.reads 4 first@40 max 3.8ms focused
+  run 25 delay=0 ; actual=0.3 ; found+22.3ms ; vis+23.7 fg+11.1 ; U.probe 35.1ms true ; U.efhbcd 5.9ms real ; L.probe@33 3.6ms true ; L.reads 4 first@43 max 5.5ms focused
+  run 26 delay=0 ; actual=0.3 ; found+22.6ms ; vis+24.6 fg+10.0 ; U.probe 3037.0ms false ; U.efhbcd 2.0ms real ; L.probe@40 0.9ms true ; L.reads 4 first@51 max 2.0ms focused ; ODD
+  run 27 delay=0 ; actual=0.2 ; found+19.5ms ; vis+40.8 fg+10.2 ; U.probe 41.7ms true ; U.efhbcd 1.9ms real ; L.probe@39 0.8ms true ; L.reads 4 first@46 max 1.7ms focused
+  run 28 delay=0 ; actual=0.2 ; found+21.9ms ; vis+20.8 fg+8.3 ; U.probe 26.6ms true ; U.efhbcd 7.0ms real ; L.probe@28 2.1ms true ; L.reads 4 first@37 max 1.6ms focused
+  run 29 delay=0 ; actual=0.3 ; found+20.3ms ; vis+20.7 fg+9.7 ; U.probe 34.1ms true ; U.efhbcd 4.1ms real ; L.probe@30 2.0ms true ; L.reads 4 first@41 max 2.0ms focused
+  run 30 delay=0 ; actual=0.2 ; found+19.2ms ; vis+19.6 fg+8.7 ; U.probe 38.5ms true ; U.efhbcd 1.7ms real ; L.probe@30 1.3ms true ; L.reads 4 first@38 max 1.7ms focused
+### e38-listener-uonly: 30 trials, 2 odd; answer: count, min-max ms
+  L.probe true: 30, 0.3-8.2
+  L.read focused: 120, 0.7-5.5
+  U.efhbcd real: 30, 1.6-13.4
+  U.probe false: 2, 3031.3-3037.0
+  U.probe true: 28, 26.1-45.4
+## e38-tooltip-nohandler
+  run  1 delay=0 ; actual=0.3 ; found+19.6ms ; vis+20.1 fg+9.1 ; R.rawprobe 24.6ms s1/0x10000 ; U.probe 36.8ms true ; U.efhbcd 1.8ms real ; R.efhbcd 22.8ms real
+  run  2 delay=0 ; actual=0.3 ; found+19.5ms ; vis+18.7 fg+9.9 ; R.rawprobe 22.8ms s1/0x10000 ; U.probe 38.5ms true ; U.efhbcd 4.1ms real ; R.efhbcd 21.6ms real
+  run  3 delay=0 ; actual=0.3 ; found+18.5ms ; vis+22.4 fg+11.7 ; R.rawprobe 27.0ms s1/0x10000 ; U.probe 35.9ms true ; U.efhbcd 2.4ms real ; R.efhbcd 21.4ms real
+  run  4 delay=0 ; actual=0.4 ; found+19.9ms ; vis+19.9 fg+11.1 ; R.rawprobe 24.1ms s1/0x10000 ; U.probe 43.0ms true ; U.efhbcd 3.0ms real ; R.efhbcd 23.8ms real
+  run  5 delay=0 ; actual=0.3 ; found+23.4ms ; vis+21.7 fg+9.1 ; R.rawprobe 27.4ms s1/0x10000 ; U.probe 29.7ms true ; U.efhbcd 4.3ms real ; R.efhbcd 14.0ms real
+  run  6 delay=0 ; actual=0.2 ; found+19.6ms ; vis+20.6 fg+9.2 ; R.rawprobe 24.2ms s1/0x10000 ; U.probe 35.9ms true ; U.efhbcd 1.7ms real ; R.efhbcd 14.2ms real
+  run  7 delay=0 ; actual=0.3 ; found+20.4ms ; vis+20.5 fg+11.7 ; R.rawprobe 25.3ms s1/0x10000 ; U.probe 35.8ms true ; U.efhbcd 8.4ms real ; R.efhbcd 20.2ms real
+  run  8 delay=0 ; actual=0.2 ; found+18.7ms ; vis+18.0 fg+9.2 ; R.rawprobe 22.3ms s1/0x10000 ; U.probe 36.3ms true ; U.efhbcd 2.7ms real ; R.efhbcd 21.9ms real
+  run  9 delay=0 ; actual=0.6 ; found+21.9ms ; vis+23.5 fg+12.5 ; R.rawprobe 27.2ms s1/0x10000 ; U.probe 30.9ms true ; U.efhbcd 4.6ms real ; R.efhbcd 12.9ms real
+  run 10 delay=0 ; actual=0.2 ; found+22.5ms ; vis+22.1 fg+9.4 ; R.rawprobe 26.6ms s1/0x10000 ; U.probe 28.3ms true ; U.efhbcd 3.0ms real ; R.efhbcd 13.2ms real
+  run 11 delay=0 ; actual=0.3 ; found+21.8ms ; vis+26.0 fg+10.5 ; R.rawprobe 27.1ms s1/0x10000 ; U.probe 28.6ms true ; U.efhbcd 5.2ms real ; R.efhbcd 16.4ms real
+  run 12 delay=0 ; actual=0.3 ; found+20.2ms ; vis+21.0 fg+10.0 ; R.rawprobe 25.2ms s1/0x10000 ; U.probe 27.3ms true ; U.efhbcd 13.8ms real ; R.efhbcd 17.3ms real
+  run 13 delay=0 ; actual=0.2 ; found+22.2ms ; vis+19.8 fg+10.2 ; R.rawprobe 24.4ms s1/0x10000 ; U.probe 36.2ms true ; U.efhbcd 1.6ms real ; R.efhbcd 18.2ms real
+  run 14 delay=0 ; actual=0.2 ; found+19.4ms ; vis+24.9 fg+9.5 ; R.rawprobe 23.2ms s1/0x10000 ; U.probe 34.2ms true ; U.efhbcd 5.1ms real ; R.efhbcd 16.5ms real
+  run 15 delay=0 ; actual=0.3 ; found+20.2ms ; vis+20.2 fg+9.3 ; R.rawprobe 24.7ms s1/0x10000 ; U.probe 37.8ms true ; U.efhbcd 2.5ms real ; R.efhbcd 16.3ms real
+  run 16 delay=0 ; actual=0.3 ; found+19.6ms ; vis+19.7 fg+13.2 ; R.rawprobe 23.5ms s1/0x10000 ; U.probe 40.2ms true ; U.efhbcd 6.0ms real ; R.efhbcd 24.0ms real
+  run 17 delay=0 ; actual=0.2 ; found+19.8ms ; vis+20.6 fg+10.8 ; R.rawprobe 25.2ms s1/0x10000 ; U.probe 36.5ms true ; U.efhbcd 1.3ms real ; R.efhbcd 20.3ms real
+  run 18 delay=0 ; actual=0.2 ; found+21.6ms ; vis+18.4 fg+8.8 ; R.rawprobe 23.1ms s1/0x10000 ; U.probe 36.0ms true ; U.efhbcd 1.2ms real ; R.efhbcd 14.6ms real
+  run 19 delay=0 ; actual=0.3 ; found+18.6ms ; vis+18.2 fg+9.0 ; R.rawprobe 22.5ms s1/0x10000 ; U.probe 31.5ms true ; U.efhbcd 4.3ms real ; R.efhbcd 15.2ms real
+  run 20 delay=0 ; actual=0.3 ; found+19.7ms ; vis+19.9 fg+8.9 ; R.rawprobe 24.6ms s1/0x10000 ; U.probe 29.2ms true ; U.efhbcd 9.0ms real ; R.efhbcd 15.0ms real
+  run 21 delay=0 ; actual=0.3 ; found+21.1ms ; vis+29.4 fg+8.8 ; R.rawprobe 23.8ms s1/0x10000 ; U.probe 33.2ms true ; U.efhbcd 2.1ms real ; R.efhbcd 19.9ms real
+  run 22 delay=0 ; actual=0.3 ; found+20.0ms ; vis+20.1 fg+14.4 ; R.rawprobe 25.2ms s1/0x10000 ; U.probe 31.1ms true ; U.efhbcd 5.6ms real ; R.efhbcd 14.9ms real
+  run 23 delay=0 ; actual=0.2 ; found+18.9ms ; vis+20.2 fg+9.6 ; R.rawprobe 23.9ms s1/0x10000 ; U.probe 36.4ms true ; U.efhbcd 2.4ms real ; R.efhbcd 23.5ms real
+  run 24 delay=0 ; actual=0.3 ; found+21.1ms ; vis+21.8 fg+11.0 ; R.rawprobe 26.3ms s1/0x10000 ; U.probe 29.0ms true ; U.efhbcd 9.5ms real ; R.efhbcd 14.0ms real
+  run 25 delay=0 ; actual=0.2 ; found+20.5ms ; vis+37.3 fg+9.8 ; R.rawprobe 25.0ms s1/0x10000 ; U.probe 39.3ms true ; U.efhbcd 1.8ms real ; R.efhbcd 22.0ms real
+  run 26 delay=0 ; actual=0.3 ; found+21.9ms ; vis+33.6 fg+10.1 ; R.rawprobe 24.6ms s1/0x10000 ; U.probe 37.2ms true ; U.efhbcd 8.1ms real ; R.efhbcd 24.7ms real
+  run 27 delay=0 ; actual=0.3 ; found+23.6ms ; vis+23.1 fg+10.2 ; R.rawprobe 26.1ms s1/0x10000 ; U.probe 37.1ms true ; U.efhbcd 5.0ms real ; R.efhbcd 17.7ms real
+  run 28 delay=0 ; actual=0.2 ; found+21.9ms ; vis+20.6 fg+8.4 ; R.rawprobe 22.8ms s1/0x10000 ; U.probe 25.0ms true ; U.efhbcd 3.2ms real ; R.efhbcd 12.6ms real
+  run 29 delay=0 ; actual=0.3 ; found+19.6ms ; vis+26.4 fg+10.5 ; R.rawprobe 24.2ms s1/0x10000 ; U.probe 35.1ms true ; U.efhbcd 9.0ms real ; R.efhbcd 22.4ms real
+  run 30 delay=0 ; actual=0.3 ; found+39.4ms ; vis+19.3 fg+10.4 ; R.rawprobe 24.4ms s1/0x10000 ; U.probe 28.0ms true ; U.efhbcd 6.0ms real ; R.efhbcd 14.5ms real
+  run 31 delay=0 ; actual=0.3 ; found+23.0ms ; vis+18.6 fg+10.5 ; R.rawprobe 23.6ms s1/0x10000 ; U.probe 35.1ms true ; U.efhbcd 4.1ms real ; R.efhbcd 16.5ms real
+  run 32 delay=0 ; actual=0.2 ; found+19.2ms ; vis+17.9 fg+8.8 ; R.rawprobe 22.6ms s1/0x10000 ; U.probe 36.1ms true ; U.efhbcd 2.7ms real ; R.efhbcd 17.5ms real
+  run 33 delay=0 ; actual=0.3 ; found+19.2ms ; vis+21.5 fg+10.0 ; R.rawprobe 22.1ms s1/0x10000 ; U.probe 24.3ms true ; U.efhbcd 13.4ms real ; R.efhbcd 21.3ms real
+  run 34 delay=0 ; actual=0.2 ; found+20.7ms ; vis+20.1 fg+9.0 ; R.rawprobe 24.6ms s1/0x10000 ; U.probe 31.7ms true ; U.efhbcd 8.5ms real ; R.efhbcd 18.3ms real
+  run 35 delay=0 ; actual=0.3 ; found+20.7ms ; vis+19.1 fg+8.3 ; R.rawprobe 24.8ms s1/0x10000 ; U.probe 32.0ms true ; U.efhbcd 5.2ms real ; R.efhbcd 19.2ms real
+  run 36 delay=0 ; actual=0.3 ; found+23.1ms ; vis+26.6 fg+14.0 ; R.rawprobe 25.6ms s1/0x10000 ; U.probe 40.5ms true ; U.efhbcd 2.1ms real ; R.efhbcd 25.8ms real
+  run 37 delay=0 ; actual=0.4 ; found+21.2ms ; vis+23.9 fg+12.4 ; R.rawprobe 28.9ms s1/0x10000 ; U.probe 45.8ms true ; U.efhbcd 5.0ms real ; R.efhbcd 25.7ms real
+  run 38 delay=0 ; actual=0.2 ; found+19.5ms ; vis+19.6 fg+9.0 ; R.rawprobe 23.5ms s1/0x10000 ; U.probe 41.5ms true ; U.efhbcd 3.3ms real ; R.efhbcd 22.8ms real
+  run 39 delay=0 ; actual=0.3 ; found+19.8ms ; vis+17.5 fg+8.3 ; R.rawprobe 23.1ms s1/0x10000 ; U.probe 33.6ms true ; U.efhbcd 1.7ms real ; R.efhbcd 16.5ms real
+  run 40 delay=0 ; actual=0.3 ; found+20.1ms ; vis+21.6 fg+13.8 ; R.rawprobe 26.2ms s1/0x10000 ; U.probe 37.9ms true ; U.efhbcd 6.0ms real ; R.efhbcd 19.7ms real
+### e38-tooltip-nohandler: 40 trials, 0 odd; answer: count, min-max ms
+  R.efhbcd real: 40, 12.6-25.8
+  R.rawprobe s1/0x10000: 40, 22.1-28.9
+  U.efhbcd real: 40, 1.2-13.8
+  U.probe true: 40, 24.3-45.8
+## e38-passive-uonly
+  run  1 delay=0 ; actual=0.2 ; found+19.0ms ; vis+21.4 fg+8.6 ; U.probe 28.0ms true ; U.efhbcd 5.8ms real ; L.reads 0
+  run  2 delay=0 ; actual=0.2 ; found+20.2ms ; vis+19.3 fg+8.6 ; U.probe 31.9ms true ; U.efhbcd 6.9ms real ; L.reads 0
+  run  3 delay=0 ; actual=0.2 ; found+21.4ms ; vis+20.2 fg+9.8 ; U.probe 40.3ms true ; U.efhbcd 1.9ms real ; L.reads 0
+  run  4 delay=0 ; actual=0.2 ; found+19.3ms ; vis+33.7 fg+9.8 ; U.probe 41.6ms true ; U.efhbcd 1.9ms real ; L.reads 0
+  run  5 delay=0 ; actual=0.2 ; found+19.8ms ; vis+36.1 fg+11.4 ; U.probe 37.5ms true ; U.efhbcd 1.8ms real ; L.reads 0
+  run  6 delay=0 ; actual=0.3 ; found+20.3ms ; vis+21.7 fg+9.2 ; U.probe 35.4ms true ; U.efhbcd 4.1ms real ; L.reads 0
+  run  7 delay=0 ; actual=0.2 ; found+19.6ms ; vis+19.9 fg+9.0 ; U.probe 38.2ms true ; U.efhbcd 1.7ms real ; L.reads 0
+  run  8 delay=0 ; actual=0.2 ; found+18.7ms ; vis+22.6 fg+10.4 ; U.probe 29.5ms true ; U.efhbcd 3.9ms real ; L.reads 0
+  run  9 delay=0 ; actual=0.2 ; found+19.1ms ; vis+19.0 fg+8.2 ; U.probe 43.0ms true ; U.efhbcd 1.1ms real ; L.reads 0
+  run 10 delay=0 ; actual=0.2 ; found+21.3ms ; vis+20.4 fg+9.1 ; U.probe 26.8ms true ; U.efhbcd 2.4ms real ; L.reads 0
+  run 11 delay=0 ; actual=0.3 ; found+27.2ms ; vis+22.9 fg+10.5 ; U.probe 29.8ms true ; U.efhbcd 2.6ms real ; L.reads 0
+  run 12 delay=0 ; actual=0.7 ; found+22.5ms ; vis+22.7 fg+10.3 ; U.probe 29.5ms true ; U.efhbcd 7.9ms real ; L.reads 0
+  run 13 delay=0 ; actual=0.3 ; found+23.2ms ; vis+20.6 fg+9.7 ; U.probe 38.9ms true ; U.efhbcd 3.5ms real ; L.reads 0
+  run 14 delay=0 ; actual=0.2 ; found+21.0ms ; vis+20.1 fg+12.6 ; U.probe 3032.5ms false ; U.efhbcd 1.4ms real ; L.reads 0 ; ODD
+  run 15 delay=0 ; actual=0.3 ; found+21.5ms ; vis+24.2 fg+8.0 ; U.probe 31.0ms true ; U.efhbcd 9.7ms real ; L.reads 0
+  run 16 delay=0 ; actual=0.2 ; found+18.9ms ; vis+21.6 fg+8.6 ; U.probe 39.6ms true ; U.efhbcd 5.2ms real ; L.reads 0
+  run 17 delay=0 ; actual=0.2 ; found+20.1ms ; vis+31.7 fg+10.1 ; U.probe 41.5ms true ; U.efhbcd 1.2ms real ; L.reads 0
+  run 18 delay=0 ; actual=0.2 ; found+18.9ms ; vis+22.2 fg+9.4 ; U.probe 3032.8ms false ; U.efhbcd 1.4ms real ; L.reads 0 ; ODD
+  run 19 delay=0 ; actual=0.2 ; found+19.9ms ; vis+20.4 fg+11.6 ; U.probe 37.7ms true ; U.efhbcd 2.2ms real ; L.reads 0
+  run 20 delay=0 ; actual=0.4 ; found+21.3ms ; vis+22.1 fg+11.8 ; U.probe 3033.0ms false ; U.efhbcd 1.2ms real ; L.reads 0 ; ODD
+  run 21 delay=0 ; actual=0.3 ; found+19.4ms ; vis+38.7 fg+8.9 ; U.probe 37.4ms true ; U.efhbcd 3.5ms real ; L.reads 0
+  run 22 delay=0 ; actual=0.2 ; found+18.9ms ; vis+38.8 fg+9.5 ; U.probe 42.3ms true ; U.efhbcd 2.2ms real ; L.reads 0
+  run 23 delay=0 ; actual=0.3 ; found+20.6ms ; vis+21.7 fg+10.6 ; U.probe 41.9ms true ; U.efhbcd 2.1ms real ; L.reads 0
+  run 24 delay=0 ; actual=0.3 ; found+21.5ms ; vis+21.7 fg+8.7 ; U.probe 37.5ms true ; U.efhbcd 1.4ms real ; L.reads 0
+  run 25 delay=0 ; actual=0.2 ; found+23.5ms ; vis+20.1 fg+11.0 ; U.probe 38.8ms true ; U.efhbcd 1.5ms real ; L.reads 0
+  run 26 delay=0 ; actual=0.2 ; found+39.3ms ; vis+21.7 fg+11.3 ; U.probe 30.9ms true ; U.efhbcd 5.8ms real ; L.reads 0
+  run 27 delay=0 ; actual=0.3 ; found+20.5ms ; vis+22.1 fg+9.6 ; U.probe 30.8ms true ; U.efhbcd 6.0ms real ; L.reads 0
+  run 28 delay=0 ; actual=0.3 ; found+19.5ms ; vis+21.3 fg+15.6 ; U.probe 3037.5ms false ; U.efhbcd 1.7ms real ; L.reads 0 ; ODD
+  run 29 delay=0 ; actual=0.2 ; found+19.7ms ; vis+20.2 fg+9.4 ; U.probe 42.1ms true ; U.efhbcd 1.7ms real ; L.reads 0
+  run 30 delay=0 ; actual=0.3 ; found+21.1ms ; vis+22.4 fg+9.8 ; U.probe 38.8ms true ; U.efhbcd 1.2ms real ; L.reads 0
+  run 31 delay=0 ; actual=0.2 ; found+20.9ms ; vis+20.5 fg+10.2 ; U.probe 38.9ms true ; U.efhbcd 4.0ms real ; L.reads 0
+  run 32 delay=0 ; actual=0.3 ; found+21.9ms ; vis+19.6 fg+10.8 ; U.probe 34.6ms true ; U.efhbcd 1.9ms real ; L.reads 0
+  run 33 delay=0 ; actual=0.3 ; found+20.6ms ; vis+20.5 fg+10.2 ; U.probe 41.3ms true ; U.efhbcd 2.6ms real ; L.reads 0
+  run 34 delay=0 ; actual=0.2 ; found+21.9ms ; vis+21.1 fg+9.9 ; U.probe 35.6ms true ; U.efhbcd 2.4ms real ; L.reads 0
+  run 35 delay=0 ; actual=0.2 ; found+18.3ms ; vis+20.0 fg+9.7 ; U.probe 36.7ms true ; U.efhbcd 1.6ms real ; L.reads 0
+  run 36 delay=0 ; actual=0.2 ; found+21.4ms ; vis+20.4 fg+9.6 ; U.probe 29.6ms true ; U.efhbcd 6.8ms real ; L.reads 0
+  run 37 delay=0 ; actual=0.3 ; found+39.7ms ; vis+22.2 fg+8.5 ; U.probe 31.3ms true ; U.efhbcd 8.4ms real ; L.reads 0
+  run 38 delay=0 ; actual=0.4 ; found+20.2ms ; vis+25.8 fg+8.2 ; U.probe 38.2ms true ; U.efhbcd 1.3ms real ; L.reads 0
+  run 39 delay=0 ; actual=0.2 ; found+19.1ms ; vis+19.4 fg+10.6 ; U.probe 35.7ms true ; U.efhbcd 1.8ms real ; L.reads 0
+  run 40 delay=0 ; actual=0.2 ; found+19.5ms ; vis+20.0 fg+8.9 ; U.probe 27.1ms true ; U.efhbcd 9.4ms real ; L.reads 0
+### e38-passive-uonly: 40 trials, 4 odd; answer: count, min-max ms
+  U.efhbcd real: 40, 1.1-9.7
+  U.probe false: 4, 3032.5-3037.5
+  U.probe true: 36, 26.8-43.0
+## e38-rawpath
+  run  1 delay=0 ; actual=0.2 ; found+19.4ms ; vis+38.5 fg+9.4 ; V.rawprobe 23.7ms s1/0x10000 ; V.efhbcd 25.4ms real ; L.reads 0
+  run  2 delay=0 ; actual=0.2 ; found+20.9ms ; vis+20.2 fg+10.2 ; V.rawprobe 25.3ms s1/0x10000 ; V.efhbcd 29.5ms real ; L.reads 0
+  run  3 delay=0 ; actual=0.3 ; found+19.4ms ; vis+19.1 fg+10.0 ; V.rawprobe 24.3ms s1/0x10000 ; V.efhbcd 28.0ms real ; L.reads 0
+  run  4 delay=0 ; actual=0.2 ; found+22.7ms ; vis+21.1 fg+11.9 ; V.rawprobe 25.3ms s1/0x10000 ; V.efhbcd 25.8ms real ; L.reads 0
+  run  5 delay=0 ; actual=0.3 ; found+20.1ms ; vis+21.6 fg+9.1 ; V.rawprobe 27.4ms s1/0x10000 ; V.efhbcd 20.5ms real ; L.reads 0
+  run  6 delay=0 ; actual=0.2 ; found+19.7ms ; vis+23.2 fg+9.0 ; V.rawprobe 27.6ms s1/0x10000 ; V.efhbcd 13.3ms real ; L.reads 0
+  run  7 delay=0 ; actual=0.2 ; found+19.9ms ; vis+31.0 fg+9.7 ; V.rawprobe 24.3ms s1/0x10000 ; V.efhbcd 19.8ms real ; L.reads 0
+  run  8 delay=0 ; actual=0.2 ; found+38.6ms ; vis+20.0 fg+9.2 ; V.rawprobe 25.6ms s1/0x10000 ; V.efhbcd 23.8ms real ; L.reads 0
+  run  9 delay=0 ; actual=0.3 ; found+21.1ms ; vis+21.6 fg+9.4 ; V.rawprobe 26.0ms s1/0x10000 ; V.efhbcd 17.2ms real ; L.reads 0
+  run 10 delay=0 ; actual=0.2 ; found+20.4ms ; vis+40.1 fg+13.2 ; V.rawprobe 22.3ms s1/0x10000 ; V.efhbcd 28.5ms real ; L.reads 0
+  run 11 delay=0 ; actual=0.2 ; found+20.3ms ; vis+20.4 fg+8.0 ; V.rawprobe 25.5ms s1/0x10000 ; V.efhbcd 13.4ms real ; L.reads 0
+  run 12 delay=0 ; actual=0.3 ; found+21.6ms ; vis+24.4 fg+9.0 ; V.rawprobe 30.6ms s1/0x10000 ; V.efhbcd 12.4ms real ; L.reads 0
+  run 13 delay=0 ; actual=0.3 ; found+20.5ms ; vis+20.1 fg+9.1 ; V.rawprobe 25.5ms s1/0x10000 ; V.efhbcd 23.6ms real ; L.reads 0
+  run 14 delay=0 ; actual=0.2 ; found+22.5ms ; vis+20.7 fg+9.5 ; V.rawprobe 25.8ms s1/0x10000 ; V.efhbcd 24.2ms real ; L.reads 0
+  run 15 delay=0 ; actual=0.2 ; found+19.9ms ; vis+20.2 fg+9.1 ; V.rawprobe 24.3ms s1/0x10000 ; V.efhbcd 25.1ms real ; L.reads 0
+  run 16 delay=0 ; actual=0.2 ; found+19.7ms ; vis+20.5 fg+9.6 ; V.rawprobe 26.1ms s1/0x10000 ; V.efhbcd 17.5ms real ; L.reads 0
+  run 17 delay=0 ; actual=0.3 ; found+21.5ms ; vis+40.5 fg+10.6 ; V.rawprobe 26.3ms s1/0x10000 ; V.efhbcd 23.8ms real ; L.reads 0
+  run 18 delay=0 ; actual=0.2 ; found+20.9ms ; vis+21.7 fg+9.0 ; V.rawprobe 25.9ms s1/0x10000 ; V.efhbcd 25.1ms real ; L.reads 0
+  run 19 delay=0 ; actual=0.2 ; found+19.1ms ; vis+20.0 fg+9.0 ; V.rawprobe 26.3ms s1/0x10000 ; V.efhbcd 17.6ms real ; L.reads 0
+  run 20 delay=0 ; actual=0.2 ; found+22.2ms ; vis+19.9 fg+9.0 ; V.rawprobe 24.6ms s1/0x10000 ; V.efhbcd 14.8ms real ; L.reads 0
+  run 21 delay=0 ; actual=0.2 ; found+20.9ms ; vis+19.8 fg+9.0 ; V.rawprobe 25.1ms s1/0x10000 ; V.efhbcd 19.2ms real ; L.reads 0
+  run 22 delay=0 ; actual=0.2 ; found+39.5ms ; vis+20.7 fg+7.7 ; V.rawprobe 25.8ms s1/0x10000 ; V.efhbcd 15.2ms real ; L.reads 0
+  run 23 delay=0 ; actual=0.2 ; found+18.6ms ; vis+19.9 fg+9.7 ; V.rawprobe 23.9ms s1/0x10000 ; V.efhbcd 20.9ms real ; L.reads 0
+  run 24 delay=0 ; actual=0.3 ; found+22.2ms ; vis+23.1 fg+8.4 ; V.rawprobe 25.0ms s1/0x10000 ; V.efhbcd 21.8ms real ; L.reads 0
+  run 25 delay=0 ; actual=0.2 ; found+19.9ms ; vis+20.1 fg+9.0 ; V.rawprobe 23.9ms s1/0x10000 ; V.efhbcd 23.4ms real ; L.reads 0
+  run 26 delay=0 ; actual=0.3 ; found+21.7ms ; vis+28.3 fg+9.4 ; V.rawprobe 27.5ms s1/0x10000 ; V.efhbcd 21.6ms real ; L.reads 0
+  run 27 delay=0 ; actual=0.3 ; found+20.0ms ; vis+22.3 fg+11.9 ; V.rawprobe 26.2ms s1/0x10000 ; V.efhbcd 21.8ms real ; L.reads 0
+  run 28 delay=0 ; actual=0.2 ; found+18.5ms ; vis+20.8 fg+10.2 ; V.rawprobe 24.8ms s1/0x10000 ; V.efhbcd 15.7ms real ; L.reads 0
+  run 29 delay=0 ; actual=0.3 ; found+24.5ms ; vis+30.9 fg+9.7 ; V.rawprobe 26.0ms s1/0x10000 ; V.efhbcd 22.3ms real ; L.reads 0
+  run 30 delay=0 ; actual=0.4 ; found+19.7ms ; vis+21.2 fg+11.1 ; V.rawprobe 25.6ms s1/0x10000 ; V.efhbcd 20.4ms real ; L.reads 0
+  run 31 delay=0 ; actual=0.2 ; found+20.1ms ; vis+19.9 fg+9.0 ; V.rawprobe 24.2ms s1/0x10000 ; V.efhbcd 21.2ms real ; L.reads 0
+  run 32 delay=0 ; actual=0.2 ; found+18.7ms ; vis+21.6 fg+9.0 ; V.rawprobe 27.3ms s1/0x10000 ; V.efhbcd 14.3ms real ; L.reads 0
+  run 33 delay=0 ; actual=0.3 ; found+38.2ms ; vis+26.0 fg+9.4 ; V.rawprobe 24.0ms s1/0x10000 ; V.efhbcd 26.7ms real ; L.reads 0
+  run 34 delay=0 ; actual=0.2 ; found+20.1ms ; vis+38.5 fg+7.7 ; V.rawprobe 24.6ms s1/0x10000 ; V.efhbcd 24.2ms real ; L.reads 0
+  run 35 delay=0 ; actual=0.2 ; found+22.1ms ; vis+29.8 fg+11.2 ; V.rawprobe 27.1ms s1/0x10000 ; V.efhbcd 18.5ms real ; L.reads 0
+  run 36 delay=0 ; actual=0.2 ; found+23.5ms ; vis+23.8 fg+10.3 ; V.rawprobe 24.1ms s1/0x10000 ; V.efhbcd 27.5ms real ; L.reads 0
+  run 37 delay=0 ; actual=0.4 ; found+20.3ms ; vis+41.5 fg+12.1 ; V.rawprobe 27.7ms s1/0x10000 ; V.efhbcd 26.3ms real ; L.reads 0
+  run 38 delay=0 ; actual=0.3 ; found+21.6ms ; vis+30.7 fg+13.3 ; V.rawprobe 24.7ms s1/0x10000 ; V.efhbcd 19.7ms real ; L.reads 0
+  run 39 delay=0 ; actual=0.3 ; found+25.0ms ; vis+21.8 fg+9.3 ; V.rawprobe 26.5ms s1/0x10000 ; V.efhbcd 21.5ms real ; L.reads 0
+  run 40 delay=0 ; actual=0.3 ; found+19.3ms ; vis+20.0 fg+9.1 ; V.rawprobe 25.4ms s1/0x10000 ; V.efhbcd 18.4ms real ; L.reads 0
+### e38-rawpath: 40 trials, 0 odd; answer: count, min-max ms
+  V.efhbcd real: 40, 12.4-29.5
+  V.rawprobe s1/0x10000: 40, 22.3-30.6

@@ -1,0 +1,12 @@
+.lines -d
+.sympath+ C:\Users\Dickson\Desktop\projects\verbatim\target\proto-hold\build\debug
+.reload /f uiautomationcore.dll
+.reload /f focusproto.exe
+bp user32!SendMessageTimeoutW ".echotime; .printf \"SMTO-ENTER tid=%x hwnd=%p msg=%x wp=%p lp=%p flags=%x timeout=%d\n\", @$tid, @rcx, @edx, @r8, @r9, dwo(@rsp+28), dwo(@rsp+30); kc 14; gc"
+bp uiautomationcore!HwndUtils::SendWmGetObject+0x167 ".echotime; .printf \"SMTO-RETURN(SendWmGetObject) tid=%x rax=%p lasterr=%x\n\", @$tid, @rax, dwo(@$teb+68); gc"
+bp uiautomationcore!`anonymous namespace'::PerformOperationOnHwndThreadImpl+0xb3 ".echotime; .printf \"SMTO-RETURN(PerformOperationOnHwndThreadImpl) tid=%x rax=%p lasterr=%x\n\", @$tid, @rax, dwo(@$teb+68); gc"
+bm focusproto!*HandlePropertyChangedEvent* ".echotime; .printf \"HANDLER-NAME tid=%x\n\", @$tid; kc 30; gc"
+bm focusproto!*HandleFocusChangedEvent* ".echotime; .printf \"HANDLER-FOCUS tid=%x\n\", @$tid; kc 30; gc"
+bl
+.echo ATTACHED
+g

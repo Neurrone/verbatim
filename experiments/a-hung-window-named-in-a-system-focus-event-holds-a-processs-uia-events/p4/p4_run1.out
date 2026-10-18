@@ -1,0 +1,51 @@
+[1792297505897157] protoTV: ondesk-child-pid 17644
+[1792297505920635] protoTV: ready
+[1792297505956636] tool find protoTV -> 31064786 ondesk-child-pid 14964
+[1792297505992781] protoA: ondesk-child-pid 15292
+[1792297506012698] protoA: ready
+[1792297506045642] tool find protoA -> 8716664 ondesk-child-pid 9400
+[1792297506060322] protoB: ondesk-child-pid 8816
+[1792297506081312] protoB: ready
+[1792297506115310] tool find protoB -> 18547672 ondesk-child-pid 4544
+[1792297506147850] tool findchild 31064786 WindowsForms10.SysTreeView32.app.0.141b42a_r9_ad1 -> 53609298 ondesk-child-pid 4772
+tree view hwnd 53609298
+[1792297506162148] O_A: ondesk-child-pid 9892
+[1792297506201650] O_A: registered O_A group:8716664:pid in 17.2ms
+[1792297506201740] O_A: client-ready O_A
+[1792297506217026] O_B: ondesk-child-pid 12728
+[1792297506255496] O_B: registered O_B group:18547672:pid in 16.3ms
+[1792297506256529] O_B: registered O_B name:18547672 in 1.0ms
+[1792297506256589] O_B: client-ready O_B
+[1792297506270809] N_B: ondesk-child-pid 12984
+[1792297506302679] N_B: registered N_B name:18547672 in 11.1ms
+[1792297506302747] N_B: client-ready N_B
+[1792297506316919] D: ondesk-child-pid 5464
+[1792297506351720] D: registered D desk:pid in 10.8ms
+[1792297506351818] D: client-ready D
+=== baseline: B focus and name change, TV answering
+[1792297506852269] >protoB: focus btn1
+[1792297506853261] protoB: applied
+[1792297506856892] O_B: ev O_B group:18547672:pid focus t=1792297506856553 pid=8816 name="?" hwnd=-1
+[1792297507054916] >protoB: set-name btn1 Base
+[1792297507055404] protoB: applied
+[1792297507056385] O_B: ev O_B name:18547672 prop30005 t=1792297507056340 pid=8816 name="Base" hwnd=0
+[1792297507057572] N_B: ev N_B name:18547672 prop30005 t=1792297507057533 pid=8816 name="Base" hwnd=0
+[1792297507556805] >protoA: focus item1
+[1792297507557706] protoA: applied
+[1792297507561317] O_A: ev O_A group:8716664:pid focus t=1792297507560925 pid=15292 name="?" hwnd=-1
+=== TV stalled 8 s, then a focus WinEvent naming its tree view
+[1792297508059386] >protoTV: stall 8000
+[1792297508059690] protoTV: stall started
+[1792297508112663] tool winevent 53609298 8005 -4 0 -> winevent sent t=1792297508109670 ondesk-child-pid 8676
+=== B raises focus and a name change; A raises focus
+[1792297508313310] >protoB: focus item2
+[1792297508313817] protoB: applied
+[1792297508313859] >protoB: set-name btn1 During
+[1792297508314078] protoB: applied
+[1792297508315004] N_B: ev N_B name:18547672 prop30005 t=1792297508314965 pid=8816 name="During" hwnd=0
+[1792297508315194] >protoA: focus slider1
+[1792297508315441] protoA: applied
+[1792297512129702] O_A: ev O_A group:8716664:pid focus t=1792297512129561 pid=15292 name="?" hwnd=-1
+[1792297512129755] O_B: ev O_B group:18547672:pid focus t=1792297512129582 pid=8816 name="?" hwnd=-1
+[1792297512130503] O_B: ev O_B name:18547672 prop30005 t=1792297512130456 pid=8816 name="During" hwnd=0
+[1792297516060097] protoTV: stall ended 1792297516059993

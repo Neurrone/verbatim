@@ -1,0 +1,45 @@
+# e39 experiment 1, a native UIA window (collide's server): what each call
+# sends to the window, seen by WH_CALLWNDPROC and WH_CALLWNDPROCRET hooks
+# on every thread of the server (hooklog/<server pid>.log). Each call is
+# made by its own fresh client process, so each is that process's first
+# connection; marks separate them in the hook log by time.
+spawn S server
+wait S hwnd
+hook hwnd:$HWND
+spawn A client 0 A
+send A init
+wait A done
+spawn B client 0 B
+send B init
+wait B done
+spawn C client 0 C
+send C init
+wait C done
+spawn D client 0 D
+send D init
+wait D done
+sleep 300
+send A target $HWND | send A probe
+wait A done probe
+sleep 300
+send A lookup
+wait A done lookup
+sleep 300
+send B target $HWND | send B lookup
+wait B done lookup
+sleep 300
+send C target $HWND | send C rawprobe2
+wait C done rawprobe2
+sleep 300
+send C lookup
+wait C done lookup
+sleep 300
+send D target $HWND | send D efh
+wait D done efh
+sleep 300
+send D probe
+wait D done probe
+sleep 300
+send D rawprobe2 0x00000000ffffffe7
+wait D done rawprobe2
+drain 300

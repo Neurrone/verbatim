@@ -1,0 +1,84 @@
+2026-10-16T21:37:07.421609Z  INFO verbatim_outpost::supervisor::ignored: these processes are ignored entirely pids=[10412, 11308]
+2026-10-16T21:37:07.490114Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65788]
+2026-10-16T21:37:07.490240Z DEBUG verbatim_outpost::listener: UIA focus event received pid=8232 marker=1 kind=Focus runtime_id=[42, 65788]
+2026-10-16T21:37:07.491563Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65788] class_name=Some("Shell_TrayWnd") framework=Some("Win32") hwnd=65788 same_as_current=None
+2026-10-16T21:37:07.491668Z DEBUG verbatim_uia::subscribe: a UIA subscription moves from=[] to="the desktop" elements=[[42, 65548]] group=Base
+2026-10-16T21:37:07.492946Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=8232 marker=1 reason="its element no longer has the keyboard focus"
+2026-10-16T21:37:07.501400Z DEBUG verbatim_uia::subscribe: AddEventHandlerGroup runtime_id=[42, 65548] result=Ok(())
+2026-10-16T21:37:07.504803Z DEBUG verbatim_outpost::set_up: SCRATCH setup: probed pid=8232 window=65838 thread=8236 provider=false us=944
+2026-10-16T21:37:07.505648Z DEBUG verbatim_outpost::set_up: SCRATCH setup: probed pid=8232 window=65848 thread=8236 provider=false us=787
+2026-10-16T21:37:07.506432Z DEBUG verbatim_outpost::set_up: SCRATCH setup: probed pid=8232 window=65850 thread=8236 provider=false us=744
+2026-10-16T21:37:07.507519Z DEBUG verbatim_outpost::set_up: SCRATCH setup: probed pid=8232 window=65854 thread=8236 provider=false us=1038
+2026-10-16T21:37:07.508302Z DEBUG verbatim_outpost::set_up: SCRATCH setup: probed pid=8232 window=262334 thread=8408 provider=false us=747
+2026-10-16T21:37:07.508997Z DEBUG verbatim_outpost::set_up: SCRATCH setup: probed pid=8232 window=65788 thread=7528 provider=false us=660
+2026-10-16T21:37:07.509951Z DEBUG verbatim_outpost::set_up: SCRATCH setup: probed pid=8232 window=66048 thread=7528 provider=true us=919
+2026-10-16T21:37:07.511719Z DEBUG verbatim_outpost::set_up: SCRATCH setup: the remote operation pid=8232 window=66048 us=795
+2026-10-16T21:37:07.511792Z  INFO verbatim_outpost::listener: UIA's setup in an application is over pid=8232 outcome=Done
+2026-10-16T21:37:09.005118Z DEBUG verbatim_ia2::hook: WinEvent received kind=Foreground event=0x0003 hwnd=19073382 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-16T21:37:09.048358Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=19073382 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-16T21:37:09.049105Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=39256212 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-16T21:37:09.049885Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=25494778 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-16T21:37:09.051553Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=25494778 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-16T21:37:09.123639Z DEBUG verbatim_outpost::set_up: SCRATCH setup: probed pid=10232 window=19073382 thread=11336 provider=false us=115850
+2026-10-16T21:37:09.126230Z DEBUG verbatim_outpost::set_up: SCRATCH setup: probed pid=10232 window=7669510 thread=11336 provider=false us=2533
+2026-10-16T21:37:09.135100Z DEBUG verbatim_outpost::set_up: SCRATCH setup: probed pid=10232 window=39256212 thread=11336 provider=true us=8807
+2026-10-16T21:37:09.141616Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:09.141834Z DEBUG verbatim_outpost::listener: UIA focus event received pid=10232 marker=2 kind=Focus runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:09.164299Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65548]
+2026-10-16T21:37:09.164382Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5420 marker=3 kind=Focus runtime_id=[42, 65548]
+2026-10-16T21:37:09.168491Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=65548 class="#32769" is_uia=false thread=4292 elapsed_us=22 elapsed_ms=0
+2026-10-16T21:37:09.168807Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5420 marker=3 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-16T21:37:09.183729Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=0 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-16T21:37:09.194137Z DEBUG verbatim_outpost::set_up: SCRATCH setup: the remote operation pid=10232 window=39256212 us=53470
+2026-10-16T21:37:09.194237Z  INFO verbatim_outpost::listener: UIA's setup in an application is over pid=10232 outcome=Done
+2026-10-16T21:37:09.223455Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=25494778 class="Windows.UI.Input.InputSite.WindowClass" is_uia=true thread=11336 elapsed_us=5841 elapsed_ms=5
+2026-10-16T21:37:09.223607Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 25494778, 4, 2] class_name=Some("TermControl") framework=Some("XAML") hwnd=0 same_as_current=None
+2026-10-16T21:37:09.227071Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=10232 marker=2 reason="its element no longer has the keyboard focus"
+2026-10-16T21:37:09.231315Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 19073382]
+2026-10-16T21:37:09.231387Z DEBUG verbatim_outpost::listener: UIA focus event received pid=10232 marker=4 kind=Focus runtime_id=[42, 19073382]
+2026-10-16T21:37:09.231746Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 19073382] class_name=Some("CASCADIA_HOSTING_WINDOW_CLASS") framework=Some("Win32") hwnd=19073382 same_as_current=None
+2026-10-16T21:37:09.232224Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=10232 marker=4 reason="its element no longer has the keyboard focus"
+2026-10-16T21:37:09.236704Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:09.236826Z DEBUG verbatim_outpost::listener: UIA focus event received pid=10232 marker=5 kind=Focus runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:09.242207Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 25494778, 4, 2] class_name=Some("TermControl") framework=Some("XAML") hwnd=0 same_as_current=None
+2026-10-16T21:37:09.242858Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=10232 marker=5 reason="its element no longer has the keyboard focus"
+2026-10-16T21:37:09.381476Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=19073382 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-16T21:37:09.382643Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=39256212 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-16T21:37:09.383777Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=25494778 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-16T21:37:09.384356Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=25494778 id_object=3 id_child=0 raised_ms_ago=0
+2026-10-16T21:37:09.388277Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=19073382 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-16T21:37:09.389333Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=39256212 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-16T21:37:09.390253Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=25494778 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-16T21:37:09.390620Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=25494778 id_object=4 id_child=0 raised_ms_ago=0
+2026-10-16T21:37:09.419889Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:09.419977Z DEBUG verbatim_outpost::listener: UIA focus event received pid=10232 marker=6 kind=Focus runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:09.420146Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:09.420195Z DEBUG verbatim_outpost::listener: UIA focus event received pid=10232 marker=7 kind=Focus runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:09.425575Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 25494778, 4, 2] class_name=Some("TermControl") framework=Some("XAML") hwnd=0 same_as_current=None
+2026-10-16T21:37:09.438040Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="remote" read=4 met_known=None depth_limited=false out_of_time=false window=Some(25494778)
+2026-10-16T21:37:09.438115Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="remote" runtime_id=[42, 25494778, 4, 3] role=Unknown name=None hwnd=0 content=true
+2026-10-16T21:37:09.438152Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="remote" runtime_id=[42, 25494778] role=Pane name=None hwnd=25494778 content=true
+2026-10-16T21:37:09.438179Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="remote" runtime_id=[42, 39256212] role=Pane name=Some("DesktopWindowXamlSource") hwnd=39256212 content=false
+2026-10-16T21:37:09.438243Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="remote" runtime_id=[42, 19073382] role=Window name=Some("verbatim-e2e-commands-mvbhn8zy") hwnd=19073382 content=true
+2026-10-16T21:37:09.438284Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors: the outermost is a top-level window; no classic walk window=19073382
+2026-10-16T21:37:09.438306Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="sent" runtime_id=[42, 25494778, 4, 3] role=Unknown name=None hwnd=0 content=true
+2026-10-16T21:37:09.438409Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="sent" runtime_id=[42, 25494778] role=Pane name=None hwnd=25494778 content=true
+2026-10-16T21:37:09.438442Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="sent" runtime_id=[42, 39256212] role=Pane name=Some("DesktopWindowXamlSource") hwnd=39256212 content=false
+2026-10-16T21:37:09.438468Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="sent" runtime_id=[42, 19073382] role=Window name=Some("verbatim-e2e-commands-mvbhn8zy") hwnd=19073382 content=true
+2026-10-16T21:37:09.441157Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 25494778, 4, 2] class_name=Some("TermControl") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-16T21:37:09.441701Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=10232 marker=7 reason="a repeat of the last focus, which still has the keyboard focus"
+2026-10-16T21:37:12.620274Z DEBUG verbatim_uia::com: UIA event received event="notification" id=2 runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:13.369903Z DEBUG verbatim_uia::com: UIA event received event="notification" id=2 runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:13.985555Z DEBUG verbatim_uia::com: UIA event received event="notification" id=2 runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:14.033030Z DEBUG verbatim_uia::com: UIA event received event="notification" id=2 runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:16.104351Z DEBUG verbatim_uia::com: UIA event received event="notification" id=2 runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:16.467639Z DEBUG verbatim_uia::com: UIA event received event="notification" id=2 runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:16.734891Z DEBUG verbatim_uia::com: UIA event received event="notification" id=2 runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:17.049654Z DEBUG verbatim_uia::com: UIA event received event="notification" id=2 runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:17.334256Z DEBUG verbatim_uia::com: UIA event received event="notification" id=2 runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:17.613873Z DEBUG verbatim_uia::com: UIA event received event="notification" id=2 runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:17.917783Z DEBUG verbatim_uia::com: UIA event received event="notification" id=2 runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:18.191864Z DEBUG verbatim_uia::com: UIA event received event="notification" id=2 runtime_id=[42, 25494778, 4, 2]
+2026-10-16T21:37:18.461549Z  INFO verbatim_outpost::listener: shutting down, as Core asked
+2026-10-16T21:37:18.473693Z DEBUG verbatim_uia::subscribe: a UIA subscription ends: RemoveAllEventHandlers result=Ok(())
+2026-10-16T21:37:18.474590Z  INFO verbatim_outpost::listener: the focus listener shut down elapsed_ms=13 reading_threads=3 failed_reads=0

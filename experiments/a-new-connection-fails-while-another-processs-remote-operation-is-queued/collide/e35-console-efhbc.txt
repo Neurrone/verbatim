@@ -1,0 +1,23 @@
+# e35: positive control for the console: B, a new process, calls
+# ElementFromHandleBuildCache on the console window while L's remote
+# operation waits for the suspended window thread.
+findwindow collide-console
+owner $HWND
+spawn L client $HWND L
+send L init
+wait L done
+send L efh
+wait L done
+send L rop
+wait L done 10000
+spawn B client $HWND B
+send B init
+wait B done
+stall tid:${CONSOLE_TID} 300
+send L async rop
+sleep 5
+send B efhbc
+wait B done 15000
+send B info
+wait B done 15000
+drain 500

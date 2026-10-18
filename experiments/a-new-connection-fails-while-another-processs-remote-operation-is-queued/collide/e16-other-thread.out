@@ -1,0 +1,24 @@
+22:15:50.413171 run spawn S server
+  S 22:15:50.430519 hwnd 12585526 pid 9932
+22:15:50.430749 run send S newthread
+  S 22:15:50.430653 ready
+  S 22:15:50.432061 hwnd 14156642 pid 9932
+22:15:50.436757 run spawn L client 12585526 L
+22:15:50.436818 run send L init
+  L 22:15:50.444580 client-ready L
+  L 22:15:50.451031 done init L start=22:15:50.444633 ms=6.4 ok
+22:15:50.451210 run send L efh
+  L 22:15:50.468597 done efh L start=22:15:50.451274 ms=17.3 ok
+22:15:50.468775 run send L rop
+  L 22:15:50.482486 done rop L start=22:15:50.468833 ms=13.6 ok
+22:15:50.487602 run spawn B client 14156642 B
+22:15:50.487661 run send B init
+  B 22:15:50.496009 client-ready B
+  B 22:15:50.503094 done init B start=22:15:50.496058 ms=7.0 ok
+22:15:50.503298 run send S busy 40
+  S 22:15:50.503508 busy-begin
+22:15:50.503670 run send L async rop
+22:15:50.508760 run send B probe
+  S 22:15:50.543553 busy-end
+  L 22:15:50.545331 done async-rop L start=22:15:50.504019 ms=41.3 ok
+  B 22:15:53.534734 done probe B start=22:15:50.508856 ms=3025.9 result=false

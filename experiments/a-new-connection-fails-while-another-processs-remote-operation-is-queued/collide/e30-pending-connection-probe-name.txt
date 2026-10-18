@@ -1,0 +1,33 @@
+# S's main thread is busy 1000 ms; B's probe of S's main window
+# waits for it (no remote operation is sent). C, holding the element of
+# the window of S's second, idle UI thread, calls name on it: is C's call
+# delayed behind B's pending connection?
+spawn S server
+wait S hwnd
+send S newthread
+wait S hwnd
+spawn L client $HWND L
+send L init
+wait L done
+send L efh
+wait L done
+send L rop
+wait L done 10000
+spawn B client $HWND B
+send B init
+wait B done
+spawn C client $HWND2 C
+send C init
+wait C done
+send C efh
+wait C done
+send C ropname
+wait C done 10000
+send S busy 1000
+wait S busy-begin
+send B async probe
+sleep 5
+send C name
+wait C done 15000
+wait B done 15000
+drain 300

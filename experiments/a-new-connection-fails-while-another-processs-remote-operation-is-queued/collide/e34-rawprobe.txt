@@ -1,0 +1,43 @@
+# e34: during L's queued remote operation in S, B sends a raw
+# WM_GETOBJECT(UiaRootObjectId) to S's window and C, another new
+# process, calls UiaHasServerSideProvider on it at the same moment.
+# Then both ask the same of N, a window without a UIA provider.
+spawn S server
+wait S hwnd
+send S showtopoff
+wait S shown
+owner $HWND
+spawn N server --no-uia
+wait N hwnd
+owner $HWND2
+spawn L client $HWND L
+send L init
+wait L done
+send L efh
+wait L done
+send L rop
+wait L done 10000
+spawn B client $HWND B
+send B init
+wait B done
+spawn C client $HWND C
+send C init
+wait C done
+send S busy 300
+wait S busy-begin
+send L async rop
+sleep 5
+send B rawprobe
+send C probe
+wait B done 15000
+wait C done 15000
+drain 300
+send B target $HWND2
+wait B done
+send B rawprobe
+wait B done 15000
+send C target $HWND2
+wait C done
+send C probe
+wait C done 15000
+drain 500

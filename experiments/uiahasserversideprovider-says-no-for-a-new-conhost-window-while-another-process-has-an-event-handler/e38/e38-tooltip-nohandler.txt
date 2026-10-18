@@ -1,0 +1,22 @@
+# e38 control for e38-tooltip: T is a third UIA client that fetches the
+# root element but registers no handler. All calls are waited for.
+spawn T client 0 T
+send T init
+wait T done
+send T root
+wait T done root
+spawn U client 0 U
+send U init
+wait U done
+spawn R client 0 R
+send R init
+wait R done
+fgright
+console ${TITLE}
+sleep ${DELAY}
+send R target $HWND | send U target $HWND | send R rawprobe | send U probe | send R efhbcd | send U efhbcd
+wait U done efhbcd 20000
+wait R done efhbcd 20000
+drain 500
+closeconsole
+drain 200

@@ -1,0 +1,1129 @@
+diff --git a/crates/collide/Cargo.toml b/crates/collide/Cargo.toml
+new file mode 100644
+index 00000000..8cf65aad
+--- /dev/null
++++ b/crates/collide/Cargo.toml
+@@ -0,0 +1,14 @@
++[package]
++name = "collide"
++description = "Scratch: reproduces the UIA first-connection collision with controlled timing"
++version.workspace = true
++edition.workspace = true
++publish.workspace = true
++license.workspace = true
++
++[dependencies]
++verbatim-uia.workspace = true
++verbatim-uia-rops.workspace = true
++windows.workspace = true
++windows-core.workspace = true
++workspace-hack = { version = "0.1", path = "../workspace-hack" }
+diff --git a/crates/collide/src/client.rs b/crates/collide/src/client.rs
+new file mode 100644
+index 00000000..c24a47fd
+--- /dev/null
++++ b/crates/collide/src/client.rs
+@@ -0,0 +1,328 @@
++//! A UIA and MSAA client driven one command per line on standard input,
++//! each command one kind of first call into the server.
++
++use std::ffi::c_void;
++use std::io::BufRead;
++
++use windows::Win32::Foundation::HWND;
++use windows::Win32::System::Com::{
++    CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
++};
++use windows::Win32::System::Variant::VARIANT;
++use windows::Win32::UI::Accessibility::{
++    AccessibleObjectFromEvent, AccessibleObjectFromWindow, CUIAutomation8, IAccessible,
++    IUIAutomation, IUIAutomationElement, IUIAutomationEventHandler, IUIAutomationEventHandler_Impl,
++    TreeScope_Subtree, UIA_EVENT_ID, UIA_NamePropertyId, UIA_ToolTipOpenedEventId,
++    UiaHasServerSideProvider,
++};
++use windows::Win32::Foundation::{LPARAM, WPARAM};
++use windows::Win32::UI::Accessibility::UiaRootObjectId;
++use windows::Win32::UI::WindowsAndMessaging::{
++    CHILDID_SELF, OBJID_CLIENT, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_GETOBJECT,
++};
++use windows::core::{Interface, Ref, Result, implement};
++
++use crate::{now_us, say, tod};
++
++#[implement(IUIAutomationEventHandler)]
++struct Handler;
++
++impl IUIAutomationEventHandler_Impl for Handler_Impl {
++    fn HandleAutomationEvent(&self, _: Ref<'_, IUIAutomationElement>, _: UIA_EVENT_ID) -> Result<()> {
++        Ok(())
++    }
++}
++
++struct State {
++    hwnd: HWND,
++    uia: Option<IUIAutomation>,
++    element: Option<IUIAutomationElement>,
++    handlers: Vec<IUIAutomationEventHandler>,
++}
++
++pub fn main(args: &[String]) {
++    let hwnd: isize = args[0].parse().unwrap();
++    let tag = args.get(1).cloned().unwrap_or_default();
++    // SAFETY: this thread's own initialization.
++    unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok().unwrap();
++    let mut state = State {
++        hwnd: HWND(hwnd as *mut c_void),
++        uia: None,
++        element: None,
++        handlers: Vec::new(),
++    };
++    say(&format!("client-ready {tag}"));
++    for line in std::io::stdin().lock().lines() {
++        let Ok(line) = line else { break };
++        let line = line.trim().to_owned();
++        if line == "quit" {
++            break;
++        }
++        if let Some(hwnd) = line.strip_prefix("target ") {
++            state.hwnd = HWND(hwnd.parse::<isize>().unwrap() as *mut c_void);
++            state.element = None;
++            say(&format!("done target {tag}"));
++            continue;
++        }
++        if let Some(command) = line.strip_prefix("async ") {
++            let command = command.to_owned();
++            let hwnd = state.hwnd.0 as isize;
++            let uia = state.uia.clone().map(|u| u.into_raw() as usize);
++            let element = state.element.clone().map(|e| e.into_raw() as usize);
++            let tag = tag.clone();
++            std::thread::spawn(move || {
++                // SAFETY: this thread's own initialization (the MTA, as the
++                // main thread's, so the pointers stay valid here).
++                unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok().unwrap();
++                let mut state = State {
++                    hwnd: HWND(hwnd as *mut c_void),
++                    // SAFETY: references moved from the main thread, same apartment.
++                    uia: uia.map(|u| unsafe { IUIAutomation::from_raw(u as *mut c_void) }),
++                    // SAFETY: as above.
++                    element: element.map(|e| unsafe { IUIAutomationElement::from_raw(e as *mut c_void) }),
++                    handlers: Vec::new(),
++                };
++                let start = now_us();
++                let detail = run(&mut state, &command);
++                #[allow(clippy::cast_precision_loss)]
++                let ms = (now_us() - start) as f64 / 1000.0;
++                say(&format!("done async-{command} {tag} start={} ms={ms:.1} {detail}", tod(start)));
++                std::mem::forget(state);
++            });
++            continue;
++        }
++        let start = now_us();
++        let detail = run(&mut state, &line);
++        let end = now_us();
++        #[allow(clippy::cast_precision_loss)]
++        let ms = (end - start) as f64 / 1000.0;
++        say(&format!(
++            "done {line} {tag} start={} ms={ms:.1} {detail}",
++            tod(start)
++        ));
++    }
++}
++
++fn run(state: &mut State, command: &str) -> String {
++    match command {
++        "init" => {
++            // SAFETY: an in-process class.
++            match unsafe { CoCreateInstance::<_, IUIAutomation>(&CUIAutomation8, None, CLSCTX_INPROC_SERVER) } {
++                Ok(uia) => {
++                    state.uia = Some(uia);
++                    "ok".into()
++                }
++                Err(e) => format!("err {e:?}"),
++            }
++        }
++        "timeouts" => {
++            let uia: windows::Win32::UI::Accessibility::IUIAutomation2 =
++                state.uia.as_ref().unwrap().cast().unwrap();
++            // SAFETY: plain setters on a live client.
++            unsafe {
++                uia.SetConnectionTimeout(2000).unwrap();
++                uia.SetTransactionTimeout(2000).unwrap();
++            }
++            "ok".into()
++        }
++        "efocus" => {
++            let uia = state.uia.as_ref().unwrap();
++            // SAFETY: a plain COM call on a live client.
++            match unsafe { uia.GetFocusedElement() } {
++                Ok(element) => {
++                    // SAFETY: a live element.
++                    let id = unsafe { element.CurrentProcessId() }.unwrap_or(0);
++                    state.element = Some(element);
++                    format!("ok pid={id}")
++                }
++                Err(e) => format!("err {:#x} {}", e.code().0, e.message()),
++            }
++        }
++        "rawprobe" => {
++            let mut answer = 0usize;
++            #[allow(clippy::cast_sign_loss)]
++            // SAFETY: a plain message with a valid out pointer.
++            let sent = unsafe {
++                SendMessageTimeoutW(
++                    state.hwnd,
++                    WM_GETOBJECT,
++                    WPARAM(0),
++                    LPARAM(UiaRootObjectId as isize),
++                    SMTO_ABORTIFHUNG,
++                    3000,
++                    Some(&raw mut answer),
++                )
++            };
++            format!("sent={} lresult={answer:#x}", sent.0)
++        }
++        "probe" => {
++            // SAFETY: any window handle is tolerated.
++            let yes = unsafe { UiaHasServerSideProvider(state.hwnd) }.as_bool();
++            format!("result={yes}")
++        }
++        "efh" => {
++            let uia = state.uia.as_ref().unwrap();
++            // SAFETY: any window handle is tolerated.
++            match unsafe { uia.ElementFromHandle(state.hwnd) } {
++                Ok(element) => {
++                    state.element = Some(element);
++                    "ok".into()
++                }
++                Err(e) => format!("err {:#x} {}", e.code().0, e.message()),
++            }
++        }
++        "efhbc" => {
++            let uia = state.uia.as_ref().unwrap();
++            let result = (|| -> Result<String> {
++                // SAFETY: plain COM calls on live objects.
++                unsafe {
++                    let request = uia.CreateCacheRequest()?;
++                    request.AddProperty(UIA_NamePropertyId)?;
++                    let element = uia.ElementFromHandleBuildCache(state.hwnd, &request)?;
++                    let name = element.CachedName()?;
++                    state.element = Some(element);
++                    Ok(name.to_string())
++                }
++            })();
++            match result {
++                Ok(name) => format!("ok name={name:?}"),
++                Err(e) => format!("err {:#x} {}", e.code().0, e.message()),
++            }
++        }
++        "children" | "descendants" => {
++            let uia = state.uia.as_ref().unwrap();
++            let Some(element) = state.element.as_ref() else {
++                return "err no element".into();
++            };
++            let scope = if command == "children" {
++                windows::Win32::UI::Accessibility::TreeScope_Children
++            } else {
++                windows::Win32::UI::Accessibility::TreeScope_Descendants
++            };
++            // SAFETY: plain COM calls on live objects.
++            match unsafe { uia.CreateTrueCondition().and_then(|c| element.FindAll(scope, &c)).and_then(|a| a.Length()) } {
++                Ok(n) => format!("ok count={n}"),
++                Err(e) => format!("err {:#x} {}", e.code().0, e.message()),
++            }
++        }
++        "walk" => {
++            let uia = state.uia.as_ref().unwrap();
++            let Some(element) = state.element.as_ref() else {
++                return "err no element".into();
++            };
++            // SAFETY: plain COM calls on live objects.
++            match unsafe { uia.RawViewWalker().and_then(|w| w.GetFirstChildElement(element)).and_then(|c| c.CurrentName()) } {
++                Ok(n) => format!("ok first={:?}", n.to_string()),
++                Err(e) => format!("err {:#x} {}", e.code().0, e.message()),
++            }
++        }
++        "name" => match state.element.as_ref() {
++            // SAFETY: a live element.
++            Some(element) => match unsafe { element.CurrentName() } {
++                Ok(name) => format!("ok name={:?}", name.to_string()),
++                Err(e) => format!("err {:#x} {}", e.code().0, e.message()),
++            },
++            None => "err no element".into(),
++        },
++        "getfocus" => {
++            let uia = state.uia.as_ref().unwrap();
++            // SAFETY: plain COM calls on live objects.
++            match unsafe { uia.GetFocusedElement().and_then(|e| e.CurrentName()) } {
++                Ok(name) => format!("ok name={:?}", name.to_string()),
++                Err(e) => format!("err {:#x} {}", e.code().0, e.message()),
++            }
++        }
++        "events" => {
++            let uia = state.uia.as_ref().unwrap();
++            let Some(element) = state.element.as_ref() else {
++                return "err no element".into();
++            };
++            let handler: IUIAutomationEventHandler = Handler.into();
++            // SAFETY: plain COM calls on live objects.
++            match unsafe {
++                uia.AddAutomationEventHandler(
++                    UIA_ToolTipOpenedEventId,
++                    element,
++                    TreeScope_Subtree,
++                    None,
++                    &handler,
++                )
++            } {
++                Ok(()) => {
++                    state.handlers.push(handler);
++                    "ok".into()
++                }
++                Err(e) => format!("err {:#x} {}", e.code().0, e.message()),
++            }
++        }
++        "rop" | "ropname" => {
++            let Some(element) = state.element.as_ref() else {
++                return "err no element".into();
++            };
++            let mut builder = verbatim_uia_rops::Builder::new();
++            let reg = builder.import_element(element);
++            builder.add_to_results(reg);
++            if command == "ropname" {
++                let name = builder.property(reg, UIA_NamePropertyId.0);
++                builder.add_to_results(name);
++            }
++            let operation = builder.finish();
++            match operation.execute() {
++                Ok(_) => "ok".into(),
++                Err(e) => format!("err {e:?}"),
++            }
++        }
++        "msaa" => {
++            let mut raw: *mut c_void = std::ptr::null_mut();
++            #[allow(clippy::cast_sign_loss)]
++            // SAFETY: a valid out pointer.
++            let result = unsafe {
++                AccessibleObjectFromWindow(
++                    state.hwnd,
++                    OBJID_CLIENT.0 as u32,
++                    &IAccessible::IID,
++                    &raw mut raw,
++                )
++            };
++            match result {
++                Ok(()) => {
++                    // SAFETY: the object the call returned.
++                    let accessible = unsafe { IAccessible::from_raw(raw) };
++                    // SAFETY: a live object.
++                    match unsafe { accessible.get_accName(&VARIANT::from(0i32)) } {
++                        Ok(name) => format!("ok name={:?}", name.to_string()),
++                        Err(e) => format!("ok-object name-err {:#x} {}", e.code().0, e.message()),
++                    }
++                }
++                Err(e) => format!("err {:#x} {}", e.code().0, e.message()),
++            }
++        }
++        "msaaevent" => {
++            let mut accessible: Option<IAccessible> = None;
++            let mut child = VARIANT::default();
++            #[allow(clippy::cast_sign_loss)]
++            // SAFETY: valid out pointers.
++            let result = unsafe {
++                AccessibleObjectFromEvent(
++                    state.hwnd,
++                    OBJID_CLIENT.0 as u32,
++                    CHILDID_SELF as u32,
++                    &raw mut accessible,
++                    &raw mut child,
++                )
++            };
++            match (result, accessible) {
++                (Ok(()), Some(accessible)) => {
++                    // SAFETY: a live object.
++                    match unsafe { accessible.get_accName(&child) } {
++                        Ok(name) => format!("ok name={:?}", name.to_string()),
++                        Err(e) => format!("ok-object name-err {:#x} {}", e.code().0, e.message()),
++                    }
++                }
++                (Ok(()), None) => "err null".into(),
++                (Err(e), _) => format!("err {:#x} {}", e.code().0, e.message()),
++            }
++        }
++        other => format!("unknown {other}"),
++    }
++}
+diff --git a/crates/collide/src/main.rs b/crates/collide/src/main.rs
+new file mode 100644
+index 00000000..1b7e3115
+--- /dev/null
++++ b/crates/collide/src/main.rs
+@@ -0,0 +1,73 @@
++//! Scratch tool: a UIA server, UIA clients and an orchestrator, to
++//! reproduce the first-connection collision with controlled timing.
++
++mod client;
++mod run;
++mod server;
++
++use std::io::Write;
++use std::sync::Mutex;
++
++use windows::Win32::System::SystemInformation::GetSystemTimePreciseAsFileTime;
++
++static OUT: Mutex<()> = Mutex::new(());
++
++/// Microseconds since 1601, from the precise system clock (comparable
++/// across processes and with a trace's UTC times).
++pub fn now_us() -> u64 {
++    // SAFETY: no preconditions.
++    let ft = unsafe { GetSystemTimePreciseAsFileTime() };
++    ((u64::from(ft.dwHighDateTime) << 32) | u64::from(ft.dwLowDateTime)) / 10
++}
++
++/// UTC time of day, to the microsecond.
++pub fn tod(us: u64) -> String {
++    let day = us % 86_400_000_000;
++    format!(
++        "{:02}:{:02}:{:02}.{:06}",
++        day / 3_600_000_000,
++        day / 60_000_000 % 60,
++        day / 1_000_000 % 60,
++        day % 1_000_000
++    )
++}
++
++/// One line on standard output, with the time first.
++pub fn say(text: &str) {
++    let _guard = OUT.lock();
++    let mut out = std::io::stdout().lock();
++    let _ = writeln!(out, "{} {text}", tod(now_us()));
++    let _ = out.flush();
++}
++
++fn main() {
++    let args: Vec<String> = std::env::args().collect();
++    match args.get(1).map(String::as_str) {
++        Some("server") => server::main(&args[2..]),
++        Some("client") => client::main(&args[2..]),
++        Some("run") => run::main(&args[2..]),
++        Some("mutexbench") => mutex_bench(),
++        _ => eprintln!("usage: collide server|client|run ..."),
++    }
++}
++
++/// Times an uncontended named mutex's acquire and release, as a per-call
++/// gate between two processes would pay it.
++fn mutex_bench() {
++    use windows::Win32::System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject, INFINITE};
++    let name: Vec<u16> = "Local\\verbatim-scratch-bench".encode_utf16().chain(Some(0)).collect();
++    // SAFETY: a named mutex this process creates and closes at exit.
++    let mutex = unsafe { CreateMutexW(None, false, windows::core::PCWSTR(name.as_ptr())) }.unwrap();
++    let rounds = 200_000u64;
++    let start = now_us();
++    for _ in 0..rounds {
++        // SAFETY: a live handle.
++        unsafe {
++            WaitForSingleObject(mutex, INFINITE);
++            let _ = ReleaseMutex(mutex);
++        }
++    }
++    #[allow(clippy::cast_precision_loss)]
++    let each = (now_us() - start) as f64 / rounds as f64;
++    println!("named mutex acquire and release, uncontended: {each:.3} us a pair over {rounds} rounds");
++}
+diff --git a/crates/collide/src/run.rs b/crates/collide/src/run.rs
+new file mode 100644
+index 00000000..e04d5fe8
+--- /dev/null
++++ b/crates/collide/src/run.rs
+@@ -0,0 +1,210 @@
++//! The orchestrator: runs a script of steps against server and client
++//! processes, printing every line they print, tagged, in arrival order.
++//!
++//! Steps, one per line (`#` starts a comment; `${NAME}` is replaced by an
++//! environment variable, `$HWND` and `$HWND2` by the first and second
++//! window a server announced):
++//! - `spawn <tag> <collide arguments...>`
++//! - `send <tag> <line>`
++//! - `wait <tag> <prefix> [timeout ms]`: until that process prints a line
++//!   whose text starts with the prefix; a timeout is reported, not fatal
++//! - `sleep <ms>` (fractions allowed; spins for precision)
++
++use std::collections::HashMap;
++use std::io::{BufRead, BufReader, Write};
++use std::process::{Child, ChildStdin, Command, Stdio};
++use std::sync::mpsc::{Receiver, Sender, channel};
++use std::time::{Duration, Instant};
++
++use crate::{now_us, tod};
++
++struct World {
++    tx: Sender<(String, String)>,
++    rx: Receiver<(String, String)>,
++    children: HashMap<String, (Child, ChildStdin)>,
++    vars: HashMap<String, String>,
++    hwnds: usize,
++}
++
++impl World {
++    fn spawn(&mut self, tag: &str, args: &[String]) {
++        let exe = std::env::current_exe().unwrap();
++        self.spawn_exe(tag, exe.to_str().unwrap(), args);
++    }
++
++    fn spawn_exe(&mut self, tag: &str, exe: &str, args: &[String]) {
++        let mut child = Command::new(exe)
++            .args(args)
++            .stdin(Stdio::piped())
++            .stdout(Stdio::piped())
++            .spawn()
++            .unwrap();
++        let stdin = child.stdin.take().unwrap();
++        let stdout = child.stdout.take().unwrap();
++        let tx = self.tx.clone();
++        let owned = tag.to_owned();
++        std::thread::spawn(move || {
++            for line in BufReader::new(stdout).lines() {
++                let Ok(line) = line else { break };
++                if tx.send((owned.clone(), line)).is_err() {
++                    break;
++                }
++            }
++        });
++        println!("{} run spawn {tag} {}", tod(now_us()), args.join(" "));
++        self.children.insert(tag.to_owned(), (child, stdin));
++    }
++
++    fn send(&mut self, tag: &str, line: &str) {
++        println!("{} run send {tag} {line}", tod(now_us()));
++        let (_, stdin) = self.children.get_mut(tag).unwrap();
++        writeln!(stdin, "{line}").unwrap();
++        stdin.flush().unwrap();
++    }
++
++    fn note(&mut self, tag: &str, line: &str) {
++        println!("{tag:>3} {line}");
++        if let Some(rest) = line.split_once(' ').map(|(_, r)| r)
++            && let Some(hwnd) = rest.strip_prefix("hwnd ")
++        {
++            let value = hwnd.split_whitespace().next().unwrap().to_owned();
++            self.hwnds += 1;
++            let name = if self.hwnds == 1 {
++                "HWND".to_owned()
++            } else {
++                format!("HWND{}", self.hwnds)
++            };
++            self.vars.insert(name, value);
++        }
++    }
++
++    fn wait(&mut self, tag: &str, prefix: &str, timeout: Duration) -> bool {
++        let deadline = Instant::now() + timeout;
++        loop {
++            let left = deadline.saturating_duration_since(Instant::now());
++            match self.rx.recv_timeout(left) {
++                Ok((from, line)) => {
++                    self.note(&from, &line);
++                    let text = line.split_once(' ').map_or("", |(_, r)| r);
++                    if from == tag && (text.starts_with(prefix) || line.starts_with(prefix)) {
++                        return true;
++                    }
++                }
++                Err(_) => {
++                    println!("{} run timeout waiting {tag} {prefix}", tod(now_us()));
++                    return false;
++                }
++            }
++        }
++    }
++
++    fn drain(&mut self, quiet: Duration) {
++        while let Ok((from, line)) = self.rx.recv_timeout(quiet) {
++            self.note(&from, &line);
++        }
++    }
++
++    fn expand_env(&self, text: &str) -> String {
++        let mut out = text.to_owned();
++        while let Some(start) = out.find("${") {
++            let end = out[start..].find('}').unwrap() + start;
++            let name = &out[start + 2..end];
++            let value = std::env::var(name).unwrap_or_default();
++            out.replace_range(start..=end, &value);
++        }
++        out
++    }
++
++    fn expand(&self, text: &str) -> String {
++        let mut out = text.to_owned();
++        let mut names: Vec<&String> = self.vars.keys().collect();
++        names.sort_by_key(|n| std::cmp::Reverse(n.len()));
++        for name in names {
++            out = out.replace(&format!("${name}"), &self.vars[name]);
++        }
++        out
++    }
++}
++
++pub fn main(args: &[String]) {
++    let script = std::fs::read_to_string(&args[0]).unwrap();
++    let (tx, rx) = channel();
++    let mut world = World {
++        tx,
++        rx,
++        children: HashMap::new(),
++        vars: HashMap::new(),
++        hwnds: 0,
++    };
++    for raw in script.lines() {
++        let raw = raw.split('#').next().unwrap().trim();
++        if raw.is_empty() {
++            continue;
++        }
++        let expanded = world.expand_env(raw);
++        for line in expanded.split('|').map(str::trim).filter(|l| !l.is_empty()) {
++        let line = world.expand(line);
++        let words: Vec<String> = line.split_whitespace().map(str::to_owned).collect();
++        match words[0].as_str() {
++            "spawn" => world.spawn(&words[1], &words[2..]),
++            "spawnexe" => world.spawn_exe(&words[1], &words[2], &words[3..]),
++            "findwindow" => {
++                let title: Vec<u16> = words[1].encode_utf16().chain(Some(0)).collect();
++                // SAFETY: a valid title.
++                let hwnd = unsafe {
++                    windows::Win32::UI::WindowsAndMessaging::FindWindowW(
++                        None,
++                        windows::core::PCWSTR(title.as_ptr()),
++                    )
++                }
++                .unwrap();
++                let line = format!("{} hwnd {} found", tod(now_us()), hwnd.0 as isize);
++                world.note("run", &line);
++            }
++            "send" => {
++                let rest = line.splitn(3, ' ').nth(2).unwrap_or("").to_owned();
++                world.send(&words[1], &rest);
++            }
++            "wait" => {
++                let timeout = words
++                    .get(3)
++                    .map_or(10_000, |t| t.parse::<u64>().unwrap());
++                world.wait(&words[1], &words[2], Duration::from_millis(timeout));
++            }
++            "sleep" => {
++                let ms: f64 = words[1].parse().unwrap();
++                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
++                let until = now_us() + (ms * 1000.0) as u64;
++                if ms > 20.0 {
++                    std::thread::sleep(Duration::from_secs_f64((ms - 15.0) / 1000.0));
++                }
++                while now_us() < until {
++                    std::hint::spin_loop();
++                }
++            }
++            "drain" => {
++                let ms = words.get(1).map_or(300, |t| t.parse::<u64>().unwrap());
++                world.drain(Duration::from_millis(ms));
++            }
++            other => panic!("unknown step {other}"),
++        }
++        }
++    }
++    world.drain(Duration::from_millis(200));
++    let tags: Vec<String> = world.children.keys().cloned().collect();
++    for tag in tags {
++        let _ = world.send_quiet(&tag);
++    }
++    for (_, (mut child, _)) in world.children.drain() {
++        let _ = child.kill();
++        let _ = child.wait();
++    }
++}
++
++impl World {
++    fn send_quiet(&mut self, tag: &str) -> std::io::Result<()> {
++        let (_, stdin) = self.children.get_mut(tag).unwrap();
++        writeln!(stdin, "quit")?;
++        stdin.flush()
++    }
++}
+diff --git a/crates/collide/src/server.rs b/crates/collide/src/server.rs
+new file mode 100644
+index 00000000..49a46ebd
+--- /dev/null
++++ b/crates/collide/src/server.rs
+@@ -0,0 +1,474 @@
++//! A minimal native UIA server: one STA UI thread, windows that answer
++//! every `WM_GETOBJECT` with `UiaReturnRawElementProvider`, a COM message
++//! filter that can hold a modal loop open while it pumps sent messages,
++//! and a cross-apartment call that makes the UI thread wait in COM's
++//! modal loop on demand.
++
++use std::cell::RefCell;
++use std::collections::HashMap;
++use std::ffi::c_void;
++use std::io::BufRead;
++use std::sync::Mutex;
++use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
++use std::time::Duration;
++
++use windows::Win32::Foundation::{E_NOINTERFACE, HWND, LPARAM, LRESULT, WPARAM};
++use windows::Win32::Media::Audio::{CoRegisterMessageFilter, IMessageFilter, IMessageFilter_Impl};
++use windows::Win32::Media::HTASK;
++use windows::Win32::System::Com::{
++    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED, CoCreateInstance,
++    CoInitializeEx, IGlobalInterfaceTable, INTERFACEINFO, IServiceProvider, IServiceProvider_Impl,
++};
++use windows::Win32::System::LibraryLoader::GetModuleHandleW;
++use windows::Win32::System::Threading::GetCurrentProcessId;
++use windows::Win32::System::Variant::VARIANT;
++use windows::Win32::UI::Accessibility::{
++    IRawElementProviderSimple, IRawElementProviderSimple_Impl, ProviderOptions,
++    ProviderOptions_ServerSideProvider, ProviderOptions_UseComThreading, UIA_ControlTypePropertyId,
++    UIA_NamePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_PaneControlTypeId,
++    UiaHostProviderFromHwnd, UiaReturnRawElementProvider, UiaRootObjectId,
++};
++use windows::Win32::UI::WindowsAndMessaging::{
++    CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, InSendMessageEx,
++    MSG, MSG_WAIT_FOR_MULTIPLE_OBJECTS_EX_FLAGS, MsgWaitForMultipleObjectsEx, PM_NOREMOVE,
++    PM_QS_SENDMESSAGE, PeekMessageW, PostMessageW, PostQuitMessage, QS_SENDMESSAGE, RegisterClassW,
++    SW_SHOW, SetForegroundWindow, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WM_APP,
++    WM_GETOBJECT, WNDCLASSW, WS_OVERLAPPEDWINDOW,
++};
++use windows::core::{BSTR, Error, GUID, IUnknown, Interface, PCWSTR, Result, implement, w};
++
++use crate::{now_us, say};
++
++const WM_LINE: u32 = WM_APP + 1;
++const WM_POKE: u32 = WM_APP + 2;
++
++/// The armed hold: (longest, linger after a `WM_GETOBJECT` ends), in ms.
++static HOLD: Mutex<Option<(u64, u64)>> = Mutex::new(None);
++static PROVIDER_HOLD: Mutex<Option<(u64, u64)>> = Mutex::new(None);
++static IN_HOLD: AtomicBool = AtomicBool::new(false);
++static RELEASE: AtomicBool = AtomicBool::new(false);
++static GETOBJECT_DONE: AtomicU64 = AtomicU64::new(0);
++static POKE: AtomicBool = AtomicBool::new(false);
++static POKE_TARGETS: Mutex<Vec<isize>> = Mutex::new(Vec::new());
++static SLOW_MS: AtomicU32 = AtomicU32::new(0);
++static FILTER: AtomicBool = AtomicBool::new(false);
++static DETECT_ALL: AtomicBool = AtomicBool::new(false);
++static ONLY_ROOT: AtomicBool = AtomicBool::new(false);
++static NO_UIA: AtomicBool = AtomicBool::new(false);
++static PENDING_LOG: AtomicBool = AtomicBool::new(true);
++
++thread_local! {
++    static PROVIDERS: RefCell<HashMap<isize, IRawElementProviderSimple>> = RefCell::new(HashMap::new());
++    static SLOW: RefCell<Option<IServiceProvider>> = const { RefCell::new(None) };
++}
++
++#[implement(IRawElementProviderSimple)]
++struct Provider {
++    hwnd: isize,
++}
++
++impl IRawElementProviderSimple_Impl for Provider_Impl {
++    fn ProviderOptions(&self) -> Result<ProviderOptions> {
++        Ok(ProviderOptions(
++            ProviderOptions_ServerSideProvider.0 | ProviderOptions_UseComThreading.0,
++        ))
++    }
++    fn GetPatternProvider(&self, _: UIA_PATTERN_ID) -> Result<IUnknown> {
++        Err(Error::empty())
++    }
++    fn GetPropertyValue(&self, id: UIA_PROPERTY_ID) -> Result<VARIANT> {
++        if id == UIA_NamePropertyId {
++            let armed = PROVIDER_HOLD.lock().unwrap().take();
++            if let Some((longest, linger)) = armed {
++                say("provider-hold");
++                hold(longest, linger);
++            }
++            Ok(VARIANT::from(BSTR::from("uia-provider")))
++        } else if id == UIA_ControlTypePropertyId {
++            Ok(VARIANT::from(UIA_PaneControlTypeId.0))
++        } else {
++            Ok(VARIANT::default())
++        }
++    }
++    fn HostRawElementProvider(&self) -> Result<IRawElementProviderSimple> {
++        // SAFETY: the window is this process's own.
++        unsafe { UiaHostProviderFromHwnd(HWND(self.hwnd as *mut c_void)) }
++    }
++}
++
++#[implement(IMessageFilter)]
++struct Filter;
++
++impl IMessageFilter_Impl for Filter_Impl {
++    fn HandleInComingCall(&self, _: u32, _: HTASK, _: u32, _: *const INTERFACEINFO) -> u32 {
++        0 // SERVERCALL_ISHANDLED
++    }
++    fn RetryRejectedCall(&self, _: HTASK, _: u32, _: u32) -> u32 {
++        u32::MAX // cancel
++    }
++    fn MessagePending(&self, callee: HTASK, tick: u32, pending_type: u32) -> u32 {
++        if DETECT_ALL.load(Ordering::Relaxed) || PENDING_LOG.swap(false, Ordering::Relaxed) {
++            say(&format!(
++                "pending callee={:?} tick={tick} type={pending_type}",
++                callee.0
++            ));
++        }
++        let armed = HOLD.lock().unwrap().take();
++        if let Some((longest, linger)) = armed {
++            hold(longest, linger);
++        }
++        2 // PENDINGMSG_WAITDEFPROCESS
++    }
++}
++
++/// Keeps the modal loop open, dispatching only sent messages, until a
++/// `WM_GETOBJECT` dispatched here has ended `linger` ms ago, `release`
++/// arrives, or `longest` ms have passed.
++fn hold(longest: u64, linger: u64) {
++    GETOBJECT_DONE.store(0, Ordering::SeqCst);
++    RELEASE.store(false, Ordering::SeqCst);
++    IN_HOLD.store(true, Ordering::SeqCst);
++    say("held");
++    let start = now_us();
++    let why = loop {
++        let now = now_us();
++        if now - start > longest * 1000 {
++            break "longest";
++        }
++        if RELEASE.load(Ordering::SeqCst) {
++            break "release";
++        }
++        let done = GETOBJECT_DONE.load(Ordering::SeqCst);
++        if done != 0 && now.saturating_sub(done) >= linger * 1000 {
++            break "after-getobject";
++        }
++        // SAFETY: no handles; wakes for a sent message or after 1 ms.
++        unsafe {
++            MsgWaitForMultipleObjectsEx(
++                None,
++                1,
++                QS_SENDMESSAGE,
++                MSG_WAIT_FOR_MULTIPLE_OBJECTS_EX_FLAGS(0),
++            );
++        }
++        let mut msg = MSG::default();
++        // SAFETY: dispatches pending sent messages only.
++        let _ = unsafe { PeekMessageW(&raw mut msg, None, 0, 0, PM_NOREMOVE | PM_QS_SENDMESSAGE) };
++    };
++    IN_HOLD.store(false, Ordering::SeqCst);
++    POKE.store(false, Ordering::SeqCst);
++    say(&format!("released why={why}"));
++}
++
++#[implement(IServiceProvider, Agile = false)]
++struct Slow;
++
++impl IServiceProvider_Impl for Slow_Impl {
++    fn QueryService(&self, _: *const GUID, _: *const GUID, out: *mut *mut c_void) -> Result<()> {
++        std::thread::sleep(Duration::from_millis(u64::from(SLOW_MS.load(Ordering::SeqCst))));
++        if !out.is_null() {
++            // SAFETY: the caller's out pointer.
++            unsafe { *out = std::ptr::null_mut() };
++        }
++        Err(E_NOINTERFACE.into())
++    }
++}
++
++/// An object in this process's MTA, called through a proxy from the STA.
++fn make_slow() -> IServiceProvider {
++    const GIT: GUID = GUID::from_u128(0x00000323_0000_0000_c000_000000000046);
++    let (tx, rx) = std::sync::mpsc::channel::<u32>();
++    std::thread::spawn(move || {
++        // SAFETY: this thread's own initialization.
++        unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok().unwrap();
++        let slow: IServiceProvider = Slow.into();
++        // SAFETY: the system's global interface table.
++        let git: IGlobalInterfaceTable = unsafe { CoCreateInstance(&GIT, None, CLSCTX_INPROC_SERVER) }.unwrap();
++        // SAFETY: a live interface.
++        let cookie = unsafe { git.RegisterInterfaceInGlobal(&slow, &IServiceProvider::IID) }.unwrap();
++        tx.send(cookie).unwrap();
++        loop {
++            std::thread::park();
++        }
++    });
++    let cookie = rx.recv().unwrap();
++    // SAFETY: the system's global interface table.
++    let git: IGlobalInterfaceTable = unsafe { CoCreateInstance(&GIT, None, CLSCTX_INPROC_SERVER) }.unwrap();
++    let mut raw = std::ptr::null_mut();
++    // SAFETY: a registered cookie and a valid out pointer.
++    unsafe { git.GetInterfaceFromGlobal(cookie, &IServiceProvider::IID, &raw mut raw) }.unwrap();
++    // SAFETY: the reference the call returned.
++    unsafe { IServiceProvider::from_raw(raw) }
++}
++
++fn register() {
++    let class = WNDCLASSW {
++        lpfnWndProc: Some(wnd_proc),
++        // SAFETY: this module.
++        hInstance: unsafe { GetModuleHandleW(None) }.unwrap().into(),
++        lpszClassName: w!("CollideServer"),
++        ..Default::default()
++    };
++    // SAFETY: a valid class.
++    unsafe { RegisterClassW(&raw const class) };
++}
++
++fn create(title: &str, show: bool) -> HWND {
++    let wide: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
++    // SAFETY: a registered class and a valid title.
++    let hwnd = unsafe {
++        CreateWindowExW(
++            WINDOW_EX_STYLE(0),
++            w!("CollideServer"),
++            PCWSTR(wide.as_ptr()),
++            WS_OVERLAPPEDWINDOW,
++            CW_USEDEFAULT,
++            CW_USEDEFAULT,
++            400,
++            300,
++            None,
++            None,
++            None,
++            None,
++        )
++    }
++    .unwrap();
++    if show {
++        // SAFETY: our window.
++        unsafe {
++            let _ = ShowWindow(hwnd, SW_SHOW);
++        }
++        // SAFETY: plain calls; the input attachment is undone at once.
++        unsafe {
++            let foreground = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
++            let theirs = windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(foreground, None);
++            let ours = windows::Win32::System::Threading::GetCurrentThreadId();
++            let _ = windows::Win32::System::Threading::AttachThreadInput(ours, theirs, true);
++            let _ = SetForegroundWindow(hwnd);
++            let _ = windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(Some(hwnd));
++            let _ = windows::Win32::System::Threading::AttachThreadInput(ours, theirs, false);
++        }
++    }
++    say(&format!("hwnd {} pid {}", hwnd.0 as isize, unsafe {
++        GetCurrentProcessId()
++    }));
++    hwnd
++}
++
++pub fn main(args: &[String]) {
++    let filter = args.iter().any(|a| a == "--filter");
++    let show = args.iter().any(|a| a == "--show");
++    ONLY_ROOT.store(args.iter().any(|a| a == "--only-root"), Ordering::SeqCst);
++    NO_UIA.store(args.iter().any(|a| a == "--no-uia"), Ordering::SeqCst);
++    // SAFETY: this thread's own initialization.
++    unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.ok().unwrap();
++    FILTER.store(filter, Ordering::SeqCst);
++    if filter {
++        let filter: IMessageFilter = Filter.into();
++        // SAFETY: a live filter.
++        unsafe { CoRegisterMessageFilter(&filter, None) }.unwrap();
++    }
++    SLOW.with(|s| *s.borrow_mut() = Some(make_slow()));
++    register();
++    let hwnd = create("collide", show);
++    let target = hwnd.0 as isize;
++    std::thread::spawn(move || {
++        for line in std::io::stdin().lock().lines() {
++            let Ok(line) = line else { break };
++            let line = line.trim().to_owned();
++            match line.as_str() {
++                "release" => RELEASE.store(true, Ordering::SeqCst),
++                "poke on" => POKE.store(true, Ordering::SeqCst),
++                "poke off" => POKE.store(false, Ordering::SeqCst),
++                _ => {
++                    let raw = Box::into_raw(Box::new(line)) as isize;
++                    // SAFETY: the window procedure takes the box back.
++                    unsafe {
++                        let _ = PostMessageW(
++                            Some(HWND(target as *mut c_void)),
++                            WM_LINE,
++                            WPARAM(0),
++                            LPARAM(raw),
++                        );
++                    }
++                }
++            }
++        }
++    });
++    POKE_TARGETS.lock().unwrap().push(target);
++    std::thread::spawn(move || {
++        loop {
++            if POKE.load(Ordering::SeqCst) {
++                for &window in POKE_TARGETS.lock().unwrap().iter() {
++                    // SAFETY: a posted message to our window.
++                    unsafe {
++                        let _ = PostMessageW(
++                            Some(HWND(window as *mut c_void)),
++                            WM_POKE,
++                            WPARAM(0),
++                            LPARAM(0),
++                        );
++                    }
++                }
++            }
++            std::thread::sleep(Duration::from_millis(1));
++        }
++    });
++    say("ready");
++    let mut msg = MSG::default();
++    // SAFETY: the standard loop.
++    while unsafe { GetMessageW(&raw mut msg, None, 0, 0) }.as_bool() {
++        // SAFETY: the message just read.
++        unsafe {
++            let _ = TranslateMessage(&raw const msg);
++            DispatchMessageW(&raw const msg);
++        }
++    }
++}
++
++fn command(line: &str) {
++    let words: Vec<&str> = line.split_whitespace().collect();
++    match words.as_slice() {
++        ["arm", longest, linger] => {
++            *HOLD.lock().unwrap() = Some((longest.parse().unwrap(), linger.parse().unwrap()));
++            PENDING_LOG.store(true, Ordering::SeqCst);
++            POKE.store(true, Ordering::SeqCst);
++            say("armed");
++        }
++        ["armprov", longest, linger] => {
++            *PROVIDER_HOLD.lock().unwrap() =
++                Some((longest.parse().unwrap(), linger.parse().unwrap()));
++            say("armed");
++        }
++        ["disarm"] => {
++            let was = HOLD.lock().unwrap().take();
++            POKE.store(false, Ordering::SeqCst);
++            say(&format!("disarmed was_armed={}", was.is_some()));
++        }
++        ["detectall"] => {
++            DETECT_ALL.store(true, Ordering::SeqCst);
++            POKE.store(true, Ordering::SeqCst);
++            say("detecting");
++        }
++        ["detect"] => {
++            PENDING_LOG.store(true, Ordering::SeqCst);
++            say("detecting");
++        }
++        ["modal", ms] => {
++            SLOW_MS.store(ms.parse().unwrap(), Ordering::SeqCst);
++            let slow = SLOW.with(|s| s.borrow().clone()).unwrap();
++            say("modal-begin");
++            // SAFETY: a live proxy; the result is ignored.
++            let result = unsafe { slow.QueryService::<IUnknown>(&GUID::zeroed()) }.map(|_| ());
++            say(&format!("modal-end {result:?}"));
++        }
++        ["activate"] => {
++            // CLSID_ShellWindows, served out of process by File Explorer.
++            const SHELL_WINDOWS: GUID = GUID::from_u128(0x9ba05972_f6a8_11cf_a442_00a0c90a8f39);
++            say("activate-begin");
++            // SAFETY: an activation whose result is dropped.
++            let result = unsafe {
++                CoCreateInstance::<_, IUnknown>(&SHELL_WINDOWS, None, windows::Win32::System::Com::CLSCTX_LOCAL_SERVER)
++            };
++            say(&format!("activate-end ok={}", result.is_ok()));
++        }
++        ["newwindow"] => {
++            create("collide-2", false);
++        }
++        ["newthread"] => {
++            let filter = FILTER.load(Ordering::SeqCst);
++            std::thread::spawn(move || {
++                // SAFETY: this thread's own initialization.
++                unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.ok().unwrap();
++                if filter {
++                    let filter: IMessageFilter = Filter.into();
++                    // SAFETY: a live filter.
++                    unsafe { CoRegisterMessageFilter(&filter, None) }.unwrap();
++                }
++                let hwnd = create("collide-thread", false);
++                POKE_TARGETS.lock().unwrap().push(hwnd.0 as isize);
++                let mut msg = MSG::default();
++                // SAFETY: the standard loop.
++                while unsafe { GetMessageW(&raw mut msg, None, 0, 0) }.as_bool() {
++                    // SAFETY: the message just read.
++                    unsafe {
++                        let _ = TranslateMessage(&raw const msg);
++                        DispatchMessageW(&raw const msg);
++                    }
++                }
++            });
++        }
++        ["busy", ms] => {
++            // The UI thread works without pumping, as an application busy
++            // with layout or rendering: sent and posted messages wait.
++            let ms: u64 = ms.parse().unwrap();
++            say("busy-begin");
++            let until = now_us() + ms * 1000;
++            while now_us() < until {
++                std::hint::spin_loop();
++            }
++            say("busy-end");
++        }
++        ["quit"] => {
++            // SAFETY: ends this thread's loop.
++            unsafe { PostQuitMessage(0) };
++        }
++        _ => say(&format!("unknown {line}")),
++    }
++}
++
++unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
++    match msg {
++        WM_GETOBJECT => {
++            #[allow(clippy::cast_possible_truncation)]
++            let objid = lparam.0 as i32;
++            // SAFETY: no preconditions.
++            let in_send = unsafe { InSendMessageEx(None) };
++            let held = IN_HOLD.load(Ordering::SeqCst);
++            let start = now_us();
++            say(&format!(
++                "getobject-begin hwnd={} objid={objid} wparam={:#x} insend={in_send:#x} in_hold={held}",
++                hwnd.0 as isize, wparam.0
++            ));
++            let result = if NO_UIA.load(Ordering::SeqCst)
++                || (ONLY_ROOT.load(Ordering::SeqCst) && objid != UiaRootObjectId)
++            {
++                // SAFETY: default handling.
++                unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
++            } else {
++                let provider = PROVIDERS.with(|p| {
++                    p.borrow_mut()
++                        .entry(hwnd.0 as isize)
++                        .or_insert_with(|| {
++                            Provider {
++                                hwnd: hwnd.0 as isize,
++                            }
++                            .into()
++                        })
++                        .clone()
++                });
++                // SAFETY: a live provider for our window.
++                unsafe { UiaReturnRawElementProvider(hwnd, wparam, lparam, &provider) }
++            };
++            say(&format!(
++                "getobject-end hwnd={} objid={objid} lresult={:#x} us={} in_hold={held}",
++                hwnd.0 as isize,
++                result.0,
++                now_us() - start
++            ));
++            if held {
++                GETOBJECT_DONE.store(now_us(), Ordering::SeqCst);
++            }
++            result
++        }
++        WM_LINE => {
++            // SAFETY: the stdin thread's box.
++            let line = unsafe { Box::from_raw(lparam.0 as *mut String) };
++            command(&line);
++            LRESULT(0)
++        }
++        WM_POKE => LRESULT(0),
++        // SAFETY: default handling.
++        _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
++    }
++}

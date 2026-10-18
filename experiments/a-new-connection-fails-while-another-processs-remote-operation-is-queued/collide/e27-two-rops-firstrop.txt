@@ -1,0 +1,26 @@
+# B's remote operation into S while L's waits for S's busy UI thread;
+# B's first remote operation into S.
+# Both read the element's name inside the operation.
+spawn S server
+wait S hwnd
+spawn L client $HWND L
+send L init
+wait L done
+send L efh
+wait L done
+send L ropname
+wait L done 10000
+spawn B client $HWND B
+send B init
+wait B done
+send B efh
+wait B done
+
+send S busy 40
+wait S busy-begin
+send L async ropname
+sleep 5
+send B ropname
+wait B done 15000
+wait L done 15000
+drain 300

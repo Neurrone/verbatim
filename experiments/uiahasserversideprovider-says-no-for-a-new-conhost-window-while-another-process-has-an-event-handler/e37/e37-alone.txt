@@ -1,0 +1,11 @@
+# e37 (UiaHasServerSideProvider alone): as e37-parallel with U only, no
+# raw probe from any process.
+spawn U client 0 U
+send U init
+wait U done
+console ${TITLE}
+sleep ${DELAY}
+send U target $HWND | send U probe | send U efhbcd
+wait U done efhbcd 20000
+closeconsole
+drain 200

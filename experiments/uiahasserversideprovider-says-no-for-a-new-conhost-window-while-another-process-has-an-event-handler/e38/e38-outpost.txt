@@ -1,0 +1,33 @@
+# e38 condition 2: a first console (A) is open with O, an outpost-like
+# client, attached (ElementFromHandleBuildCache, a registration over its
+# subtree with text events, a WinEvent hook on its console host). U is a
+# spare-like process: its UIA client and a registration over nothing made
+# before the second console (B) starts; DELAY ms after B's window is found
+# U hooks B's console host (its pid) and probes, as a spare assigned to B does, while
+# R sends the raw probe; then each looks the window up.
+spawn U client 0 U
+send U init
+wait U done
+send U spare
+wait U done spare
+spawn R client 0 R
+send R init
+wait R done
+fgright
+console ${TITLE}-a
+spawn O client 0 O
+send O init
+wait O done
+send O target $HWND
+wait O done target
+send O outpost
+wait O done outpost 20000
+sleep 1000
+fgright
+console ${TITLE}
+sleep ${DELAY}
+send R target $HWND2 | send U target $HWND2 | send U hookpid $CONPID2 | send R rawprobe | send U probe | send R efhbcd | send U efhbcd
+wait U done efhbcd 20000
+drain 1500
+closeconsole
+drain 200

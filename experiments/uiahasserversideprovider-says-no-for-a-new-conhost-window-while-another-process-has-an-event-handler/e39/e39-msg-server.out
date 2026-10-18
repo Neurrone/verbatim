@@ -1,0 +1,72 @@
+20:53:48.558745 run spawn S server
+  S 20:53:48.573054 hwnd 78185864 pid 8660
+run 20:53:48.589060 hooked pid=8660 threads=[16540, 3952]
+20:53:48.593806 run spawn A client 0 A
+20:53:48.593845 run send A init
+  S 20:53:48.573179 ready
+  A 20:53:48.601012 client-ready A
+  A 20:53:48.606554 done init A start=20:53:48.601046 ms=5.5 ok
+20:53:48.610991 run spawn B client 0 B
+20:53:48.611031 run send B init
+  B 20:53:48.619240 client-ready B
+  B 20:53:48.625228 done init B start=20:53:48.619274 ms=5.9 ok
+20:53:48.630147 run spawn C client 0 C
+20:53:48.630194 run send C init
+  C 20:53:48.637180 client-ready C
+  C 20:53:48.642540 done init C start=20:53:48.637216 ms=5.3 ok
+20:53:48.647242 run spawn D client 0 D
+20:53:48.647292 run send D init
+  D 20:53:48.655269 client-ready D
+  D 20:53:48.660588 done init D start=20:53:48.655312 ms=5.3 ok
+20:53:48.960725 run send A target 78185864
+20:53:48.960865 run send A probe
+  A 20:53:48.960829 done target A
+  S 20:53:48.975238 getobject-begin hwnd=78185864 objid=-25 wparam=0xd983598d insend=0x1 in_hold=false
+  S 20:53:48.979321 getobject-end hwnd=78185864 objid=-25 lresult=0x10000 us=4085 in_hold=false
+  S 20:53:48.980811 getobject-begin hwnd=78185864 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 20:53:48.980850 getobject-end hwnd=78185864 objid=-25 lresult=0x10000 us=41 in_hold=false
+  A 20:53:48.981702 done probe A start=20:53:48.960884 ms=20.8 result=true
+20:53:49.281797 run send A lookup
+  S 20:53:49.282168 getobject-begin hwnd=78185864 objid=-25 wparam=0xd983598e insend=0x1 in_hold=false
+  S 20:53:49.282254 getobject-end hwnd=78185864 objid=-25 lresult=0x10000 us=89 in_hold=false
+  S 20:53:49.282936 getobject-begin hwnd=78185864 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 20:53:49.282967 getobject-end hwnd=78185864 objid=-25 lresult=0x10000 us=32 in_hold=false
+  A 20:53:49.284160 done lookup A start=20:53:49.281885 ms=2.3 ok kind=native pid=8660 desc="[pid:15656,providerId:0x4A90588 Main:Nested [pid:8660,providerId:0x4A90588 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+20:53:49.584262 run send B target 78185864
+20:53:49.584334 run send B lookup
+  B 20:53:49.584346 done target B
+  S 20:53:49.593260 getobject-begin hwnd=78185864 objid=-25 wparam=0xd9e1acf6 insend=0x1 in_hold=false
+  S 20:53:49.593343 getobject-end hwnd=78185864 objid=-25 lresult=0x10000 us=86 in_hold=false
+  S 20:53:49.594138 getobject-begin hwnd=78185864 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 20:53:49.594170 getobject-end hwnd=78185864 objid=-25 lresult=0x10000 us=33 in_hold=false
+  B 20:53:49.595281 done lookup B start=20:53:49.584361 ms=10.9 ok kind=native pid=8660 desc="[pid:6364,providerId:0x4A90588 Main:Nested [pid:8660,providerId:0x4A90588 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+20:53:49.895383 run send C target 78185864
+20:53:49.895443 run send C rawprobe2
+  C 20:53:49.895466 done target C
+  S 20:53:49.895592 getobject-begin hwnd=78185864 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 20:53:49.895664 getobject-end hwnd=78185864 objid=-25 lresult=0x10000 us=73 in_hold=false
+  C 20:53:49.895714 done rawprobe2 C start=20:53:49.895481 ms=0.2 sent=1 lresult=0x10000 err=0 lparam=0xffffffffffffffe7
+20:53:50.195805 run send C lookup
+  S 20:53:50.206973 getobject-begin hwnd=78185864 objid=-25 wparam=0xda3f5c71 insend=0x1 in_hold=false
+  S 20:53:50.207062 getobject-end hwnd=78185864 objid=-25 lresult=0x10000 us=94 in_hold=false
+  S 20:53:50.207798 getobject-begin hwnd=78185864 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 20:53:50.207830 getobject-end hwnd=78185864 objid=-25 lresult=0x10000 us=34 in_hold=false
+  C 20:53:50.208906 done lookup C start=20:53:50.195886 ms=13.0 ok kind=native pid=8660 desc="[pid:6344,providerId:0x4A90588 Main:Nested [pid:8660,providerId:0x4A90588 Main(parent link):Unidentified Provider (unmanaged:collide.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+20:53:50.509006 run send D target 78185864
+20:53:50.509082 run send D efh
+  D 20:53:50.509102 done target D
+  S 20:53:50.517790 getobject-begin hwnd=78185864 objid=-25 wparam=0xda6ead14 insend=0x1 in_hold=false
+  S 20:53:50.517869 getobject-end hwnd=78185864 objid=-25 lresult=0x10000 us=83 in_hold=false
+  S 20:53:50.518631 getobject-begin hwnd=78185864 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 20:53:50.518662 getobject-end hwnd=78185864 objid=-25 lresult=0x10000 us=32 in_hold=false
+  D 20:53:50.519081 done efh D start=20:53:50.509120 ms=10.0 ok
+20:53:50.819187 run send D probe
+  S 20:53:50.819581 getobject-begin hwnd=78185864 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 20:53:50.819639 getobject-end hwnd=78185864 objid=-25 lresult=0x10000 us=61 in_hold=false
+  S 20:53:50.819805 getobject-begin hwnd=78185864 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 20:53:50.819828 getobject-end hwnd=78185864 objid=-25 lresult=0x10000 us=24 in_hold=false
+  D 20:53:50.820119 done probe D start=20:53:50.819267 ms=0.8 result=true
+20:53:51.120369 run send D rawprobe2 0x00000000ffffffe7
+  S 20:53:51.120539 getobject-begin hwnd=78185864 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 20:53:51.120606 getobject-end hwnd=78185864 objid=-25 lresult=0x10000 us=69 in_hold=false
+  D 20:53:51.120664 done rawprobe2 0x00000000ffffffe7 D start=20:53:51.120447 ms=0.2 sent=1 lresult=0x10000 err=0 lparam=0x00000000ffffffe7

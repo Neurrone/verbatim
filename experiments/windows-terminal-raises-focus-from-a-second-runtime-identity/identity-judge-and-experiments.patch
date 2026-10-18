@@ -1,0 +1,344 @@
+diff --git a/crates/verbatim-e2e/src/registry.rs b/crates/verbatim-e2e/src/registry.rs
+index e3116e55..2511d722 100644
+--- a/crates/verbatim-e2e/src/registry.rs
++++ b/crates/verbatim-e2e/src/registry.rs
+@@ -1424,6 +1424,17 @@ pub const SCENARIOS: &[ScenarioDef] = &[
+         body: demo_settings_dialog_keys::body,
+         teardown: demo_settings_dialog_keys::teardown,
+     },
++    ScenarioDef {
++        name: "measure_terminal_identities",
++        group: Group::Measure,
++        settings: None,
++        local_only: false,
++        document: None,
++        comparable: Comparable::No("scratch judge"),
++        setup: measure::setup_terminal_identities,
++        body: measure::body_terminal_identities,
++        teardown: measure::teardown,
++    },
+     ScenarioDef {
+         name: "measure_focus_windows_terminal",
+         group: Group::Measure,
+diff --git a/crates/verbatim-e2e/src/scenario.rs b/crates/verbatim-e2e/src/scenario.rs
+index 01df526a..56740cda 100644
+--- a/crates/verbatim-e2e/src/scenario.rs
++++ b/crates/verbatim-e2e/src/scenario.rs
+@@ -479,6 +479,10 @@ impl Scenario {
+         if !filter.is_empty() {
+             env.push(("RUST_LOG".to_owned(), filter));
+         }
++        // EXPERIMENT (scratch, reverted).
++        if let Ok(experiment) = std::env::var("VERBATIM_EXP") {
++            env.push(("VERBATIM_EXP".to_owned(), experiment));
++        }
+         let launched = agent.launch_verbatim(&exe_str, &run_dir, &env, &stderr_path);
+         let (verbatim_pid, ignored) = match launched {
+             Ok((launched, ignored)) => (launched.pid, ignored),
+@@ -1648,6 +1652,18 @@ impl Scenario {
+         self.agent.child_processes(pid)
+     }
+ 
++    /// Scratch: waits for the process `pid` to exit.
++    ///
++    /// # Errors
++    ///
++    /// Returns an error if the request fails or it does not exit in time.
++    pub fn wait_for_pid_exit(&mut self, pid: u32, timeout: Duration) -> io::Result<()> {
++        match self.agent.wait_for_exit(pid, timeout)? {
++            ProcessState::Exited { .. } => Ok(()),
++            ProcessState::Running => Err(io::Error::other(format!("{pid} still running"))),
++        }
++    }
++
+     /// Ends one of Verbatim's own processes, which the scenario then
+     /// expects to have exited, and waits for it to go.
+     ///
+diff --git a/crates/verbatim-e2e/src/scenarios/measure.rs b/crates/verbatim-e2e/src/scenarios/measure.rs
+index 9cb40430..e365618f 100644
+--- a/crates/verbatim-e2e/src/scenarios/measure.rs
++++ b/crates/verbatim-e2e/src/scenarios/measure.rs
+@@ -222,6 +222,45 @@ pub(crate) fn body_focus_windows_terminal(scenario: &mut Scenario, state: &mut S
+     switch_between(scenario, &truth, &first, &second);
+ }
+ 
++/// Scratch judge: opens Windows Terminal and a second window in it, then
++/// closes both, `VERBATIM_IDENTITY_ROUNDS` times (default 20).
++pub(crate) fn setup_terminal_identities(_scenario: &mut Scenario) -> io::Result<ScenarioState> {
++    Ok(ScenarioState::None)
++}
++
++/// `measure_terminal_identities`.
++pub(crate) fn body_terminal_identities(scenario: &mut Scenario, _state: &mut ScenarioState) {
++    let rounds: usize = std::env::var("VERBATIM_IDENTITY_ROUNDS")
++        .ok()
++        .and_then(|value| value.parse().ok())
++        .unwrap_or(20);
++    for round in 0..rounds {
++        let first_state = terminal::open_windows_terminal(scenario, &format!("ida{round}"), &[])
++            .expect("opens Windows Terminal");
++        let ScenarioState::Window { pid, .. } = &first_state else {
++            unreachable!()
++        };
++        let pid = *pid;
++        let first = terminal::title(&first_state).to_owned();
++        std::thread::sleep(std::time::Duration::from_millis(1500));
++        let _ = scenario.take_all_queued();
++        let second_state =
++            terminal::open_windows_terminal_window(scenario, &format!("idb{round}"), &first_state)
++                .expect("opens a second window");
++        let second = terminal::title(&second_state).to_owned();
++        std::thread::sleep(std::time::Duration::from_millis(1500));
++        let _ = scenario.take_all_queued();
++        scenario.close_windows_titled(&second).expect("closes the second");
++        scenario.close_windows_titled(&first).expect("closes the first");
++        scenario
++            .wait_for_pid_exit(pid, std::time::Duration::from_secs(10))
++            .expect("Windows Terminal exits");
++        std::thread::sleep(std::time::Duration::from_millis(500));
++        let _ = scenario.take_all_queued();
++        eprintln!("identity round {round} done");
++    }
++}
++
+ pub(crate) fn setup_focus_tabs(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+     terminal::open_windows_terminal_for_tabs(scenario, "m-tabs")
+ }
+diff --git a/crates/verbatim-e2e/tests/e2e.rs b/crates/verbatim-e2e/tests/e2e.rs
+index 1936e7fa..28a70fc0 100644
+--- a/crates/verbatim-e2e/tests/e2e.rs
++++ b/crates/verbatim-e2e/tests/e2e.rs
+@@ -145,6 +145,7 @@ scenario_tests! {
+ // deselect them with `--skip measure_` (docs/tooling/e2e.md).
+ scenario_tests! {
+     "a measurement workload, run by name (docs/tooling/e2e.md)":
++    measure_terminal_identities
+     measure_focus_windows_terminal
+     measure_focus_windows_terminal_tabs
+     measure_focus_explorer
+diff --git a/crates/verbatim-outpost/src/listener.rs b/crates/verbatim-outpost/src/listener.rs
+index 1b75a62b..8dc40ea5 100644
+--- a/crates/verbatim-outpost/src/listener.rs
++++ b/crates/verbatim-outpost/src/listener.rs
+@@ -1277,10 +1277,41 @@ fn install_desktop_subscriptions(
+     // refines a role (`ListenerEvent`): UIA fills only these in the
+     // application for each event, and the outpost reads what more it needs
+     // of a selected item when it handles the event.
+-    let parts = [focus, selection, menu, notifications]
++    let mut parts: Vec<Part> = [focus, selection, menu, notifications]
+         .into_iter()
+         .map(Part::shaped::<ListenerEvent>)
+         .collect();
++    // EXPERIMENT (scratch, reverted): NVDA's full global group.
++    if std::env::var("VERBATIM_EXP").is_ok_and(|value| value.contains("full")) {
++        use windows::Win32::UI::Accessibility as A;
++        tracing::info!("EXPERIMENT: NVDA's full global group");
++        parts.push(Part::shaped::<ListenerEvent>(Subscription::Events {
++            events: vec![
++                A::UIA_LiveRegionChangedEventId,
++                A::UIA_SelectionItem_ElementAddedToSelectionEventId,
++                A::UIA_SelectionItem_ElementRemovedFromSelectionEventId,
++                A::UIA_ToolTipOpenedEventId,
++                A::UIA_Window_WindowOpenedEventId,
++                A::UIA_SystemAlertEventId,
++                A::UIA_LayoutInvalidatedEventId,
++                A::UIA_Drag_DragStartEventId,
++                A::UIA_Drag_DragCancelEventId,
++                A::UIA_Drag_DragCompleteEventId,
++            ],
++            callback: Arc::new(|_: &Cached<ListenerEvent>, _| {}),
++        }));
++        parts.push(Part::shaped::<ListenerEvent>(Subscription::Properties {
++            properties: vec![
++                A::UIA_RangeValueValuePropertyId,
++                A::UIA_DragDropEffectPropertyId,
++                A::UIA_DropTargetDropTargetEffectPropertyId,
++            ],
++            callback: Arc::new(|_: &Cached<ListenerEvent>, _| {}),
++        }));
++        parts.push(Part::shaped::<ListenerEvent>(Subscription::ActiveTextPosition {
++            callback: Arc::new(|_: &Cached<ListenerEvent>, _| {}),
++        }));
++    }
+     match Registration::with_parts(parts, Scope::Desktop) {
+         Ok(registration) => Some(registration),
+         Err(error) => {
+diff --git a/crates/verbatim-uia/src/subscribe.rs b/crates/verbatim-uia/src/subscribe.rs
+index fb5a1194..829d836d 100644
+--- a/crates/verbatim-uia/src/subscribe.rs
++++ b/crates/verbatim-uia/src/subscribe.rs
+@@ -866,6 +866,12 @@ fn set_up(parts: Vec<Part>, target: &Target, thread: &Thread) -> windows::core::
+             })
+         })
+         .collect::<windows::core::Result<Vec<_>>>()?;
++    // EXPERIMENT (scratch, reverted): one handler object for every part.
++    let built = if std::env::var("VERBATIM_EXP").is_ok_and(|value| value.contains("one")) {
++        combine(built)?
++    } else {
++        built
++    };
+     // NVDA's order (`UIAHandler/__init__.py` 547 to 593): the desktop's
+     // root element is fetched first, then the focus handler goes on the
+     // client, and only then is the group registered, on that root. A
+@@ -904,6 +910,49 @@ fn set_up(parts: Vec<Part>, target: &Target, thread: &Thread) -> windows::core::
+     })
+ }
+ 
++/// EXPERIMENT (scratch, reverted): every part's handler behind one COM
++/// object, as NVDA registers its one handler object for everything.
++fn combine(mut built: Vec<Built>) -> windows::core::Result<Vec<Built>> {
++    tracing::info!("EXPERIMENT: one handler object");
++    let mut combined = handlers::Combined {
++        focus: None,
++        events: Vec::new(),
++        properties: None,
++        notifications: None,
++        active_text_position: None,
++    };
++    for part in &built {
++        match &part.handler {
++            Handler::Focus(handler) => combined.focus = Some(handler.clone()),
++            Handler::Event(handler, event) => combined.events.push((*event, handler.clone())),
++            Handler::Events(handler, events) => {
++                for event in events {
++                    combined.events.push((*event, handler.clone()));
++                }
++            }
++            Handler::Properties(handler, _) => combined.properties = Some(handler.clone()),
++            Handler::Notifications(handler) => combined.notifications = Some(handler.clone()),
++            Handler::ActiveTextPosition(handler) => {
++                combined.active_text_position = Some(handler.clone());
++            }
++        }
++    }
++    let unknown: windows_core::IUnknown = combined.into();
++    for part in &mut built {
++        part.handler = match &part.handler {
++            Handler::Focus(_) => Handler::Focus(unknown.cast()?),
++            Handler::Event(_, event) => Handler::Event(unknown.cast()?, *event),
++            Handler::Events(_, events) => Handler::Events(unknown.cast()?, events.clone()),
++            Handler::Properties(_, properties) => {
++                Handler::Properties(unknown.cast()?, properties.clone())
++            }
++            Handler::Notifications(_) => Handler::Notifications(unknown.cast()?),
++            Handler::ActiveTextPosition(_) => Handler::ActiveTextPosition(unknown.cast()?),
++        };
++    }
++    Ok(built)
++}
++
+ fn run(
+     parts: Vec<Part>,
+     target: &Target,
+@@ -1246,6 +1295,111 @@ mod handlers {
+         }
+     }
+ 
++    /// EXPERIMENT (scratch, reverted): one object for every handler.
++    #[implement(
++        windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler,
++        windows::Win32::UI::Accessibility::IUIAutomationEventHandler,
++        windows::Win32::UI::Accessibility::IUIAutomationPropertyChangedEventHandler,
++        windows::Win32::UI::Accessibility::IUIAutomationNotificationEventHandler,
++        windows::Win32::UI::Accessibility::IUIAutomationActiveTextPositionChangedEventHandler
++    )]
++    pub struct Combined {
++        pub focus: Option<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler>,
++        pub events: Vec<(UIA_EVENT_ID, windows::Win32::UI::Accessibility::IUIAutomationEventHandler)>,
++        pub properties:
++            Option<windows::Win32::UI::Accessibility::IUIAutomationPropertyChangedEventHandler>,
++        pub notifications:
++            Option<windows::Win32::UI::Accessibility::IUIAutomationNotificationEventHandler>,
++        pub active_text_position: Option<
++            windows::Win32::UI::Accessibility::IUIAutomationActiveTextPositionChangedEventHandler,
++        >,
++    }
++
++    impl windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler_Impl
++        for Combined_Impl
++    {
++        fn HandleFocusChangedEvent(
++            &self,
++            sender: windows_core::Ref<IUIAutomationElement>,
++        ) -> windows_core::Result<()> {
++            if let Some(inner) = &self.focus {
++                // SAFETY: an in-process call to a live handler.
++                unsafe { inner.HandleFocusChangedEvent(sender.as_ref()) }?;
++            }
++            Ok(())
++        }
++    }
++
++    impl IUIAutomationEventHandler_Impl for Combined_Impl {
++        fn HandleAutomationEvent(
++            &self,
++            sender: windows_core::Ref<IUIAutomationElement>,
++            eventid: UIA_EVENT_ID,
++        ) -> windows_core::Result<()> {
++            for (event, inner) in &self.events {
++                if *event == eventid {
++                    // SAFETY: as above.
++                    unsafe { inner.HandleAutomationEvent(sender.as_ref(), eventid) }?;
++                }
++            }
++            Ok(())
++        }
++    }
++
++    impl IUIAutomationPropertyChangedEventHandler_Impl for Combined_Impl {
++        fn HandlePropertyChangedEvent(
++            &self,
++            sender: windows_core::Ref<IUIAutomationElement>,
++            propertyid: UIA_PROPERTY_ID,
++            newvalue: &VARIANT,
++        ) -> windows_core::Result<()> {
++            if let Some(inner) = &self.properties {
++                // SAFETY: as above.
++                unsafe { inner.HandlePropertyChangedEvent(sender.as_ref(), propertyid, newvalue) }?;
++            }
++            Ok(())
++        }
++    }
++
++    impl IUIAutomationNotificationEventHandler_Impl for Combined_Impl {
++        fn HandleNotificationEvent(
++            &self,
++            sender: windows_core::Ref<IUIAutomationElement>,
++            notificationkind: NotificationKind,
++            notificationprocessing: NotificationProcessing,
++            displaystring: &windows_core::BSTR,
++            activityid: &windows_core::BSTR,
++        ) -> windows_core::Result<()> {
++            if let Some(inner) = &self.notifications {
++                // SAFETY: as above.
++                unsafe {
++                    inner.HandleNotificationEvent(
++                        sender.as_ref(),
++                        notificationkind,
++                        notificationprocessing,
++                        displaystring,
++                        activityid,
++                    )
++                }?;
++            }
++            Ok(())
++        }
++    }
++
++    impl IUIAutomationActiveTextPositionChangedEventHandler_Impl for Combined_Impl {
++        fn HandleActiveTextPositionChangedEvent(
++            &self,
++            sender: windows_core::Ref<IUIAutomationElement>,
++            range: windows_core::Ref<IUIAutomationTextRange>,
++        ) -> windows_core::Result<()> {
++            if let Some(inner) = &self.active_text_position {
++                // SAFETY: as above.
++                unsafe { inner.HandleActiveTextPositionChangedEvent(sender.as_ref(), range.as_ref()) }?;
++            }
++            Ok(())
++        }
++    }
++
+     /// The notification handler.
+     #[implement(windows::Win32::UI::Accessibility::IUIAutomationNotificationEventHandler)]
+     pub struct NotificationHandler {

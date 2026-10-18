@@ -1,0 +1,1070 @@
+diff --git a/crates/mockapp/Cargo.toml b/crates/mockapp/Cargo.toml
+index c93b0c6e..1b748b49 100644
+--- a/crates/mockapp/Cargo.toml
++++ b/crates/mockapp/Cargo.toml
+@@ -54,6 +54,10 @@ harness = false
+ name = "events"
+ harness = false
+ 
++[[test]]
++name = "experiments"
++harness = false
++
+ [[test]]
+ name = "focus_reports"
+ harness = false
+diff --git a/crates/mockapp/src/main.rs b/crates/mockapp/src/main.rs
+index 42d33352..a00ded0b 100644
+--- a/crates/mockapp/src/main.rs
++++ b/crates/mockapp/src/main.rs
+@@ -18,6 +18,7 @@ mod fixture;
+ mod hits;
+ mod list_view;
+ mod msaa;
++mod probe;
+ mod stdin;
+ mod tree;
+ mod tree_view;
+@@ -69,6 +70,10 @@ enum BackendArg {
+ }
+ 
+ fn main() -> ExitCode {
++    let args: Vec<String> = std::env::args().collect();
++    if args.get(1).map(String::as_str) == Some("--focus-probe") {
++        probe::run(&args[2..]);
++    }
+     let cli = Cli::parse();
+     match run(&cli) {
+         Ok(()) => ExitCode::SUCCESS,
+diff --git a/crates/mockapp/src/probe.rs b/crates/mockapp/src/probe.rs
+new file mode 100644
+index 00000000..da3f665e
+--- /dev/null
++++ b/crates/mockapp/src/probe.rs
+@@ -0,0 +1,390 @@
++//! `mockapp --focus-probe <log> <pid> <ready>`: an experiment, not part of
++//! mockapp's provider role (scratchpad `focus-pipeline-design.md`, section
++//! 12.11 and the (b2) live check). It holds, in one process, the
++//! desktop-wide UIA focus registration and a focus registration in an event
++//! handler group scoped to each top-level window of process `pid`, and logs
++//! every focus event either one delivers: the route, the time, the sender's
++//! process, runtime id, name, control type and window, its cached and live
++//! `HasKeyboardFocus`. It registers on each new top-level window of `pid` as
++//! it is shown, and logs how long each registration took. It writes `ready`
++//! once its first registrations are in, and runs until it is ended.
++
++use std::ffi::c_void;
++use std::fs::File;
++use std::io::Write;
++use std::sync::mpsc::{self, Sender};
++use std::sync::{Mutex, OnceLock, PoisonError};
++use std::time::{SystemTime, UNIX_EPOCH};
++
++use windows::Win32::Foundation::{HWND, LPARAM};
++use windows::Win32::System::Com::{
++    CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
++};
++use windows::Win32::System::Ole::{SafeArrayDestroy, SafeArrayGetElement, SafeArrayGetLBound, SafeArrayGetUBound};
++use windows::Win32::UI::Accessibility::{
++    CUIAutomation8, HWINEVENTHOOK, IUIAutomation6, IUIAutomationCacheRequest, IUIAutomationElement,
++    IUIAutomationEventHandler, IUIAutomationEventHandler_Impl,
++    IUIAutomationFocusChangedEventHandler, IUIAutomationFocusChangedEventHandler_Impl,
++    SetWinEventHook, TreeScope_Subtree, UIA_AutomationFocusChangedEventId, UIA_ControlTypePropertyId,
++    UIA_EVENT_ID, UIA_HasKeyboardFocusPropertyId, UIA_NamePropertyId,
++    UIA_NativeWindowHandlePropertyId, UIA_ProcessIdPropertyId, UIA_RuntimeIdPropertyId,
++};
++use windows::Win32::UI::WindowsAndMessaging::{
++    DispatchMessageW, EVENT_OBJECT_FOCUS, EVENT_OBJECT_SHOW, EnumWindows, GA_ROOT, GetAncestor,
++    GetClassNameW, GetMessageW,
++    GetWindowThreadProcessId, IsWindowVisible, MSG, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT,
++};
++use windows::core::BOOL;
++use windows_core::implement;
++
++/// The log, shared by every callback.
++static LOG: OnceLock<Mutex<File>> = OnceLock::new();
++/// New top-level windows of the target, for the registration thread.
++static SHOWN: OnceLock<Mutex<Sender<isize>>> = OnceLock::new();
++/// The target's process id.
++static TARGET: OnceLock<u32> = OnceLock::new();
++
++fn now_us() -> u128 {
++    SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .map_or(0, |since| since.as_micros())
++}
++
++fn log(line: &str) {
++    if let Some(file) = LOG.get() {
++        let mut file = file.lock().unwrap_or_else(PoisonError::into_inner);
++        let _ = writeln!(file, "{} {line}", now_us());
++        let _ = file.flush();
++    }
++}
++
++fn runtime_id(element: &IUIAutomationElement) -> Vec<i32> {
++    // SAFETY: a live element; the runtime id is read from its cache.
++    let Ok(array) = (unsafe { element.GetRuntimeId() }) else {
++        return Vec::new();
++    };
++    let mut ids = Vec::new();
++    // SAFETY: a one-dimensional array UIA returned.
++    let bounds = unsafe { (SafeArrayGetLBound(array, 1), SafeArrayGetUBound(array, 1)) };
++    if let (Ok(low), Ok(high)) = bounds {
++        for index in low..=high {
++            let mut value = 0i32;
++            // SAFETY: an index within the bounds and an i32 to write.
++            if unsafe { SafeArrayGetElement(array, &raw const index, (&raw mut value).cast::<c_void>()) }
++                .is_ok()
++            {
++                ids.push(value);
++            }
++        }
++    }
++    // SAFETY: the array UIA gave this call to own.
++    let _ = unsafe { SafeArrayDestroy(array) };
++    ids
++}
++
++fn describe(route: &str, element: &IUIAutomationElement) {
++    // SAFETY: cached reads on a live element.
++    let pid = unsafe { element.CachedProcessId() }.unwrap_or(0);
++    // SAFETY: as above.
++    let name = unsafe { element.CachedName() }.map(|name| name.to_string()).unwrap_or_default();
++    // SAFETY: as above.
++    let control_type = unsafe { element.CachedControlType() }.map_or(0, |id| id.0);
++    // SAFETY: as above.
++    let hwnd = unsafe { element.CachedNativeWindowHandle() }.map_or(0, |hwnd| hwnd.0 as isize);
++    // SAFETY: as above.
++    let cached_focus = unsafe { element.CachedHasKeyboardFocus() }.map(BOOL::as_bool);
++    let read = now_us();
++    // SAFETY: a live read on a live element, off the application's thread.
++    let live_focus = unsafe { element.CurrentHasKeyboardFocus() }.map(BOOL::as_bool);
++    let read_us = now_us() - read;
++    log(&format!(
++        "event route={route} pid={pid} target={} rid={:?} name={name:?} type={control_type} hwnd={hwnd} cached_focus={cached_focus:?} live_focus={live_focus:?} live_read_us={read_us}",
++        TARGET.get().is_some_and(|&target| i64::from(pid) == i64::from(target)),
++        runtime_id(element)
++    ));
++}
++
++#[implement(IUIAutomationFocusChangedEventHandler)]
++struct DesktopFocus;
++
++impl IUIAutomationFocusChangedEventHandler_Impl for DesktopFocus_Impl {
++    fn HandleFocusChangedEvent(
++        &self,
++        sender: windows_core::Ref<IUIAutomationElement>,
++    ) -> windows_core::Result<()> {
++        if let Some(element) = sender.as_ref() {
++            describe("desktop", element);
++        }
++        Ok(())
++    }
++}
++
++#[implement(IUIAutomationEventHandler)]
++struct ScopedFocus;
++
++impl IUIAutomationEventHandler_Impl for ScopedFocus_Impl {
++    fn HandleAutomationEvent(
++        &self,
++        sender: windows_core::Ref<IUIAutomationElement>,
++        _event: UIA_EVENT_ID,
++    ) -> windows_core::Result<()> {
++        if let Some(element) = sender.as_ref() {
++            describe("scoped", element);
++        }
++        Ok(())
++    }
++}
++
++unsafe extern "system" fn shown(
++    _hook: HWINEVENTHOOK,
++    event: u32,
++    hwnd: HWND,
++    id_object: i32,
++    id_child: i32,
++    thread: u32,
++    time: u32,
++) {
++    if event == EVENT_OBJECT_FOCUS {
++        let mut class = [0u16; 128];
++        // SAFETY: a local query into a buffer of the given size.
++        let length = unsafe { GetClassNameW(hwnd, &mut class) };
++        let class = String::from_utf16_lossy(&class[..usize::try_from(length).unwrap_or(0)]);
++        let mut pid = 0u32;
++        // SAFETY: a local query with an out-pointer.
++        unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut pid)) };
++        let mut accessible: Option<windows::Win32::UI::Accessibility::IAccessible> = None;
++        let mut variant = windows::Win32::System::Variant::VARIANT::default();
++        // SAFETY: out-pointers for the object and its child id; this
++        // thread joined COM in `run`.
++        let acquired = unsafe {
++            windows::Win32::UI::Accessibility::AccessibleObjectFromEvent(
++                hwnd,
++                id_object as u32,
++                id_child as u32,
++                &raw mut accessible,
++                &raw mut variant,
++            )
++        };
++        let object = match (acquired, accessible) {
++            (Ok(()), Some(accessible)) => {
++                // SAFETY: cross-process reads on a live object.
++                let name = unsafe { accessible.get_accName(&variant) }.map(|name| name.to_string());
++                // SAFETY: as above.
++                let role = unsafe { accessible.get_accRole(&variant) }
++                    .ok()
++                    .and_then(|role| i32::try_from(&role).ok());
++                format!("msaa_role={role:?} msaa_name={name:?}")
++            }
++            (result, _) => format!("msaa_acquire={result:?}"),
++        };
++        log(&format!(
++            "event route=msaa pid={pid} target={} hwnd={} class={class:?} object={id_object} child={id_child} thread={thread} time={time} {object}",
++            TARGET.get() == Some(&pid),
++            hwnd.0 as isize
++        ));
++        return;
++    }
++    // SAFETY: a local query of a window handle.
++    let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
++    if id_object == OBJID_WINDOW.0 && id_child == 0 && root == hwnd {
++        log(&format!("shown hwnd={}", hwnd.0 as isize));
++        if let Some(sender) = SHOWN.get() {
++            let _ = sender
++                .lock()
++                .unwrap_or_else(PoisonError::into_inner)
++                .send(hwnd.0 as isize);
++        }
++    }
++}
++
++unsafe extern "system" fn collect(hwnd: HWND, windows: LPARAM) -> BOOL {
++    let mut pid = 0u32;
++    // SAFETY: a local query with an out-pointer.
++    unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut pid)) };
++    // SAFETY: a local query.
++    if Some(&pid) == TARGET.get() && unsafe { IsWindowVisible(hwnd) }.as_bool() {
++        // SAFETY: `windows` is the vector `run` passed, live for the call.
++        unsafe { (*(windows.0 as *mut Vec<isize>)).push(hwnd.0 as isize) };
++    }
++    BOOL(1)
++}
++
++fn register(
++    uia: &IUIAutomation6,
++    cache: &IUIAutomationCacheRequest,
++    handler: &IUIAutomationEventHandler,
++    hwnd: isize,
++) {
++    let started = now_us();
++    // SAFETY: live client, cache and handler; a window handle UIA checks.
++    let result = unsafe {
++        uia.ElementFromHandleBuildCache(HWND(hwnd as *mut c_void), cache)
++            .and_then(|element| {
++                let group = uia.CreateEventHandlerGroup()?;
++                group.AddAutomationEventHandler(
++                    UIA_AutomationFocusChangedEventId,
++                    TreeScope_Subtree,
++                    cache,
++                    handler,
++                )?;
++                uia.AddEventHandlerGroup(&element, &group)
++            })
++    };
++    log(&format!(
++        "registered hwnd={hwnd} took_us={} result={result:?}",
++        now_us() - started
++    ));
++}
++
++/// Clears every proxy factory entry's mapping of WinEvents to focus
++/// changes on `uia`, as `verbatim_uia::proxy` clears the other events',
++/// and logs which entries mapped focus.
++fn clear_focus_mapping(uia: &IUIAutomation6) {
++    use windows::Win32::UI::Accessibility::UIA_PROPERTY_ID;
++    // SAFETY: local calls on a live client.
++    let Ok(mapping) = (unsafe { uia.ProxyFactoryMapping() }) else {
++        log("clear-focus-mapping: no mapping");
++        return;
++    };
++    // SAFETY: as above.
++    let count = unsafe { mapping.Count() }.unwrap_or(0);
++    for index in 0..count {
++        // SAFETY: an index below the count.
++        let Ok(entry) = (unsafe { mapping.GetEntry(index) }) else {
++            continue;
++        };
++        // SAFETY: a local read.
++        let mapped = unsafe {
++            entry.GetWinEventsForAutomationEvent(UIA_AutomationFocusChangedEventId, UIA_PROPERTY_ID(0))
++        };
++        let Ok(array) = mapped else { continue };
++        if array.is_null() {
++            continue;
++        }
++        // SAFETY: owned here.
++        let _ = unsafe { SafeArrayDestroy(array) };
++        // SAFETY: a local read.
++        let class = unsafe { entry.ClassName() }.map(|name| name.to_string()).unwrap_or_default();
++        // SAFETY: a null array maps no WinEvent.
++        let cleared = unsafe {
++            entry.SetWinEventsForAutomationEvent(
++                UIA_AutomationFocusChangedEventId,
++                UIA_PROPERTY_ID(0),
++                std::ptr::null(),
++            )
++        };
++        // SAFETY: put back at its place, as changes need.
++        let _ = unsafe { mapping.RemoveEntry(index) };
++        // SAFETY: as above.
++        let _ = unsafe { mapping.InsertEntry(index, &entry) };
++        log(&format!("clear-focus-mapping: entry {index} class {class:?} {cleared:?}"));
++    }
++}
++
++/// Runs the probe with `args`: the log's path, the target's process id,
++/// and the ready file's path. Never returns.
++pub(crate) fn run(args: &[String]) -> ! {
++    let (log_path, pid, ready, clear) = match args {
++        [log_path, pid, ready] => (log_path, pid, ready, false),
++        [log_path, pid, ready, flag] if flag == "clear-focus-mapping" => (log_path, pid, ready, true),
++        _ => {
++            eprintln!("mockapp --focus-probe <log> <pid> <ready> [clear-focus-mapping]");
++            std::process::exit(2);
++        }
++    };
++    let pid: u32 = pid.parse().expect("a process id");
++    let _ = TARGET.set(pid);
++    let _ = LOG.set(Mutex::new(File::create(log_path).expect("the log")));
++    let (shown_tx, shown_rx) = mpsc::channel();
++    let _ = SHOWN.set(Mutex::new(shown_tx));
++    log(&format!("start target={pid}"));
++
++    // The one thread that adds handlers, as Microsoft's threading page asks.
++    let ready = ready.clone();
++    std::thread::spawn(move || {
++        // SAFETY: joins this thread to the multithreaded apartment.
++        let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
++        // SAFETY: creates UIA's client object in this process.
++        let uia: IUIAutomation6 =
++            unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER) }.expect("UIA");
++        if clear {
++            clear_focus_mapping(&uia);
++        }
++        // SAFETY: a local call on a live client.
++        let cache = unsafe { uia.CreateCacheRequest() }.expect("cache");
++        for property in [
++            UIA_ProcessIdPropertyId,
++            UIA_RuntimeIdPropertyId,
++            UIA_NamePropertyId,
++            UIA_ControlTypePropertyId,
++            UIA_NativeWindowHandlePropertyId,
++            UIA_HasKeyboardFocusPropertyId,
++        ] {
++            // SAFETY: a local call on a live cache request.
++            unsafe { cache.AddProperty(property) }.expect("a property");
++        }
++        let desktop: IUIAutomationFocusChangedEventHandler = DesktopFocus.into();
++        let started = now_us();
++        // SAFETY: live client, cache and handler.
++        let added = unsafe { uia.AddFocusChangedEventHandler(&cache, &desktop) };
++        log(&format!(
++            "registered desktop took_us={} result={added:?}",
++            now_us() - started
++        ));
++        let scoped: IUIAutomationEventHandler = ScopedFocus.into();
++        let mut windows: Vec<isize> = Vec::new();
++        // SAFETY: the callback writes into `windows`, live for the call.
++        let _ = unsafe { EnumWindows(Some(collect), LPARAM((&raw mut windows) as isize)) };
++        for &hwnd in &windows {
++            register(&uia, &cache, &scoped, hwnd);
++        }
++        std::fs::write(&ready, b"ready").expect("the ready file");
++        let mut registered = windows;
++        while let Ok(hwnd) = shown_rx.recv() {
++            if !registered.contains(&hwnd) {
++                registered.push(hwnd);
++                register(&uia, &cache, &scoped, hwnd);
++            }
++        }
++    });
++
++    // The new-window hook, pumped on this thread.
++    // SAFETY: an out-of-context hook for the target's show events.
++    let hook = unsafe {
++        SetWinEventHook(
++            EVENT_OBJECT_SHOW,
++            EVENT_OBJECT_SHOW,
++            None,
++            Some(shown),
++            pid,
++            0,
++            WINEVENT_OUTOFCONTEXT,
++        )
++    };
++    log(&format!("hooked {}", !hook.is_invalid()));
++    // The MSAA focus hook covers every process, so a window hosting
++    // another process's content (Settings in ApplicationFrameHost) is seen;
++    // its callback acquires the object, which needs COM on this thread.
++    // SAFETY: joins this thread to the multithreaded apartment.
++    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
++    // SAFETY: an out-of-context hook for every process's focus events.
++    let focus_hook = unsafe {
++        SetWinEventHook(
++            EVENT_OBJECT_FOCUS,
++            EVENT_OBJECT_FOCUS,
++            None,
++            Some(shown),
++            0,
++            0,
++            WINEVENT_OUTOFCONTEXT,
++        )
++    };
++    log(&format!("focus hooked {}", !focus_hook.is_invalid()));
++    let mut message = MSG::default();
++    // SAFETY: this thread's own message loop.
++    while unsafe { GetMessageW(&raw mut message, None, 0, 0) }.as_bool() {
++        // SAFETY: the message just taken.
++        unsafe { DispatchMessageW(&raw const message) };
++    }
++    std::process::exit(0);
++}
+diff --git a/crates/mockapp/tests/common/mod.rs b/crates/mockapp/tests/common/mod.rs
+index 4ceedbb0..ffe861dc 100644
+--- a/crates/mockapp/tests/common/mod.rs
++++ b/crates/mockapp/tests/common/mod.rs
+@@ -256,6 +256,23 @@ impl MockApp {
+         self.send("release");
+     }
+ 
++    /// Experiments only: writes `line` without waiting for an answer.
++    pub fn write(&mut self, line: &str) {
++        self.write_line(line);
++    }
++
++    /// Experiments only: the next line mockapp prints, `None` after
++    /// `timeout`.
++    pub fn line(&self, timeout: Duration) -> Option<String> {
++        self.lines.recv_timeout(timeout).ok()
++    }
++
++    /// Experiments only: ends mockapp's process at once.
++    pub fn kill(&mut self) {
++        let _ = self.child.kill();
++        let _ = self.child.wait();
++    }
++
+     /// The next line mockapp prints, waiting at most `timeout`.
+     fn next_line(&self, what: &str, timeout: Duration) -> String {
+         self.lines
+diff --git a/crates/verbatim-e2e/src/registry.rs b/crates/verbatim-e2e/src/registry.rs
+index bf25e440..37387647 100644
+--- a/crates/verbatim-e2e/src/registry.rs
++++ b/crates/verbatim-e2e/src/registry.rs
+@@ -126,7 +126,8 @@ use crate::artifacts::{self, ScenarioSummary};
+ use crate::scenario::{Document, Scenario};
+ use crate::scenarios::{
+     demo_notepad_editing, demo_review_cursor, demo_say_all, demo_settings_dialog_keys,
+-    demo_terminal_session, editing, explorer_folder_window, lock_key_announcements,
++    demo_terminal_session, editing, experiment_focus_routes, explorer_folder_window,
++    lock_key_announcements,
+     menu_and_settings_dialog, notepad_say_all, notepad_spelling_errors,
+     object_navigation_in_settings, object_navigation_over_uia, outpost_crash_recovery,
+     rapid_tabbing_in_settings, review_cursor, review_words, second_application_and_verbatim_menu,
+@@ -191,6 +192,9 @@ pub enum Group {
+     /// Demonstrations, recorded by `cargo xtask demo` and left out of the
+     /// suite.
+     Demo,
++    /// Design experiments that measure rather than assert, left out of the
++    /// suite like the demonstrations; on an experiment branch only.
++    Experiment,
+ }
+ 
+ impl Group {
+@@ -205,6 +209,7 @@ impl Group {
+             Self::Navigation => "navigation",
+             Self::Text => "text",
+             Self::Demo => "demo",
++            Self::Experiment => "experiment",
+         }
+     }
+ 
+@@ -218,6 +223,7 @@ impl Group {
+             "navigation" => Some(Self::Navigation),
+             "text" => Some(Self::Text),
+             "demo" => Some(Self::Demo),
++            "experiment" => Some(Self::Experiment),
+             _ => None,
+         }
+     }
+@@ -1244,6 +1250,86 @@ pub const SCENARIOS: &[ScenarioDef] = &[
+         body: demo_settings_dialog_keys::body,
+         teardown: demo_settings_dialog_keys::teardown,
+     },
++    ScenarioDef {
++        name: "notepad_experiment_focus_routes",
++        group: Group::Experiment,
++        settings: None,
++        local_only: true,
++        document: Some(experiment_focus_routes::notepad_document),
++        setup: experiment_focus_routes::notepad_setup,
++        body: experiment_focus_routes::notepad_body,
++        teardown: experiment_focus_routes::teardown,
++    },
++    ScenarioDef {
++        name: "experiment_focus_routes_windows_terminal",
++        group: Group::Experiment,
++        settings: None,
++        local_only: false,
++        document: None,
++        setup: experiment_focus_routes::windows_terminal_setup,
++        body: experiment_focus_routes::windows_terminal_body,
++        teardown: experiment_focus_routes::teardown,
++    },
++    ScenarioDef {
++        name: "experiment_focus_routes_explorer",
++        group: Group::Experiment,
++        settings: None,
++        local_only: false,
++        document: None,
++        setup: experiment_focus_routes::explorer_setup,
++        body: experiment_focus_routes::explorer_body,
++        teardown: experiment_focus_routes::teardown,
++    },
++    ScenarioDef {
++        name: "experiment_focus_routes_text_box",
++        group: Group::Experiment,
++        settings: None,
++        local_only: false,
++        document: None,
++        setup: experiment_focus_routes::text_box_setup,
++        body: experiment_focus_routes::text_box_body,
++        teardown: experiment_focus_routes::teardown,
++    },
++    ScenarioDef {
++        name: "experiment_focus_mapping_text_box",
++        group: Group::Experiment,
++        settings: None,
++        local_only: false,
++        document: None,
++        setup: experiment_focus_routes::text_box_setup,
++        body: experiment_focus_routes::text_box_mapping_body,
++        teardown: experiment_focus_routes::teardown,
++    },
++    ScenarioDef {
++        name: "experiment_focus_mapping_msinfo",
++        group: Group::Experiment,
++        settings: None,
++        local_only: false,
++        document: None,
++        setup: experiment_focus_routes::msinfo_setup,
++        body: experiment_focus_routes::msinfo_mapping_body,
++        teardown: experiment_focus_routes::teardown,
++    },
++    ScenarioDef {
++        name: "experiment_focus_routes_msinfo",
++        group: Group::Experiment,
++        settings: None,
++        local_only: false,
++        document: None,
++        setup: experiment_focus_routes::msinfo_setup,
++        body: experiment_focus_routes::msinfo_body,
++        teardown: experiment_focus_routes::teardown,
++    },
++    ScenarioDef {
++        name: "experiment_focus_routes_settings",
++        group: Group::Experiment,
++        settings: None,
++        local_only: false,
++        document: None,
++        setup: experiment_focus_routes::settings_setup,
++        body: experiment_focus_routes::settings_body,
++        teardown: experiment_focus_routes::teardown,
++    },
+ ];
+ 
+ /// Looks up a scenario or a demonstration by [`ScenarioDef::name`].
+@@ -1272,7 +1358,7 @@ pub fn select<'a>(
+     if names.is_empty() && groups.is_empty() {
+         return Ok(scenarios
+             .iter()
+-            .filter(|def| def.group != Group::Demo)
++            .filter(|def| def.group != Group::Demo && def.group != Group::Experiment)
+             .collect());
+     }
+ 
+@@ -1387,6 +1473,10 @@ fn run(def: &ScenarioDef) {
+     let body_outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+         scenario.speech().expect_sequence(&startup_speech());
+         crate::scenarios::expect_desktop(&mut scenario);
++        // Experiments only: the experiment group asserts no speech.
++        if def.group == Group::Experiment {
++            scenario.speech().collect_only();
++        }
+         let mut created = (def.setup)(&mut scenario)
+             .unwrap_or_else(|error| panic!("scenario {:?}: setup failed: {error}", def.name));
+         let result = panic::catch_unwind(AssertUnwindSafe(|| {
+diff --git a/crates/verbatim-e2e/src/scenario.rs b/crates/verbatim-e2e/src/scenario.rs
+index effcaea3..0d206dd1 100644
+--- a/crates/verbatim-e2e/src/scenario.rs
++++ b/crates/verbatim-e2e/src/scenario.rs
+@@ -1095,6 +1095,37 @@ impl Scenario {
+         )
+     }
+ 
++    /// Experiments only: launches `command` with `args`, a helper with no
++    /// window of its own, and returns its process id; the caller ends it
++    /// with [`Scenario::end_helper`].
++    ///
++    /// # Errors
++    ///
++    /// Returns an error if the agent cannot start it.
++    pub fn launch_helper(&mut self, command: &str, args: &[String]) -> io::Result<u32> {
++        Ok(self.agent.launch_process(command, args, None, &[], None)?.pid)
++    }
++
++    /// Experiments only: ends the helper `pid` that
++    /// [`Scenario::launch_helper`] started.
++    ///
++    /// # Errors
++    ///
++    /// Returns an error if the request fails.
++    pub fn end_helper(&mut self, pid: u32) -> io::Result<()> {
++        self.agent.kill_process(pid).map(|_| ())
++    }
++
++    /// Experiments only: the contents of the file `path` on the agent's
++    /// machine.
++    ///
++    /// # Errors
++    ///
++    /// Returns an error if the request fails.
++    pub fn read_agent_file(&mut self, path: &str) -> io::Result<Vec<u8>> {
++        self.agent.read_file(path)
++    }
++
+     /// Runs `command` with `args`, a program that hands what it is asked to
+     /// a running instance of itself and exits, such as Windows Terminal's
+     /// executable opening a tab in a window of the harness's running
+diff --git a/crates/verbatim-e2e/src/scenarios/experiment_focus_routes.rs b/crates/verbatim-e2e/src/scenarios/experiment_focus_routes.rs
+new file mode 100644
+index 00000000..9597bae9
+--- /dev/null
++++ b/crates/verbatim-e2e/src/scenarios/experiment_focus_routes.rs
+@@ -0,0 +1,281 @@
++//! Experiments, not tests (scratchpad `focus-pipeline-design.md`, the (b2)
++//! live check): whether a UIA focus registration in an event handler group
++//! scoped to an application's top-level window receives every focus event
++//! the desktop-wide `AddFocusChangedEventHandler` receives, in real
++//! applications, and how quickly each delivers.
++//!
++//! Each scenario opens its target with the harness's own helpers, from the
++//! minimized desktop, starts the probe (`mockapp --focus-probe`, staged
++//! beside Verbatim) on the target's process, and presses keys that move the
++//! focus, confirming the target is in front before every key and taking
++//! whatever Verbatim says without asserting it. Then it opens a new
++//! top-level window of the same application where it can, to time the
++//! probe's registration on a window that has just appeared. The probe's log
++//! and the scenario's key times are printed with an `EXPERIMENT` prefix
++//! and saved beside the artifacts as `experiment-<name>.log`.
++
++use std::io;
++use std::time::{SystemTime, UNIX_EPOCH};
++
++use crate::registry::ScenarioState;
++use crate::scenario::{Document, Scenario, WINDOW_TIMEOUT, harness_marker};
++
++pub(crate) use super::no_teardown as teardown;
++
++/// The Notepad document.
++const NOTEPAD: &str = "experiment-routes";
++
++fn now_us() -> u128 {
++    SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .map_or(0, |since| since.as_micros())
++}
++
++/// The probe and its log.
++struct Probe {
++    pid: u32,
++    log: String,
++    name: &'static str,
++}
++
++/// Takes whatever Verbatim has said, unasserted: these are experiments.
++fn take_speech(scenario: &mut Scenario) {
++    let heard: Vec<String> = scenario
++        .take_until_idle()
++        .into_iter()
++        .map(|heard| heard.text)
++        .collect();
++    println!("EXPERIMENT {} heard {heard:?}", now_us());
++}
++
++/// Starts the probe on the process owning the window titled with `marker`,
++/// which must be in front.
++fn start_probe(scenario: &mut Scenario, name: &'static str, marker: &str) -> Probe {
++    start_probe_with(scenario, name, marker, false)
++}
++
++/// [`start_probe`], with the probe's client told never to map a WinEvent
++/// to a UIA focus change when `clear_focus_mapping`.
++fn start_probe_with(
++    scenario: &mut Scenario,
++    name: &'static str,
++    marker: &str,
++    clear_focus_mapping: bool,
++) -> Probe {
++    take_speech(scenario);
++    let window = scenario
++        .wait_for_window_in_front(marker, WINDOW_TIMEOUT)
++        .expect("the target is in front");
++    let log = scenario.harness_file(&format!("{name}-probe"), "txt");
++    let ready = scenario.harness_file(&format!("{name}-probe-ready"), "txt");
++    let exe = format!(r"{}\mockapp.exe", scenario.run_directory());
++    let mut args = vec![
++        "--focus-probe".to_owned(),
++        log.clone(),
++        window.pid.to_string(),
++        ready.clone(),
++    ];
++    if clear_focus_mapping {
++        args.push("clear-focus-mapping".to_owned());
++    }
++    let pid = scenario
++        .launch_helper(&exe, &args)
++        .expect("the probe starts");
++    scenario
++        .wait_for_agent_file(&ready, WINDOW_TIMEOUT)
++        .expect("the probe registers");
++    println!(
++        "EXPERIMENT {} probe {pid} on {} pid {} ({})",
++        now_us(),
++        window.title,
++        window.pid,
++        window.image
++    );
++    Probe { pid, log, name }
++}
++
++/// Presses `key` once the window titled with `marker` is in front, and
++/// takes what Verbatim says.
++fn press(scenario: &mut Scenario, marker: &str, key: &str) {
++    scenario
++        .wait_for_window_in_front(marker, WINDOW_TIMEOUT)
++        .expect("the target is in front before the key");
++    println!("EXPERIMENT {} key {key:?} in {marker:?}", now_us());
++    scenario.send_keys(&[key]).expect("sends the key");
++    take_speech(scenario);
++}
++
++/// Ends the probe and saves its log.
++fn finish(scenario: &mut Scenario, probe: &Probe) {
++    take_speech(scenario);
++    scenario.end_helper(probe.pid).expect("the probe ends");
++    let log = scenario.read_agent_file(&probe.log).expect("the probe's log");
++    let log = String::from_utf8_lossy(&log).into_owned();
++    for line in log.lines() {
++        println!("EXPERIMENT probe {line}");
++    }
++    let saved = crate::artifacts::artifacts_root().join(format!("experiment-{}.log", probe.name));
++    if let Some(parent) = saved.parent() {
++        let _ = std::fs::create_dir_all(parent);
++    }
++    std::fs::write(&saved, log).expect("saves the probe's log");
++}
++
++/// The Notepad document, opened before Verbatim starts.
++pub(crate) fn notepad_document() -> Document {
++    Document {
++        name: NOTEPAD,
++        contents: "first line\nsecond line\n".to_owned(),
++    }
++}
++
++pub(crate) fn notepad_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
++    scenario.bring_document_forward(NOTEPAD)?;
++    Ok(ScenarioState::None)
++}
++
++/// Windows 11 Notepad: its File menu, then a new window (Control+Shift+N),
++/// closed again with Control+W.
++pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
++    let marker = harness_marker(NOTEPAD);
++    let probe = start_probe(scenario, "notepad", &marker);
++    for key in ["alt+f", "downarrow", "escape"] {
++        press(scenario, &marker, key);
++    }
++    press(scenario, &marker, "control+shift+n");
++    press(scenario, "Untitled - Notepad", "control+w");
++    press(scenario, &marker, "downarrow");
++    finish(scenario, &probe);
++}
++
++pub(crate) fn windows_terminal_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
++    super::terminal::open_windows_terminal(scenario, "experiment-routes-terminal", &[])
++}
++
++/// The harness's Windows Terminal: its command palette, then a second
++/// window of the same Windows Terminal, and its command palette.
++pub(crate) fn windows_terminal_body(scenario: &mut Scenario, state: &mut ScenarioState) {
++    let marker = super::terminal::title(state).to_owned();
++    let probe = start_probe(scenario, "windows_terminal", &marker);
++    for key in ["control+shift+p", "escape"] {
++        press(scenario, &marker, key);
++    }
++    println!("EXPERIMENT {} opening a second window", now_us());
++    let second = super::terminal::open_windows_terminal_window(
++        scenario,
++        "experiment-routes-terminal-two",
++        state,
++    )
++    .expect("opens a second window");
++    let second = super::terminal::title(&second).to_owned();
++    take_speech(scenario);
++    for key in ["control+shift+p", "escape"] {
++        press(scenario, &second, key);
++    }
++    finish(scenario, &probe);
++}
++
++pub(crate) fn explorer_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
++    let title = scenario.open_folder(
++        "experiment-routes-folder",
++        &["alpha", "beta", "gamma", "Inner\\delta"],
++    )?;
++    Ok(ScenarioState::Title(title))
++}
++
++/// A File Explorer folder window: its items, into the subfolder and back,
++/// the panes with F6, then a new window of the folder (Control+N). Enter
++/// is pressed only on the subfolder, "Inner", the first item once Home
++/// has moved there (folders sort first), so no file is ever opened.
++pub(crate) fn explorer_body(scenario: &mut Scenario, state: &mut ScenarioState) {
++    let ScenarioState::Title(marker) = state else {
++        panic!("setup opens the folder");
++    };
++    let marker = marker.clone();
++    let probe = start_probe(scenario, "explorer", &marker);
++    for key in ["downarrow", "downarrow", "home", "enter", "backspace", "f6", "f6"] {
++        press(scenario, &marker, key);
++    }
++    press(scenario, &marker, "control+n");
++    press(scenario, &marker, "downarrow");
++    finish(scenario, &probe);
++}
++
++pub(crate) fn settings_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
++    scenario.open_settings_page("ms-settings:system")?;
++    Ok(ScenarioState::None)
++}
++
++/// The Settings app's System page (content in `SystemSettings`, frame in
++/// `ApplicationFrameHost`): from the search box into the navigation list
++/// and back. It opens nothing.
++pub(crate) fn settings_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
++    let probe = start_probe(scenario, "settings", "Settings");
++    for key in ["tab", "downarrow", "uparrow", "shift+tab"] {
++        press(scenario, "Settings", key);
++    }
++    finish(scenario, &probe);
++}
++
++/// msinfo32's window title.
++const MSINFO: &str = "System Information";
++
++pub(crate) fn msinfo_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
++    scenario.require_absent(MSINFO)?;
++    scenario.launch_titled("msinfo32.exe", &[], MSINFO, true)?;
++    Ok(ScenarioState::None)
++}
++
++/// msinfo32, with the probe's focus mapping cleared: its Win32 tree view
++/// (`SysTreeView32`) and list view (`SysListView32`, the one class whose
++/// proxy maps a WinEvent to a UIA focus change), both read by UIA's
++/// proxies; the probe logs the UIA focus handler's and the MSAA focus
++/// hook's view of each focus change.
++pub(crate) fn msinfo_mapping_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
++    let probe = start_probe_with(scenario, "msinfo_cleared", MSINFO, true);
++    for key in ["downarrow", "uparrow", "tab", "downarrow", "downarrow", "shift+tab"] {
++        press(scenario, MSINFO, key);
++    }
++    finish(scenario, &probe);
++}
++
++/// The same walk in msinfo32 with the focus mapping as it is, for the
++/// comparison.
++pub(crate) fn msinfo_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
++    let probe = start_probe_with(scenario, "msinfo", MSINFO, false);
++    for key in ["downarrow", "uparrow", "tab", "downarrow", "downarrow", "shift+tab"] {
++        press(scenario, MSINFO, key);
++    }
++    finish(scenario, &probe);
++}
++
++/// The Windows Forms text box with the probe's focus mapping cleared.
++pub(crate) fn text_box_mapping_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
++    let marker = harness_marker("experiment-routes-box");
++    let probe = start_probe_with(scenario, "text_box_cleared", &marker, true);
++    for key in ["alt+space", "escape", "alt+space", "escape"] {
++        press(scenario, &marker, key);
++    }
++    finish(scenario, &probe);
++}
++
++pub(crate) fn text_box_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
++    let pid = super::text_box::open(
++        scenario,
++        "experiment-routes-box",
++        super::text_box::BOX_NAME,
++        "first line\r\nsecond line\r\n",
++    )?;
++    Ok(ScenarioState::TargetPid(pid))
++}
++
++/// The suite's Windows Forms text box, a Win32 edit control UIA proxies:
++/// its system menu and back, twice. It opens no second window.
++pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
++    let marker = harness_marker("experiment-routes-box");
++    let probe = start_probe(scenario, "text_box", &marker);
++    for key in ["alt+space", "escape", "alt+space", "escape"] {
++        press(scenario, &marker, key);
++    }
++    finish(scenario, &probe);
++}
+diff --git a/crates/verbatim-e2e/src/scenarios/mod.rs b/crates/verbatim-e2e/src/scenarios/mod.rs
+index ed5bff1a..2d0086bc 100644
+--- a/crates/verbatim-e2e/src/scenarios/mod.rs
++++ b/crates/verbatim-e2e/src/scenarios/mod.rs
+@@ -20,6 +20,7 @@ pub(crate) mod demo_say_all;
+ pub(crate) mod demo_settings_dialog_keys;
+ pub(crate) mod demo_terminal_session;
+ pub(crate) mod editing;
++pub(crate) mod experiment_focus_routes;
+ pub(crate) mod explorer_folder_window;
+ pub(crate) mod lock_key_announcements;
+ pub(crate) mod menu_and_settings_dialog;
+diff --git a/crates/verbatim-e2e/src/speech.rs b/crates/verbatim-e2e/src/speech.rs
+index e7eb750a..1f0603e8 100644
+--- a/crates/verbatim-e2e/src/speech.rs
++++ b/crates/verbatim-e2e/src/speech.rs
+@@ -257,6 +257,12 @@ pub struct SpeechCollector {
+     /// Pauses, `true`, and resumes, `false`, read and not yet matched by
+     /// an assertion, oldest first.
+     pauses: VecDeque<bool>,
++    /// Experiments only: the scenario asserts no speech
++    /// ([`Self::collect_only`]); unmatched utterances are collected here
++    /// and printed instead of failing it.
++    collect_only: bool,
++    /// Utterances collected in collect-only mode, oldest first.
++    collected: Vec<Heard>,
+ }
+ 
+ impl SpeechCollector {
+@@ -299,6 +305,8 @@ impl SpeechCollector {
+             order: Vec::new(),
+             next_sound: u64::MAX,
+             pauses: VecDeque::new(),
++            collect_only: false,
++            collected: Vec::new(),
+         }
+     }
+ 
+@@ -747,6 +755,11 @@ impl SpeechCollector {
+     /// that no assertion matched, or if Verbatim does not become idle.
+     pub fn expect_nothing_more(&mut self, after_input: Option<u64>) {
+         self.await_idle(after_input);
++        if self.collect_only {
++            // Collected and printed, never failed on.
++            self.require_all_asserted("after the scenario's last step");
++            return;
++        }
+         self.require_all_asserted("after the scenario's last assertion");
+         let unended: Vec<UtteranceId> = self.unended.iter().copied().collect();
+         for utterance in unended {
+@@ -776,18 +789,24 @@ impl SpeechCollector {
+     ///
+     /// Panics if Verbatim does not become idle.
+     pub fn take_until_idle(&mut self, after_input: Option<u64>) -> Vec<Heard> {
++        let mut taken = std::mem::take(&mut self.collected);
+         self.await_idle(after_input);
+-        let taken: Vec<Heard> = self
+-            .pending
+-            .drain(..)
+-            .map(|utterance| Heard {
+-                text: utterance.text,
+-                utterance: utterance.utterance,
+-            })
+-            .collect();
++        taken.extend(self.pending.drain(..).map(|utterance| Heard {
++            text: utterance.text,
++            utterance: utterance.utterance,
++        }));
+         taken
+     }
+ 
++    /// Experiments only: from now on this scenario asserts no speech.
++    /// Every utterance is still read, timed and kept on the timeline;
++    /// unmatched ones are collected and printed rather than failing the
++    /// scenario, before an input or at its end. Only the registry's
++    /// `experiment` group sets it.
++    pub fn collect_only(&mut self) {
++        self.collect_only = true;
++    }
++
+     /// Asks Verbatim, on this connection, to answer once it has handled
+     /// the input numbered `after_input` and everything before it, and is
+     /// idle, and reads every frame until the answer: every utterance
+@@ -850,6 +869,22 @@ impl SpeechCollector {
+         // about pausing asserts it. So a pause asserted after an input
+         // is one that input caused.
+         self.pauses.clear();
++        if self.collect_only {
++            let pending: Vec<Heard> = self
++                .pending
++                .drain(..)
++                .map(|utterance| Heard {
++                    text: utterance.text,
++                    utterance: utterance.utterance,
++                })
++                .collect();
++            if !pending.is_empty() {
++                let texts: Vec<&str> = pending.iter().map(|heard| heard.text.as_str()).collect();
++                println!("EXPERIMENT collected {when}: {texts:?}");
++            }
++            self.collected.extend(pending);
++            return;
++        }
+         if let Some(first) = self.pending.front() {
+             let unmatched: Vec<&str> = self.pending.iter().map(|u| u.text.as_str()).collect();
+             self.fail_at(
+diff --git a/crates/verbatim-e2e/tests/e2e.rs b/crates/verbatim-e2e/tests/e2e.rs
+index a9d0c9aa..df837228 100644
+--- a/crates/verbatim-e2e/tests/e2e.rs
++++ b/crates/verbatim-e2e/tests/e2e.rs
+@@ -136,6 +136,21 @@ scenario_tests! {
+     demo_settings_dialog_keys
+ }
+ 
++// Design experiments, on an experiment branch only: they measure and print
++// rather than assert. The suite's commands must deselect them with
++// `--skip experiment_ --skip notepad_experiment_`.
++scenario_tests! {
++    "an experiment that measures rather than asserts; run it by name":
++    notepad_experiment_focus_routes
++    experiment_focus_routes_windows_terminal
++    experiment_focus_routes_explorer
++    experiment_focus_routes_text_box
++    experiment_focus_mapping_text_box
++    experiment_focus_mapping_msinfo
++    experiment_focus_routes_msinfo
++    experiment_focus_routes_settings
++}
++
+ /// The agent reports an interactive session on the default desktop: the
+ /// precondition every scenario depends on, not itself a scenario. A screen
+ /// reader driven from a non-interactive session (session 0, `WinRM`,

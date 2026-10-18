@@ -1,0 +1,42 @@
+22:46:15.707906 run spawn S server --show
+  S 22:46:15.736488 hwnd 26805466 pid 15636
+22:46:15.742150 run spawn L client 26805466 L
+22:46:15.742215 run send L init
+  S 22:46:15.736586 ready
+  L 22:46:15.750190 client-ready L
+  L 22:46:15.755200 done init L start=22:46:15.750233 ms=5.0 ok
+22:46:15.755338 run send L efh
+  S 22:46:15.763549 getobject-begin hwnd=26805466 objid=-25 wparam=0x647ff3ff insend=0x1 in_hold=false
+  S 22:46:15.764454 getobject-end hwnd=26805466 objid=-25 lresult=0x10000 us=914 in_hold=false
+  S 22:46:15.765798 getobject-begin hwnd=26805466 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:46:15.765838 getobject-end hwnd=26805466 objid=-25 lresult=0x10000 us=41 in_hold=false
+  L 22:46:15.766331 done efh L start=22:46:15.755377 ms=10.9 ok
+22:46:15.766408 run send L rop
+  S 22:46:15.772626 getobject-begin hwnd=26805466 objid=-25 wparam=0x64815b64 insend=0x0 in_hold=false
+  S 22:46:15.772689 getobject-end hwnd=26805466 objid=-25 lresult=0x10000 us=67 in_hold=false
+  S 22:46:15.772883 getobject-begin hwnd=26805466 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:46:15.772909 getobject-end hwnd=26805466 objid=-25 lresult=0x10000 us=27 in_hold=false
+  L 22:46:15.773351 done rop L start=22:46:15.766436 ms=6.9 ok
+22:46:15.790827 run spawn B client 26805466 B
+22:46:15.790881 run send B init
+  B 22:46:15.797478 client-ready B
+  B 22:46:15.801683 done init B start=22:46:15.797513 ms=4.2 ok
+22:46:15.801786 run send S busy 40
+  S 22:46:15.801925 busy-begin
+22:46:15.801996 run send L async rop
+22:46:15.807054 run send B getfocus
+  S 22:46:15.841941 busy-end
+  S 22:46:15.841999 getobject-begin hwnd=26805466 objid=0 wparam=0x3390 insend=0x1 in_hold=false
+  S 22:46:15.842194 getobject-end hwnd=26805466 objid=0 lresult=0x0 us=196 in_hold=false
+  S 22:46:15.842433 getobject-begin hwnd=26805466 objid=-25 wparam=0x64815b65 insend=0x0 in_hold=false
+  S 22:46:15.842474 getobject-end hwnd=26805466 objid=-25 lresult=0x10000 us=43 in_hold=false
+  S 22:46:15.842570 getobject-begin hwnd=26805466 objid=-12 wparam=0x0 insend=0x1 in_hold=false
+  S 22:46:15.842590 getobject-end hwnd=26805466 objid=-12 lresult=0x0 us=20 in_hold=false
+  S 22:46:15.842653 getobject-begin hwnd=26805466 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:46:15.842676 getobject-end hwnd=26805466 objid=-25 lresult=0x10000 us=24 in_hold=false
+  S 22:46:15.842886 getobject-begin hwnd=26805466 objid=-25 wparam=0x648be4a6 insend=0x1 in_hold=false
+  S 22:46:15.842919 getobject-end hwnd=26805466 objid=-25 lresult=0x10000 us=34 in_hold=false
+  L 22:46:15.843244 done async-rop L start=22:46:15.802186 ms=41.1 ok
+  S 22:46:15.843639 getobject-begin hwnd=26805466 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:46:15.843670 getobject-end hwnd=26805466 objid=-25 lresult=0x10000 us=32 in_hold=false
+  B 22:46:15.844866 done getfocus B start=22:46:15.807106 ms=37.8 ok name="uia-provider"

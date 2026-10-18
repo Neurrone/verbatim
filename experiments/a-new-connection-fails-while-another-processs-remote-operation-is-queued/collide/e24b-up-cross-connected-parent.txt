@@ -1,0 +1,40 @@
+# Upward crossing between processes: T's child window is under S's
+# main window (as SystemSettings under ApplicationFrameHost). B holds
+# T's child's element, having first connected to S's main window and
+# held its element, and calls parent (into S's provider) while L's
+# remote operation into S waits for S's busy UI thread.
+spawn S server
+wait S hwnd
+send S showoff
+wait S shown
+spawn T server
+wait T hwnd
+send T childof $HWND
+wait T hwnd
+
+spawn L client $HWND L
+send L init
+wait L done
+send L efh
+wait L done
+send L rop
+wait L done 10000
+
+spawn B client $HWND B
+send B init
+wait B done
+send B efh
+wait B done
+send B target $HWND3
+wait B done
+send B efh
+wait B done
+
+send S busy 40
+wait S busy-begin
+send L async rop
+sleep 5
+send B parent
+wait B done 15000
+wait L done 15000
+drain 300

@@ -1,0 +1,43 @@
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+verbatim-outpost.exe 13040 thread 15012 "verbatim-worker" blocked 3008.144 ms, from 21:53:16.792412 to 21:53:19.800556, woken by ntoskrnl.exe 0 thread 0 "Idle Thread"
+  where it waited:
+    ntdll.dll!NtWaitForSingleObject
+    kernelbase.dll!WaitForSingleObjectEx
+    uiautomationcore.dll!HrWaitForSingleObject
+    uiautomationcore.dll!ChannelBasedClientConnectionManager::CreateLowBoxChannelBasedClientConnection
+    uiautomationcore.dll!ChannelBasedClientConnectionManager::CreateChannelBasedConnection
+    uiautomationcore.dll!ProviderEntryPoint::GetUiaNode
+    uiautomationcore.dll!ProviderEntryPoint::GetNativeUiaNode
+    uiautomationcore.dll!UiaNodeFactory::HasServerSideProvider
+    uiautomationcore.dll!UiaHasServerSideProvider
+    verbatim-outpost.exe+0x4591da
+    verbatim-outpost.exe+0x45cd45
+    verbatim-outpost.exe+0x1fa3c0
+    verbatim-outpost.exe+0x34d0a5
+    verbatim-outpost.exe+0x1c5a7a
+    verbatim-outpost.exe+0x1d3025
+    verbatim-outpost.exe+0x1d4c2f
+    verbatim-outpost.exe+0x2c21dc
+    verbatim-outpost.exe+0x31c1a4
+    verbatim-outpost.exe+0x37b614
+    verbatim-outpost.exe+0x36d0f3
+    verbatim-outpost.exe+0x36cfa8
+    verbatim-outpost.exe+0x1dec9f
+    verbatim-outpost.exe+0x2c1fe7
+    verbatim-outpost.exe+0x1ddcaf
+    verbatim-outpost.exe+0x1dc3fe
+    verbatim-outpost.exe+0x2c1df7
+    verbatim-outpost.exe+0x37bc99
+    verbatim-outpost.exe+0x2e348c
+    verbatim-outpost.exe+0x31c141
+    verbatim-outpost.exe+0x37b5b1
+    verbatim-outpost.exe+0x2e38b3
+    verbatim-outpost.exe+0x2e23f3
+    verbatim-outpost.exe+0x17c3a9
+    verbatim-outpost.exe+0x590d03
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+  where it was readied:
+verbatim-outpost.exe 10584 thread 7072 "main" blocked 0.043 ms, from 21:53:16.794556 to 21:53:16.794600, woken by conhost.exe 7300 thread 4108 "Console Driver Message IO Thread"
+  where it waited:

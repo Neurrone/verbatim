@@ -1,0 +1,26 @@
+# e35b: as e35, but in a console started fresh for the trial, so L's
+# remote operation is the first in conhost (UIA's one-time setup there),
+# sent while conhost's window thread is suspended. CONSOLE_TITLE and
+# CONSOLE_TID come from the driver, e35b-run.ps1.
+findwindow ${CONSOLE_TITLE}
+owner $HWND
+spawn L client $HWND L
+send L init
+wait L done
+send L efh
+wait L done
+spawn B client $HWND B
+send B init
+wait B done
+send B efh
+wait B done
+send B docchild
+wait B done
+stall tid:${CONSOLE_TID} 300
+send L async rop
+sleep 5
+send B toplevel
+wait B done 15000
+send B info
+wait B done 15000
+drain 500

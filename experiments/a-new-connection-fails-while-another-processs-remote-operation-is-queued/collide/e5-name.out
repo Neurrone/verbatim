@@ -1,0 +1,34 @@
+22:45:44.515016 run spawn S server
+  S 22:45:44.528282 hwnd 26281178 pid 15312
+22:45:44.532336 run spawn L client 26281178 L
+22:45:44.532390 run send L init
+  S 22:45:44.528356 ready
+  L 22:45:44.539029 client-ready L
+  L 22:45:44.543147 done init L start=22:45:44.539062 ms=4.1 ok
+22:45:44.543246 run send L efh
+  S 22:45:44.550241 getobject-begin hwnd=26281178 objid=-25 wparam=0x51e51cc9 insend=0x1 in_hold=false
+  S 22:45:44.551315 getobject-end hwnd=26281178 objid=-25 lresult=0x10000 us=1080 in_hold=false
+  S 22:45:44.552437 getobject-begin hwnd=26281178 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:45:44.552475 getobject-end hwnd=26281178 objid=-25 lresult=0x10000 us=39 in_hold=false
+  L 22:45:44.552905 done efh L start=22:45:44.543281 ms=9.6 ok
+22:45:44.553431 run send L rop
+  S 22:45:44.560633 getobject-begin hwnd=26281178 objid=-25 wparam=0x51e6c2a9 insend=0x0 in_hold=false
+  S 22:45:44.560693 getobject-end hwnd=26281178 objid=-25 lresult=0x10000 us=64 in_hold=false
+  S 22:45:44.560913 getobject-begin hwnd=26281178 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:45:44.560946 getobject-end hwnd=26281178 objid=-25 lresult=0x10000 us=35 in_hold=false
+  L 22:45:44.561480 done rop L start=22:45:44.553471 ms=8.0 ok
+22:45:44.565726 run spawn B client 26281178 B
+22:45:44.565762 run send B init
+  B 22:45:44.572941 client-ready B
+  B 22:45:44.577187 done init B start=22:45:44.572974 ms=4.2 ok
+22:45:44.577289 run send S busy 40
+  S 22:45:44.577417 busy-begin
+22:45:44.577484 run send L async name
+22:45:44.582528 run send B probe
+  S 22:45:44.617434 busy-end
+  S 22:45:44.617476 getobject-begin hwnd=26281178 objid=-25 wparam=0x51eb3998 insend=0x1 in_hold=false
+  S 22:45:44.617548 getobject-end hwnd=26281178 objid=-25 lresult=0x10000 us=73 in_hold=false
+  L 22:45:44.617769 done async-name L start=22:45:44.577651 ms=40.1 ok name="uia-provider"
+  S 22:45:44.618286 getobject-begin hwnd=26281178 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:45:44.618317 getobject-end hwnd=26281178 objid=-25 lresult=0x10000 us=33 in_hold=false
+  B 22:45:44.618717 done probe B start=22:45:44.582565 ms=36.1 result=true

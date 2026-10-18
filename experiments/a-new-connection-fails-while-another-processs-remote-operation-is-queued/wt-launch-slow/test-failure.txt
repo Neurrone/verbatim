@@ -1,0 +1,7 @@
+speech did not match
+expected: ["verbatim-e2e-commands-mvbi7zno window", "verbatim-e2e-commands-mvbi7zno terminal", "blank"]
+actual:   ["verbatim-e2e-commands-mvbi7zno window", "pane"]
+first difference: utterance 1, character 0: expected "verbatim-e2e-commands-mvbi7zno terminal", got "pane"
+
+the failing step's trace, 6700148981768, from Verbatim's log, Core's flight recorder and the outposts' logs, in time order:
+flight-recorder.jsonl: {"input":{"Event":{"trace_id":6700148981768,"observed_at_ms":1792187596658,"source":11696,"backend":"Msaa","window":{"top_level":16320490,"root_owner":16320490,"topmost":false,"under_active_window":null,"in_foreground":true},"event":{"FocusChanged":{"node":{"id":{"outpost":4,"number":1},"backend":"Msaa","role":"Pane","name":null,"value":null,"states":3,"details":{"description":null,"keyboard_shortcut":null,"position_in_set":null,"set_size":null,"level":null,"rect":{"left":156,"top":157,"width":1113,"height":626},"top_level_client":false}},"foreground":false,"ancestors":[{"id":{"outpost":4,"number":4},"backend":"Uia","role":"Window","name":"verbatim-e2e-commands-mvbi7zno","value":null,"states":2,"details":{"description":null,"keyboard_shortcut":null,"position_in_set":null,"set_size":null,"level":null,"rect":{"left":148,"top":156,"width":1129,"height":635},"top_level_client":false}}],"ancestors_unknown":false,"selected_child":null}}}},"effect_count":4}

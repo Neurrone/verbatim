@@ -1,0 +1,4 @@
+speech did not match
+expected: ["verbatim-e2e-typed-words-mvbjtere.txt - Notepad", "Text editor document", "Typing at the end:"]
+actual:   ["verbatim-e2e-typed-words-mvbjtere.txt - Notepad", "edit multi line"]
+first difference: utterance 1, character 0: expected "Text editor document", got "edit multi line"

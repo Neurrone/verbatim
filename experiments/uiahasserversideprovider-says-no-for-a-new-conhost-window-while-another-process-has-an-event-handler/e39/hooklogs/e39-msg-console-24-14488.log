@@ -1,0 +1,3 @@
+20:32:18.951164 attach pid=14488
+20:32:18.951249 tid=4868 call hwnd=34210628 class=ConsoleWindowClass msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 sameproc=1 insend=0x1
+20:32:18.951321 tid=4868 ret  hwnd=34210628 msg=0x3d wparam=0x0 lparam=0xffffffffffffffe7 lresult=0x10000

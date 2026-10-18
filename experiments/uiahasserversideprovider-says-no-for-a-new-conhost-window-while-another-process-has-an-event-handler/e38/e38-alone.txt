@@ -1,0 +1,16 @@
+# e38 control: e37-parallel with the console given the foreground (fgright),
+# as the e2e agent's console takes it, and no other UIA client.
+spawn U client 0 U
+send U init
+wait U done
+spawn R client 0 R
+send R init
+wait R done
+fgright
+console ${TITLE}
+sleep ${DELAY}
+send R target $HWND | send U target $HWND | send R rawprobe | send U probe | send R efhbcd | send U efhbcd
+wait U done efhbcd 20000
+drain 1500
+closeconsole
+drain 200

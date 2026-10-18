@@ -1,0 +1,52 @@
+diff --git a/crates/verbatim-outpost/src/arbitration.rs b/crates/verbatim-outpost/src/arbitration.rs
+index 97249789..92e73eb7 100644
+--- a/crates/verbatim-outpost/src/arbitration.rs
++++ b/crates/verbatim-outpost/src/arbitration.rs
+@@ -338,6 +338,8 @@ pub(crate) fn uses_uia_keeping(arbitrator: &Mutex<Arbitrator>, hwnd: isize) -> (
+         hwnd,
+         class = classes.raw,
+         is_uia,
++        thread = window_thread(hwnd),
++        elapsed_us = started.elapsed().as_micros(),
+         elapsed_ms = started.elapsed().as_millis(),
+         "arbitration probed"
+     );
+diff --git a/crates/verbatim-outpost/src/set_up.rs b/crates/verbatim-outpost/src/set_up.rs
+index 1937155e..fab3eba7 100644
+--- a/crates/verbatim-outpost/src/set_up.rs
++++ b/crates/verbatim-outpost/src/set_up.rs
+@@ -86,7 +86,10 @@ pub enum SetUpResult {
+ #[must_use]
+ pub fn run(uia: &Uia, pid: Pid, hint: isize, known: Option<&IUIAutomationElement>) -> SetUpResult {
+     if let Some(element) = known {
+-        match import(element) {
++        let started = Instant::now();
++        let imported = import(element);
++        tracing::debug!(pid = pid.0, us = started.elapsed().as_micros(), "SCRATCH setup: the remote operation on the known element");
++        match imported {
+             Imported::Done => return SetUpResult::Over(SetUpOutcome::Done),
+             Imported::TimedOut => {
+                 return candidates(pid.0, hint)
+@@ -103,7 +106,9 @@ pub fn run(uia: &Uia, pid: Pid, hint: isize, known: Option<&IUIAutomationElement
+     }
+     for window in candidates(pid.0, hint) {
+         let probed = Instant::now();
+-        if !verbatim_uia::has_server_side_provider(window) {
++        let provider = verbatim_uia::has_server_side_provider(window);
++        tracing::debug!(pid = pid.0, window, thread = crate::outpost::window::window_thread(window), provider, us = probed.elapsed().as_micros(), "SCRATCH setup: probed");
++        if !provider {
+             if probed.elapsed() >= PROBE_ANSWERED_WITHIN {
+                 return SetUpResult::NotAnswering(window);
+             }
+@@ -119,7 +124,10 @@ pub fn run(uia: &Uia, pid: Pid, hint: isize, known: Option<&IUIAutomationElement
+                 continue;
+             }
+         };
+-        match import(&element) {
++        let started = Instant::now();
++        let imported = import(&element);
++        tracing::debug!(pid = pid.0, window, us = started.elapsed().as_micros(), "SCRATCH setup: the remote operation");
++        match imported {
+             Imported::Done => return SetUpResult::Over(SetUpOutcome::Done),
+             Imported::TimedOut => return SetUpResult::NotAnswering(window),
+             Imported::Failed(outcome) => return SetUpResult::Over(outcome),

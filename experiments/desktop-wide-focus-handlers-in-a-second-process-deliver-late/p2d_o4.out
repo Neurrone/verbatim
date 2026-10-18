@@ -1,0 +1,34 @@
+[1792297419756316] charmap: ondesk-child-pid 4400
+[1792297419790532] tool find Character Map -> 53412690 ondesk-child-pid 15756
+[1792297419806217] C0: ondesk-child-pid 17392
+[1792297419841358] C0: registered C0 desk:pid in 11.8ms
+[1792297419841539] C0: registered C0 desk:pid in 0.2ms
+[1792297419841642] C0: registered C0 desk:pid in 0.1ms
+[1792297419841782] C0: registered C0 desk:pid in 0.1ms
+[1792297419841829] C0: client-ready C0
+[1792297420025092] C0: ev C0 desk:pid focus t=1792297420024734 pid=4400 name="?" hwnd=-1
+[1792297420025378] C0: ev C0 desk:pid focus t=1792297420025306 pid=4400 name="?" hwnd=-1
+[1792297420025701] C0: ev C0 desk:pid focus t=1792297420025631 pid=4400 name="?" hwnd=-1
+[1792297420025960] C0: ev C0 desk:pid focus t=1792297420025898 pid=4400 name="?" hwnd=-1
+[1792297420027602] C0: ev C0 desk:pid focus t=1792297420027494 pid=4400 name="?" hwnd=-1
+[1792297420027899] C0: ev C0 desk:pid focus t=1792297420027828 pid=4400 name="?" hwnd=-1
+[1792297420028187] C0: ev C0 desk:pid focus t=1792297420028112 pid=4400 name="?" hwnd=-1
+[1792297420028468] C0: ev C0 desk:pid focus t=1792297420028399 pid=4400 name="?" hwnd=-1
+[1792297420030343] C0: ev C0 desk:pid focus t=1792297420030221 pid=4400 name="?" hwnd=-1
+[1792297420030741] C0: ev C0 desk:pid focus t=1792297420030656 pid=4400 name="?" hwnd=-1
+[1792297420031012] C0: ev C0 desk:pid focus t=1792297420030945 pid=4400 name="?" hwnd=-1
+[1792297420031301] C0: ev C0 desk:pid focus t=1792297420031227 pid=4400 name="?" hwnd=-1
+[1792297420033134] C0: ev C0 desk:pid focus t=1792297420033042 pid=4400 name="?" hwnd=-1
+[1792297420033468] C0: ev C0 desk:pid focus t=1792297420033381 pid=4400 name="?" hwnd=-1
+[1792297420033817] C0: ev C0 desk:pid focus t=1792297420033737 pid=4400 name="?" hwnd=-1
+[1792297420034116] C0: ev C0 desk:pid focus t=1792297420034045 pid=4400 name="?" hwnd=-1
+[1792297420380370] tool winevent 53412690 8005 -4 0 -> winevent sent t=1792297420375932 ondesk-child-pid 4408
+[1792297420565662] tool winevent 53412690 8005 -4 0 -> winevent sent t=1792297420561538 ondesk-child-pid 12316
+[1792297420775868] tool winevent 53412690 8005 -4 0 -> winevent sent t=1792297420771020 ondesk-child-pid 3244
+[1792297420976982] tool winevent 53412690 8005 -4 0 -> winevent sent t=1792297420973705 ondesk-child-pid 5072
+[1792297421174970] tool winevent 53412690 8005 -4 0 -> winevent sent t=1792297421167183 ondesk-child-pid 17480
+[1792297421375848] tool winevent 53412690 8005 -4 0 -> winevent sent t=1792297421371847 ondesk-child-pid 6360
+[1792297421583158] tool winevent 53412690 8005 -4 0 -> winevent sent t=1792297421579319 ondesk-child-pid 628
+[1792297421773613] tool winevent 53412690 8005 -4 0 -> winevent sent t=1792297421769851 ondesk-child-pid 4040
+[1792297421964947] tool winevent 53412690 8005 -4 0 -> winevent sent t=1792297421961167 ondesk-child-pid 18032
+[1792297422159707] tool winevent 53412690 8005 -4 0 -> winevent sent t=1792297422155617 ondesk-child-pid 18080

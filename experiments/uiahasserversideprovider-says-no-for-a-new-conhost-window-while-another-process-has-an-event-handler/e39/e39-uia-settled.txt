@@ -1,0 +1,18 @@
+# e39 experiment 2: under the e38 trigger (L, a passive listener: its
+# registrations and hook, nothing read), V, a fresh client that has made
+# its UIA client and cache request and connected to nothing, makes (run
+# with DELAY 2000, on a console already started)
+# UiaHasServerSideProvider, then the lookup, DELAY ms after the console window is found. No hooks.
+spawn L listen L e39- passive
+wait L listening 20000
+spawn V client 0 V
+send V init
+wait V done
+fgright
+console ${TITLE}
+sleep ${DELAY}
+send V target $HWND | send V probe | send V lookup
+wait V done lookup 20000
+drain 500
+closeconsole
+drain 200

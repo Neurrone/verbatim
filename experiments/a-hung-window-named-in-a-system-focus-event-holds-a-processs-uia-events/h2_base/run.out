@@ -1,0 +1,250 @@
+[1792298959291050] holdTV: ondesk-child-pid 13152
+[1792298959319438] holdTV: ready
+[1792298959359851] tool find holdTV -> 38536370 ondesk-child-pid 16120
+[1792298959376138] holdB: ondesk-child-pid 5496
+[1792298959400433] holdB: ready
+[1792298959442366] tool find holdB -> 40829914 ondesk-child-pid 15648
+[1792298959483579] tool findchild 38536370 WindowsForms10.SysTreeView32.app.0.141b42a_r9_ad1 -> 54002514 ondesk-child-pid 6000
+tree view hwnd 0x3380352, TV pid 13152, B hwnd 0x26f03da
+[1792298959499238] D: ondesk-child-pid 6904
+[1792298959532041] D: registered D desk:pid in 11.4ms
+[1792298959539720] D: registered D name:40829914 in 7.7ms
+[1792298959539812] D: client-ready D
+[1792298959720702] cdb: ************* Path validation summary **************
+[1792298959720780] cdb: Response                         Time (ms)     Location
+[1792298959720811] cdb: Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+[1792298959720990] cdb:    AllowParallelInitializationOfLocalRepositories : true
+[1792298959721001] cdb:    -- Configuring repositories
+[1792298959736036] cdb: Microsoft (R) Windows Debugger Version 10.0.29661.1004 AMD64
+[1792298959736064] cdb: Copyright (c) Microsoft Corporation. All rights reserved.
+[1792298959737627] cdb: *** wait with pending attach
+[1792298959773275] cdb: ************* Path validation summary **************
+[1792298959773309] cdb: Response                         Time (ms)     Location
+[1792298959773320] cdb: Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+[1792298959773331] cdb: Symbol search path is: srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+[1792298959773340] cdb: Executable search path is: 
+[1792298959773575] cdb: ModLoad: 00007ff7`83830000 00007ff7`838ba000   C:\Users\Dickson\Desktop\projects\verbatim\target\proto-hold\build\debug\focusproto.exe
+[1792298959773837] cdb: ModLoad: 00007ffb`e1180000 00007ffb`e13e8000   C:\WINDOWS\SYSTEM32\ntdll.dll
+[1792298959779389] cdb: ModLoad: 00007ffb`e0990000 00007ffb`e0a5b000   C:\WINDOWS\System32\KERNEL32.DLL
+[1792298959779481] cdb: ModLoad: 00007ffb`de950000 00007ffb`ded51000   C:\WINDOWS\System32\KERNELBASE.dll
+[1792298959779656] cdb: ModLoad: 00007ffb`df930000 00007ffb`dfb07000   C:\WINDOWS\System32\user32.dll
+[1792298959779761] cdb: ModLoad: 00007ffb`de400000 00007ffb`de427000   C:\WINDOWS\System32\win32u.dll
+[1792298959779849] cdb: ModLoad: 00007ffb`df900000 00007ffb`df92b000   C:\WINDOWS\System32\GDI32.dll
+[1792298959779940] cdb: ModLoad: 00007ffb`ded60000 00007ffb`dee8a000   C:\WINDOWS\System32\gdi32full.dll
+[1792298959780041] cdb: ModLoad: 00007ffb`de430000 00007ffb`de4d3000   C:\WINDOWS\System32\msvcp_win.dll
+[1792298959780133] cdb: ModLoad: 00007ffb`de7f0000 00007ffb`de93c000   C:\WINDOWS\System32\ucrtbase.dll
+[1792298959780242] cdb: ModLoad: 00007ffb`e0520000 00007ffb`e06ba000   C:\WINDOWS\System32\ole32.dll
+[1792298959780344] cdb: ModLoad: 00007ffb`df450000 00007ffb`df7db000   C:\WINDOWS\System32\combase.dll
+[1792298959780444] cdb: ModLoad: 00007ffb`df330000 00007ffb`df448000   C:\WINDOWS\System32\RPCRT4.dll
+[1792298959780537] cdb: ModLoad: 00007ffb`e0830000 00007ffb`e0909000   C:\WINDOWS\System32\oleaut32.dll
+[1792298959780636] cdb: ModLoad: 00007ffb`c95a0000 00007ffb`c95cc000   C:\WINDOWS\SYSTEM32\VCRUNTIME140.dll
+[1792298959780750] cdb: ModLoad: 00007ffb`b7b70000 00007ffb`b7f90000   C:\WINDOWS\SYSTEM32\uiautomationcore.dll
+[1792298959780852] cdb: ModLoad: 00007ffb`dfd30000 00007ffb`dfd61000   C:\WINDOWS\System32\IMM32.DLL
+[1792298959780954] cdb: ModLoad: 00007ffb`dd010000 00007ffb`dd02b000   C:\WINDOWS\SYSTEM32\kernel.appcore.dll
+[1792298959781062] cdb: ModLoad: 00007ffb`e0b90000 00007ffb`e0c39000   C:\WINDOWS\System32\msvcrt.dll
+[1792298959781187] cdb: ModLoad: 00007ffb`de730000 00007ffb`de7dc000   C:\WINDOWS\System32\bcryptPrimitives.dll
+[1792298959781290] cdb: ModLoad: 00007ffb`df840000 00007ffb`df8ef000   C:\WINDOWS\System32\clbcatq.dll
+[1792298959781399] cdb: ModLoad: 00007ffb`db410000 00007ffb`db4b7000   C:\WINDOWS\system32\uxtheme.dll
+[1792298959781506] cdb: ModLoad: 00007ffb`e1080000 00007ffb`e1128000   C:\WINDOWS\System32\sechost.dll
+[1792298959781628] cdb: ModLoad: 00007ffb`cd440000 00007ffb`cd4b5000   C:\WINDOWS\SYSTEM32\OLEACC.dll
+[1792298959781754] cdb: ModLoad: 00007ffb`daed0000 00007ffb`daffa000   C:\WINDOWS\SYSTEM32\CoreMessaging.dll
+[1792298959781889] cdb: ModLoad: 00007ffb`d78e0000 00007ffb`d7a97000   C:\Windows\System32\windowmanagementapi.dll
+[1792298959782000] cdb: ModLoad: 00007ffb`d7c50000 00007ffb`d7dba000   C:\WINDOWS\SYSTEM32\wintypes.dll
+[1792298959782181] cdb: ModLoad: 00007ffb`e0d60000 00007ffb`e0e1c000   C:\WINDOWS\System32\advapi32.dll
+[1792298959782312] cdb: ModLoad: 00007ffb`dd8e0000 00007ffb`dd8ec000   C:\WINDOWS\SYSTEM32\CRYPTBASE.DLL
+[1792298959782430] cdb: ModLoad: 00007ffb`bea90000 00007ffb`beb6b000   C:\Windows\System32\UiaManager.dll
+[1792298959782633] cdb: ModLoad: 00007ffb`de060000 00007ffb`de102000   C:\WINDOWS\SYSTEM32\sxs.dll
+[1792298959783793] cdb: (1af8.263c): Break instruction exception - code 80000003 (first chance)
+[1792298959826758] cdb: ntdll!DbgBreakPoint:
+[1792298959826856] cdb: 00007ffb`e12a3f40 cc              int     3
+[1792298959826933] cdb: 0:012> .lines -d
+[1792298959826958] cdb: Line number information will not be loaded
+[1792298959827001] cdb: 0:012> .sympath+ C:\Users\Dickson\Desktop\projects\verbatim\target\proto-hold\build\debug
+[1792298959832226] cdb: Symbol search path is: srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols;C:\Users\Dickson\Desktop\projects\verbatim\target\proto-hold\build\debug
+[1792298959832319] cdb: Expanded Symbol search path is: srv*c:\users\dickson\desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols;c:\users\dickson\desktop\projects\verbatim\target\proto-hold\build\debug
+[1792298959832399] cdb: ************* Path validation summary **************
+[1792298959832432] cdb: Response                         Time (ms)     Location
+[1792298959832450] cdb: Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+[1792298959832465] cdb: OK                                             C:\Users\Dickson\Desktop\projects\verbatim\target\proto-hold\build\debug
+[1792298959832479] cdb: 0:012> .reload /f uiautomationcore.dll
+[1792298959843850] cdb: 0:012> .reload /f focusproto.exe
+[1792298959924574] cdb: *** WARNING: Unable to verify checksum for C:\Users\Dickson\Desktop\projects\verbatim\target\proto-hold\build\debug\focusproto.exe
+[1792298959928881] cdb: 0:012> bp user32!SendMessageTimeoutW ".echotime; .printf \"SMTO-ENTER tid=%x hwnd=%p msg=%x wp=%p lp=%p flags=%x timeout=%d\n\", @$tid, @rcx, @edx, @r8, @r9, dwo(@rsp+28), dwo(@rsp+30); kc 14; gc"
+[1792298959934080] cdb: 0:012> bp uiautomationcore!HwndUtils::SendWmGetObject+0x167 ".echotime; .printf \"SMTO-RETURN(SendWmGetObject) tid=%x rax=%p lasterr=%x\n\", @$tid, @rax, dwo(@$teb+68); gc"
+[1792298960297331] cdb: 0:012> bp uiautomationcore!`anonymous namespace'::PerformOperationOnHwndThreadImpl+0xb3 ".echotime; .printf \"SMTO-RETURN(PerformOperationOnHwndThreadImpl) tid=%x rax=%p lasterr=%x\n\", @$tid, @rax, dwo(@$teb+68); gc"
+[1792298960640627] cdb: Couldn't resolve error at 'uiautomationcore!`anonymous namespace'::PerformOperationOnHwndThreadImpl+0xb3 ".echotime; .printf \"SMTO-RETURN(PerformOperationOnHwndThreadImpl) tid=%x rax=%p lasterr=%x\n\", @$tid, @rax, dwo(@$teb+68); gc"'
+[1792298960640704] cdb: 0:012> bm focusproto!*HandlePropertyChangedEvent* ".echotime; .printf \"HANDLER-NAME tid=%x\n\", @$tid; kc 30; gc"
+[1792298960651016] cdb:   2: 00007ff7`83835f80 @!"focusproto!windows::Win32::UI::Accessibility::impl$346::new::HandlePropertyChangedEvent<focusproto::Prop_Impl,-1>"
+[1792298960720844] cdb:   3: 00007ff7`83851c60 @!"focusproto!focusproto::impl$3::HandlePropertyChangedEvent"
+[1792298960720943] cdb: 0:012> bm focusproto!*HandleFocusChangedEvent* ".echotime; .printf \"HANDLER-FOCUS tid=%x\n\", @$tid; kc 30; gc"
+[1792298960727147] cdb:   4: 00007ff7`83835e80 @!"focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>"
+[1792298960756874] cdb:   5: 00007ff7`83852270 @!"focusproto!focusproto::impl$1::HandleFocusChangedEvent"
+[1792298960756991] cdb: 0:012> bl
+[1792298960759012] cdb:  0 e 00007ffb`df972cd0     0001 (0001)  0:**** user32!SendMessageTimeoutW ".echotime; .printf \"SMTO-ENTER tid=%x hwnd=%p msg=%x wp=%p lp=%p flags=%x timeout=%d\n\", @$tid, @rcx, @edx, @r8, @r9, dwo(@rsp+28), dwo(@rsp+30); kc 14; gc"
+[1792298960759080] cdb:  1 e 00007ffb`b7c1b9c3     0001 (0001)  0:**** uiautomationcore!HwndUtils::SendWmGetObject+0x167 ".echotime; .printf \"SMTO-RETURN(SendWmGetObject) tid=%x rax=%p lasterr=%x\n\", @$tid, @rax, dwo(@$teb+68); gc"
+[1792298960759119] cdb:  2 e 00007ff7`83835f80     0001 (0001)  0:**** focusproto!windows::Win32::UI::Accessibility::impl$346::new::HandlePropertyChangedEvent<focusproto::Prop_Impl,-1> ".echotime; .printf \"HANDLER-NAME tid=%x\n\", @$tid; kc 30; gc"
+[1792298960759187] cdb:  3 e 00007ff7`83851c60     0001 (0001)  0:**** focusproto!focusproto::impl$3::HandlePropertyChangedEvent ".echotime; .printf \"HANDLER-NAME tid=%x\n\", @$tid; kc 30; gc"
+[1792298960759251] cdb:  4 e 00007ff7`83835e80     0001 (0001)  0:**** focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1> ".echotime; .printf \"HANDLER-FOCUS tid=%x\n\", @$tid; kc 30; gc"
+[1792298960759298] cdb:  5 e 00007ff7`83852270     0001 (0001)  0:**** focusproto!focusproto::impl$1::HandleFocusChangedEvent ".echotime; .printf \"HANDLER-FOCUS tid=%x\n\", @$tid; kc 30; gc"
+[1792298960759338] cdb: 0:012> .echo ATTACHED
+[1792298960759374] cdb: ATTACHED
+[1792298960759406] cdb: 0:012> g
+[1792298961759957] >holdB: set-name btn1 Base
+[1792298961760492] holdB: applied
+[1792298961763378] cdb: Debugger (not debuggee) time: Sun Oct 18 12:49:21.761 2026 (UTC + 8:00)
+[1792298961763658] cdb: SMTO-ENTER tid=3f34 hwnd=00000000026f03da msg=164 wp=0000000000000000 lp=00000008192feb20 flags=22 timeout=20000 Call Site
+[1792298961763675] cdb: user32!SendMessageTimeoutW
+[1792298961763827] cdb: uiautomationcore!BasicHwndUtils::GetComboFromList
+[1792298961763973] cdb: uiautomationcore!HwndProxy::Navigate
+[1792298961764100] cdb: uiautomationcore!UiaNodeFactory::ConstructUiaNode
+[1792298961764205] cdb: uiautomationcore!UiaNodeFactory::FromPartialNodeInfo
+[1792298961764297] cdb: uiautomationcore!UiaNodeFactory::FromRemoteNode
+[1792298961764438] cdb: uiautomationcore!ProtobufHelper::GetElement
+[1792298961764574] cdb: uiautomationcore!SavedEvent::OnMessage
+[1792298961764683] cdb: uiautomationcore!WorkItemQueue::ThreadProc
+[1792298961769816] cdb: uiautomationcore!WorkItemQueue::StaticThreadProc
+[1792298961770077] cdb: KERNEL32!BaseThreadInitThunk
+[1792298961770277] cdb: ntdll!RtlUserThreadStart
+[1792298961773323] cdb: Debugger (not debuggee) time: Sun Oct 18 12:49:21.771 2026 (UTC + 8:00)
+[1792298961773379] cdb: HANDLER-NAME tid=3f34 Call Site
+[1792298961773391] cdb: focusproto!windows::Win32::UI::Accessibility::impl$346::new::HandlePropertyChangedEvent<focusproto::Prop_Impl,-1>
+[1792298961773400] cdb: uiautomationcore!ClientIEventHandler<IUIAutomationPropertyChangedEventHandler>::OnEvent
+[1792298961773411] cdb: uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+[1792298961773427] cdb: uiautomationcore!EventRecord::CrossProcess_OnTentativeEvent
+[1792298961773440] cdb: uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnTentativeEvent
+[1792298961773449] cdb: uiautomationcore!SavedEvent::OnMessage
+[1792298961773455] cdb: uiautomationcore!WorkItemQueue::ThreadProc
+[1792298961773460] cdb: uiautomationcore!WorkItemQueue::StaticThreadProc
+[1792298961773465] cdb: KERNEL32!BaseThreadInitThunk
+[1792298961773469] cdb: ntdll!RtlUserThreadStart
+[1792298961774723] cdb: Debugger (not debuggee) time: Sun Oct 18 12:49:21.771 2026 (UTC + 8:00)
+[1792298961774758] cdb: HANDLER-NAME tid=3f34 Call Site
+[1792298961774766] cdb: focusproto!focusproto::impl$3::HandlePropertyChangedEvent
+[1792298961774772] cdb: focusproto!windows::Win32::UI::Accessibility::impl$346::new::HandlePropertyChangedEvent<focusproto::Prop_Impl,-1>
+[1792298961774778] cdb: uiautomationcore!ClientIEventHandler<IUIAutomationPropertyChangedEventHandler>::OnEvent
+[1792298961774783] cdb: uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+[1792298961774788] cdb: uiautomationcore!EventRecord::CrossProcess_OnTentativeEvent
+[1792298961774794] cdb: uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnTentativeEvent
+[1792298961774799] cdb: uiautomationcore!SavedEvent::OnMessage
+[1792298961774804] cdb: uiautomationcore!WorkItemQueue::ThreadProc
+[1792298961774808] cdb: uiautomationcore!WorkItemQueue::StaticThreadProc
+[1792298961774813] cdb: KERNEL32!BaseThreadInitThunk
+[1792298961774819] cdb: ntdll!RtlUserThreadStart
+[1792298961775051] D: ev D name:40829914 prop30005 t=1792298961774990 pid=5496 name="Base" hwnd=0
+=== TV stalled, then a focus WinEvent naming its tree view
+[1792298962275507] >holdTV: stall 8000
+[1792298962275747] holdTV: stall started
+[1792298962330072] cdb: Debugger (not debuggee) time: Sun Oct 18 12:49:22.328 2026 (UTC + 8:00)
+[1792298962330270] cdb: SMTO-ENTER tid=3f34 hwnd=0000000003380352 msg=3d wp=00000000470cda9c lp=ffffffffffffffe7 flags=22 timeout=2000 Call Site
+[1792298962330289] cdb: user32!SendMessageTimeoutW
+[1792298962330397] cdb: uiautomationcore!HwndUtils::SendWmGetObject
+[1792298962330550] cdb: uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+[1792298962330760] cdb: uiautomationcore!ProviderEntryPoint::ConnectToProvider
+[1792298962330866] cdb: uiautomationcore!ProviderEntryPoint::GetUiaNode
+[1792298962331007] cdb: uiautomationcore!ProviderEntryPoint::GetNativeUiaNode
+[1792298962331083] cdb: uiautomationcore!ClientProxyManager::GetCompleteProxyNode
+[1792298962331170] cdb: uiautomationcore!FocusTracker::GetFocusedElementFromWinEvent
+[1792298962331254] cdb: uiautomationcore!FocusTracker::HandleFocusChange
+[1792298962331384] cdb: uiautomationcore!FocusTracker::WinEventThreadProcCallback
+[1792298962331484] cdb: uiautomationcore!WinEventTracker::WinEventThreadProc
+[1792298962331562] cdb: uiautomationcore!WinEventTracker::CallbackWorkItem::DoWork
+[1792298962331655] cdb: uiautomationcore!WorkItemQueue::ThreadProc
+[1792298962331766] cdb: uiautomationcore!WorkItemQueue::StaticThreadProc
+[1792298962331841] cdb: KERNEL32!BaseThreadInitThunk
+[1792298962331909] cdb: ntdll!RtlUserThreadStart
+[1792298962333389] tool winevent 54002514 8005 -4 0 -> winevent sent t=1792298962329454 ondesk-child-pid 16164
+[1792298962533582] >holdB: set-name btn1 During
+[1792298962533909] holdB: applied
+[1792298964341813] cdb: Debugger (not debuggee) time: Sun Oct 18 12:49:24.340 2026 (UTC + 8:00)
+[1792298964342325] cdb: SMTO-RETURN(SendWmGetObject) tid=3f34 rax=0000000000000000 lasterr=5b4 (1af8.3f34): C++ EH exception - code e06d7363 (first chance)
+[1792298964342725] cdb: (1af8.3f34): C++ EH exception - code e06d7363 (first chance)
+[1792298964345725] cdb: Debugger (not debuggee) time: Sun Oct 18 12:49:24.342 2026 (UTC + 8:00)
+[1792298964345759] cdb: SMTO-ENTER tid=3f34 hwnd=0000000003380352 msg=c199 wp=0000000000000000 lp=00000000470cda9d flags=0 timeout=2000 Call Site
+[1792298964345768] cdb: user32!SendMessageTimeoutW
+[1792298964345774] cdb: uiautomationcore!`anonymous namespace'::PerformOperationOnHwndThreadImpl
+[1792298964345784] cdb: uiautomationcore!PerformOperationOnHwndThread
+[1792298964345790] cdb: uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+[1792298964345795] cdb: uiautomationcore!ProviderEntryPoint::ConnectToProvider
+[1792298964345800] cdb: uiautomationcore!ProviderEntryPoint::GetUiaNode
+[1792298964345804] cdb: uiautomationcore!ProviderEntryPoint::GetProxyUiaNode
+[1792298964345809] cdb: uiautomationcore!UiaNodeFactory::InProcProxyFromHwnd
+[1792298964345814] cdb: uiautomationcore!ClientProxyManager::InternalGetProxyProvider
+[1792298964345819] cdb: uiautomationcore!ClientProxyManager::GetCompleteProxyNode
+[1792298964345824] cdb: uiautomationcore!FocusTracker::GetFocusedElementFromWinEvent
+[1792298964345829] cdb: uiautomationcore!FocusTracker::HandleFocusChange
+[1792298964345834] cdb: uiautomationcore!FocusTracker::WinEventThreadProcCallback
+[1792298964345839] cdb: uiautomationcore!WinEventTracker::WinEventThreadProc
+[1792298964345844] cdb: uiautomationcore!WinEventTracker::CallbackWorkItem::DoWork
+[1792298964345848] cdb: uiautomationcore!WorkItemQueue::ThreadProc
+[1792298964345854] cdb: uiautomationcore!WorkItemQueue::StaticThreadProc
+[1792298964345859] cdb: KERNEL32!BaseThreadInitThunk
+[1792298964345864] cdb: ntdll!RtlUserThreadStart
+[1792298966351976] cdb: (1af8.3f34): C++ EH exception - code e06d7363 (first chance)
+[1792298966352757] cdb: (1af8.3f34): C++ EH exception - code e06d7363 (first chance)
+[1792298966353209] cdb: (1af8.3f34): C++ EH exception - code e06d7363 (first chance)
+[1792298966353584] cdb: (1af8.3f34): C++ EH exception - code e06d7363 (first chance)
+[1792298966357687] cdb: Debugger (not debuggee) time: Sun Oct 18 12:49:26.355 2026 (UTC + 8:00)
+[1792298966357731] cdb: SMTO-ENTER tid=3f34 hwnd=00000000026f03da msg=164 wp=0000000000000000 lp=00000008192feb20 flags=22 timeout=20000 Call Site
+[1792298966357740] cdb: user32!SendMessageTimeoutW
+[1792298966357747] cdb: uiautomationcore!BasicHwndUtils::GetComboFromList
+[1792298966357752] cdb: uiautomationcore!HwndProxy::Navigate
+[1792298966357757] cdb: uiautomationcore!UiaNodeFactory::ConstructUiaNode
+[1792298966357763] cdb: uiautomationcore!UiaNodeFactory::FromPartialNodeInfo
+[1792298966357767] cdb: uiautomationcore!UiaNodeFactory::FromRemoteNode
+[1792298966357772] cdb: uiautomationcore!ProtobufHelper::GetElement
+[1792298966357777] cdb: uiautomationcore!SavedEvent::OnMessage
+[1792298966357781] cdb: uiautomationcore!WorkItemQueue::ThreadProc
+[1792298966357786] cdb: uiautomationcore!WorkItemQueue::StaticThreadProc
+[1792298966357790] cdb: KERNEL32!BaseThreadInitThunk
+[1792298966357795] cdb: ntdll!RtlUserThreadStart
+[1792298966368667] cdb: Debugger (not debuggee) time: Sun Oct 18 12:49:26.367 2026 (UTC + 8:00)
+[1792298966368717] cdb: HANDLER-NAME tid=3f34 Call Site
+[1792298966368729] cdb: focusproto!windows::Win32::UI::Accessibility::impl$346::new::HandlePropertyChangedEvent<focusproto::Prop_Impl,-1>
+[1792298966368736] cdb: uiautomationcore!ClientIEventHandler<IUIAutomationPropertyChangedEventHandler>::OnEvent
+[1792298966368741] cdb: uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+[1792298966368747] cdb: uiautomationcore!EventRecord::CrossProcess_OnTentativeEvent
+[1792298966368752] cdb: uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnTentativeEvent
+[1792298966368757] cdb: uiautomationcore!SavedEvent::OnMessage
+[1792298966368762] cdb: uiautomationcore!WorkItemQueue::ThreadProc
+[1792298966368767] cdb: uiautomationcore!WorkItemQueue::StaticThreadProc
+[1792298966368771] cdb: KERNEL32!BaseThreadInitThunk
+[1792298966368782] cdb: ntdll!RtlUserThreadStart
+[1792298966380253] cdb: Debugger (not debuggee) time: Sun Oct 18 12:49:26.379 2026 (UTC + 8:00)
+[1792298966380306] cdb: HANDLER-NAME tid=3f34 Call Site
+[1792298966380319] cdb: focusproto!focusproto::impl$3::HandlePropertyChangedEvent
+[1792298966380327] cdb: focusproto!windows::Win32::UI::Accessibility::impl$346::new::HandlePropertyChangedEvent<focusproto::Prop_Impl,-1>
+[1792298966380334] cdb: uiautomationcore!ClientIEventHandler<IUIAutomationPropertyChangedEventHandler>::OnEvent
+[1792298966380341] cdb: uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+[1792298966380347] cdb: uiautomationcore!EventRecord::CrossProcess_OnTentativeEvent
+[1792298966380352] cdb: uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnTentativeEvent
+[1792298966380358] cdb: uiautomationcore!SavedEvent::OnMessage
+[1792298966380368] cdb: uiautomationcore!WorkItemQueue::ThreadProc
+[1792298966380375] cdb: uiautomationcore!WorkItemQueue::StaticThreadProc
+[1792298966380381] cdb: KERNEL32!BaseThreadInitThunk
+[1792298966380392] cdb: ntdll!RtlUserThreadStart
+[1792298966380898] D: ev D name:40829914 prop30005 t=1792298966380827 pid=5496 name="During" hwnd=0
+[1792298970275970] holdTV: stall ended 1792298970275886
+[1792298971278409] cdb: (1af8.3f34): C++ EH exception - code e06d7363 (first chance)
+[1792298971279513] cdb: (1af8.3f34): C++ EH exception - code e06d7363 (first chance)
+[1792298971280210] cdb: (1af8.3f34): C++ EH exception - code e06d7363 (first chance)
+[1792298971280832] cdb: (1af8.3f34): C++ EH exception - code e06d7363 (first chance)
+[1792298971281491] cdb: (1af8.3f34): C++ EH exception - code e06d7363 (first chance)
+[1792298971282082] cdb: (1af8.3f34): C++ EH exception - code e06d7363 (first chance)
+[1792298971292187] cdb: (1af8.228): C++ EH exception - code e06d7363 (first chance)
+[1792298971292657] cdb: (1af8.228): C++ EH exception - code e06d7363 (first chance)
+[1792298971293109] cdb: (1af8.228): C++ EH exception - code e06d7363 (first chance)
+[1792298971293478] cdb: (1af8.228): C++ EH exception - code e06d7363 (first chance)
+[1792298971293911] cdb: (1af8.228): C++ EH exception - code e06d7363 (first chance)
+[1792298971294278] cdb: (1af8.228): C++ EH exception - code e06d7363 (first chance)
+[1792298971294681] cdb: (1af8.228): C++ EH exception - code e06d7363 (first chance)
+[1792298971295061] cdb: (1af8.228): C++ EH exception - code e06d7363 (first chance)
+[1792298971296137] cdb: (1af8.228): C++ EH exception - code e06d7363 (first chance)
+[1792298971296717] cdb: (1af8.228): C++ EH exception - code e06d7363 (first chance)
+[1792298971297094] cdb: (1af8.228): C++ EH exception - code e06d7363 (first chance)
+[1792298971297481] cdb: (1af8.228): C++ EH exception - code e06d7363 (first chance)
+[1792298971297913] cdb: (1af8.228): C++ EH exception - code e06d7363 (first chance)
+[1792298971298290] cdb: (1af8.228): C++ EH exception - code e06d7363 (first chance)
+[1792298971298692] cdb: (1af8.228): C++ EH exception - code e06d7363 (first chance)
+[1792298971299197] cdb: (1af8.228): C++ EH exception - code e06d7363 (first chance)
+[1792298971302877] cdb: ntdll!NtTerminateProcess+0x14:
+[1792298971302919] cdb: 00007ffb`e12e22d4 c3              ret

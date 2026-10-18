@@ -1,0 +1,33 @@
+# e36: B holds S's top-level element (efh before the operation)
+# and the element of S's child window under it (first child), then
+# walks up from the child to the element under the desktop root while
+# L's remote operation waits in S's busy UI thread (control: no operation).
+spawn S server
+wait S hwnd
+send S showtopoff
+wait S shown
+owner $HWND
+send S child
+wait S hwnd
+spawn L client $HWND L
+send L init
+wait L done
+send L efh
+wait L done
+send L rop
+wait L done 10000
+spawn B client $HWND B
+send B init
+wait B done
+send B efh
+wait B done
+send B holdfirstchild
+wait B done
+send S busy 300
+wait S busy-begin
+sleep 5
+send B toplevel
+wait B done 15000
+send B info
+wait B done 15000
+drain 500

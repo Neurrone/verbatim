@@ -1,0 +1,3 @@
+launch: segments 150, odd 0, 14-id focus receipts 0, 14-id focuses accepted 0, extra terminal announcements 0
+second: segments 150, odd 19, 14-id focus receipts 57, 14-id focuses accepted 0, extra terminal announcements 0
+return: segments 150, odd 0, 14-id focus receipts 0, 14-id focuses accepted 0, extra terminal announcements 0

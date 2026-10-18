@@ -1,0 +1,34 @@
+21:37:09.140110 to 21:37:09.141481 (11) idle in GetMessage
+21:37:09.141648 to 21:37:09.141653 (1) UIA HwndInvoker
+21:37:09.141756 to 21:37:09.141910 (2) idle in GetMessage
+21:37:09.141934 to 21:37:09.141934 (1) other: ?
+21:37:09.141956 to 21:37:09.142957 (7) idle in GetMessage
+21:37:09.143370 to 21:37:09.147371 (1) setup: NavigationHelperProxyOneCore::Initialize
+21:37:09.147835 to 21:37:09.151902 (26) setup: EndpointStateNotifier CoCreateInstance (modal loop)
+21:37:09.151934 to 21:37:09.151934 (1) other: ?
+21:37:09.151974 to 21:37:09.156384 (37) setup: EndpointStateNotifier CoCreateInstance (modal loop)
+21:37:09.156406 to 21:37:09.156406 (1) other: ?
+21:37:09.156440 to 21:37:09.184373 (26) setup: EndpointStateNotifier CoCreateInstance (modal loop)
+21:37:09.184397 to 21:37:09.184397 (1) other: ?
+21:37:09.184442 to 21:37:09.185749 (13) setup: EndpointStateNotifier CoCreateInstance (modal loop)
+21:37:09.186747 to 21:37:09.186747 (1) other: ?
+21:37:09.186800 to 21:37:09.187240 (1) setup: EndpointStateNotifier CoCreateInstance (modal loop)
+21:37:09.187279 to 21:37:09.187279 (1) other: ?
+21:37:09.187297 to 21:37:09.190901 (14) setup: EndpointStateNotifier CoCreateInstance (modal loop)
+21:37:09.190925 to 21:37:09.190925 (1) other: ?
+21:37:09.190949 to 21:37:09.192018 (9) setup: EndpointStateNotifier CoCreateInstance (modal loop)
+21:37:09.192203 to 21:37:09.192529 (3) remote operation import
+21:37:09.192578 to 21:37:09.192589 (1) UiaReturnRawElementProvider
+21:37:09.192639 to 21:37:09.192666 (1) UIA ComInvoker
+21:37:09.192722 to 21:37:09.192894 (2) remote operation import
+21:37:09.192924 to 21:37:09.192924 (1) other: ?
+21:37:09.192934 to 21:37:09.193771 (11) remote operation import
+21:37:09.193850 to 21:37:09.197005 (19) idle in GetMessage
+21:37:09.197064 to 21:37:09.197091 (1) UiaReturnRawElementProvider
+21:37:09.197170 to 21:37:09.197174 (1) UIA ComInvoker
+21:37:09.197235 to 21:37:09.197954 (5) idle in GetMessage
+21:37:09.198014 to 21:37:09.198142 (2) UIA ComInvoker
+21:37:09.198230 to 21:37:09.199563 (4) idle in GetMessage
+21:37:09.199615 to 21:37:09.199624 (1) UiaReturnRawElementProvider
+21:37:09.199673 to 21:37:09.199705 (1) UIA ComInvoker
+21:37:09.199746 to 21:37:09.199935 (1) idle in GetMessage

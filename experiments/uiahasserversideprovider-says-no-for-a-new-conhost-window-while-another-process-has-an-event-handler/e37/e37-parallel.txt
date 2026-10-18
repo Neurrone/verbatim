@@ -1,0 +1,19 @@
+# e37 (parallel): U and R, two fresh client processes (UIA created, no
+# connection yet), wait while the orchestrator starts a fresh console
+# (conhost.exe cmd.exe, titled from its first frame) and spins until its
+# window exists. DELAY ms later, R sends the raw WM_GETOBJECT(UiaRootObjectId)
+# probe and U calls UiaHasServerSideProvider on it at the same moment; each
+# then calls ElementFromHandleBuildCache with the provider description cached.
+spawn U client 0 U
+send U init
+wait U done
+spawn R client 0 R
+send R init
+wait R done
+console ${TITLE}
+sleep ${DELAY}
+send R target $HWND | send U target $HWND | send R rawprobe | send U probe | send R efhbcd | send U efhbcd
+wait U done efhbcd 20000
+wait R done efhbcd 20000
+closeconsole
+drain 200

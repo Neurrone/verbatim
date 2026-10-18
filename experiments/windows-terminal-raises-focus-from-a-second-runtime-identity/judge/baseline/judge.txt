@@ -1,0 +1,4 @@
+  <scratch folder>/judge/baseline/listener.log segment 63 launch hwnd 66126500: 14-id events 3, accepted [[14, 872814197, 0, 0, 0, 4, 3], [42, 50333928, 4, 3]]
+launch: segments 150, odd 2, 14-id focus receipts 4, 14-id focuses accepted 1, extra terminal announcements 1
+second: segments 150, odd 19, 14-id focus receipts 57, 14-id focuses accepted 0, extra terminal announcements 0
+return: segments 150, odd 0, 14-id focus receipts 0, 14-id focuses accepted 0, extra terminal announcements 0

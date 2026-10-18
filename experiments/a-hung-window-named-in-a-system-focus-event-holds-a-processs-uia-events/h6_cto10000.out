@@ -1,0 +1,20 @@
+[1792299933551559] holdM: ondesk-child-pid 16076
+[1792299933573784] holdM: ready
+[1792299933610380] tool find holdM -> 82576776 ondesk-child-pid 7360
+[1792299933624702] D: ondesk-child-pid 12724
+[1792299933655490] D: registered D desk:min in 10.6ms
+[1792299933655594] D: client-ready D
+[1792299933955724] >holdM: focus item1
+[1792299933956257] holdM: applied
+[1792299933965941] D: ev D desk:min focus t=1792299933965882 pid=16076 name="First" hwnd=0
+RESULT cto10000 answering: focus after 10 ms: ev D desk:min focus t=1792299933965882 pid=16076 name="First" hwnd=0
+[1792299933966153] >holdM: stall 3000 0 focus item2
+[1792299933966224] holdM: stall started
+[1792299933966323] holdM: applied
+[1792299936966407] holdM: stall ended 1792299936966328
+[1792299936969355] D: ev D desk:min focus t=1792299936969276 pid=16076 name="Second" hwnd=0
+RESULT cto10000 raised inside a 3 s stall: focus 3003 ms into the stall: ev D desk:min focus t=1792299936969276 pid=16076 name="Second" hwnd=0
+[1792299937270260] >holdM: focus item1
+[1792299937270494] holdM: applied
+[1792299937272413] D: ev D desk:min focus t=1792299937272360 pid=16076 name="First" hwnd=0
+RESULT cto10000 answering again: focus after 2 ms: ev D desk:min focus t=1792299937272360 pid=16076 name="First" hwnd=0

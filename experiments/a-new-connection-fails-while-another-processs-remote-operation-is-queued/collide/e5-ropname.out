@@ -1,0 +1,36 @@
+22:45:46.120473 run spawn S server
+  S 22:45:46.134432 hwnd 26412250 pid 15632
+22:45:46.139494 run spawn L client 26412250 L
+22:45:46.139548 run send L init
+  S 22:45:46.134527 ready
+  L 22:45:46.147676 client-ready L
+  L 22:45:46.152150 done init L start=22:45:46.147716 ms=4.4 ok
+22:45:46.152243 run send L efh
+  S 22:45:46.159577 getobject-begin hwnd=26412250 objid=-25 wparam=0x52dab088 insend=0x1 in_hold=false
+  S 22:45:46.160621 getobject-end hwnd=26412250 objid=-25 lresult=0x10000 us=1047 in_hold=false
+  S 22:45:46.161713 getobject-begin hwnd=26412250 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:45:46.161744 getobject-end hwnd=26412250 objid=-25 lresult=0x10000 us=31 in_hold=false
+  L 22:45:46.162220 done efh L start=22:45:46.152287 ms=9.9 ok
+22:45:46.162287 run send L rop
+  S 22:45:46.169224 getobject-begin hwnd=26412250 objid=-25 wparam=0x52dc17c9 insend=0x0 in_hold=false
+  S 22:45:46.169274 getobject-end hwnd=26412250 objid=-25 lresult=0x10000 us=53 in_hold=false
+  S 22:45:46.169453 getobject-begin hwnd=26412250 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:45:46.169479 getobject-end hwnd=26412250 objid=-25 lresult=0x10000 us=27 in_hold=false
+  L 22:45:46.169889 done rop L start=22:45:46.162316 ms=7.6 ok
+22:45:46.186380 run spawn B client 26412250 B
+22:45:46.186418 run send B init
+  B 22:45:46.192798 client-ready B
+  B 22:45:46.196989 done init B start=22:45:46.192829 ms=4.2 ok
+22:45:46.197099 run send S busy 40
+  S 22:45:46.197252 busy-begin
+22:45:46.197356 run send L async ropname
+22:45:46.202400 run send B probe
+  S 22:45:46.237272 busy-end
+  S 22:45:46.237312 getobject-begin hwnd=26412250 objid=-25 wparam=0x52e2311a insend=0x1 in_hold=false
+  S 22:45:46.237389 getobject-end hwnd=26412250 objid=-25 lresult=0x10000 us=77 in_hold=false
+  S 22:45:46.237594 getobject-begin hwnd=26412250 objid=-25 wparam=0x52dc17ca insend=0x0 in_hold=false
+  S 22:45:46.237636 getobject-end hwnd=26412250 objid=-25 lresult=0x10000 us=43 in_hold=false
+  S 22:45:46.237859 getobject-begin hwnd=26412250 objid=-25 wparam=0x0 insend=0x1 in_hold=false
+  S 22:45:46.237887 getobject-end hwnd=26412250 objid=-25 lresult=0x10000 us=28 in_hold=false
+  L 22:45:46.238502 done async-ropname L start=22:45:46.197517 ms=41.0 ok
+  B 22:45:49.238999 done probe B start=22:45:46.202435 ms=3036.6 result=false

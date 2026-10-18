@@ -1,0 +1,5 @@
+  <scratch folder>/judge/exp-one/listener.log segment 60 launch hwnd 59049922: 14-id events 3, accepted [[14, 879068345, 0, 0, 0, 4, 3], [42, 50399520, 4, 3]]
+  <scratch folder>/judge/exp-one/listener.log segment 264 launch hwnd 45810488: 14-id events 3, accepted [[14, 881492122, 0, 0, 0, 4, 3], [42, 84543714, 4, 3]]
+launch: segments 150, odd 2, 14-id focus receipts 2, 14-id focuses accepted 2, extra terminal announcements 2
+second: segments 150, odd 11, 14-id focus receipts 33, 14-id focuses accepted 0, extra terminal announcements 0
+return: segments 150, odd 0, 14-id focus receipts 0, 14-id focuses accepted 0, extra terminal announcements 0

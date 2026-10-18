@@ -1,0 +1,5 @@
+cold: n=20; first target probe min 7.8, median 8.55, max 13.5; target lookup min 0.8, median 1.0, max 1.8; answers ['ok', 'result=true']
+warm-other: n=20; first target probe min 0.9, median 1.0, max 1.1; target lookup min 0.9, median 0.9, max 1.0; answers ['ok', 'result=true']
+   the warm-up's own probe: min 8.0, median 8.600000000000001, max 10.9
+warm-own: n=20; first target probe min 1.2, median 1.4, max 1.7; target lookup min 0.8, median 0.9, max 1.0; answers ['ok', 'result=true']
+   the warm-up's own probe: min 6.8, median 7.6, max 10.8

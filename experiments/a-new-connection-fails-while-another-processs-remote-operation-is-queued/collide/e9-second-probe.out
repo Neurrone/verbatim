@@ -1,0 +1,24 @@
+22:10:28.969072 run spawn S server
+  S 22:10:28.982061 hwnd 17303218 pid 15872
+22:10:28.986194 run spawn L client 17303218 L
+22:10:28.986245 run send L init
+  S 22:10:28.982195 ready
+  L 22:10:28.992440 client-ready L
+  L 22:10:28.996677 done init L start=22:10:28.992471 ms=4.2 ok
+22:10:28.996777 run send L efh
+  L 22:10:29.005823 done efh L start=22:10:28.996818 ms=9.0 ok
+22:10:29.005871 run send L rop
+  L 22:10:29.013294 done rop L start=22:10:29.005900 ms=7.4 ok
+22:10:29.017506 run spawn B client 17303218 B
+22:10:29.017533 run send B init
+  B 22:10:29.023867 client-ready B
+  B 22:10:29.028019 done init B start=22:10:29.023901 ms=4.1 ok
+22:10:29.028111 run send B probe
+  B 22:10:29.035944 done probe B start=22:10:29.028141 ms=7.8 result=true
+22:10:29.036002 run send S busy 40
+  S 22:10:29.036113 busy-begin
+22:10:29.036172 run send L async rop
+22:10:29.041213 run send B probe
+  S 22:10:29.076129 busy-end
+  L 22:10:29.077123 done async-rop L start=22:10:29.036339 ms=40.8 ok
+  B 22:10:32.076668 done probe B start=22:10:29.041247 ms=3035.4 result=false

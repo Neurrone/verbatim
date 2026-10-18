@@ -1,0 +1,840 @@
+=== run 1 delay=0.0
+19:22:26.823863 run spawn L listen L e38- passive
+  L 19:22:26.867340 listening L mode=passive ms=36.5
+19:22:26.871769 run spawn U client 0 U
+19:22:26.871798 run send U init
+  U 19:22:26.878657 client-ready U
+  U 19:22:26.883018 done init U start=19:22:26.878691 ms=4.3 ok
+run 19:22:26.913453 fgright sent=1 allowed=true
+run 19:22:26.938549 hwnd 21037778 found console conhost-pid=3144 launched=19:22:26.919509 after-launch-ms=19.0 visible=false
+19:22:26.938680 run send U target 21037778
+19:22:26.938703 run send U probe
+19:22:26.938714 run send U efhbcd
+  U 19:22:26.938771 done target U
+run 19:22:26.947192 console-foreground after-found-ms=8.6
+run 19:22:26.959952 console-visible after-found-ms=21.4
+  U 19:22:26.966770 done probe U start=19:22:26.938780 ms=28.0 result=true
+  L 19:22:26.967609 L focus-event rid=[42, 21037778, 4, -1] hwnd=21037778 pid=Some(3144)
+  U 19:22:26.972650 done efhbcd U start=19:22:26.966798 ms=5.8 ok name="e38-passive-uonly-1-5668" pid=3144 desc="[pid:5520,providerId:0x14102D2 Main:Nested [pid:3144,providerId:0x14102D2 Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:22:26.976153 L focus-event rid=[42, 21037778] hwnd=21037778 pid=Some(3144)
+  L 19:22:26.981854 L focus-event rid=[42, 21037778, 4, -1] hwnd=21037778 pid=Some(3144)
+run 19:22:28.552402 console closed wait=0
+=== run 2 delay=0.0
+19:22:32.920584 run spawn L listen L e38- passive
+  L 19:22:32.958455 listening L mode=passive ms=31.0
+19:22:32.962971 run spawn U client 0 U
+19:22:32.963004 run send U init
+  U 19:22:32.970042 client-ready U
+  U 19:22:32.974215 done init U start=19:22:32.970077 ms=4.1 ok
+run 19:22:33.004444 fgright sent=1 allowed=true
+run 19:22:33.030737 hwnd 44369132 found console conhost-pid=16932 launched=19:22:33.010536 after-launch-ms=20.2 visible=false
+19:22:33.030871 run send U target 44369132
+19:22:33.030925 run send U probe
+19:22:33.030940 run send U efhbcd
+  U 19:22:33.030930 done target U
+run 19:22:33.039364 console-foreground after-found-ms=8.6
+run 19:22:33.050076 console-visible after-found-ms=19.3
+  L 19:22:33.058742 L focus-event rid=[42, 44369132, 4, -1] hwnd=44369132 pid=Some(16932)
+  L 19:22:33.061298 L focus-event rid=[42, 44369132] hwnd=44369132 pid=Some(16932)
+  U 19:22:33.062907 done probe U start=19:22:33.030954 ms=31.9 result=true
+  U 19:22:33.069808 done efhbcd U start=19:22:33.062925 ms=6.9 ok name="e38-passive-uonly-2-5668" pid=16932 desc="[pid:2168,providerId:0x2A504EC Main:Nested [pid:16932,providerId:0x2A504EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:22:33.071085 L focus-event rid=[42, 44369132, 4, -1] hwnd=44369132 pid=Some(16932)
+run 19:22:34.662043 console closed wait=0
+=== run 3 delay=0.0
+19:22:38.921439 run spawn L listen L e38- passive
+  L 19:22:38.961031 listening L mode=passive ms=29.8
+19:22:38.965322 run spawn U client 0 U
+19:22:38.965352 run send U init
+  U 19:22:38.973304 client-ready U
+  U 19:22:38.977567 done init U start=19:22:38.973341 ms=4.2 ok
+run 19:22:39.007819 fgright sent=1 allowed=true
+run 19:22:39.035227 hwnd 44565740 found console conhost-pid=13548 launched=19:22:39.013777 after-launch-ms=21.4 visible=false
+19:22:39.035371 run send U target 44565740
+19:22:39.035395 run send U probe
+19:22:39.035406 run send U efhbcd
+  U 19:22:39.035462 done target U
+run 19:22:39.044992 console-foreground after-found-ms=9.8
+run 19:22:39.055456 console-visible after-found-ms=20.2
+  L 19:22:39.061929 L focus-event rid=[42, 44565740, 4, -1] hwnd=44565740 pid=Some(13548)
+  L 19:22:39.064436 L focus-event rid=[42, 44565740] hwnd=44565740 pid=Some(13548)
+  U 19:22:39.075738 done probe U start=19:22:39.035471 ms=40.3 result=true
+  L 19:22:39.076048 L focus-event rid=[42, 44565740, 4, -1] hwnd=44565740 pid=Some(13548)
+  U 19:22:39.077658 done efhbcd U start=19:22:39.075759 ms=1.9 ok name="e38-passive-uonly-3-5668" pid=13548 desc="[pid:18428,providerId:0x2A804EC Main:Nested [pid:13548,providerId:0x2A804EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 19:22:40.662584 console closed wait=0
+=== run 4 delay=0.0
+19:22:44.928085 run spawn L listen L e38- passive
+  L 19:22:44.974980 listening L mode=passive ms=31.8
+19:22:44.979196 run spawn U client 0 U
+19:22:44.979224 run send U init
+  U 19:22:44.986795 client-ready U
+  U 19:22:44.991117 done init U start=19:22:44.986831 ms=4.3 ok
+run 19:22:45.021818 fgright sent=1 allowed=true
+run 19:22:45.047482 hwnd 44762348 found console conhost-pid=8428 launched=19:22:45.028170 after-launch-ms=19.3 visible=false
+19:22:45.047632 run send U target 44762348
+19:22:45.047681 run send U probe
+19:22:45.047705 run send U efhbcd
+  U 19:22:45.047673 done target U
+run 19:22:45.057247 console-foreground after-found-ms=9.8
+  L 19:22:45.075077 L focus-event rid=[42, 44762348, 4, -1] hwnd=44762348 pid=Some(8428)
+  L 19:22:45.077470 L focus-event rid=[42, 44762348] hwnd=44762348 pid=Some(8428)
+run 19:22:45.081164 console-visible after-found-ms=33.7
+  L 19:22:45.083327 L focus-event rid=[42, 44762348, 4, -1] hwnd=44762348 pid=Some(8428)
+  U 19:22:45.089265 done probe U start=19:22:45.047701 ms=41.6 result=true
+  U 19:22:45.091228 done efhbcd U start=19:22:45.089291 ms=1.9 ok name="e38-passive-uonly-4-5668" pid=8428 desc="[pid:11800,providerId:0x2AB04EC Main:Nested [pid:8428,providerId:0x2AB04EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 19:22:46.666449 console closed wait=0
+=== run 5 delay=0.0
+19:22:51.044278 run spawn L listen L e38- passive
+  L 19:22:51.083039 listening L mode=passive ms=30.4
+19:22:51.088137 run spawn U client 0 U
+19:22:51.088178 run send U init
+  U 19:22:51.095678 client-ready U
+  U 19:22:51.099861 done init U start=19:22:51.095715 ms=4.1 ok
+run 19:22:51.130387 fgright sent=1 allowed=true
+run 19:22:51.156623 hwnd 48236044 found console conhost-pid=15708 launched=19:22:51.136853 after-launch-ms=19.8 visible=false
+19:22:51.156758 run send U target 48236044
+19:22:51.156834 run send U probe
+19:22:51.156855 run send U efhbcd
+  U 19:22:51.156842 done target U
+run 19:22:51.168022 console-foreground after-found-ms=11.4
+  L 19:22:51.185295 L focus-event rid=[42, 48236044, 4, -1] hwnd=48236044 pid=Some(15708)
+  L 19:22:51.187575 L focus-event rid=[42, 48236044] hwnd=48236044 pid=Some(15708)
+run 19:22:51.192685 console-visible after-found-ms=36.1
+  U 19:22:51.194335 done probe U start=19:22:51.156860 ms=37.5 result=true
+  U 19:22:51.196121 done efhbcd U start=19:22:51.194360 ms=1.8 ok name="e38-passive-uonly-5-5668" pid=15708 desc="[pid:3660,providerId:0x2E0060C Main:Nested [pid:15708,providerId:0x2E0060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:22:51.199128 L focus-event rid=[42, 48236044, 4, -1] hwnd=48236044 pid=Some(15708)
+run 19:22:52.778177 console closed wait=0
+=== run 6 delay=0.0
+19:22:57.034830 run spawn L listen L e38- passive
+  L 19:22:57.079570 listening L mode=passive ms=37.6
+19:22:57.084066 run spawn U client 0 U
+19:22:57.084102 run send U init
+  U 19:22:57.090880 client-ready U
+  U 19:22:57.095857 done init U start=19:22:57.090926 ms=4.9 ok
+run 19:22:57.126408 fgright sent=1 allowed=true
+run 19:22:57.153250 hwnd 48432652 found console conhost-pid=7856 launched=19:22:57.132914 after-launch-ms=20.3 visible=false
+19:22:57.153408 run send U target 48432652
+19:22:57.153493 run send U probe
+19:22:57.153514 run send U efhbcd
+  U 19:22:57.153511 done target U
+run 19:22:57.162398 console-foreground after-found-ms=9.2
+run 19:22:57.174980 console-visible after-found-ms=21.7
+  L 19:22:57.183144 L focus-event rid=[42, 48432652, 4, -1] hwnd=48432652 pid=Some(7856)
+  L 19:22:57.186569 L focus-event rid=[42, 48432652] hwnd=48432652 pid=Some(7856)
+  U 19:22:57.188973 done probe U start=19:22:57.153529 ms=35.4 result=true
+  U 19:22:57.193101 done efhbcd U start=19:22:57.188996 ms=4.1 ok name="e38-passive-uonly-6-5668" pid=7856 desc="[pid:18304,providerId:0x2E3060C Main:Nested [pid:7856,providerId:0x2E3060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:22:57.193893 L focus-event rid=[42, 48432652, 4, -1] hwnd=48432652 pid=Some(7856)
+run 19:22:58.806610 console closed wait=0
+=== run 7 delay=0.0
+19:23:03.083184 run spawn L listen L e38- passive
+  L 19:23:03.119115 listening L mode=passive ms=29.7
+19:23:03.123568 run spawn U client 0 U
+19:23:03.123607 run send U init
+  U 19:23:03.130594 client-ready U
+  U 19:23:03.134579 done init U start=19:23:03.130627 ms=3.9 ok
+run 19:23:03.165072 fgright sent=1 allowed=true
+run 19:23:03.190693 hwnd 48629260 found console conhost-pid=3084 launched=19:23:03.171068 after-launch-ms=19.6 visible=false
+19:23:03.190841 run send U target 48629260
+19:23:03.190871 run send U probe
+19:23:03.190893 run send U efhbcd
+  U 19:23:03.190887 done target U
+run 19:23:03.199738 console-foreground after-found-ms=9.0
+run 19:23:03.210601 console-visible after-found-ms=19.9
+  L 19:23:03.217903 L focus-event rid=[42, 48629260, 4, -1] hwnd=48629260 pid=Some(3084)
+  L 19:23:03.219966 L focus-event rid=[42, 48629260] hwnd=48629260 pid=Some(3084)
+  U 19:23:03.229121 done probe U start=19:23:03.190906 ms=38.2 result=true
+  U 19:23:03.230811 done efhbcd U start=19:23:03.229145 ms=1.7 ok name="e38-passive-uonly-7-5668" pid=3084 desc="[pid:1100,providerId:0x2E6060C Main:Nested [pid:3084,providerId:0x2E6060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:23:03.232184 L focus-event rid=[42, 48629260, 4, -1] hwnd=48629260 pid=Some(3084)
+run 19:23:04.820850 console closed wait=0
+=== run 8 delay=0.0
+19:23:09.016318 run spawn L listen L e38- passive
+  L 19:23:09.056435 listening L mode=passive ms=33.6
+19:23:09.060820 run spawn U client 0 U
+19:23:09.060850 run send U init
+  U 19:23:09.068091 client-ready U
+  U 19:23:09.072584 done init U start=19:23:09.068139 ms=4.4 ok
+run 19:23:09.103014 fgright sent=1 allowed=true
+run 19:23:09.128003 hwnd 48825868 found console conhost-pid=15948 launched=19:23:09.109287 after-launch-ms=18.7 visible=false
+19:23:09.128161 run send U target 48825868
+19:23:09.128211 run send U probe
+19:23:09.128237 run send U efhbcd
+  U 19:23:09.128223 done target U
+run 19:23:09.138393 console-foreground after-found-ms=10.4
+run 19:23:09.150557 console-visible after-found-ms=22.6
+  U 19:23:09.157785 done probe U start=19:23:09.128248 ms=29.5 result=true
+  U 19:23:09.161756 done efhbcd U start=19:23:09.157806 ms=3.9 ok name="e38-passive-uonly-8-5668" pid=15948 desc="[pid:18388,providerId:0x2E9060C Main:Nested [pid:15948,providerId:0x2E9060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:23:09.163128 L focus-event rid=[42, 48825868, 4, -1] hwnd=48825868 pid=Some(15948)
+  L 19:23:09.165398 L focus-event rid=[42, 48825868] hwnd=48825868 pid=Some(15948)
+  L 19:23:09.167804 L focus-event rid=[42, 48825868, 4, -1] hwnd=48825868 pid=Some(15948)
+run 19:23:10.740271 console closed wait=0
+=== run 9 delay=0.0
+19:23:14.992333 run spawn L listen L e38- passive
+  L 19:23:15.036501 listening L mode=passive ms=36.8
+19:23:15.040767 run spawn U client 0 U
+19:23:15.040820 run send U init
+  U 19:23:15.047320 client-ready U
+  U 19:23:15.051468 done init U start=19:23:15.047351 ms=4.1 ok
+run 19:23:15.081689 fgright sent=1 allowed=true
+run 19:23:15.106898 hwnd 49022476 found console conhost-pid=8540 launched=19:23:15.087759 after-launch-ms=19.1 visible=false
+19:23:15.107025 run send U target 49022476
+19:23:15.107080 run send U probe
+19:23:15.107097 run send U efhbcd
+  U 19:23:15.107079 done target U
+run 19:23:15.115112 console-foreground after-found-ms=8.2
+run 19:23:15.125888 console-visible after-found-ms=19.0
+  L 19:23:15.140630 L focus-event rid=[42, 49022476, 4, -1] hwnd=49022476 pid=Some(8540)
+  L 19:23:15.142103 L focus-event rid=[42, 49022476] hwnd=49022476 pid=Some(8540)
+  L 19:23:15.147938 L focus-event rid=[42, 49022476, 4, -1] hwnd=49022476 pid=Some(8540)
+  U 19:23:15.150141 done probe U start=19:23:15.107092 ms=43.0 result=true
+  U 19:23:15.151281 done efhbcd U start=19:23:15.150170 ms=1.1 ok name="e38-passive-uonly-9-5668" pid=8540 desc="[pid:4492,providerId:0x2EC060C Main:Nested [pid:8540,providerId:0x2EC060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 19:23:16.714286 console closed wait=0
+=== run 10 delay=0.0
+19:23:20.996104 run spawn L listen L e38- passive
+  L 19:23:21.034616 listening L mode=passive ms=31.7
+19:23:21.038755 run spawn U client 0 U
+19:23:21.038782 run send U init
+  U 19:23:21.045316 client-ready U
+  U 19:23:21.049711 done init U start=19:23:21.045360 ms=4.3 ok
+run 19:23:21.080260 fgright sent=1 allowed=true
+run 19:23:21.107946 hwnd 49219084 found console conhost-pid=12056 launched=19:23:21.086624 after-launch-ms=21.3 visible=false
+19:23:21.108077 run send U target 49219084
+19:23:21.108102 run send U probe
+19:23:21.108113 run send U efhbcd
+  U 19:23:21.108143 done target U
+run 19:23:21.117050 console-foreground after-found-ms=9.1
+run 19:23:21.128347 console-visible after-found-ms=20.4
+  U 19:23:21.134961 done probe U start=19:23:21.108162 ms=26.8 result=true
+  U 19:23:21.137371 done efhbcd U start=19:23:21.134981 ms=2.4 ok name="e38-passive-uonly-10-5668" pid=12056 desc="[pid:8476,providerId:0x2EF060C Main:Nested [pid:12056,providerId:0x2EF060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:23:21.137970 L focus-event rid=[42, 49219084, 4, -1] hwnd=49219084 pid=Some(12056)
+  L 19:23:21.143464 L focus-event rid=[42, 49219084] hwnd=49219084 pid=Some(12056)
+  L 19:23:21.149408 L focus-event rid=[42, 49219084, 4, -1] hwnd=49219084 pid=Some(12056)
+run 19:23:22.712847 console closed wait=0
+=== run 11 delay=0.0
+19:23:26.946303 run spawn L listen L e38- passive
+  L 19:23:26.989326 listening L mode=passive ms=35.4
+19:23:26.993912 run spawn U client 0 U
+19:23:26.993940 run send U init
+  U 19:23:27.001487 client-ready U
+  U 19:23:27.005916 done init U start=19:23:27.001529 ms=4.4 ok
+run 19:23:27.036643 fgright sent=1 allowed=true
+run 19:23:27.070851 hwnd 49415692 found console conhost-pid=9384 launched=19:23:27.043693 after-launch-ms=27.2 visible=false
+19:23:27.071047 run send U target 49415692
+19:23:27.071084 run send U probe
+19:23:27.071100 run send U efhbcd
+  U 19:23:27.071103 done target U
+run 19:23:27.081355 console-foreground after-found-ms=10.5
+run 19:23:27.093742 console-visible after-found-ms=22.9
+  L 19:23:27.101178 L focus-event rid=[42, 49415692, 4, -1] hwnd=49415692 pid=Some(9384)
+  L 19:23:27.102497 L focus-event rid=[42, 49415692] hwnd=49415692 pid=Some(9384)
+  U 19:23:27.100977 done probe U start=19:23:27.071123 ms=29.8 result=true
+  U 19:23:27.103637 done efhbcd U start=19:23:27.100996 ms=2.6 ok name="e38-passive-uonly-11-5668" pid=9384 desc="[pid:14008,providerId:0x2F2060C Main:Nested [pid:9384,providerId:0x2F2060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:23:27.114897 L focus-event rid=[42, 49415692, 4, -1] hwnd=49415692 pid=Some(9384)
+run 19:23:28.638581 console closed wait=0
+=== run 12 delay=0.0
+19:23:32.829373 run spawn L listen L e38- passive
+  L 19:23:32.872519 listening L mode=passive ms=34.9
+19:23:32.877145 run spawn U client 0 U
+19:23:32.877195 run send U init
+  U 19:23:32.884494 client-ready U
+  U 19:23:32.888851 done init U start=19:23:32.884533 ms=4.3 ok
+run 19:23:32.919426 fgright sent=1 allowed=true
+run 19:23:32.948204 hwnd 49612300 found console conhost-pid=15652 launched=19:23:32.925716 after-launch-ms=22.5 visible=false
+19:23:32.948376 run send U target 49612300
+19:23:32.948411 run send U probe
+19:23:32.948423 run send U efhbcd
+  U 19:23:32.948889 done target U
+run 19:23:32.958500 console-foreground after-found-ms=10.3
+run 19:23:32.970889 console-visible after-found-ms=22.7
+  U 19:23:32.978437 done probe U start=19:23:32.948906 ms=29.5 result=true
+  L 19:23:32.980155 L focus-event rid=[42, 49612300, 4, -1] hwnd=49612300 pid=Some(15652)
+  L 19:23:32.985319 L focus-event rid=[42, 49612300] hwnd=49612300 pid=Some(15652)
+  U 19:23:32.986312 done efhbcd U start=19:23:32.978456 ms=7.9 ok name="e38-passive-uonly-12-5668" pid=15652 desc="[pid:15836,providerId:0x2F5060C Main:Nested [pid:15652,providerId:0x2F5060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:23:32.989797 L focus-event rid=[42, 49612300, 4, -1] hwnd=49612300 pid=Some(15652)
+run 19:23:34.516831 console closed wait=0
+=== run 13 delay=0.0
+19:23:38.800840 run spawn L listen L e38- passive
+  L 19:23:38.842616 listening L mode=passive ms=33.2
+19:23:38.846942 run spawn U client 0 U
+19:23:38.846978 run send U init
+  U 19:23:38.853651 client-ready U
+  U 19:23:38.857950 done init U start=19:23:38.853687 ms=4.3 ok
+run 19:23:38.888258 fgright sent=1 allowed=true
+run 19:23:38.917782 hwnd 49808908 found console conhost-pid=16760 launched=19:23:38.894541 after-launch-ms=23.2 visible=false
+19:23:38.917925 run send U target 49808908
+19:23:38.918015 run send U probe
+19:23:38.918432 run send U efhbcd
+  U 19:23:38.917985 done target U
+run 19:23:38.927511 console-foreground after-found-ms=9.7
+run 19:23:38.938374 console-visible after-found-ms=20.6
+  L 19:23:38.950023 L focus-event rid=[42, 49808908, 4, -1] hwnd=49808908 pid=Some(16760)
+  L 19:23:38.952864 L focus-event rid=[42, 49808908] hwnd=49808908 pid=Some(16760)
+  U 19:23:38.956935 done probe U start=19:23:38.918034 ms=38.9 result=true
+  U 19:23:38.960575 done efhbcd U start=19:23:38.957049 ms=3.5 ok name="e38-passive-uonly-13-5668" pid=16760 desc="[pid:13612,providerId:0x2F8060C Main:Nested [pid:16760,providerId:0x2F8060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:23:38.961863 L focus-event rid=[42, 49808908, 4, -1] hwnd=49808908 pid=Some(16760)
+run 19:23:40.533302 console closed wait=0
+=== run 14 delay=0.0
+19:23:44.813164 run spawn L listen L e38- passive
+  L 19:23:44.852892 listening L mode=passive ms=32.8
+19:23:44.857430 run spawn U client 0 U
+19:23:44.857475 run send U init
+  U 19:23:44.864436 client-ready U
+  U 19:23:44.868696 done init U start=19:23:44.864492 ms=4.2 ok
+run 19:23:44.899341 fgright sent=1 allowed=true
+run 19:23:44.926447 hwnd 50005516 found console conhost-pid=9532 launched=19:23:44.905403 after-launch-ms=21.0 visible=false
+19:23:44.926600 run send U target 50005516
+19:23:44.926654 run send U probe
+19:23:44.926667 run send U efhbcd
+  U 19:23:44.926676 done target U
+run 19:23:44.939007 console-foreground after-found-ms=12.6
+run 19:23:44.946574 console-visible after-found-ms=20.1
+  L 19:23:44.959314 L focus-event rid=[42, 50005516, 4, -1] hwnd=50005516 pid=Some(9532)
+  L 19:23:44.960380 L focus-event rid=[42, 50005516] hwnd=50005516 pid=Some(9532)
+  L 19:23:44.965734 L focus-event rid=[42, 50005516, 4, -1] hwnd=50005516 pid=Some(9532)
+  U 19:23:47.959159 done probe U start=19:23:44.926689 ms=3032.5 result=false
+  U 19:23:47.960649 done efhbcd U start=19:23:47.959204 ms=1.4 ok name="e38-passive-uonly-14-5668" pid=9532 desc="[pid:16564,providerId:0x2FB060C Main:Nested [pid:9532,providerId:0x2FB060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 19:23:49.481831 console closed wait=0
+=== run 15 delay=0.0
+19:23:53.758932 run spawn L listen L e38- passive
+  L 19:23:53.797312 listening L mode=passive ms=31.7
+19:23:53.801612 run spawn U client 0 U
+19:23:53.801650 run send U init
+  U 19:23:53.808070 client-ready U
+  U 19:23:53.812196 done init U start=19:23:53.808107 ms=4.1 ok
+run 19:23:53.842864 fgright sent=1 allowed=true
+run 19:23:53.871515 hwnd 50202124 found console conhost-pid=5016 launched=19:23:53.850023 after-launch-ms=21.5 visible=false
+19:23:53.871682 run send U target 50202124
+19:23:53.871769 run send U probe
+19:23:53.871808 run send U efhbcd
+  U 19:23:53.871740 done target U
+run 19:23:53.879467 console-foreground after-found-ms=8.0
+run 19:23:53.895671 console-visible after-found-ms=24.2
+  L 19:23:53.901109 L focus-event rid=[42, 50202124, 4, -1] hwnd=50202124 pid=Some(5016)
+  U 19:23:53.902838 done probe U start=19:23:53.871806 ms=31.0 result=true
+  L 19:23:53.904288 L focus-event rid=[42, 50202124] hwnd=50202124 pid=Some(5016)
+  U 19:23:53.912617 done efhbcd U start=19:23:53.902863 ms=9.7 ok name="e38-passive-uonly-15-5668" pid=5016 desc="[pid:11016,providerId:0x2FE060C Main:Nested [pid:5016,providerId:0x2FE060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:23:53.916168 L focus-event rid=[42, 50202124, 4, -1] hwnd=50202124 pid=Some(5016)
+run 19:23:55.460391 console closed wait=0
+=== run 16 delay=0.0
+19:23:59.801850 run spawn L listen L e38- passive
+  L 19:23:59.844144 listening L mode=passive ms=31.1
+19:23:59.848694 run spawn U client 0 U
+19:23:59.848733 run send U init
+  U 19:23:59.855786 client-ready U
+  U 19:23:59.859902 done init U start=19:23:59.855824 ms=4.1 ok
+run 19:23:59.890406 fgright sent=1 allowed=true
+run 19:23:59.915693 hwnd 50398732 found console conhost-pid=4400 launched=19:23:59.896829 after-launch-ms=18.9 visible=false
+19:23:59.915828 run send U target 50398732
+19:23:59.915856 run send U probe
+19:23:59.915870 run send U efhbcd
+  U 19:23:59.915889 done target U
+run 19:23:59.924317 console-foreground after-found-ms=8.6
+run 19:23:59.937296 console-visible after-found-ms=21.6
+  L 19:23:59.947638 L focus-event rid=[42, 50398732, 4, -1] hwnd=50398732 pid=Some(4400)
+  L 19:23:59.948566 L focus-event rid=[42, 50398732] hwnd=50398732 pid=Some(4400)
+  U 19:23:59.955516 done probe U start=19:23:59.915903 ms=39.6 result=true
+  L 19:23:59.956011 L focus-event rid=[42, 50398732, 4, -1] hwnd=50398732 pid=Some(4400)
+  U 19:23:59.960742 done efhbcd U start=19:23:59.955539 ms=5.2 ok name="e38-passive-uonly-16-5668" pid=4400 desc="[pid:1028,providerId:0x301060C Main:Nested [pid:4400,providerId:0x301060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 19:24:01.483142 console closed wait=0
+=== run 17 delay=0.0
+19:24:05.793724 run spawn L listen L e38- passive
+  L 19:24:05.840264 listening L mode=passive ms=38.6
+19:24:05.844945 run spawn U client 0 U
+19:24:05.844980 run send U init
+  U 19:24:05.851441 client-ready U
+  U 19:24:05.855572 done init U start=19:24:05.851475 ms=4.1 ok
+run 19:24:05.885920 fgright sent=1 allowed=true
+run 19:24:05.912862 hwnd 50595340 found console conhost-pid=8148 launched=19:24:05.892785 after-launch-ms=20.1 visible=false
+19:24:05.913011 run send U target 50595340
+19:24:05.913039 run send U probe
+19:24:05.913060 run send U efhbcd
+  U 19:24:05.913051 done target U
+run 19:24:05.922922 console-foreground after-found-ms=10.1
+  L 19:24:05.940633 L focus-event rid=[42, 50595340, 4, -1] hwnd=50595340 pid=Some(8148)
+  L 19:24:05.942070 L focus-event rid=[42, 50595340] hwnd=50595340 pid=Some(8148)
+run 19:24:05.944542 console-visible after-found-ms=31.7
+  L 19:24:05.954328 L focus-event rid=[42, 50595340, 4, -1] hwnd=50595340 pid=Some(8148)
+  U 19:24:05.954605 done probe U start=19:24:05.913064 ms=41.5 result=true
+  U 19:24:05.955807 done efhbcd U start=19:24:05.954632 ms=1.2 ok name="e38-passive-uonly-17-5668" pid=8148 desc="[pid:5852,providerId:0x304060C Main:Nested [pid:8148,providerId:0x304060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 19:24:07.554645 console closed wait=0
+=== run 18 delay=0.0
+19:24:11.809981 run spawn L listen L e38- passive
+  L 19:24:11.848002 listening L mode=passive ms=31.7
+19:24:11.852972 run spawn U client 0 U
+19:24:11.853014 run send U init
+  U 19:24:11.859913 client-ready U
+  U 19:24:11.864240 done init U start=19:24:11.859958 ms=4.3 ok
+run 19:24:11.894882 fgright sent=1 allowed=true
+run 19:24:11.919991 hwnd 50791948 found console conhost-pid=12776 launched=19:24:11.901101 after-launch-ms=18.9 visible=false
+19:24:11.920128 run send U target 50791948
+19:24:11.920211 run send U probe
+19:24:11.920232 run send U efhbcd
+  U 19:24:11.920224 done target U
+run 19:24:11.929369 console-foreground after-found-ms=9.4
+run 19:24:11.942158 console-visible after-found-ms=22.2
+  L 19:24:11.948606 L focus-event rid=[42, 50791948, 4, -1] hwnd=50791948 pid=Some(12776)
+  L 19:24:11.949539 L focus-event rid=[42, 50791948] hwnd=50791948 pid=Some(12776)
+  L 19:24:11.967083 L focus-event rid=[42, 50791948, 4, -1] hwnd=50791948 pid=Some(12776)
+  U 19:24:14.953086 done probe U start=19:24:11.920240 ms=3032.8 result=false
+  U 19:24:14.954551 done efhbcd U start=19:24:14.953122 ms=1.4 ok name="e38-passive-uonly-18-5668" pid=12776 desc="[pid:17124,providerId:0x307060C Main:Nested [pid:12776,providerId:0x307060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 19:24:16.479245 console closed wait=0
+=== run 19 delay=0.0
+19:24:20.769519 run spawn L listen L e38- passive
+  L 19:24:20.806283 listening L mode=passive ms=29.6
+19:24:20.811180 run spawn U client 0 U
+19:24:20.811237 run send U init
+  U 19:24:20.818558 client-ready U
+  U 19:24:20.822994 done init U start=19:24:20.818593 ms=4.4 ok
+run 19:24:20.853352 fgright sent=1 allowed=true
+run 19:24:20.879510 hwnd 50988556 found console conhost-pid=13768 launched=19:24:20.859611 after-launch-ms=19.9 visible=false
+19:24:20.879635 run send U target 50988556
+19:24:20.879723 run send U probe
+19:24:20.879770 run send U efhbcd
+  U 19:24:20.879718 done target U
+run 19:24:20.891080 console-foreground after-found-ms=11.6
+run 19:24:20.899935 console-visible after-found-ms=20.4
+  L 19:24:20.910104 L focus-event rid=[42, 50988556, 4, -1] hwnd=50988556 pid=Some(13768)
+  L 19:24:20.912397 L focus-event rid=[42, 50988556] hwnd=50988556 pid=Some(13768)
+  U 19:24:20.917456 done probe U start=19:24:20.879750 ms=37.7 result=true
+  U 19:24:20.919731 done efhbcd U start=19:24:20.917496 ms=2.2 ok name="e38-passive-uonly-19-5668" pid=13768 desc="[pid:14472,providerId:0x30A060C Main:Nested [pid:13768,providerId:0x30A060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:24:20.920888 L focus-event rid=[42, 50988556, 4, -1] hwnd=50988556 pid=Some(13768)
+run 19:24:22.476970 console closed wait=0
+=== run 20 delay=0.0
+19:24:26.665951 run spawn L listen L e38- passive
+  L 19:24:26.710533 listening L mode=passive ms=35.1
+19:24:26.715078 run spawn U client 0 U
+19:24:26.715110 run send U init
+  U 19:24:26.721607 client-ready U
+  U 19:24:26.725589 done init U start=19:24:26.721639 ms=3.9 ok
+run 19:24:26.755787 fgright sent=1 allowed=true
+run 19:24:26.783069 hwnd 51185164 found console conhost-pid=3564 launched=19:24:26.761791 after-launch-ms=21.3 visible=false
+19:24:26.783330 run send U target 51185164
+19:24:26.783405 run send U probe
+19:24:26.783433 run send U efhbcd
+  U 19:24:26.783415 done target U
+run 19:24:26.794823 console-foreground after-found-ms=11.8
+run 19:24:26.805147 console-visible after-found-ms=22.1
+  L 19:24:26.817735 L focus-event rid=[42, 51185164, 4, -1] hwnd=51185164 pid=Some(3564)
+  L 19:24:26.821300 L focus-event rid=[42, 51185164] hwnd=51185164 pid=Some(3564)
+  L 19:24:26.828869 L focus-event rid=[42, 51185164, 4, -1] hwnd=51185164 pid=Some(3564)
+  U 19:24:29.816479 done probe U start=19:24:26.783456 ms=3033.0 result=false
+  U 19:24:29.817755 done efhbcd U start=19:24:29.816513 ms=1.2 ok name="e38-passive-uonly-20-5668" pid=3564 desc="[pid:15300,providerId:0x30D060C Main:Nested [pid:3564,providerId:0x30D060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 19:24:31.348830 console closed wait=0
+=== run 21 delay=0.0
+19:24:35.648707 run spawn L listen L e38- passive
+  L 19:24:35.687472 listening L mode=passive ms=32.1
+19:24:35.692785 run spawn U client 0 U
+19:24:35.692836 run send U init
+  U 19:24:35.700259 client-ready U
+  U 19:24:35.705022 done init U start=19:24:35.700297 ms=4.7 ok
+run 19:24:35.735332 fgright sent=1 allowed=true
+run 19:24:35.761084 hwnd 51381772 found console conhost-pid=3200 launched=19:24:35.741658 after-launch-ms=19.4 visible=false
+19:24:35.761226 run send U target 51381772
+19:24:35.761288 run send U probe
+19:24:35.761305 run send U efhbcd
+  U 19:24:35.761322 done target U
+run 19:24:35.770009 console-foreground after-found-ms=8.9
+  L 19:24:35.791432 L focus-event rid=[42, 51381772, 4, -1] hwnd=51381772 pid=Some(3200)
+  L 19:24:35.792894 L focus-event rid=[42, 51381772] hwnd=51381772 pid=Some(3200)
+  L 19:24:35.796616 L focus-event rid=[42, 51381772, 4, -1] hwnd=51381772 pid=Some(3200)
+  U 19:24:35.798753 done probe U start=19:24:35.761336 ms=37.4 result=true
+run 19:24:35.799815 console-visible after-found-ms=38.7
+  U 19:24:35.802233 done efhbcd U start=19:24:35.798771 ms=3.5 ok name="e38-passive-uonly-21-5668" pid=3200 desc="[pid:1648,providerId:0x310060C Main:Nested [pid:3200,providerId:0x310060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 19:24:37.390513 console closed wait=0
+=== run 22 delay=0.0
+19:24:41.639669 run spawn L listen L e38- passive
+  L 19:24:41.678320 listening L mode=passive ms=30.5
+19:24:41.682656 run spawn U client 0 U
+19:24:41.682681 run send U init
+  U 19:24:41.690146 client-ready U
+  U 19:24:41.694453 done init U start=19:24:41.690187 ms=4.3 ok
+run 19:24:41.724744 fgright sent=1 allowed=true
+run 19:24:41.749582 hwnd 51578380 found console conhost-pid=17516 launched=19:24:41.730691 after-launch-ms=18.9 visible=false
+19:24:41.749713 run send U target 51578380
+19:24:41.749742 run send U probe
+19:24:41.749757 run send U efhbcd
+  U 19:24:41.749758 done target U
+run 19:24:41.759058 console-foreground after-found-ms=9.5
+run 19:24:41.788390 console-visible after-found-ms=38.8
+  L 19:24:41.791436 L focus-event rid=[42, 51578380, 4, -1] hwnd=51578380 pid=Some(17516)
+  U 19:24:41.792070 done probe U start=19:24:41.749771 ms=42.3 result=true
+  L 19:24:41.792846 L focus-event rid=[42, 51578380] hwnd=51578380 pid=Some(17516)
+  U 19:24:41.794309 done efhbcd U start=19:24:41.792092 ms=2.2 ok name="e38-passive-uonly-22-5668" pid=17516 desc="[pid:5312,providerId:0x313060C Main:Nested [pid:17516,providerId:0x313060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:24:41.796472 L focus-event rid=[42, 51578380, 4, -1] hwnd=51578380 pid=Some(17516)
+run 19:24:43.386883 console closed wait=0
+=== run 23 delay=0.0
+19:24:47.630232 run spawn L listen L e38- passive
+  L 19:24:47.679326 listening L mode=passive ms=35.3
+19:24:47.683518 run spawn U client 0 U
+19:24:47.683559 run send U init
+  U 19:24:47.690799 client-ready U
+  U 19:24:47.694939 done init U start=19:24:47.690835 ms=4.1 ok
+run 19:24:47.725246 fgright sent=1 allowed=true
+run 19:24:47.752541 hwnd 51774988 found console conhost-pid=8444 launched=19:24:47.731932 after-launch-ms=20.6 visible=false
+19:24:47.752742 run send U target 51774988
+19:24:47.752786 run send U probe
+19:24:47.752810 run send U efhbcd
+  U 19:24:47.752791 done target U
+run 19:24:47.763073 console-foreground after-found-ms=10.6
+run 19:24:47.774230 console-visible after-found-ms=21.7
+  L 19:24:47.789644 L focus-event rid=[42, 51774988, 4, -1] hwnd=51774988 pid=Some(8444)
+  L 19:24:47.792388 L focus-event rid=[42, 51774988] hwnd=51774988 pid=Some(8444)
+  U 19:24:47.794751 done probe U start=19:24:47.752804 ms=41.9 result=true
+  L 19:24:47.796315 L focus-event rid=[42, 51774988, 4, -1] hwnd=51774988 pid=Some(8444)
+  U 19:24:47.796916 done efhbcd U start=19:24:47.794775 ms=2.1 ok name="e38-passive-uonly-23-5668" pid=8444 desc="[pid:7096,providerId:0x316060C Main:Nested [pid:8444,providerId:0x316060C Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 19:24:49.375606 console closed wait=0
+=== run 24 delay=0.0
+19:24:53.587116 run spawn L listen L e38- passive
+  L 19:24:53.628405 listening L mode=passive ms=31.0
+19:24:53.632530 run spawn U client 0 U
+19:24:53.632559 run send U init
+  U 19:24:53.639524 client-ready U
+  U 19:24:53.643546 done init U start=19:24:53.639555 ms=4.0 ok
+run 19:24:53.673951 fgright sent=1 allowed=true
+run 19:24:53.701267 hwnd 48694508 found console conhost-pid=4544 launched=19:24:53.679752 after-launch-ms=21.5 visible=false
+19:24:53.701425 run send U target 48694508
+19:24:53.701506 run send U probe
+19:24:53.701553 run send U efhbcd
+  U 19:24:53.701511 done target U
+run 19:24:53.710007 console-foreground after-found-ms=8.7
+run 19:24:53.723011 console-visible after-found-ms=21.7
+  L 19:24:53.731581 L focus-event rid=[42, 48694508, 4, -1] hwnd=48694508 pid=Some(4544)
+  L 19:24:53.735352 L focus-event rid=[42, 48694508] hwnd=48694508 pid=Some(4544)
+  L 19:24:53.735427 L focus-event rid=[42, 48694508, 4, -1] hwnd=48694508 pid=Some(4544)
+  U 19:24:53.739033 done probe U start=19:24:53.701550 ms=37.5 result=true
+  U 19:24:53.740496 done efhbcd U start=19:24:53.739058 ms=1.4 ok name="e38-passive-uonly-24-5668" pid=4544 desc="[pid:14628,providerId:0x2E704EC Main:Nested [pid:4544,providerId:0x2E704EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 19:24:55.308915 console closed wait=0
+=== run 25 delay=0.0
+19:24:59.639393 run spawn L listen L e38- passive
+  L 19:24:59.680521 listening L mode=passive ms=32.9
+19:24:59.684835 run spawn U client 0 U
+19:24:59.684865 run send U init
+  U 19:24:59.691815 client-ready U
+  U 19:24:59.695894 done init U start=19:24:59.691853 ms=4.0 ok
+run 19:24:59.726458 fgright sent=1 allowed=true
+run 19:24:59.756863 hwnd 48891116 found console conhost-pid=3004 launched=19:24:59.733407 after-launch-ms=23.5 visible=false
+19:24:59.756998 run send U target 48891116
+19:24:59.757064 run send U probe
+19:24:59.757076 run send U efhbcd
+  U 19:24:59.757077 done target U
+run 19:24:59.767847 console-foreground after-found-ms=11.0
+run 19:24:59.776958 console-visible after-found-ms=20.1
+  L 19:24:59.790529 L focus-event rid=[42, 48891116, 4, -1] hwnd=48891116 pid=Some(3004)
+  L 19:24:59.791637 L focus-event rid=[42, 48891116] hwnd=48891116 pid=Some(3004)
+  U 19:24:59.795911 done probe U start=19:24:59.757097 ms=38.8 result=true
+  U 19:24:59.797418 done efhbcd U start=19:24:59.795932 ms=1.5 ok name="e38-passive-uonly-25-5668" pid=3004 desc="[pid:17804,providerId:0x2EA04EC Main:Nested [pid:3004,providerId:0x2EA04EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:24:59.798342 L focus-event rid=[42, 48891116, 4, -1] hwnd=48891116 pid=Some(3004)
+run 19:25:01.367461 console closed wait=0
+=== run 26 delay=0.0
+19:25:05.652510 run spawn L listen L e38- passive
+  L 19:25:05.693508 listening L mode=passive ms=32.2
+19:25:05.698024 run spawn U client 0 U
+19:25:05.698081 run send U init
+  U 19:25:05.705586 client-ready U
+  U 19:25:05.709870 done init U start=19:25:05.705619 ms=4.2 ok
+run 19:25:05.740155 fgright sent=1 allowed=true
+run 19:25:05.785628 hwnd 49087724 found console conhost-pid=10152 launched=19:25:05.746323 after-launch-ms=39.3 visible=false
+19:25:05.785794 run send U target 49087724
+19:25:05.785824 run send U probe
+19:25:05.785837 run send U efhbcd
+  U 19:25:05.785836 done target U
+run 19:25:05.796920 console-foreground after-found-ms=11.3
+run 19:25:05.807278 console-visible after-found-ms=21.7
+  U 19:25:05.816761 done probe U start=19:25:05.785852 ms=30.9 result=true
+  L 19:25:05.818210 L focus-event rid=[42, 49087724, 4, -1] hwnd=49087724 pid=Some(10152)
+  U 19:25:05.822644 done efhbcd U start=19:25:05.816792 ms=5.8 ok name="e38-passive-uonly-26-5668" pid=10152 desc="[pid:12888,providerId:0x2ED04EC Main:Nested [pid:10152,providerId:0x2ED04EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:25:05.824521 L focus-event rid=[42, 49087724] hwnd=49087724 pid=Some(10152)
+  L 19:25:05.829530 L focus-event rid=[42, 49087724, 4, -1] hwnd=49087724 pid=Some(10152)
+run 19:25:07.406954 console closed wait=0
+=== run 27 delay=0.0
+19:25:11.621250 run spawn L listen L e38- passive
+  L 19:25:11.661732 listening L mode=passive ms=32.6
+19:25:11.667337 run spawn U client 0 U
+19:25:11.667422 run send U init
+  U 19:25:11.674982 client-ready U
+  U 19:25:11.679331 done init U start=19:25:11.675024 ms=4.3 ok
+run 19:25:11.709896 fgright sent=1 allowed=true
+run 19:25:11.737189 hwnd 49284332 found console conhost-pid=16880 launched=19:25:11.716702 after-launch-ms=20.5 visible=false
+19:25:11.737332 run send U target 49284332
+19:25:11.737428 run send U probe
+19:25:11.737458 run send U efhbcd
+  U 19:25:11.737447 done target U
+run 19:25:11.746804 console-foreground after-found-ms=9.6
+run 19:25:11.759266 console-visible after-found-ms=22.1
+  U 19:25:11.768295 done probe U start=19:25:11.737464 ms=30.8 result=true
+  L 19:25:11.770092 L focus-event rid=[42, 49284332, 4, -1] hwnd=49284332 pid=Some(16880)
+  L 19:25:11.773219 L focus-event rid=[42, 49284332] hwnd=49284332 pid=Some(16880)
+  U 19:25:11.774371 done efhbcd U start=19:25:11.768319 ms=6.0 ok name="e38-passive-uonly-27-5668" pid=16880 desc="[pid:18332,providerId:0x2F004EC Main:Nested [pid:16880,providerId:0x2F004EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:25:11.776258 L focus-event rid=[42, 49284332, 4, -1] hwnd=49284332 pid=Some(16880)
+run 19:25:13.371685 console closed wait=0
+=== run 28 delay=0.0
+19:25:17.634508 run spawn L listen L e38- passive
+  L 19:25:17.678261 listening L mode=passive ms=34.9
+19:25:17.682704 run spawn U client 0 U
+19:25:17.682732 run send U init
+  U 19:25:17.689853 client-ready U
+  U 19:25:17.694450 done init U start=19:25:17.689903 ms=4.5 ok
+run 19:25:17.725137 fgright sent=1 allowed=true
+run 19:25:17.750606 hwnd 49480940 found console conhost-pid=14200 launched=19:25:17.731150 after-launch-ms=19.5 visible=false
+19:25:17.750743 run send U target 49480940
+19:25:17.750812 run send U probe
+19:25:17.750826 run send U efhbcd
+  U 19:25:17.750866 done target U
+run 19:25:17.766170 console-foreground after-found-ms=15.6
+run 19:25:17.771873 console-visible after-found-ms=21.3
+  L 19:25:17.779154 L focus-event rid=[42, 49480940, 4, -1] hwnd=49480940 pid=Some(14200)
+  L 19:25:17.781107 L focus-event rid=[42, 49480940] hwnd=49480940 pid=Some(14200)
+  L 19:25:17.792822 L focus-event rid=[42, 49480940, 4, -1] hwnd=49480940 pid=Some(14200)
+  U 19:25:20.788377 done probe U start=19:25:17.750877 ms=3037.5 result=false
+  U 19:25:20.790166 done efhbcd U start=19:25:20.788448 ms=1.7 ok name="e38-passive-uonly-28-5668" pid=14200 desc="[pid:6248,providerId:0x2F304EC Main:Nested [pid:14200,providerId:0x2F304EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 19:25:22.356413 console closed wait=0
+=== run 29 delay=0.0
+19:25:26.618588 run spawn L listen L e38- passive
+  L 19:25:26.662349 listening L mode=passive ms=31.3
+19:25:26.666855 run spawn U client 0 U
+19:25:26.666896 run send U init
+  U 19:25:26.674090 client-ready U
+  U 19:25:26.678327 done init U start=19:25:26.674127 ms=4.2 ok
+run 19:25:26.708734 fgright sent=1 allowed=true
+run 19:25:26.734595 hwnd 49677548 found console conhost-pid=15328 launched=19:25:26.714854 after-launch-ms=19.7 visible=false
+19:25:26.734726 run send U target 49677548
+19:25:26.734768 run send U probe
+19:25:26.734790 run send U efhbcd
+  U 19:25:26.734771 done target U
+run 19:25:26.743957 console-foreground after-found-ms=9.4
+run 19:25:26.754764 console-visible after-found-ms=20.2
+  L 19:25:26.771524 L focus-event rid=[42, 49677548, 4, -1] hwnd=49677548 pid=Some(15328)
+  L 19:25:26.772510 L focus-event rid=[42, 49677548] hwnd=49677548 pid=Some(15328)
+  U 19:25:26.776906 done probe U start=19:25:26.734787 ms=42.1 result=true
+  U 19:25:26.778684 done efhbcd U start=19:25:26.776936 ms=1.7 ok name="e38-passive-uonly-29-5668" pid=15328 desc="[pid:5400,providerId:0x2F604EC Main:Nested [pid:15328,providerId:0x2F604EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:25:26.779362 L focus-event rid=[42, 49677548, 4, -1] hwnd=49677548 pid=Some(15328)
+run 19:25:28.367934 console closed wait=0
+=== run 30 delay=0.0
+19:25:32.648635 run spawn L listen L e38- passive
+  L 19:25:32.687243 listening L mode=passive ms=31.4
+19:25:32.691442 run spawn U client 0 U
+19:25:32.691469 run send U init
+  U 19:25:32.697897 client-ready U
+  U 19:25:32.701969 done init U start=19:25:32.697939 ms=4.0 ok
+run 19:25:32.732180 fgright sent=1 allowed=true
+run 19:25:32.759243 hwnd 49874156 found console conhost-pid=4868 launched=19:25:32.738177 after-launch-ms=21.1 visible=false
+19:25:32.759400 run send U target 49874156
+19:25:32.759430 run send U probe
+19:25:32.759444 run send U efhbcd
+  U 19:25:32.759489 done target U
+run 19:25:32.769062 console-foreground after-found-ms=9.8
+run 19:25:32.781628 console-visible after-found-ms=22.4
+  L 19:25:32.794697 L focus-event rid=[42, 49874156, 4, -1] hwnd=49874156 pid=Some(4868)
+  L 19:25:32.796207 L focus-event rid=[42, 49874156] hwnd=49874156 pid=Some(4868)
+  L 19:25:32.796274 L focus-event rid=[42, 49874156, 4, -1] hwnd=49874156 pid=Some(4868)
+  U 19:25:32.798328 done probe U start=19:25:32.759504 ms=38.8 result=true
+  U 19:25:32.799583 done efhbcd U start=19:25:32.798358 ms=1.2 ok name="e38-passive-uonly-30-5668" pid=4868 desc="[pid:4040,providerId:0x2F904EC Main:Nested [pid:4868,providerId:0x2F904EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 19:25:34.367435 console closed wait=0
+=== run 31 delay=0.0
+19:25:38.568808 run spawn L listen L e38- passive
+  L 19:25:38.607519 listening L mode=passive ms=32.0
+19:25:38.611789 run spawn U client 0 U
+19:25:38.611817 run send U init
+  U 19:25:38.618210 client-ready U
+  U 19:25:38.622360 done init U start=19:25:38.618242 ms=4.1 ok
+run 19:25:38.653058 fgright sent=1 allowed=true
+run 19:25:38.681141 hwnd 50070764 found console conhost-pid=15848 launched=19:25:38.660256 after-launch-ms=20.9 visible=false
+19:25:38.681302 run send U target 50070764
+19:25:38.681345 run send U probe
+19:25:38.681358 run send U efhbcd
+  U 19:25:38.681355 done target U
+run 19:25:38.691319 console-foreground after-found-ms=10.2
+run 19:25:38.701673 console-visible after-found-ms=20.5
+  L 19:25:38.717180 L focus-event rid=[42, 50070764, 4, -1] hwnd=50070764 pid=Some(15848)
+  L 19:25:38.718940 L focus-event rid=[42, 50070764] hwnd=50070764 pid=Some(15848)
+  U 19:25:38.720239 done probe U start=19:25:38.681368 ms=38.9 result=true
+  U 19:25:38.724240 done efhbcd U start=19:25:38.720254 ms=4.0 ok name="e38-passive-uonly-31-5668" pid=15848 desc="[pid:13656,providerId:0x2FC04EC Main:Nested [pid:15848,providerId:0x2FC04EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:25:38.725732 L focus-event rid=[42, 50070764, 4, -1] hwnd=50070764 pid=Some(15848)
+run 19:25:40.310298 console closed wait=0
+=== run 32 delay=0.0
+19:25:44.519460 run spawn L listen L e38- passive
+  L 19:25:44.558749 listening L mode=passive ms=32.3
+19:25:44.563081 run spawn U client 0 U
+19:25:44.563115 run send U init
+  U 19:25:44.569509 client-ready U
+  U 19:25:44.573550 done init U start=19:25:44.569539 ms=4.0 ok
+run 19:25:44.604173 fgright sent=1 allowed=true
+run 19:25:44.632046 hwnd 50267372 found console conhost-pid=18252 launched=19:25:44.610192 after-launch-ms=21.9 visible=false
+19:25:44.632201 run send U target 50267372
+19:25:44.632280 run send U probe
+19:25:44.632322 run send U efhbcd
+  U 19:25:44.632284 done target U
+run 19:25:44.642844 console-foreground after-found-ms=10.8
+run 19:25:44.651616 console-visible after-found-ms=19.6
+  L 19:25:44.660263 L focus-event rid=[42, 50267372, 4, -1] hwnd=50267372 pid=Some(18252)
+  L 19:25:44.661678 L focus-event rid=[42, 50267372] hwnd=50267372 pid=Some(18252)
+  U 19:25:44.666921 done probe U start=19:25:44.632321 ms=34.6 result=true
+  L 19:25:44.668119 L focus-event rid=[42, 50267372, 4, -1] hwnd=50267372 pid=Some(18252)
+  U 19:25:44.668849 done efhbcd U start=19:25:44.666945 ms=1.9 ok name="e38-passive-uonly-32-5668" pid=18252 desc="[pid:13972,providerId:0x2FF04EC Main:Nested [pid:18252,providerId:0x2FF04EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 19:25:46.198328 console closed wait=0
+=== run 33 delay=0.0
+19:25:50.471714 run spawn L listen L e38- passive
+  L 19:25:50.508896 listening L mode=passive ms=31.0
+19:25:50.513459 run spawn U client 0 U
+19:25:50.513491 run send U init
+  U 19:25:50.519967 client-ready U
+  U 19:25:50.524182 done init U start=19:25:50.519999 ms=4.2 ok
+run 19:25:50.554695 fgright sent=1 allowed=true
+run 19:25:50.583987 hwnd 50463980 found console conhost-pid=17060 launched=19:25:50.563404 after-launch-ms=20.6 visible=false
+19:25:50.584125 run send U target 50463980
+19:25:50.584226 run send U probe
+19:25:50.584246 run send U efhbcd
+  U 19:25:50.584204 done target U
+run 19:25:50.594198 console-foreground after-found-ms=10.2
+run 19:25:50.604482 console-visible after-found-ms=20.5
+  L 19:25:50.618988 L focus-event rid=[42, 50463980, 4, -1] hwnd=50463980 pid=Some(17060)
+  L 19:25:50.619751 L focus-event rid=[42, 50463980] hwnd=50463980 pid=Some(17060)
+  U 19:25:50.625593 done probe U start=19:25:50.584251 ms=41.3 result=true
+  L 19:25:50.627956 L focus-event rid=[42, 50463980, 4, -1] hwnd=50463980 pid=Some(17060)
+  U 19:25:50.628229 done efhbcd U start=19:25:50.625627 ms=2.6 ok name="e38-passive-uonly-33-5668" pid=17060 desc="[pid:2956,providerId:0x30204EC Main:Nested [pid:17060,providerId:0x30204EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 19:25:52.184570 console closed wait=0
+=== run 34 delay=0.0
+19:25:56.452016 run spawn L listen L e38- passive
+  L 19:25:56.490306 listening L mode=passive ms=31.7
+19:25:56.494818 run spawn U client 0 U
+19:25:56.494843 run send U init
+  U 19:25:56.501283 client-ready U
+  U 19:25:56.505450 done init U start=19:25:56.501312 ms=4.1 ok
+run 19:25:56.535789 fgright sent=1 allowed=true
+run 19:25:56.563887 hwnd 50660588 found console conhost-pid=2700 launched=19:25:56.541956 after-launch-ms=21.9 visible=false
+19:25:56.564024 run send U target 50660588
+19:25:56.564077 run send U probe
+19:25:56.564094 run send U efhbcd
+  U 19:25:56.564079 done target U
+run 19:25:56.573832 console-foreground after-found-ms=9.9
+run 19:25:56.584964 console-visible after-found-ms=21.1
+  L 19:25:56.595015 L focus-event rid=[42, 50660588, 4, -1] hwnd=50660588 pid=Some(2700)
+  L 19:25:56.598502 L focus-event rid=[42, 50660588] hwnd=50660588 pid=Some(2700)
+  U 19:25:56.599712 done probe U start=19:25:56.564091 ms=35.6 result=true
+  U 19:25:56.602164 done efhbcd U start=19:25:56.599732 ms=2.4 ok name="e38-passive-uonly-34-5668" pid=2700 desc="[pid:13756,providerId:0x30504EC Main:Nested [pid:2700,providerId:0x30504EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:25:56.605784 L focus-event rid=[42, 50660588, 4, -1] hwnd=50660588 pid=Some(2700)
+run 19:25:58.178012 console closed wait=0
+=== run 35 delay=0.0
+19:26:02.411015 run spawn L listen L e38- passive
+  L 19:26:02.448188 listening L mode=passive ms=30.2
+19:26:02.452578 run spawn U client 0 U
+19:26:02.452606 run send U init
+  U 19:26:02.458873 client-ready U
+  U 19:26:02.463019 done init U start=19:26:02.458907 ms=4.1 ok
+run 19:26:02.493813 fgright sent=1 allowed=true
+run 19:26:02.518274 hwnd 50857196 found console conhost-pid=16832 launched=19:26:02.499929 after-launch-ms=18.3 visible=false
+19:26:02.518403 run send U target 50857196
+19:26:02.518477 run send U probe
+19:26:02.518498 run send U efhbcd
+  U 19:26:02.518478 done target U
+run 19:26:02.527992 console-foreground after-found-ms=9.7
+run 19:26:02.538306 console-visible after-found-ms=20.0
+  L 19:26:02.548476 L focus-event rid=[42, 50857196, 4, -1] hwnd=50857196 pid=Some(16832)
+  L 19:26:02.551054 L focus-event rid=[42, 50857196] hwnd=50857196 pid=Some(16832)
+  U 19:26:02.555222 done probe U start=19:26:02.518492 ms=36.7 result=true
+  U 19:26:02.556901 done efhbcd U start=19:26:02.555248 ms=1.6 ok name="e38-passive-uonly-35-5668" pid=16832 desc="[pid:16236,providerId:0x30804EC Main:Nested [pid:16832,providerId:0x30804EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:26:02.560946 L focus-event rid=[42, 50857196, 4, -1] hwnd=50857196 pid=Some(16832)
+run 19:26:04.144077 console closed wait=0
+=== run 36 delay=0.0
+19:26:08.389693 run spawn L listen L e38- passive
+  L 19:26:08.432347 listening L mode=passive ms=33.3
+19:26:08.436625 run spawn U client 0 U
+19:26:08.436655 run send U init
+  U 19:26:08.443135 client-ready U
+  U 19:26:08.447477 done init U start=19:26:08.443189 ms=4.3 ok
+run 19:26:08.477933 fgright sent=1 allowed=true
+run 19:26:08.506049 hwnd 51053804 found console conhost-pid=5576 launched=19:26:08.484669 after-launch-ms=21.4 visible=false
+19:26:08.506209 run send U target 51053804
+19:26:08.506241 run send U probe
+19:26:08.506253 run send U efhbcd
+  U 19:26:08.506254 done target U
+run 19:26:08.515601 console-foreground after-found-ms=9.6
+run 19:26:08.526481 console-visible after-found-ms=20.4
+  L 19:26:08.534924 L focus-event rid=[42, 51053804, 4, -1] hwnd=51053804 pid=Some(5576)
+  U 19:26:08.535909 done probe U start=19:26:08.506270 ms=29.6 result=true
+  L 19:26:08.538253 L focus-event rid=[42, 51053804] hwnd=51053804 pid=Some(5576)
+  U 19:26:08.542687 done efhbcd U start=19:26:08.535931 ms=6.8 ok name="e38-passive-uonly-36-5668" pid=5576 desc="[pid:18056,providerId:0x30B04EC Main:Nested [pid:5576,providerId:0x30B04EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:26:08.546507 L focus-event rid=[42, 51053804, 4, -1] hwnd=51053804 pid=Some(5576)
+run 19:26:10.124802 console closed wait=0
+=== run 37 delay=0.0
+19:26:14.379915 run spawn L listen L e38- passive
+  L 19:26:14.420824 listening L mode=passive ms=30.8
+19:26:14.425292 run spawn U client 0 U
+19:26:14.425320 run send U init
+  U 19:26:14.432651 client-ready U
+  U 19:26:14.437209 done init U start=19:26:14.432681 ms=4.5 ok
+run 19:26:14.467399 fgright sent=1 allowed=true
+run 19:26:14.513125 hwnd 51250412 found console conhost-pid=11876 launched=19:26:14.473387 after-launch-ms=39.7 visible=false
+19:26:14.513285 run send U target 51250412
+19:26:14.513354 run send U probe
+19:26:14.513370 run send U efhbcd
+  U 19:26:14.513413 done target U
+run 19:26:14.521629 console-foreground after-found-ms=8.5
+run 19:26:14.535331 console-visible after-found-ms=22.2
+  L 19:26:14.543476 L focus-event rid=[42, 51250412, 4, -1] hwnd=51250412 pid=Some(11876)
+  U 19:26:14.544709 done probe U start=19:26:14.513424 ms=31.3 result=true
+  L 19:26:14.552719 L focus-event rid=[42, 51250412] hwnd=51250412 pid=Some(11876)
+  U 19:26:14.553182 done efhbcd U start=19:26:14.544732 ms=8.4 ok name="e38-passive-uonly-37-5668" pid=11876 desc="[pid:15636,providerId:0x30E04EC Main:Nested [pid:11876,providerId:0x30E04EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:26:14.556272 L focus-event rid=[42, 51250412, 4, -1] hwnd=51250412 pid=Some(11876)
+run 19:26:16.145412 console closed wait=0
+=== run 38 delay=0.0
+19:26:20.458091 run spawn L listen L e38- passive
+  L 19:26:20.498884 listening L mode=passive ms=33.7
+19:26:20.503313 run spawn U client 0 U
+19:26:20.503343 run send U init
+  U 19:26:20.510094 client-ready U
+  U 19:26:20.514319 done init U start=19:26:20.510130 ms=4.2 ok
+run 19:26:20.544998 fgright sent=1 allowed=true
+run 19:26:20.571771 hwnd 51447020 found console conhost-pid=3776 launched=19:26:20.551547 after-launch-ms=20.2 visible=false
+19:26:20.572030 run send U target 51447020
+19:26:20.572097 run send U probe
+19:26:20.572115 run send U efhbcd
+  U 19:26:20.572110 done target U
+run 19:26:20.579938 console-foreground after-found-ms=8.2
+run 19:26:20.597614 console-visible after-found-ms=25.8
+  L 19:26:20.599856 L focus-event rid=[42, 51447020, 4, -1] hwnd=51447020 pid=Some(3776)
+  L 19:26:20.601968 L focus-event rid=[42, 51447020] hwnd=51447020 pid=Some(3776)
+  L 19:26:20.610048 L focus-event rid=[42, 51447020, 4, -1] hwnd=51447020 pid=Some(3776)
+  U 19:26:20.610354 done probe U start=19:26:20.572128 ms=38.2 result=true
+  U 19:26:20.611698 done efhbcd U start=19:26:20.610369 ms=1.3 ok name="e38-passive-uonly-38-5668" pid=3776 desc="[pid:11300,providerId:0x31104EC Main:Nested [pid:3776,providerId:0x31104EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 19:26:22.213575 console closed wait=0
+=== run 39 delay=0.0
+19:26:26.407557 run spawn L listen L e38- passive
+  L 19:26:26.445128 listening L mode=passive ms=30.9
+19:26:26.449632 run spawn U client 0 U
+19:26:26.449668 run send U init
+  U 19:26:26.456252 client-ready U
+  U 19:26:26.460775 done init U start=19:26:26.456284 ms=4.5 ok
+run 19:26:26.491065 fgright sent=1 allowed=true
+run 19:26:26.516554 hwnd 51643628 found console conhost-pid=6052 launched=19:26:26.497408 after-launch-ms=19.1 visible=false
+19:26:26.516687 run send U target 51643628
+19:26:26.516757 run send U probe
+19:26:26.516775 run send U efhbcd
+  U 19:26:26.516762 done target U
+run 19:26:26.527163 console-foreground after-found-ms=10.6
+run 19:26:26.535903 console-visible after-found-ms=19.4
+  L 19:26:26.549698 L focus-event rid=[42, 51643628, 4, -1] hwnd=51643628 pid=Some(6052)
+  L 19:26:26.550647 L focus-event rid=[42, 51643628] hwnd=51643628 pid=Some(6052)
+  U 19:26:26.552487 done probe U start=19:26:26.516779 ms=35.7 result=true
+  U 19:26:26.554306 done efhbcd U start=19:26:26.552509 ms=1.8 ok name="e38-passive-uonly-39-5668" pid=6052 desc="[pid:8440,providerId:0x31404EC Main:Nested [pid:6052,providerId:0x31404EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+  L 19:26:26.555209 L focus-event rid=[42, 51643628, 4, -1] hwnd=51643628 pid=Some(6052)
+run 19:26:28.128649 console closed wait=0
+=== run 40 delay=0.0
+19:26:32.336127 run spawn L listen L e38- passive
+  L 19:26:32.376896 listening L mode=passive ms=33.9
+19:26:32.381332 run spawn U client 0 U
+19:26:32.381380 run send U init
+  U 19:26:32.389077 client-ready U
+  U 19:26:32.393372 done init U start=19:26:32.389115 ms=4.2 ok
+run 19:26:32.423824 fgright sent=1 allowed=true
+run 19:26:32.450772 hwnd 51840236 found console conhost-pid=7536 launched=19:26:32.431252 after-launch-ms=19.5 visible=false
+19:26:32.450900 run send U target 51840236
+19:26:32.450942 run send U probe
+19:26:32.450955 run send U efhbcd
+  U 19:26:32.450946 done target U
+run 19:26:32.459712 console-foreground after-found-ms=8.9
+run 19:26:32.470743 console-visible after-found-ms=20.0
+  U 19:26:32.478052 done probe U start=19:26:32.450958 ms=27.1 result=true
+  L 19:26:32.479814 L focus-event rid=[42, 51840236, 4, -1] hwnd=51840236 pid=Some(7536)
+  L 19:26:32.482658 L focus-event rid=[42, 51840236] hwnd=51840236 pid=Some(7536)
+  L 19:26:32.486669 L focus-event rid=[42, 51840236, 4, -1] hwnd=51840236 pid=Some(7536)
+  U 19:26:32.487456 done efhbcd U start=19:26:32.478079 ms=9.4 ok name="e38-passive-uonly-40-5668" pid=7536 desc="[pid:6460,providerId:0x31704EC Main:Nested [pid:7536,providerId:0x31704EC Main(parent link):Microsoft Console Host Window (unmanaged:conhost.exe)]; Nonclient:Microsoft: Non-Client Proxy (unmanaged:uiautomationcore.dll); Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:uiautomationcore.dll)]"
+run 19:26:34.018413 console closed wait=0

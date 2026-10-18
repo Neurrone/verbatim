@@ -1,0 +1,12 @@
+[1792299635268950] holdTV: ondesk-child-pid 6660
+[1792299635292710] holdTV: ready
+[1792299635327220] tool find holdTV -> 42861530 ondesk-child-pid 15536
+[1792299635341903] holdB: ondesk-child-pid 8024
+[1792299635361369] holdB: ready
+[1792299635394535] tool find holdB -> 85066742 ondesk-child-pid 5480
+[1792299635426704] tool findchild 42861530 WindowsForms10.SysTreeView32.app.0.141b42a_r9_ad1 -> 55706450 ondesk-child-pid 10664
+[1792299635440538] D: ondesk-child-pid 16120
+[1792299635461084] D: 
+[1792299635461137] D: thread 'main' (12796) panicked at crates\focusproto\src\main.rs:230:45:
+[1792299635461217] D: called `Result::unwrap()` on an `Err` value: Error { code: HRESULT(0x80004002), message: "No such interface supported" }
+[1792299635461237] D: note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

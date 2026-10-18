@@ -1,0 +1,15 @@
+notepad_typed_words-1 | probe RichEditD2DPT true 8.0 ms, starts +39.3 ms after the outpost was given | listener rop 24.4 ms, from +20.7 to +45.0 ms relative to the probe start
+notepad_typed_words-2
+notepad_typed_words-3 | probe RichEditD2DPT true 10.0 ms, starts +33.7 ms after the outpost was given | listener rop 27.4 ms, from +18.0 to +45.4 ms relative to the probe start
+notepad_typed_words-4
+notepad_typed_words-5 | probe RichEditD2DPT true 1.0 ms, starts +11.4 ms after the outpost was given | listener rop 10.4 ms, from -14.7 to -4.3 ms relative to the probe start
+notepad_typed_words-6 | probe RichEditD2DPT false 3026.0 ms, starts +6.2 ms after the outpost was given | listener rop 13.2 ms, from +11.6 to +24.7 ms relative to the probe start
+notepad_typed_words-7 | probe RichEditD2DPT true 8.0 ms, starts +45.1 ms after the outpost was given | listener rop 22.4 ms, from +20.8 to +43.2 ms relative to the probe start
+notepad_typed_words-8 | probe RichEditD2DPT true 8.0 ms, starts +1154.7 ms after the outpost was given | listener rop 20.9 ms, from +16.9 to +37.9 ms relative to the probe start
+notepad_typed_words-9 | probe RichEditD2DPT true 7.0 ms, starts +40.1 ms after the outpost was given | listener rop 27.1 ms, from +12.4 to +39.5 ms relative to the probe start
+notepad_typed_words-10 | probe RichEditD2DPT true 8.0 ms, starts +49.0 ms after the outpost was given | listener rop 18.5 ms, from +13.8 to +32.3 ms relative to the probe start
+notepad_typed_words-11 | probe RichEditD2DPT true 7.0 ms, starts +25.5 ms after the outpost was given | listener rop 13.0 ms, from +8.7 to +21.8 ms relative to the probe start
+notepad_typed_words-12 | probe RichEditD2DPT true 5.0 ms, starts +18.0 ms after the outpost was given | listener rop 10.8 ms, from -24.3 to -13.4 ms relative to the probe start
+notepad_typed_words-13 | probe RichEditD2DPT true 10.0 ms, starts +18.0 ms after the outpost was given | listener rop 24.8 ms, from +18.8 to +43.5 ms relative to the probe start
+notepad_typed_words-14 | probe RichEditD2DPT true 4.0 ms, starts +29.8 ms after the outpost was given | listener rop 26.8 ms, from +16.1 to +42.9 ms relative to the probe start
+notepad_typed_words-15 | probe RichEditD2DPT true 8.0 ms, starts +35.4 ms after the outpost was given | listener rop 20.2 ms, from +22.6 to +42.7 ms relative to the probe start
