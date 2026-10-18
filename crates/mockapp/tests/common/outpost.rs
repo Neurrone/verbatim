@@ -15,11 +15,12 @@
 //! the element mockapp reports focused, and the outpost's read of it
 //! counts as the one call the system read is.
 //!
-//! Its arbitration reads the time from the test too
-//! ([`Outpost::set_arbitration_clock`]): the time stands still unless the
-//! test moves it on ([`OutpostUnderTest::pass_time`]), so a window's verdict
-//! of no UIA provider runs out, and its probe is made again, only where the
-//! test says, however long the test takes.
+//! The outpost and the listener's reader read the time from the test too
+//! ([`Outpost::set_clock`], [`FocusReader::set_clock`]): the time stands
+//! still unless the test moves it on ([`OutpostUnderTest::pass_time`]), so a
+//! window's verdict of no UIA provider runs out, and its probe is made
+//! again, and a classic walk's time budget is spent, only where the test
+//! says, however long the test and its calls take.
 //!
 //! No window takes the foreground on the desktop a test runs on, so the
 //! outpost and the listener's reader read the foreground window from the
@@ -285,7 +286,7 @@ pub struct OutpostUnderTest {
     /// Where the outpost's read of the foreground window waits while the
     /// test holds its worker.
     gate: Arc<WorkerGate>,
-    /// The time the outpost's arbitration reads.
+    /// The time the outpost and the listener's reader read.
     time: Arc<Mutex<Instant>>,
     /// The window the outpost reads as the foreground.
     foreground: Arc<AtomicIsize>,
@@ -389,9 +390,9 @@ impl OutpostUnderTest {
         };
         let time = Arc::new(Mutex::new(Instant::now()));
         let clock = Arc::clone(&time);
-        outpost.set_arbitration_clock(Arc::new(move || {
-            *clock.lock().unwrap_or_else(PoisonError::into_inner)
-        }));
+        let clock: verbatim_outpost::arbitration::Clock =
+            Arc::new(move || *clock.lock().unwrap_or_else(PoisonError::into_inner));
+        outpost.set_clock(Arc::clone(&clock));
         // No window takes the foreground where these tests run: mockapp's
         // is the foreground unless the test says otherwise
         // ([`OutpostUnderTest::set_foreground`]).
@@ -416,6 +417,8 @@ impl OutpostUnderTest {
         reader.set_foreground_reader(Arc::new(move || {
             listener_foreground.load(Ordering::Relaxed)
         }));
+        // And the same time.
+        reader.set_clock(clock);
         Self {
             outpost,
             messages,
@@ -443,7 +446,7 @@ impl OutpostUnderTest {
         self.focus_reads.load(Ordering::Relaxed)
     }
 
-    /// Moves the time the outpost's arbitration reads on by `by`.
+    /// Moves the time the outpost and the listener's reader read on by `by`.
     pub fn pass_time(&self, by: Duration) {
         *self.time.lock().unwrap_or_else(PoisonError::into_inner) += by;
     }

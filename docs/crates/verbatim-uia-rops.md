@@ -175,8 +175,8 @@ own element to it, and the outpost the focused element a focus-now query
 read), the runtime ids the caller already knows, a depth limit, the
 `verbatim_uia::Fill<Ancestor>` every returned element is filled by (the
 shape's properties for the gates its request was built with: every gate
-on for the listener, the theme's for the outpost), a deadline, which
-only the classic walk checks, between hops, and `lock_up_from`, which the
+on for the listener, the theme's for the outpost), an out-of-time check
+(`out_of_time`), which only the classic walk makes, between hops, and `lock_up_from`, which the
 classic walk asks, for each element with a window of its own, for the
 lock of another application a step up from it reaches into; the walk
 holds the first lock answered for that step and every later one
@@ -204,8 +204,8 @@ element it compares equal to still has the focus. The `Ancestry`:
   the walk stopped there.
 - `depth_limited`: whether the walk stopped at the depth limit with
   ancestors left.
-- `out_of_time`: whether the classic walk stopped at the deadline with
-  ancestors left; never set by the program.
+- `out_of_time`: whether the classic walk stopped when the query's time
+  was up, with ancestors left; never set by the program.
 - `selected_child`: for a list or tab control (by the element's cached
   control type), the first selected child, a `Cached<Ancestor>` too,
   which the outpost reports as its node.
@@ -685,8 +685,8 @@ walk goes down to it; a level with no such child answers that nothing was
 found. The program does the whole path in one round trip and fills the
 found element's cache inside the provider; the classic walk takes one
 call per child it looks at (`GetFirstChildElementBuildCache`, then
-`GetNextSiblingElementBuildCache`) and checks the query's deadline between
-calls. The outpost uses it, since stage A step 6 of phase 6, to find its
+`GetNextSiblingElementBuildCache`) and makes the query's out-of-time check
+(`out_of_time`) between calls. The outpost uses it, since stage A step 6 of phase 6, to find its
 own copy of an element the focus listener read
 (`docs/design/focus-pipeline.md`, section 12.5): the focus, from the
 nearest element of its chain with a window of its own, after the focus is

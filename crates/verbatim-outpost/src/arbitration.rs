@@ -52,9 +52,17 @@ pub use verbatim_ia2::class::normalize_class_name;
 /// is probed again: NVDA's `isUIAWindow` cache period.
 pub const NEGATIVE_VERDICT_LIFETIME: Duration = Duration::from_millis(500);
 
-/// What time it is, for the lifetime of a kept verdict: [`Instant::now`]
-/// unless a test sets its own ([`Arbitrator::set_clock`]).
+/// What time it is, for the lifetime of a kept verdict and the time budget
+/// of a classic walk: [`Instant::now`] unless a test sets its own
+/// ([`Arbitrator::set_clock`]).
 pub type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
+
+/// Whether `budget` has passed by `clock` since this call: the out-of-time
+/// check a classic walk makes between its calls.
+pub(crate) fn time_limit(clock: &Clock, budget: Duration) -> impl Fn() -> bool + '_ {
+    let deadline = clock() + budget;
+    move || clock() >= deadline
+}
 
 /// A kept probe result.
 #[derive(Clone, Copy, Debug)]
@@ -120,7 +128,8 @@ impl Arbitrator {
     }
 
     /// Reads the time from `clock` from now on, in place of the system's:
-    /// for a test that decides when a verdict of no provider runs out.
+    /// for a test that decides when a verdict of no provider runs out, and
+    /// when a classic walk's time budget is spent.
     pub fn set_clock(&mut self, clock: Clock) {
         self.clock = clock;
     }
@@ -131,6 +140,13 @@ impl Arbitrator {
     #[must_use]
     pub fn now(&self) -> Instant {
         (self.clock)()
+    }
+
+    /// The arbitrator's clock, which the outpost's classic walks measure
+    /// their time budgets by too.
+    #[must_use]
+    pub fn clock(&self) -> Clock {
+        Arc::clone(&self.clock)
     }
 
     /// Sets a `SetBackendOverride` command's forced backend: `Some(true)`
@@ -616,6 +632,26 @@ mod tests {
         assert_eq!(arb.verdict(42, &classes), Some(false));
         *time.lock().unwrap() = start + NEGATIVE_VERDICT_LIFETIME;
         assert_eq!(arb.verdict(42, &classes), None);
+    }
+
+    #[test]
+    fn a_walks_time_limit_runs_out_by_the_arbitrators_clock() {
+        let start = Instant::now();
+        let time = Arc::new(std::sync::Mutex::new(start));
+        let mut arb = Arbitrator::new(&[]);
+        let read = Arc::clone(&time);
+        arb.set_clock(Arc::new(move || {
+            *read
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        }));
+        let budget = Duration::from_secs(1);
+        let clock = arb.clock();
+        let out_of_time = time_limit(&clock, budget);
+        *time.lock().unwrap() = start + budget.saturating_sub(Duration::from_millis(1));
+        assert!(!out_of_time());
+        *time.lock().unwrap() = start + budget;
+        assert!(out_of_time());
     }
 
     #[test]

@@ -311,6 +311,12 @@ impl Context {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The outpost's clock ([`Outpost::set_clock`]), which its classic
+    /// walks measure their time budgets by.
+    fn clock(&self) -> crate::arbitration::Clock {
+        self.arbitrator().clock()
+    }
+
     /// The foreground window's handle, by the reader the outpost was given
     /// ([`Outpost::set_foreground_reader`]).
     fn foreground_window(&self) -> isize {
@@ -1106,11 +1112,13 @@ impl Outpost {
         self.context.failed_reads()
     }
 
-    /// Reads the time for arbitration's kept verdicts from `clock` from now
-    /// on, in place of the system's ([`Arbitrator::set_clock`]): a test
-    /// that counts an operation's calls decides when a window's verdict of
-    /// no UIA provider runs out and its probe is made again.
-    pub fn set_arbitration_clock(&self, clock: crate::arbitration::Clock) {
+    /// Reads the time for arbitration's kept verdicts and for the time
+    /// budgets of the outpost's classic walks from `clock` from now on, in
+    /// place of the system's ([`Arbitrator::set_clock`]): a test that counts
+    /// an operation's calls decides when a window's verdict of no UIA
+    /// provider runs out and its probe is made again, and when a walk's
+    /// time is up, however long its calls take.
+    pub fn set_clock(&self, clock: crate::arbitration::Clock) {
         self.context.arbitrator().set_clock(clock);
     }
 

@@ -3,8 +3,6 @@
 //! by the classic walk behind the same signature, and [`focus_ancestry`],
 //! the one function callers use, which picks between them.
 
-use std::time::Instant;
-
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, UIA_E_ELEMENTNOTAVAILABLE, UIA_E_TIMEOUT, UIA_HasKeyboardFocusPropertyId,
     UIA_LegacyIAccessibleStatePropertyId, UIA_ListControlTypeId, UIA_MenuItemControlTypeId,
@@ -49,10 +47,10 @@ pub struct FocusQuery<'a> {
     /// How every returned element's cache is filled: as an [`Ancestor`],
     /// with the gates its request was built with.
     pub fill: &'a Fill<Ancestor>,
-    /// When the classic walk stops between hops, reporting the ancestry as
-    /// cut short ([`Ancestry::out_of_time`]). The remote program is one
-    /// call and does not check it.
-    pub deadline: Option<Instant>,
+    /// Whether the classic walk's time is up, checked between hops: it then
+    /// stops, reporting the ancestry as cut short ([`Ancestry::out_of_time`]).
+    /// The remote program is one call and does not check it.
+    pub out_of_time: Option<&'a dyn Fn() -> bool>,
     /// Whether the element must have the keyboard focus, read live, for
     /// anything else to be read ([`FocusAncestry::NotFocused`]), as NVDA's
     /// `shouldAllowUIAFocusEvent` judges a focus event's sender. False
@@ -100,7 +98,7 @@ pub struct Ancestry {
     pub met_known: Option<usize>,
     /// Whether the walk stopped at the depth limit with ancestors left.
     pub depth_limited: bool,
-    /// Whether the classic walk stopped at the query's deadline with
+    /// Whether the classic walk stopped when the query's time was up, with
     /// ancestors left. Never set by the remote program.
     pub out_of_time: bool,
     /// For a list or tab control, the first selected child, filled by the
@@ -627,7 +625,7 @@ impl RemoteCache {
 /// fill's request, the steps up into another application holding its
 /// lock ([`FocusQuery::lock_up_from`]). Stops where the remote program
 /// stops: at a known ancestor, at the depth limit, or below the desktop
-/// root; and at the query's deadline. The nearest window comes from the
+/// root; and when the query's time is up. The nearest window comes from the
 /// walked ancestors' caches, or, when the walk stopped before reaching
 /// one, from one more call ([`verbatim_uia::nearest_window_handle`]).
 ///
@@ -680,11 +678,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         element,
         legacy_state: None,
     };
-    let out_of_time = || {
-        query
-            .deadline
-            .is_some_and(|deadline| Instant::now() >= deadline)
-    };
+    let out_of_time = || query.out_of_time.is_some_and(|out_of_time| out_of_time());
     let mut current = live.clone();
     let mut current_window = input.hwnd;
     let mut step_lock: Option<AppLock> = None;

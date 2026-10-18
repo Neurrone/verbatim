@@ -189,7 +189,7 @@ fn query<'a>(
         previous: None,
         depth_limit: 50,
         fill,
-        deadline: None,
+        out_of_time: None,
         require_focus: true,
         refresh: false,
         lock_up_from: None,

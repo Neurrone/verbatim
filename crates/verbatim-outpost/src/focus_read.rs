@@ -82,7 +82,7 @@ use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, Path, focus_ancestr
 
 use crate::ForegroundReader;
 pub(crate) use crate::app_locks::{AppLocks, Granted};
-use crate::arbitration::{Arbitrator, uses_uia, window_class_name};
+use crate::arbitration::{Arbitrator, Clock, time_limit, uses_uia, window_class_name};
 use crate::outpost::acceptance::{EventName, RequestedEvents, SystemWindows, accepts_event};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::outpost::window::{
@@ -375,6 +375,27 @@ impl FocusReader {
         self.foreground = reader;
     }
 
+    /// Reads the time for its windows' kept verdicts and for the time
+    /// budget of its classic walk from `clock` from now on, in place of the
+    /// system's, as an outpost does (`Outpost::set_clock`): a test that
+    /// counts a read's calls decides when the walk's time is up, however
+    /// long its calls take.
+    pub fn set_clock(&mut self, clock: Clock) {
+        self.arbitrator
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set_clock(clock);
+    }
+
+    /// The reader's clock ([`set_clock`](Self::set_clock)), which its
+    /// classic walk measures its time budget by.
+    fn clock(&self) -> Clock {
+        self.arbitrator
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clock()
+    }
+
     /// Judges and reads the UIA focus event, or menu opening (`kind`),
     /// whose sender is `sender`, as the registration delivers it, and which
     /// came as `arrival`. `focus_window` is the keyboard focus window of
@@ -430,6 +451,8 @@ impl FocusReader {
             let top = top_level_of(window);
             (top != window).then(|| self.lock_up_into(top)).flatten()
         };
+        let clock = self.clock();
+        let out_of_time = time_limit(&clock, READ_BUDGET);
         let read = self
             .uia
             .request::<Ancestor>(Ancestor::all_on())
@@ -442,7 +465,7 @@ impl FocusReader {
                     previous: previous.as_ref(),
                     depth_limit: MAX_ANCESTORS,
                     fill: &fill,
-                    deadline: Some(Instant::now() + READ_BUDGET),
+                    out_of_time: Some(&out_of_time),
                     require_focus: true,
                     refresh: true,
                     lock_up_from: Some(&lock_up_from),

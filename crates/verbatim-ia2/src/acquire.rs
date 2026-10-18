@@ -607,7 +607,7 @@ pub fn ancestor_chain(
         max_hops,
         known: &|_| false,
         read_by_other_api: &|_| false,
-        deadline: None,
+        out_of_time: None,
     };
     ancestor_chain_until(node, registry, &limits).map(|(chain, _)| chain)
 }
@@ -624,8 +624,9 @@ pub struct AncestorLimits<'a> {
     /// before a parent in a different window for which this holds, as NVDA
     /// switches API where a parent lies in such a window.
     pub read_by_other_api: &'a dyn Fn(isize) -> bool,
-    /// When to give up.
-    pub deadline: Option<std::time::Instant>,
+    /// Whether the walk's time is up, checked between its calls: it then
+    /// gives up ([`Walked::OutOfTime`]).
+    pub out_of_time: Option<&'a dyn Fn() -> bool>,
 }
 
 /// How an ancestor walk ended.
@@ -665,11 +666,7 @@ pub fn ancestor_chain_until(
         purpose: Purpose::Context,
         ..Reading::default()
     };
-    let out_of_time = || {
-        limits
-            .deadline
-            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
-    };
+    let out_of_time = || limits.out_of_time.is_some_and(|out_of_time| out_of_time());
     let mut walked = Walked::Complete;
     let (acc, (hwnd, id_object, _), at) = locate(node, registry)?;
     let mut chain = Vec::new();

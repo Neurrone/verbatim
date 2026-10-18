@@ -458,8 +458,13 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   window has begun to answer the probe. The time is the arbitrator's
   `Clock`, the system's unless `Arbitrator::set_clock` sets another, and
   `Arbitrator::now` reads it, for the worker's renewal of the verdicts an
-  entry probed; `Outpost::set_arbitration_clock` sets an outpost's, for a
-  test that counts calls and decides when a probe is made again. Both class lists are
+  entry probed. The same clock measures the time budgets of the outpost's
+  classic walks (`PATH_BUDGET`, `ENRICHMENT_BUDGET`) and of a focus
+  reader's (`READ_BUDGET`), each checked between calls through
+  `arbitration::time_limit`. `Outpost::set_clock` sets an outpost's, and
+  `FocusReader::set_clock` a focus reader's, for a test that counts calls
+  and decides when a probe is made again and when a walk's time is up,
+  however long its calls take. Both class lists are
   lifted from NVDA and pinned by unit tests naming their exact NVDA source
   locations, so a future NVDA sync is a diff of two lists: the bad list is
   `badUIAWindowClassNames` in `nvda/source/UIAHandler/__init__.py`, and the
@@ -605,8 +610,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     6). Each UIA call ends after
     `verbatim_uia::CALL_TIMEOUT`, five seconds, set once for the process.
     A focus's ancestor walk checks its two-second budget
-    (`ENRICHMENT_BUDGET`) between calls, so it ends within the budget and
-    one call. The one operation made of many provider calls, a UIA
+    (`ENRICHMENT_BUDGET`, by the outpost's clock) between calls, so it
+    ends within the budget and one call. The one operation made of many provider calls, a UIA
     dialog's own text (one second, `DIALOG_TEXT_WAIT`), runs on the
     context's `verbatim_uia::BoundedClient` and is given up at its
     deadline, its thread abandoned; a dialog's text given up is no text. Tree

@@ -499,10 +499,11 @@ desktop, where they disturbed end-to-end runs.
 The experiments behind the harness's exit are in `docs/uia-bugs.md`,
 "A process that used UIA can hang or crash as it exits".
 The outpost those tests run
-(`tests/common/outpost.rs`) reads arbitration's time from the test,
-which stands still unless the test moves it on (`pass_time`), so a
+(`tests/common/outpost.rs`) and its focus reader read the time from the
+test, which stands still unless the test moves it on (`pass_time`), so a
 window's verdict of no UIA provider runs out, and its probe's
-`WM_GETOBJECT` is made, only where the test says. `uia_tree.rs` and `msaa_tree.rs` walk
+`WM_GETOBJECT` is made, and a classic walk's time budget is spent, only
+where the test says. `uia_tree.rs` and `msaa_tree.rs` walk
 a rich scripted tree through each real client stack and assert normalized
 roles, names, values, states, and detail properties match the fixture —
 every node's details must read back exactly what was scripted, and

@@ -45,8 +45,9 @@ pub struct AncestorStops<'a> {
     pub read_by_other_api: &'a dyn Fn(isize) -> bool,
     /// Whether a reported ancestor is already known: the walk stops there.
     pub known: &'a dyn Fn(verbatim_model::NodeId) -> bool,
-    /// When to give up, reporting the chain as incomplete.
-    pub deadline: Option<std::time::Instant>,
+    /// Whether the walk's time is up, checked before each hop and after a
+    /// hop that fails: it then gives up, reporting the chain as incomplete.
+    pub out_of_time: Option<&'a dyn Fn() -> bool>,
 }
 
 /// How an ancestor walk ended ([`Uia::ancestors`]).
@@ -537,7 +538,7 @@ impl Uia {
     /// first reported ancestor `stops.known` recognizes, from the previous
     /// focus's chain, with that ancestor outermost, as NVDA's focus
     /// ancestry stops where it meets the previous focus's ancestors; and
-    /// when `stops.deadline` passes, or a hop finds the provider did not
+    /// when `stops.out_of_time` says its time is up, or a hop finds the provider did not
     /// answer within UIA's transaction timeout, reporting the chain as
     /// incomplete. Ancestors that are not presentable focus context are
     /// crossed but never reported (NVDA's `isPresentableFocusAncestor`).
@@ -557,7 +558,7 @@ impl Uia {
         let AncestorStops {
             read_by_other_api,
             known,
-            deadline,
+            out_of_time,
         } = *stops;
         let walker = self.raw_view_walker()?;
         let mut chain = Vec::new();
@@ -572,7 +573,7 @@ impl Uia {
                 "UIA ancestor walk"
             );
         };
-        let out_of_time = || deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
+        let out_of_time = || out_of_time.is_some_and(|out_of_time| out_of_time());
         for _ in 0..max_hops {
             if out_of_time() {
                 chain.reverse();
@@ -1411,7 +1412,7 @@ mod presentation_tests {
         let stops = super::AncestorStops {
             read_by_other_api: &|hwnd| hwnd == 77,
             known: &|_| false,
-            deadline: None,
+            out_of_time: None,
         };
         let (chain, crossed, walked) =
             super::Uia::ancestor_chain_from_parts(&parents, &registry, &stops);
@@ -1441,7 +1442,7 @@ mod presentation_tests {
         let stops = super::AncestorStops {
             read_by_other_api: &|_| false,
             known: &|id| id == known,
-            deadline: None,
+            out_of_time: None,
         };
         let (chain, crossed, walked) =
             super::Uia::ancestor_chain_from_parts(&parents, &registry, &stops);

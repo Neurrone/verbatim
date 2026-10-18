@@ -96,9 +96,9 @@ Public API:
   NVDA shipped for years), capped by the caller, and stopped by
   `AncestorStops`: at a window read through the other API, at an ancestor
   the caller already knows (reporting `AncestorWalk::MetKnown`), or at a
-  deadline or a hop that UIA's transaction timeout ended
-  (`AncestorWalk::OutOfTime`); any other failed hop is the root. The
-  deadline is checked between hops, each of which UIA ends after
+  caller's out-of-time check (`out_of_time`) or a hop that UIA's
+  transaction timeout ended (`AncestorWalk::OutOfTime`); any other failed
+  hop is the root. The check is made between hops, each of which UIA ends after
   `CALL_TIMEOUT`. Ancestors that are not
   presentable focus context — NVDA's `isPresentableFocusAncestor`,
   ported: layout elements (unknown and pane roles, textless static text,

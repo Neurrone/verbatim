@@ -232,7 +232,7 @@ fn focus_and_navigation_execute_exactly() {
         previous: Some(&previous),
         depth_limit: 64,
         fill: &fill,
-        deadline: None,
+        out_of_time: None,
         require_focus: true,
         refresh: false,
         lock_up_from: None,
@@ -309,7 +309,7 @@ fn reads_and_paths_execute_exactly() {
         previous: Some(&previous),
         depth_limit: 64,
         fill: &fill,
-        deadline: None,
+        out_of_time: None,
         require_focus: true,
         refresh: true,
         lock_up_from: None,
@@ -337,7 +337,7 @@ fn reads_and_paths_execute_exactly() {
             root: &root,
             path,
             fill: &nodes,
-            deadline: None,
+            out_of_time: None,
         };
         element_by_path_remote(&fixture.uia, &query)
             .expect("the program runs")

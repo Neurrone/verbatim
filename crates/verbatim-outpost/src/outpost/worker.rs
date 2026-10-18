@@ -3199,7 +3199,8 @@ impl Worker<'_> {
         let uia = self.client.uia()?;
         let nodes = context.node_request(uia).ok()?;
         let remote = context.tries_remote(Some(route.window));
-        let (found, import_failed) = focus_path::find(uia, &route, &nodes, remote);
+        let (found, import_failed) =
+            focus_path::find(uia, &route, &nodes, remote, &context.clock());
         if import_failed {
             context.read_classically(route.window);
         }

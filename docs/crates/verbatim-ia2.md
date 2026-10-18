@@ -193,7 +193,8 @@ Public API:
   when the node is no longer kept, its window no longer exists, or its
   object has disconnected, and `selected_child` answers `None`:
   `ancestor_chain`, and `ancestor_chain_until` with `AncestorLimits`
-  (stopping at a known ancestor, a deadline, or a parent in a different
+  (stopping at a known ancestor, when the caller's `out_of_time` check
+  says its time is up, or at a parent in a different
   window that `read_by_other_api` says is read through UIA, and saying
   which as `Walked`, whose `Crossed(hwnd)` lets the outpost continue the
   walk through UIA; a control's window object met on the way has as its

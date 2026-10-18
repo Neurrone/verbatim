@@ -21,7 +21,7 @@ use verbatim_uia_rops::{
     navigation_step,
 };
 
-use crate::arbitration::window_class_name;
+use crate::arbitration::{time_limit, window_class_name};
 use crate::protocol::{DumpedTree, FocusNow, FocusedControl};
 
 use super::Context;
@@ -231,13 +231,14 @@ pub(super) fn uia_enrichment(
     role: Role,
     previous: &[NodeSnapshot],
 ) -> Enrichment {
-    let deadline = std::time::Instant::now() + ENRICHMENT_BUDGET;
+    let clock = context.clock();
+    let out_of_time = time_limit(&clock, ENRICHMENT_BUDGET);
     let ancestors = uia_ancestors(
         context,
         (uia, ancestors),
         element.live(),
         previous,
-        Some(deadline),
+        Some(&out_of_time),
     );
     let selected = if wants_selected_child(role) {
         match uia.selected_node(element.live(), nodes, &context.uia_registry) {
@@ -268,7 +269,7 @@ fn uia_ancestors(
     (uia, request): (&Uia, &Request<Ancestor>),
     element: &Live,
     previous: &[NodeSnapshot],
-    deadline: Option<std::time::Instant>,
+    out_of_time: Option<&dyn Fn() -> bool>,
 ) -> Option<Vec<NodeSnapshot>> {
     let desktop = desktop_window();
     let read_by_msaa = |hwnd: isize| hwnd != desktop && !window_uses_uia(context, hwnd);
@@ -281,7 +282,7 @@ fn uia_ancestors(
         &verbatim_uia::AncestorStops {
             read_by_other_api: &read_by_msaa,
             known: &known,
-            deadline,
+            out_of_time,
         },
     ) else {
         return Some(Vec::new());
@@ -291,7 +292,7 @@ fn uia_ancestors(
         (uia, request),
         (uia_chain, crossed, walked),
         previous,
-        deadline,
+        out_of_time,
     )
 }
 
@@ -305,7 +306,7 @@ fn uia_chain_onward(
     (uia, request): (&Uia, &Request<Ancestor>),
     (uia_chain, crossed, walked): (Vec<NodeSnapshot>, Option<isize>, AncestorWalk),
     previous: &[NodeSnapshot],
-    deadline: Option<std::time::Instant>,
+    out_of_time: Option<&dyn Fn() -> bool>,
 ) -> Option<Vec<NodeSnapshot>> {
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
     match walked {
@@ -331,7 +332,13 @@ fn uia_chain_onward(
         if known(client.id) {
             return Some(splice(previous, below, client.id));
         }
-        let above = msaa_ancestors(context, Some((uia, request)), &client, previous, deadline)?;
+        let above = msaa_ancestors(
+            context,
+            Some((uia, request)),
+            &client,
+            previous,
+            out_of_time,
+        )?;
         Some(above.into_iter().chain(below).collect())
     })();
     tracing::debug!(
@@ -381,17 +388,18 @@ pub(super) fn uia_chain_from_read(
         &verbatim_uia::AncestorStops {
             read_by_other_api: &read_by_msaa,
             known: &known,
-            deadline: None,
+            out_of_time: None,
         },
     );
-    let deadline = std::time::Instant::now() + ENRICHMENT_BUDGET;
+    let clock = context.clock();
+    let out_of_time = time_limit(&clock, ENRICHMENT_BUDGET);
     match client.uia_with(context, Context::ancestor_request) {
         Ok((uia, request)) => uia_chain_onward(
             context,
             (uia, &request),
             (chain, crossed, walked),
             previous,
-            Some(deadline),
+            Some(&out_of_time),
         ),
         // Without a client the MSAA continuation cannot cross back into
         // UIA, so it is not made; the chain read is reported as it is.
@@ -433,7 +441,8 @@ pub(super) fn uia_remote_enrichment(
     if !context.tries_remote(window) {
         return None;
     }
-    let deadline = std::time::Instant::now() + ENRICHMENT_BUDGET;
+    let clock = context.clock();
+    let out_of_time = time_limit(&clock, ENRICHMENT_BUDGET);
     // The previous chain's UIA nodes, by runtime id, for the walk to stop
     // at; their node ids, in the same order, for splicing.
     let (known_ids, known): (Vec<NodeId>, Vec<Vec<i32>>) = previous
@@ -454,14 +463,14 @@ pub(super) fn uia_remote_enrichment(
         previous: None,
         depth_limit: MAX_ANCESTOR_HOPS,
         fill: &fill,
-        deadline: Some(deadline),
+        out_of_time: Some(&out_of_time),
         require_focus: true,
         refresh: false,
         lock_up_from: None,
     };
     // One remote operation, one transaction, which UIA's transaction
     // timeout bounds; the classic walk it falls back to checks the
-    // deadline between its calls.
+    // budget between its calls.
     let (ancestry, path) = match focus_ancestry(uia, &query, true) {
         Ok((FocusAncestry::Focused(ancestry), path)) => (ancestry, path),
         Ok((FocusAncestry::NotFocused, _)) => return Some(Err(NotFocused)),
@@ -496,7 +505,7 @@ pub(super) fn uia_remote_enrichment(
             &verbatim_uia::AncestorStops {
                 read_by_other_api: &read_by_msaa,
                 known: &is_known,
-                deadline: None,
+                out_of_time: None,
             },
         );
         // The program stops at any known ancestor, while only a reported
@@ -513,7 +522,7 @@ pub(super) fn uia_remote_enrichment(
             (uia, request),
             (chain, crossed, walked),
             previous,
-            Some(deadline),
+            Some(&out_of_time),
         )
     };
     tracing::debug!(
@@ -526,7 +535,7 @@ pub(super) fn uia_remote_enrichment(
 
 /// An MSAA node's ancestors, outermost first, without the window objects
 /// above controls (see [`msaa_enrichment`]), stopping at a container of
-/// `previous` and reusing the rest, or `None` when `deadline` passed. Where
+/// `previous` and reusing the rest, or `None` when `out_of_time` said its time was up. Where
 /// a parent lies in a window read through UIA, the walk continues from that
 /// window's UIA element, as NVDA switches API when a parent is in such a
 /// window (`correctAPIForRelation`): in a Save As dialog, the file name
@@ -541,7 +550,7 @@ fn msaa_ancestors(
     uia: Option<(&Uia, &Request<Ancestor>)>,
     node: &NodeSnapshot,
     previous: &[NodeSnapshot],
-    deadline: Option<std::time::Instant>,
+    out_of_time: Option<&dyn Fn() -> bool>,
 ) -> Option<Vec<NodeSnapshot>> {
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
     let read_by_uia = |hwnd: isize| uia.is_some() && window_uses_uia(context, hwnd);
@@ -549,7 +558,7 @@ fn msaa_ancestors(
         max_hops: MAX_ANCESTOR_HOPS,
         known: &known,
         read_by_other_api: &read_by_uia,
-        deadline,
+        out_of_time,
     };
     let (chain, walked) =
         verbatim_ia2::acquire::ancestor_chain_until(node.id, &context.msaa_registry, &limits)
@@ -580,7 +589,13 @@ fn msaa_ancestors(
             } else {
                 chain
             };
-            let above = uia_ancestors(context, (uia, request), element.live(), previous, deadline)?;
+            let above = uia_ancestors(
+                context,
+                (uia, request),
+                element.live(),
+                previous,
+                out_of_time,
+            )?;
             Some(above.into_iter().chain(below).collect())
         }
     }
@@ -603,16 +618,17 @@ pub(super) fn msaa_enrichment(
     // parents the `GenericWindow` class, which is not a presentable focus
     // ancestor. A dialog is still announced, by its client area's dialog
     // role.
-    let deadline = std::time::Instant::now() + ENRICHMENT_BUDGET;
+    let clock = context.clock();
+    let out_of_time = time_limit(&clock, ENRICHMENT_BUDGET);
     let ancestors = match client.uia_with(context, Context::ancestor_request) {
         Ok((uia, request)) => msaa_ancestors(
             context,
             Some((uia, &request)),
             node,
             previous,
-            Some(deadline),
+            Some(&out_of_time),
         ),
-        Err(_) => msaa_ancestors(context, None, node, previous, Some(deadline)),
+        Err(_) => msaa_ancestors(context, None, node, previous, Some(&out_of_time)),
     };
     let selected = if wants_selected_child(node.role) {
         verbatim_ia2::acquire::selected_child(node.id, &context.msaa_registry)
@@ -710,6 +726,7 @@ fn dialog_text_of(context: &Context, node: &NodeSnapshot) -> Option<String> {
                 .as_ref()
                 .is_some_and(|route| context.tries_remote(Some(route.window)));
             let gates = crate::gates::node_gates(&context.fetches());
+            let clock = context.clock();
             let gathered = context.bounded.run(DIALOG_TEXT_WAIT, move |uia| {
                 // Nothing of the dialog's own element is read: its text is
                 // gathered from its children. A kept element is resolved
@@ -718,7 +735,8 @@ fn dialog_text_of(context: &Context, node: &NodeSnapshot) -> Option<String> {
                     (Some(element), _) => element.resolve().ok()?.live().clone(),
                     (None, Some(route)) => {
                         let nodes = uia.request::<Node>(gates).ok()?;
-                        let found = super::focus_path::find(uia, &route, &nodes, remote).0?;
+                        let found =
+                            super::focus_path::find(uia, &route, &nodes, remote, &clock).0?;
                         found.live().clone()
                     }
                     (None, None) => return None,
@@ -898,7 +916,8 @@ fn resolve_uia_element(
     // found by its path, without a search.
     if let Some(route) = context.focus_route(&runtime_id) {
         let remote = context.tries_remote(Some(route.window));
-        let (found, import_failed) = super::focus_path::find(uia, &route, nodes, remote);
+        let (found, import_failed) =
+            super::focus_path::find(uia, &route, nodes, remote, &context.clock());
         if import_failed {
             context.read_classically(route.window);
         }

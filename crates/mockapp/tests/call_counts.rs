@@ -1860,7 +1860,7 @@ fn uia_selected_children_cost_exactly() {
                     previous: None,
                     depth_limit: 64,
                     fill: &ancestors,
-                    deadline: None,
+                    out_of_time: None,
                     require_focus: true,
                     refresh: false,
                     lock_up_from: None,

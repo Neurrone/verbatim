@@ -9,8 +9,6 @@
 //! the classic implementation behind the same signature takes one call per
 //! child it looks at. [`element_by_path`] is the one function callers use.
 
-use std::time::Instant;
-
 use windows::Win32::UI::Accessibility::UIA_RuntimeIdPropertyId;
 
 use verbatim_uia::{Cached, Direction, Fill, Live, Node, Uia};
@@ -32,10 +30,10 @@ pub struct PathQuery<'a> {
     pub path: &'a [Vec<i32>],
     /// How the element found's cache is filled: as a [`Node`].
     pub fill: &'a Fill<Node>,
-    /// When the classic walk gives up between its calls, answering that
-    /// nothing was found. The remote program is one call and does not
-    /// check it.
-    pub deadline: Option<Instant>,
+    /// Whether the classic walk's time is up, checked between its calls: it
+    /// then gives up, answering that nothing was found. The remote program
+    /// is one call and does not check it.
+    pub out_of_time: Option<&'a dyn Fn() -> bool>,
 }
 
 /// The signature both implementations share: the element at the end of the
@@ -141,7 +139,7 @@ pub fn element_by_path_remote(
 /// raw-view child and then its next siblings, each one call
 /// (`GetFirstChildElementBuildCache` and `GetNextSiblingElementBuildCache`),
 /// until one has it. Stops with nothing found at a level with no such
-/// child, and at the query's deadline, checked between calls.
+/// child, and when the query's time is up, checked between calls.
 ///
 /// # Errors
 ///
@@ -153,11 +151,7 @@ pub fn element_by_path_classic(
 ) -> Result<Option<Cached<Node>>, Error> {
     let request = query.fill.request();
     let walker = uia.raw_view_walker()?;
-    let out_of_time = || {
-        query
-            .deadline
-            .is_some_and(|deadline| Instant::now() >= deadline)
-    };
+    let out_of_time = || query.out_of_time.is_some_and(|out_of_time| out_of_time());
     // A step that reaches no element comes back as an error with no
     // failure code (`WalkerExt`).
     let step = |found: windows::core::Result<Cached<Node>>| match found {

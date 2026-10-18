@@ -14,11 +14,12 @@
 
 #![forbid(unsafe_code)]
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use verbatim_uia::{Cached, Fill, Node, Request, Uia};
 use verbatim_uia_rops::{Path, PathQuery, element_by_path};
 
+use crate::arbitration::{Clock, time_limit};
 use crate::protocol::UiaFocusRead;
 
 /// How long the classic walk down a path, used where a remote operation
@@ -87,8 +88,9 @@ impl FocusPath {
 /// The element `route` leads to, filled by `nodes`: the route's
 /// window's element, read with one connection call, then the walk down the
 /// route's runtime ids, one remote operation where `remote` allows it, else
-/// the classic walk within [`PATH_BUDGET`]. `None` when the window's element
-/// cannot be read or the path does not lead to the element; and whether a
+/// the classic walk within [`PATH_BUDGET`] by `clock`. `None` when the
+/// window's element cannot be read or the path does not lead to the
+/// element; and whether a
 /// remote operation could not import the window's element (a client-side
 /// proxy), so the caller reads that window the classic way from then on.
 pub(crate) fn find(
@@ -96,6 +98,7 @@ pub(crate) fn find(
     route: &Route,
     nodes: &Request<Node>,
     remote: bool,
+    clock: &Clock,
 ) -> (Option<Cached<Node>>, bool) {
     let root = match uia.window_element(route.window, nodes) {
         Ok(root) => root,
@@ -109,11 +112,12 @@ pub(crate) fn find(
         return (same.then_some(root), false);
     }
     let fill = Fill::new(nodes);
+    let out_of_time = time_limit(clock, PATH_BUDGET);
     let query = PathQuery {
         root: root.live(),
         path: &route.path,
         fill: &fill,
-        deadline: Some(Instant::now() + PATH_BUDGET),
+        out_of_time: Some(&out_of_time),
     };
     match element_by_path(uia, &query, remote) {
         Ok((found, path)) => {
