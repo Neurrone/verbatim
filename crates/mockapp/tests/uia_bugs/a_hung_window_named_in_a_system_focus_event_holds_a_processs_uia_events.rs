@@ -13,14 +13,20 @@
 //! then its registered `UiaServerConnection_HookMessage`. The held event is
 //! a name change in a second mockapp, on the UIA backend.
 
+use std::sync::atomic::{AtomicIsize, Ordering};
 use std::time::{Duration, Instant};
 
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{NormalizedEvent, PropertyChange};
 use verbatim_outpost::Heard;
 use verbatim_outpost::protocol::OutpostToSupervisor;
-use windows::Win32::UI::Accessibility::{NotifyWinEvent, UIA_NamePropertyId};
-use windows::Win32::UI::WindowsAndMessaging::{CHILDID_SELF, EVENT_OBJECT_FOCUS, OBJID_CLIENT};
+use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::Accessibility::{
+    HWINEVENTHOOK, NotifyWinEvent, SetWinEventHook, UIA_NamePropertyId, UnhookWinEvent,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CHILDID_SELF, EVENT_OBJECT_FOCUS, OBJID_CLIENT, WINEVENT_OUTOFCONTEXT,
+};
 
 use crate::common;
 use crate::common::outpost::OutpostUnderTest;
@@ -33,26 +39,81 @@ const CONNECTION_TIMEOUT: Duration = Duration::from_millis(500);
 const TREE_VIEW: &str = "WindowsForms10.SysTreeView32.app.0.141b42a_r9_ad1";
 
 /// A mockapp whose tree view is the hung window, and the tree view.
-fn tree_view() -> (common::MockApp, windows::Win32::Foundation::HWND) {
+fn tree_view() -> (common::MockApp, HWND) {
     let title = common::unique_title("hung-tree-view");
     let app = common::spawn("tree_view.json", "msaa", &title);
     let tree = common::tree_view::tree_view(common::find_window(&title));
     (app, tree)
 }
 
-/// Stalls `tree_view`'s window thread until it is released, and raises a
-/// focus `WinEvent` naming the tree view; returns when it was raised.
-fn hang_and_name_in_a_focus_event(
-    tree_view: &mut common::MockApp,
-    tree: windows::Win32::Foundation::HWND,
-) -> Instant {
-    tree_view.write("stall-until-release");
-    tree_view.expect_line("stall started", String::new);
+/// Stalls `app`'s window thread until it is released, and raises a focus
+/// `WinEvent` naming its window `hung`; returns when it was raised.
+fn hang_and_name_in_a_focus_event(app: &mut common::MockApp, hung: HWND) -> Instant {
+    app.write("stall-until-release");
+    app.expect_line("stall started", String::new);
     let child = i32::try_from(CHILDID_SELF).expect("CHILDID_SELF is 0");
     let raised = Instant::now();
     // SAFETY: a WinEvent for a live window, raised from this process.
-    unsafe { NotifyWinEvent(EVENT_OBJECT_FOCUS, tree, OBJID_CLIENT.0, child) };
+    unsafe { NotifyWinEvent(EVENT_OBJECT_FOCUS, hung, OBJID_CLIENT.0, child) };
     raised
+}
+
+/// The window the last focus `WinEvent` [`FocusWinEvents`] heard named.
+static FOCUS_WINEVENT: AtomicIsize = AtomicIsize::new(0);
+
+/// Records the window a focus `WinEvent` names.
+unsafe extern "system" fn focus_winevent(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    hwnd: HWND,
+    _object: i32,
+    _child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    FOCUS_WINEVENT.store(hwnd.0 as isize, Ordering::SeqCst);
+}
+
+/// An out-of-context `WinEvent` hook for focus `WinEvent`s, delivered to
+/// this thread, made before one is raised, so the test knows when one has
+/// reached this process.
+struct FocusWinEvents(HWINEVENTHOOK);
+
+impl FocusWinEvents {
+    fn hook() -> Self {
+        FOCUS_WINEVENT.store(0, Ordering::SeqCst);
+        // SAFETY: an out-of-context hook, delivered to this thread as it
+        // pumps messages; the callback lives for the process.
+        let hook = unsafe {
+            SetWinEventHook(
+                EVENT_OBJECT_FOCUS,
+                EVENT_OBJECT_FOCUS,
+                None,
+                Some(focus_winevent),
+                0,
+                0,
+                WINEVENT_OUTOFCONTEXT,
+            )
+        };
+        assert!(!hook.is_invalid(), "the focus WinEvent hook");
+        Self(hook)
+    }
+
+    /// Pumps this thread's messages until a focus `WinEvent` naming `hwnd`
+    /// has reached this process, and then removes the hook.
+    fn reached(self, hwnd: HWND) {
+        common::pump_until(|| {
+            (FOCUS_WINEVENT.load(Ordering::SeqCst) == hwnd.0 as isize).then_some(())
+        });
+        drop(self);
+    }
+}
+
+impl Drop for FocusWinEvents {
+    fn drop(&mut self) {
+        // SAFETY: the hook this guard made, removed once.
+        let _ = unsafe { UnhookWinEvent(self.0) };
+    }
 }
 
 /// With a desktop-wide focus handler in this process and the connection
@@ -99,10 +160,10 @@ pub fn a_name_change_waits_for_both_sends_to_a_hung_focus() {
 }
 
 /// With no focus registration in this process, another application's name
-/// change, raised after the focus `WinEvent`, arrives while the tree view
-/// still hangs, with the connection timeout longer than the test's wait for
-/// it, so that a held one would not: UIA's focus tracking runs only in a
-/// process that holds a focus registration.
+/// change, raised after the focus `WinEvent` has reached this process,
+/// arrives while the tree view still hangs, with the connection timeout
+/// longer than the test's wait for it, so that a held one would not: UIA's
+/// focus tracking runs only in a process that holds a focus registration.
 pub fn a_name_change_is_not_held_in_a_process_with_no_focus_registration() {
     let (mut hung, tree) = tree_view();
     let (mut b, b_hwnd) = support::mockapp("hung-other", "uia");
@@ -115,7 +176,9 @@ pub fn a_name_change_is_not_held_in_a_process_with_no_focus_registration() {
         &names,
     );
 
+    let focus_winevents = FocusWinEvents::hook();
     hang_and_name_in_a_focus_event(&mut hung, tree);
+    focus_winevents.reached(tree);
     b.send("set-name btn1 Renamed");
     assert_eq!(names.next().0, support::from(&b, "Renamed"));
     hung.release();
@@ -128,9 +191,9 @@ pub fn a_name_change_is_not_held_in_a_process_with_no_focus_registration() {
 /// (`docs/uia-bugs.md`, "Workarounds that worked"): a real outpost in this
 /// process, following the focus in the second mockapp, hears its name
 /// change by UIA's own event, and reports it, while the tree view still
-/// hangs, named in a focus `WinEvent`, with the connection timeout longer
-/// than the test's wait for the event, so that a held one would not be
-/// heard.
+/// hangs, named in a focus `WinEvent` that has reached this process, with
+/// the connection timeout longer than the test's wait for the report, so
+/// that a held one would not be heard or reported.
 pub fn an_outposts_uia_events_are_not_held_behind_a_hung_focus() {
     let (mut hung, tree) = tree_view();
     let (mut b, b_hwnd) = support::mockapp("hung-outpost", "uia");
@@ -141,13 +204,14 @@ pub fn an_outposts_uia_events_are_not_held_behind_a_hung_focus() {
     let button = common::listener_focus(&uia, b_hwnd.0 as isize);
     let focus = outpost.uia_focus(&button).node;
 
+    let focus_winevents = FocusWinEvents::hook();
     hang_and_name_in_a_focus_event(&mut hung, tree);
+    focus_winevents.reached(tree);
     b.send("set-name btn1 Renamed");
     outpost.heard(&[
         Heard::UiaProperty(UIA_NamePropertyId.0),
         Heard::Msaa(WinEventKind::NameChange),
     ]);
-    hung.release();
     match outpost.next() {
         OutpostToSupervisor::Event {
             event:
@@ -160,6 +224,7 @@ pub fn an_outposts_uia_events_are_not_held_behind_a_hung_focus() {
         } => assert_eq!((node_id, name.as_deref()), (focus.id, Some("Renamed"))),
         other => panic!("the outpost said {other:?}, not the focus's new name"),
     }
+    hung.release();
     outpost.settled();
     drop(outpost);
     hung.quit();
@@ -205,15 +270,16 @@ pub fn a_provider_held_raising_its_event_holds_only_its_own_events() {
     b.quit();
 }
 
-/// The cost of a short connection timeout (`h6`): with it at 500 ms, an
-/// MSAA mockapp's focus raised from inside a 1.5-second stall of its window
-/// thread is never delivered to a desktop-wide focus handler, which hears a
-/// second MSAA mockapp's focus, raised after the stall, first. UIA's focus
-/// tracking handles the two focus `WinEvent`s in turn, so a late delivery
-/// of the first would come before it; the second is another application's,
-/// so UIA cannot take the first for it.
+/// The cost of a short connection timeout (`h6`): with it at 500 ms, the
+/// focus of an MSAA mockapp whose window thread is busy, named in a focus
+/// `WinEvent`, is never delivered to a desktop-wide focus handler. Once UIA
+/// has sent the busy window its second message, a second MSAA mockapp's
+/// focus is the first heard, though UIA's focus tracking handles focus
+/// `WinEvent`s in turn, so a busy focus that was held rather than dropped
+/// would have come before it; and once the busy window is released, the
+/// second mockapp's next focus is the next heard, and nothing more.
 pub fn a_focus_raised_while_its_window_is_busy_past_the_connection_timeout_is_dropped() {
-    let (mut busy, _) = support::mockapp("hung-dropped", "msaa");
+    let (mut busy, busy_hwnd) = support::mockapp("hung-dropped", "msaa");
     let (mut other, _) = support::mockapp("hung-dropped-other", "msaa");
     let uia = support::client();
     support::set_connection_timeout(uia.client(), CONNECTION_TIMEOUT);
@@ -225,13 +291,17 @@ pub fn a_focus_raised_while_its_window_is_busy_past_the_connection_timeout_is_dr
     }
     .expect("the desktop-wide focus handler");
 
-    let stall = Duration::from_millis(1_500);
-    busy.write(&format!("stall {} 0 focus btn1", stall.as_millis()));
-    busy.expect_line("stall started", String::new);
-    busy.expect_line("applied", String::new);
-    let _ = busy.stall_ended(stall);
+    hang_and_name_in_a_focus_event(&mut busy, busy_hwnd);
+    busy.expect_line(
+        &support::root_object_request(support::MOCKAPP_WINDOW),
+        String::new,
+    );
+    busy.expect_line(&support::hook_message(support::MOCKAPP_WINDOW), String::new);
     other.send("focus btn1");
     assert_eq!(focus.next().0, support::from(&other, "Original Name"));
+    busy.release();
+    other.send("focus item1");
+    assert_eq!(focus.next().0, support::from(&other, "First"));
     focus.heard_nothing_more();
     busy.quit();
     other.quit();
