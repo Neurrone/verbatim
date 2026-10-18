@@ -198,8 +198,20 @@ jobs:
             # Started by hand: one scenario, run E2E_REPEAT times, each in
             # its own test process as a suite run would run it; a failed
             # run fails the step but the remaining runs still go ahead.
+            # A repeat below 1, or a name that lists no test (a misspelling
+            # runs nothing and passes), fails before any run.
+            $repeat = 0
+            if (-not [int]::TryParse($env:E2E_REPEAT, [ref]$repeat) -or $repeat -lt 1) {
+              Write-Error "repeat must be a whole number of at least 1, not '$env:E2E_REPEAT'"
+              exit 1
+            }
+            $listed = @(cargo test -p verbatim-e2e --test e2e -- --ignored --list --exact $env:E2E_SCENARIO | Where-Object { $_ -match ': test$' })
+            if ($LASTEXITCODE -ne 0 -or $listed.Count -ne 1) {
+              Write-Error "the scenario '$env:E2E_SCENARIO' must name exactly one test; it lists $($listed.Count): $($listed -join ', ')"
+              exit 1
+            }
             $status = 0
-            for ($run = 1; $run -le [int]$env:E2E_REPEAT; $run++) {
+            for ($run = 1; $run -le $repeat; $run++) {
               "run $run of $env:E2E_REPEAT" | Tee-Object -FilePath verbatim-e2e-test-output.log -Append
               cargo test -p verbatim-e2e --test e2e -- --ignored --exact $env:E2E_SCENARIO --test-threads=1 2>&1 | Tee-Object -FilePath verbatim-e2e-test-output.log -Append
               if ($LASTEXITCODE -ne 0) { $status = $LASTEXITCODE }

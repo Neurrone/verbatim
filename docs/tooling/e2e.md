@@ -92,7 +92,9 @@ repeat=<n>`, the workflow runs only its `e2e` job, which runs that one
 scenario n times, each in its own test process, and uploads every run's
 copy from the history (below) as the `verbatim-e2e-history` artifact, so
 an intermittent failure on GitHub's runner can be measured without a push
-for each run. Before the suite, the job closes a message box the runner
+for each run. The job fails before any run when n is below 1 or the name
+does not list exactly one test, since a misspelt name runs nothing and
+passes. Before the suite, the job closes a message box the runner
 image shows at logon: image 20261007.264.1 shows "System Properties"
 (`SystemPropertiesPerformance.exe`, "Windows created a temporary paging
 file..."), which stays all run and takes the foreground when Verbatim's
