@@ -122,5 +122,9 @@ fn main() {
             "a_focus_raised_while_its_window_is_busy_past_the_connection_timeout_is_dropped",
             hung_focus::a_focus_raised_while_its_window_is_busy_past_the_connection_timeout_is_dropped,
         ),
+        (
+            "a_core_api_focus_registration_on_one_window_hears_that_applications_focus_alone",
+            focus_scope::a_core_api_focus_registration_on_one_window_hears_that_applications_focus_alone,
+        ),
     ]);
 }
