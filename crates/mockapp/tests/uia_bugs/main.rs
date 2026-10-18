@@ -12,11 +12,13 @@ mod common;
 #[path = "../common/harness.rs"]
 mod harness;
 
+mod a_hung_window_named_in_a_system_focus_event_holds_a_processs_uia_events;
 mod elements_cannot_be_passed_to_another_process;
 mod focus_events_cannot_be_limited_to_one_application;
 mod setup_race;
 mod support;
 
+use a_hung_window_named_in_a_system_focus_event_holds_a_processs_uia_events as hung_focus;
 use elements_cannot_be_passed_to_another_process as marshal;
 use focus_events_cannot_be_limited_to_one_application as focus_scope;
 
@@ -54,6 +56,18 @@ fn main() {
         (
             "an_object_passed_to_another_process_works_until_a_call_passes_it_an_element",
             marshal::an_object_passed_to_another_process_works_until_a_call_passes_it_an_element,
+        ),
+        (
+            "a_name_change_waits_for_both_sends_to_a_hung_focus",
+            hung_focus::a_name_change_waits_for_both_sends_to_a_hung_focus,
+        ),
+        (
+            "a_name_change_is_not_held_in_a_process_with_no_focus_registration",
+            hung_focus::a_name_change_is_not_held_in_a_process_with_no_focus_registration,
+        ),
+        (
+            "an_outposts_uia_events_are_not_held_behind_a_hung_focus",
+            hung_focus::an_outposts_uia_events_are_not_held_behind_a_hung_focus,
         ),
     ]);
 }

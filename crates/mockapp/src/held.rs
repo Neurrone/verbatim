@@ -1,12 +1,15 @@
-//! The stall that holds the window thread until `release`, for the tests
-//! of the lock per application (`docs/design/focus-pipeline.md`, section
-//! 20.7): with `stall-after-focus-read <n>`, the `n`th read of a node's
-//! `HasKeyboardFocus` property from now, once answered, posts the window a
-//! stall that lasts until `release`: the window thread takes no message
-//! meanwhile, as a busy application's UI thread does. It prints `stall
-//! started` as it begins and `stall message arrived` once when the first
-//! message is posted or sent to the thread meanwhile: a client's next call,
-//! waiting for the thread. Its end is `release`'s own acknowledgement.
+//! The stall that holds the window thread until `release`: with
+//! `stall-after-focus-read <n>`, for the tests of the lock per application
+//! (`docs/design/focus-pipeline.md`, section 20.7), the `n`th read of a
+//! node's `HasKeyboardFocus` property from now, once answered, posts the
+//! window a stall that lasts until `release`; with `stall-until-release`,
+//! the stall begins at once. The window thread takes no message
+//! meanwhile, as a busy or hung application's UI thread does. It prints
+//! `stall started` as it begins, and says when a client's call reaches the
+//! thread meanwhile and waits for it: after a focus read, `stall message
+//! arrived` once, when the first message is posted or sent to the thread;
+//! with `stall-until-release`, `stall message sent` each time a message is
+//! sent to it. Its end is `release`'s own acknowledgement.
 
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::sync::OnceLock;
@@ -17,8 +20,8 @@ use windows::Win32::System::Threading::{
     CreateEventW, INFINITE, ResetEvent, SetEvent, WaitForSingleObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    MSG_WAIT_FOR_MULTIPLE_OBJECTS_EX_FLAGS, MsgWaitForMultipleObjectsEx, PostMessageW,
-    QS_POSTMESSAGE, QS_SENDMESSAGE, WM_APP,
+    GetQueueStatus, MSG_WAIT_FOR_MULTIPLE_OBJECTS_EX_FLAGS, MsgWaitForMultipleObjectsEx,
+    PostMessageW, QS_POSTMESSAGE, QS_SENDMESSAGE, WM_APP,
 };
 use windows::core::PCWSTR;
 
@@ -76,6 +79,38 @@ pub(crate) fn focus_read(hwnd: HWND) {
         unsafe {
             let _ = PostMessageW(Some(hwnd), WM_APP_STALL_UNTIL_RELEASE, WPARAM(0), LPARAM(0));
         }
+    }
+}
+
+/// The stall `stall-until-release` begins at once, on the window thread:
+/// it takes no message until `release`, saying each time a message is
+/// sent to the thread, as a hung window's callers send it one after
+/// another and wait. Posted messages, which no caller waits for, are not
+/// reported: the window's own posts land in the stall while the
+/// application is still starting.
+pub(crate) fn stall_now_until_release() {
+    arm_release();
+    crate::window::acknowledge("stall started");
+    let released = released_event();
+    // SAFETY: the release event, open for the process's life; wakes for it
+    // or for a message sent to this thread since the queue was last looked
+    // at, which is not taken.
+    while unsafe {
+        MsgWaitForMultipleObjectsEx(
+            Some(&[released]),
+            INFINITE,
+            QS_SENDMESSAGE,
+            MSG_WAIT_FOR_MULTIPLE_OBJECTS_EX_FLAGS(0),
+        )
+    } != WAIT_OBJECT_0
+    {
+        crate::window::acknowledge("stall message sent");
+        // Marks the sent messages in the queue as looked at, taking none,
+        // so the next wait wakes only for one sent after them: without it,
+        // the waits went on waking at once once a caller had given up its
+        // call.
+        // SAFETY: no preconditions.
+        let _ = unsafe { GetQueueStatus(QS_SENDMESSAGE) };
     }
 }
 

@@ -5,12 +5,12 @@
 //! behaviour.
 
 use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use verbatim_uia::Uia;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomation, IUIAutomation6, IUIAutomationCacheRequest, IUIAutomationElement,
+    IUIAutomation, IUIAutomation2, IUIAutomation6, IUIAutomationCacheRequest, IUIAutomationElement,
     IUIAutomationEventHandler, IUIAutomationEventHandlerGroup,
     IUIAutomationFocusChangedEventHandler, IUIAutomationPropertyChangedEventHandler,
     TreeScope_Subtree, UIA_AutomationFocusChangedEventId, UIA_NamePropertyId,
@@ -50,6 +50,32 @@ pub fn cache(client: &IUIAutomation) -> IUIAutomationCacheRequest {
         unsafe { request.AddProperty(property) }.expect("the property cached");
     }
     request
+}
+
+/// Sets the process's connection timeout, which every client in the
+/// process shares (`docs/uia-bugs.md`, "The connection timeout applies to
+/// the whole process"), through `client`; each test runs in a process of
+/// its own.
+pub fn set_connection_timeout(client: &IUIAutomation, timeout: Duration) {
+    let client: IUIAutomation2 = client.cast().expect("an IUIAutomation2 client");
+    let milliseconds = u32::try_from(timeout.as_millis()).expect("the timeout fits");
+    // SAFETY: a live client; a plain integer.
+    unsafe { client.SetConnectionTimeout(milliseconds) }.expect("the connection timeout set");
+}
+
+/// A registration of `handler` for the name changes in `window`'s subtree.
+pub fn names_on(client: &IUIAutomation, window: &IUIAutomationElement, handler: &Handler) {
+    // SAFETY: a live client, element, cache request and handler.
+    unsafe {
+        client.AddPropertyChangedEventHandlerNativeArray(
+            window,
+            TreeScope_Subtree,
+            &cache(client),
+            &handler.properties,
+            &[UIA_NamePropertyId],
+        )
+    }
+    .expect("the name changes registered");
 }
 
 /// A registration of `handler` for UIA's focus event, and for name changes

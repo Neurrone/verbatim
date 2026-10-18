@@ -177,8 +177,14 @@ pub(crate) enum Command {
     /// message reaches the thread meanwhile ([`crate::held`]). Applied on
     /// the window thread.
     StallAfterFocusRead(u32),
+    /// `stall-until-release`: stalls the window thread now, until
+    /// `release`, saying when the stall begins and each time a message is
+    /// sent to the thread meanwhile ([`crate::held`]), as a hung
+    /// application's UI thread takes no message. Applied on the window
+    /// thread.
+    StallUntilRelease,
     /// `release`: lets the call `hold` held, or the stall of
-    /// `stall-after-focus-read`, go on. Applied and acknowledged on the
+    /// `stall-after-focus-read` or `stall-until-release`, go on. Applied and acknowledged on the
     /// stdin thread, since the window thread is the one held.
     Release,
     /// `quit`.
@@ -243,6 +249,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "quit" => Some(Command::Quit),
         "hold" => Some(Command::Hold),
         "stall-after-focus-read" => rest.parse().ok().map(Command::StallAfterFocusRead),
+        "stall-until-release" => Some(Command::StallUntilRelease),
         "release" => Some(Command::Release),
         "focus" if !rest.is_empty() => Some(Command::Focus(rest.to_owned())),
         "set-focus" if !rest.is_empty() => Some(Command::SetFocus(rest.to_owned())),
@@ -537,6 +544,10 @@ mod tests {
             Some(Command::StallAfterFocusRead(2))
         ));
         assert!(parse_command("stall-after-focus-read").is_none());
+        assert!(matches!(
+            parse_command("stall-until-release"),
+            Some(Command::StallUntilRelease)
+        ));
     }
 
     #[test]

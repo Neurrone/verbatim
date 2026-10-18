@@ -189,11 +189,16 @@ which takes no message until `release`, printing `stall started` as it
 begins and `stall message arrived` once when the first message is posted
 or sent to it meanwhile; acknowledged `applied` when armed; the lock tests'
 hold of `docs/design/focus-pipeline.md`, section 20.7),
+`stall-until-release` (the window thread stalls at once, taking no
+message until `release`, as a hung application's does, printing `stall
+started` as it begins and `stall message sent` each time a message is
+sent to it meanwhile, so a test sees each call a client makes to the hung
+window and waits on; the UIA fault tests' hung window),
 `menu-opened <id>` (raises UIA's `MenuOpened` event from the node, which
 the focus listener reads as a focus on it; an automation event, which UIA
 delivers on a desktop where no window has the keyboard focus, as it does
 not deliver a focus event; UIA-only), `release` (lets the held call, or
-either hold, go on; applied and acknowledged `applied` by the stdin thread
+a stall that lasts until release, go on; applied and acknowledged `applied` by the stdin thread
 itself, since the window thread is the one held), and `quit`.
 
 Every other command is acknowledged on stdout by the window thread once it

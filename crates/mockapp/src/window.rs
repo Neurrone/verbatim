@@ -484,6 +484,10 @@ fn apply(hwnd: HWND, context: &WindowContext, command: Command) -> bool {
         acknowledge("applied");
         return true;
     }
+    if let Command::StallUntilRelease = command {
+        crate::held::stall_now_until_release();
+        return true;
+    }
     if let Command::StallAfterFocusRead(reads) = command {
         crate::held::arm_stall_after_focus_read(reads);
         acknowledge("applied");
