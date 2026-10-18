@@ -19,8 +19,10 @@
 //! - `E57_POSTED`: `0` stalls without `posted`, so that mockapp reports
 //!   only messages sent to the stalled thread.
 //!
-//! This file was run from `crates/mockapp/tests/uia_bugs/`; the readme
-//! beside it says how to put it back there.
+//! This file was run from `crates/mockapp/tests/uia_bugs/` at commit
+//! e04bdd8a, and is rerun only in a worktree at that commit, since mockapp's
+//! stall has changed since; the readme beside it says how to put it back
+//! there.
 //!
 //! The handler reads the sender's cached name, filled in mockapp's
 //! process as the event is raised, so a late delivery still names the
