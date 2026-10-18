@@ -12,15 +12,16 @@ mod common;
 #[path = "../common/harness.rs"]
 mod harness;
 
+mod a_cache_request_fails_while_uias_first_time_setup_runs_on_another_thread;
 mod a_hung_window_named_in_a_system_focus_event_holds_a_processs_uia_events;
 mod a_new_connection_fails_while_another_processs_remote_operation_is_queued;
 mod a_registration_that_times_out_reports_success;
 mod elements_cannot_be_passed_to_another_process;
 mod focus_events_cannot_be_limited_to_one_application;
-mod setup_race;
 mod support;
 mod the_connection_timeout_applies_to_the_whole_process;
 
+use a_cache_request_fails_while_uias_first_time_setup_runs_on_another_thread as setup_race;
 use a_hung_window_named_in_a_system_focus_event_holds_a_processs_uia_events as hung_focus;
 use a_new_connection_fails_while_another_processs_remote_operation_is_queued as collision;
 use a_registration_that_times_out_reports_success as timed_out_registration;
@@ -36,6 +37,9 @@ fn main() {
     }
     if let Ok(window) = std::env::var(collision::OPERATOR) {
         collision::operator(&window);
+    }
+    if std::env::var(setup_race::RACER).is_ok() {
+        setup_race::racer();
     }
     harness::run_isolated(&[
         (

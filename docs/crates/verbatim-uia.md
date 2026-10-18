@@ -86,8 +86,9 @@ Public API:
   life of the process so the setup is not undone:
   while UIA's first-time setup is still running on one thread, a cache
   request built on another fails with `E_FAIL`, which made a mockapp test
-  fail about one run in five (mockapp's `tests/uia_bugs/setup_race.rs`
-  races six threads in a fresh process).
+  fail about one run in five (mockapp's
+  `tests/uia_bugs/a_cache_request_fails_while_uias_first_time_setup_runs_on_another_thread.rs`
+  races six threads in each of four fresh processes).
 - `Uia::ancestors(element, request, registry, max_hops, stops)` — the
   chain of ancestors of an element, each read as the `Ancestor` shape,
   outermost first, as `NodeSnapshot`s: a per-hop `GetParentElementBuildCache` walk
