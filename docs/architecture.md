@@ -199,7 +199,9 @@ screen reader in both rendered and source form.
   application holds only its own reading thread, except that a hung window
   named in a focus `WinEvent` holds UIA's delivery of every focus event to
   the listener until it answers (measured, section 12.11; NVDA's exposure
-  too). MSAA events are forwarded with no call, as before. The outpost no
+  too; `docs/uia-bugs.md`, "A hung window named in a system focus event holds
+  a process's UIA events"). MSAA events are forwarded with no call, as
+  before. The outpost no
   longer reads the focused element for a focus event: it reports the
   listener's read and finds its own copy of the element afterwards, off
   the way to speech.

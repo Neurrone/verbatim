@@ -5,23 +5,15 @@
 //! process-detach code.
 //!
 //! Why the process is not allowed to exit normally: a process that has
-//! connected to UIA providers sometimes hangs at full CPU, or crashes with
-//! an access violation, as it exits normally, after all its tests have
-//! passed. Resolved with Microsoft's public symbols, the fault is inside
-//! `UIAutomationCore.dll`'s own process-detach code: destroying its global
-//! telemetry object (`TelemetryUtility::m_instance`) walks a linked list of
-//! per-provider connection records that is corrupt by then, and the walk
-//! never ends or reads freed memory. Releasing every UIA object first does
-//! not prevent it, nor does waiting seconds after every provider has gone,
-//! so there is no proper shutdown on our side that avoids it; what corrupts
-//! the list is not yet known. It happened in about 1 to 3 percent of runs
-//! of the arbitration tests, and failed CI on GitHub's runner. Verbatim's
-//! own processes are not affected, because outposts and the listener end
-//! themselves with `TerminateProcess` once they have shut down, and never
-//! run that code (`docs/architecture.md`, section 1, "Process and thread
-//! model"); these test binaries are the only processes that use UIA as a
-//! client and exit normally. The experiments' figures are in
-//! `docs/crates/mockapp.md`.
+//! connected to UIA providers sometimes hangs at full CPU, or crashes, in
+//! `UIAutomationCore.dll`'s own process-detach code as it exits normally,
+//! after all its tests have passed, and nothing tried on our side avoids it
+//! (`docs/uia-bugs.md`, "A process that used UIA can hang or crash as it
+//! exits"). Verbatim's own processes are not affected, because outposts and
+//! the listener end themselves with `TerminateProcess` once they have shut
+//! down, and never run that code (`docs/architecture.md`, section 1,
+//! "Process and thread model"); these test binaries are the only processes
+//! that use UIA as a client and exit normally.
 //!
 //! So, once the results are printed and flushed, the runner ends its own
 //! process with `TerminateProcess`, as outposts and the listener end

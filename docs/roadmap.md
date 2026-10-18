@@ -206,20 +206,12 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
 
 - The focus pipeline's follow-ups (2026-10-17):
   - `conhost_two_windows` fails about 1 run in 20, its cause found and
-    its fix awaiting Dickson's decision. `UiaHasServerSideProvider`,
-    called by a fresh client on a console window created moments earlier,
-    answers no after about 3 seconds whenever any other process has a UIA
-    event handler registered: experiment e38 in
-    `target/e2e-evidence/launch-collision/collide/readme.md` saw it in 0 of
-    110 trials with no other handler and up to 10 of 30 with one, and a
-    single idle tooltip-opened handler is enough. The per-application lock
-    cannot prevent it. A raw `SendMessageTimeout` probe sending
-    `WM_GETOBJECT` with `UiaRootObjectId` answered correctly in all 360
-    trials, and the lookup that followed returned the console host's own
-    element. Replacing the probe (`crates/verbatim-uia/src/probe.rs` and
-    its callers) replaces the call NVDA makes, and NVDA would get the same
-    wrong answer (`nvda/source/UIAHandler/__init__.py`, lines 1279 to
-    1287), so it waits for Dickson.
+    its fix awaiting Dickson's decision: see `docs/uia-bugs.md`,
+    "UiaHasServerSideProvider says no for a new conhost window while
+    another process has an event handler". The fix, the raw
+    `WM_GETOBJECT` probe, replaces the call NVDA makes
+    (`crates/verbatim-uia/src/probe.rs` and its callers), so it waits for
+    Dickson.
   - When a console window is read through MSAA, NVDA gives its client
     object the legacy console overlay with the terminal role
     (`nvda/source/NVDAObjects/IAccessible/__init__.py`, lines 731 to 733,

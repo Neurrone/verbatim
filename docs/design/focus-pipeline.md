@@ -553,6 +553,8 @@ Steps 1 to 4 of section 10.3 (time limits, the probe, Core's single channel, the
 
 ### 12.11 Experiment E-hung-proxy: results (run 2026-10-10, twice)
 
+The fault, with its mechanism and every workaround tried since, is recorded in `docs/uia-bugs.md`, "A hung window named in a system focus event holds a process's UIA events".
+
 - Baseline, P1 answering: the WinEvents raised for the tree view reached none of the test process's registrations (the name change's mapping is turned off by `verbatim_uia::proxy`, as NVDA turns it off; the focus mapping is kept, as NVDA keeps it, but UIA reported no focus for a window that is not the system's focus).
 - Control, P1 answering: P2's focus reached its scoped handler 1 ms after it was raised.
 - Control, P1 hung (stalled 15 s) and no WinEvent naming its window: P2's focus arrived in 0 ms. A hung application alone delays nothing.
@@ -1012,6 +1014,8 @@ One effect the design did not foresee: with a spare, the outpost handles Windows
 ## 20. A lock per application around the UIA calls that collide (decided 2026-10-17; built 2026-10-17)
 
 ### 20.1 The defect
+
+The fault, with every workaround tried since, is recorded in `docs/uia-bugs.md`, "A new connection fails while another process's remote operation is queued"; this section keeps the account the lock was designed from.
 
 When any process sends a UIA remote operation into an application, there is a window, from the operation's arrival in the application until UIA begins evaluating it, during which every new UIA connection from another process to that application fails without an error: `UiaHasServerSideProvider` answers "no" after about 3 seconds, and `ElementFromHandle` and `ElementFromHandleBuildCache` return UIA's client-side window proxy after about 2 seconds, in place of the application's own element. The window is short while the application's UI thread pumps, lengthened for the first operation in the process by UIA's one-time setup there (about 7.5 ms on this machine), and as long as the UI thread is busy, which is how a launch makes it long. What the experiments of 2026-10-17 established, with the collide tool (`target/e2e-evidence/launch-collision/collide-tool-with-busy.patch`, extended for `e22` onward by `collide/collide-tool-crossings.patch` beside the scripts; the scripts and their outputs in `target/e2e-evidence/launch-collision/collide/`):
 

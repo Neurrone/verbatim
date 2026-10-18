@@ -1029,13 +1029,10 @@ pub fn release_mta_usage() {
 /// The setup lasts only as long as the apartment, so the apartment is kept
 /// for the life of the process (`CoIncrementMTAUsage`) rather than by
 /// whichever thread happens to be in it. Every use of UIA in the crate
-/// calls this first, the provider probe included. Without it, while one
+/// calls this first, the provider probe included, because while one
 /// thread is still setting UIA up, another thread's `CreateCacheRequest`
-/// fails with `E_FAIL` (found on 2026-10-03: with six threads creating
-/// clients at once in a fresh process, five failed nearly every time; one
-/// call 50 ms later succeeded, and no call failed once a first client had
-/// built a cache request). A probe running at the same moment is another
-/// way into the setup and made the same call fail. An outpost starts
+/// fails (`docs/uia-bugs.md`, "A cache request fails while UIA's
+/// first-time setup runs on another thread"), and an outpost starts
 /// several UIA threads at once.
 ///
 /// # Errors
@@ -1137,7 +1134,8 @@ fn enable_recovery_and_coalescing(client: &IUIAutomation6) -> windows::core::Res
 
 /// Sets the process's connection and transaction timeouts to
 /// [`CALL_TIMEOUT`] through `client`: process-wide settings, though made
-/// through a client (`docs/design/focus-pipeline.md`, experiment E1).
+/// through a client (`docs/uia-bugs.md`, "The connection timeout applies
+/// to the whole process").
 fn set_process_timeouts(client: &IUIAutomation2) -> windows::core::Result<()> {
     let timeout = u32::try_from(CALL_TIMEOUT.as_millis()).unwrap_or(u32::MAX);
     // SAFETY: `client` is a live IUIAutomation2; each timeout is a plain

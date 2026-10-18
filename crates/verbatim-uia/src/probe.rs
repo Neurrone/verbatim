@@ -29,7 +29,9 @@ pub fn has_server_side_provider(hwnd: isize) -> bool {
     // A new connection to the window by its handle, which answers "no"
     // after about three seconds when it arrives while a remote operation
     // from another process waits to be evaluated in the window's
-    // application: made holding that application's lock (`crate::lock`).
+    // application (`docs/uia-bugs.md`, "A new connection fails while
+    // another process's remote operation is queued"): made holding that
+    // application's lock (`crate::lock`).
     crate::lock::guarded_window("UiaHasServerSideProvider", hwnd, || {
         // SAFETY: UiaHasServerSideProvider tolerates any window handle,
         // returning false for invalid ones; the BOOL is converted, not

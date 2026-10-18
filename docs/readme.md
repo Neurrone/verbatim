@@ -28,7 +28,8 @@ submodule commit.
 guide in [docs/crates](crates/readme.md) that must be kept current;
 the NVDA reference for the behavior is in [docs/nvda](nvda/readme.md);
 the [design records](design/) hold the detailed designs behind the work
-and the decision log of phase 6.
+and the decision log of phase 6; and [the UIA faults](uia-bugs.md) say
+what UI Automation gets wrong and what has been tried against each.
 
 **Running and debugging things.** [The tooling guides](tooling/readme.md),
 one file per purpose, cover setup and builds, `verbatim-inspect`,
@@ -70,6 +71,10 @@ NVDA says, to decide what Verbatim should say.
   a cross-process call, cold and steady state, cancelled traces, the
   floor and the ratio, and for each operation and backend the minimum,
   current, and target call counts that CI asserts exactly.
+- [Faults in UI Automation](uia-bugs.md) — the faults in Windows' UIA
+  that Verbatim has established by experiment, and in applications'
+  providers: each one's trigger, symptoms, workarounds tried, NVDA's
+  exposure, and its reproduction test in `crates/mockapp/tests/uia_bugs/`.
 - [Text attributes](text-attributes.md) — the survey of every UIA text
   attribute and annotation in Windows Terminal, the console host, and
   Windows 11 Notepad: what each reports, whether it varies, and what

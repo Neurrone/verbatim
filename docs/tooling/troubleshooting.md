@@ -258,16 +258,14 @@ error.
 **A provider probe answers "no" after about three seconds, and the focus
 is read through MSAA, spoken as "pane", or announced twice.** The probe is
 `UiaHasServerSideProvider`, logged at debug by the listener and the
-outposts as `arbitration probed` with its `elapsed_ms`. UI Automation
-fails every new connection from one process to an application while a
-remote operation from another process waits to be evaluated there: the
-probe answers "no" after about 3,000 ms and `ElementFromHandle` returns
-UIA's window proxy after about 2,000 ms, without an error
-(`docs/design/focus-pipeline.md`, section 20.1). The listener's focus read
-is such an operation, and an outpost's first connection to a launching
-application such a connection, so they collided at first sight in about 3
-in 100 Windows Terminal launches and 1 in 25 Notepad openings. Verbatim
-now makes both under the application's lock (`verbatim_uia::lock`). A
+outposts as `arbitration probed` with its `elapsed_ms`. Two UIA faults
+give it (`docs/uia-bugs.md`): "A new connection fails while another
+process's remote operation is queued", where the listener's focus read
+is the operation and an outpost's first connection to a launching
+application the connection, which Verbatim now makes under the
+application's lock (`verbatim_uia::lock`); and, for a conhost window
+just created, "UiaHasServerSideProvider says no for a new conhost window
+while another process has an event handler", which no lock prevents. A
 slow "no" that remains has another cause: a remote operation by other
 software, such as NVDA's, which no lock of Verbatim's covers; an
 operation of Verbatim's that timed out just before, whose request UIA

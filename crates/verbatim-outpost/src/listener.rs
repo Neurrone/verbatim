@@ -50,8 +50,9 @@
 //! runs past its deadline, so a slow or hung application holds only its
 //! own thread. One exposure is UIA's own and cannot be contained here: a
 //! hung window named in a focus `WinEvent` holds UIA's delivery of every
-//! focus event to the listener until it answers (section 12.11), as it
-//! holds NVDA's.
+//! focus event to the listener until it answers, as it holds NVDA's
+//! (`docs/uia-bugs.md`, "A hung window named in a system focus event holds a
+//! process's UIA events").
 //!
 //! The hand-over of MSAA events (`docs/design/focus-pipeline.md`, section
 //! 12.4, "The MSAA hand-over, exactly"): every application's outpost takes

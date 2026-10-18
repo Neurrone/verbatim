@@ -419,7 +419,11 @@ running `MockApp`'s drop, and a `mockapp` left running would keep the
 standard error it inherited open, on which `cargo test` then waits
 forever. `child_cleanup.rs` pins this: it runs itself as a subprocess
 that starts a `mockapp` and panics where the panic cannot unwind, and
-asserts that the subprocess's standard error closes promptly. Every test file runs through `tests/common/harness.rs` instead of
+asserts that the subprocess's standard error closes promptly.
+`tests/uia_bugs/` is one test binary (`main.rs` declares a module per
+file) holding the tests that reproduce a fault in UI Automation or show
+that Verbatim's workaround for one still holds, each file named after the
+fault's heading in `docs/uia-bugs.md`. Every test file runs through `tests/common/harness.rs` instead of
 libtest (`harness = false`): it runs and reports the tests as libtest
 does, then ends the process without running DLL detach code, because
 `UIAutomationCore.dll`'s own detach code sometimes hangs or crashes in a
@@ -447,16 +451,8 @@ to have the focus, tells the outpost under test which (below). Since
 `cargo xtask ci` put the others' mockapp windows on the interactive
 desktop, where they disturbed end-to-end runs.
 
-The experiments behind the harness's exit: the arbitration test binary
-hung at exit in 1 run in 40 before UIA's first-time setup was fixed and
-in 1 in 100 after; waiting 12 seconds after every provider had gone still
-left 2 hangs in 100 runs; six threads each connecting to a mockapp of its
-own hung 1 in 40 against 0 in 40 for one thread, too few runs to tell
-whether concurrent connections corrupt the list; and `CoUninitialize`
-does not end UIA's own CoreMessaging thread. NVDA exits the same way after
-releasing its UIA client, so it is exposed too. verbatim-uia's `first_use`
-test exits normally without this, because it never connects to a
-provider, so the list stays empty.
+The experiments behind the harness's exit are in `docs/uia-bugs.md`,
+"A process that used UIA can hang or crash as it exits".
 The outpost those tests run
 (`tests/common/outpost.rs`) reads arbitration's time from the test,
 which stands still unless the test moves it on (`pass_time`), so a
