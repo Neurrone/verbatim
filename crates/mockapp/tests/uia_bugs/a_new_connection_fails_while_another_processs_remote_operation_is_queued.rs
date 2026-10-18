@@ -171,13 +171,15 @@ pub fn a_probe_during_another_processs_queued_operation_answers_no() {
     app.quit();
 }
 
-/// The control: with no operation queued, a probe made while mockapp's
-/// window thread is stalled, and released once the probe's message has
-/// reached the thread, answers that the window has a provider, so the
-/// stall alone does not make the probe answer no.
+/// The control: with the sender started, its first remote operation run,
+/// and no second queued, a probe made while mockapp's window thread is
+/// stalled, and released once the probe's message has reached the thread,
+/// answers that the window has a provider, so neither the stall nor the
+/// sender's presence alone makes the probe answer no.
 pub fn a_probe_during_a_plain_stall_answers_yes() {
     let (mut app, hwnd) = support::mockapp("collide-control", "uia");
     let _setup = support::client();
+    let operator = Operator::start(hwnd);
     let hwnd = hwnd.0 as isize;
 
     app.write("stall-until-release");
@@ -195,5 +197,6 @@ pub fn a_probe_during_a_plain_stall_answers_yes() {
         .recv_timeout(common::WAIT_TIMEOUT)
         .expect("the probe answers");
     assert!(probed, "the probe answered no");
+    operator.end();
     app.quit();
 }

@@ -271,15 +271,17 @@ pub fn a_provider_held_raising_its_event_holds_only_its_own_events() {
 }
 
 /// The cost of a short connection timeout (`h6`): with it at 500 ms, the
-/// focus of an MSAA mockapp whose window thread is busy, named in a focus
-/// `WinEvent`, is never delivered to a desktop-wide focus handler. Once UIA
-/// has sent the busy window its second message, a second MSAA mockapp's
-/// focus is the first heard, though UIA's focus tracking handles focus
-/// `WinEvent`s in turn, so a busy focus that was held rather than dropped
-/// would have come before it; and once the busy window is released, the
-/// second mockapp's next focus is the next heard, and nothing more.
+/// focus of an MSAA mockapp whose window thread stays busy past both of
+/// UIA's waits for it is never delivered to a desktop-wide focus handler.
+/// The mockapp raises its focus and stalls in the same turn of its window
+/// thread (`stall-until-release after focus btn1`). Once UIA has sent it
+/// its second message, a second MSAA mockapp's focus is the first heard,
+/// though UIA's focus tracking handles focus `WinEvent`s in turn, so a
+/// busy focus that was held rather than dropped would have come before
+/// it; and once the busy window is released, the second mockapp's next
+/// focus is the next heard, and nothing more.
 pub fn a_focus_raised_while_its_window_is_busy_past_the_connection_timeout_is_dropped() {
-    let (mut busy, busy_hwnd) = support::mockapp("hung-dropped", "msaa");
+    let (mut busy, _) = support::mockapp("hung-dropped", "msaa");
     let (mut other, _) = support::mockapp("hung-dropped-other", "msaa");
     let uia = support::client();
     support::set_connection_timeout(uia.client(), CONNECTION_TIMEOUT);
@@ -291,7 +293,9 @@ pub fn a_focus_raised_while_its_window_is_busy_past_the_connection_timeout_is_dr
     }
     .expect("the desktop-wide focus handler");
 
-    hang_and_name_in_a_focus_event(&mut busy, busy_hwnd);
+    busy.write("stall-until-release after focus btn1");
+    busy.expect_line("applied", String::new);
+    busy.expect_line("stall started", String::new);
     busy.expect_line(
         &support::root_object_request(support::MOCKAPP_WINDOW),
         String::new,
