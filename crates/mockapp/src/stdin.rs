@@ -8,7 +8,9 @@
 //! `notify <text>`,
 //! `active-text-position <id> <start> <end>`, `take-runtime-id <id> <from>`,
 //! `stall <ms> [<at> <command>]`, `on-activate <command>`, `slow <ms>`, `hold`,
-//! `stall-after-focus-read <n>`, `menu-opened <id>`, `release`, and `quit`.
+//! `stall-after-focus-read <n>`,
+//! `stall-until-release [posted | quiet] [after <command>]`,
+//! `menu-opened <id>`, `release`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
@@ -173,21 +175,28 @@ pub(crate) enum Command {
     Hold,
     /// `stall-after-focus-read <n>`: the `n`th read of a node's
     /// `HasKeyboardFocus` from now, once answered, stalls the window thread
-    /// until `release`, which says when the stall begins and when the first
-    /// message reaches the thread meanwhile ([`crate::held`]). Applied on
-    /// the window thread.
+    /// until `release`, holding and naming messages as
+    /// `stall-until-release posted` does ([`crate::held`]). Applied on the
+    /// window thread.
     StallAfterFocusRead(u32),
-    /// `stall-until-release [posted | quiet]`: stalls the window thread now,
-    /// until `release`, as a hung application's UI thread answers no
-    /// client, saying when the stall begins and naming each client's message
-    /// sent to the thread meanwhile; with `posted`, also naming the first
-    /// message posted to it; with `quiet`, taking no message and saying
-    /// nothing but its start ([`crate::held`]). Applied on the window
-    /// thread.
-    StallUntilRelease(crate::held::Reports),
+    /// `stall-until-release [posted | quiet] [after <command>]`: stalls the
+    /// window thread now, or, with `after <command>`, once it has applied
+    /// the command, in the same turn, so no message reaches the thread in
+    /// between, as an application raises an event and then hangs;
+    /// either way it lasts until `release`, as a hung application's UI
+    /// thread answers no client, saying when the stall begins, and holding and naming each
+    /// message sent to any window on the thread from another thread
+    /// meanwhile, but for the system's broadcasts and messages whose sender
+    /// waits for no answer, which are answered and not named; with
+    /// `posted`, also naming the first message posted to the thread by
+    /// anything but mockapp; with `quiet`, taking no message and saying
+    /// nothing but its start ([`crate::held`]). Nothing is said after
+    /// `release`'s acknowledgement. Applied on the window thread.
+    StallUntilRelease(crate::held::Reports, Option<Box<Command>>),
     /// `release`: lets the call `hold` held, or the stall of
-    /// `stall-after-focus-read` or `stall-until-release`, go on. Applied and acknowledged on the
-    /// stdin thread, since the window thread is the one held.
+    /// `stall-after-focus-read` or `stall-until-release`, go on. Applied
+    /// and acknowledged on the stdin thread, since the window thread is the
+    /// one held.
     Release,
     /// `quit`.
     Quit,
@@ -217,15 +226,20 @@ fn caret(rest: &str) -> Option<Command> {
     Some(Command::Caret(id.to_owned(), start, end))
 }
 
-/// `stall-until-release`'s argument: what the stall reports.
+/// `stall-until-release`'s arguments: what the stall reports, and the
+/// command applied before it begins, if any.
 fn stall_until_release(rest: &str) -> Option<Command> {
-    let reports = match rest {
+    let (mode, after) = match rest.split_once("after ") {
+        Some((mode, command)) => (mode.trim(), Some(Box::new(parse_command(command)?))),
+        None => (rest, None),
+    };
+    let reports = match mode {
         "" => crate::held::Reports::Sends,
         "posted" => crate::held::Reports::SendsAndFirstPost,
         "quiet" => crate::held::Reports::Nothing,
         _ => return None,
     };
-    Some(Command::StallUntilRelease(reports))
+    Some(Command::StallUntilRelease(reports, after))
 }
 
 /// `stall`'s arguments: its length, and optionally when into it to apply
@@ -380,11 +394,7 @@ pub(crate) fn run(sink: &Sender<Command>, wake: impl Fn()) {
                 wake();
                 break;
             }
-            Some(Command::Release) => {
-                crate::hits::release();
-                crate::held::release();
-                crate::window::acknowledge("applied");
-            }
+            Some(Command::Release) => crate::held::release(),
             Some(command) => {
                 if sink.send(command).is_err() {
                     break;
@@ -559,18 +569,32 @@ mod tests {
         assert!(parse_command("stall-after-focus-read").is_none());
         assert!(matches!(
             parse_command("stall-until-release"),
-            Some(Command::StallUntilRelease(crate::held::Reports::Sends))
+            Some(Command::StallUntilRelease(
+                crate::held::Reports::Sends,
+                None
+            ))
         ));
         assert!(matches!(
             parse_command("stall-until-release posted"),
             Some(Command::StallUntilRelease(
-                crate::held::Reports::SendsAndFirstPost
+                crate::held::Reports::SendsAndFirstPost,
+                None
             ))
         ));
         assert!(matches!(
             parse_command("stall-until-release quiet"),
-            Some(Command::StallUntilRelease(crate::held::Reports::Nothing))
+            Some(Command::StallUntilRelease(
+                crate::held::Reports::Nothing,
+                None
+            ))
         ));
+        match parse_command("stall-until-release after focus btn1") {
+            Some(Command::StallUntilRelease(crate::held::Reports::Sends, Some(after))) => {
+                assert!(matches!(*after, Command::Focus(ref id) if id == "btn1"));
+            }
+            _ => panic!("expected StallUntilRelease after a focus"),
+        }
+        assert!(parse_command("stall-until-release after frobnicate").is_none());
     }
 
     #[test]

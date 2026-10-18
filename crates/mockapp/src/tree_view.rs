@@ -193,9 +193,6 @@ unsafe extern "system" fn superclass_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    // A client's message during a stall of `stall-until-release` waits
-    // there until `release` (`crate::held`).
-    crate::held::hold_if_stalled(hwnd, msg, lparam);
     #[expect(
         clippy::cast_possible_truncation,
         reason = "idObject is 32 bits by convention"

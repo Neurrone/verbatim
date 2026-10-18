@@ -184,28 +184,42 @@ provider call, whichever client makes it, prints `held <method>` on
 stdout as it begins and waits until `release`, so a test knows a client's
 call is in progress and decides when it ends; acknowledged `applied`),
 `stall-after-focus-read <n>` (the `n`th read of a node's
-`HasKeyboardFocus` from now, once answered, stalls the window thread,
-which takes no message until `release`, printing `stall started` as it
-begins and `stall message arrived` once when the first message is posted
-or sent to it meanwhile; acknowledged `applied` when armed; the lock tests'
-hold of `docs/design/focus-pipeline.md`, section 20.7),
-`stall-until-release` (the window thread stalls at once until `release`,
-answering no client meanwhile, as a hung application's does: it takes each
-message sent to it, and the window procedure that receives a client's
-message, `WM_GETOBJECT` or a registered message such as UI Automation's
-own, holds it until `release`, printing `stall message sent <message> to
-<class>`, the message (`WM_GETOBJECT` with its object id, or the registered
-message's name) and the class of the window it was sent to, so a test waits
-for exactly the call it expects; any other message sent to the thread, such
-as the `WM_SETTINGCHANGE` Windows sends every top-level window when a
-screen reader starts or stops, is answered and not reported; it prints
-`stall started` as it begins; `stall-until-release posted` also names the
-first message posted to the thread, once, as `stall message posted <id> to
+`HasKeyboardFocus` from now, once answered, stalls the window thread
+until `release`, holding and naming messages as `stall-until-release
+posted` does, as the listener's remote operation's arrival is posted to
+it; acknowledged `applied` when armed; the lock tests' hold of
+`docs/design/focus-pipeline.md`, section 20.7), `stall-until-release` (the window thread stalls at once,
+or, with `stall-until-release after <command>`, once it has applied the
+command in the same turn, as an application raises an event and then
+hangs, until `release`, answering no client meanwhile, as a hung
+application's does: a hook on the thread (`WH_CALLWNDPROC`), called before any window
+procedure is given a sent message, holds every message sent from another
+thread to any window on the thread, mockapp's own, the native controls',
+COM's `OleMainThreadWndClass` and the input method's, until `release`,
+printing `stall message sent <message> to <class>`, the message
+(`WM_GETOBJECT` with its object id, a registered message's name, or its
+number) and the class of the window it was sent to, so a test waits for
+exactly the call it expects; the thread goes on taking sent messages, each
+held inside the one before, so they are answered in the reverse order of
+their arrival; two kinds are answered and not reported: the system's
+broadcasts, `WM_SETTINGCHANGE`, `WM_THEMECHANGED`, `WM_SYSCOLORCHANGE`,
+`WM_DISPLAYCHANGE`, `WM_FONTCHANGE`, `WM_TIMECHANGE` and
+`WM_DEVICECHANGE`, which Windows sends every top-level window, on the
+tests' desktops too, such as when a screen reader starts or stops, and a
+message whose sender waits for no answer (`SendNotifyMessage`), such as a
+registered message broadcast to every window; it prints `stall started`
+as it begins and nothing after `release`'s acknowledgement;
+`stall-until-release posted` also names the first message posted to the
+thread by anything but mockapp, once, as `stall message posted <id> to
 <class>`, as a remote operation's arrival is posted, read without taking
 it; `stall-until-release quiet` takes no message at all and says nothing
 between its start and its end, for a test whose evidence comes from
-elsewhere; a wait that fails ends the stall with `stall failed: <reason>`;
-the UIA fault tests' hung and busy windows),
+elsewhere; a wait that fails prints `stall failed: <reason>`, and the
+thread then takes no message until `release`; because a stall that takes
+messages keeps calling `PeekMessageW`, Windows never counts its windows
+as hung (`IsHungAppWindow`), so a sender using `SMTO_ABORTIFHUNG` waits
+for it as for a busy window, where it would give up at once on a real
+hang; the UIA fault tests' hung and busy windows),
 `menu-opened <id>` (raises UIA's `MenuOpened` event from the node, which
 the focus listener reads as a focus on it; an automation event, which UIA
 delivers on a desktop where no window has the keyboard focus, as it does

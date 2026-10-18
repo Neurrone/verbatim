@@ -584,6 +584,12 @@ fn connect_during_the_hold(
     run.finish();
 }
 
+/// mockapp's line for the post of the listener's remote operation's
+/// arrival to its stalled window thread: `WM_USER`, to the window COM keeps
+/// for the thread's single-threaded apartment, as COM delivers a call into
+/// one.
+const OPERATION_ARRIVAL: &str = "stall message posted 0x0400 to OleMainThreadWndClass";
+
 /// The listener's first remote operation into mockapp, the read of its
 /// first focus, which sets UIA up there, waits behind mockapp's busy UI
 /// thread, which stopped taking messages once it answered the listener's
@@ -607,7 +613,7 @@ fn a_probe_waits_for_the_first_operation_behind_a_busy_ui_thread() {
     app.send("menu-opened root");
     let first = run.expect_given(pid);
     app.expect_line("stall started", || logs.logged());
-    app.expect_line("stall message arrived", || logs.logged());
+    app.expect_line(OPERATION_ARRIVAL, || logs.logged());
     let _ = logs.wait_for("listener", pid.0, executes);
     connect_during_the_hold(
         run,
@@ -651,7 +657,7 @@ fn a_probe_waits_for_an_operation_behind_a_busy_ui_thread() {
     app.send("set-focus btn_ok");
     app.send("menu-opened btn_ok");
     app.expect_line("stall started", || logs.logged());
-    app.expect_line("stall message arrived", || logs.logged());
+    app.expect_line(OPERATION_ARRIVAL, || logs.logged());
     connect_during_the_hold(run, (&logs, &mut app), (first, pid, hwnd.0 as isize), "OK");
     app.quit();
 }

@@ -82,9 +82,6 @@ unsafe extern "system" fn wnd_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    // A client's message during a stall of `stall-until-release` waits
-    // there until `release` (`crate::held`).
-    crate::held::hold_if_stalled(hwnd, msg, lparam);
     if msg == WM_GETOBJECT {
         // `idObject` is 32 bits, zero-extended into `lParam`, as the host
         // window's procedure reads it.
