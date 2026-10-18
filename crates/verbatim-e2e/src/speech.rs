@@ -171,8 +171,8 @@ pub fn cut_off(text: &str) -> Expected {
 
 /// An optional utterance, for [`SpeechCollector::expect_sequence`]: speech
 /// whose presence the application decides by its own timing, accepted at
-/// this place in the sequence heard in full, cut off by later speech, or
-/// not said at all, and nothing else in its place. Each use is approved
+/// this place in the sequence heard in full, cut off, whatever cut it
+/// off, or not said at all, and nothing else in its place. Each use is approved
 /// and listed in `docs/testing.md` ("Optional utterances"), and what
 /// became of it is reported with the run ([`OptionalOutcome`]). It must be
 /// followed in the same sequence by an utterance of other text, which
@@ -1928,6 +1928,95 @@ mod tests {
         assert_eq!(
             speech.optional_outcomes()[0].to_string(),
             "\"title terminal\": cut off"
+        );
+    }
+
+    #[test]
+    fn more_repeats_than_an_optional_utterance_declares_fail() {
+        let mut speech = collector(vec![
+            queued(1, "title window"),
+            queued(2, "title terminal"),
+            queued(3, "title terminal"),
+            queued(4, "title terminal"),
+            queued(5, "blank"),
+        ]);
+        let message = fails(move || {
+            speech.expect_sequence(&[
+                heard("title window"),
+                optional("title terminal"),
+                heard("title terminal"),
+                heard("blank"),
+            ]);
+        });
+        assert!(
+            message.contains("first difference: utterance 3, character 0"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn two_repeats_of_an_optional_utterance_declared_twice_pass_and_are_reported() {
+        let mut speech = collector(vec![
+            queued(1, "title window"),
+            queued(2, "title terminal"),
+            queued(3, "title terminal"),
+            queued(4, "title terminal"),
+            queued(5, "blank"),
+            ended(1, UtteranceEnding::Completed),
+            ended(2, UtteranceEnding::Cancelled),
+            ended(3, UtteranceEnding::Cancelled),
+            ended(4, UtteranceEnding::Completed),
+            ended(5, UtteranceEnding::Completed),
+        ]);
+        speech.expect_sequence(&[
+            heard("title window"),
+            optional_up_to("title terminal", 2),
+            heard("title terminal"),
+            heard("blank"),
+        ]);
+        speech.expect_nothing_more(None);
+        assert_eq!(
+            speech.optional_outcomes()[0].to_string(),
+            "\"title terminal\": 2 times: cut off, cut off"
+        );
+    }
+
+    #[test]
+    fn an_optional_utterance_followed_only_by_its_own_text_is_a_harness_error() {
+        let mut speech = collector(Vec::new());
+        let payload = catch_unwind(AssertUnwindSafe(move || {
+            speech.expect_sequence(&[optional("title terminal"), heard("title terminal")]);
+        }))
+        .expect_err("the assertion fails");
+        assert_eq!(
+            payload.downcast_ref::<String>().map(String::as_str),
+            Some(
+                "harness error: the optional utterance \"title terminal\" is not followed by an utterance of other text that is always said"
+            )
+        );
+    }
+
+    #[test]
+    fn an_absent_optional_repeat_leaves_its_one_required_copy_to_be_heard_in_full() {
+        let mut speech = collector(vec![
+            queued(1, "title window"),
+            queued(2, "title terminal"),
+            queued(3, "blank"),
+            ended(1, UtteranceEnding::Completed),
+            ended(2, UtteranceEnding::Cancelled),
+            ended(3, UtteranceEnding::Completed),
+        ]);
+        let message = fails(move || {
+            speech.expect_sequence(&[
+                heard("title window"),
+                optional("title terminal"),
+                heard("title terminal"),
+                heard("blank"),
+            ]);
+        });
+        assert_eq!(
+            message,
+            "the utterance \"title terminal\" was expected to end Completed, but ended Cancelled"
         );
     }
 
