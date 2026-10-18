@@ -1,11 +1,14 @@
-//! UIA's first-time setup in a process, raced by several threads, as an
-//! outpost starts its UIA threads together. A file of its own, so the test
-//! runs in a fresh process where UIA has not been set up yet.
+//! `docs/uia-bugs.md`, "A cache request fails while UIA's first-time setup
+//! runs on another thread": several threads of a fresh process, as an
+//! outpost starts its UIA threads together, each create a client and build
+//! a cache request at once. They all succeed only because `verbatim_uia`
+//! finishes UIA's first-time setup once before any thread uses UIA. The
+//! runner starts each test in a process of its own, so UIA has not been set
+//! up when this one starts.
 
 use verbatim_uia::Shape as _;
 
-#[test]
-fn clients_created_at_once_in_a_fresh_process_all_build_cache_requests() {
+pub fn clients_created_at_once_in_a_fresh_process_all_build_cache_requests() {
     const THREADS: usize = 6;
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(THREADS));
     let threads: Vec<_> = (0..THREADS)

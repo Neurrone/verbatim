@@ -111,6 +111,11 @@ name = "time_limits"
 harness = false
 
 [[test]]
+name = "uia_bugs"
+path = "tests/uia_bugs/main.rs"
+harness = false
+
+[[test]]
 name = "uia_tree"
 harness = false
 
