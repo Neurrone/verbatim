@@ -22,4 +22,4 @@ Not known: whether a registration that timed out ever delivers events.
 
 ## Rerunning
 
-As [the mockapp experiments' folder](../mockapp-experiments-2026-10-10/readme.md) says: `cargo test -p mockapp --test experiments -- e_tt --nocapture` in a worktree at b0a1989. Section 10.3 of `docs/design/focus-pipeline.md` asks for E-TT to become a test; that is left for later.
+As [the mockapp experiments' folder](../mockapp-experiments-2026-10-10/readme.md) says: `cargo test -p mockapp --test experiments -- e_tt --nocapture` in a worktree at b0a1989. E-TT's registration, its read and its search are tests now, in `crates/mockapp/tests/uia_bugs/` (`docs/uia-bugs.md` names them).

@@ -2,7 +2,7 @@
 
 This file records the faults in Windows' UI Automation (UIA) that Verbatim has established by experiment: what triggers each, what a caller sees, what was tried against it, and whether NVDA meets it. A behaviour gets a heading here only once a test or a recorded experiment shows it; a suspicion stays in the design record or the roadmap until then. Where a statement is an inference rather than a measurement, it says so.
 
-Every figure comes from the recorded output of the experiment named beside it, on Dickson's x64 machine (Windows 11, build 26200) unless another machine is named. The experiments live in [`experiments/`](../experiments/readme.md), one folder per entry that has them, named after its heading: each folder's readme defines every experiment the entry names, with its setup, result and numbers, beside the scripts, tool patches and raw outputs; the design records cited hold the reasoning built on them. Tests that reproduce a fault, or show that Verbatim's workaround still holds, live in `crates/mockapp/tests/uia_bugs/`, one file per fault, named after its heading here.
+Every figure comes from the recorded output of the experiment named beside it, on Dickson's x64 machine (Windows 11, build 26200) unless another machine is named. The experiments live in [`experiments/`](../experiments/readme.md), one folder per entry that has them, named after its heading: each folder's readme defines every experiment the entry names, with its setup, result and numbers, beside the scripts, tool patches and raw outputs; the design records cited hold the reasoning built on them. Tests that reproduce a fault or show a limitation, or show that Verbatim's workaround still holds, live in `crates/mockapp/tests/uia_bugs/`, one file per entry, named after its heading here; each entry's "Reproduction test" names them, or says why there is none.
 
 Terms used throughout:
 
@@ -65,7 +65,7 @@ No NVDA issue or capture records this fault. NVDA is one process, and a process'
 
 #### Reproduction test
 
-No test in `uia_bugs/` reproduces it. The lock's tests show the fault when the lock is removed (`a_probe_waits_for_the_first_operation_behind_a_busy_ui_thread` and `a_probe_waits_for_an_operation_behind_a_busy_ui_thread` in `crates/mockapp/tests/app_lock.rs`: with the lock removed, the probe made during the stall answers "no" after about 5 seconds); they stay with the lock, which the redesign removes. The experiments are the collide tool's (below).
+`a_probe_during_another_processs_queued_operation_answers_no` in `crates/mockapp/tests/uia_bugs/a_new_connection_fails_while_another_processs_remote_operation_is_queued.rs` reproduces it, as `e1` does: the test binary, started again, sets UIA up in mockapp with a first remote operation and sends a second while mockapp's window thread is stalled; UIA posts the operation's arrival to the stalled thread (`WM_USER`, to UIA's own window in the process), and the test's provider probe, whose `WM_GETOBJECT` is sent to the thread, then answers "no", while once the thread is released the operation reads mockapp's own provider and a later probe answers "yes". It passed 20 of 20 runs, about 3.2 seconds each: the probe's "no" came about 3 seconds after it was made whatever the test's connection timeout, measured at 500, 1,000, 2,000 and 5,000 ms. The element lookup returned the window proxy about 2 seconds after it was made at a connection timeout of 500 or 1,000 ms, and after 5 seconds at 5,000 ms, sending the stalled thread several messages meanwhile, so the test uses the probe. The lock's tests show the lock prevents the fault (`a_probe_waits_for_the_first_operation_behind_a_busy_ui_thread` and `a_probe_waits_for_an_operation_behind_a_busy_ui_thread` in `crates/mockapp/tests/app_lock.rs`: with the lock removed, the probe made during the stall answers "no" after about 5 seconds); they stay with the lock, which the redesign removes.
 
 #### Evidence
 
@@ -162,7 +162,15 @@ NVDA is inferred to meet it: it is one process with a desktop-wide focus registr
 
 #### Reproduction test
 
-No test reproduces it yet. The mockapp experiments `e_mapping`, `e_hung_cause` and `e_cross` reproduced it every time they ran, but they lived in `crates/mockapp/tests/experiments.rs` on an experiment branch (commits 8b491dc and b0a1989) that was never merged, and are kept as files in `experiments/mockapp-experiments-2026-10-10/`; the 2026-10-18 measurements used the scratch tool `focusproto`.
+These are in `crates/mockapp/tests/uia_bugs/a_hung_window_named_in_a_system_focus_event_holds_a_processs_uia_events.rs`; the first three hang mockapp's tree view by stalling its window thread until the test releases it, which says each time a message is sent to it. Each passed 20 of 20 runs:
+
+- `a_name_change_waits_for_both_sends_to_a_hung_focus` reproduces the fault: with a desktop-wide focus handler and the connection timeout at 500 ms, another application's name change, raised after UIA's first send to the tree view, has not arrived when the second send reaches it, and arrives after that, 1,007 to 1,026 ms after the focus `WinEvent`, while the tree view still hangs.
+- `a_name_change_is_not_held_in_a_process_with_no_focus_registration` shows the second case under "Not affected".
+- `an_outposts_uia_events_are_not_held_behind_a_hung_focus` shows that Verbatim's workaround holds: a real outpost hears and reports the name change of the focus it follows while the tree view hangs. With a focus subscription added to the outpost's registration, it failed 20 of 20 runs.
+- `a_provider_held_raising_its_event_holds_only_its_own_events` shows E-delivery's case under "Not affected".
+- `a_focus_raised_while_its_window_is_busy_past_the_connection_timeout_is_dropped` shows `h6`'s cost of a short connection timeout, with a 1.5-second stall at 500 ms; with the connection timeout above the test's wait, the stalled focus was delivered and the test failed.
+
+The October experiments `e_mapping`, `e_hung_cause` and `e_cross` are kept as files in `experiments/mockapp-experiments-2026-10-10/`, and the 2026-10-18 measurements used the scratch tool `focusproto`.
 
 #### Evidence
 
@@ -198,7 +206,11 @@ NVDA leaves UIA's defaults (focus pipeline section 6.1), so it does not meet thi
 
 #### Reproduction test
 
-No test reproduces it yet; the experiments were E1 (section 11) and `h5_read.py`.
+These are in `crates/mockapp/tests/uia_bugs/the_connection_timeout_applies_to_the_whole_process.rs`; each passed 20 of 20 runs:
+
+- `a_lookup_waits_the_connection_timeout_another_client_set_last` reproduces it, as `h5_main10000_other500` did: a lookup on a client that set the connection timeout longer than the test's wait fails with `UIA_E_TIMEOUT` while the window still hangs, once a client on another thread has set 500 ms.
+- `timeouts_set_through_one_client_are_read_by_another` reproduces E1: both timeouts set through one client are what a client made before, on another thread, reads.
+- `the_first_client_in_a_process_has_verbatims_timeouts` and `making_a_client_keeps_the_timeouts_another_set` show that Verbatim's workaround holds. With the setup's setting removed, the first failed 20 of 20 runs, reading UIA's defaults of 2,000 and 20,000 ms; with client creation setting the timeouts as well, the second failed 20 of 20.
 
 #### Evidence
 
@@ -242,7 +254,7 @@ No test reproduces it yet; the experiment is P2c.
 
 #### Trigger
 
-`AddEventHandlerGroup` on a window whose provider does not answer (held in `FragmentRoot`), with the transaction timeout at 1 second.
+`AddEventHandlerGroup` on a window whose provider does not answer (held in `FragmentRoot`), with a timeout shorter than the hold: the transaction timeout at 1 second in E-TT. In the test below, the registration's wait followed the connection timeout instead: 540 to 549 ms with the connection timeout at 500 ms and the transaction timeout at 5,000 ms, and 5,453 to 5,504 ms the other way round.
 
 #### Symptoms
 
@@ -266,7 +278,7 @@ Not known.
 
 #### Reproduction test
 
-No test reproduces it yet. E-TT lived in the unmerged `crates/mockapp/tests/experiments.rs`, now kept as a file in `experiments/mockapp-experiments-2026-10-10/`, and section 10.3 had asked for it to be kept as a test.
+`a_group_registered_while_its_provider_is_held_reports_success` in `crates/mockapp/tests/uia_bugs/a_registration_that_times_out_reports_success.rs` reproduces it, with both timeouts at 500 ms: the registration returns success while mockapp still holds its provider in `FragmentRoot`. `a_read_while_its_provider_is_held_fails`, beside it, shows the case under "Not affected": a name read, held in `GetPropertyValue`, fails with `UIA_E_TIMEOUT`. Each passed 20 of 20 runs. Neither tests whether the registration delivers afterwards.
 
 #### Evidence
 
@@ -349,7 +361,7 @@ In a process where UIA has not been used yet, several threads create clients and
 
 #### Symptoms
 
-While UIA's first-time setup runs on one thread, `CreateCacheRequest` on another fails with `E_FAIL`. With six threads creating clients at once in a fresh process, five failed nearly every time; it made a mockapp arbitration test fail about one run in five (7c402534). With Verbatim's workaround removed, the test below failed in 2 of 3 runs on 2026-10-18, with `E_FAIL` (0x80004005).
+While UIA's first-time setup runs on one thread, `CreateCacheRequest` on another fails with `E_FAIL`. With six threads creating clients at once in a fresh process, five failed nearly every time; it made a mockapp arbitration test fail about one run in five (7c402534). With Verbatim's workaround removed, on 2026-10-18, one fresh process racing from 2 to 16 threads met no failure in about one race in 10 to 30, and the test below, which races six threads in each of four fresh processes, failed 50 of 50 runs with `E_FAIL` (0x80004005).
 
 #### Not affected
 
@@ -369,7 +381,7 @@ NVDA creates its UIA client on one thread, so it is inferred not to meet it.
 
 #### Reproduction test
 
-`clients_created_at_once_in_a_fresh_process_all_build_cache_requests` in `crates/mockapp/tests/uia_bugs/setup_race.rs` shows the workaround holds: it passes with it, and without it fails as above, though not in every run.
+`clients_created_at_once_in_a_fresh_process_all_build_cache_requests` in `crates/mockapp/tests/uia_bugs/a_cache_request_fails_while_uias_first_time_setup_runs_on_another_thread.rs` shows that the workaround holds: it passed 20 of 20 runs with it, and failed 50 of 50 without it.
 
 #### Evidence
 
@@ -420,13 +432,13 @@ These are not faults: UIA works as designed, or as far as is known, but the desi
 
 ### Focus events cannot be limited to one application
 
-The documented call is refused: `IUIAutomation::AddAutomationEventHandler` for `UIA_AutomationFocusChangedEventId` on one window fails with `E_INVALIDARG` and UIA's message "Focus events must be registered using IUIAutomation::AddFocusChangedEventHandler" (E-scope, section 11; P1, 3 of 3). Two undocumented routes are accepted: the focus event in an event handler group registered on a window's element with `TreeScope_Subtree`, and the core API's `UiaAddEvent` on a window's node. Each delivered that window's provider-raised focus events and no other application's (E-scope; P1, 3 of 3; P5, 2 of 2), but neither received any focus event of a window UIA reads through its proxy, where the desktop-wide handler received both in every run (P1, 3 of 3; P5). So a scoped focus registration cannot serve classic Win32 applications (inferred; confirming it needs a real application with real keyboard focus). Each registered process also adds about 47 to 49 provider calls per focus event, on the application's UI thread (P2; E-cost). Evidence: [`experiments/focus-events-cannot-be-limited-to-one-application/`](../experiments/focus-events-cannot-be-limited-to-one-application/readme.md), experiments E-scope, E-cost, P1, P2 and P5; `docs/design/focus-pipeline.md`, section 11, E-scope and E-cost.
+The documented call is refused: `IUIAutomation::AddAutomationEventHandler` for `UIA_AutomationFocusChangedEventId` on one window fails with `E_INVALIDARG` and UIA's message "Focus events must be registered using IUIAutomation::AddFocusChangedEventHandler" (E-scope, section 11; P1, 3 of 3). Two undocumented routes are accepted: the focus event in an event handler group registered on a window's element with `TreeScope_Subtree`, and the core API's `UiaAddEvent` on a window's node. Each delivered that window's provider-raised focus events and no other application's (E-scope; P1, 3 of 3; P5, 2 of 2), but neither received any focus event of a window UIA reads through its proxy, where the desktop-wide handler received both in every run (P1, 3 of 3; P5). So a scoped focus registration cannot serve classic Win32 applications (inferred; confirming it needs a real application with real keyboard focus). Each registered process also adds about 47 to 49 provider calls per focus event, on the application's UI thread (P2; E-cost). Evidence: [`experiments/focus-events-cannot-be-limited-to-one-application/`](../experiments/focus-events-cannot-be-limited-to-one-application/readme.md), experiments E-scope, E-cost, P1, P2 and P5; `docs/design/focus-pipeline.md`, section 11, E-scope and E-cost. Tests, in `crates/mockapp/tests/uia_bugs/focus_events_cannot_be_limited_to_one_application.rs`, each passing 20 of 20 runs: `a_focus_handler_on_one_window_is_refused`, `a_focus_event_in_a_group_on_one_window_hears_that_applications_focus_alone`, `a_focus_event_in_a_group_on_a_proxied_window_hears_none_of_its_focus` and `a_core_api_focus_registration_on_one_window_hears_that_applications_focus_alone`. E-cost's and P2's call counts vary from one event to the next, so no test pins them.
 
 On a desktop where no window has the keyboard focus, as in mockapp's tests, desktop-wide focus registrations receive only the focus events UIA derives from a WinEvent, and scoped ones receive provider-raised focus (E-scope; P1).
 
 ### Elements cannot be passed to another process
 
-`CoMarshalInterface` of an `IUIAutomationElement` with `MSHCTX_LOCAL` succeeded, but `CoUnmarshalInterface` of those bytes in another process failed with `E_FAIL`, in three runs; the free-threaded marshaler's in-process form failed there with `E_UNEXPECTED`. Within the owning process the same bytes gave a working proxy, and an event handler object of Verbatim's own marshaled to the other process worked until a call passed it an element. No route, documented or not, was found for giving another process an event's sender, so the process that receives a UIA event is the only one that can read from its element; this is why the listener judges and reads each focus itself. A sender stays usable in its own process for as long as the provider keeps the element (P3). Evidence: [`experiments/elements-cannot-be-passed-to-another-process/`](../experiments/elements-cannot-be-passed-to-another-process/readme.md), experiments E-marshal (commit f86da7f, on the unmerged experiment branch) and P3; `docs/design/focus-pipeline.md`, section 11, E-marshal.
+`CoMarshalInterface` of an `IUIAutomationElement` with `MSHCTX_LOCAL` succeeded, but `CoUnmarshalInterface` of those bytes in another process failed with `E_FAIL`, in three runs; the free-threaded marshaler's in-process form failed there with `E_UNEXPECTED`. Within the owning process the same bytes gave a working proxy, and an event handler object of Verbatim's own marshaled to the other process worked until a call passed it an element. No route, documented or not, was found for giving another process an event's sender, so the process that receives a UIA event is the only one that can read from its element; this is why the listener judges and reads each focus itself. A sender stays usable in its own process for as long as the provider keeps the element (P3). Evidence: [`experiments/elements-cannot-be-passed-to-another-process/`](../experiments/elements-cannot-be-passed-to-another-process/readme.md), experiments E-marshal (commit f86da7f, on the unmerged experiment branch) and P3; `docs/design/focus-pipeline.md`, section 11, E-marshal. Tests, in `crates/mockapp/tests/uia_bugs/elements_cannot_be_passed_to_another_process.rs`, each passing 20 of 20 runs: `an_element_marshaled_for_another_process_cannot_be_unmarshaled_there`, `an_element_marshaled_for_another_apartment_cannot_be_unmarshaled_in_another_process`, `an_object_passed_to_another_process_works_until_a_call_passes_it_an_element` and `a_kept_sender_is_read_live_until_its_provider_removes_it`, which pins P3's removal and exit but not its reads after 31 and 152 seconds.
 
 ### Ancestors cannot be cached or listened to
 
@@ -434,7 +446,7 @@ An event registration scoped to an element's ancestors (`TreeScope_Ancestors` or
 
 ### A timeout bounds each provider call, not an operation
 
-Under a 1-second transaction timeout, a `FindFirst` over a window's descendants held 13,208 ms before failing with `UIA_E_TIMEOUT`, waiting a full timeout for each provider call the held thread did not answer (E-TT, section 11; its experiments folder is shared with "A registration that times out reports success", [`experiments/a-registration-that-times-out-reports-success/`](../experiments/a-registration-that-times-out-reports-success/readme.md)). A remote operation is one transaction, so the timeout bounds it as a whole (`a_stalled_provider_holds_execute_until_the_transaction_timeout` in `crates/mockapp/tests/remote_ops.rs`). Operations made of many calls are run with a deadline of their own on a thread that can be abandoned (`crates/verbatim-uia/src/bounded.rs`).
+Under a 1-second transaction timeout, a `FindFirst` over a window's descendants held 13,208 ms before failing with `UIA_E_TIMEOUT`, waiting a full timeout for each provider call the held thread did not answer (E-TT, section 11; its experiments folder is shared with "A registration that times out reports success", [`experiments/a-registration-that-times-out-reports-success/`](../experiments/a-registration-that-times-out-reports-success/readme.md)). A remote operation is one transaction, so the timeout bounds it as a whole (`a_stalled_provider_holds_execute_until_the_transaction_timeout` in `crates/mockapp/tests/remote_ops.rs`). Operations made of many calls are run with a deadline of their own on a thread that can be abandoned (`crates/verbatim-uia/src/bounded.rs`). `a_search_waits_a_timeout_for_each_call_its_stalled_provider_does_not_answer`, in `crates/mockapp/tests/uia_bugs/a_timeout_bounds_each_provider_call_not_an_operation.rs`, shows it, passing 20 of 20 runs: with both timeouts at 200 ms and mockapp's window thread stalled, `FindFirst` sends the thread two calls and fails with `UIA_E_TIMEOUT` more than two timeouts after it began. It failed after three timeouts at 100, 200 and 500 ms, and four at 1,000 ms.
 
 ## Applications
 

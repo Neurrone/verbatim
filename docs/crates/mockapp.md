@@ -428,9 +428,13 @@ forever. `child_cleanup.rs` pins this: it runs itself as a subprocess
 that starts a `mockapp` and panics where the panic cannot unwind, and
 asserts that the subprocess's standard error closes promptly.
 `tests/uia_bugs/` is one test binary (`main.rs` declares a module per
-file) holding the tests that reproduce a fault in UI Automation or show
-that Verbatim's workaround for one still holds, each file named after the
-fault's heading in `docs/uia-bugs.md`. Every test file runs through `tests/common/harness.rs` instead of
+file) holding the tests that reproduce a fault or limitation of UI
+Automation or show that Verbatim's workaround for one still holds, each
+file named after the entry's heading in `docs/uia-bugs.md`, and
+`support.rs` with the mechanics they share. A test that needs a second
+UIA client process starts the binary again with an environment variable
+that `main` recognizes: an element's owner, a remote operation's sender,
+or a process racing UIA's first-time setup. Every test file runs through `tests/common/harness.rs` instead of
 libtest (`harness = false`): it runs and reports the tests as libtest
 does, then ends the process without running DLL detach code, because
 `UIAutomationCore.dll`'s own detach code sometimes hangs or crashes in a
