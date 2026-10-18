@@ -187,7 +187,8 @@ call is in progress and decides when it ends; acknowledged `applied`),
 `HasKeyboardFocus` from now, once answered, stalls the window thread
 until `release`, holding and naming messages as `stall-until-release
 posted` does, as the listener's remote operation's arrival is posted to
-it; acknowledged `applied` when armed; the lock tests' hold of
+it; acknowledged `applied` when armed; its `release` is readied as the
+command is read, as `stall-until-release`'s is; the lock tests' hold of
 `docs/design/focus-pipeline.md`, section 20.7), `stall-until-release` (the window thread stalls at once,
 or, with `stall-until-release after <command>`, once it has applied the
 command in the same turn, as an application raises an event and then
@@ -201,25 +202,33 @@ printing `stall message sent <message> to <class>`, the message
 number) and the class of the window it was sent to, so a test waits for
 exactly the call it expects; the thread goes on taking sent messages, each
 held inside the one before, so they are answered in the reverse order of
-their arrival; two kinds are answered and not reported: the system's
-broadcasts, `WM_SETTINGCHANGE`, `WM_THEMECHANGED`, `WM_SYSCOLORCHANGE`,
-`WM_DISPLAYCHANGE`, `WM_FONTCHANGE`, `WM_TIMECHANGE` and
-`WM_DEVICECHANGE`, which Windows sends every top-level window, on the
-tests' desktops too, such as when a screen reader starts or stops, and a
-message whose sender waits for no answer (`SendNotifyMessage`), such as a
-registered message broadcast to every window; it prints `stall started`
-as it begins and nothing after `release`'s acknowledgement;
+their arrival; three kinds are answered and not reported: the system's
+broadcasts, the messages Windows documents as sent to every top-level
+window, on the tests' desktops too, such as `WM_SETTINGCHANGE` when a
+screen reader starts or stops, `WM_THEMECHANGED`, `WM_DISPLAYCHANGE`,
+`WM_POWERBROADCAST` and `WM_DWMCOMPOSITIONCHANGED` (`held::BROADCASTS`
+lists them all; it is a known set, so any other message sent to a stalled
+thread is held and reported, and a test that does not expect it fails on
+the line), a message the thread sends itself, as it may while it answers a
+broadcast, and a message whose sender waits for no answer
+(`SendNotifyMessage`), such as a registered message broadcast to every
+window; it prints `stall started` as it begins and nothing after
+`release`'s acknowledgement; its `release` is readied as its command is
+read, so a `release` written after the command ends the stall even before
+it has begun, and it then prints nothing at all;
 `stall-until-release posted` also names the first message posted to the
-thread by anything but mockapp, once, as `stall message posted <id> to
-<class>`, as a remote operation's arrival is posted, read without taking
-it; `stall-until-release quiet` takes no message at all and says nothing
+thread whose number is not one of mockapp's own posts (`WM_APP` to
+`WM_APP + 0xFF`), a timer's (`WM_TIMER` to 0x0118) or a hot key's
+(`WM_HOTKEY`), once, as `stall message posted <id> to <class>`, as a
+remote operation's arrival is posted, read without taking it;
+`stall-until-release quiet` takes no message at all and says nothing
 between its start and its end, for a test whose evidence comes from
 elsewhere; a wait that fails prints `stall failed: <reason>`, and the
-thread then takes no message until `release`; because a stall that takes
-messages keeps calling `PeekMessageW`, Windows never counts its windows
-as hung (`IsHungAppWindow`), so a sender using `SMTO_ABORTIFHUNG` waits
-for it as for a busy window, where it would give up at once on a real
-hang; the UIA fault tests' hung and busy windows),
+thread then takes no message until `release`; a stall takes a message
+only when one is sent to it, so, as for a real hang, Windows counts its
+windows as hung (`IsHungAppWindow`) once it has taken none for 5 seconds,
+and a sender using `SMTO_ABORTIFHUNG` gives up on them at once from then
+on; the UIA fault tests' hung and busy windows),
 `menu-opened <id>` (raises UIA's `MenuOpened` event from the node, which
 the focus listener reads as a focus on it; an automation event, which UIA
 delivers on a desktop where no window has the keyboard focus, as it does

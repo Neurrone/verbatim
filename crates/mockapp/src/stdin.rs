@@ -177,7 +177,8 @@ pub(crate) enum Command {
     /// `HasKeyboardFocus` from now, once answered, stalls the window thread
     /// until `release`, holding and naming messages as
     /// `stall-until-release posted` does ([`crate::held`]). Applied on the
-    /// window thread.
+    /// window thread; its `release` is readied as the command is read
+    /// ([`crate::held::arm_release`]).
     StallAfterFocusRead(u32),
     /// `stall-until-release [posted | quiet] [after <command>]`: stalls the
     /// window thread now, or, with `after <command>`, once it has applied
@@ -188,10 +189,15 @@ pub(crate) enum Command {
     /// message sent to any window on the thread from another thread
     /// meanwhile, but for the system's broadcasts and messages whose sender
     /// waits for no answer, which are answered and not named; with
-    /// `posted`, also naming the first message posted to the thread by
-    /// anything but mockapp; with `quiet`, taking no message and saying
+    /// `posted`, also naming the first message posted to the thread whose
+    /// number is not mockapp's own (`WM_APP` to `WM_APP + 0xFF`), a
+    /// timer's or a hot key's; with `quiet`, taking no message and saying
     /// nothing but its start ([`crate::held`]). Nothing is said after
-    /// `release`'s acknowledgement. Applied on the window thread.
+    /// `release`'s acknowledgement: its `release` is readied as the command
+    /// is read ([`crate::held::arm_release`]), so a `release` written after
+    /// the command, even before `stall started`, ends the stall, which then
+    /// says nothing at all if it had not begun. Applied on the window
+    /// thread.
     StallUntilRelease(crate::held::Reports, Option<Box<Command>>),
     /// `release`: lets the call `hold` held, or the stall of
     /// `stall-after-focus-read` or `stall-until-release`, go on. Applied
@@ -396,6 +402,12 @@ pub(crate) fn run(sink: &Sender<Command>, wake: impl Fn()) {
             }
             Some(Command::Release) => crate::held::release(),
             Some(command) => {
+                if matches!(
+                    command,
+                    Command::StallUntilRelease(..) | Command::StallAfterFocusRead(_)
+                ) {
+                    crate::held::arm_release();
+                }
                 if sink.send(command).is_err() {
                     break;
                 }
