@@ -10,8 +10,8 @@
 //! the first message is posted or sent to the thread; with
 //! `stall-until-release`, `stall message sent` each time a message is sent
 //! to it, and with `stall-until-release posted`, also `stall message
-//! posted` each time one is posted. Its end is `release`'s own
-//! acknowledgement.
+//! posted` once, when the first message is posted to it. Its end is
+//! `release`'s own acknowledgement.
 
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::sync::OnceLock;
@@ -87,15 +87,17 @@ pub(crate) fn focus_read(hwnd: HWND) {
 /// The stall `stall-until-release` begins at once, on the window thread:
 /// it takes no message until `release`, saying each time a message is
 /// sent to the thread, as a hung window's callers send it one after
-/// another and wait, and, with `posted`, each time one is posted to it, as
-/// UI Automation posts a remote operation's arrival. Posts are reported
-/// only when asked for: a tree view's window thread was once posted a
-/// message of unknown origin during the stall.
+/// another and wait, and, with `posted`, when the first message is posted
+/// to it, as UI Automation posts a remote operation's arrival, once or
+/// twice. Posts are reported only when asked for, since a tree view's
+/// window thread was once posted a message of unknown origin during the
+/// stall, and only the first, since UIA's second post for an operation
+/// comes or not.
 pub(crate) fn stall_now_until_release(posted: bool) {
     arm_release();
     crate::window::acknowledge("stall started");
     let released = released_event();
-    let kinds = if posted {
+    let mut kinds = if posted {
         QS_SENDMESSAGE | QS_POSTMESSAGE
     } else {
         QS_SENDMESSAGE
@@ -119,8 +121,9 @@ pub(crate) fn stall_now_until_release(posted: bool) {
         // caller had given up its call.
         // SAFETY: no preconditions.
         let arrived = unsafe { GetQueueStatus(kinds) } & 0xffff;
-        if arrived & QS_POSTMESSAGE.0 != 0 {
+        if arrived & kinds.0 & QS_POSTMESSAGE.0 != 0 {
             crate::window::acknowledge("stall message posted");
+            kinds = QS_SENDMESSAGE;
         }
         if arrived & QS_SENDMESSAGE.0 != 0 {
             crate::window::acknowledge("stall message sent");

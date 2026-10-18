@@ -179,7 +179,7 @@ pub(crate) enum Command {
     StallAfterFocusRead(u32),
     /// `stall-until-release [posted]`: stalls the window thread now, until
     /// `release`, saying when the stall begins and each time a message is
-    /// sent to the thread meanwhile, and, with `posted`, each time one is
+    /// sent to the thread meanwhile, and, with `posted`, when the first is
     /// posted ([`crate::held`]), as a hung application's UI thread takes no
     /// message. Applied on the window thread.
     StallUntilRelease(bool),
