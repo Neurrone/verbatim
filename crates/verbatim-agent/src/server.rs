@@ -333,7 +333,6 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         },
         request @ (Request::ForegroundInfo
         | Request::CloseWindows { .. }
-        | Request::CloseWindow { .. }
         | Request::SetForeground { .. }
         | Request::WaitForWindow { .. }
         | Request::MinimizeAll { .. }
@@ -342,6 +341,7 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         | Request::DeleteFile { .. }
         | Request::DeleteFolder { .. }) => desktop_request(id, request),
         request @ (Request::RecordWindows
+        | Request::CloseWindow { .. }
         | Request::WaitForNewWindowsGone { .. }
         | Request::CloseAbandonedWindows { .. }) => {
             scenario_windows_request(connection, id, request)
@@ -655,22 +655,6 @@ fn desktop_request(id: u64, request: Request) -> Frame {
                 ),
             },
         },
-        Request::CloseWindow {
-            window,
-            pid,
-            class,
-            timeout_ms,
-        } => Frame::Reply {
-            to: id,
-            payload: ReplyPayload::WindowsClosed {
-                remaining: u32::from(!desktop::close_window(
-                    window,
-                    pid,
-                    &class,
-                    Duration::from_millis(timeout_ms),
-                )),
-            },
-        },
         Request::SetForeground { window } => Frame::Reply {
             to: id,
             payload: ReplyPayload::Foreground {
@@ -730,13 +714,29 @@ fn desktop_request(id: u64, request: Request) -> Frame {
 }
 
 /// Answers the requests that prove a scenario left no window open, made on
-/// `connection`: recording its starting windows, waiting at its cleanup for
+/// `connection`: recording its starting windows, closing one window it
+/// opened by handle, waiting at its cleanup for
 /// the windows it opened to be gone, and closing what an abandoned scenario
 /// left.
 fn scenario_windows_request(connection: u64, id: u64, request: Request) -> Frame {
     let payload = match request {
         Request::RecordWindows => scenario_windows::record(connection)
             .map(|count| ReplyPayload::WindowsRecorded { count }),
+        Request::CloseWindow {
+            window,
+            pid,
+            class,
+            timeout_ms,
+        } => scenario_windows::close_window(
+            connection,
+            window,
+            pid,
+            &class,
+            Duration::from_millis(timeout_ms),
+        )
+        .map(|gone| ReplyPayload::WindowsClosed {
+            remaining: u32::from(!gone),
+        }),
         Request::WaitForNewWindowsGone { timeout_ms } => {
             scenario_windows::wait_for_new_gone(connection, Duration::from_millis(timeout_ms))
                 .map(|remaining| ReplyPayload::NewWindows { remaining })

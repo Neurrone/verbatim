@@ -142,6 +142,12 @@ impl Watch {
         }
     }
 
+    /// Whether `window` is in the baseline of the scenario `connection` is
+    /// running, so it was there before the scenario started.
+    fn in_baseline(&self, connection: u64, window: &WindowIdentity) -> io::Result<bool> {
+        Ok(self.baseline(connection)?.contains(window))
+    }
+
     /// Ends the watch of the scenario `connection` is running, every window
     /// it opened having gone.
     fn finish(&mut self, connection: u64) {
@@ -263,6 +269,38 @@ pub(crate) fn record(connection: u64) -> io::Result<u32> {
     let count = u32::try_from(baseline.len()).unwrap_or(u32::MAX);
     lock().record(connection, baseline)?;
     Ok(count)
+}
+
+/// Closes `window`, owned by process `pid` with class `class`, as
+/// [`desktop::close_window`] does, unless it is in the baseline of the
+/// scenario `connection` is running. Every File Explorer folder window has
+/// the same process and class, so a handle Windows has given the owner's
+/// own folder window since passes that check; a window that was open
+/// before the scenario started is never the scenario's, so it is refused.
+/// Returns whether it has gone.
+///
+/// # Errors
+///
+/// Returns an error when `connection` recorded no baseline, or `window`
+/// is in it.
+pub(crate) fn close_window(
+    connection: u64,
+    window: u64,
+    pid: u32,
+    class: &str,
+    timeout: Duration,
+) -> io::Result<bool> {
+    let identity = WindowIdentity {
+        window,
+        pid,
+        class: class.to_owned(),
+    };
+    if lock().in_baseline(connection, &identity)? {
+        return Err(io::Error::other(format!(
+            "window {window:#x} (process {pid}, class {class}) was open before the scenario              started (RecordWindows), so it is not the scenario's and was not closed"
+        )));
+    }
+    Ok(desktop::close_window(window, pid, class, timeout))
 }
 
 /// Waits up to `timeout`, on window events, for every shown window not in
@@ -392,6 +430,18 @@ mod tests {
             [reused]
         );
         assert!(watch.baseline(2).is_err(), "only connection 1's");
+    }
+
+    #[test]
+    fn a_window_in_the_baseline_is_refused_a_close_by_handle() {
+        let mut watch = Watch::default();
+        assert!(watch.in_baseline(1, &window(1)).is_err(), "nothing recorded");
+        watch
+            .record(1, std::iter::once(window(1)).collect())
+            .expect("records");
+        assert!(watch.in_baseline(1, &window(1)).expect("connection 1's"));
+        assert!(!watch.in_baseline(1, &window(2)).expect("connection 1's"));
+        assert!(watch.in_baseline(2, &window(1)).is_err(), "only connection 1's");
     }
 
     #[test]

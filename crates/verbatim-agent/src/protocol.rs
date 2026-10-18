@@ -53,11 +53,14 @@ use serde::{Deserialize, Serialize};
 /// passes over a window Windows never brings to the foreground; version 20
 /// added [`Request::CloseWindow`], so a window whose title has changed,
 /// such as a File Explorer window that has navigated, is closed by its
-/// handle. A test
+/// handle; version 21 refuses [`Request::CloseWindow`] for a window in
+/// the connection's baseline ([`Request::RecordWindows`]), since every
+/// File Explorer folder window shares one process and class, so a reused
+/// handle could otherwise close the owner's own folder window. A test
 /// run against an older agent is refused at `Hello`
 /// instead of losing its connection mid-run, or running without the
 /// exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 20;
+pub const AGENT_PROTOCOL_VERSION: u32 = 21;
 
 /// The environment variable that names, to the Verbatim under test, the
 /// processes it ignores entirely (`ignore_foreign_terminals` in
@@ -329,9 +332,13 @@ pub enum Request {
     /// Sends a close request to one window by its handle, while it is still
     /// shown and still owned by process `pid` with class `class`, so a handle
     /// Windows has given another window since is left alone, and waits up to
-    /// `timeout_ms` for it to go, whatever its title has become. Answered by
-    /// [`ReplyPayload::WindowsClosed`], `remaining` being 1 when it is still
-    /// shown.
+    /// `timeout_ms` for it to go, whatever its title has become. Refused
+    /// when the window is in this connection's baseline
+    /// ([`Request::RecordWindows`]), or this connection recorded none: a
+    /// window open before the scenario started is never the scenario's,
+    /// and every File Explorer folder window has the same process and
+    /// class. Answered by [`ReplyPayload::WindowsClosed`], `remaining`
+    /// being 1 when it is still shown.
     CloseWindow {
         /// The window's handle ([`WindowInfo::window`]).
         window: u64,

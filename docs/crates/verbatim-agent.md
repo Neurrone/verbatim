@@ -18,7 +18,7 @@ it when the suite is done.
 Public API:
 
 - `protocol` — the agent's own wire vocabulary, versioned separately from
-  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 15) and framed
+  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 21) and framed
   with the same newline-JSON helpers the control plane uses
   (`verbatim_control::protocol::write_message`/`read_message`). Its pids
   are raw OS process ids naming a process a test is driving, not
@@ -68,7 +68,10 @@ Public API:
     request to every visible window whose title contains some text, then a
     wait for them to go), `CloseWindow` (the same for one window by its
     handle, while it is still owned by the process and class it was found
-    with, whatever its title has become, since protocol version 20), and
+    with, whatever its title has become, since protocol version 20, and
+    refused since version 21 for a window in the connection's recorded
+    starting windows, since every File Explorer folder window shares one
+    process and class), and
     `TakeForeignTerminalWindows` (every Windows
     Terminal window shown since the last such request by a process outside
     the jobs of every process the agent launched, forgotten as it is
