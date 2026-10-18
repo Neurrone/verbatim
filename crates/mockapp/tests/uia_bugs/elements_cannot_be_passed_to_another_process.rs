@@ -3,7 +3,8 @@
 //! for another process cannot be unmarshaled there, in either of COM's
 //! forms, though the same bytes work in the process that made them, and an
 //! object of the test's own passed the same way works across the two
-//! processes until a call passes it an element.
+//! processes until a call passes it an element; and that a sender stays
+//! usable in its own process while its provider keeps the element.
 //!
 //! The element's owner is this test binary started again ([`owner`]), on
 //! the test's desktop, which reads mockapp's window element, marshals it,
@@ -23,7 +24,8 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, IUIAutomationEventHandler, UIA_MenuOpenedEventId,
+    IUIAutomationElement, IUIAutomationEventHandler, UIA_E_ELEMENTNOTAVAILABLE,
+    UIA_MenuOpenedEventId,
 };
 use windows::core::{GUID, HRESULT, Interface};
 
@@ -355,4 +357,49 @@ pub fn an_object_passed_to_another_process_works_until_a_call_passes_it_an_eleme
     );
     owner.end();
     app.quit();
+}
+
+/// The current name of the element `kept`, read live.
+fn live_name(
+    kept: &windows::core::AgileReference<IUIAutomationElement>,
+) -> Result<String, HRESULT> {
+    let element = kept.resolve().expect("the kept sender");
+    // SAFETY: a live element; a cross-process read.
+    unsafe { element.CurrentName() }
+        .map(|name| name.to_string())
+        .map_err(|error| error.code())
+}
+
+/// A sender stays usable in the process that received it for as long as
+/// the provider keeps its element (P3 in this limitation's experiments
+/// folder): the senders of two focus events in mockapp, kept, read their
+/// names live; once mockapp removes one's element (`take-runtime-id`), its
+/// read fails with `UIA_E_ELEMENTNOTAVAILABLE` while the other still
+/// answers; once mockapp has exited, the other's fails the same way.
+pub fn a_kept_sender_is_read_live_until_its_provider_removes_it() {
+    let (mut app, hwnd) = support::mockapp("marshal-kept", "uia");
+    let uia = support::client();
+    let handler = support::Handler::new();
+    let _group = support::group_on(
+        uia.client(),
+        &support::element(uia.client(), hwnd),
+        &handler,
+        false,
+    );
+    app.send("focus btn1");
+    let (_, _, button) = handler.next_with_sender();
+    app.send("focus item1");
+    let (_, _, item) = handler.next_with_sender();
+    let gone = Err(HRESULT(UIA_E_ELEMENTNOTAVAILABLE.cast_signed()));
+    assert_eq!(
+        (live_name(&button), live_name(&item)),
+        (Ok("Original Name".to_owned()), Ok("First".to_owned()))
+    );
+    app.send("take-runtime-id item2 btn1");
+    assert_eq!(
+        (live_name(&button), live_name(&item)),
+        (gone.clone(), Ok("First".to_owned()))
+    );
+    app.quit();
+    assert_eq!(live_name(&item), gone);
 }

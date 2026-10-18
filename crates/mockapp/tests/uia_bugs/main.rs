@@ -110,5 +110,9 @@ fn main() {
             "a_probe_during_another_processs_queued_operation_answers_no",
             collision::a_probe_during_another_processs_queued_operation_answers_no,
         ),
+        (
+            "a_kept_sender_is_read_live_until_its_provider_removes_it",
+            marshal::a_kept_sender_is_read_live_until_its_provider_removes_it,
+        ),
     ]);
 }

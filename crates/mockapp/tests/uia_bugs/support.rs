@@ -16,7 +16,7 @@ use windows::Win32::UI::Accessibility::{
     TreeScope_Subtree, UIA_AutomationFocusChangedEventId, UIA_NamePropertyId,
     UIA_ProcessIdPropertyId,
 };
-use windows::core::Interface;
+use windows::core::{AgileReference, Interface};
 
 use crate::common;
 
@@ -134,13 +134,16 @@ pub fn from(app: &common::MockApp, name: &str) -> Heard {
     }
 }
 
+/// What a handler heard: the event, when, and its sender.
+pub type Event = (Heard, Instant, AgileReference<IUIAutomationElement>);
+
 /// One handler object as each of the three handler interfaces, and what it
-/// hears, with when it heard it.
+/// hears, with when it heard it and the sender.
 pub struct Handler {
     pub events: IUIAutomationEventHandler,
     pub focus: IUIAutomationFocusChangedEventHandler,
     pub properties: IUIAutomationPropertyChangedEventHandler,
-    heard: Receiver<(Heard, Instant)>,
+    heard: Receiver<Event>,
 }
 
 impl Handler {
@@ -157,6 +160,13 @@ impl Handler {
 
     /// The next event heard, and when, waiting at most the shared wait.
     pub fn next(&self) -> (Heard, Instant) {
+        let (heard, at, _) = self.next_with_sender();
+        (heard, at)
+    }
+
+    /// The next event heard, when, and its sender, kept as the handler
+    /// received it, waiting at most the shared wait.
+    pub fn next_with_sender(&self) -> Event {
         self.heard
             .recv_timeout(common::WAIT_TIMEOUT)
             .unwrap_or_else(|error| {
@@ -171,7 +181,7 @@ impl Handler {
     pub fn heard_nothing_more(&self) {
         match self.heard.try_recv() {
             Err(TryRecvError::Empty) => {}
-            Ok((heard, _)) => panic!("an event from {heard:?} was heard as well"),
+            Ok((heard, ..)) => panic!("an event from {heard:?} was heard as well"),
             Err(TryRecvError::Disconnected) => panic!("the handler is gone"),
         }
     }
@@ -194,10 +204,12 @@ mod hearing {
         UIA_EVENT_ID, UIA_PROPERTY_ID,
     };
 
-    use super::Heard;
+    use windows::core::AgileReference;
+
+    use super::{Event, Heard};
 
     /// A handler that sends what it hears to `sender`.
-    pub(super) fn new(sender: Sender<(Heard, Instant)>) -> IUIAutomationEventHandler {
+    pub(super) fn new(sender: Sender<Event>) -> IUIAutomationEventHandler {
         Hearing {
             sender: Mutex::new(sender),
         }
@@ -210,7 +222,7 @@ mod hearing {
         IUIAutomationPropertyChangedEventHandler
     )]
     struct Hearing {
-        sender: Mutex<Sender<(Heard, Instant)>>,
+        sender: Mutex<Sender<Event>>,
     }
 
     impl Hearing_Impl {
@@ -226,11 +238,12 @@ mod hearing {
                 pid: u32::try_from(pid).expect("a process id"),
                 name: name.to_string(),
             };
+            let kept = AgileReference::new(element).expect("the sender kept");
             let _ = self
                 .sender
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .send((heard, at));
+                .send((heard, at, kept));
         }
     }
 
