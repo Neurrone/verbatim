@@ -26,7 +26,7 @@ Established, on this machine: the second identity occurs with every registration
 - `identity-judge-and-experiments.patch`: the scratch scenario and the two registration experiments, against 32948a4d.
 - `judge/baseline/`, `judge/exp-one/`, `judge/exp-full/`: each run's judge output (`judge.txt`) and test result (`test.out`). The listener logs the judge read, about 5 MB each, and the timelines are not kept. The scratch folder in the judge's paths is redacted to `<scratch folder>`.
 
-The GitHub runs the design record cites (Actions runs 38988118089 and 39032739474) are kept only as downloaded artifacts on Dickson's machine, about 200 MB in all, and are not copied here.
+The GitHub runs the design record cites (Actions runs [38988118089](https://github.com/Neurrone/verbatim/actions/runs/38988118089) and [39032739474](https://github.com/Neurrone/verbatim/actions/runs/39032739474)) are not copied here: their artifacts, about 200 MB in all, expire on GitHub, and the findings this entry needs are recorded above.
 
 ## Rerunning
 

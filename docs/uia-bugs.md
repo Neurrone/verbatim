@@ -508,7 +508,7 @@ No test reproduces it; mockapp has no second identity. The identity judge in its
 
 #### Evidence
 
-[`experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`](../experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/readme.md): the identity judge and its three 150-round runs; `docs/design/windows-terminal-twin-focus.md`; `docs/design/focus-pipeline.md`, sections 16.8 and 16.9; GitHub Actions runs 38988118089 and 39032739474, whose downloaded artifacts are not committed.
+[`experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`](../experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/readme.md): the identity judge and its three 150-round runs; `docs/design/windows-terminal-twin-focus.md`; `docs/design/focus-pipeline.md`, sections 16.8 and 16.9; GitHub Actions runs [38988118089](https://github.com/Neurrone/verbatim/actions/runs/38988118089) and [39032739474](https://github.com/Neurrone/verbatim/actions/runs/39032739474), whose downloadable artifacts expire and are not committed.
 
 ### A Qt application's cached keyboard focus can be stale
 
