@@ -6,8 +6,9 @@
 //!
 //! The setup runs once in a process, so each race is run in a fresh
 //! process of its own, this test binary started again ([`racer`]), and
-//! several are run: without the workaround one race in a few dozen found
-//! no failure, so several together leave the fault no way to pass unseen.
+//! several are run: without the workaround about one race in 10 to 30
+//! found no failure, so several together leave the fault no way to pass
+//! unseen.
 
 use std::io::Read as _;
 use std::process::{Command, Stdio};
