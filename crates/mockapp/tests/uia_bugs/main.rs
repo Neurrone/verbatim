@@ -16,6 +16,7 @@ mod a_cache_request_fails_while_uias_first_time_setup_runs_on_another_thread;
 mod a_hung_window_named_in_a_system_focus_event_holds_a_processs_uia_events;
 mod a_new_connection_fails_while_another_processs_remote_operation_is_queued;
 mod a_registration_that_times_out_reports_success;
+mod a_timeout_bounds_each_provider_call_not_an_operation;
 mod elements_cannot_be_passed_to_another_process;
 mod focus_events_cannot_be_limited_to_one_application;
 mod support;
@@ -25,6 +26,7 @@ use a_cache_request_fails_while_uias_first_time_setup_runs_on_another_thread as 
 use a_hung_window_named_in_a_system_focus_event_holds_a_processs_uia_events as hung_focus;
 use a_new_connection_fails_while_another_processs_remote_operation_is_queued as collision;
 use a_registration_that_times_out_reports_success as timed_out_registration;
+use a_timeout_bounds_each_provider_call_not_an_operation as per_call_timeout;
 use elements_cannot_be_passed_to_another_process as marshal;
 use focus_events_cannot_be_limited_to_one_application as focus_scope;
 use the_connection_timeout_applies_to_the_whole_process as timeouts;
@@ -121,6 +123,10 @@ fn main() {
         (
             "a_focus_raised_while_its_window_is_busy_past_the_connection_timeout_is_dropped",
             hung_focus::a_focus_raised_while_its_window_is_busy_past_the_connection_timeout_is_dropped,
+        ),
+        (
+            "a_search_waits_a_timeout_for_each_call_its_stalled_provider_does_not_answer",
+            per_call_timeout::a_search_waits_a_timeout_for_each_call_its_stalled_provider_does_not_answer,
         ),
         (
             "a_core_api_focus_registration_on_one_window_hears_that_applications_focus_alone",
