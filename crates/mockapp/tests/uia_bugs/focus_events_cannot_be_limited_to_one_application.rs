@@ -163,21 +163,14 @@ unsafe extern "system" fn core_heard(
     }
 }
 
-/// The core API's route (P5): `UiaAddEvent` for the focus event on A's
-/// window's node, with its subtree, hears A's provider-raised focus events
-/// and not B's. B's events would reach the registration's process with
-/// A's, in the order raised, so each of A's is heard after any of B's
-/// raised before it.
-pub fn a_core_api_focus_registration_on_one_window_hears_that_applications_focus_alone() {
-    let (mut a, a_hwnd) = support::mockapp("scope-core-a", "uia");
-    let (mut b, _) = support::mockapp("scope-core-b", "uia");
-    let _setup = support::client();
-    let (sender, heard) = mpsc::channel();
-    *CORE_HEARD.lock().unwrap_or_else(PoisonError::into_inner) = Some(sender);
+/// The core API's focus registration (`UiaAddEvent`) for `hwnd`'s window
+/// node, with its subtree, sending each sender's process id to
+/// [`CORE_HEARD`].
+fn core_focus_registration(hwnd: windows::Win32::Foundation::HWND) -> HUIAEVENT {
     let mut node = HUIANODE::default();
     // SAFETY: a window handle, which UIA checks, and an out-pointer for the
     // node.
-    unsafe { UiaNodeFromHandle(a_hwnd, &raw mut node) }.expect("A's window's node");
+    unsafe { UiaNodeFromHandle(hwnd, &raw mut node) }.expect("the window's node");
     let mut condition = UiaCondition {
         ConditionType: ConditionType_True,
     };
@@ -209,16 +202,35 @@ pub fn a_core_api_focus_registration_on_one_window_hears_that_applications_focus
         )
     }
     .expect("the core API's registration");
+    event
+}
 
-    b.send("focus btn1");
-    a.send("focus item1");
+/// The core API's route (P5): `UiaAddEvent` for the focus event on A's
+/// window's node, with its subtree, hears A's provider-raised focus events
+/// and not B's. A second registration, on B's window's node, feeds the
+/// same channel, so each of B's events is known to reach this process:
+/// each is heard once, from B's registration, and one heard by A's as well
+/// would be an extra of B's in the exact sequence of senders.
+pub fn a_core_api_focus_registration_on_one_window_hears_that_applications_focus_alone() {
+    let (mut a, a_hwnd) = support::mockapp("scope-core-a", "uia");
+    let (mut b, b_hwnd) = support::mockapp("scope-core-b", "uia");
+    let _setup = support::client();
+    let (sender, heard) = mpsc::channel();
+    *CORE_HEARD.lock().unwrap_or_else(PoisonError::into_inner) = Some(sender);
+    let _on_a = core_focus_registration(a_hwnd);
+    let _on_b = core_focus_registration(b_hwnd);
+
     let next = || {
         heard
             .recv_timeout(common::WAIT_TIMEOUT)
             .expect("a focus event heard")
     };
+    b.send("focus btn1");
+    assert_eq!(next(), b.pid());
+    a.send("focus item1");
     assert_eq!(next(), a.pid());
     b.send("focus item2");
+    assert_eq!(next(), b.pid());
     a.send("focus btn1");
     assert_eq!(next(), a.pid());
     assert_eq!(heard.try_recv(), Err(mpsc::TryRecvError::Empty));
