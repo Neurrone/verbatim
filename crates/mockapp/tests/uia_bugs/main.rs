@@ -17,10 +17,12 @@ mod elements_cannot_be_passed_to_another_process;
 mod focus_events_cannot_be_limited_to_one_application;
 mod setup_race;
 mod support;
+mod the_connection_timeout_applies_to_the_whole_process;
 
 use a_hung_window_named_in_a_system_focus_event_holds_a_processs_uia_events as hung_focus;
 use elements_cannot_be_passed_to_another_process as marshal;
 use focus_events_cannot_be_limited_to_one_application as focus_scope;
+use the_connection_timeout_applies_to_the_whole_process as timeouts;
 
 /// Runs this binary's tests through the UIA test runner, or this binary as
 /// a test's helper process when the test started it as one.
@@ -68,6 +70,22 @@ fn main() {
         (
             "an_outposts_uia_events_are_not_held_behind_a_hung_focus",
             hung_focus::an_outposts_uia_events_are_not_held_behind_a_hung_focus,
+        ),
+        (
+            "a_lookup_waits_the_connection_timeout_another_client_set_last",
+            timeouts::a_lookup_waits_the_connection_timeout_another_client_set_last,
+        ),
+        (
+            "timeouts_set_through_one_client_are_read_by_another",
+            timeouts::timeouts_set_through_one_client_are_read_by_another,
+        ),
+        (
+            "the_first_client_in_a_process_has_verbatims_timeouts",
+            timeouts::the_first_client_in_a_process_has_verbatims_timeouts,
+        ),
+        (
+            "making_a_client_keeps_the_timeouts_another_set",
+            timeouts::making_a_client_keeps_the_timeouts_another_set,
         ),
     ]);
 }
