@@ -42,7 +42,7 @@ Established: a registration that timed out reports success and starts to deliver
 
 Inferred, not shown: that UIA's client makes the registration again about 2 seconds after the timeout, and that this second attempt waits in the window thread's queue until the stall ends. Whether the 2 seconds is UIA's default connection timeout, used where the process's setting is not, was not tested.
 
-The reproduction test `a_registration_that_timed_out_misses_an_event_raised_just_after_the_stall` registers while mockapp's window thread takes no message at all (`stall-until-release quiet`), raises one focus event as soon as the thread is released, and shows that it is lost; `docs/uia-bugs.md` describes it.
+No test reproduces the loss: nothing marks the end of the gap, so a test cannot tell an event lost in it from one delivered late (`docs/uia-bugs.md` says why).
 
 The outputs are in [`e57/out/`](e57/out/), one line per trial; the 66 exploratory trials that found the conditions are in [`e57/out/explore/`](e57/out/explore/) and agree with them. The first version of the summary script misread the exploratory stream trials as hearing nothing; the corrected [`e57/onset.py`](e57/onset.py) summarises each line: the registration's time, the events lost and heard, any event heard more than 50 ms after it was raised, any heard twice, and any lost after the first one heard.
 

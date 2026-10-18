@@ -190,12 +190,6 @@ impl Handler {
             })
     }
 
-    /// What the handler hears from now on, for a caller that keeps its
-    /// registrations, which hold the handler object.
-    pub fn into_receiver(self) -> Receiver<Event> {
-        self.heard
-    }
-
     /// Asserts that nothing more has been heard.
     pub fn heard_nothing_more(&self) {
         match self.heard.try_recv() {
