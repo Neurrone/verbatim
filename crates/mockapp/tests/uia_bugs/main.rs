@@ -33,6 +33,7 @@ use the_connection_timeout_applies_to_the_whole_process as timeouts;
 
 /// Runs this binary's tests through the UIA test runner, or this binary as
 /// a test's helper process when the test started it as one.
+#[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     if let Ok(window) = std::env::var(marshal::OWNER) {
         marshal::owner(&window);
@@ -103,6 +104,10 @@ fn main() {
         (
             "a_group_registered_while_its_provider_is_held_reports_success",
             timed_out_registration::a_group_registered_while_its_provider_is_held_reports_success,
+        ),
+        (
+            "a_registration_that_timed_out_misses_an_event_raised_just_after_the_stall",
+            timed_out_registration::a_registration_that_timed_out_misses_an_event_raised_just_after_the_stall,
         ),
         (
             "a_read_while_its_provider_is_held_fails",

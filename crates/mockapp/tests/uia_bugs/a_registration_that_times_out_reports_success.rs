@@ -10,6 +10,10 @@
 //! the hold. Both of the process's timeouts are set short: the read is
 //! bounded by the transaction timeout, and the registration, measured
 //! while these tests were written, by the connection timeout.
+//!
+//! A registration that timed out delivers nothing until about 2 seconds
+//! after it returned, however long either timeout is (e57): an event
+//! raised in between is lost, and one raised after it is heard.
 
 use std::sync::mpsc;
 use std::time::Duration;
@@ -90,6 +94,41 @@ pub fn a_group_registered_while_its_provider_is_held_reports_success() {
         .expect("the registration returns while the provider is held");
     assert_eq!(registered, Ok(()));
     app.release();
+    app.quit();
+}
+
+/// A group with the focus event, registered on the window during a
+/// 1.5-second stall of mockapp's window thread, returns success before
+/// the stall ends; an event raised as soon as the stall ends, under
+/// 1.5 seconds after the registration returned, is never heard, and one
+/// raised after a further 3-second stall, over 3 seconds after the
+/// registration returned, is heard alone. UIA delivers a registration's
+/// events in the order they were raised, so the first event, had it been
+/// late rather than lost, would come before the second.
+pub fn a_registration_that_timed_out_misses_an_event_raised_just_after_the_stall() {
+    let (mut app, hwnd) = support::mockapp("timeout-late", "uia");
+    let window = window_with_short_timeouts(hwnd)
+        .resolve()
+        .expect("the window's element on this thread");
+    let uia = support::client();
+    let focus = Handler::new();
+    let stall = Duration::from_millis(1_500);
+    app.stall(stall);
+    let _group = support::group_on(uia.client(), &window, &focus, false);
+    let returned = common::now_us();
+    let ended = app.stall_ended(stall);
+    assert!(
+        returned < ended,
+        "the registration returned {}us after the stall ended",
+        returned - ended
+    );
+    app.send("focus btn1");
+    let further = Duration::from_secs(3);
+    app.stall(further);
+    let _ = app.stall_ended(further);
+    app.send("focus item1");
+    assert_eq!(focus.next().0, support::from(&app, "First"));
+    focus.heard_nothing_more();
     app.quit();
 }
 
