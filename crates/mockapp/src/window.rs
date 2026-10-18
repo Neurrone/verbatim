@@ -253,6 +253,9 @@ unsafe extern "system" fn wnd_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    // A client's message during a stall of `stall-until-release` waits
+    // there until `release` (`crate::held`).
+    crate::held::hold_if_stalled(hwnd, msg, lparam);
     match msg {
         WM_GETOBJECT => {
             hits::hit(hits::Method::GetObject);
@@ -484,8 +487,8 @@ fn apply(hwnd: HWND, context: &WindowContext, command: Command) -> bool {
         acknowledge("applied");
         return true;
     }
-    if let Command::StallUntilRelease(posted) = command {
-        crate::held::stall_now_until_release(posted);
+    if let Command::StallUntilRelease(reports) = command {
+        crate::held::stall_now_until_release(reports);
         return true;
     }
     if let Command::StallAfterFocusRead(reads) = command {

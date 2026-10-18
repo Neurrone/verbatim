@@ -9,9 +9,11 @@
 //! ([`operator`]), which sets UIA up in mockapp with a first remote
 //! operation and sends a second when the test says. mockapp's window thread
 //! is stalled until the test releases it (`stall-until-release posted`),
-//! which says each time a message is posted or sent to it: UIA posts the
-//! operation's arrival, and the probe sends `WM_GETOBJECT`, the evidence
-//! that each is waiting for the thread.
+//! which names the first message posted to it and each client's message
+//! sent to it: the operation's arrival is posted to the
+//! thread, `WM_USER` to the window COM keeps for the thread's apartment
+//! ([`ARRIVAL`]), and the probe sends `WM_GETOBJECT`, the evidence that
+//! each is waiting for the thread.
 
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -27,6 +29,11 @@ use crate::{common, support};
 /// The environment variable that makes this binary the operation's
 /// sender, naming mockapp's window.
 pub const OPERATOR: &str = "VERBATIM_TEST_REMOTE_OPERATOR";
+
+/// mockapp's line for the post of a remote operation's arrival to the
+/// stalled window thread: `WM_USER`, to the window COM keeps for the
+/// thread's single-threaded apartment, as COM delivers a call into one.
+const ARRIVAL: &str = "stall message posted 0x0400 to OleMainThreadWndClass";
 
 /// A remote operation that reads `element`'s name, run in its provider's
 /// process; the name it read.
@@ -125,23 +132,29 @@ impl Operator {
 
 /// While the sender's operation waits for mockapp's stalled window thread,
 /// the provider probe of mockapp's window from this process answers that
-/// it has no provider, though the window answers once released: the operation reads the window's name
-/// from mockapp's own provider, and a probe made once it has finished
-/// answers that the window has a provider.
+/// it has no provider, though the window answers once released: the
+/// operation reads the window's name from mockapp's own provider, and a
+/// probe made once it has finished answers that the window has a provider.
+/// UIA's first-time setup in this process is done before the stall, so the
+/// probe is only the probe.
 pub fn a_probe_during_another_processs_queued_operation_answers_no() {
     let (mut app, hwnd) = support::mockapp("collide", "uia");
+    let _setup = support::client();
     let mut operator = Operator::start(hwnd);
     let hwnd = hwnd.0 as isize;
 
     app.write("stall-until-release posted");
     app.expect_line("stall started", String::new);
     operator.send_operation();
-    app.expect_line("stall message posted", String::new);
+    app.expect_line(ARRIVAL, String::new);
     let (done, probed) = mpsc::channel();
     std::thread::spawn(move || {
         let _ = done.send(verbatim_uia::has_server_side_provider(hwnd));
     });
-    app.expect_line("stall message sent", String::new);
+    app.expect_line(
+        &support::root_object_request(support::MOCKAPP_WINDOW),
+        String::new,
+    );
     app.release();
     let probed = probed
         .recv_timeout(common::WAIT_TIMEOUT)
@@ -155,5 +168,32 @@ pub fn a_probe_during_another_processs_queued_operation_answers_no() {
     );
     assert!(verbatim_uia::has_server_side_provider(hwnd));
     operator.end();
+    app.quit();
+}
+
+/// The control: with no operation queued, a probe made while mockapp's
+/// window thread is stalled, and released once the probe's message has
+/// reached the thread, answers that the window has a provider, so the
+/// stall alone does not make the probe answer no.
+pub fn a_probe_during_a_plain_stall_answers_yes() {
+    let (mut app, hwnd) = support::mockapp("collide-control", "uia");
+    let _setup = support::client();
+    let hwnd = hwnd.0 as isize;
+
+    app.write("stall-until-release");
+    app.expect_line("stall started", String::new);
+    let (done, probed) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(verbatim_uia::has_server_side_provider(hwnd));
+    });
+    app.expect_line(
+        &support::root_object_request(support::MOCKAPP_WINDOW),
+        String::new,
+    );
+    app.release();
+    let probed = probed
+        .recv_timeout(common::WAIT_TIMEOUT)
+        .expect("the probe answers");
+    assert!(probed, "the probe answered no");
     app.quit();
 }

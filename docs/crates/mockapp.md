@@ -189,14 +189,23 @@ which takes no message until `release`, printing `stall started` as it
 begins and `stall message arrived` once when the first message is posted
 or sent to it meanwhile; acknowledged `applied` when armed; the lock tests'
 hold of `docs/design/focus-pipeline.md`, section 20.7),
-`stall-until-release` (the window thread stalls at once, taking no
-message until `release`, as a hung application's does, printing `stall
-started` as it begins and `stall message sent` each time a message is
-sent to it meanwhile, so a test sees each call a client makes to the hung
-window and waits on; `stall-until-release posted` also prints `stall
-message posted` once, when the first message is posted to it, as UIA
-posts a remote operation's arrival, once or twice; the UIA fault tests'
-hung and busy windows),
+`stall-until-release` (the window thread stalls at once until `release`,
+answering no client meanwhile, as a hung application's does: it takes each
+message sent to it, and the window procedure that receives a client's
+message, `WM_GETOBJECT` or a registered message such as UI Automation's
+own, holds it until `release`, printing `stall message sent <message> to
+<class>`, the message (`WM_GETOBJECT` with its object id, or the registered
+message's name) and the class of the window it was sent to, so a test waits
+for exactly the call it expects; any other message sent to the thread, such
+as the `WM_SETTINGCHANGE` Windows sends every top-level window when a
+screen reader starts or stops, is answered and not reported; it prints
+`stall started` as it begins; `stall-until-release posted` also names the
+first message posted to the thread, once, as `stall message posted <id> to
+<class>`, as a remote operation's arrival is posted, read without taking
+it; `stall-until-release quiet` takes no message at all and says nothing
+between its start and its end, for a test whose evidence comes from
+elsewhere; a wait that fails ends the stall with `stall failed: <reason>`;
+the UIA fault tests' hung and busy windows),
 `menu-opened <id>` (raises UIA's `MenuOpened` event from the node, which
 the focus listener reads as a focus on it; an automation event, which UIA
 delivers on a desktop where no window has the keyboard focus, as it does

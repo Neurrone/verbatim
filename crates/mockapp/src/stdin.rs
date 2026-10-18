@@ -177,12 +177,14 @@ pub(crate) enum Command {
     /// message reaches the thread meanwhile ([`crate::held`]). Applied on
     /// the window thread.
     StallAfterFocusRead(u32),
-    /// `stall-until-release [posted]`: stalls the window thread now, until
-    /// `release`, saying when the stall begins and each time a message is
-    /// sent to the thread meanwhile, and, with `posted`, when the first is
-    /// posted ([`crate::held`]), as a hung application's UI thread takes no
-    /// message. Applied on the window thread.
-    StallUntilRelease(bool),
+    /// `stall-until-release [posted | quiet]`: stalls the window thread now,
+    /// until `release`, as a hung application's UI thread answers no
+    /// client, saying when the stall begins and naming each client's message
+    /// sent to the thread meanwhile; with `posted`, also naming the first
+    /// message posted to it; with `quiet`, taking no message and saying
+    /// nothing but its start ([`crate::held`]). Applied on the window
+    /// thread.
+    StallUntilRelease(crate::held::Reports),
     /// `release`: lets the call `hold` held, or the stall of
     /// `stall-after-focus-read` or `stall-until-release`, go on. Applied and acknowledged on the
     /// stdin thread, since the window thread is the one held.
@@ -213,6 +215,17 @@ fn caret(rest: &str) -> Option<Command> {
         None => start,
     };
     Some(Command::Caret(id.to_owned(), start, end))
+}
+
+/// `stall-until-release`'s argument: what the stall reports.
+fn stall_until_release(rest: &str) -> Option<Command> {
+    let reports = match rest {
+        "" => crate::held::Reports::Sends,
+        "posted" => crate::held::Reports::SendsAndFirstPost,
+        "quiet" => crate::held::Reports::Nothing,
+        _ => return None,
+    };
+    Some(Command::StallUntilRelease(reports))
 }
 
 /// `stall`'s arguments: its length, and optionally when into it to apply
@@ -249,11 +262,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "quit" => Some(Command::Quit),
         "hold" => Some(Command::Hold),
         "stall-after-focus-read" => rest.parse().ok().map(Command::StallAfterFocusRead),
-        "stall-until-release" => match rest {
-            "" => Some(Command::StallUntilRelease(false)),
-            "posted" => Some(Command::StallUntilRelease(true)),
-            _ => None,
-        },
+        "stall-until-release" => stall_until_release(rest),
         "release" => Some(Command::Release),
         "focus" if !rest.is_empty() => Some(Command::Focus(rest.to_owned())),
         "set-focus" if !rest.is_empty() => Some(Command::SetFocus(rest.to_owned())),
@@ -550,11 +559,17 @@ mod tests {
         assert!(parse_command("stall-after-focus-read").is_none());
         assert!(matches!(
             parse_command("stall-until-release"),
-            Some(Command::StallUntilRelease(false))
+            Some(Command::StallUntilRelease(crate::held::Reports::Sends))
         ));
         assert!(matches!(
             parse_command("stall-until-release posted"),
-            Some(Command::StallUntilRelease(true))
+            Some(Command::StallUntilRelease(
+                crate::held::Reports::SendsAndFirstPost
+            ))
+        ));
+        assert!(matches!(
+            parse_command("stall-until-release quiet"),
+            Some(Command::StallUntilRelease(crate::held::Reports::Nothing))
         ));
     }
 

@@ -63,7 +63,10 @@ pub fn a_lookup_waits_the_connection_timeout_another_client_set_last() {
     hung.write("stall-until-release");
     hung.expect_line("stall started", String::new);
     go.send(()).expect("the first client is waiting");
-    hung.expect_line("stall message sent", String::new);
+    hung.expect_line(
+        &support::root_object_request(support::MOCKAPP_WINDOW),
+        String::new,
+    );
     let looked_up = looked_up
         .recv_timeout(common::WAIT_TIMEOUT)
         .expect("the lookup ends while the window hangs");

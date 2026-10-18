@@ -118,6 +118,10 @@ fn main() {
             collision::a_probe_during_another_processs_queued_operation_answers_no,
         ),
         (
+            "a_probe_during_a_plain_stall_answers_yes",
+            collision::a_probe_during_a_plain_stall_answers_yes,
+        ),
+        (
             "a_kept_sender_is_read_live_until_its_provider_removes_it",
             marshal::a_kept_sender_is_read_live_until_its_provider_removes_it,
         ),

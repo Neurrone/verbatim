@@ -8,9 +8,10 @@
 //!
 //! The hung window is mockapp's comctl32 tree view, on the MSAA backend,
 //! its window thread stalled until the test releases it
-//! (`stall-until-release`), which says each time a message is sent to it:
-//! the evidence of UIA's sends. The held event is a name change in a
-//! second mockapp, on the UIA backend.
+//! (`stall-until-release`), which names each client's message sent to it:
+//! the evidence of UIA's two sends, `WM_GETOBJECT` for its root object and
+//! then its registered `UiaServerConnection_HookMessage`. The held event is
+//! a name change in a second mockapp, on the UIA backend.
 
 use std::time::{Duration, Instant};
 
@@ -27,6 +28,9 @@ use crate::support::{self, Handler};
 
 /// The connection timeout these tests set, short so that the hold is too.
 const CONNECTION_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// The class of mockapp's tree view, as Windows Forms names it.
+const TREE_VIEW: &str = "WindowsForms10.SysTreeView32.app.0.141b42a_r9_ad1";
 
 /// A mockapp whose tree view is the hung window, and the tree view.
 fn tree_view() -> (common::MockApp, windows::Win32::Foundation::HWND) {
@@ -77,9 +81,9 @@ pub fn a_name_change_waits_for_both_sends_to_a_hung_focus() {
     );
 
     let raised = hang_and_name_in_a_focus_event(&mut hung, tree);
-    hung.expect_line("stall message sent", String::new);
+    hung.expect_line(&support::root_object_request(TREE_VIEW), String::new);
     b.send("set-name btn1 Renamed");
-    hung.expect_line("stall message sent", String::new);
+    hung.expect_line(&support::hook_message(TREE_VIEW), String::new);
     names.heard_nothing_more();
     let (heard, at) = names.next();
     assert_eq!(heard, support::from(&b, "Renamed"));
