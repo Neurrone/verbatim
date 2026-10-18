@@ -14,7 +14,6 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationEventHandler, IUIAutomationEventHandlerGroup,
     IUIAutomationFocusChangedEventHandler, IUIAutomationPropertyChangedEventHandler,
     TreeScope_Subtree, UIA_AutomationFocusChangedEventId, UIA_NamePropertyId,
-    UIA_ProcessIdPropertyId,
 };
 use windows::core::{AgileReference, Interface};
 
@@ -40,16 +39,13 @@ pub fn element(client: &IUIAutomation, hwnd: HWND) -> IUIAutomationElement {
     unsafe { client.ElementFromHandle(hwnd) }.expect("the window's element")
 }
 
-/// A cache request for the sender's process id and name, which every
-/// handler here reads.
+/// A cache request with nothing added to it, for a registration: the
+/// handlers here read their senders live, since a cached read is made
+/// only through `verbatim_uia`'s shapes, which a raw handler's sender is
+/// not.
 pub fn cache(client: &IUIAutomation) -> IUIAutomationCacheRequest {
     // SAFETY: a local call on a live client.
-    let request = unsafe { client.CreateCacheRequest() }.expect("a cache request");
-    for property in [UIA_ProcessIdPropertyId, UIA_NamePropertyId] {
-        // SAFETY: a local call on the live request.
-        unsafe { request.AddProperty(property) }.expect("the property cached");
-    }
-    request
+    unsafe { client.CreateCacheRequest() }.expect("a cache request")
 }
 
 /// Sets the process's connection timeout, which every client in the
@@ -118,8 +114,8 @@ pub fn group_on(
     group
 }
 
-/// An event as a handler heard it: its sender's process id and name, as
-/// cached with the event.
+/// An event as a handler heard it: its sender's process id and name, read
+/// live as the event arrived.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Heard {
     pub pid: u32,
@@ -229,11 +225,10 @@ mod hearing {
         fn hear(&self, sender: &windows_core::Ref<IUIAutomationElement>) {
             let at = Instant::now();
             let element = sender.as_ref().expect("an event's sender");
-            // SAFETY: a cached read of the live sender, local to this
-            // process.
-            let pid = unsafe { element.CachedProcessId() }.expect("the sender's cached process id");
+            // SAFETY: a live read of the sender, which the handler holds.
+            let pid = unsafe { element.CurrentProcessId() }.expect("the sender's process id");
             // SAFETY: as above.
-            let name = unsafe { element.CachedName() }.expect("the sender's cached name");
+            let name = unsafe { element.CurrentName() }.expect("the sender's name");
             let heard = Heard {
                 pid: u32::try_from(pid).expect("a process id"),
                 name: name.to_string(),
