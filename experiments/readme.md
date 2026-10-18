@@ -11,7 +11,7 @@ Left out everywhere: screen recordings, ETW traces, symbol caches, binaries and 
 - [A hung window named in a system focus event holds a process's UIA events](a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/readme.md): `h1` to `h6`, P4, and the October experiments E-delivery, E-hung-proxy, `e_mapping`, `e_hung_cause` and `e_cross`.
 - [The connection timeout applies to the whole process](the-connection-timeout-applies-to-the-whole-process/readme.md): E1 and `h5`.
 - [Desktop-wide focus handlers in a second process deliver late](desktop-wide-focus-handlers-in-a-second-process-deliver-late/readme.md): P2's delivery timings, `p2b`, `p2c` and `p2d`.
-- [A registration that times out reports success](a-registration-that-times-out-reports-success/readme.md): E-TT and E3, which also serve the limitation that a timeout bounds each provider call, not an operation.
+- [A registration that times out reports success](a-registration-that-times-out-reports-success/readme.md): E-TT and E3, which also serve the limitation that a timeout bounds each provider call, not an operation, and `e57`, when such a registration starts to deliver.
 
 The other faults in `docs/uia-bugs.md` rest on commits and tests named in their entries, with no separate experiment.
 

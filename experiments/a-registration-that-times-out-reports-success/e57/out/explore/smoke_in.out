@@ -1,0 +1,2 @@
+e57 where=in cto=2000 tto=5000 stall=1 registered ok 2209 (returned 2210 ms after go) sends=0 other_lines=[] released 201 ms after return; ev0 raised +0 not heard;
+e57 where=in cto=2000 tto=5000 stall=1 registered ok 2208 (returned 2208 ms after go) sends=0 other_lines=[] released 201 ms after return; ev0 raised +0 not heard;

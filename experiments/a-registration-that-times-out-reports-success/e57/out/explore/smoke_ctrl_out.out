@@ -1,0 +1,1 @@
+e57 where=out cto=2000 tto=5000 stall=0 registered ok 2 (returned 3 ms after go) sends=0 other_lines=[] released 0 ms after return; ev0 raised +0 heard +2 (after 2);

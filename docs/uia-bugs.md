@@ -254,11 +254,13 @@ No test reproduces it yet; the experiment is P2c.
 
 #### Trigger
 
-`AddEventHandlerGroup` on a window whose provider does not answer (held in `FragmentRoot`), with a timeout shorter than the hold: the transaction timeout at 1 second in E-TT. In the test below, the registration's wait followed the connection timeout instead: 540 to 549 ms with the connection timeout at 500 ms and the transaction timeout at 5,000 ms, and 5,453 to 5,504 ms the other way round.
+`AddEventHandlerGroup` on a window whose provider does not answer, because a provider call is held (in `FragmentRoot`) or the window thread takes no message (a stall), with a timeout shorter than the hold: the transaction timeout at 1 second in E-TT. In the test below, the registration's wait followed the connection timeout instead: 540 to 549 ms with the connection timeout at 500 ms and the transaction timeout at 5,000 ms, and 5,453 to 5,504 ms the other way round. A group holding UIA's focus event, registered during a stall, also returns after the connection timeout, whatever the transaction timeout: 532 to 551 ms at 500 ms, 2,190 to 2,226 ms at 2,000 ms, and 5,514 to 5,541 ms at 5,000 ms (e57).
 
 #### Symptoms
 
-The registration returned success after 1,089 ms, though the provider never answered. Whether that registration delivers anything afterwards is unknown (E-TT, section 11).
+The registration returned success after 1,089 ms, though the provider never answered (E-TT, section 11).
+
+Such a registration delivers nothing until about 2 seconds after its call returned (1,981 to 2,001 ms), or until the stall ends if that is later, and then delivers every event raised. An event raised after the stall has ended but before that point is lost: it is never delivered, late or otherwise. The point follows neither the connection timeout (500, 2,000 and 5,000 ms) nor the transaction timeout (500, 5,000 and 20,000 ms), and the next event raised does not bring it forward. A registration made in a second process behaves the same as one made in the test's own process. These figures come from e57, 180 trials. Inferred, not shown: UIA's client makes the registration again about 2 seconds after the timeout, and that attempt waits in the window thread's queue until the stall ends.
 
 #### Not affected
 
@@ -266,7 +268,7 @@ Single reads under the same timeout fail as expected: `CurrentName` after 1,095 
 
 #### Workarounds that worked
 
-None is built. Proposed: treat a registration that took longer than the timeout as failed and make it again (section 11, E-TT), or, for a hand-over of an application's focus, trust a registration only once its first event has arrived (section 13.2).
+None is built. Proposed: treat a registration that took longer than the timeout as failed and make it again (section 11, E-TT), or, for a hand-over of an application's focus, trust a registration only once its first event has arrived (section 13.2). The second rests on what e57 shows: a registration that timed out does start to deliver, and it loses no event raised after its first delivered one. That first event comes no sooner than about 2 seconds after the registration returned. Until then the registration loses every event raised, so whatever served the window before must go on serving it, and an application that raises no event never confirms the registration. Whether a second registration made after the stall ends delivers at once is not tested.
 
 #### Workarounds that didn't work
 
@@ -278,11 +280,13 @@ Not known.
 
 #### Reproduction test
 
-`a_group_registered_while_its_provider_is_held_reports_success` in `crates/mockapp/tests/uia_bugs/a_registration_that_times_out_reports_success.rs` reproduces it, with both timeouts at 500 ms: the registration returns success while mockapp still holds its provider in `FragmentRoot`. `a_read_while_its_provider_is_held_fails`, beside it, shows the case under "Not affected": a name read, held in `GetPropertyValue`, fails with `UIA_E_TIMEOUT`. Each passed 20 of 20 runs. Neither tests whether the registration delivers afterwards.
+`a_group_registered_while_its_provider_is_held_reports_success` in `crates/mockapp/tests/uia_bugs/a_registration_that_times_out_reports_success.rs` reproduces it, with both timeouts at 500 ms: the registration returns success while mockapp still holds its provider in `FragmentRoot`. `a_read_while_its_provider_is_held_fails`, beside it, shows the case under "Not affected": a name read, held in `GetPropertyValue`, fails with `UIA_E_TIMEOUT`. Each passed 20 of 20 runs.
+
+`a_registration_that_timed_out_misses_an_event_raised_just_after_the_stall`, in the same file, reproduces e57's gap with the connection timeout at 500 ms. A group holding UIA's focus event, registered during a 1.5-second stall of mockapp's window thread, returns success before the stall ends. A focus event raised as the stall ends is never heard, and one raised after a further 3-second stall is heard alone. It passed 40 of 40 runs alone and 60 of 60 with the rest of the folder in parallel; expecting the first event instead, it failed 20 of 20.
 
 #### Evidence
 
-[`experiments/a-registration-that-times-out-reports-success/`](../experiments/a-registration-that-times-out-reports-success/readme.md): experiment E-TT; `docs/design/focus-pipeline.md`, section 11, E-TT.
+[`experiments/a-registration-that-times-out-reports-success/`](../experiments/a-registration-that-times-out-reports-success/readme.md): experiments E-TT and e57; `docs/design/focus-pipeline.md`, section 11, E-TT.
 
 ### A remote operation's keyboard focus read can differ from a plain read
 
