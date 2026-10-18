@@ -2,7 +2,7 @@
 
 This file records the faults in Windows' UI Automation (UIA) that Verbatim has established by experiment: what triggers each, what a caller sees, what was tried against it, and whether NVDA meets it. A behaviour gets a heading here only once a test or a recorded experiment shows it; a suspicion stays in the design record or the roadmap until then. Where a statement is an inference rather than a measurement, it says so.
 
-Every figure comes from the recorded output of the experiment named beside it, on Dickson's x64 machine (Windows 11, build 26200) unless another machine is named. Most experiments are scratch tools whose scripts and outputs are kept under `target/e2e-evidence/` on that machine, which git does not hold; the design records cited hold the committed account. Tests that reproduce a fault, or show that Verbatim's workaround still holds, live in `crates/mockapp/tests/uia_bugs/`, one file per fault, named after its heading here.
+Every figure comes from the recorded output of the experiment named beside it, on Dickson's x64 machine (Windows 11, build 26200) unless another machine is named. The experiments live in [`experiments/`](../experiments/readme.md), one folder per entry that has them, named after its heading: each folder's readme defines every experiment the entry names, with its setup, result and numbers, beside the scripts, tool patches and raw outputs; the design records cited hold the reasoning built on them. Tests that reproduce a fault, or show that Verbatim's workaround still holds, live in `crates/mockapp/tests/uia_bugs/`, one file per fault, named after its heading here.
 
 Terms used throughout:
 
@@ -31,7 +31,7 @@ Process A sends a remote operation into an application; while that operation wai
 
 The call fails without an error. `UiaHasServerSideProvider` answers "no" after about 3 seconds; `ElementFromHandle` and `ElementFromHandleBuildCache` return UIA's window proxy, named by the window's title, after about 2 seconds, in place of the application's own element (`e1`; in `e33`'s positive control, with a 300 ms busy period, after 2,300 to 2,337 ms in 6 of 6). A caller that trusts the answer reads the window through MSAA.
 
-In Verbatim the operation was the listener's focus read and the connection an outpost's probe or lookup, or the reverse. About 3 in 100 Windows Terminal launches read the terminal's first focus through MSAA, spoken as "pane", or announced it twice, and about 1 in 25 Notepad openings did the same (`docs/design/focus-pipeline.md`, section 20.1). In one slow Windows Terminal launch the outpost's probe of the terminal's `InputSite` window waited 3,008 ms and answered "no" while the listener's focus read waited for the busy UI thread (`target/e2e-evidence/launch-collision/wt-launch-slow/`).
+In Verbatim the operation was the listener's focus read and the connection an outpost's probe or lookup, or the reverse. About 3 in 100 Windows Terminal launches read the terminal's first focus through MSAA, spoken as "pane", or announced it twice, and about 1 in 25 Notepad openings did the same (`docs/design/focus-pipeline.md`, section 20.1). In one slow Windows Terminal launch the outpost's probe of the terminal's `InputSite` window waited 3,008 ms and answered "no" while the listener's focus read waited for the busy UI thread (`wt-launch-slow/` in this fault's experiments folder).
 
 A related cost that is not a failure: a remote operation waiting for one busy UI thread delays every other client's call into the process, on any thread, held elements included, by the same time (`e28`, 9 of 9 delayed to the end of a 1,000 ms busy period, against under 1.1 ms in the control `e28c`).
 
@@ -69,7 +69,7 @@ No test in `uia_bugs/` reproduces it. The lock's tests show the fault when the l
 
 #### Evidence
 
-`docs/design/focus-pipeline.md`, sections 20.1, 20.5, 20.8, 20.9 and 20.12; the collide tool's scripts and outputs `e1` to `e36` in `target/e2e-evidence/launch-collision/collide/` (the tool as `target/e2e-evidence/launch-collision/collide-tool-with-busy.patch`, extended by `collide/collide-tool-crossings.patch` and `collide/collide-tool-e33.patch`), `collide/readme.md` for `e33` to `e36`; commits 3782ee8d and 610c51fd.
+[`experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/`](../experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/readme.md): the collide tool's experiments `e1` to `e36` (including `e24b`, `e24c`, `e26b`, `e28c`, `e28d`, `e35b` and `e35c`), with the tool as patches, and the Notepad and Windows Terminal launches that met the fault; `docs/design/focus-pipeline.md`, sections 20.1, 20.5, 20.8, 20.9 and 20.12; commits 3782ee8d and 610c51fd.
 
 ### UiaHasServerSideProvider says no for a new conhost window while another process has an event handler
 
@@ -83,7 +83,7 @@ The probe answers "no" after 3,022 to 3,058 ms, so the window is read through MS
 
 In the "no" trials of `e39`, conhost received UIA's request 24 to 31 ms after the window was found and answered `0x10000` in about 3.5 ms, as in the "yes" trials: the window answered, and UIA's client waited afterwards. A lookup by handle meets the same fault: `ElementFromHandleBuildCache` alone, at 0 ms under the trigger, returned UIA's MSAA proxy (its process id the console's client, not conhost) after 5,030 to 5,043 ms in 7 of 120 trials (`e39`).
 
-In the end-to-end suite this is inferred to be why `conhost_two_windows` fails about 1 run in 20: each failing run's probe came from a spare outpost newly given the second console's conhost, 1 to 3 ms after the window's foreground event, with no Verbatim call pending in that conhost, and one of the kept runs already had the per-application lock (`focus-followups/kept-runs/`, cited in `e38`).
+In the end-to-end suite this is inferred to be why `conhost_two_windows` fails about 1 run in 20: each failing run's probe came from a spare outpost newly given the second console's conhost, 1 to 3 ms after the window's foreground event, with no Verbatim call pending in that conhost, and one of the kept runs already had the per-application lock (`kept-runs/` in this fault's experiments folder, cited in `e38`).
 
 #### Not affected
 
@@ -94,7 +94,7 @@ In the end-to-end suite this is inferred to be why `conhost_two_windows` fails a
 
 #### Workarounds that worked
 
-- The raw probe, proposed and not yet built (`target/e2e-evidence/launch-collision/design-raw-probe.md`, awaiting Dickson): one `SendMessageTimeoutW` sending `WM_GETOBJECT` with wParam 0 and lParam `UiaRootObjectId` sign-extended (as UIA itself sends it), where an answer of exactly `0x10000` means the window has a provider. Under the trigger at 0 ms, the raw probe and then the lookup were right in 120 of 120 trials, median 45.6 ms in all (37 to 56), against 39.2 ms for `UiaHasServerSideProvider` and then the lookup; on a settled conhost window 9.6 ms against 10.2 (`e39`). Across 88 windows of real applications it agreed with `UiaHasServerSideProvider` on every window that answered 0 or `0x10000`; 3 File Explorer child windows answered `0xffffffff80040201` where UIA said no, which is why only `0x10000` counts as yes. Costs and risks: Microsoft documents that applications never send this message directly and documents no meaning for its answer; that the lookup after it succeeds because it starts after conhost has pumped is inferred, not shown.
+- The raw probe, proposed and not yet built (`design-raw-probe.md` in this fault's experiments folder, awaiting Dickson): one `SendMessageTimeoutW` sending `WM_GETOBJECT` with wParam 0 and lParam `UiaRootObjectId` sign-extended (as UIA itself sends it), where an answer of exactly `0x10000` means the window has a provider. Under the trigger at 0 ms, the raw probe and then the lookup were right in 120 of 120 trials, median 45.6 ms in all (37 to 56), against 39.2 ms for `UiaHasServerSideProvider` and then the lookup; on a settled conhost window 9.6 ms against 10.2 (`e39`). Across 88 windows of real applications it agreed with `UiaHasServerSideProvider` on every window that answered 0 or `0x10000`; 3 File Explorer child windows answered `0xffffffff80040201` where UIA said no, which is why only `0x10000` counts as yes. Costs and risks: Microsoft documents that [applications never send this message directly](https://learn.microsoft.com/en-us/windows/win32/winauto/wm-getobject) and documents no meaning for its answer; that the lookup after it succeeds because it starts after conhost has pumped is inferred, not shown.
 
 #### Workarounds that didn't work
 
@@ -106,15 +106,15 @@ In the end-to-end suite this is inferred to be why `conhost_two_windows` fails a
 
 NVDA asks the same question with the same call (`nvda/source/UIAHandler/__init__.py`, lines 1274 to 1286) and always has its own handlers registered, so it is inferred to be exposed; no NVDA capture shows it.
 
-NVDA records a different fault of the same call: `UiaHasServerSideProvider` on a hung application blocks its caller, and NVDA's watchdog, which recovers by `CoCancelCall` on its main thread and by cancelling its own window messages, cannot cancel it, nor the UIA element lookups (`ElementFromHandleBuildCache`, `GetFocusedElementBuildCache`, `ElementFromPointBuildCache`). NVDA #20170 (fixing #20169, 2026-05-26, in the pinned source) runs those calls through `watchdog.cancellableExecute`, which abandons the thread making the call; its comment calls the probe "a blocking cross-process call that the watchdog cannot otherwise cancel". That UIA's client calls in general are not cancelled by `CoCancelCall` is an inference from this, which Verbatim has not tested (`docs/nvda/main-loop-and-watchdog.md`); Verbatim bounds such calls by abandoning the thread too (`crates/verbatim-uia/src/bounded.rs`).
+NVDA records a different fault of the same call: `UiaHasServerSideProvider` on a hung application blocks its caller, and NVDA's watchdog, which recovers by `CoCancelCall` on its main thread and by cancelling its own window messages, cannot cancel it, nor the UIA element lookups (`ElementFromHandleBuildCache`, `GetFocusedElementBuildCache`, `ElementFromPointBuildCache`). [NVDA #20170](https://github.com/nvaccess/nvda/pull/20170) (fixing [NVDA #20169](https://github.com/nvaccess/nvda/issues/20169), 2026-05-26, in the pinned source) runs those calls through `watchdog.cancellableExecute`, which abandons the thread making the call; its comment calls the probe "a blocking cross-process call that the watchdog cannot otherwise cancel". That UIA's client calls in general are not cancelled by `CoCancelCall` is an inference from this, which Verbatim has not tested (`docs/nvda/main-loop-and-watchdog.md`); Verbatim bounds such calls by abandoning the thread too (`crates/verbatim-uia/src/bounded.rs`).
 
 #### Reproduction test
 
-No test reproduces it reliably yet. The collide tool reproduced it in at most a third of trials, which is not enough for a test; a mockapp version would need a window stalled before its first pump (`design-raw-probe.md`, section 6, judge 5).
+No test reproduces it reliably yet. The collide tool reproduced it in at most a third of trials, which is not enough for a test; a mockapp version would need a window stalled before its first pump (`design-raw-probe.md` in the experiments folder, section 6, judge 5).
 
 #### Evidence
 
-`target/e2e-evidence/launch-collision/collide/readme.md`, sections `e37`, `e38` and `e39`, with their scripts, outputs and summaries in `collide/e37/`, `collide/e38/` and `collide/e39/` and the tool as `collide-tool-e37.patch` to `collide-tool-e39.patch`; `target/e2e-evidence/launch-collision/design-raw-probe.md`; NVDA commit 961db0e66 (#20170).
+[`experiments/uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler/`](../experiments/uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler/readme.md): experiments `e37`, `e38` (including `e38-rawpath`) and `e39`, with their scripts, outputs, summaries and tool patches, the kept `conhost_two_windows` failures, and `design-raw-probe.md`; NVDA commit [961db0e66](https://github.com/nvaccess/nvda/commit/961db0e66cdb079144d49ca4b8b505a3a65741d3) ([NVDA #20170](https://github.com/nvaccess/nvda/pull/20170)).
 
 ### A hung window named in a system focus event holds a process's UIA events
 
@@ -162,11 +162,11 @@ NVDA is inferred to meet it: it is one process with a desktop-wide focus registr
 
 #### Reproduction test
 
-No test reproduces it yet. The mockapp experiments `e_mapping`, `e_hung_cause` and `e_cross` reproduced it every time they ran, but they lived in `crates/mockapp/tests/experiments.rs` on an experiment branch (commits 8b491dc and b0a1989) that was never merged; the 2026-10-18 measurements used the scratch tool `focusproto`.
+No test reproduces it yet. The mockapp experiments `e_mapping`, `e_hung_cause` and `e_cross` reproduced it every time they ran, but they lived in `crates/mockapp/tests/experiments.rs` on an experiment branch (commits 8b491dc and b0a1989) that was never merged, and are kept as files in `experiments/mockapp-experiments-2026-10-10/`; the 2026-10-18 measurements used the scratch tool `focusproto`.
 
 #### Evidence
 
-`docs/design/focus-pipeline.md`, section 12.11 and its subsections "Containment option 2, tested" and "Cross-process containment and MSAA's view of UIA focus"; `target/e2e-evidence/hung-hold/readme.md`, with its tool in `hung-hold/focusproto/` and the outputs `h1_*` to `h6_*`; `target/e2e-evidence/outpost-focus/readme.md`, P4; commits 8b491dc and b0a1989.
+[`experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/`](../experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/readme.md): experiments `h1` to `h6` (`h1_base`, `h2_base`, `h2_cui`, the `h3_*` variants including `h3_tto500`, `h4_*`, `h5_*` and `h6_*`) with the `focusproto` tool, P4 (including `N_B`), and the October experiments E-delivery, E-hung-proxy, `e_mapping`, `e_hung_cause` and `e_cross`, whose code is in [`experiments/mockapp-experiments-2026-10-10/`](../experiments/mockapp-experiments-2026-10-10/readme.md); `docs/design/focus-pipeline.md`, section 12.11 and its subsections "Containment option 2, tested" and "Cross-process containment and MSAA's view of UIA focus"; commits 8b491dc and b0a1989.
 
 ### The connection timeout applies to the whole process
 
@@ -202,7 +202,7 @@ No test reproduces it yet; the experiments were E1 (section 11) and `h5_read.py`
 
 #### Evidence
 
-`docs/design/focus-pipeline.md`, section 11, E1; `target/e2e-evidence/hung-hold/readme.md`, "What bounds it", and `hung-hold/h5_*.out`.
+[`experiments/the-connection-timeout-applies-to-the-whole-process/`](../experiments/the-connection-timeout-applies-to-the-whole-process/readme.md): experiments E1 and `h5`, whose files are kept with the hung-window fault's experiments and the mockapp experiments; `docs/design/focus-pipeline.md`, section 11, E1.
 
 ### Desktop-wide focus handlers in a second process deliver late
 
@@ -236,7 +236,7 @@ No test reproduces it yet; the experiment is P2c.
 
 #### Evidence
 
-`target/e2e-evidence/outpost-focus/readme.md`, P2, with `p2_cost.py` and the `p2b_*` and `p2c_*` outputs.
+[`experiments/desktop-wide-focus-handlers-in-a-second-process-deliver-late/`](../experiments/desktop-wide-focus-handlers-in-a-second-process-deliver-late/readme.md): experiment P2's delivery timings, `p2b`, `p2c` and `p2d`.
 
 ### A registration that times out reports success
 
@@ -266,11 +266,11 @@ Not known.
 
 #### Reproduction test
 
-No test reproduces it yet. E-TT lived in the unmerged `crates/mockapp/tests/experiments.rs`, and section 10.3 had asked for it to be kept as a test.
+No test reproduces it yet. E-TT lived in the unmerged `crates/mockapp/tests/experiments.rs`, now kept as a file in `experiments/mockapp-experiments-2026-10-10/`, and section 10.3 had asked for it to be kept as a test.
 
 #### Evidence
 
-`docs/design/focus-pipeline.md`, section 11, E-TT.
+[`experiments/a-registration-that-times-out-reports-success/`](../experiments/a-registration-that-times-out-reports-success/readme.md): experiment E-TT; `docs/design/focus-pipeline.md`, section 11, E-TT.
 
 ### A remote operation's keyboard focus read can differ from a plain read
 
@@ -296,7 +296,7 @@ None was tried.
 
 #### NVDA
 
-NVDA reads the sender's keyboard focus plainly in `shouldAllowUIAFocusEvent` (live since #20764, from the event's cache before that), and the second identity answered no either way (focus pipeline section 16.9).
+NVDA reads the sender's keyboard focus plainly in `shouldAllowUIAFocusEvent` (live since [NVDA #20764](https://github.com/nvaccess/nvda/pull/20764), from the event's cache before that), and the second identity answered no either way (focus pipeline section 16.9).
 
 #### Reproduction test
 
@@ -420,21 +420,21 @@ These are not faults: UIA works as designed, or as far as is known, but the desi
 
 ### Focus events cannot be limited to one application
 
-The documented call is refused: `IUIAutomation::AddAutomationEventHandler` for `UIA_AutomationFocusChangedEventId` on one window fails with `E_INVALIDARG` and UIA's message "Focus events must be registered using IUIAutomation::AddFocusChangedEventHandler" (E-scope, section 11; P1, 3 of 3). Two undocumented routes are accepted: the focus event in an event handler group registered on a window's element with `TreeScope_Subtree`, and the core API's `UiaAddEvent` on a window's node. Each delivered that window's provider-raised focus events and no other application's (E-scope; P1, 3 of 3; P5, 2 of 2), but neither received any focus event of a window UIA reads through its proxy, where the desktop-wide handler received both in every run (P1, 3 of 3; P5). So a scoped focus registration cannot serve classic Win32 applications (inferred; confirming it needs a real application with real keyboard focus). Each registered process also adds about 47 to 49 provider calls per focus event, on the application's UI thread (P2; E-cost). Evidence: `docs/design/focus-pipeline.md`, section 11, E-scope and E-cost; `target/e2e-evidence/outpost-focus/readme.md`, P1, P2 and P5.
+The documented call is refused: `IUIAutomation::AddAutomationEventHandler` for `UIA_AutomationFocusChangedEventId` on one window fails with `E_INVALIDARG` and UIA's message "Focus events must be registered using IUIAutomation::AddFocusChangedEventHandler" (E-scope, section 11; P1, 3 of 3). Two undocumented routes are accepted: the focus event in an event handler group registered on a window's element with `TreeScope_Subtree`, and the core API's `UiaAddEvent` on a window's node. Each delivered that window's provider-raised focus events and no other application's (E-scope; P1, 3 of 3; P5, 2 of 2), but neither received any focus event of a window UIA reads through its proxy, where the desktop-wide handler received both in every run (P1, 3 of 3; P5). So a scoped focus registration cannot serve classic Win32 applications (inferred; confirming it needs a real application with real keyboard focus). Each registered process also adds about 47 to 49 provider calls per focus event, on the application's UI thread (P2; E-cost). Evidence: [`experiments/focus-events-cannot-be-limited-to-one-application/`](../experiments/focus-events-cannot-be-limited-to-one-application/readme.md), experiments E-scope, E-cost, P1, P2 and P5; `docs/design/focus-pipeline.md`, section 11, E-scope and E-cost.
 
-On a desktop where no window has the keyboard focus, as in mockapp's tests, desktop-wide focus registrations receive only the focus events UIA derives from a WinEvent, and scoped ones receive provider-raised focus (E-scope; `outpost-focus/readme.md`).
+On a desktop where no window has the keyboard focus, as in mockapp's tests, desktop-wide focus registrations receive only the focus events UIA derives from a WinEvent, and scoped ones receive provider-raised focus (E-scope; P1).
 
 ### Elements cannot be passed to another process
 
-`CoMarshalInterface` of an `IUIAutomationElement` with `MSHCTX_LOCAL` succeeded, but `CoUnmarshalInterface` of those bytes in another process failed with `E_FAIL`, in three runs; the free-threaded marshaler's in-process form failed there with `E_UNEXPECTED`. Within the owning process the same bytes gave a working proxy, and an event handler object of Verbatim's own marshaled to the other process worked until a call passed it an element. No route, documented or not, was found for giving another process an event's sender, so the process that receives a UIA event is the only one that can read from its element; this is why the listener judges and reads each focus itself. A sender stays usable in its own process for as long as the provider keeps the element (P3). Evidence: `docs/design/focus-pipeline.md`, section 11, E-marshal (commit f86da7f, on the unmerged experiment branch); `outpost-focus/readme.md`, P3.
+`CoMarshalInterface` of an `IUIAutomationElement` with `MSHCTX_LOCAL` succeeded, but `CoUnmarshalInterface` of those bytes in another process failed with `E_FAIL`, in three runs; the free-threaded marshaler's in-process form failed there with `E_UNEXPECTED`. Within the owning process the same bytes gave a working proxy, and an event handler object of Verbatim's own marshaled to the other process worked until a call passed it an element. No route, documented or not, was found for giving another process an event's sender, so the process that receives a UIA event is the only one that can read from its element; this is why the listener judges and reads each focus itself. A sender stays usable in its own process for as long as the provider keeps the element (P3). Evidence: [`experiments/elements-cannot-be-passed-to-another-process/`](../experiments/elements-cannot-be-passed-to-another-process/readme.md), experiments E-marshal (commit f86da7f, on the unmerged experiment branch) and P3; `docs/design/focus-pipeline.md`, section 11, E-marshal.
 
 ### Ancestors cannot be cached or listened to
 
-An event registration scoped to an element's ancestors (`TreeScope_Ancestors` or `TreeScope_Parent`, with or without the element itself) receives no ancestor's events: on Windows 11's taskbar, a registration on the clock button's child did not hear the clock button's name change each minute, while one on the clock button itself did; mockapp gave the same result, made as an event handler group and directly (`docs/parity/backends.md`, the local group). Microsoft's documentation of `IUIAutomationCacheRequest::TreeScope` also excludes the parent and ancestors from a cache request, so an element's ancestors are read by a walk or a remote operation; Verbatim has not tested that restriction itself.
+An event registration scoped to an element's ancestors (`TreeScope_Ancestors` or `TreeScope_Parent`, with or without the element itself) receives no ancestor's events: on Windows 11's taskbar, a registration on the clock button's child did not hear the clock button's name change each minute, while one on the clock button itself did; mockapp gave the same result, made as an event handler group and directly (`docs/parity/backends.md`, the local group). Microsoft's documentation of [`IUIAutomationCacheRequest::TreeScope`](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationcacherequest-get_treescope) also excludes the parent and ancestors from a cache request, so an element's ancestors are read by a walk or a remote operation; Verbatim has not tested that restriction itself.
 
 ### A timeout bounds each provider call, not an operation
 
-Under a 1-second transaction timeout, a `FindFirst` over a window's descendants held 13,208 ms before failing with `UIA_E_TIMEOUT`, waiting a full timeout for each provider call the held thread did not answer (E-TT, section 11). A remote operation is one transaction, so the timeout bounds it as a whole (`a_stalled_provider_holds_execute_until_the_transaction_timeout` in `crates/mockapp/tests/remote_ops.rs`). Operations made of many calls are run with a deadline of their own on a thread that can be abandoned (`crates/verbatim-uia/src/bounded.rs`).
+Under a 1-second transaction timeout, a `FindFirst` over a window's descendants held 13,208 ms before failing with `UIA_E_TIMEOUT`, waiting a full timeout for each provider call the held thread did not answer (E-TT, section 11; its experiments folder is shared with "A registration that times out reports success", [`experiments/a-registration-that-times-out-reports-success/`](../experiments/a-registration-that-times-out-reports-success/readme.md)). A remote operation is one transaction, so the timeout bounds it as a whole (`a_stalled_provider_holds_execute_until_the_transaction_timeout` in `crates/mockapp/tests/remote_ops.rs`). Operations made of many calls are run with a deadline of their own on a thread that can be abandoned (`crates/verbatim-uia/src/bounded.rs`).
 
 ## Applications
 
@@ -504,11 +504,11 @@ NVDA receives it in second windows and takes none: its `shouldAllowUIAFocusEvent
 
 #### Reproduction test
 
-No test reproduces it; mockapp has no second identity. The judge in `target/e2e-evidence/wt-twin-identity/` measures it live.
+No test reproduces it; mockapp has no second identity. The identity judge in its experiments folder measures it live.
 
 #### Evidence
 
-`docs/design/windows-terminal-twin-focus.md`; `docs/design/focus-pipeline.md`, sections 16.8 and 16.9; `target/e2e-evidence/github-38988118089/`, `target/e2e-evidence/github-39032739474/` and `target/e2e-evidence/wt-twin-identity/`.
+[`experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`](../experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/readme.md): the identity judge and its three 150-round runs; `docs/design/windows-terminal-twin-focus.md`; `docs/design/focus-pipeline.md`, sections 16.8 and 16.9; GitHub Actions runs 38988118089 and 39032739474, whose downloaded artifacts are not committed.
 
 ### A Qt application's cached keyboard focus can be stale
 
@@ -518,15 +518,15 @@ Page Up or Page Down in WeChat's conversation list, whose Qt UIA provider raises
 
 #### Symptoms
 
-The keyboard focus cached with the container's event can still say it has the focus when the event is judged, so a client that judges by the cached value announces the container before the item (NVDA #20764, fixing #20763).
+The keyboard focus cached with the container's event can still say it has the focus when the event is judged, so a client that judges by the cached value announces the container before the item ([NVDA #20764](https://github.com/nvaccess/nvda/pull/20764), fixing [NVDA #20763](https://github.com/nvaccess/nvda/issues/20763)).
 
 #### Not affected
 
-Up Arrow and Down Arrow (NVDA #20764).
+Up Arrow and Down Arrow ([NVDA #20764](https://github.com/nvaccess/nvda/pull/20764)).
 
 #### Workarounds that worked
 
-- NVDA reads the sender's keyboard focus live when it judges a focus event (#20764, in the pinned source). Verbatim's listener reads it plainly too (ab18245e).
+- NVDA reads the sender's keyboard focus live when it judges a focus event ([NVDA #20764](https://github.com/nvaccess/nvda/pull/20764), in the pinned source). Verbatim's listener reads it plainly too (ab18245e).
 
 #### Workarounds that didn't work
 
@@ -542,7 +542,7 @@ No test reproduces it; Verbatim has no Qt application in its tests.
 
 #### Evidence
 
-NVDA commit 3ca80a5fa (#20764).
+NVDA commit [3ca80a5fa](https://github.com/nvaccess/nvda/commit/3ca80a5faaee941bb4deb76728088cef091012e0) ([NVDA #20764](https://github.com/nvaccess/nvda/pull/20764)).
 
 ### Excel 2016 freezes when asked for its provider in response to its own events
 

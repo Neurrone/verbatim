@@ -75,6 +75,10 @@ NVDA says, to decide what Verbatim should say.
   that Verbatim has established by experiment, and in applications'
   providers: each one's trigger, symptoms, workarounds tried, NVDA's
   exposure, and its reproduction test in `crates/mockapp/tests/uia_bugs/`.
+- [Experiments](../experiments/readme.md) — the experiments behind the
+  UIA faults, one folder per entry: each experiment defined by its
+  identifier with its setup, result and numbers, beside its scripts,
+  tool patches and raw outputs.
 - [Text attributes](text-attributes.md) — the survey of every UIA text
   attribute and annotation in Windows Terminal, the console host, and
   Windows 11 Notepad: what each reports, whether it varies, and what
