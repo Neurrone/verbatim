@@ -114,5 +114,13 @@ fn main() {
             "a_kept_sender_is_read_live_until_its_provider_removes_it",
             marshal::a_kept_sender_is_read_live_until_its_provider_removes_it,
         ),
+        (
+            "a_provider_held_raising_its_event_holds_only_its_own_events",
+            hung_focus::a_provider_held_raising_its_event_holds_only_its_own_events,
+        ),
+        (
+            "a_focus_raised_while_its_window_is_busy_past_the_connection_timeout_is_dropped",
+            hung_focus::a_focus_raised_while_its_window_is_busy_past_the_connection_timeout_is_dropped,
+        ),
     ]);
 }

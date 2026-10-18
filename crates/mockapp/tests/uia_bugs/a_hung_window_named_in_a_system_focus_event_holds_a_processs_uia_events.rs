@@ -161,3 +161,74 @@ pub fn an_outposts_uia_events_are_not_held_behind_a_hung_focus() {
     hung.quit();
     b.quit();
 }
+
+/// A server-side provider held while raising its own focus event holds
+/// only its own events (E-delivery, in "Not affected"): with mockapp A's
+/// provider held in the call UIA makes into it as A raises its focus,
+/// B's focus event reaches this process, and A's arrives once A is
+/// released.
+pub fn a_provider_held_raising_its_event_holds_only_its_own_events() {
+    let (mut a, a_hwnd) = support::mockapp("held-raise-a", "uia");
+    let (mut b, b_hwnd) = support::mockapp("held-raise-b", "uia");
+    let uia = support::client();
+    let on_a = Handler::new();
+    let on_b = Handler::new();
+    let _a_group = support::group_on(
+        uia.client(),
+        &support::element(uia.client(), a_hwnd),
+        &on_a,
+        false,
+    );
+    let _b_group = support::group_on(
+        uia.client(),
+        &support::element(uia.client(), b_hwnd),
+        &on_b,
+        false,
+    );
+
+    a.hold();
+    a.write("focus btn1");
+    assert_eq!(a.held(), "ProviderOptions");
+    b.send("focus btn1");
+    assert_eq!(on_b.next().0, support::from(&b, "Original Name"));
+    on_a.heard_nothing_more();
+    a.release();
+    a.expect_line("applied", String::new);
+    assert_eq!(on_a.next().0, support::from(&a, "Original Name"));
+    on_a.heard_nothing_more();
+    on_b.heard_nothing_more();
+    a.quit();
+    b.quit();
+}
+
+/// The cost of a short connection timeout (`h6`): with it at 500 ms, an
+/// MSAA mockapp's focus raised from inside a 1.5-second stall of its window
+/// thread is never delivered to a desktop-wide focus handler, which hears a
+/// second MSAA mockapp's focus, raised after the stall, first. UIA's focus
+/// tracking handles the two focus `WinEvent`s in turn, so a late delivery
+/// of the first would come before it; the second is another application's,
+/// so UIA cannot take the first for it.
+pub fn a_focus_raised_while_its_window_is_busy_past_the_connection_timeout_is_dropped() {
+    let (mut busy, _) = support::mockapp("hung-dropped", "msaa");
+    let (mut other, _) = support::mockapp("hung-dropped-other", "msaa");
+    let uia = support::client();
+    support::set_connection_timeout(uia.client(), CONNECTION_TIMEOUT);
+    let focus = Handler::new();
+    // SAFETY: live client, cache request and handler.
+    unsafe {
+        uia.client()
+            .AddFocusChangedEventHandler(&support::cache(uia.client()), &focus.focus)
+    }
+    .expect("the desktop-wide focus handler");
+
+    let stall = Duration::from_millis(1_500);
+    busy.write(&format!("stall {} 0 focus btn1", stall.as_millis()));
+    busy.expect_line("stall started", String::new);
+    busy.expect_line("applied", String::new);
+    let _ = busy.stall_ended(stall);
+    other.send("focus btn1");
+    assert_eq!(focus.next().0, support::from(&other, "Original Name"));
+    focus.heard_nothing_more();
+    busy.quit();
+    other.quit();
+}
