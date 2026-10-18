@@ -435,13 +435,19 @@ mod tests {
     #[test]
     fn a_window_in_the_baseline_is_refused_a_close_by_handle() {
         let mut watch = Watch::default();
-        assert!(watch.in_baseline(1, &window(1)).is_err(), "nothing recorded");
+        assert!(
+            watch.in_baseline(1, &window(1)).is_err(),
+            "nothing recorded"
+        );
         watch
             .record(1, std::iter::once(window(1)).collect())
             .expect("records");
         assert!(watch.in_baseline(1, &window(1)).expect("connection 1's"));
         assert!(!watch.in_baseline(1, &window(2)).expect("connection 1's"));
-        assert!(watch.in_baseline(2, &window(1)).is_err(), "only connection 1's");
+        assert!(
+            watch.in_baseline(2, &window(1)).is_err(),
+            "only connection 1's"
+        );
     }
 
     #[test]
