@@ -260,7 +260,13 @@ No test reproduces it yet; the experiment is P2c.
 
 The registration returned success after 1,089 ms, though the provider never answered (E-TT, section 11).
 
-Such a registration delivers nothing until about 2 seconds after its call returned (1,981 to 2,001 ms), or until the stall ends if that is later, and then delivers every event raised. An event raised after the stall has ended but before that point is lost: it is never delivered, late or otherwise. The point follows neither the connection timeout (500, 2,000 and 5,000 ms) nor the transaction timeout (500, 5,000 and 20,000 ms), and the next event raised does not bring it forward. A registration made in a second process behaves the same as one made in the test's own process. These figures come from e57, 180 trials. Inferred, not shown: UIA's client makes the registration again about 2 seconds after the timeout, and that attempt waits in the window thread's queue until the stall ends.
+Such a registration delivers nothing until about 2 seconds after its call returned (1,981 to 2,001 ms), or until the stall ends if that is later, and then delivers every event raised. An event raised after the stall has ended but before that point is lost: it is never delivered, late or otherwise. The point follows neither the connection timeout (500, 2,000 and 5,000 ms) nor the transaction timeout (500, 5,000 and 20,000 ms), and the next event raised does not bring it forward. A registration made in a second process behaves the same as one made in the test's own process. These figures come from e57, 180 trials.
+
+The registration is made once, by its own request, which waits for the stalled thread and runs as the stall ends: a provider that is told of registrations (`IRawElementProviderAdviseEvents`) is told of it then, once. Nothing reaches the application when the gap ends: no second registration, provider call, sent message or posted message came in the 6 seconds after the stall's end, while delivery starts about 2 seconds after the call returned, and the events raised in the gap reach the application's UIA side and are lost in the registering client (e58, 10 trials).
+
+The gap silences every registration the registering process has on that window, including one made before the stall on another client object, which loses the same events. A registration on another window in the same process, and one on the same window in another process, hear every event (e58, 5 trials).
+
+During the gap, `RemoveEventHandlerGroup` on the registration fails at once with `UIA_E_TIMEOUT` and leaves it in place: UIA still holds the handler 15 seconds later, and the registration delivers once the gap ends. Removed after the gap, it is removed at once and its handler released (e58, 5 trials each).
 
 #### Not affected
 
@@ -268,7 +274,7 @@ Single reads under the same timeout fail as expected: `CurrentName` after 1,095 
 
 #### Workarounds that worked
 
-None is built. Proposed: treat a registration that took longer than the timeout as failed and make it again (section 11, E-TT), or, for a hand-over of an application's focus, trust a registration only once its first event has arrived (section 13.2). The second rests on what e57 shows: a registration that timed out does start to deliver, and it loses no event raised after its first delivered one. That first event comes no sooner than about 2 seconds after the registration returned. Until then the registration loses every event raised, so whatever served the window before must go on serving it, and an application that raises no event never confirms the registration. Whether a second registration made after the stall ends delivers at once is not tested.
+None is built. Proposed: treat a registration that took longer than the timeout as failed and make it again (section 11, E-TT), removing it only once its gap has passed, since a removal during the gap fails and leaves it delivering, or, for a hand-over of an application's focus, trust a registration only once its first event has arrived (section 13.2). The second rests on what e57 shows: a registration that timed out does start to deliver, and it loses no event raised after its first delivered one. That first event comes no sooner than about 2 seconds after the registration returned. Until then the registration loses every event raised, so whatever served the window before must go on serving it, and an application that raises no event never confirms the registration. Whether a second registration made after the stall ends delivers at once is not tested.
 
 #### Workarounds that didn't work
 
@@ -282,11 +288,11 @@ Not known.
 
 `a_group_registered_while_its_provider_is_held_reports_success` in `crates/mockapp/tests/uia_bugs/a_registration_that_times_out_reports_success.rs` reproduces it, with both timeouts at 500 ms: the registration returns success while mockapp still holds its provider in `FragmentRoot`. `a_read_while_its_provider_is_held_fails`, beside it, shows the case under "Not affected": a name read, held in `GetPropertyValue`, fails with `UIA_E_TIMEOUT`. Each passed 20 of 20 runs.
 
-No test reproduces the loss of events raised after the stall. Nothing marks the end of the gap, so a test cannot wait for evidence that it is over, and without that it cannot tell an event lost in the gap from one delivered late. The loss rests on e57.
+No test reproduces the loss of events raised after the stall. Nothing marks the end of the gap: in e58, nothing reached the application as delivery started. So a test cannot wait for evidence that the gap is over, and without that it cannot tell an event lost in the gap from one delivered late. The loss rests on e57 and e58.
 
 #### Evidence
 
-[`experiments/a-registration-that-times-out-reports-success/`](../experiments/a-registration-that-times-out-reports-success/readme.md): experiments E-TT and e57; `docs/design/focus-pipeline.md`, section 11, E-TT.
+[`experiments/a-registration-that-times-out-reports-success/`](../experiments/a-registration-that-times-out-reports-success/readme.md): experiments E-TT, e57 and e58; `docs/design/focus-pipeline.md`, section 11, E-TT.
 
 ### A remote operation's keyboard focus read can differ from a plain read
 

@@ -12,7 +12,7 @@
 //! while these tests were written, by the connection timeout.
 //!
 //! A registration that timed out delivers nothing for about 2 seconds
-//! after it returned (e57), and no test shows it: nothing marks
+//! after it returned (e57 and e58), and no test shows it: nothing marks
 //! the end of that gap, so a test could not tell an event lost in it from
 //! one delivered late (`docs/uia-bugs.md` says why).
 
