@@ -1980,12 +1980,21 @@ enum Next {
 /// before `due`, as a system wait may, wakes it to check its deadlines.
 fn next_command(command_rx: &mut PortQueue<ShellCommand>, due: Option<Instant>) -> Next {
     match due {
-        Some(due) => match command_rx.recv_timeout(due.saturating_duration_since(Instant::now())) {
-            Received::Item(command) => Next::Command(command),
-            Received::TimedOut => Next::Woken,
-            Received::Closed => Next::Closed,
-        },
+        Some(due) => {
+            next_of(command_rx.recv_timeout(due.saturating_duration_since(Instant::now())))
+        }
         None => command_rx.recv().map_or(Next::Closed, Next::Command),
+    }
+}
+
+/// What a wait for a deadline came to, from what the queue gave: a wait
+/// that ran out wakes the thread whenever it ran out, before the deadline
+/// included, so nothing here compares the time with the deadline.
+fn next_of(received: Received<ShellCommand>) -> Next {
+    match received {
+        Received::Item(command) => Next::Command(command),
+        Received::TimedOut => Next::Woken,
+        Received::Closed => Next::Closed,
     }
 }
 
@@ -2417,15 +2426,13 @@ mod tests {
 
     /// A wait for a deadline that runs out with no command wakes the
     /// reducer thread to check its deadlines rather than ending it, however
-    /// the time compares with the deadline; only the queue's end ends it.
+    /// the time compares with the deadline, a wait that ends before it
+    /// included; only the queue's end ends it.
     #[test]
     fn a_wait_that_runs_out_wakes_the_reducer_thread_and_only_the_end_stops_it() {
+        assert!(matches!(next_of(Received::TimedOut), Next::Woken));
         let (command_tx, mut command_rx) = port_queue().expect("a port");
         let due = Instant::now();
-        assert!(matches!(
-            next_command(&mut command_rx, Some(due)),
-            Next::Woken
-        ));
         drop(command_tx);
         assert!(matches!(
             next_command(&mut command_rx, Some(due)),
