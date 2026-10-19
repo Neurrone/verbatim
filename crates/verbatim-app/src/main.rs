@@ -471,12 +471,16 @@ fn run(
             store: Arc::clone(&store),
             commands: command_tx.clone(),
         });
+    let shell_host: Arc<dyn verbatim_gui::ShellItemsHost> = Arc::new(AppShellItemsHost {
+        commands: command_tx.clone(),
+    });
     let handle_slot = Arc::clone(&gui_handle);
     let gui_readiness = Arc::clone(&readiness);
     run_gui(
         host_for_gui,
         theme_host,
         terminal_host,
+        shell_host,
         gui_event_tx,
         move |handle| {
             let _ = handle_slot.set(handle);
@@ -840,6 +844,42 @@ fn window_pid(hwnd: isize) -> Option<Pid> {
     (pid != 0).then_some(Pid(pid))
 }
 
+/// The list dialogs' way to the shell's items: a request on the reducer
+/// thread's port, answered by the taskbar process's outpost.
+struct AppShellItemsHost {
+    commands: Commands,
+}
+
+impl verbatim_gui::ShellItemsHost for AppShellItemsHost {
+    fn request(&self, kind: ShellItemKind, deliver: verbatim_gui::DeliverShellItems) -> bool {
+        let sent = self
+            .commands
+            .send(ShellCommand::ShellItems(kind, deliver))
+            .is_ok();
+        if !sent {
+            tracing::debug!("the reducer thread is gone; the shell's items are not listed");
+        }
+        sent
+    }
+}
+
+/// The process that owns the taskbar window (`Shell_TrayWnd`), whose
+/// outpost answers the shell items query; `None` when there is no taskbar.
+/// Local calls.
+fn taskbar_process() -> Option<Pid> {
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+    // SAFETY: FindWindowW reads window state only.
+    let taskbar = unsafe {
+        FindWindowW(
+            &windows::core::HSTRING::from("Shell_TrayWnd"),
+            windows::core::PCWSTR::null(),
+        )
+    }
+    .ok()
+    .filter(|hwnd| !hwnd.is_invalid())?;
+    window_pid(taskbar.0 as isize)
+}
+
 /// The process whose outpost answers a focus-now query for the
 /// application `pid`. When Windows names `pid` as the owner of the window in
 /// front, the process that serves that window
@@ -937,6 +977,10 @@ pub(crate) enum ShellCommand {
     AwaitIdle(u64),
     /// Answer the control plane's `DumpFocus` on the channel.
     DumpFocus(Sender<FocusReport>),
+    /// The tray or taskbar list dialog wants the shell's items: ask the
+    /// outpost of the process that owns the taskbar, and hand the outcome
+    /// to the delivery callback.
+    ShellItems(ShellItemKind, verbatim_gui::DeliverShellItems),
 }
 
 /// What the reducer thread owns: the reducer state, the request table, and
@@ -959,6 +1003,9 @@ struct ReducerThread<'a> {
     /// process whose outpost is awaited, the application to ask for, which
     /// differs for a console host, asked for its console's client.
     focus_now_wanted: HashMap<Pid, Pid>,
+    /// The shell's items wanted by the list dialogs, each asked of the
+    /// taskbar's process once its outpost is ready.
+    shell_items_wanted: Vec<(Pid, ShellItemKind, verbatim_gui::DeliverShellItems)>,
     /// The views last sent to the supervisor.
     views: (Option<Pid>, BTreeSet<OutpostId>),
     /// The highest numbered harness key handled so far.
@@ -1097,8 +1144,10 @@ impl ReducerThread<'_> {
             OutpostMessage::Frame(_) | OutpostMessage::Parsed(_) => {}
             OutpostMessage::NotWatched { target_pid } => {
                 // The application is not running, or is ignored: no outpost
-                // will answer for it, so its focus is no longer awaited.
+                // will answer for it, so its focus is no longer awaited,
+                // nor the shell's items.
                 self.focus_now_wanted.remove(&target_pid);
+                self.no_shell_items_from(target_pid);
                 let mut outposts = self.context.outposts.lock().expect("outposts lock");
                 if outposts
                     .get(&target_pid)
@@ -1316,6 +1365,9 @@ impl ReducerThread<'_> {
                     }
                     self.focus_now(outpost, application);
                 }
+                for (_, kind, deliver) in self.take_shell_items_wanted(target_pid) {
+                    self.ask_shell_items(outpost, kind, deliver);
+                }
                 self.context.outposts.lock().expect("outposts lock").insert(
                     target_pid,
                     OutpostStatus {
@@ -1357,6 +1409,7 @@ impl ReducerThread<'_> {
                 self.apply(*input);
             }
             ShellCommand::DumpTree(ticket, reply) => self.dump_tree(ticket, reply),
+            ShellCommand::ShellItems(kind, deliver) => self.shell_items(kind, deliver),
             ShellCommand::DumpTreeGivenUp(ticket) => self.dump_tree_given_up(ticket),
             ShellCommand::FocusNow(pid) => self.want_focus_now(pid),
             ShellCommand::PlayEarcon(earcon) => self.context.manager.play_earcon(earcon),
@@ -1738,6 +1791,68 @@ impl ReducerThread<'_> {
         self.send(outpost, id, command);
     }
 
+    /// Asks the outpost of the process that owns the taskbar for the
+    /// shell's items of `kind`, starting one when there is none, so
+    /// verbatim.exe makes no UIA connection into the shell's windows
+    /// (`docs/design/listener-without-connections.md`, decision 9). The
+    /// outcome goes to `deliver`; `None` when there is no taskbar or its
+    /// process gets no outpost.
+    fn shell_items(&mut self, kind: ShellItemKind, deliver: verbatim_gui::DeliverShellItems) {
+        let Some(pid) = taskbar_process() else {
+            tracing::warn!(?kind, "the taskbar window was not found");
+            deliver(None);
+            return;
+        };
+        if let Some(outpost) = self.live.ready(pid) {
+            self.ask_shell_items(outpost, kind, deliver);
+        } else {
+            self.shell_items_wanted.push((pid, kind, deliver));
+            self.context.supervisor.ensure_spawned(pid);
+        }
+    }
+
+    /// Sends `outpost` the shell items query.
+    fn ask_shell_items(
+        &mut self,
+        outpost: OutpostId,
+        kind: ShellItemKind,
+        deliver: verbatim_gui::DeliverShellItems,
+    ) {
+        let id = self.requests.begin(outpost, Asker::ShellItems { deliver });
+        let command = SupervisorToOutpost::Query {
+            trace_id: TraceId::mint(),
+            request_id: id.0,
+            query: Query::ShellItems { kind },
+            timing: EventTiming::default(),
+        };
+        self.send(outpost, id, command);
+    }
+
+    /// Answers every shell items request waiting for the process `pid`'s
+    /// outpost, which will not come, with nothing.
+    fn no_shell_items_from(&mut self, pid: Pid) {
+        for (_, kind, deliver) in self.take_shell_items_wanted(pid) {
+            tracing::warn!(
+                ?kind,
+                %pid,
+                "the taskbar's process has no outpost; the shell's items are not listed"
+            );
+            deliver(None);
+        }
+    }
+
+    /// The shell items wanted from the process `pid`, taken from the list.
+    fn take_shell_items_wanted(
+        &mut self,
+        pid: Pid,
+    ) -> Vec<(Pid, ShellItemKind, verbatim_gui::DeliverShellItems)> {
+        let (taken, kept) = std::mem::take(&mut self.shell_items_wanted)
+            .into_iter()
+            .partition(|(wanted, _, _)| *wanted == pid);
+        self.shell_items_wanted = kept;
+        taken
+    }
+
     /// Withdraws the tree dump named `ticket`, whose caller stopped
     /// waiting. The outpost answers "not started" if the dump was still
     /// queued; a dump already running finishes, within its own walk budget.
@@ -1799,6 +1914,7 @@ fn reducer_loop(
         requests: RequestTable::default(),
         live: LiveOutposts::default(),
         focus_now_wanted: HashMap::new(),
+        shell_items_wanted: Vec::new(),
         views: (None, BTreeSet::new()),
         handled_input: 0,
         frames: context.supervisor.frames(),
@@ -1900,7 +2016,7 @@ fn router_loop(
             ScriptAction::SpeakTime => speak_time_or_date(manager, emitted.repeat),
             ScriptAction::ShowTrayList => send_gui_command(
                 gui_handle,
-                GuiCommand::OpenShellItemList(shell_list_kind(emitted.repeat)),
+                GuiCommand::OpenShellItemList(shell_list_kind(emitted.repeat + 1)),
             ),
             other => {
                 if let Some(command) = other.review_command() {

@@ -25,23 +25,22 @@ Public API:
   when the loop ends: after `Shutdown`, or when a replacing instance posts
   `WM_QUIT` to the hidden frame's thread. It runs once per process; a
   second call fails, since wxWidgets cannot start again after it ends.
-- `shell_items` — system tray and taskbar item enumeration for the
-  systrayList replica: `request_shell_items(kind, deliver)` enumerates on
-  a short-lived worker thread and hands `deliver` the outcome on its guard
-  thread; the GUI sends it down its channel to the GUI thread.
-  `ShellItemKind` picks the surface (the notification area plus the
-  overflow flyout window while visible, or the taskbar with the
-  notification area's subtree excluded); `ShellItem` is a name, a screen
-  rectangle, and a UIA runtime id, `center_of` is the click target, and
+- `shell_items` — the system tray and taskbar items the systrayList
+  replica lists. `ShellItemsHost` (trait) is how the GUI gets them: its
+  `request(kind, deliver)` returns at once and calls `deliver`
+  (`DeliverShellItems`) once, on another thread, with the items or `None`
+  for a failure; the app implements it by asking the outpost of the
+  process that owns the taskbar, which reads the items within its own
+  application, so the GUI makes no UIA connection into the shell's
+  windows (`docs/design/listener-without-connections.md`, decision 9),
+  and the GUI sends the outcome down its channel to the GUI thread.
+  `run_gui` takes the host. `ShellItemKind` picks the surface (the
+  notification area plus the overflow flyout window while visible, or
+  the taskbar with the notification area's subtree excluded) and
+  `ShellItem` is a name, a screen rectangle, and a UIA runtime id, both
+  re-exported from `verbatim-model`; `center_of` is the click target, and
   `refind` finds a chosen item in a fresh enumeration by its runtime id,
-  or else by a name no other item has. Enumeration goes through
-  the existing `verbatim-uia` client — `window_element` on shell
-  windows resolved by class, a control-view walk with each element read
-  as the `ShellButton` shape — and collects named,
-  on-screen buttons. A hung shell cannot hang Verbatim: a guard thread
-  abandons the worker after a three second deadline (the outpost
-  watchdog's discipline, kept local and simple for a one-shot query) and
-  the request just logs and presents nothing.
+  or else by a name no other item has.
 - `ControlPlan` — re-exported from the pure `plan` module described below.
 - `ThemeHost` (trait) — what the Theme page needs from the app: the themes
   and sounds folders, the theme the configuration names with its options
@@ -281,9 +280,9 @@ in flight, and otherwise starts one; when the results arrive on the GUI
 thread, presentation performs the same prePopup dance as settings and
 builds the dialog through `list_dialog` — a label over the item names with
 Left Click, Left Double Click, Right Click, and Cancel, where each click
-action closes the dialog and enumerates the same surface again on a worker
-thread, finds the selected item there (`refind`), and on the guard thread
-moves the pointer to the center of its rectangle as it is now
+action closes the dialog and asks the host for the same surface again,
+finds the selected item there (`refind`), and on the thread that receives
+the answer moves the pointer to the center of its rectangle as it is now
 (`SetCursorPos`) and injects the matching mouse events (`SendInput`; left
 down and up, twice for the double click, right down and up). Icons move
 when another is added or removed, so the rectangle recorded when the list

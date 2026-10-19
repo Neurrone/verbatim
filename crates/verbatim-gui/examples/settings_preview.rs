@@ -186,6 +186,19 @@ impl ThemeHost for MockThemeHost {
 
 /// A terminal host holding the reader settings in memory and printing
 /// each change.
+/// The preview opens no shell item list, so it lists nothing.
+struct NoShellItems;
+
+impl verbatim_gui::ShellItemsHost for NoShellItems {
+    fn request(
+        &self,
+        _kind: verbatim_gui::ShellItemKind,
+        _deliver: verbatim_gui::DeliverShellItems,
+    ) -> bool {
+        false
+    }
+}
+
 struct MockTerminalHost {
     settings: Mutex<ReaderSettings>,
 }
@@ -230,9 +243,16 @@ fn main() {
         }
     });
 
-    run_gui(host, theme_host, terminal_host, events_tx, move |handle| {
-        *handle_slot.lock().unwrap() = Some(handle.clone());
-        handle.send(GuiCommand::OpenSettings);
-    })
+    run_gui(
+        host,
+        theme_host,
+        terminal_host,
+        Arc::new(NoShellItems),
+        events_tx,
+        move |handle| {
+            *handle_slot.lock().unwrap() = Some(handle.clone());
+            handle.send(GuiCommand::OpenSettings);
+        },
+    )
     .expect("GUI ran");
 }

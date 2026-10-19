@@ -78,6 +78,13 @@ pub(crate) enum Asker {
     /// reducer, as NVDA's fake focus queues a focus on it and nothing for
     /// its window.
     FakeFocus { source: Pid, trace_id: TraceId },
+    /// The tray or taskbar list dialog's request for the shell's items,
+    /// whose outcome goes to `deliver`: the items, or `None` for any
+    /// failure.
+    ShellItems {
+        /// Where the outcome goes.
+        deliver: verbatim_gui::DeliverShellItems,
+    },
     /// The reducer's text request (`Effect::Text`): its outcome re-enters
     /// the reducer as `Input::TextCompleted` under the reducer's own query
     /// id, a failure of any kind as the protocol's "unanswered".
@@ -215,6 +222,21 @@ fn describe(outcome: &QueryOutcome) -> String {
 }
 
 /// Hands one outcome to its asker.
+/// Hands a shell items query's outcome to the list dialog's `deliver`:
+/// the items, or `None` for any failure.
+fn deliver_shell_items(deliver: verbatim_gui::DeliverShellItems, outcome: QueryOutcome) {
+    match outcome {
+        QueryOutcome::Done(QueryResult::ShellItems(items)) => deliver(Some(items)),
+        other => {
+            tracing::warn!(
+                reason = describe(&other),
+                "the shell's items were not listed"
+            );
+            deliver(None);
+        }
+    }
+}
+
 fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
     match asker {
         Asker::Reducer {
@@ -271,6 +293,10 @@ fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
             };
             // The requester may have timed out and dropped its receiver.
             let _ = reply.try_send(answer);
+            Vec::new()
+        }
+        Asker::ShellItems { deliver } => {
+            deliver_shell_items(deliver, outcome);
             Vec::new()
         }
         Asker::FocusNow { source, trace_id } => match outcome {

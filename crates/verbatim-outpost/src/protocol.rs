@@ -891,6 +891,15 @@ pub enum Query {
         /// What to do.
         op: TextOp,
     },
+    /// The shell's tray icons or taskbar buttons, for Core's system tray
+    /// list dialog, asked of the outpost of the process that owns the
+    /// taskbar, which reads them within its own application
+    /// (`docs/design/listener-without-connections.md`, decision 9).
+    /// Answered [`QueryResult::ShellItems`].
+    ShellItems {
+        /// Which shell surface.
+        kind: verbatim_model::ShellItemKind,
+    },
 }
 
 /// The one outcome of a query.
@@ -939,6 +948,8 @@ pub enum QueryResult {
     /// `NoText` and `Gone` among them, comes back this way, so Core hands it
     /// to the reducer unchanged.
     Text(TextReply),
+    /// The answer to [`Query::ShellItems`], in the shell's order.
+    ShellItems(Vec<verbatim_model::ShellItem>),
 }
 
 /// The answer to [`Query::FocusNow`].

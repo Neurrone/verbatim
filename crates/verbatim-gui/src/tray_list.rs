@@ -17,8 +17,8 @@
 //! this module only supplies the titles and labels for the two dialog
 //! flavors, the payload table of enumerated [`ShellItem`]s, and the click
 //! injection. The button callbacks run on the GUI thread; the enumeration
-//! makes cross-process calls, so it runs on the worker [`request_shell_items`]
-//! starts, and the injection (`SetCursorPos` plus `SendInput`, which work
+//! is an outpost's query, asked through the [`ShellItemsHost`], whose
+//! outcome arrives on another thread, and the injection (`SetCursorPos` plus `SendInput`, which work
 //! from any thread) is made on the thread that receives its outcome.
 
 use std::mem::size_of;
@@ -35,7 +35,7 @@ use verbatim_i18n::messages;
 use verbatim_model::Rect;
 
 use crate::list_dialog::{ButtonVerdict, ListDialogButton, ListDialogSpec};
-use crate::shell_items::{ShellItem, ShellItemKind, center_of, refind, request_shell_items};
+use crate::shell_items::{ShellItem, ShellItemKind, ShellItemsHost, center_of, refind};
 
 /// Called with an item's name when the item chosen is gone by the time it
 /// would be clicked. Called on the enumeration's guard thread.
@@ -61,6 +61,7 @@ enum ClickAction {
 pub(crate) fn shell_list_dialog(
     kind: ShellItemKind,
     items: Vec<ShellItem>,
+    host: &Arc<dyn ShellItemsHost>,
     gone: &OnGone,
 ) -> ListDialogSpec {
     let (title, label) = match kind {
@@ -77,9 +78,10 @@ pub(crate) fn shell_list_dialog(
         on_activate: {
             let items = Rc::clone(&items);
             let gone = Arc::clone(gone);
+            let host = Arc::clone(host);
             Rc::new(move |index| {
                 if let Some(item) = items.get(index) {
-                    click_when_found(kind, item.clone(), action, Arc::clone(&gone));
+                    click_when_found(&*host, kind, item.clone(), action, Arc::clone(&gone));
                 }
                 ButtonVerdict::Close
             })
@@ -101,23 +103,32 @@ pub(crate) fn shell_list_dialog(
     }
 }
 
-/// Enumerates `kind` afresh on a worker thread and clicks `chosen` where it
-/// is now, or calls `gone` with its name when it cannot be found: it was
+/// Enumerates `kind` afresh through `host` and clicks `chosen` where it is
+/// now, or calls `gone` with its name when it cannot be found: it was
 /// removed, its name no longer tells it apart, or the enumeration failed.
-fn click_when_found(kind: ShellItemKind, chosen: ShellItem, action: ClickAction, gone: OnGone) {
-    let started = request_shell_items(kind, move |fresh| {
-        if let Some(item) = fresh.as_deref().and_then(|fresh| refind(&chosen, fresh)) {
-            click(action, item.rect);
-        } else {
-            tracing::info!(
-                name = chosen.name,
-                "the chosen shell item is gone; not clicked"
-            );
-            gone(chosen.name);
-        }
-    });
+fn click_when_found(
+    host: &dyn ShellItemsHost,
+    kind: ShellItemKind,
+    chosen: ShellItem,
+    action: ClickAction,
+    gone: OnGone,
+) {
+    let started = host.request(
+        kind,
+        Box::new(move |fresh| {
+            if let Some(item) = fresh.as_deref().and_then(|fresh| refind(&chosen, fresh)) {
+                click(action, item.rect);
+            } else {
+                tracing::info!(
+                    name = chosen.name,
+                    "the chosen shell item is gone; not clicked"
+                );
+                gone(chosen.name);
+            }
+        }),
+    );
     if !started {
-        // Logged by `request_shell_items`; nothing is clicked.
+        // Logged by the host; nothing is clicked.
         tracing::warn!("the shell item could not be found again; not clicked");
     }
 }

@@ -17,7 +17,6 @@ verbatim-i18n.workspace = true
 verbatim-input-windows.workspace = true
 verbatim-model.workspace = true
 verbatim-speech.workspace = true
-verbatim-uia.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]

@@ -725,8 +725,8 @@ uia_shape! {
 }
 
 uia_shape! {
-    /// An element of the shell's notification area, as `verbatim-gui`'s
-    /// list of its buttons reads it.
+    /// An element of the shell's notification area or taskbar, as File
+    /// Explorer's outpost reads it for Core's list of the shell's buttons.
     pub struct ShellButton {
         gates: none;
         groups {}

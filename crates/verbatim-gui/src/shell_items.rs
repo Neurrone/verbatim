@@ -1,332 +1,32 @@
-//! Enumerating system tray icons and taskbar buttons over UIA, for the
-//! systrayList replica dialog (roadmap, milestone M3).
+//! The system tray icons and taskbar buttons the systrayList replica
+//! dialog lists (roadmap, milestone M3), and how an item chosen from an
+//! earlier list is found again and clicked.
 //!
-//! Enumeration goes through the existing `verbatim-uia` client over the
-//! shell windows, not the NVDA add-on's per-Windows-build window-class
-//! walks: [`request_shell_items`] resolves the notification area (a
-//! `TrayNotifyWnd` child of `Shell_TrayWnd`, plus the overflow flyout
-//! window when it is visible) or the taskbar (`Shell_TrayWnd` with the
-//! notification area's subtree excluded), walks the control view with each
-//! element read as `verbatim_uia::ShellButton`, and collects
-//! every named, on-screen button as a [`ShellItem`] of name and screen
-//! rectangle.
-//!
-//! Threading. Cross-process UIA calls must never run on the GUI thread or
-//! any input or speech thread, so the query runs on a short-lived worker
-//! thread spawned per request. A hung shell must not hang Verbatim: a
-//! sibling guard thread waits on the worker with a deadline and abandons it
-//! on expiry (a blocked cross-process COM call cannot be safely cancelled —
-//! the same reasoning as `verbatim-outpost`'s watchdog, kept local and
-//! simple here because this is a one-shot query, not an outpost). Either
-//! way the guard thread hands the outcome to a delivery callback, which the
-//! GUI uses to send it down the same channel
-//! [`GuiHandle`](crate::GuiHandle) posts commands through.
-
-use std::thread;
-use std::time::Duration;
-
-use crossbeam_channel::{RecvTimeoutError, bounded};
-
-use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Accessibility::{IUIAutomationTreeWalker, UIA_ButtonControlTypeId};
-use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, FindWindowW, IsWindowVisible};
-use windows::core::{HSTRING, PCWSTR};
+//! The GUI makes no UIA connection into the shell's windows: it asks its
+//! [`ShellItemsHost`], which the app implements by sending File Explorer's
+//! outpost a query; the outpost reads the items within its own application
+//! (`docs/design/listener-without-connections.md`, decision 9) and the
+//! answer comes back through the host's delivery callback, on another
+//! thread, which the GUI uses to send it down the same channel
+//! [`GuiHandle`](crate::GuiHandle) posts commands through. The GUI thread
+//! never waits for the shell.
 
 use verbatim_model::Rect;
-use verbatim_uia::{Cached, Direction, Request, ShellButton, Uia};
+pub use verbatim_model::{ShellItem, ShellItemKind};
 
-/// Which shell surface to enumerate.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ShellItemKind {
-    /// The system tray: the notification area plus the overflow flyout
-    /// window when it is open.
-    SystemTray,
-    /// The taskbar buttons: everything on the taskbar outside the
-    /// notification area.
-    Taskbar,
-}
+/// Where an enumeration's outcome goes: `Some(items)` on success, possibly
+/// empty, or `None` when it failed or passed its deadline (already logged).
+/// Called once, on a thread that is not the GUI's.
+pub type DeliverShellItems = Box<dyn FnOnce(Option<Vec<ShellItem>>) + Send>;
 
-/// One enumerated tray icon or taskbar button.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ShellItem {
-    /// The item's accessible name, shown in the list dialog.
-    pub name: String,
-    /// The item's screen rectangle when it was enumerated; a click finds
-    /// the item again first ([`refind`]) and targets the center of its
-    /// rectangle then.
-    pub rect: Rect,
-    /// The item's UIA runtime id, which identifies its element for as long
-    /// as the element exists; empty when the shell gave none.
-    pub runtime_id: Vec<i32>,
-}
-
-/// How long the guard thread waits for the enumeration worker before
-/// abandoning it. Generous relative to the outpost's 300 millisecond
-/// per-call deadline because one enumeration is many cross-process calls,
-/// but short enough that a hung shell answers a gesture with a logged
-/// failure rather than a dialog that arrives half a minute late.
-const ENUMERATION_DEADLINE: Duration = Duration::from_secs(3);
-
-/// Depth cap for the control-view walk; the shell trees of interest are
-/// shallow, so anything deeper is runaway recursion, not real items.
-const MAX_DEPTH: u32 = 16;
-
-/// Total node cap across one walk, bounding the worst case against an
-/// adversarially deep or wide provider.
-const MAX_NODES: usize = 1024;
-
-/// Enumerates `kind` on a worker thread and hands the outcome to `deliver`.
-///
-/// `deliver` runs on the guard thread, not the GUI thread, with
-/// `Some(items)` on success (possibly empty) or `None` when enumeration
-/// failed or exceeded its deadline (both already logged); it is invoked
-/// exactly once when this returns true. False means the guard thread could
-/// not be started (logged), and `deliver` will never run. Callable from any
-/// thread.
-#[must_use]
-pub fn request_shell_items<F>(kind: ShellItemKind, deliver: F) -> bool
-where
-    F: FnOnce(Option<Vec<ShellItem>>) + Send + 'static,
-{
-    let guard = thread::Builder::new()
-        .name("verbatim-shell-guard".to_owned())
-        .spawn(move || deliver(enumerate_with_deadline(kind)));
-    if let Err(error) = guard {
-        tracing::warn!(%error, "could not spawn the shell enumeration guard thread");
-        return false;
-    }
-    true
-}
-
-/// Runs [`enumerate`] on its own worker thread and waits up to
-/// [`ENUMERATION_DEADLINE`] for the answer. On expiry the worker is
-/// abandoned — it may complete later, but its send lands in a dropped
-/// channel and the thread exits.
-fn enumerate_with_deadline(kind: ShellItemKind) -> Option<Vec<ShellItem>> {
-    let (result_tx, result_rx) = bounded(1);
-    let worker = thread::Builder::new()
-        .name("verbatim-shell-enum".to_owned())
-        .spawn(move || {
-            let _ = result_tx.send(enumerate(kind));
-        });
-    if let Err(error) = worker {
-        tracing::warn!(%error, "could not spawn the shell enumeration worker thread");
-        return None;
-    }
-    match result_rx.recv_timeout(ENUMERATION_DEADLINE) {
-        Ok(items) => items,
-        Err(RecvTimeoutError::Timeout) => {
-            tracing::warn!(
-                ?kind,
-                deadline_ms = ENUMERATION_DEADLINE.as_millis(),
-                "shell enumeration exceeded its deadline; worker abandoned"
-            );
-            None
-        }
-        Err(RecvTimeoutError::Disconnected) => None,
-    }
-}
-
-/// The whole enumeration, run on the worker thread: create a UIA client,
-/// resolve the shell windows for `kind`, and collect their buttons.
-fn enumerate(kind: ShellItemKind) -> Option<Vec<ShellItem>> {
-    let uia = match Uia::new() {
-        Ok(client) => client,
-        Err(error) => {
-            tracing::warn!(%error, "shell enumeration could not create a UIA client");
-            return None;
-        }
-    };
-    // What the list reads of each element, the bounding rectangle among it.
-    let request = match uia.request_fixed::<ShellButton>() {
-        Ok(request) => request,
-        Err(error) => {
-            tracing::warn!(%error, "shell enumeration could not build its cache request");
-            return None;
-        }
-    };
-    let walker = match uia.control_view_walker() {
-        Ok(walker) => walker,
-        Err(error) => {
-            tracing::warn!(%error, "shell enumeration could not create a tree walker");
-            return None;
-        }
-    };
-
-    let mut items = Vec::new();
-    match kind {
-        ShellItemKind::SystemTray => {
-            let Some(notify) = notification_area() else {
-                tracing::warn!("the taskbar's notification area window was not found");
-                return None;
-            };
-            collect_from_window(&uia, &walker, &request, notify, None, &mut items);
-            if let Some(overflow) = visible_overflow_window() {
-                collect_from_window(&uia, &walker, &request, overflow, None, &mut items);
-            }
-        }
-        ShellItemKind::Taskbar => {
-            let Some(shell) = find_top_level("Shell_TrayWnd") else {
-                tracing::warn!("the taskbar window was not found");
-                return None;
-            };
-            // The notification area lives inside Shell_TrayWnd; excluding
-            // its subtree is what makes this the taskbar list rather than
-            // both lists at once.
-            collect_from_window(
-                &uia,
-                &walker,
-                &request,
-                shell,
-                notification_area(),
-                &mut items,
-            );
-        }
-    }
-    Some(items)
-}
-
-/// The notification area window: the `TrayNotifyWnd` child of
-/// `Shell_TrayWnd`, present on Windows 10 and 11 alike.
-fn notification_area() -> Option<HWND> {
-    let shell = find_top_level("Shell_TrayWnd")?;
-    // SAFETY: FindWindowExW reads window state only; a stale parent handle
-    // yields an error, not a fault.
-    unsafe {
-        FindWindowExW(
-            Some(shell),
-            None,
-            &HSTRING::from("TrayNotifyWnd"),
-            PCWSTR::null(),
-        )
-    }
-    .ok()
-    .filter(|hwnd| !hwnd.is_invalid())
-}
-
-/// The tray overflow flyout window, only while it is actually open:
-/// Windows 11 names its class `TopLevelWindowForOverflowXamlIsland`,
-/// Windows 10 `NotifyIconOverflowWindow`. Hidden overflow windows are
-/// skipped — their items report stale rectangles.
-fn visible_overflow_window() -> Option<HWND> {
-    [
-        "TopLevelWindowForOverflowXamlIsland",
-        "NotifyIconOverflowWindow",
-    ]
-    .into_iter()
-    .filter_map(find_top_level)
-    // SAFETY: IsWindowVisible reads window state only.
-    .find(|&hwnd| unsafe { IsWindowVisible(hwnd) }.as_bool())
-}
-
-/// Finds a top-level window by class name.
-fn find_top_level(class: &str) -> Option<HWND> {
-    // SAFETY: FindWindowW reads window state only.
-    unsafe { FindWindowW(&HSTRING::from(class), PCWSTR::null()) }
-        .ok()
-        .filter(|hwnd| !hwnd.is_invalid())
-}
-
-/// Collects every qualifying button under `hwnd` into `items`, skipping the
-/// subtree rooted at the window `exclude` (when given).
-fn collect_from_window(
-    uia: &Uia,
-    walker: &IUIAutomationTreeWalker,
-    request: &Request<ShellButton>,
-    hwnd: HWND,
-    exclude: Option<HWND>,
-    items: &mut Vec<ShellItem>,
-) {
-    let root = match uia.window_element(hwnd.0 as isize, request) {
-        Ok(element) => element,
-        Err(error) => {
-            tracing::warn!(%error, "shell window has no UIA element");
-            return;
-        }
-    };
-    let mut visited = 0usize;
-    collect_recursive(walker, request, &root, exclude, 0, &mut visited, items);
-}
-
-/// Recursive worker for [`collect_from_window`]: control-view children via
-/// `GetFirstChildElementBuildCache` and `GetNextSiblingElementBuildCache`,
-/// the same shape as `Uia::tree`. Buttons are collected and not
-/// descended into; the excluded window's subtree is skipped wholesale.
-fn collect_recursive(
-    walker: &IUIAutomationTreeWalker,
-    request: &Request<ShellButton>,
-    element: &Cached<ShellButton>,
-    exclude: Option<HWND>,
-    depth: u32,
-    visited: &mut usize,
-    items: &mut Vec<ShellItem>,
-) {
-    let button = element.read();
-    if let Some(exclude) = exclude
-        && button.hwnd == exclude.0 as isize
-    {
-        return;
-    }
-
-    if button.control_type == Some(UIA_ButtonControlTypeId.0) {
-        // The rectangle comes from the shell's provider in another process;
-        // one whose size does not fit is dropped rather than overflowing
-        // (`verbatim_uia`'s rectangle read).
-        if let Some(mut item) = item_from_parts(button.name, button.offscreen, button.rect) {
-            // Local: UIA keeps the runtime id with the element.
-            item.runtime_id = element.runtime_id();
-            items.push(item);
-        }
-        // Tray and taskbar buttons carry no nested items worth walking.
-        return;
-    }
-
-    if depth >= MAX_DEPTH {
-        return;
-    }
-    // An Err from the walker means "no child / no sibling", the same
-    // convention Uia::tree relies on.
-    let mut next = element
-        .live()
-        .walk(walker, Direction::FirstChild, request)
-        .ok();
-    while let Some(current) = next {
-        *visited += 1;
-        if *visited >= MAX_NODES {
-            tracing::debug!("shell enumeration hit its node cap; results may be partial");
-            return;
-        }
-        collect_recursive(
-            walker,
-            request,
-            &current,
-            exclude,
-            depth + 1,
-            visited,
-            items,
-        );
-        next = current
-            .live()
-            .walk(walker, Direction::NextSibling, request)
-            .ok();
-    }
-}
-
-/// The pure filter deciding whether one walked button becomes a
-/// [`ShellItem`]: it must have a non-blank name (the list shows nothing
-/// else), be on screen, and have a non-empty rectangle (click actions
-/// target its center, so a degenerate rectangle is unusable).
-fn item_from_parts(name: Option<String>, offscreen: bool, rect: Option<Rect>) -> Option<ShellItem> {
-    if offscreen {
-        return None;
-    }
-    let name = name.filter(|name| !name.trim().is_empty())?;
-    let rect = rect.filter(|rect| rect.width > 0 && rect.height > 0)?;
-    Some(ShellItem {
-        name,
-        rect,
-        runtime_id: Vec::new(),
-    })
+/// What enumerates the shell's items for the GUI: the app, which asks the
+/// outpost of the process that owns the taskbar.
+pub trait ShellItemsHost: Send + Sync {
+    /// Asks for `kind`'s items and returns at once. `deliver` is called
+    /// exactly once with the outcome when this returns true; false means
+    /// the request could not be made (logged), and `deliver` is never
+    /// called.
+    fn request(&self, kind: ShellItemKind, deliver: DeliverShellItems) -> bool;
 }
 
 /// The item in a fresh enumeration, `fresh`, that is `chosen`, an item the
@@ -373,19 +73,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn named_onscreen_button_becomes_an_item() {
-        let item = item_from_parts(Some("Volume".into()), false, Some(rect(24, 24)));
-        assert_eq!(
-            item,
-            Some(ShellItem {
-                name: "Volume".into(),
-                rect: rect(24, 24),
-                runtime_id: Vec::new(),
-            })
-        );
-    }
-
     fn item(name: &str, left: i32, runtime_id: &[i32]) -> ShellItem {
         ShellItem {
             name: name.into(),
@@ -422,39 +109,6 @@ mod tests {
             refind(&chosen, &twins),
             None,
             "two items of that name, neither of them the one chosen"
-        );
-    }
-
-    #[test]
-    fn unnamed_or_blank_named_buttons_are_dropped() {
-        assert_eq!(item_from_parts(None, false, Some(rect(24, 24))), None);
-        assert_eq!(
-            item_from_parts(Some("   ".into()), false, Some(rect(24, 24))),
-            None,
-            "a whitespace-only name shows as an empty row and is dropped"
-        );
-    }
-
-    #[test]
-    fn offscreen_buttons_are_dropped() {
-        assert_eq!(
-            item_from_parts(Some("Clock".into()), true, Some(rect(24, 24))),
-            None
-        );
-    }
-
-    #[test]
-    fn degenerate_rectangles_are_dropped() {
-        assert_eq!(item_from_parts(Some("Clock".into()), false, None), None);
-        assert_eq!(
-            item_from_parts(Some("Clock".into()), false, Some(rect(0, 24))),
-            None,
-            "a zero-width rectangle has no clickable center"
-        );
-        assert_eq!(
-            item_from_parts(Some("Clock".into()), false, Some(rect(24, 0))),
-            None,
-            "a zero-height rectangle has no clickable center"
         );
     }
 

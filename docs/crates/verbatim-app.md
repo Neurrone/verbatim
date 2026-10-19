@@ -454,7 +454,14 @@ knowing for review:
   lists the taskbar instead: `verbatim-input` counts quick presses on each
   emitted gesture, and the router passes that count to
   `speak_time_or_date` and to `shell_list_kind`, which maps it to the
-  listed surface. The GUI event thread speaks `GuiEvent::ShellItemGone`
+  listed surface. The list dialog's items come through
+  `AppShellItemsHost`, which posts `ShellCommand::ShellItems` to the
+  reducer thread: it finds the taskbar's process (`Shell_TrayWnd`'s
+  owner, a local call), sends that process's ready outpost
+  `Query::ShellItems` under `Asker::ShellItems`, or starts an outpost
+  for it and sends the query once it is ready, and hands the outcome to
+  the dialog's delivery callback, `None` for any failure or when the
+  process gets no outpost. The GUI event thread speaks `GuiEvent::ShellItemGone`
   as queued text, when the list dialog finds its chosen item gone. When the loop exits — Exit item,
   control-plane quit, or a replacing instance's `WM_QUIT` — teardown drops
   the hooks and shuts the outposts and the listener down cleanly through

@@ -414,8 +414,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   focus unless that was observed later),
   `ForwardingEnded` (to an outpost, the hand-over's end), `Query` (a
   request id and a `Query`: `FocusNow`, `Navigate` with a model `QueryKind`,
-  `Activate`, `Ancestors`, `DumpTree`, or `Text`, a node and a model
-  `TextOp`, milestone M4's text protocol), `Cancel` (withdraws a query that
+  `Activate`, `Ancestors`, `DumpTree`, `Text`, a node and a model
+  `TextOp`, milestone M4's text protocol, or `ShellItems`, the shell's
+  tray icons or taskbar buttons for Core's list dialog), `Cancel` (withdraws a query that
   has not started), `Ping`, `IdleQuery` (the harness's idle barrier's
   round, under "The idle barrier" below), `Shutdown` (shut down
   cleanly and exit, under "Shutting down" below), `Assign` (to a
@@ -1762,7 +1763,15 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
 
 ### Queries
 
-- Queries (the worker): `DumpTree` walks the target's foreground window (or
+- Queries (the worker): `ShellItems` (`outpost/shell_items.rs`) reads the
+  notification area (`TrayNotifyWnd` under `Shell_TrayWnd`, with the
+  overflow flyout while visible) or the taskbar (`Shell_TrayWnd` without
+  the notification area's subtree) in the control view, each element as
+  the `ShellButton` shape, and answers every named, on-screen button with
+  a rectangle as a `ShellItem`; it reads no window its application does
+  not serve, looks the windows up without the proxy rule
+  (`any_window_element`), and has the walk's deadline.
+  `DumpTree` walks the target's foreground window (or
   its first visible top-level window) through its backend — UIA via
   `Uia::tree`, every node read as the `TreeDump` shape, MSAA via
   `verbatim_ia2::acquire::walk_tree` from `OBJID_CLIENT` — capped at depth 64

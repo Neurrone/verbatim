@@ -51,6 +51,10 @@ Public API:
   protocol's `DumpTree` reply and the control protocol's `DumpTree` reply,
   so a tree dump travels from the outpost through Core to
   `verbatim-inspect` without translation.
+- `ShellItemKind` and `ShellItem` — the system tray or taskbar surface,
+  and one of its buttons (a name, a screen `Rect`, a UIA runtime id): the
+  outpost protocol's `ShellItems` query and answer, and what
+  `verbatim-gui`'s list dialog shows.
 - `NormalizedEvent` — `FocusChanged` (carrying a full snapshot, a
   `foreground` flag set when the focus is a window that just became the
   system's foreground window, the node's ancestor chain, outermost first,

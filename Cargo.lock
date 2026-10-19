@@ -1761,7 +1761,6 @@ dependencies = [
  "verbatim-input-windows",
  "verbatim-model",
  "verbatim-speech",
- "verbatim-uia",
  "windows",
  "workspace-hack",
 ]

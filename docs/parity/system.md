@@ -141,7 +141,9 @@ the tray or taskbar again, finds the chosen item by its UIA runtime id,
 or else by a name no other item has, and clicks it where it is now; an
 item that cannot be found is not clicked, and Verbatim says "is no
 longer there" after its name (`verbatim-gui`'s `tray_list` and
-`shell_items`).
+`shell_items`). The items are read by the outpost of File Explorer's
+taskbar process within its own application, where the add-on reads them
+from NVDA's process (`verbatim-outpost`'s `shell_items`).
 
 ### Logging and the log viewer
 

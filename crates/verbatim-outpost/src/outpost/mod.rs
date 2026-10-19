@@ -41,6 +41,7 @@ mod intake;
 mod narrowing;
 mod outbound;
 mod read;
+mod shell_items;
 pub(crate) mod text_reads;
 pub(crate) mod window;
 mod worker;

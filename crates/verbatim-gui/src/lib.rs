@@ -43,7 +43,7 @@ use verbatim_i18n::messages;
 use verbatim_speech::{SettingId, SettingValue, SpeechSettingsHost};
 
 pub use plan::ControlPlan;
-pub use shell_items::ShellItemKind;
+pub use shell_items::{DeliverShellItems, ShellItem, ShellItemKind, ShellItemsHost};
 pub use terminal_panel::{TerminalChange, TerminalHost};
 pub use theme_panel::ThemeHost;
 
@@ -140,7 +140,8 @@ impl std::error::Error for GuiError {}
 ///
 /// `settings_host` backs the settings dialog's Speech page,
 /// `theme_host` its Theme page, and `terminal_host` its Terminal page;
-/// `events` carries [`GuiEvent`]s out to the app.
+/// `shell_host` enumerates the shell's items for the tray and taskbar list
+/// dialogs; `events` carries [`GuiEvent`]s out to the app.
 ///
 /// The GUI runs at most once per process: wxWidgets keeps one application
 /// in process-wide state and does not support starting again after it
@@ -154,6 +155,7 @@ pub fn run_gui(
     settings_host: Arc<dyn SpeechSettingsHost>,
     theme_host: Arc<dyn ThemeHost>,
     terminal_host: Arc<dyn TerminalHost>,
+    shell_host: Arc<dyn ShellItemsHost>,
     events: Sender<GuiEvent>,
     on_ready: impl FnOnce(GuiHandle) + Send + 'static,
 ) -> Result<(), GuiError> {
@@ -174,6 +176,7 @@ pub fn run_gui(
         theme: RefCell::new(None),
         terminal_host,
         terminal: RefCell::new(None),
+        shell_host,
         events,
         handle: GuiHandle { sender },
         receiver,
@@ -223,6 +226,8 @@ pub(crate) struct GuiCore {
     /// The Terminal page's state while the settings dialog is open and the
     /// page has been shown.
     terminal: RefCell<Option<TerminalPanel>>,
+    /// What enumerates the shell's items for the list dialogs.
+    shell_host: Arc<dyn ShellItemsHost>,
     events: Sender<GuiEvent>,
     /// The GUI's own handle, for work it hands to other threads.
     handle: GuiHandle,
@@ -363,10 +368,10 @@ impl GuiCore {
     }
 
     /// Opens the shell item list dialog for `kind`: focuses the existing
-    /// one when open, otherwise starts an enumeration on a worker thread
+    /// one when open, otherwise asks the [`ShellItemsHost`] for the items,
     /// whose outcome comes back through the GUI's channel. The GUI thread
-    /// never blocks on the shell — see [`shell_items`]' module
-    /// documentation for the threading and deadline story.
+    /// never blocks on the shell (see [`shell_items`]' module
+    /// documentation).
     fn open_shell_item_list(&self, kind: ShellItemKind) {
         let action = self.lifecycle.borrow_mut().request_shell_list();
         match action {
@@ -376,9 +381,10 @@ impl GuiCore {
             OpenShellList::FocusExisting => self.focus_foreground(ffi::DialogKind::ShellList),
             OpenShellList::Enumerate => {
                 let handle = self.handle.clone();
-                let started = shell_items::request_shell_items(kind, move |items| {
-                    handle.post(GuiMessage::ShellItems(kind, items));
-                });
+                let started = self.shell_host.request(
+                    kind,
+                    Box::new(move |items| handle.post(GuiMessage::ShellItems(kind, items))),
+                );
                 if !started {
                     // No outcome will ever arrive: end the enumeration now,
                     // as one that found nothing, so later requests are not
@@ -404,7 +410,8 @@ impl GuiCore {
         let gone: tray_list::OnGone = Arc::new(move |name| {
             let _ = events.send(GuiEvent::ShellItemGone(name));
         });
-        let (model, buttons) = tray_list::shell_list_dialog(kind, items, &gone).split();
+        let (model, buttons) =
+            tray_list::shell_list_dialog(kind, items, &self.shell_host, &gone).split();
         *self.list_buttons.borrow_mut() = Some(buttons);
         // Same discipline as settings: take the foreground before the
         // dialog exists, so the process already owns it when the dialog
