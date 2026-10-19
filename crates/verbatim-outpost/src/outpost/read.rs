@@ -130,6 +130,7 @@ pub(super) fn window_uses_uia(context: &Context, hwnd: isize) -> bool {
         &context.arbitrator,
         hwnd,
         crate::arbitration::Probe::Uia,
+        || verbatim_uia::console_reports_formatting(hwnd),
     );
     if kept {
         // The event thread may narrow its hook now that it knows.

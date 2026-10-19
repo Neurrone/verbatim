@@ -352,9 +352,19 @@ fn has_windows_forms_class(raw: &str) -> bool {
 /// the provider probe, whose answer the arbitrator keeps (a provider for the
 /// window's lifetime, none for a short while). Returns `true` for UIA. The
 /// probe is `probe`: the listener's raw probe, or an outpost's
-/// `UiaHasServerSideProvider` ([`Probe`]).
-pub(crate) fn uses_uia(arbitrator: &Mutex<Arbitrator>, hwnd: isize, probe: Probe) -> bool {
-    uses_uia_keeping(arbitrator, hwnd, probe).0
+/// `UiaHasServerSideProvider` ([`Probe`]). A console window with a provider
+/// is used only when `console` answers that its text reports formatting
+/// ([`PostProbeCheck::Console`]): an outpost reads that by the window's
+/// handle ([`verbatim_uia::console_reports_formatting`]), and the listener,
+/// which connects to no window, from the elements it holds
+/// ([`verbatim_uia::held_console_reports_formatting`]).
+pub(crate) fn uses_uia(
+    arbitrator: &Mutex<Arbitrator>,
+    hwnd: isize,
+    probe: Probe,
+    console: impl FnOnce() -> Option<bool>,
+) -> bool {
+    uses_uia_keeping(arbitrator, hwnd, probe, console).0
 }
 
 /// Which probe asks a window for its provider
@@ -375,6 +385,7 @@ pub(crate) fn uses_uia_keeping(
     arbitrator: &Mutex<Arbitrator>,
     hwnd: isize,
     probe: Probe,
+    console: impl FnOnce() -> Option<bool>,
 ) -> (bool, bool) {
     let classes = WindowClasses::of(hwnd);
     if let Some(verdict) = lock(arbitrator).verdict(hwnd, &classes) {
@@ -396,7 +407,7 @@ pub(crate) fn uses_uia_keeping(
     if is_uia && let Some(check) = post_probe_check(&classes) {
         // NVDA uses some providers only after checking them.
         let usable = match check {
-            PostProbeCheck::Console => verbatim_uia::console_reports_formatting(hwnd),
+            PostProbeCheck::Console => console(),
             PostProbeCheck::WindowsFormsListView => match probe {
                 Probe::Uia => verbatim_uia::is_windows_forms(hwnd),
                 // The listener connects to no window, so it reads the

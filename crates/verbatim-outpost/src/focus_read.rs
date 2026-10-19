@@ -772,13 +772,13 @@ impl FocusReader {
                         return Err("its comparison with the current focus failed");
                     }
                     (Some(Ok(true)), Some((focus, window))) => (*window, focus),
-                    _ => (self.native_window(element, hwnd)?, element),
+                    _ => (self.native_window(element, sender)?, element),
                 }
             }
             // Only focuses and menu openings are read; a selection or a
             // notification is checked ([`Self::check_fact`]).
             FocusEvent::Focus | FocusEvent::Selection | FocusEvent::Notification => {
-                let nearest = self.native_window(element, hwnd)?;
+                let nearest = self.native_window(element, sender)?;
                 // 3. NVDA's duplicate rule (`UIAHandler/__init__.py` 902 to
                 // 923; section 16.3): the sender is the last focus accepted,
                 // by any of the listener's readers, as UIA compares them,
@@ -865,8 +865,8 @@ impl FocusReader {
         Ok(window)
     }
 
-    /// Step 2: whether the sender, `element`, whose own window is `hwnd`, is
-    /// native UIA (`isNativeUIAElement`, `UIAHandler/__init__.py` 1515 to
+    /// Step 2: whether the sender, `element`, whose event's cache is
+    /// `sender`, is native UIA (`isNativeUIAElement`, `UIAHandler/__init__.py` 1515 to
     /// 1575): its nearest window, its own else the nearest ancestor's
     /// (`getNearestWindowHandle`, one call), must use UIA as NVDA decides
     /// it (`isUIAWindow`: the class lists, then the window's own provider,
@@ -881,11 +881,22 @@ impl FocusReader {
     /// exceptions, a `NetUI` container in a Word document and Internet
     /// Explorer 9's downloads list, are Office's and Internet Explorer's,
     /// and are not ported. Answers the nearest window.
+    ///
+    /// A console window with a provider is checked, as NVDA checks it, for
+    /// the complete provider of current Windows, from the held sender
+    /// rather than by the window's handle, a connection
+    /// (`docs/design/listener-without-connections.md`, section 3, step 5):
+    /// the sender is the console's text area, known by its cached
+    /// automation id, or the console window's own element, under which the
+    /// text area is found. Any other sender in a console window, of which
+    /// none is known, gets no answer: its focus is dropped as not native,
+    /// and the window is checked again at its next focus.
     fn native_window(
         &self,
         element: &IUIAutomationElement,
-        hwnd: isize,
+        sender: &ListenerEvent,
     ) -> Result<isize, &'static str> {
+        let hwnd = sender.role.hwnd;
         let nearest = if hwnd == 0 {
             let started = Instant::now();
             let nearest = verbatim_uia::nearest_window_handle(element);
@@ -902,7 +913,15 @@ impl FocusReader {
         // The raw probe, not a connection: the listener connects to no
         // application's window (`docs/design/listener-without-connections.md`,
         // section 2).
-        if !uses_uia(&self.arbitrator, nearest, Probe::Raw) {
+        let automation_id = sender.automation_id.as_deref();
+        let console = || {
+            (automation_id == Some(verbatim_uia::CONSOLE_TEXT_AREA) || hwnd == nearest)
+                .then(|| {
+                    verbatim_uia::held_console_reports_formatting(&self.uia, element, automation_id)
+                })
+                .flatten()
+        };
+        if !uses_uia(&self.arbitrator, nearest, Probe::Raw, console) {
             return Err("its window does not use UIA, so its MSAA events speak for it");
         }
         Ok(nearest)

@@ -477,7 +477,11 @@ Public API:
   console's text area reports one visible range with its font (the
   complete console provider of current Windows), and whether a window's
   UIA framework is `WinForm` (an outpost's check; the focus listener reads
-  the class name instead). Each answers `None` when the application did
+  the class name instead). `held_console_reports_formatting(uia, element,
+  automation_id)` is the console check from an element the caller holds,
+  the console's text area (its automation id `CONSOLE_TEXT_AREA`) or the
+  console window's element, with no connection to the window: the focus
+  listener's. Each answers `None` when the application did
   not answer in time, so the outpost asks again rather than keep the
   verdict.
 - `nearest_window_handle(element)` — NVDA's `getNearestWindowHandle`:

@@ -78,7 +78,10 @@ pub mod test_console;
 pub mod text;
 
 pub use bounded::{BoundedClient, Unanswered};
-pub use checks::{console_reports_formatting, is_windows_forms};
+pub use checks::{
+    CONSOLE_TEXT_AREA, console_reports_formatting, held_console_reports_formatting,
+    is_windows_forms,
+};
 pub use client::{
     AncestorParts, AncestorStops, AncestorWalk, CALL_TIMEOUT, Uia, release_mta_usage,
 };

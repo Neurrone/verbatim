@@ -460,7 +460,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   using it (a console's formatted text, a list view's Windows Forms
   origin, which an outpost reads as the window's UIA framework through
   `verbatim_uia::is_windows_forms` and the focus listener, which connects
-  to no window, as its raw class's `WindowsForms10.` prefix); a provider
+  to no window, as its raw class's `WindowsForms10.` prefix; and a
+  console's formatted text, which an outpost reads by the window's handle
+  and the listener from the event's sender, the text area or the console
+  window's element, through the console check `uses_uia` is given); a provider
   that fails it is recorded with `record_excluded` and
   is MSAA for the window's lifetime. A probe that finds a UIA
   provider is kept for the window's lifetime and dropped by `forget` when

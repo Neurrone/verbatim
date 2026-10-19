@@ -990,9 +990,13 @@ fn a_menu_items_legacy_state_is_read_with_its_focus() {
 /// focus on a console window's own element before it reads the element,
 /// even while that element reports the keyboard focus: the text area's own
 /// focus is the one reported. As in NVDA, the refusal is the object's, so
-/// it comes after the native check, which asks the console window whether
-/// its provider reports formatting (NVDA's check for a console's UIA, five
-/// calls here; section 18), and nothing of the element is read.
+/// it comes after the native check, which asks whether the console's
+/// provider reports formatting (NVDA's check for a console's UIA; section
+/// 18): from the held window element, with no connection to the window
+/// (`docs/design/listener-without-connections.md`, section 3, step 5), four
+/// calls, the text area's search, its text pattern, its visible ranges and
+/// the range's font, where the check by the window's handle made five; and
+/// nothing of the element is read.
 fn a_console_windows_own_focus_is_never_reported() {
     let title = common::unique_title("mockapp-console-window");
     let mut app = common::spawn("console_window.json", "uia", &title);
@@ -1015,10 +1019,67 @@ fn a_console_windows_own_focus_is_never_reported() {
     };
     assert_eq!(reason, "the console window's own focus");
     assert_eq!(
-        calls.uia, 5,
+        calls.uia, 4,
         "the console check, and no read of the element"
     );
     outpost.deliver(judged.into_fact(0));
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A console's text area's focus is checked as native UIA from the text
+/// area itself, the held sender, known by its cached automation id, with
+/// no connection to the console window
+/// (`docs/design/listener-without-connections.md`, section 3, step 5), and
+/// read: six calls, the sender's nearest window, the console check's three
+/// (the text pattern, the visible ranges and the range's font, where the
+/// check by the window's handle made five), the keyboard focus, and the
+/// read's remote operation; and one window message, the raw probe. The
+/// outpost reports it as the console's terminal, and its caret.
+fn a_console_text_areas_focus_is_checked_from_the_text_area() {
+    let title = common::unique_title("mockapp-console-text-area");
+    let mut app = common::spawn("console_window.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus text");
+    let (judged, calls) = outpost.listener_read(&client.focused());
+    let Judged::Read(_) = &judged else {
+        panic!("the listener did not read the text area's focus: {judged:?}");
+    };
+    assert_eq!(
+        (calls.uia, calls.msaa, calls.window_messages),
+        (6, 0, 1),
+        "the probe, the console check from the text area, and the read"
+    );
+    outpost.deliver(judged.into_fact(0));
+    let (node, ancestors) = match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::FocusChanged {
+                node, ancestors, ..
+            },
+            ..
+        } => (node, ancestors),
+        other => panic!("the outpost said {other:?}, not the text area's focus"),
+    };
+    assert_eq!((node.role, node.name), (Role::Terminal, None));
+    assert_eq!(
+        ancestors
+            .iter()
+            .map(|ancestor| ancestor.name.as_deref())
+            .collect::<Vec<_>>(),
+        [Some("Mockapp Console Window Fixture")]
+    );
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::CaretMoved { node_id, .. },
+            ..
+        } if node_id == node.id => {}
+        other => panic!("the outpost said {other:?}, not the terminal's caret"),
+    }
     outpost.settled();
 
     drop(outpost);
@@ -1334,6 +1395,10 @@ fn main() {
         (
             "a_console_windows_own_focus_is_never_reported",
             a_console_windows_own_focus_is_never_reported,
+        ),
+        (
+            "a_console_text_areas_focus_is_checked_from_the_text_area",
+            a_console_text_areas_focus_is_checked_from_the_text_area,
         ),
         (
             "a_focus_whose_window_has_no_uia_provider_is_dropped",
