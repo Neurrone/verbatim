@@ -3,7 +3,9 @@
 //! `msaa`-backend one does not, each found by a single probe, and that
 //! `verbatim-outpost`'s real `Arbitrator`, given that probe's answer,
 //! resolves each to the matching backend, and that a window too busy to
-//! answer is asked once and its "no" taken, as NVDA takes it.
+//! answer is asked once and its "no" taken, as NVDA takes it. The focus
+//! listener's raw probe, one `WM_GETOBJECT`, gives each window the same
+//! answer.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -13,7 +15,7 @@ use std::time::Duration;
 
 use verbatim_model::CallCounts;
 use verbatim_outpost::arbitration::{Arbitrator, WindowClasses};
-use verbatim_uia::has_server_side_provider;
+use verbatim_uia::{RawProbe, has_server_side_provider, raw_probe};
 
 fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
     let title = common::unique_title("mockapp-arb-uia");
@@ -30,6 +32,11 @@ fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
     assert!(
         has_server_side_provider(hwnd),
         "a uia-backend mockapp window has a server-side UIA provider"
+    );
+    assert_eq!(
+        raw_probe(hwnd),
+        RawProbe::Provider,
+        "the raw probe finds the same provider"
     );
     arbitrator.record_probe(hwnd, true);
     assert_eq!(
@@ -133,6 +140,11 @@ fn msaa_backend_has_no_server_side_provider_and_arbitrates_to_msaa() {
     assert!(
         !has_server_side_provider(hwnd),
         "a msaa-backend mockapp window answers that it has no server-side UIA provider"
+    );
+    assert_eq!(
+        raw_probe(hwnd),
+        RawProbe::Answered(0),
+        "the raw probe gets the default window procedure's answer"
     );
     arbitrator.record_probe(hwnd, false);
     assert_eq!(

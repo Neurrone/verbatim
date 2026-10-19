@@ -29,8 +29,10 @@
 //!   subscription.
 //! - [`NodeIdRegistry`] — stable [`NodeId`](verbatim_model::NodeId)s from UIA
 //!   runtime IDs, sharing a mint counter with the MSAA backend.
-//! - [`has_server_side_provider`] — the arbitration probe (blocking; see its
-//!   docs and run it only on a deadline-guarded worker).
+//! - [`has_server_side_provider`] — the arbitration probe the outposts make
+//!   (blocking; see its docs and run it only on a deadline-guarded worker),
+//!   and [`raw_probe`], the focus listener's, one window message rather than
+//!   a UIA connection, its outcome read by [`raw_probe_verdict`].
 //! - [`nearest_window_handle`] — NVDA's `getNearestWindowHandle`: resolves the
 //!   window an arbitrary element belongs to, for elements (menu items, list
 //!   items) that are not windows themselves. Also blocking; see its docs.
@@ -82,7 +84,9 @@ pub use com::{
 pub use element::{ElementExt, WalkerExt, elements_of};
 pub use focus::FocusCallback;
 pub use nearest::nearest_window_handle;
-pub use probe::has_server_side_provider;
+pub use probe::{
+    RAW_PROBE_TIMEOUT_MS, RawProbe, has_server_side_provider, raw_probe, raw_probe_verdict,
+};
 pub use registry::{NodeIdRegistry, Released};
 pub use shape::{
     Absent, Agile, Ancestor, AncestorGates, Cached, Covers, Description, DialogText, Direction,

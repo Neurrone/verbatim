@@ -489,7 +489,9 @@ tree was walked, after a scripted `select`: the MSAA provider's
 variant when none is selected.
 `arbitration.rs` asserts `verbatim_uia::has_server_side_provider` and
 `verbatim_outpost::Arbitrator` resolve a `uia`-backend window to UIA and a
-`msaa`-backend one to MSAA. `events.rs` asserts that
+`msaa`-backend one to MSAA, and that the listener's `verbatim_uia::raw_probe`
+answers `0x10000` for the first and the default window procedure's 0 for
+the second. `events.rs` asserts that
 `set-name`/`set-value` commands are observed by a property
 `verbatim_uia::Registration` and `verbatim_ia2::WinEventHook`,
 that `select` is observed by a selection `verbatim_uia::Registration` (with

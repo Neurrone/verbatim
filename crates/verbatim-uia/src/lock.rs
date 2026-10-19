@@ -35,7 +35,10 @@
 //! its windows by its handle, and the listener's walk steps up into it from
 //! another application) is made holding the lock, taken immediately before
 //! the call and released immediately after it. No other call is guarded,
-//! and nothing else is done while the lock is held.
+//! and nothing else is done while the lock is held. The listener's
+//! arbitration probe is not guarded: it is the raw probe
+//! ([`crate::raw_probe`]), a window message rather than a connection, which
+//! answered correctly beside a queued remote operation.
 //!
 //! An [`AppLock`] names the application (its process id and creation time)
 //! and holds the mutex's handle. An outpost, whose process serves one

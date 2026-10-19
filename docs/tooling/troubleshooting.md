@@ -256,13 +256,17 @@ total and why it ended, telling a closed pipe from a stop and from an
 error.
 
 **A provider probe answers "no" after about three seconds, and the focus
-is read through MSAA, spoken as "pane", or announced twice.** The probe is
-`UiaHasServerSideProvider`, logged at debug by the listener and the
-outposts as `arbitration probed` with its `elapsed_ms`. Two UIA faults
-give it (`docs/uia-bugs.md`): "A new connection fails while another
-process's remote operation is queued", where the listener's focus read
-is the operation and an outpost's first connection to a launching
-application the connection, which Verbatim now makes under the
+is read through MSAA, spoken as "pane", or announced twice.** The
+outposts' probe is `UiaHasServerSideProvider`, logged at debug as
+`arbitration probed` with its `elapsed_ms` and `probe=Uia`; the focus
+listener's is the raw probe, one `WM_GETOBJECT` that waits at most 3
+seconds, logged as `arbitration probed` with `probe=Raw` and, before it,
+`raw probe` with its outcome (a timeout, a refusal, a gone window, or the
+window's answer). Two UIA faults give the outposts' slow "no"
+(`docs/uia-bugs.md`): "A new connection fails while another process's
+remote operation is queued", where the listener's focus read is the
+operation and an outpost's first connection to a launching application
+the connection, which Verbatim now makes under the
 application's lock (`verbatim_uia::lock`); and, for a conhost window
 just created, "UiaHasServerSideProvider says no for a new conhost window
 while another process has an event handler", which no lock prevents. A

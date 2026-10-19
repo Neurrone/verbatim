@@ -5,13 +5,17 @@
 //! config-overridable "good" class list forces UIA, and so does a Windows 11
 //! shell window, recognized by its root ancestor's class; a "bad" class list
 //! (seeded from NVDA's, where UIA implementations are known to interfere with
-//! MSAA) forces MSAA; otherwise the window is probed with
-//! `UiaHasServerSideProvider`. A window with a provider is still set aside
+//! MSAA) forces MSAA; otherwise the window is probed: by an outpost, on its
+//! own application's windows, with `UiaHasServerSideProvider`
+//! ([`verbatim_uia::has_server_side_provider`]), and by the focus listener
+//! with the raw probe, one `WM_GETOBJECT` and no UIA connection
+//! ([`verbatim_uia::raw_probe`];
+//! `docs/design/listener-without-connections.md`, decision 2). A window
+//! with a provider is still set aside
 //! for MSAA when its provider is one NVDA does not use: an old console's,
 //! or a list view's outside Windows Forms ([`post_probe_check`]).
 //! Class-list checks are fast local window calls; the probe blocks on the
-//! target's message pump and runs only on the outpost's worker, under its
-//! deadline ([`verbatim_uia::has_server_side_provider`]).
+//! target's message pump and runs only on a deadline-guarded worker.
 //!
 //! A probe that finds a UIA provider is kept for the window's lifetime and
 //! forgotten when the window is destroyed ([`Arbitrator::forget`]), as
@@ -335,24 +339,45 @@ pub fn post_probe_check(classes: &WindowClasses) -> Option<PostProbeCheck> {
 /// `isUIAWindow` decides it, for an outpost's events and for the focus
 /// listener's UIA focus judgement alike: the class lists and kept verdicts first, then
 /// the provider probe, whose answer the arbitrator keeps (a provider for the
-/// window's lifetime, none for a short while). Returns `true` for UIA.
-pub(crate) fn uses_uia(arbitrator: &Mutex<Arbitrator>, hwnd: isize) -> bool {
-    uses_uia_keeping(arbitrator, hwnd).0
+/// window's lifetime, none for a short while). Returns `true` for UIA. The
+/// probe is `probe`: the listener's raw probe, or an outpost's
+/// `UiaHasServerSideProvider` ([`Probe`]).
+pub(crate) fn uses_uia(arbitrator: &Mutex<Arbitrator>, hwnd: isize, probe: Probe) -> bool {
+    uses_uia_keeping(arbitrator, hwnd, probe).0
+}
+
+/// Which probe asks a window for its provider
+/// (`docs/design/listener-without-connections.md`, decision 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Probe {
+    /// UIA's own `UiaHasServerSideProvider`, a connection to the window:
+    /// an outpost's, on its own application's windows.
+    Uia,
+    /// One `WM_GETOBJECT`, no connection: the focus listener's.
+    Raw,
 }
 
 /// [`uses_uia`], and whether this call probed the window and kept a verdict
 /// of UIA for its lifetime: an outpost's event thread may then narrow its
 /// hook (`outpost::narrowing`).
-pub(crate) fn uses_uia_keeping(arbitrator: &Mutex<Arbitrator>, hwnd: isize) -> (bool, bool) {
+pub(crate) fn uses_uia_keeping(
+    arbitrator: &Mutex<Arbitrator>,
+    hwnd: isize,
+    probe: Probe,
+) -> (bool, bool) {
     let classes = WindowClasses::of(hwnd);
     if let Some(verdict) = lock(arbitrator).verdict(hwnd, &classes) {
         return (verdict, false);
     }
     let started = std::time::Instant::now();
-    let is_uia = verbatim_uia::has_server_side_provider(hwnd);
+    let is_uia = match probe {
+        Probe::Uia => verbatim_uia::has_server_side_provider(hwnd),
+        Probe::Raw => verbatim_uia::raw_probe(hwnd).has_provider(),
+    };
     tracing::debug!(
         hwnd,
         class = classes.raw,
+        ?probe,
         is_uia,
         elapsed_ms = started.elapsed().as_millis(),
         "arbitration probed"

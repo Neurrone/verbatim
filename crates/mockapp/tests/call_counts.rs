@@ -1244,6 +1244,13 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
 /// `HostRawElementProvider`, 5 `Navigate`, and 1 `FragmentRoot`, and for
 /// the list's item 1, 10, 4, 3, 3, and 1: so the cold focus rose by one
 /// call and the others by two, by both read paths alike.
+///
+/// The listener's probe of the window, at the cold focus, is the raw probe
+/// (`docs/design/listener-without-connections.md`, section 3, step 4): one
+/// `WM_GETOBJECT` that mockapp answers, and no UIA connection, which as
+/// `UiaHasServerSideProvider` cost mockapp one `WM_GETOBJECT`, five
+/// `ProviderOptions`, one `HostRawElementProvider` and one `Navigate`
+/// more, by both read paths alike.
 fn uia_focus_changes_cost_exactly_remote() {
     uia_focus_changes(
         true,
@@ -1252,12 +1259,12 @@ fn uia_focus_changes_cost_exactly_remote() {
                 calls(3, 0, 1),
                 0,
                 &[
-                    ("WM_GETOBJECT", 14),
-                    ("ProviderOptions", 88),
+                    ("WM_GETOBJECT", 13),
+                    ("ProviderOptions", 83),
                     ("GetPatternProvider", 55),
                     ("GetPropertyValue", 118),
-                    ("HostRawElementProvider", 37),
-                    ("Navigate", 28),
+                    ("HostRawElementProvider", 36),
+                    ("Navigate", 27),
                     ("GetRuntimeId", 13),
                     ("BoundingRectangle", 5),
                     ("FragmentRoot", 17),
@@ -1328,12 +1335,12 @@ fn uia_focus_changes_cost_exactly_classic() {
                 calls(7, 0, 1),
                 0,
                 &[
-                    ("WM_GETOBJECT", 13),
-                    ("ProviderOptions", 85),
+                    ("WM_GETOBJECT", 12),
+                    ("ProviderOptions", 80),
                     ("GetPatternProvider", 77),
                     ("GetPropertyValue", 150),
-                    ("HostRawElementProvider", 36),
-                    ("Navigate", 20),
+                    ("HostRawElementProvider", 35),
+                    ("Navigate", 19),
                     ("GetRuntimeId", 11),
                     ("BoundingRectangle", 7),
                     ("FragmentRoot", 23),

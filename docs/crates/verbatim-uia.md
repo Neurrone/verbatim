@@ -433,7 +433,29 @@ Public API:
   (`docs/design/focus-pipeline.md`, section 8). The probe waits for UIA's first-time setup in the process (`ensure_ready`)
   before it asks: one racing that setup answered "no provider" at once for
   a window that has one, about one run in five of two probes started
-  together in a fresh process.
+  together in a fresh process. The outposts make this probe on their own
+  application's windows.
+- `raw_probe(hwnd) -> RawProbe` — the focus listener's arbitration probe:
+  one `SendMessageTimeoutW` of `WM_GETOBJECT` with wParam 0 and
+  `UiaRootObjectId` sign-extended, as UIA's own probe begins, with
+  `SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT` and
+  `RAW_PROBE_TIMEOUT_MS` (3,000 ms), counted as one window message. It is
+  not a UIA connection, so it neither takes nor needs the application's
+  lock, and it answers correctly where a new connection would meet
+  another process's queued remote operation
+  (`docs/design/listener-without-connections.md`, section 3, step 4).
+  `raw_probe_verdict(sent, answer, last_error)` reads the outcome, a pure
+  function: exactly `0x10000` is `RawProbe::Provider`; any other answer is
+  `Answered`, 0 being the default window procedure's and other values,
+  such as File Explorer's child windows' `0xffffffff80040201`, windows UIA
+  also says have none; a failure is `TimedOut` (or judged hung),
+  `AccessDenied` (a window of higher integrity), `Gone`, or `Failed` with
+  its error. `RawProbe::has_provider` is true only for `Provider`. Nothing
+  is done with the answer but compare it. A one-off count of mockapp's
+  handles and private bytes over 12,000 probes found no growth without
+  bound, but about 2.3 KB kept in the application for each of the first
+  1,000 or so probes of a window (`docs/design/listener-without-connections.md`,
+  risk 7).
 - `console_reports_formatting(hwnd)` and `is_windows_forms(hwnd)` — the
   checks NVDA makes on a window with a provider before using it: whether a
   console's text area reports one visible range with its font (the
@@ -481,8 +503,8 @@ Public API:
   unguarded with neither, as in Core's own clients and the tests that call
   them directly: `guarded(name, call)` for a remote operation (the one
   `Execute` in `verbatim-uia-rops` and `GetFocusedElementBuildCache`), and
-  `guarded_window(name, hwnd, call)` for a connection by handle (the probe,
-  `ElementFromHandleBuildCache` and `ElementFromHandle`), which takes the
+  `guarded_window(name, hwnd, call)` for a connection by handle (the
+  outposts' probe, `ElementFromHandleBuildCache` and `ElementFromHandle`), which takes the
   lock only when the window's provider process (`provider_process`: its
   owner, or for a console window its console host, read from the console's
   client, the window's owner, since Windows names the client's thread for
@@ -509,8 +531,8 @@ Public API:
   `*BuildCache` fetches and tree-walker steps, `BuildUpdatedCache`,
   `FindFirst`, `CurrentControllerFor`, pattern fetches and methods,
   `NormalizeElementBuildCache`, and the provider checks' text reads, as UIA
-  calls; the arbitration probe's `UiaHasServerSideProvider`, as a window
-  message. Cached reads, `GetRuntimeId`, and
+  calls; the arbitration probe's `UiaHasServerSideProvider`, and the raw
+  probe's `WM_GETOBJECT`, each as one window message. Cached reads, `GetRuntimeId`, and
   creating clients, conditions, walkers, and cache requests are local and
   not counted, nor are event subscriptions (`docs/performance.md`, "What
   counts as a call"). The outpost's worker takes the count around each

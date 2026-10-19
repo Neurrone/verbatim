@@ -59,8 +59,9 @@ kinds, counted separately (`verbatim_model::CallKind`):
   `WindowFromAccessibleObject`, and a `QueryInterface` for any interface
   but `IUnknown` on an object from the application.
 - A window message sent to one of the application's windows and answered
-  by its window procedure: the arbitration probe (`UiaHasServerSideProvider`
-  is one `WM_GETOBJECT`),
+  by its window procedure: the arbitration probe (an outpost's
+  `UiaHasServerSideProvider` is one `WM_GETOBJECT`, and the focus
+  listener's raw probe is that `WM_GETOBJECT` sent itself),
   a list view's or tree view's `LVM_` and `TVM_` messages, and an edit
   control's `EM_` messages and `WM_GETTEXT`.
 
@@ -447,7 +448,7 @@ focus waits behind the events queued before it as NVDA's does.
   order (`docs/design/focus-pipeline.md`, section 18; Dickson,
   2026-10-16). They are the sender's nearest window, for a windowless
   sender; the window's provider, probed once in its lifetime for NVDA's
-  native check (the listener's probe, `UiaHasServerSideProvider`); the
+  native check (the listener's raw probe, one `WM_GETOBJECT`); the
   sender's keyboard focus, read plainly; and one program reading the whole
   chain up to the top-level window. There is no comparison, since no focus
   was accepted before.
@@ -455,11 +456,14 @@ focus waits behind the events queued before it as NVDA's does.
   sender's nearest window, its plain keyboard focus read, and one
   `Execute`, which walks up to the process's top-level window and stops
   there, never asking for the desktop's root, all the listener's; and the
-  listener's probe. There is no comparison, since no focus was accepted
-  before. 375 provider calls in all.
+  listener's raw probe. There is no comparison, since no focus was
+  accepted before. 367 provider calls in all: the raw probe costs mockapp
+  one `WM_GETOBJECT`, where `UiaHasServerSideProvider` cost it two and
+  seven more provider calls as UIA connected (five `ProviderOptions`, one
+  `HostRawElementProvider` and one `Navigate`).
 - Today, classic: 7 UIA calls and 1 window message: the same two checks,
   and five for the classic read (the live keyboard focus, the focus's
-  cache, and three hops up to the desktop's root), and the probe. 422
+  cache, and three hops up to the desktop's root), and the raw probe. 414
   provider calls in all.
 - Target: the minimum, which the remote path meets. The classic walk
   could still stop at the desktop's root element, which is known locally,

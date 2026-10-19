@@ -82,7 +82,7 @@ use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, Path, focus_ancestr
 
 use crate::ForegroundReader;
 pub(crate) use crate::app_locks::{AppLocks, Granted};
-use crate::arbitration::{Arbitrator, Clock, time_limit, uses_uia, window_class_name};
+use crate::arbitration::{Arbitrator, Clock, Probe, time_limit, uses_uia, window_class_name};
 use crate::outpost::acceptance::{EventName, RequestedEvents, SystemWindows, accepts_event};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::outpost::window::{
@@ -869,7 +869,8 @@ impl FocusReader {
     /// native UIA (`isNativeUIAElement`, `UIAHandler/__init__.py` 1515 to
     /// 1575): its nearest window, its own else the nearest ancestor's
     /// (`getNearestWindowHandle`, one call), must use UIA as NVDA decides
-    /// it (`isUIAWindow`: the class lists, then the window's own provider),
+    /// it (`isUIAWindow`: the class lists, then the window's own provider,
+    /// asked with the raw probe),
     /// or NVDA ignores the event ("Ignoring for non native element") and
     /// the window's MSAA events speak for it. A sender with no window
     /// anywhere above it, or whose walk to one fails, is not native either,
@@ -898,7 +899,10 @@ impl FocusReader {
         } else {
             hwnd
         };
-        if !uses_uia(&self.arbitrator, nearest) {
+        // The raw probe, not a connection: the listener connects to no
+        // application's window (`docs/design/listener-without-connections.md`,
+        // section 2).
+        if !uses_uia(&self.arbitrator, nearest, Probe::Raw) {
             return Err("its window does not use UIA, so its MSAA events speak for it");
         }
         Ok(nearest)

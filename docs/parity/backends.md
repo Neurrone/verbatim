@@ -25,6 +25,15 @@ Start, and the desktop. The window is asked once, and a "no" that UIA
 gave after the window did not answer in time is kept like any other, as
 NVDA keeps it (`docs/design/focus-pipeline.md`, section 8).
 
+Different: the focus listener asks the same question with one raw
+`WM_GETOBJECT` for `UiaRootObjectId`, counting only the answer `0x10000`
+as a provider and waiting at most 3 seconds, rather than with
+`UiaHasServerSideProvider`, which connects to the window and answered
+"no" falsely beside another process's queued remote operation (`e34`)
+and under `e38`'s trigger; the outposts keep `UiaHasServerSideProvider`
+for their own application's windows
+(`docs/design/listener-without-connections.md`, decision 2).
+
 Not yet (M7): NVDA's Word, Excel, and Chromium exceptions, which set UIA
 aside only when NVDA has injected its in-process helper; without it NVDA
 uses UIA for them, as Verbatim does, and they arrive with Verbatim's
