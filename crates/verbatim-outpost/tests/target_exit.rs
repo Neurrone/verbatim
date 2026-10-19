@@ -68,11 +68,7 @@ fn launch(
             log_stem,
             memory_cap: None,
         },
-        ChildEnds {
-            commands,
-            messages,
-            inherited: Vec::new(),
-        },
+        ChildEnds { commands, messages },
     )
     .expect("the outpost starts in its job");
 

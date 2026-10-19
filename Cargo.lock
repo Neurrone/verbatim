@@ -927,7 +927,6 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
- "tracing-subscriber",
  "verbatim-core",
  "verbatim-ia2",
  "verbatim-model",

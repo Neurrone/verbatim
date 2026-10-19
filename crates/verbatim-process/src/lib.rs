@@ -186,11 +186,6 @@ pub struct ChildEnds {
     pub commands: OwnedHandle,
     /// The end the child writes messages to.
     pub messages: OwnedHandle,
-    /// Other handles the child inherits, named on its command line by the
-    /// caller, which knows their values. Each is
-    /// made inheritable for the `CreateProcessW` call alone, as the pipe ends
-    /// are, and closed here once the child has inherited it.
-    pub inherited: Vec<OwnedHandle>,
 }
 
 /// Launches a contained child as `spec` describes, over pipes the caller
@@ -207,10 +202,8 @@ pub struct ChildEnds {
 pub fn launch_with_ends(spec: &ChildSpec<'_>, ends: ChildEnds) -> io::Result<Contained> {
     let child_in = HANDLE(ends.commands.into_raw_handle());
     let child_out = HANDLE(ends.messages.into_raw_handle());
-    // Closed when this returns, after the child has inherited them.
-    let inherited = ends.inherited;
     match create_job(spec.memory_cap) {
-        Ok(job) => spawn_contained(spec, job, [child_in, child_out], &inherited),
+        Ok(job) => spawn_contained(spec, job, [child_in, child_out]),
         Err(error) => {
             close_handle(child_in);
             close_handle(child_out);
@@ -221,13 +214,11 @@ pub fn launch_with_ends(spec: &ChildSpec<'_>, ends: ChildEnds) -> io::Result<Con
 
 /// Spawns `spec`'s executable in `job`, inheriting `pipe_ends` (the end it
 /// reads commands from, then the end it writes messages to), which are
-/// closed here whatever the outcome, and `inherited`, which the caller
-/// closes.
+/// closed here whatever the outcome.
 fn spawn_contained(
     spec: &ChildSpec<'_>,
     job: OwnedHandle,
     pipe_ends: [HANDLE; 2],
-    inherited: &[OwnedHandle],
 ) -> io::Result<Contained> {
     let [child_in, child_out] = pipe_ends;
     let arguments = (spec.arguments)(child_in.0 as usize, child_out.0 as usize);
@@ -235,11 +226,7 @@ fn spawn_contained(
     // Best-effort: a failed log open leaves the child unredirected, never
     // unspawned.
     let log = child_log_handle(spec.exe, spec.log_stem);
-    let others: Vec<HANDLE> = inherited
-        .iter()
-        .map(|handle| HANDLE(handle.as_raw_handle()))
-        .collect();
-    let spawned = spawn_in_job(&command_line, &job, (pipe_ends, &others), log);
+    let spawned = spawn_in_job(&command_line, &job, pipe_ends, log);
     if let Some(log) = log {
         // The child inherited its own copy; drop ours whether or not the
         // spawn succeeded.
@@ -315,14 +302,14 @@ struct Spawned {
 
 /// Creates the child inside `job`. The child inherits only the handles
 /// named in a `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`:
-/// its two pipe ends, `pipe_ends`, the `others` its caller gives it, and,
+/// its two pipe ends, `pipe_ends`, and,
 /// when `log` is `Some`, the log file its standard output and error are
 /// redirected to (its standard input too, harmlessly — a child reads its
 /// command pipe, never stdin).
 fn spawn_in_job(
     command_line: &str,
     job: &OwnedHandle,
-    (pipe_ends, others): ([HANDLE; 2], &[HANDLE]),
+    pipe_ends: [HANDLE; 2],
     log: Option<HANDLE>,
 ) -> io::Result<Spawned> {
     let mut command: Vec<u16> = command_line
@@ -330,7 +317,6 @@ fn spawn_in_job(
         .chain(std::iter::once(0))
         .collect();
     let mut inherited = pipe_ends.to_vec();
-    inherited.extend_from_slice(others);
     inherited.extend(log);
     let jobs = [HANDLE(job.as_raw_handle().cast::<c_void>())];
 

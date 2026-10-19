@@ -126,11 +126,7 @@ pub(super) fn launch(
             log_stem: &log_stem,
             memory_cap: Some(OUTPOST_MEMORY_CAP),
         },
-        ChildEnds {
-            commands,
-            messages,
-            inherited: Vec::new(),
-        },
+        ChildEnds { commands, messages },
     )?;
     let pipes = ChildPipes {
         to_child,

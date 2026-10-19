@@ -258,7 +258,6 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         | Command::SlowPatterns(_)
         | Command::RefuseText(_)
         | Command::Hold
-        | Command::StallAfterFocusRead(_)
         | Command::Release
         | Command::Quit
         | Command::Unrecognized(_) => {}
@@ -761,8 +760,6 @@ mod props {
         } else if id == UIA_IsEnabledPropertyId.0 {
             bool_variant(!node.states.contains(State::Disabled))
         } else if id == UIA_HasKeyboardFocusPropertyId.0 {
-            // A test's stall after this read (`stall-after-focus-read`).
-            crate::held::focus_read(hwnd);
             bool_variant(node.states.contains(State::Focused))
         } else if id == UIA_IsKeyboardFocusablePropertyId.0 {
             bool_variant(node.states.contains(State::Focusable))
