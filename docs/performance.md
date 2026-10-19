@@ -479,16 +479,26 @@ child of the other's MSAA window (`call_counts.rs`,
   probe of the parent, the other process's window
   (`docs/design/listener-without-connections.md`, section 4.3); with the
   probe it made 1 window message more, a connection. Above a parent with
-  a UIA provider it makes 23 MSAA calls, through UIA's MSAA bridge, and
-  no connection (`uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider`). While the
+  a UIA provider it makes 23 MSAA calls, which MSAA's standard proxy
+  answers in mockapp, and no UIA call of its own
+  (`uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider`);
+  UIA's client side still connects to that parent as the outpost's read
+  returns the child window's element (decision 13): once by the remote
+  program and twice classically, each connection one `UiaRootObjectId`
+  `WM_GETOBJECT` with a nonzero wParam, one with a zero wParam, and 6
+  `ProviderOptions`, 2 `HostRawElementProvider` and 2 `Navigate` calls,
+  and once in a focus-now query by either path. A parent without a
+  provider receives the nonzero message alone as often, an owner
+  nothing. While the
   listener reads, the parent's process receives 2 `WM_GETOBJECT`s, each
   with `UiaRootObjectId` and a nonzero wParam, which UIA's client side
   sends itself when a call on a held element returns the child window's
   element (the nearest window and the read); no other call. Before the
   walks stopped at the boundary, their step up into the parent cost it 6
   `WM_GETOBJECT`s and 17 MSAA calls.
-- Target: no message to the parent from the listener, which UIA's client
-  side does not allow while the listener holds the child window's element.
+- Target: no message to the parent from the listener or the outpost,
+  which UIA's client side does not allow while either holds the child
+  window's element; accepted as a known limit (decision 13).
 
 ### A focus change into a list, UIA
 

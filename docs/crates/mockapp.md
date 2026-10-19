@@ -335,7 +335,13 @@ focused button.
   runs every provider call, so a read made after a client's call returns
   counts every hit that call caused: `WM_APP + 2` returns the counter
   whose index in `Method::ALL` is `wParam`, and `WM_APP + 3` zeroes them
-  all. The tests compile `src/hits.rs` into their shared module, so the
+  all. The `WM_GETOBJECT`s are also counted by kind (`GetObjectKind`):
+  `UiaRootObjectId` with a nonzero `wParam`, the message a UIA connection
+  begins with, `UiaRootObjectId` with a zero one, `OBJID_CLIENT`,
+  `OBJID_WINDOW`, `OBJID_QUERYCLASSNAMEIDX`, and any other object id;
+  `WM_APP + 7` returns the count of the kind whose index is `wParam`
+  (`common::read_get_objects`), and `WM_APP + 3` zeroes them too. The
+  tests compile `src/hits.rs` into their shared module, so the
   method list and message numbers cannot drift apart. Every counted call
   is also where `slow` delays a call and `hold` holds one. Started with
   `--count-registrations`, mockapp answers for its UIA root, the fragment
@@ -647,8 +653,10 @@ placed below another's, as its child or owned by it, the listener's
 chain stops below the process boundary, and the parent's provider calls
 are pinned while the listener reads and during a focus-now query
 (`uia_focus_chains_stop_below_the_process_boundary`); above a parent
-that has a UIA provider, the outpost continues the chain through MSAA's
-bridge with no connection to it
+that has a UIA provider, the outpost continues the chain through MSAA
+with no UIA call into it, and UIA's client side connects to the parent
+as the outpost's read returns the child window's element, which both
+tests pin by the parent's `WM_GETOBJECT`s by kind
 (`uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider`). A container's selected child is pinned over
 `tests/fixtures/ancestry.json`, through a list's `SelectionPattern2` and
 through a tab control's `Selection` pattern, classically and in the

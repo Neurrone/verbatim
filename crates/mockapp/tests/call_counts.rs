@@ -1521,7 +1521,14 @@ fn the_listener_makes_no_connection() {
 /// one when the read returns it as an ancestor. UIA's client side sends
 /// them itself whenever a call on a held element hands it an element of a
 /// window whose parent is another process's; no walk step is made. An
-/// owner receives none.
+/// owner receives none. The outpost's reads of the focus return the child
+/// window's element too, so the parent receives the same message from
+/// them, which the parent's `WM_GETOBJECT`s, split by kind, show
+/// (decision 13).
+#[expect(
+    clippy::too_many_lines,
+    reason = "each read's calls and the parent's, pinned in full for both placements and paths"
+)]
 fn uia_focus_chains_stop_below_the_process_boundary() {
     for (owned, remote) in [(false, true), (false, false), (true, true), (true, false)] {
         let path = match (owned, remote) {
@@ -1585,9 +1592,24 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
             "the listener's chain ({path})"
         );
 
+        common::reset_hits(parent);
         let reported = outpost.focus(judged.into_fact(0));
         // The parent's client area and the chain above it through MSAA,
-        // with no probe of the other process's window.
+        // with no probe of the other process's window. UIA's client side
+        // still sends a parent its connection message as the outpost's
+        // read of the focus returns the child window's element, once by
+        // the remote program and twice classically, as it does for the
+        // listener (decision 13); an owner receives none.
+        let connection_messages = match (owned, remote) {
+            (true, _) => 0,
+            (false, true) => 1,
+            (false, false) => 2,
+        };
+        assert_eq!(
+            common::read_get_objects(parent),
+            get_objects(connection_messages, 0, &[("OBJID_CLIENT", 1)]),
+            "the parent's WM_GETOBJECTs while the outpost read ({path})"
+        );
         assert_eq!(
             reported.calls,
             calls(0, 9, 0),
@@ -1619,6 +1641,11 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
             "the parent's calls during the focus-now query ({path})"
         );
         assert_eq!(
+            common::read_get_objects(parent),
+            get_objects(u32::from(!owned), 0, &[("OBJID_CLIENT", 1)]),
+            "the parent's WM_GETOBJECTs during the focus-now query ({path})"
+        );
+        assert_eq!(
             now.ancestors
                 .iter()
                 .chain(std::iter::once(&now.node))
@@ -1642,8 +1669,9 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
 /// focus-now query, for the child and for the owned window, by either
 /// read: its client area and the chain above it through MSAA, the
 /// classic read stopping below the boundary as the remote one does. A
-/// parent also receives one `WM_GETOBJECT` more, which UIA's client side
-/// sends as the read returns the child window's element (decision 13 of
+/// parent also receives one `WM_GETOBJECT` more, `UiaRootObjectId` with a
+/// nonzero `wParam`, which UIA's client side sends as the read returns
+/// the child window's element (decision 13 of
 /// `docs/design/listener-without-connections.md`). Before the outposts
 /// stopped below the boundary, the classic read's step up into the parent
 /// cost it 6 `WM_GETOBJECT`s and 27 MSAA calls (5 and 27 for an owner).
@@ -1676,12 +1704,16 @@ const FOCUS_NOW_PARENT_HITS: [&[(&str, u32)]; 2] = [
 
 /// Above a parent window of another process that has a UIA provider, as a
 /// host of web content can have, the outpost continues the chain through
-/// MSAA, which reaches the parent through UIA's MSAA bridge, and makes no
-/// connection to it: no probe, no lookup by its handle, and no UIA step
+/// MSAA, which reads the parent through its standard proxy, since
+/// mockapp's provider window answers only `UiaRootObjectId`, and makes no
+/// UIA call into it: no probe, no lookup by its handle, and no UIA step
 /// into it (`docs/design/listener-without-connections.md`, section 4.4).
-/// So the parent is named and roled as MSAA gives it. Both of the
-/// outpost's reads, the listener's chain continued and a focus-now query,
-/// by the remote program and classically.
+/// So the parent is named and roled as MSAA gives it. UIA's client side
+/// still connects to the parent as the outpost's read returns the child
+/// window's element (decision 13), which the parent's `WM_GETOBJECT`s,
+/// split by kind, show. Both of the outpost's reads, the listener's chain
+/// continued and a focus-now query, by the remote program and
+/// classically.
 fn uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider() {
     for remote in [true, false] {
         let path = if remote { "remote" } else { "classic" };
@@ -1702,9 +1734,10 @@ fn uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider() {
         app.send("set-focus first");
         let focused = under_test.focused(hwnd);
         let (judged, _) = outpost.listener_read(&focused);
+        common::reset_hits(parent);
         let reported = outpost.focus(judged.into_fact(0));
-        // The parent's client area through UIA's MSAA bridge, named by its
-        // title, and the chain above it, all MSAA calls.
+        // The parent's client area through MSAA's standard proxy, named by
+        // its title, and the chain above it, all MSAA calls.
         let expected_chain = [
             Some(parent_title.as_str()),
             Some("Mockapp Counts Fixture"),
@@ -1721,6 +1754,26 @@ fn uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider() {
             expected_chain,
             "the outpost's chain ({path})"
         );
+        // As the outpost's read returns the child window's element, UIA's
+        // client side connects to the parent's provider, once by the
+        // remote program and twice classically, as it does for the
+        // listener (decision 13); MSAA's standard proxy takes the rest.
+        let connections = if remote { 1 } else { 2 };
+        assert_eq!(
+            common::read_get_objects(parent),
+            get_objects(connections, connections, PROXY_GET_OBJECTS),
+            "the parent's WM_GETOBJECTs while the outpost read ({path})"
+        );
+        assert_eq!(
+            common::read_hits(parent),
+            [
+                ("WM_GETOBJECT", 8 + 2 * connections),
+                ("ProviderOptions", 6 * connections),
+                ("HostRawElementProvider", 2 * connections),
+                ("Navigate", 2 * connections)
+            ],
+            "the parent's calls while the outpost read ({path})"
+        );
         outpost.read_focus_as(focused.live().element());
         common::reset_hits(parent);
         let now = outpost
@@ -1735,9 +1788,15 @@ fn uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider() {
             expected_chain,
             "the focus now's chain ({path})"
         );
-        // The bridge serves the MSAA reads from the parent's provider, and
-        // UIA's client side sends the parent its messages as the child
-        // window's element is returned; no UIA call of the outpost's.
+        // The query's read connects to the parent's provider once, as the
+        // child window's element is returned, by either path; MSAA's
+        // standard proxy takes the rest. No UIA call of the outpost's
+        // reaches the parent.
+        assert_eq!(
+            common::read_get_objects(parent),
+            get_objects(1, 1, PROXY_GET_OBJECTS),
+            "the parent's WM_GETOBJECTs during the focus-now query ({path})"
+        );
         assert_eq!(
             common::read_hits(parent),
             [
@@ -1752,6 +1811,34 @@ fn uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider() {
         app.quit();
         parent_app.quit();
     }
+}
+
+/// The `WM_GETOBJECT`s MSAA sends a window with a UIA provider and no
+/// MSAA client of its own as an outpost reads its client area and the
+/// chain above it: three for the client area, one for the window object,
+/// and one class-name query after each, as it chooses its standard proxy.
+const PROXY_GET_OBJECTS: &[(&str, u32)] = &[
+    ("OBJID_CLIENT", 3),
+    ("OBJID_WINDOW", 1),
+    ("OBJID_QUERYCLASSNAMEIDX", 4),
+];
+
+/// `read_get_objects`'s answer for `nonzero` `UiaRootObjectId` messages
+/// with a nonzero `wParam`, the message a UIA connection begins with,
+/// `zero` with a zero one, and then `others`, in counter order.
+fn get_objects(
+    nonzero: u32,
+    zero: u32,
+    others: &[(&'static str, u32)],
+) -> Vec<(&'static str, u32)> {
+    [
+        ("UiaRootObjectId, nonzero wParam", nonzero),
+        ("UiaRootObjectId, zero wParam", zero),
+    ]
+    .into_iter()
+    .filter(|&(_, count)| count != 0)
+    .chain(others.iter().copied())
+    .collect()
 }
 
 /// A mockapp MSAA window for another mockapp's window to be placed below

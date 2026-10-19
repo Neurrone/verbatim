@@ -487,6 +487,32 @@ pub fn read_hits(hwnd: HWND) -> Vec<(&'static str, u32)> {
         .collect()
 }
 
+/// The `WM_GETOBJECT`s mockapp's host window took since the counters were
+/// last reset ([`reset_hits`]), by object id and `wParam`, the kinds that
+/// are not zero, in counter order.
+#[must_use]
+pub fn read_get_objects(hwnd: HWND) -> Vec<(&'static str, u32)> {
+    hits::GetObjectKind::ALL
+        .iter()
+        .enumerate()
+        .filter_map(|(index, kind)| {
+            // SAFETY: as in `reset_hits`; the index travels as a plain
+            // integer.
+            let count = unsafe {
+                windows::Win32::UI::WindowsAndMessaging::SendMessageW(
+                    hwnd,
+                    hits::WM_GET_OBJECTS_READ,
+                    Some(windows::Win32::Foundation::WPARAM(index)),
+                    None,
+                )
+            }
+            .0;
+            let count = u32::try_from(count).unwrap_or(u32::MAX);
+            (count != 0).then(|| (kind.name(), count))
+        })
+        .collect()
+}
+
 /// How many client registrations for UIA event `event` are live on
 /// mockapp's window, as UIA has reported them to its fragment root: added
 /// less removed. Counted only by a mockapp started with

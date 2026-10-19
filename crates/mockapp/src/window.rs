@@ -32,7 +32,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{PCWSTR, w};
 use windows_core::Interface;
 
-use crate::hits::{self, WM_ADVISED_READ, WM_HITS_READ, WM_HITS_RESET};
+use crate::hits::{self, WM_ADVISED_READ, WM_GET_OBJECTS_READ, WM_HITS_READ, WM_HITS_RESET};
 use crate::stdin::{self, Command};
 use crate::tree::SharedTree;
 use crate::{msaa, uia};
@@ -255,7 +255,7 @@ unsafe extern "system" fn wnd_proc(
 ) -> LRESULT {
     match msg {
         WM_GETOBJECT => {
-            hits::hit(hits::Method::GetObject);
+            hits::hit_get_object(wparam.0, lparam.0);
             // SAFETY: `GWLP_USERDATA` was set right after `CreateWindowExW`
             // and never cleared, so any `WM_GETOBJECT` reaching this window
             // has a valid context pointer.
@@ -273,6 +273,10 @@ unsafe extern "system" fn wnd_proc(
         WM_HITS_RESET => {
             hits::reset();
             return LRESULT(0);
+        }
+        WM_GET_OBJECTS_READ => {
+            let count = hits::read_get_objects(wparam.0);
+            return LRESULT(isize::try_from(count).unwrap_or(isize::MAX));
         }
         WM_ADVISED_READ => {
             let event = i32::try_from(wparam.0).unwrap_or(0);

@@ -28,6 +28,15 @@
 //!
 //! - [`WM_ADVISED_READ`]: `wParam` is the event's id, and the result is
 //!   its live registrations.
+//!
+//! The `WM_GETOBJECT`s the host window takes are also counted by their
+//! object id, and for `UiaRootObjectId` by `wParam` ([`GetObjectKind`]),
+//! so a test can tell UIA's connection messages, `UiaRootObjectId` with a
+//! nonzero `wParam`, from MSAA's, and read with [`WM_GET_OBJECTS_READ`]; [`WM_HITS_RESET`] zeroes
+//! them too.
+//!
+//! - [`WM_GET_OBJECTS_READ`]: `wParam` is the kind's index in
+//!   [`GetObjectKind::ALL`], and the result is its count.
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -45,6 +54,121 @@ pub(crate) const WM_HITS_RESET: u32 = WM_APP + 3;
 /// Reads how many registrations for one event are live: `wParam` is the
 /// event's id.
 pub(crate) const WM_ADVISED_READ: u32 = WM_APP + 4;
+
+/// Reads how many `WM_GETOBJECT`s of one kind the host window took:
+/// `wParam` is the kind's index in [`GetObjectKind::ALL`].
+pub(crate) const WM_GET_OBJECTS_READ: u32 = WM_APP + 7;
+
+/// A `WM_GETOBJECT` the host window took, by its object id (`lParam`), and
+/// for `UiaRootObjectId` by whether its `wParam` is zero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GetObjectKind {
+    /// `UiaRootObjectId` with a nonzero `wParam`, the message a UIA
+    /// connection begins with.
+    UiaRootNonzero,
+    /// `UiaRootObjectId` with a zero `wParam`.
+    UiaRootZero,
+    /// `OBJID_CLIENT`, MSAA's request for the client area.
+    Client,
+    /// `OBJID_WINDOW`, MSAA's request for the window object.
+    Window,
+    /// `OBJID_QUERYCLASSNAMEIDX`, which MSAA sends to choose its standard
+    /// proxy for a window that does not answer its request.
+    QueryClassNameIdx,
+    /// Any other object id.
+    Other,
+}
+
+/// `UiaRootObjectId`, the object id UIA asks a window's provider by.
+const UIA_ROOT_OBJECT_ID: i32 = -25;
+
+/// `OBJID_CLIENT`.
+const OBJID_CLIENT: i32 = -4;
+
+/// `OBJID_WINDOW`.
+const OBJID_WINDOW: i32 = 0;
+
+/// `OBJID_QUERYCLASSNAMEIDX`.
+const OBJID_QUERYCLASSNAMEIDX: i32 = -12;
+
+impl GetObjectKind {
+    /// Every kind, in counter order: a kind's index here is the `wParam`
+    /// that reads it.
+    pub(crate) const ALL: [GetObjectKind; 6] = [
+        GetObjectKind::UiaRootNonzero,
+        GetObjectKind::UiaRootZero,
+        GetObjectKind::Client,
+        GetObjectKind::Window,
+        GetObjectKind::QueryClassNameIdx,
+        GetObjectKind::Other,
+    ];
+
+    /// The kind of a `WM_GETOBJECT` with these parameters; the object id is
+    /// 32 bits, zero-extended into `lParam`.
+    #[allow(
+        dead_code,
+        reason = "mockapp counts by it; the tests compile this file too"
+    )]
+    pub(crate) fn of(wparam: usize, lparam: isize) -> Self {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "the object id is the low 32 bits of lParam"
+        )]
+        let object = lparam as i32;
+        match object {
+            UIA_ROOT_OBJECT_ID if wparam != 0 => GetObjectKind::UiaRootNonzero,
+            UIA_ROOT_OBJECT_ID => GetObjectKind::UiaRootZero,
+            OBJID_CLIENT => GetObjectKind::Client,
+            OBJID_WINDOW => GetObjectKind::Window,
+            OBJID_QUERYCLASSNAMEIDX => GetObjectKind::QueryClassNameIdx,
+            _ => GetObjectKind::Other,
+        }
+    }
+
+    /// The kind's name: its object id, and for `UiaRootObjectId` its
+    /// `wParam`.
+    #[allow(
+        dead_code,
+        reason = "the tests read it, compiling this file into their own module"
+    )]
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            GetObjectKind::UiaRootNonzero => "UiaRootObjectId, nonzero wParam",
+            GetObjectKind::UiaRootZero => "UiaRootObjectId, zero wParam",
+            GetObjectKind::Client => "OBJID_CLIENT",
+            GetObjectKind::Window => "OBJID_WINDOW",
+            GetObjectKind::QueryClassNameIdx => "OBJID_QUERYCLASSNAMEIDX",
+            GetObjectKind::Other => "another object id",
+        }
+    }
+}
+
+/// One counter per [`GetObjectKind`], in [`GetObjectKind::ALL`] order.
+static GET_OBJECTS: [AtomicU32; GetObjectKind::ALL.len()] =
+    [const { AtomicU32::new(0) }; GetObjectKind::ALL.len()];
+
+/// Counts one `WM_GETOBJECT` with these parameters, as a hit of
+/// [`Method::GetObject`] and by its kind.
+#[allow(
+    dead_code,
+    reason = "mockapp counts with it; the tests compile this file too"
+)]
+pub(crate) fn hit_get_object(wparam: usize, lparam: isize) {
+    GET_OBJECTS[GetObjectKind::of(wparam, lparam) as usize].fetch_add(1, Ordering::Relaxed);
+    hit(Method::GetObject);
+}
+
+/// The count for the kind at `index` in [`GetObjectKind::ALL`], or 0 for
+/// an index past the end.
+#[allow(
+    dead_code,
+    reason = "mockapp answers with it; the tests compile this file too"
+)]
+pub(crate) fn read_get_objects(index: usize) -> u32 {
+    GET_OBJECTS
+        .get(index)
+        .map_or(0, |counter| counter.load(Ordering::Relaxed))
+}
 
 /// A provider method mockapp counts calls to, named as its interface names
 /// it.
@@ -493,9 +617,9 @@ pub(crate) fn read(index: usize) -> u32 {
         .map_or(0, |counter| counter.load(Ordering::Relaxed))
 }
 
-/// Zeroes every counter.
+/// Zeroes every counter, the `WM_GETOBJECT` kinds' too.
 pub(crate) fn reset() {
-    for counter in &HITS {
+    for counter in HITS.iter().chain(&GET_OBJECTS) {
         counter.store(0, Ordering::Relaxed);
     }
 }

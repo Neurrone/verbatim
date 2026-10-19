@@ -230,8 +230,12 @@ or owner through MSAA, from its client area up, whether that window has
 a UIA provider or not (`read::uia_chain_onward`, for the listener's read
 and a focus-now read alike), as NVDA switches API at a window boundary;
 a parent with a provider, such as a WinUI host of WebView2 content, is
-reached through UIA's MSAA bridge, named and roled as MSAA gives it,
-where NVDA reads it through UIA (sections 4.3 and 4.4 of that design).
+read through MSAA too, named and roled as MSAA gives it, where NVDA
+reads it through UIA (sections 4.3 and 4.4 of that design). UIA's
+client side still sends such a parent the message a connection begins
+with, and connects to one with a provider, whenever the outpost's read
+returns the child window's element: an accepted limit, shared with the
+listener and with NVDA (decision 13 of that design).
 The outpost connects to, probes and walks up into only the windows its
 application serves (`read::serves`, by the window's provider process):
 its own UIA walk (`read::uia_ancestors`, for the ancestors query and a
