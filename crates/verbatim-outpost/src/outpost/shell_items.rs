@@ -11,10 +11,19 @@
 //! `verbatim_uia::ShellButton`, and every named, on-screen button with a
 //! rectangle becomes a [`ShellItem`]. A window the outpost's application
 //! does not serve is not read: the outpost connects only to its own
-//! application's windows (section 4.3 of the same design). The shell
-//! windows are read through UIA whatever their provider, so the lookup
-//! takes no proxy rule (`Uia::any_window_element`). The worker's deadline
-//! for the query bounds the walk.
+//! application's windows (section 4.3 of the same design). `Shell_TrayWnd`
+//! and `TrayNotifyWnd` are read through UIA whatever their provider, so
+//! their lookup takes no proxy rule (`Uia::any_window_element`); the
+//! overflow flyout's window has a provider of its own, so its lookup takes
+//! the rule (`Uia::window_element`), and a lookup refused, as one of a
+//! shell busy past the connection timeout is, reads none of its items.
+//!
+//! The walk has a time budget, [`WALK_BUDGET`], asked before each of its
+//! calls after the first: once it has passed, the walk makes no more and
+//! the list holds the items read by then, rather than the worker's
+//! deadline for the query abandoning the walk with none.
+
+use std::time::Duration;
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{IUIAutomationTreeWalker, UIA_ButtonControlTypeId};
@@ -26,6 +35,7 @@ use verbatim_uia::{Cached, Direction, Request, ShellButton, Uia};
 
 use super::Context;
 use super::read::{Client, ReadError, serves};
+use crate::arbitration::time_limit;
 
 /// Depth cap for the control-view walk; the shell trees of interest are
 /// shallow, so anything deeper is runaway recursion, not real items.
@@ -34,6 +44,13 @@ const MAX_DEPTH: u32 = 16;
 /// Total node cap across one walk, bounding the worst case against an
 /// adversarially deep or wide provider.
 const MAX_NODES: usize = 1024;
+
+/// How long the walk may take before it makes no more calls and answers
+/// the items read by then. With one call under way when it passes, which
+/// UIA's transaction timeout ends after 5 seconds, a walk still answers
+/// within the worker's 5-second deadline for the query unless that call
+/// takes longer than 3 seconds.
+const WALK_BUDGET: Duration = Duration::from_secs(2);
 
 /// The items of `kind`, read in the outpost's application.
 pub(super) fn shell_items(
@@ -57,11 +74,14 @@ pub(super) fn shell_items(
             "the taskbar window is another application's".to_owned(),
         ));
     }
+    let clock = context.clock();
+    let out_of_time = time_limit(&clock, WALK_BUDGET);
     let walk = Walk {
         context,
         uia,
         walker: &walker,
         request: &request,
+        out_of_time: &out_of_time,
     };
     let mut items = Vec::new();
     match kind {
@@ -69,19 +89,42 @@ pub(super) fn shell_items(
             let notify = notification_area(shell).ok_or_else(|| {
                 ReadError::Failed("the taskbar's notification area window was not found".to_owned())
             })?;
-            walk.collect_from_window(notify, None, &mut items);
+            walk.collect_from_window(notify, None, Lookup::AnyProvider, &mut items);
             if let Some(overflow) = visible_overflow_window() {
-                walk.collect_from_window(overflow, None, &mut items);
+                walk.collect_from_window(overflow, None, Lookup::ProxyRule, &mut items);
             }
         }
         ShellItemKind::Taskbar => {
             // The notification area lives inside Shell_TrayWnd; excluding
             // its subtree is what makes this the taskbar list rather than
             // both lists at once.
-            walk.collect_from_window(shell, notification_area(shell), &mut items);
+            walk.collect_from_window(
+                shell,
+                notification_area(shell),
+                Lookup::AnyProvider,
+                &mut items,
+            );
         }
     }
+    if out_of_time() {
+        tracing::debug!(
+            ?kind,
+            items = items.len(),
+            "the shell walk ran out of time; the list is partial"
+        );
+    }
     Ok(items)
+}
+
+/// How a shell window's element is looked up.
+#[derive(Clone, Copy)]
+enum Lookup {
+    /// Whatever serves it, UIA's own proxies included
+    /// (`Uia::any_window_element`): `Shell_TrayWnd` and `TrayNotifyWnd`.
+    AnyProvider,
+    /// Under the proxy rule (`Uia::window_element`): the overflow flyout's
+    /// window.
+    ProxyRule,
 }
 
 /// The notification area window: the `TrayNotifyWnd` child of the taskbar
@@ -130,19 +173,36 @@ struct Walk<'a> {
     uia: &'a Uia,
     walker: &'a IUIAutomationTreeWalker,
     request: &'a Request<ShellButton>,
+    /// Whether the walk's [`WALK_BUDGET`] has passed, asked before each
+    /// call after the first.
+    out_of_time: &'a dyn Fn() -> bool,
 }
 
 impl Walk<'_> {
-    /// Collects every qualifying button under `hwnd` into `items`, skipping
-    /// the subtree rooted at the window `exclude` (when given). A window
-    /// the outpost's application does not serve is not read.
-    fn collect_from_window(&self, hwnd: HWND, exclude: Option<HWND>, items: &mut Vec<ShellItem>) {
+    /// Collects every qualifying button under `hwnd`, looked up as
+    /// `lookup` says, into `items`, skipping the subtree rooted at the
+    /// window `exclude` (when given). A window the outpost's application
+    /// does not serve is not read.
+    fn collect_from_window(
+        &self,
+        hwnd: HWND,
+        exclude: Option<HWND>,
+        lookup: Lookup,
+        items: &mut Vec<ShellItem>,
+    ) {
         let window = hwnd.0 as isize;
         if !serves(self.context, window) {
             tracing::debug!(window, "a shell window of another application is not read");
             return;
         }
-        let root = match self.uia.any_window_element(window, self.request) {
+        if (self.out_of_time)() {
+            return;
+        }
+        let root = match lookup {
+            Lookup::AnyProvider => self.uia.any_window_element(window, self.request),
+            Lookup::ProxyRule => self.uia.window_element(window, self.request),
+        };
+        let root = match root {
             Ok(element) => element,
             Err(error) => {
                 tracing::warn!(%error, "shell window has no UIA element");
@@ -180,7 +240,7 @@ impl Walk<'_> {
             // Tray and taskbar buttons carry no nested items worth walking.
             return;
         }
-        if depth >= MAX_DEPTH {
+        if depth >= MAX_DEPTH || (self.out_of_time)() {
             return;
         }
         // An error from the walker means "no child" or "no sibling".
@@ -195,6 +255,9 @@ impl Walk<'_> {
                 return;
             }
             self.collect_recursive(&current, exclude, depth + 1, visited, items);
+            if (self.out_of_time)() {
+                return;
+            }
             next = current
                 .live()
                 .walk(self.walker, Direction::NextSibling, self.request)

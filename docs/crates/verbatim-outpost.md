@@ -1758,8 +1758,12 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   the notification area's subtree) in the control view, each element as
   the `ShellButton` shape, and answers every named, on-screen button with
   a rectangle as a `ShellItem`; it reads no window its application does
-  not serve, looks the windows up without the proxy rule
-  (`any_window_element`), and has the walk's deadline.
+  not serve, looks `Shell_TrayWnd` and `TrayNotifyWnd` up without the
+  proxy rule (`any_window_element`) and the overflow flyout's window
+  under it (`window_element`), and asks its time budget (`WALK_BUDGET`,
+  2 seconds) before each call after the first, answering the items read
+  by then once it has passed, within the worker's 5-second deadline for
+  the query.
   `DumpTree` walks the target's foreground window (or
   its first visible top-level window) through its backend — UIA via
   `Uia::tree`, every node read as the `TreeDump` shape, MSAA via
