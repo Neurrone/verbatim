@@ -85,6 +85,8 @@ In the "no" trials of `e39`, conhost received UIA's request 24 to 31 ms after th
 
 In the end-to-end suite this is inferred to be why `conhost_two_windows` fails about 1 run in 20: each failing run's probe came from a spare outpost newly given the second console's conhost, 1 to 3 ms after the window's foreground event, with no Verbatim call pending in that conhost, and one of the kept runs already had the per-application lock (`kept-runs/` in this fault's experiments folder, cited in `e38`).
 
+The outposts keep this call as their probe of their own application's windows, so they meet a 3-second verdict on other applications' new windows too. In the listener design's first step (`docs/design/listener-without-connections.md`, section 10, step 1; evidence in `target/e2e-evidence/listener-no-connections/step1/`, not committed), 10 of the outposts' probes over 170 scenario runs took 2.8 to 3.3 seconds, all in `explorer_folder_window` and all on File Explorer `DirectUIHWND` windows, none on conhost: 9 answered "yes" and 1 "no", on the "Explorer Pane" window, an ancestor of the focus. In 20 runs of `measure_repeat_explorer`, alternated between the build before that step and the step, an outpost's first probe answered "no" after about 3 seconds twice in the build before, both on the "Explorer Pane", and once with the step, after 3,008 ms on the "Items View" window the listener read; that run still announced all 401 of its focuses.
+
 #### Not affected
 
 - With no other process holding a handler, no "no" in 110 trials (`e38`) and 180 (`e37`), at delays from 0 to 100 ms; another process that fetched the desktop root and registered nothing, 0 of 40.

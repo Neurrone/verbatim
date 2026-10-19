@@ -100,8 +100,15 @@ its measurements, with the corrections of
   `UiaHasServerSideProvider`'s 3-second false "no" for a new console
   window, which the outposts keep ([UIA faults](uia-bugs.md), the entry
   for that call and a new conhost window), and
-  `windows_terminal_two_windows`, from a typed character Windows Terminal
-  occasionally does not echo (the item above).
+  `windows_terminal_two_windows`, which in that step's runs failed 2 of
+  10 because Windows Terminal raised focus events for its terminal
+  control under two runtime ids, one rooted at the control's window
+  (`[42, <window>, 4, n]`) and one of the XAML framework's own (`[14,
+  ..., 4, n]`): the listener's same-element check took them for
+  different elements, and "<title> terminal" was spoken two or three
+  times where the scenario allows one ([UIA faults](uia-bugs.md),
+  "Windows Terminal raises focus from a second runtime identity";
+  evidence under `target/e2e-evidence/listener-no-connections/step1/scen/`).
 
 - A throwaway prototype of holding keys, as NVDA holds a key with
   a script while it reads the caret, measured, with a written analysis;
