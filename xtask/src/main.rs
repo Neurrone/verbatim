@@ -98,7 +98,7 @@ fn main() -> ExitCode {
                 "  trace  WPR traces of the CPU's scheduling: start, stop, waits <trace.etl>, or scenario <name> to trace a window inside one scenario and read it (docs/tooling/measuring.md)"
             );
             eprintln!(
-                "  measure  run the measure set on this machine and report each latency stage's distribution (cargo xtask measure [--release]; docs/tooling/measuring.md)"
+                "  measure  run the measure set on this machine and report each latency stage's distribution (cargo xtask measure [--release | --verbatim-exe <path>]; docs/tooling/measuring.md)"
             );
             eprintln!(
                 "  windows-terminal  download and unpack the terminal scenarios' pinned portable Windows Terminal into target/e2e-stage"

@@ -191,6 +191,19 @@ fn value(args: &[String], flag: &str) -> Option<String> {
     values(args, flag).into_iter().next()
 }
 
+/// The build a run stages, as a default label names it: `release`,
+/// `debug`, or `exe` for another build's `verbatim.exe`, whose build the
+/// command does not know.
+fn build_name(options: &RunOptions) -> &'static str {
+    if options.verbatim_exe.is_some() {
+        "exe"
+    } else if options.release {
+        "release"
+    } else {
+        "debug"
+    }
+}
+
 fn now_label() -> String {
     let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -225,13 +238,8 @@ fn run_measure(args: &[String]) -> Result<(), String> {
     if names.is_empty() {
         names = MEASURE_SET.iter().map(|&name| name.to_owned()).collect();
     }
-    let label = value(args, "--label").unwrap_or_else(|| {
-        format!(
-            "measure-{}-{}",
-            if options.release { "release" } else { "debug" },
-            now_label()
-        )
-    });
+    let label = value(args, "--label")
+        .unwrap_or_else(|| format!("measure-{}-{}", build_name(&options), now_label()));
     let folder = output_folder(&label)?;
     let agent = Agent::start(&folder)?;
     let mut results = String::new();
@@ -427,7 +435,8 @@ fn run_trace_scenario(args: &[String]) -> Result<(), String> {
         std::env::var_os("VERBATIM_E2E_VERBATIM_EXE").is_some(),
     )?;
     let keep = args.iter().any(|arg| arg == "--keep");
-    let label = value(args, "--label").unwrap_or_else(|| format!("{name}-{}", now_label()));
+    let label = value(args, "--label")
+        .unwrap_or_else(|| format!("{name}-{}-{}", build_name(&options), now_label()));
     let folder = output_folder(&label)?;
     let reader = build_reader()?;
 
@@ -499,7 +508,12 @@ fn run_options(args: &[String], variable_set: bool) -> Result<RunOptions, String
         return Err(VARIABLE_SET.to_owned());
     }
     let release = args.iter().any(|arg| arg == "--release");
-    let verbatim_exe = value(args, "--verbatim-exe").map(PathBuf::from);
+    // Absolute, because the scenarios run in `crates/verbatim-e2e`, not
+    // where the command was given.
+    let verbatim_exe = value(args, "--verbatim-exe")
+        .map(|exe| std::path::absolute(&exe))
+        .transpose()
+        .map_err(|error| format!("--verbatim-exe: {error}"))?;
     if let Some(exe) = &verbatim_exe {
         if release {
             return Err("--verbatim-exe and --release cannot be combined".to_owned());
@@ -623,6 +637,27 @@ mod tests {
         assert_eq!(
             run_options(&args, false).err(),
             Some("--verbatim-exe and --release cannot be combined".to_owned())
+        );
+    }
+
+    /// A relative path is taken from where the command was given, as the
+    /// scenarios, which run elsewhere, are handed it.
+    #[test]
+    fn a_relative_build_path_is_made_absolute() {
+        let args = arguments(&[
+            "measure_keys_text_box",
+            "--verbatim-exe",
+            r"no-such-build\verbatim.exe",
+        ]);
+        let folder = std::env::current_dir()
+            .expect("the current folder")
+            .join("no-such-build");
+        assert_eq!(
+            run_options(&args, false).err(),
+            Some(format!(
+                "{} lacks what a run stages: verbatim.exe, verbatim-outpost.exe, verbatim-synth-host.exe, mockapp.exe, espeak-ng-data, sounds",
+                folder.display()
+            ))
         );
     }
 
