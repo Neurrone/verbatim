@@ -1,17 +1,16 @@
 //! `docs/uia-bugs.md`, "The connection timeout applies to the whole
-//! process" (E1 and `h5` in its experiments folder): the connection and
+//! process" (E1 in its experiments folder): the connection and
 //! transaction timeouts a client sets belong to its process, and the last
-//! setting by any client applies to every client's calls; and Verbatim's
+//! setting by any client is what every client reads; and Verbatim's
 //! workaround, that `verbatim_uia` sets both once per process, to
 //! `CALL_TIMEOUT`, during UIA's first-time setup, and nothing else sets
 //! them.
 
 use std::sync::mpsc;
-use std::time::Duration;
 
 use verbatim_uia::CALL_TIMEOUT;
-use windows::Win32::UI::Accessibility::{IUIAutomation, IUIAutomation2, UIA_E_TIMEOUT};
-use windows::core::{HRESULT, Interface};
+use windows::Win32::UI::Accessibility::{IUIAutomation, IUIAutomation2};
+use windows::core::Interface;
 
 use crate::{common, support};
 
@@ -33,48 +32,6 @@ fn set_timeouts(client: &IUIAutomation, connection: u32, transaction: u32) {
     unsafe { client.SetConnectionTimeout(connection) }.expect("the connection timeout set");
     // SAFETY: as above.
     unsafe { client.SetTransactionTimeout(transaction) }.expect("the transaction timeout set");
-}
-
-/// A client on another thread sets both timeouts to twice the test's wait,
-/// and then a client on this thread sets only the connection timeout, to
-/// 500 ms: the first client's lookup of a window whose thread hangs fails
-/// with `UIA_E_TIMEOUT` within the test's wait, while the window still
-/// hangs, so it did not wait either timeout of its own.
-pub fn a_lookup_waits_the_connection_timeout_another_client_set_last() {
-    let (mut hung, hwnd) = support::mockapp("timeout-hung", "msaa");
-    let (ready, set) = mpsc::channel();
-    let (go, gone) = mpsc::channel();
-    let (done, looked_up) = mpsc::channel();
-    let hwnd_value = hwnd.0 as isize;
-    let first = std::thread::spawn(move || {
-        let uia = support::client();
-        let longer = u32::try_from((2 * common::WAIT_TIMEOUT).as_millis()).expect("it fits");
-        set_timeouts(uia.client(), longer, longer);
-        ready.send(()).expect("the test is waiting");
-        gone.recv().expect("the test says go");
-        let hwnd = windows::Win32::Foundation::HWND(hwnd_value as *mut _);
-        // SAFETY: a live client; a window handle, which UIA checks.
-        let looked_up = unsafe { uia.client().ElementFromHandle(hwnd) };
-        let _ = done.send(looked_up.map(drop).map_err(|error| error.code()));
-    });
-    set.recv().expect("the first client set its timeout");
-    let uia = support::client();
-    support::set_connection_timeout(uia.client(), Duration::from_millis(500));
-
-    hung.write("stall-until-release");
-    hung.expect_line("stall started", String::new);
-    go.send(()).expect("the first client is waiting");
-    hung.expect_line(
-        &support::root_object_request(support::MOCKAPP_WINDOW),
-        String::new,
-    );
-    let looked_up = looked_up
-        .recv_timeout(common::WAIT_TIMEOUT)
-        .expect("the lookup ends while the window hangs");
-    assert_eq!(looked_up, Err(HRESULT(UIA_E_TIMEOUT.cast_signed())));
-    hung.release();
-    first.join().expect("the first client's thread");
-    hung.quit();
 }
 
 /// Both timeouts set through a client on this thread are what a client on

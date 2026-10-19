@@ -466,8 +466,8 @@ Automation or show that Verbatim's workaround for one still holds, each
 file named after the entry's heading in `docs/uia-bugs.md`, and
 `support.rs` with the mechanics they share. A test that needs a second
 UIA client process starts the binary again with an environment variable
-that `main` recognizes: an element's owner, a remote operation's sender,
-or a process racing UIA's first-time setup. Every test file runs through
+that `main` recognizes: an element's owner, or a process racing UIA's
+first-time setup. Every test file runs through
 `tests/common/harness.rs` instead of libtest (`harness = false`): it runs
 and reports the tests as libtest does, then ends the process without
 running DLL detach code, because

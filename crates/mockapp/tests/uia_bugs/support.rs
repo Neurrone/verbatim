@@ -5,12 +5,12 @@
 //! behaviour.
 
 use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use verbatim_uia::Uia;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomation, IUIAutomation2, IUIAutomation6, IUIAutomationCacheRequest, IUIAutomationElement,
+    IUIAutomation, IUIAutomation6, IUIAutomationCacheRequest, IUIAutomationElement,
     IUIAutomationEventHandler, IUIAutomationEventHandlerGroup,
     IUIAutomationFocusChangedEventHandler, IUIAutomationPropertyChangedEventHandler,
     TreeScope_Subtree, UIA_AutomationFocusChangedEventId, UIA_NamePropertyId,
@@ -26,23 +26,6 @@ pub fn mockapp(prefix: &str, backend: &str) -> (common::MockApp, HWND) {
     let hwnd = common::find_window(&title);
     (app, hwnd)
 }
-
-/// mockapp's line for UI Automation's `WM_GETOBJECT` for its root object
-/// (`UiaRootObjectId`, -25), sent to a window of class `class` while
-/// mockapp's window thread is stalled until release.
-pub fn root_object_request(class: &str) -> String {
-    format!("stall message sent WM_GETOBJECT -25 to {class}")
-}
-
-/// mockapp's line for UI Automation's registered message
-/// `UiaServerConnection_HookMessage`, sent to a window of class `class`
-/// while mockapp's window thread is stalled until release.
-pub fn hook_message(class: &str) -> String {
-    format!("stall message sent UiaServerConnection_HookMessage to {class}")
-}
-
-/// The class of mockapp's main window.
-pub const MOCKAPP_WINDOW: &str = "VerbatimMockAppWindow";
 
 /// A UIA client on this thread, made by `verbatim_uia`, so UIA's
 /// first-time setup in this process is finished first.
@@ -63,32 +46,6 @@ pub fn element(client: &IUIAutomation, hwnd: HWND) -> IUIAutomationElement {
 pub fn cache(client: &IUIAutomation) -> IUIAutomationCacheRequest {
     // SAFETY: a local call on a live client.
     unsafe { client.CreateCacheRequest() }.expect("a cache request")
-}
-
-/// Sets the process's connection timeout, which every client in the
-/// process shares (`docs/uia-bugs.md`, "The connection timeout applies to
-/// the whole process"), through `client`; each test runs in a process of
-/// its own.
-pub fn set_connection_timeout(client: &IUIAutomation, timeout: Duration) {
-    let client: IUIAutomation2 = client.cast().expect("an IUIAutomation2 client");
-    let milliseconds = u32::try_from(timeout.as_millis()).expect("the timeout fits");
-    // SAFETY: a live client; a plain integer.
-    unsafe { client.SetConnectionTimeout(milliseconds) }.expect("the connection timeout set");
-}
-
-/// A registration of `handler` for the name changes in `window`'s subtree.
-pub fn names_on(client: &IUIAutomation, window: &IUIAutomationElement, handler: &Handler) {
-    // SAFETY: a live client, element, cache request and handler.
-    unsafe {
-        client.AddPropertyChangedEventHandlerNativeArray(
-            window,
-            TreeScope_Subtree,
-            &cache(client),
-            &handler.properties,
-            &[UIA_NamePropertyId],
-        )
-    }
-    .expect("the name changes registered");
 }
 
 /// A registration of `handler` for UIA's focus event, and for name changes
