@@ -46,9 +46,11 @@ pub struct FocusQuery<'a> {
     /// How every returned element's cache is filled: as an [`Ancestor`],
     /// with the gates its request was built with.
     pub fill: &'a Fill<Ancestor>,
-    /// Whether the classic walk's time is up, checked between hops: it then
-    /// stops, reporting the ancestry as cut short ([`Ancestry::out_of_time`]).
-    /// The remote program is one call and does not check it.
+    /// Whether the classic walk's time is up, checked before each of its
+    /// calls after the first: it then makes no more, reporting what the
+    /// calls skipped would have read as unknown and the ancestry as cut
+    /// short ([`Ancestry::out_of_time`]). The remote program is one call
+    /// and does not check it.
     pub out_of_time: Option<&'a dyn Fn() -> bool>,
     /// Whether the element must have the keyboard focus, read live, for
     /// anything else to be read ([`FocusAncestry::NotFocused`]), as NVDA's
@@ -659,7 +661,8 @@ impl RemoteCache {
 /// fill's request. Stops at a known ancestor, at the
 /// depth limit, below the desktop root, below the process boundary
 /// (`docs/design/listener-without-connections.md`, terms), and when the
-/// query's time is up.
+/// query's time is up, which is asked before every call but the first
+/// focus read, so that at most the call under way runs past it.
 ///
 /// The boundary is judged with local calls only, twice. Before each step,
 /// an element whose window has a parent window, or a visible owner for a
@@ -689,27 +692,35 @@ impl RemoteCache {
 pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<FocusAncestry, Error> {
     let input = query.element.read();
     let live = query.element.live();
+    // The query's time is asked before every call into the application,
+    // so at most the call under way runs past it; what the calls skipped
+    // would have read is unknown, and the walk then reads no ancestor.
+    let out_of_time = || query.out_of_time.is_some_and(|out_of_time| out_of_time());
     if query.require_focus && !live.element().has_keyboard_focus()? {
         return Ok(FocusAncestry::NotFocused);
     }
     // A failed read is an element that is gone, but a provider that did
     // not answer in time has said nothing about it.
-    let previous_focused = match query.previous.map(ElementExt::has_keyboard_focus) {
+    let previous_focused = match query
+        .previous
+        .filter(|_| !out_of_time())
+        .map(ElementExt::has_keyboard_focus)
+    {
         None => None,
         Some(Ok(focused)) => Some(focused),
         Some(Err(error)) if timed_out(&error) => return Err(Error::Uia(error)),
         Some(Err(_)) => Some(false),
     };
     let request = query.fill.request();
-    let element = if query.refresh {
+    let element = if query.refresh && !out_of_time() {
         Some(live.refresh(request)?)
     } else {
         None
     };
     // A selection that timed out, or whose container or item is gone, has
     // not said nothing is selected: the walk fails, as a hop's would.
-    let selected_child = if wants_selected_child(&input) {
-        uia.selected(live, request)?
+    let selected_child = if wants_selected_child(&input) && !out_of_time() {
+        uia.selected_within(live, request, &out_of_time)?
     } else {
         None
     };
@@ -727,7 +738,6 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         element,
         legacy_state: None,
     };
-    let out_of_time = || query.out_of_time.is_some_and(|out_of_time| out_of_time());
     let mut current = live.clone();
     let mut current_window = input.hwnd;
     let mut current_id = query.element.runtime_id();
@@ -792,7 +802,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             break;
         }
     }
-    if ancestry.window.is_none() && !complete && !ancestry.out_of_time {
+    if ancestry.window.is_none() && !complete && !ancestry.out_of_time && !out_of_time() {
         ancestry.window = verbatim_uia::nearest_window_handle(live.element());
     }
     Ok(FocusAncestry::Focused(ancestry))

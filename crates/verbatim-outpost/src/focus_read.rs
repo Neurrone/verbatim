@@ -51,12 +51,17 @@
 //!
 //! Time limits: a read is several calls, each on an element the listener
 //! holds, which UIA's transaction timeout, set once for the process, ends
-//! (`verbatim_uia::TRANSACTION_TIMEOUT`); a call that fails ends the read,
-//! and the ancestor walk stops once [`READ_BUDGET`] has passed. A watchdog
-//! abandons a thread whose read runs past [`READ_DEADLINE`], the longest
-//! an application that answers every call can take: its event is
-//! dropped, a new thread takes the application's later events, and the
-//! abandoned thread, once UIA gives up, says nothing more and ends. An
+//! (`verbatim_uia::TRANSACTION_TIMEOUT`); a call that fails ends the read.
+//! The whole read, its checks included, has one time budget,
+//! [`READ_BUDGET`], asked before each of its calls after the first: once
+//! it has passed, the read makes no more calls and reports what it has
+//! read, as the event's cache gives what it has not, with its ancestors
+//! unknown, or drops the event when its window is not yet judged. A
+//! watchdog abandons a thread whose read runs past [`READ_DEADLINE`], the
+//! budget and the one call that can be under way when it passes: its
+//! event is dropped, a new thread takes the application's later events,
+//! and the abandoned thread, once UIA gives up, says nothing more and
+//! ends. An
 //! application whose abandoned threads reach [`ABANDONED_LIMIT`] gets no
 //! new thread until one returns, and its events are dropped meanwhile, as
 //! NVDA drops a hung window's.
@@ -98,35 +103,25 @@ use crate::protocol::{
 /// The most ancestors read for a focus, as many as the outpost walks.
 const MAX_ANCESTORS: u32 = 64;
 
-/// How long the classic ancestor walk may take before the focus is
-/// reported with its ancestors unknown: checked between the walk's calls,
-/// each of which UIA ends after its transaction timeout.
+/// How long one focus event's read, its checks included, may take before
+/// it makes no more calls into the application: asked before each call
+/// after the first, each of which UIA ends after its transaction timeout.
+/// A read of an application that answers takes milliseconds
+/// (`docs/design/listener-without-connections.md`, section 10, step 6),
+/// so only a slow application meets it, and its focus is then reported
+/// with what was read by then, its ancestors unknown, rather than held
+/// (section 9, risk 4).
 const READ_BUDGET: Duration = Duration::from_secs(2);
 
-/// The most calls into the application one focus event's read makes
-/// outside the ancestor walk's budget, each of which UIA ends after its
-/// transaction timeout: the checks' nearest window, the last accepted
-/// focus's keyboard focus, and the sender's keyboard focus (3); the read's
-/// keyboard focus of the element read before and refresh of the sender's
-/// cache (2); the step of the walk under way when [`READ_BUDGET`] passes
-/// (1); and the most of the calls that exclude one another (4): the
-/// console check from the console window's element (4, a text area's
-/// takes 2), a list's selected child (2), or a menu item's legacy state
-/// (1).
-const READ_CALLS: u32 = 10;
-
 /// How long a reading thread may take over one focus event before the
-/// watchdog abandons it: the longest a read takes from an application
-/// that answers each of its calls just within UIA's transaction timeout,
-/// [`READ_CALLS`] calls, the raw probe's own wait at a window's first
-/// sight, and the walk's [`READ_BUDGET`], with one second to spare, so
-/// only a read whose application stops answering is abandoned.
-pub(crate) const READ_DEADLINE: Duration = Duration::from_secs(
-    verbatim_uia::TRANSACTION_TIMEOUT.as_secs() * READ_CALLS as u64
-        + verbatim_uia::RAW_PROBE_TIMEOUT_MS as u64 / 1000
-        + READ_BUDGET.as_secs()
-        + 1,
-);
+/// watchdog abandons it: the [`READ_BUDGET`] of 2 seconds, the one call
+/// that can be under way when it passes, which UIA's transaction timeout
+/// ends after 5 seconds (the raw probe's 3 seconds is shorter), and a
+/// second to spare, 8 seconds, so only a read whose application stops
+/// answering within a call is abandoned. It also bounds how long the
+/// application's later events wait behind the read's marker.
+pub(crate) const READ_DEADLINE: Duration =
+    Duration::from_secs(READ_BUDGET.as_secs() + verbatim_uia::TRANSACTION_TIMEOUT.as_secs() + 1);
 
 /// How many of an application's reading threads may be abandoned and still
 /// in their calls before its focus events are dropped without a read.
@@ -398,7 +393,16 @@ impl FocusReader {
         let element = sender.live().element();
         let hwnd = fields.role.hwnd;
         let event = fields.parts(sender.runtime_id());
-        let nearest = match self.judge_before_reading(sender, &fields, &event.runtime_id, kind) {
+        // The read's one time budget, from here, for its checks and its
+        // read alike.
+        let clock = self.clock();
+        let out_of_time = time_limit(&clock, READ_BUDGET);
+        let nearest = match self.judge_before_reading(
+            sender,
+            (&fields, &event.runtime_id),
+            kind,
+            &out_of_time,
+        ) {
             Ok(nearest) => nearest,
             Err(reason) => return Judged::Dropped(reason),
         };
@@ -426,8 +430,6 @@ impl FocusReader {
         // theme decides which details are spoken. A request that cannot be
         // built is a read that failed.
         let input = sender.narrow::<FocusInput>();
-        let clock = self.clock();
-        let out_of_time = time_limit(&clock, READ_BUDGET);
         let read = self
             .uia
             .request::<Ancestor>(Ancestor::all_on())
@@ -461,7 +463,7 @@ impl FocusReader {
                 (hwnd, focus_window, nearest),
                 event,
                 &ancestry,
-                arrival,
+                (arrival, &out_of_time),
             ),
             Err(error) => {
                 // NVDA lets a focus event through when its sender's keyboard
@@ -569,7 +571,7 @@ impl FocusReader {
         (hwnd, focus_window, nearest): (isize, isize, isize),
         event: CachedUiaParts,
         ancestry: &Ancestry,
-        arrival: Arrival,
+        (arrival, out_of_time): (Arrival, &dyn Fn() -> bool),
     ) -> Judged {
         let path = "classic";
         let live = ancestry
@@ -591,10 +593,11 @@ impl FocusReader {
             states: states.with(State::Focused),
             details,
         };
-        if wants_legacy_checked_state(snapshot.role, snapshot.states) {
+        if wants_legacy_checked_state(snapshot.role, snapshot.states) && !out_of_time() {
             // A menu item without the Toggle pattern: its checked state may
             // be only in its legacy MSAA state, which the classic walk
-            // leaves to this one live call.
+            // leaves to this one live call, made while the read's time
+            // lasts.
             let legacy = element
                 .current_i32_ignoring_default(UIA_LegacyIAccessibleStatePropertyId)
                 .ok()
@@ -671,12 +674,18 @@ impl FocusReader {
     /// focus is pending is made as it arrives (`Readers::focus_pending`).
     /// As NVDA queues it as a focus on the menu, it becomes the last focus
     /// accepted.
+    ///
+    /// The read's time, `out_of_time`, is asked before each call after the
+    /// first: once it is up, a comparison or keyboard focus read is not
+    /// made, and counts as one that failed, as NVDA lets the event through
+    /// when such a read fails, and the native check, which nothing can
+    /// stand in for, drops the event.
     fn judge_before_reading(
         &self,
         held: &Cached<ListenerEvent>,
-        sender: &ListenerEvent,
-        runtime_id: &[i32],
+        (sender, runtime_id): (&ListenerEvent, &[i32]),
         kind: FocusEvent,
+        out_of_time: &dyn Fn() -> bool,
     ) -> Result<isize, &'static str> {
         let element = held.live().element();
         let hwnd = sender.role.hwnd;
@@ -698,6 +707,7 @@ impl FocusReader {
         let compare = || {
             let same = current
                 .as_ref()
+                .filter(|_| !out_of_time())
                 .map(|(focus, _)| self.uia.compare_elements(element, focus));
             if tracing::enabled!(tracing::Level::DEBUG) {
                 Self::log_sender(sender, runtime_id, same.as_ref());
@@ -721,13 +731,13 @@ impl FocusReader {
                         return Err("its comparison with the current focus failed");
                     }
                     (Some(Ok(true)), Some((focus, window))) => (*window, focus),
-                    _ => (self.native_window(held, sender)?, element),
+                    _ => (self.native_window(held, sender, out_of_time)?, element),
                 }
             }
             // Only focuses and menu openings are read; a selection or a
             // notification is checked ([`Self::check_fact`]).
             FocusEvent::Focus | FocusEvent::Selection | FocusEvent::Notification => {
-                let nearest = self.native_window(held, sender)?;
+                let nearest = self.native_window(held, sender, out_of_time)?;
                 // 3. NVDA's duplicate rule (`UIAHandler/__init__.py` 902 to
                 // 923; section 16.3): the sender is the last focus accepted,
                 // by any of the listener's readers, as UIA compares them,
@@ -738,6 +748,7 @@ impl FocusReader {
                 // the second only for an element UIA equates.
                 if let (Some(Ok(true)), Some((last, _))) = (compare(), current.as_ref())
                     && kind == FocusEvent::Focus
+                    && !out_of_time()
                     && last.has_keyboard_focus().unwrap_or(false)
                 {
                     return Err("a repeat of the last focus, which still has the keyboard focus");
@@ -810,7 +821,7 @@ impl FocusReader {
         // read is followed by the focus event of where it went
         // (`docs/design/listener-without-connections.md`, section 3, step
         // 8).
-        if matches!(subject.has_keyboard_focus(), Ok(false)) {
+        if !out_of_time() && matches!(subject.has_keyboard_focus(), Ok(false)) {
             return Err("its element no longer has the keyboard focus");
         }
         Ok(window)
@@ -846,6 +857,7 @@ impl FocusReader {
         &self,
         held: &Cached<ListenerEvent>,
         sender: &ListenerEvent,
+        out_of_time: &dyn Fn() -> bool,
     ) -> Result<isize, &'static str> {
         let element = held.live().element();
         let hwnd = sender.role.hwnd;
@@ -858,7 +870,14 @@ impl FocusReader {
                 window = nearest,
                 "UIA focus sender's nearest window looked up"
             );
-            nearest.ok_or("it has no window above it, so NVDA makes no object for it")?
+            let nearest =
+                nearest.ok_or("it has no window above it, so NVDA makes no object for it")?;
+            // The probe and the console check are calls into the
+            // application too.
+            if out_of_time() {
+                return Err("its read ran out of time before its window was judged");
+            }
+            nearest
         } else {
             hwnd
         };
@@ -869,7 +888,12 @@ impl FocusReader {
         let console = || {
             (automation_id == Some(verbatim_uia::CONSOLE_TEXT_AREA) || hwnd == nearest)
                 .then(|| {
-                    verbatim_uia::held_console_reports_formatting(&self.uia, held, automation_id)
+                    verbatim_uia::held_console_reports_formatting(
+                        &self.uia,
+                        held,
+                        automation_id,
+                        out_of_time,
+                    )
                 })
                 .flatten()
         };

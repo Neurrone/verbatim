@@ -169,13 +169,21 @@ event's own element:
   verbatim.exe, never coalesced and never dropped on the way: the
   listener queues them unkeyed, and the supervisor's writer lets them
   through a full queue in order.
-- A watchdog abandons a thread whose read runs past `READ_DEADLINE`, 56
-  seconds: the longest read of an application that answers each call just
-  within UIA's five-second transaction timeout, ten calls at most outside
-  the ancestor walk's budget (`READ_CALLS`), with the raw probe's
-  three-second wait, the walk's two-second budget, and a second to spare,
-  so only a read whose application stops answering is abandoned (a call
-  that times out ends the read itself): the event is reported dropped, a
+- A read, its checks included, has one time budget, `READ_BUDGET`, 2
+  seconds, asked before each of its calls after the first, so at most the
+  call under way runs past it. Once it has passed the read makes no more
+  calls: a comparison or keyboard focus read not made counts as one that
+  failed, as NVDA lets the event through when such a read fails; the
+  native check, which nothing can stand in for, drops the event; and a
+  focus already judged is reported with what was read, the event's cache
+  giving the rest, its ancestors unknown.
+- A watchdog abandons a thread whose read runs past `READ_DEADLINE`, 8
+  seconds: the budget, the one call that can be under way when it passes,
+  which UIA's five-second transaction timeout ends (the raw probe's three
+  seconds is shorter), and a second to spare, so only a read whose
+  application stops answering within a call is abandoned. It also bounds
+  how long the application's later events wait behind the read's marker:
+  the event is reported dropped, a
   new thread takes the application's later events, and the abandoned
   thread, once its call returns, says nothing and ends. With two of an
   application's threads abandoned and still in their calls, its focus
@@ -480,7 +488,7 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   `Arbitrator::now` reads it, for the worker's renewal of the verdicts an
   entry probed. The same clock measures the time budgets of the outpost's
   classic walks (`PATH_BUDGET`, `ENRICHMENT_BUDGET`) and of a focus
-  reader's (`READ_BUDGET`), each checked between calls through
+  reader's whole read (`READ_BUDGET`), each checked between calls through
   `arbitration::time_limit`. `Outpost::set_clock` sets an outpost's, and
   `FocusReader::set_clock` a focus reader's, for a test that counts calls
   and decides when a probe is made again and when a walk's time is up,

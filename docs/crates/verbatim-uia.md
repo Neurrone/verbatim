@@ -163,7 +163,11 @@ Public API:
   that fails in any other way than two: a call the provider did not
   answer within UIA's transaction timeout (`timed_out`), and one that
   finds the container or its selected item gone (`element_is_gone`), are
-  errors, never "nothing selected". `Uia::selected_node(container,
+  errors, never "nothing selected". `Uia::selected_within(container,
+  request, out_of_time)` is the same within the caller's time: it asks
+  `out_of_time` before each call after the first and answers `None`, the
+  selected child unknown, once the time is up; the classic focus
+  ancestry calls it. `Uia::selected_node(container,
   request, registry)` reads the item as the `Node` shape and maps it to
   a snapshot, with the same errors; the outpost logs such an
   error and reports the focus without a selected child, and
@@ -512,14 +516,16 @@ Public API:
   one visible range with its font (the complete console provider of
   current Windows); the other such check, whether a list view comes from
   Windows Forms, is the arbitration's, from the class name.
-  `held_console_reports_formatting(uia, sender, automation_id)` is the
-  console check from an event's sender the caller holds, with no
-  connection to the window: the focus listener's. The sender is the
-  console's text area (its automation id `CONSOLE_TEXT_AREA`), whose Text
-  pattern is read from its cache (`TextAreaPattern`), or the console
-  window's element, under which the text area is found. Each answers
-  `None` when the application did not answer in time, and the held check
-  also when its sender is gone (`UIA_E_ELEMENTNOTAVAILABLE`), so the
+  `held_console_reports_formatting(uia, sender, automation_id,
+  out_of_time)` is the console check from an event's sender the caller
+  holds, with no connection to the window: the focus listener's. The
+  sender is the console's text area (its automation id
+  `CONSOLE_TEXT_AREA`), whose Text pattern is read from its cache
+  (`TextAreaPattern`), or the console window's element, under which the
+  text area is found; `out_of_time`, the caller's time, is asked before
+  each call. Each answers `None` when the application did not answer in
+  time, and the held check also when its sender is gone
+  (`UIA_E_ELEMENTNOTAVAILABLE`) or the caller's time ran out, so the
   caller asks again rather than keep the verdict.
 - `nearest_window_handle(element)` — NVDA's `getNearestWindowHandle`:
   resolves the native window handle of `element` itself, or of its nearest

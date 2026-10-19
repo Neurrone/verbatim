@@ -90,30 +90,53 @@ pub fn console_reports_formatting(hwnd: isize) -> Option<bool> {
 /// is "Text Area", whose Text pattern its cache holds; else the console
 /// window's element, under which the text area is found. Cross-process
 /// calls on held elements: two from the text area, four from the window's
-/// element. A sender gone before the check (`UIA_E_ELEMENTNOTAVAILABLE`)
-/// gets no answer, as a timeout does, rather than excluding a console
-/// window that is still there.
+/// element, `out_of_time` asked before each, and the check given no
+/// answer once it says the caller's time is up. A sender gone before the
+/// check (`UIA_E_ELEMENTNOTAVAILABLE`) gets no answer, as a timeout does,
+/// rather than excluding a console window that is still there.
 #[must_use]
 pub fn held_console_reports_formatting(
     uia: &Uia,
     sender: &Cached<ListenerEvent>,
     automation_id: Option<&str>,
+    out_of_time: &dyn Fn() -> bool,
 ) -> Option<bool> {
-    let read = (|| {
-        if automation_id == Some(CONSOLE_TEXT_AREA) {
+    // `Ok(None)`: the caller's time ran out before the check finished.
+    let read = (|| -> windows::core::Result<Option<bool>> {
+        let pattern = if automation_id == Some(CONSOLE_TEXT_AREA) {
             // A text area without the pattern has no complete provider.
-            sender
-                .narrow::<TextAreaPattern>()
-                .read()
-                .text
-                .map_or(Ok(false), |pattern| formatting_of(&pattern))
+            match sender.narrow::<TextAreaPattern>().read().text {
+                Some(pattern) => pattern,
+                None => return Ok(Some(false)),
+            }
         } else {
-            reports_formatting(&text_area_under(uia, sender.live().element())?)
+            if out_of_time() {
+                return Ok(None);
+            }
+            let text_area = text_area_under(uia, sender.live().element())?;
+            if out_of_time() {
+                return Ok(None);
+            }
+            text_area.current_pattern::<IUIAutomationTextPattern>(UIA_TextPatternId)?
+        };
+        if out_of_time() {
+            return Ok(None);
         }
+        let ranges = visible_ranges(&pattern)?;
+        let [range] = ranges.as_slice() else {
+            return Ok(Some(false));
+        };
+        if out_of_time() {
+            return Ok(None);
+        }
+        let font = attribute_value(range, UIA_FontNameAttributeId)?;
+        Ok(Some(font.vt() == VT_BSTR))
     })();
     match read {
+        Ok(None) => None,
         Err(error) if error.code() == HRESULT(UIA_E_ELEMENTNOTAVAILABLE.cast_signed()) => None,
-        read => answer(read),
+        Ok(Some(answer)) => Some(answer),
+        Err(error) => answer(Err(error)),
     }
 }
 
