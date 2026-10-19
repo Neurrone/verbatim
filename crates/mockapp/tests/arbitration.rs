@@ -29,14 +29,17 @@ fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
         None,
         "only the probe decides"
     );
-    assert!(
-        has_server_side_provider(hwnd),
-        "a uia-backend mockapp window has a server-side UIA provider"
-    );
+    // The raw probe first, so it is the window's first contact from any
+    // client and its answer owes nothing to a connection UIA's own probe
+    // made.
     assert_eq!(
         raw_probe(hwnd),
         RawProbe::Provider,
-        "the raw probe finds the same provider"
+        "the raw probe finds a uia-backend mockapp window's provider"
+    );
+    assert!(
+        has_server_side_provider(hwnd),
+        "UIA's own probe finds the same provider"
     );
     arbitrator.record_probe(hwnd, true);
     assert_eq!(

@@ -437,9 +437,14 @@ Public API:
   application's windows.
 - `raw_probe(hwnd) -> RawProbe` — the focus listener's arbitration probe:
   one `SendMessageTimeoutW` of `WM_GETOBJECT` with wParam 0 and
-  `UiaRootObjectId` sign-extended, as UIA's own probe begins, with
+  `UiaRootObjectId` sign-extended, with
   `SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT` and
-  `RAW_PROBE_TIMEOUT_MS` (3,000 ms), counted as one window message. It is
+  `RAW_PROBE_TIMEOUT_MS` (3,000 ms), counted as one window message.
+  `has_server_side_provider`, also counted as one window message, sends
+  two `WM_GETOBJECT`s, first with a nonzero wParam and then with wParam 0,
+  and then connects (experiment `e39`, `docs/design/focus-pipeline.md`
+  section 20); the raw probe sends only the second, with
+  wParam 0, and nothing more. It is
   not a UIA connection, so it neither takes nor needs the application's
   lock, and it answers correctly where a new connection would meet
   another process's queued remote operation

@@ -110,11 +110,15 @@ pub fn raw_probe_verdict(sent: bool, answer: isize, last_error: u32) -> RawProbe
 }
 
 /// The raw probe: asks a window whether it has a native UIA server-side
-/// provider with one `WM_GETOBJECT` for `UiaRootObjectId`, the message
-/// UIA's own probe begins with, sign-extended as UIA sends it, rather than
-/// with a UIA connection (`docs/design/listener-without-connections.md`,
-/// section 3, step 4). It answers correctly where a new connection would
-/// meet another process's queued remote operation, and needs no lock.
+/// provider with one `WM_GETOBJECT` for `UiaRootObjectId`, sign-extended
+/// as UIA sends it, rather than with a UIA connection
+/// (`docs/design/listener-without-connections.md`, section 3, step 4).
+/// `UiaHasServerSideProvider` sends two `WM_GETOBJECT`s, first with a
+/// nonzero wParam and then with wParam 0, and then connects (experiment
+/// `e39`, `docs/design/focus-pipeline.md` section 20); the raw probe sends
+/// only the second, with wParam 0, and nothing more. It answers correctly
+/// where a new connection would meet another process's queued remote
+/// operation, and needs no lock.
 ///
 /// The message is sent with `SMTO_BLOCK`, so the caller does not re-enter
 /// while it waits; `SMTO_ABORTIFHUNG`, so a thread that has pumped nothing

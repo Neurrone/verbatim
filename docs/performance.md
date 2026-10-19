@@ -59,9 +59,12 @@ kinds, counted separately (`verbatim_model::CallKind`):
   `WindowFromAccessibleObject`, and a `QueryInterface` for any interface
   but `IUnknown` on an object from the application.
 - A window message sent to one of the application's windows and answered
-  by its window procedure: the arbitration probe (an outpost's
-  `UiaHasServerSideProvider` is one `WM_GETOBJECT`, and the focus
-  listener's raw probe is that `WM_GETOBJECT` sent itself),
+  by its window procedure: the arbitration probe. An outpost's
+  `UiaHasServerSideProvider` is counted as one window message, though it
+  sends two `WM_GETOBJECT`s, first with a nonzero wParam and then with
+  wParam 0, and then connects (experiment `e39`,
+  `docs/design/focus-pipeline.md` section 20); the focus listener's raw
+  probe sends only the second, with wParam 0, and nothing more. Also
   a list view's or tree view's `LVM_` and `TVM_` messages, and an edit
   control's `EM_` messages and `WM_GETTEXT`.
 
@@ -458,7 +461,8 @@ focus waits behind the events queued before it as NVDA's does.
   there, never asking for the desktop's root, all the listener's; and the
   listener's raw probe. There is no comparison, since no focus was
   accepted before. 367 provider calls in all: the raw probe costs mockapp
-  one `WM_GETOBJECT`, where `UiaHasServerSideProvider` cost it two and
+  one `WM_GETOBJECT`, with wParam 0, where `UiaHasServerSideProvider`
+  cost it two, first with a nonzero wParam and then with wParam 0, and
   seven more provider calls as UIA connected (five `ProviderOptions`, one
   `HostRawElementProvider` and one `Navigate`).
 - Today, classic: 7 UIA calls and 1 window message: the same two checks,
