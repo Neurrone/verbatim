@@ -449,7 +449,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   `ATL:` wrappers removed), and its root ancestor's class. When the probe
   finds a provider, `post_probe_check` names the check NVDA makes before
   using it (a console's formatted text, a list view's Windows Forms
-  origin); a provider that fails it is recorded with `record_excluded` and
+  origin, which an outpost reads as the window's UIA framework through
+  `verbatim_uia::is_windows_forms` and the focus listener, which connects
+  to no window, as its raw class's `WindowsForms10.` prefix); a provider
+  that fails it is recorded with `record_excluded` and
   is MSAA for the window's lifetime. A probe that finds a UIA
   provider is kept for the window's lifetime and dropped by `forget` when
   the window is destroyed, as decision D15 specifies. A probe that finds

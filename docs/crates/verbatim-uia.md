@@ -465,7 +465,8 @@ Public API:
   checks NVDA makes on a window with a provider before using it: whether a
   console's text area reports one visible range with its font (the
   complete console provider of current Windows), and whether a window's
-  UIA framework is `WinForm`. Each answers `None` when the application did
+  UIA framework is `WinForm` (an outpost's check; the focus listener reads
+  the class name instead). Each answers `None` when the application did
   not answer in time, so the outpost asks again rather than keep the
   verdict.
 - `nearest_window_handle(element)` — NVDA's `getNearestWindowHandle`:

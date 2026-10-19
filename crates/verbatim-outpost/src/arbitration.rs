@@ -13,7 +13,9 @@
 //! `docs/design/listener-without-connections.md`, decision 2). A window
 //! with a provider is still set aside
 //! for MSAA when its provider is one NVDA does not use: an old console's,
-//! or a list view's outside Windows Forms ([`post_probe_check`]).
+//! or a list view's outside Windows Forms ([`post_probe_check`]), which an
+//! outpost reads from the window's UIA framework and the listener from its
+//! class name.
 //! Class-list checks are fast local window calls; the probe blocks on the
 //! target's message pump and runs only on a deadline-guarded worker.
 //!
@@ -335,6 +337,15 @@ pub fn post_probe_check(classes: &WindowClasses) -> Option<PostProbeCheck> {
     }
 }
 
+/// Whether a window of raw class `raw` comes from Windows Forms, whose
+/// window classes all begin `WindowsForms10.`. It agreed with the UIA
+/// framework id `WinForm` on every one of over 170 windows of Windows Forms,
+/// WPF, Qt, Firefox and Win32 applications
+/// (`docs/design/listener-without-connections.md`, section 3, step 5).
+fn has_windows_forms_class(raw: &str) -> bool {
+    raw.starts_with("WindowsForms10.")
+}
+
 /// Decides window `hwnd`'s backend with `arbitrator`, as NVDA's
 /// `isUIAWindow` decides it, for an outpost's events and for the focus
 /// listener's UIA focus judgement alike: the class lists and kept verdicts first, then
@@ -386,7 +397,14 @@ pub(crate) fn uses_uia_keeping(
         // NVDA uses some providers only after checking them.
         let usable = match check {
             PostProbeCheck::Console => verbatim_uia::console_reports_formatting(hwnd),
-            PostProbeCheck::WindowsFormsListView => verbatim_uia::is_windows_forms(hwnd),
+            PostProbeCheck::WindowsFormsListView => match probe {
+                Probe::Uia => verbatim_uia::is_windows_forms(hwnd),
+                // The listener connects to no window, so it reads the
+                // framework from the class name, a local call
+                // (`docs/design/listener-without-connections.md`, section
+                // 3, step 5).
+                Probe::Raw => Some(has_windows_forms_class(&classes.raw)),
+            },
         };
         tracing::debug!(hwnd, ?check, ?usable, "arbitration checked the provider");
         return match usable {
@@ -835,6 +853,14 @@ mod tests {
             Some(PostProbeCheck::WindowsFormsListView)
         );
         assert_eq!(post_probe_check(&top("Notepad")), None);
+    }
+
+    #[test]
+    fn a_list_view_is_windows_forms_by_its_class_name() {
+        assert!(has_windows_forms_class(
+            "WindowsForms10.SysListView32.app.0.2bf8098_r6_ad1"
+        ));
+        assert!(!has_windows_forms_class("SysListView32"));
     }
 
     #[test]
