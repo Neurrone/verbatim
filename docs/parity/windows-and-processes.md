@@ -43,10 +43,7 @@ the ancestors above the host window are read through MSAA, where NVDA
 reads those with a provider through UIA, so such a window, a WinUI
 host's "title window" among them, may be named and roled differently;
 for a host without a provider, such as Quick Assist's, both read the
-same object. Until step 7 of that design is built, the chain below a
-host or owner window that has a provider ends at the boundary, with
-nothing above the content's own window, and that step must land before
-any push. An owned dialog seen on 2026-10-19: the Windows Security
+same object. An owned dialog seen on 2026-10-19: the Windows Security
 credential dialog (`CredentialUIBroker.exe`) opened with File
 Explorer's folder window as its parent window is owned by it. NVDA
 (alpha-58022) said as it opened: "unavailable", then "Windows Security

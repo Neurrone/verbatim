@@ -139,6 +139,22 @@ pub(super) fn window_uses_uia(context: &Context, hwnd: isize) -> bool {
     uia
 }
 
+/// Whether the outpost's application serves window `hwnd`, by the
+/// window's provider process, read locally ([`served_by`]). An outpost
+/// connects to, probes, and walks up into only such windows
+/// (`docs/design/listener-without-connections.md`, section 4.3).
+pub(super) fn serves(context: &Context, hwnd: isize) -> bool {
+    served_by(hwnd, context.target_pid())
+}
+
+/// [`window_uses_uia`] for a window of the outpost's own application;
+/// `false`, without a probe, for any other process's window, which the
+/// outpost reads through MSAA whether it has a provider or not
+/// (`docs/design/listener-without-connections.md`, sections 4.3 and 4.4).
+fn own_window_uses_uia(context: &Context, hwnd: isize) -> bool {
+    serves(context, hwnd) && window_uses_uia(context, hwnd)
+}
+
 /// The snapshot of the top-level window `hwnd` for a foreground report. A
 /// window whose accessible object cannot be read (a freshly created msinfo32
 /// window, found live) is still reported, from local window data, and a
@@ -240,7 +256,7 @@ pub(super) fn uia_enrichment(
     let ancestors = uia_ancestors(
         context,
         (uia, ancestors),
-        element.live(),
+        (element.live(), element.read().role.hwnd),
         previous,
         Some(&out_of_time),
     );
@@ -271,7 +287,7 @@ pub(super) fn uia_enrichment(
 fn uia_ancestors(
     context: &Context,
     (uia, request): (&Uia, &Request<Ancestor>),
-    element: &Live,
+    (element, element_window): (&Live, isize),
     previous: &[NodeSnapshot],
     out_of_time: Option<&dyn Fn() -> bool>,
 ) -> Option<Vec<NodeSnapshot>> {
@@ -279,7 +295,7 @@ fn uia_ancestors(
     let read_by_msaa = |hwnd: isize| hwnd != desktop && !window_uses_uia(context, hwnd);
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
     let Ok((uia_chain, crossed, walked)) = uia.ancestors(
-        element,
+        (element, element_window),
         request,
         &context.uia_registry,
         MAX_ANCESTOR_HOPS,
@@ -291,8 +307,9 @@ fn uia_ancestors(
     ) else {
         return Some(Vec::new());
     };
-    // This walk takes the step into a window of another process itself,
-    // and stops there when that window is read through MSAA.
+    // The walk stops below the process boundary and answers the parent or
+    // owner window there, which is continued through MSAA, as it continues
+    // a window of its own application read through MSAA.
     uia_chain_onward(
         context,
         (uia, request),
@@ -310,11 +327,11 @@ fn uia_ancestors(
 /// element's own window (`outermost`) the child of another process's
 /// window or a top-level window another process's owns
 /// ([`verbatim_uia::parent_across_process_boundary`]), is continued from
-/// that parent or owner window through MSAA in the same way when it is
-/// read through MSAA, as the Settings page's
-/// content is continued from its frame
-/// (`docs/design/listener-without-connections.md`, section 4.2). `None`
-/// when the walk ran out of time.
+/// that parent or owner window through MSAA in the same way, whether that
+/// window has a UIA provider or not, without probing it, as the Settings
+/// page's content is continued from its frame
+/// (`docs/design/listener-without-connections.md`, sections 4.2 to 4.4).
+/// `None` when the walk ran out of time.
 fn uia_chain_onward(
     context: &Context,
     (uia, request): (&Uia, &Request<Ancestor>),
@@ -334,10 +351,9 @@ fn uia_chain_onward(
         AncestorWalk::Complete => {}
     }
     let crossed = crossed.or_else(|| {
-        let parent = outermost
+        outermost
             .filter(|&window| window != 0)
-            .and_then(verbatim_uia::parent_across_process_boundary)?;
-        (!window_uses_uia(context, parent)).then_some(parent)
+            .and_then(verbatim_uia::parent_across_process_boundary)
     });
     let Some(hwnd) = crossed else {
         return Some(uia_chain);
@@ -591,7 +607,9 @@ fn msaa_ancestors(
     out_of_time: Option<&dyn Fn() -> bool>,
 ) -> Option<Vec<NodeSnapshot>> {
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
-    let read_by_uia = |hwnd: isize| uia.is_some() && window_uses_uia(context, hwnd);
+    // Another process's window is read through MSAA, whether it has a
+    // provider or not, and is not probed.
+    let read_by_uia = |hwnd: isize| uia.is_some() && own_window_uses_uia(context, hwnd);
     let limits = verbatim_ia2::acquire::AncestorLimits {
         max_hops: MAX_ANCESTOR_HOPS,
         known: &known,
@@ -630,7 +648,7 @@ fn msaa_ancestors(
             let above = uia_ancestors(
                 context,
                 (uia, request),
-                element.live(),
+                (element.live(), hwnd),
                 previous,
                 out_of_time,
             )?;
@@ -991,9 +1009,14 @@ pub(super) fn ancestors(
         })?;
         // The full chain: object navigation reuses nothing and waits for
         // the application as long as the query's own deadline allows.
-        return Ok(
-            uia_ancestors(context, (uia, &request), element.live(), &[], None).unwrap_or_default(),
-        );
+        return Ok(uia_ancestors(
+            context,
+            (uia, &request),
+            (element.live(), element.read().role.hwnd),
+            &[],
+            None,
+        )
+        .unwrap_or_default());
     }
     verbatim_ia2::acquire::ancestor_chain(node_id, &context.msaa_registry, MAX_ANCESTOR_HOPS)
         .map_err(ReadError::from)
@@ -1140,7 +1163,7 @@ fn corrected_backend(
             .element_of(neighbor.id)
             .and_then(|agile| agile.resolve().ok())
             .map_or(0, |element| element.read().hwnd);
-        if window == 0 || window == from_window || window_uses_uia(context, window) {
+        if window == 0 || window == from_window || own_window_uses_uia(context, window) {
             return neighbor;
         }
         let object = if kind == QueryKind::Parent {
@@ -1160,7 +1183,10 @@ fn corrected_backend(
     let Some((window, _, _)) = context.msaa_registry.key_of(neighbor.id) else {
         return neighbor;
     };
-    if window == 0 || window == from_window || !window_uses_uia(context, window) {
+    // Another process's window is kept as read: the outpost makes no
+    // connection to it (`docs/design/listener-without-connections.md`,
+    // section 4.3).
+    if window == 0 || window == from_window || !own_window_uses_uia(context, window) {
         return neighbor;
     }
     client

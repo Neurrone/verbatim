@@ -47,14 +47,39 @@ pub fn provider_process(hwnd: isize) -> Option<u32> {
 /// `GetWindowThreadProcessId` names the client's. So a console host
 /// recognizes its own console window whatever its client, and no other
 /// process does. Local calls only; that fallback costs a snapshot of the
-/// system's threads.
+/// system's threads. A window of the console class that its owner by
+/// `GetWindowThreadProcessId` created itself, by `EnumThreadWindows`, is
+/// that owner's, whatever console host the owner has: no console host
+/// serves it, as none serves a test application's window of that class.
 #[must_use]
 pub fn served_by(hwnd: isize, pid: u32) -> bool {
     match provider(hwnd) {
-        Some(Provider::Process(process)) => process == pid,
+        Some(Provider::Process(process)) if process == pid => true,
+        Some(Provider::Process(_)) => console_class_window_of_its_owner(hwnd, pid),
         Some(Provider::UnreadConsole) => threads_own_window(pid, hwnd),
         None => false,
     }
+}
+
+/// Whether `hwnd` is a window of the console class that `pid`, its owner
+/// by `GetWindowThreadProcessId`, created on one of its own threads. A real
+/// console window's owner by that call is the console's client, whose
+/// threads did not create it. Local calls; the thread snapshot is taken
+/// only for a console-class window that `pid` owns.
+fn console_class_window_of_its_owner(hwnd: isize, pid: u32) -> bool {
+    let window = HWND(hwnd as *mut _);
+    let mut class = [0u16; 32];
+    // SAFETY: the buffer outlives the call, which writes at most its
+    // length; an invalid handle answers 0.
+    let length = unsafe { GetClassNameW(window, &mut class) };
+    let is_console = usize::try_from(length)
+        .ok()
+        .and_then(|length| class.get(..length))
+        .is_some_and(|class| String::from_utf16_lossy(class) == CONSOLE_WINDOW_CLASS);
+    let mut owner = 0u32;
+    // SAFETY: `owner` is a local; an invalid handle answers thread 0.
+    let thread = unsafe { GetWindowThreadProcessId(window, Some(&raw mut owner)) };
+    is_console && thread != 0 && owner == pid && threads_own_window(pid, hwnd)
 }
 
 /// A window's provider, as far as it can be read.

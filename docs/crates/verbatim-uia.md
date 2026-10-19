@@ -89,7 +89,7 @@ Public API:
   fail about one run in five (mockapp's
   `tests/uia_bugs/a_cache_request_fails_while_uias_first_time_setup_runs_on_another_thread.rs`
   races six threads in each of four fresh processes).
-- `Uia::ancestors(element, request, registry, max_hops, stops)` — the
+- `Uia::ancestors((element, element_window), request, registry, max_hops, stops)` — the
   chain of ancestors of an element, each read as the `Ancestor` shape,
   outermost first, as `NodeSnapshot`s: a per-hop `GetParentElementBuildCache` walk
   over the raw view (one cross-process round trip per ancestor, the walk
@@ -99,7 +99,12 @@ Public API:
   caller's out-of-time check (`out_of_time`) or a hop that UIA's
   transaction timeout ended (`AncestorWalk::OutOfTime`); any other failed
   hop is the root. The check is made between hops, each of which UIA ends after
-  `CALL_TIMEOUT`. Ancestors that are not
+  `CALL_TIMEOUT`. The walk never steps across the process boundary:
+  before each hop from an element whose own window (`element_window` for
+  the first, the cached handle after) has a parent window, or visible
+  owner, that another process serves (`parent_across_process_boundary`),
+  it stops and answers that window as the one to continue through the
+  other API. Ancestors that are not
   presentable focus context — NVDA's `isPresentableFocusAncestor`,
   ported: layout elements (unknown and pane roles, textless static text,
   nameless windows, property pages, and groupings) plus list items, tree
@@ -475,7 +480,10 @@ Public API:
   whether `pid` serves the window: its provider process, or for such a
   console window whether it is one of `pid`'s threads' windows by
   `EnumThreadWindows`, which goes by the thread that created it, so a
-  console host's outpost still recognizes its own console window. The
+  console host's outpost still recognizes its own console window; and a
+  window of the console class that its owner created on its own threads,
+  as a test application's is, is that owner's, no console host serving
+  it. The
   tests' console comes from the dev-only crate `verbatim-test-console`.
 - `parent_across_process_boundary(hwnd)` — the window above `hwnd` in
   UIA's raw view when another process serves it, by

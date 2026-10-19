@@ -706,9 +706,13 @@ impl Context {
     }
 
     /// The route to the element `runtime_id` names, when it is in the chain
-    /// the focus listener read for the UIA focus this outpost last reported.
+    /// the focus listener read for the UIA focus this outpost last reported,
+    /// and its window is one the outpost's application serves: the outpost
+    /// looks up no window of another process by its handle
+    /// (`docs/design/listener-without-connections.md`, section 4.3).
     fn focus_route(&self, runtime_id: &[i32]) -> Option<focus_path::Route> {
-        self.focus_path().as_ref()?.route_to(runtime_id)
+        let route = self.focus_path().as_ref()?.route_to(runtime_id)?;
+        read::serves(self, route.window).then_some(route)
     }
 }
 

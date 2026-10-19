@@ -491,8 +491,12 @@ child of the other's MSAA window (`call_counts.rs`,
 - Today: the listener's 5 UIA calls and 1 window message, as for a cold
   focus but for the step to the desktop's root: the walk's two steps end
   at the child's window, which costs only local window calls. The outpost
-  then makes 9 MSAA calls and 1 window message, its
-  `UiaHasServerSideProvider` probe of the parent, a connection. While the
+  then makes 9 MSAA calls, its client area and the chain above it, and no
+  probe of the parent, the other process's window
+  (`docs/design/listener-without-connections.md`, section 4.3); with the
+  probe it made 1 window message more, a connection. Above a parent with
+  a UIA provider it makes 23 MSAA calls, through UIA's MSAA bridge, and
+  no connection (`uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider`). While the
   listener reads, the parent's process receives 2 `WM_GETOBJECT`s, each
   with `UiaRootObjectId` and a nonzero wParam, which UIA's client side
   sends itself when a call on a held element returns the child window's

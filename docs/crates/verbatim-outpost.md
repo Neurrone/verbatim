@@ -221,11 +221,21 @@ on `verbatim-uia`. A focus whose top-level window belongs to
 another process, as the Settings app's page inside `ApplicationFrameHost`'s
 frame, is read by the listener up to the window below the process
 boundary, and the outpost continues the chain from that window's parent
-through MSAA, from its client area up, when the parent is read through
-MSAA (`read::uia_chain_onward`, for the listener's read and a focus-now
-read alike), as NVDA switches API at a window boundary. A parent window
-with a UIA provider, such as a WinUI host of WebView2 content, ends the
-chain at the boundary for now (section 4.4 of that design).
+or owner through MSAA, from its client area up, whether that window has
+a UIA provider or not (`read::uia_chain_onward`, for the listener's read
+and a focus-now read alike), as NVDA switches API at a window boundary;
+a parent with a provider, such as a WinUI host of WebView2 content, is
+reached through UIA's MSAA bridge, named and roled as MSAA gives it,
+where NVDA reads it through UIA (sections 4.3 and 4.4 of that design).
+The outpost connects to, probes and walks up into only the windows its
+application serves (`read::serves`, by the window's provider process):
+its own UIA walk (`read::uia_ancestors`, for the ancestors query and a
+focus-now read's classic read) stops below the boundary and is
+continued the same way; the MSAA walk (`read::msaa_ancestors`) answers
+another process's window as read through MSAA without probing it; a
+navigation neighbor that is another process's window is kept as read
+(`read::corrected_backend`); and a focus route through another
+process's window is not followed (`Context::focus_route`).
 
 ### Starting an outpost and asking for the focus
 

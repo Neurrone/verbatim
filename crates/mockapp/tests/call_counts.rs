@@ -1551,8 +1551,11 @@ fn the_listener_makes_no_connection() {
 /// the outpost's own walk classically) gives the same chain, continued
 /// through MSAA from the parent or owner; without the remote read's
 /// continuation from its outermost window, it ends at the child's window.
-/// The classic focus-now read still steps up into the parent itself
-/// (`uia_ancestors`), which the parent's calls during the query show.
+/// The outpost probes no window of the other process: it reads the parent
+/// or owner through MSAA whether it has a provider or not; the parent's
+/// calls during the query are pinned. With the outpost's walk
+/// (`uia_ancestors`) left to step across the boundary, the classic
+/// focus-now query's parent calls show the step.
 ///
 /// The parent still receives 2 `WM_GETOBJECT`s while the listener reads,
 /// each with `UiaRootObjectId` and a nonzero wParam, the message a UIA
@@ -1627,11 +1630,11 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
         );
 
         let reported = outpost.focus(judged.into_fact(0));
-        // The parent's probe, a connection, then its client area and the
-        // chain above it through MSAA.
+        // The parent's client area and the chain above it through MSAA,
+        // with no probe of the other process's window.
         assert_eq!(
             reported.calls,
-            connecting(calls(0, 9, 1), 1),
+            calls(0, 9, 0),
             "the outpost's calls ({path})"
         );
         assert_eq!(
@@ -1646,13 +1649,9 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
         );
 
         // A focus-now query's own read gives the same chain, continued
-        // from the parent or owner through MSAA. The remote program stops
-        // at its process's top and is continued from there; the classic
-        // read (`uia_ancestors`) still steps up into the parent and is
-        // continued through MSAA from the parent's element, which the
-        // parent's calls show until the outposts stop below the boundary
-        // too (`docs/design/listener-without-connections.md`, section 10,
-        // step 7).
+        // from the parent or owner through MSAA: the remote program and
+        // the classic read (`uia_ancestors`) both stop below the boundary,
+        // and neither probes the other process's window.
         outpost.read_focus_as(focused.live().element());
         common::reset_hits(parent);
         let now = outpost
@@ -1660,7 +1659,7 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
             .unwrap_or_else(|| panic!("the focus now has a focused control ({path})"));
         assert_eq!(
             common::read_hits(parent),
-            FOCUS_NOW_PARENT_HITS[usize::from(owned) * 2 + usize::from(remote)],
+            FOCUS_NOW_PARENT_HITS[usize::from(owned)],
             "the parent's calls during the focus-now query ({path})"
         );
         assert_eq!(
@@ -1684,25 +1683,15 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
 }
 
 /// The parent's or owner's provider calls during the boundary test's
-/// focus-now query, by case: child classic, child remote, owned classic,
-/// owned remote. The remote read is continued through MSAA from the
-/// parent's client area; the classic read steps up into the parent through
-/// UIA first (`uia_ancestors`), which costs it 4 `WM_GETOBJECT`s and more
-/// MSAA calls.
-const FOCUS_NOW_PARENT_HITS: [&[(&str, u32)]; 4] = [
-    &[
-        ("WM_GETOBJECT", 6),
-        ("accParent", 4),
-        ("get_accChild", 1),
-        ("get_accName", 2),
-        ("get_accValue", 4),
-        ("get_accDescription", 1),
-        ("get_accRole", 4),
-        ("get_accState", 6),
-        ("get_accHelp", 1),
-        ("get_accKeyboardShortcut", 2),
-        ("accLocation", 2),
-    ],
+/// focus-now query, for the child and for the owned window, by either
+/// read: its client area and the chain above it through MSAA, the
+/// classic read stopping below the boundary as the remote one does. A
+/// parent also receives one `WM_GETOBJECT` more, which UIA's client side
+/// sends as the read returns the child window's element (decision 13 of
+/// `docs/design/listener-without-connections.md`). Before the outposts
+/// stopped below the boundary, the classic read's step up into the parent
+/// cost it 6 `WM_GETOBJECT`s and 27 MSAA calls (5 and 27 for an owner).
+const FOCUS_NOW_PARENT_HITS: [&[(&str, u32)]; 2] = [
     &[
         ("WM_GETOBJECT", 2),
         ("accParent", 2),
@@ -1714,19 +1703,6 @@ const FOCUS_NOW_PARENT_HITS: [&[(&str, u32)]; 4] = [
         ("get_accState", 1),
         ("get_accKeyboardShortcut", 1),
         ("accLocation", 1),
-    ],
-    &[
-        ("WM_GETOBJECT", 5),
-        ("accParent", 4),
-        ("get_accChild", 1),
-        ("get_accName", 2),
-        ("get_accValue", 4),
-        ("get_accDescription", 1),
-        ("get_accRole", 4),
-        ("get_accState", 6),
-        ("get_accHelp", 1),
-        ("get_accKeyboardShortcut", 2),
-        ("accLocation", 2),
     ],
     &[
         ("WM_GETOBJECT", 1),
@@ -1741,6 +1717,86 @@ const FOCUS_NOW_PARENT_HITS: [&[(&str, u32)]; 4] = [
         ("accLocation", 1),
     ],
 ];
+
+/// Above a parent window of another process that has a UIA provider, as a
+/// host of web content can have, the outpost continues the chain through
+/// MSAA, which reaches the parent through UIA's MSAA bridge, and makes no
+/// connection to it: no probe, no lookup by its handle, and no UIA step
+/// into it (`docs/design/listener-without-connections.md`, section 4.4).
+/// So the parent is named and roled as MSAA gives it. Both of the
+/// outpost's reads, the listener's chain continued and a focus-now query,
+/// by the remote program and classically.
+fn uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider() {
+    for remote in [true, false] {
+        let path = if remote { "remote" } else { "classic" };
+        let parent_title = common::unique_title(&format!("mockapp-boundary-uia-parent-{path}"));
+        let parent_app = common::spawn("small.json", "uia", &parent_title);
+        let parent = common::find_window(&parent_title);
+        let title = common::unique_title(&format!("mockapp-boundary-uia-child-{path}"));
+        let mut app = common::spawn("counts.json", "uia", &title);
+        let hwnd = common::find_window(&title);
+        let under_test = UiaUnderTest::new(hwnd);
+        let mut outpost = OutpostUnderTest::with_options(
+            &app,
+            OutpostOptions {
+                remote_operations: remote,
+            },
+        );
+        place_below(hwnd, parent, false);
+        app.send("set-focus first");
+        let focused = under_test.focused(hwnd);
+        let (judged, _) = outpost.listener_read(&focused);
+        let reported = outpost.focus(judged.into_fact(0));
+        // The parent's client area through UIA's MSAA bridge, named by its
+        // title, and the chain above it, all MSAA calls.
+        let expected_chain = [
+            Some(parent_title.as_str()),
+            Some("Mockapp Counts Fixture"),
+            Some("Settings"),
+            Some("First"),
+        ];
+        assert_eq!(
+            reported.calls,
+            calls(0, 23, 0),
+            "the outpost's calls ({path})"
+        );
+        assert_eq!(
+            reported.chain(),
+            expected_chain,
+            "the outpost's chain ({path})"
+        );
+        outpost.read_focus_as(focused.live().element());
+        common::reset_hits(parent);
+        let now = outpost
+            .focus_now()
+            .unwrap_or_else(|| panic!("the focus now has a focused control ({path})"));
+        assert_eq!(
+            now.ancestors
+                .iter()
+                .chain(std::iter::once(&now.node))
+                .map(|node| node.name.as_deref())
+                .collect::<Vec<_>>(),
+            expected_chain,
+            "the focus now's chain ({path})"
+        );
+        // The bridge serves the MSAA reads from the parent's provider, and
+        // UIA's client side sends the parent its messages as the child
+        // window's element is returned; no UIA call of the outpost's.
+        assert_eq!(
+            common::read_hits(parent),
+            [
+                ("WM_GETOBJECT", 10),
+                ("ProviderOptions", 6),
+                ("HostRawElementProvider", 2),
+                ("Navigate", 2)
+            ],
+            "the parent's calls during the focus-now query ({path})"
+        );
+        drop(outpost);
+        app.quit();
+        parent_app.quit();
+    }
+}
 
 /// A mockapp MSAA window for another mockapp's window to be placed below
 /// ([`place_below`]), and its handle; shown without being activated when
@@ -3856,6 +3912,10 @@ fn main() {
         (
             "uia_focus_chains_stop_below_the_process_boundary",
             uia_focus_chains_stop_below_the_process_boundary,
+        ),
+        (
+            "uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider",
+            uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider,
         ),
         (
             "the_listener_makes_no_connection",

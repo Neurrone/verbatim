@@ -546,13 +546,22 @@ impl Uia {
     /// incomplete. Ancestors that are not presentable focus context are
     /// crossed but never reported (NVDA's `isPresentableFocusAncestor`).
     ///
+    /// The walk never steps across the process boundary: before each hop,
+    /// from an element whose own window, `element_window` for `element`
+    /// and the cached handle for an ancestor, has a parent window, or a
+    /// visible owner for a top-level window, that another process serves
+    /// ([`parent_across_process_boundary`](crate::parent_across_process_boundary)),
+    /// it stops and returns that parent or owner window as the window to
+    /// continue through the other API, local calls only
+    /// (`docs/design/listener-without-connections.md`, section 4.3).
+    ///
     /// # Errors
     ///
     /// Returns the COM error if the tree walker itself cannot be created;
     /// a hop that finds no parent is not an error, it simply ends the walk.
     pub fn ancestors(
         &self,
-        element: &Live,
+        (element, element_window): (&Live, isize),
         request: &Request<Ancestor>,
         registry: &NodeIdRegistry,
         max_hops: u32,
@@ -566,6 +575,7 @@ impl Uia {
         let walker = self.raw_view_walker()?;
         let mut chain = Vec::new();
         let mut current = element.clone();
+        let mut current_window = element_window;
         let started = std::time::Instant::now();
         let mut hops = 0u32;
         let log = |hops: u32, ending: &str| {
@@ -582,6 +592,14 @@ impl Uia {
                 chain.reverse();
                 log(hops, "out of time");
                 return Ok((chain, None, AncestorWalk::OutOfTime));
+            }
+            if let Some(across) = (current_window != 0)
+                .then(|| crate::parent_across_process_boundary(current_window))
+                .flatten()
+            {
+                chain.reverse();
+                log(hops, "below the process boundary");
+                return Ok((chain, Some(across), AncestorWalk::Complete));
             }
             hops += 1;
             let parent = match current.walk(&walker, Direction::Parent, request) {
@@ -601,6 +619,7 @@ impl Uia {
                     return Ok((chain, None, ending));
                 }
             };
+            current_window = parent.read().node.role.hwnd;
             match take_shaped_ancestor(&parent, registry, read_by_other_api, known, &mut chain) {
                 Taken::Continue => current = parent.live().clone(),
                 Taken::Crossed(hwnd) => {

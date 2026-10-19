@@ -643,7 +643,10 @@ to a window by its handle, from the connection count
 placed below another's, as its child or owned by it, the listener's
 chain stops below the process boundary, and the parent's provider calls
 are pinned while the listener reads and during a focus-now query
-(`uia_focus_chains_stop_below_the_process_boundary`). A container's selected child is pinned over
+(`uia_focus_chains_stop_below_the_process_boundary`); above a parent
+that has a UIA provider, the outpost continues the chain through MSAA's
+bridge with no connection to it
+(`uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider`). A container's selected child is pinned over
 `tests/fixtures/ancestry.json`, through a list's `SelectionPattern2` and
 through a tab control's `Selection` pattern, classically and in the
 focus's remote program; and so are a text focus's registration, its caret
