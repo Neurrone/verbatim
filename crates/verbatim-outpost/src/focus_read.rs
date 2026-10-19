@@ -49,10 +49,12 @@
 //! the event arrived, and holds the application's later events until the
 //! result or the drop takes the marker's place (section 12.4).
 //!
-//! Time limits: each read's calls are on held elements, which UIA's
-//! transaction timeout, set once for the process, ends
-//! (`verbatim_uia::TRANSACTION_TIMEOUT`). A watchdog
-//! abandons a thread whose read runs past [`READ_DEADLINE`]: its event is
+//! Time limits: a read is several calls, each on an element the listener
+//! holds, which UIA's transaction timeout, set once for the process, ends
+//! (`verbatim_uia::TRANSACTION_TIMEOUT`); a call that fails ends the read,
+//! and the ancestor walk stops once [`READ_BUDGET`] has passed. A watchdog
+//! abandons a thread whose read runs past [`READ_DEADLINE`], the longest
+//! an application that answers every call can take: its event is
 //! dropped, a new thread takes the application's later events, and the
 //! abandoned thread, once UIA gives up, says nothing more and ends. An
 //! application whose abandoned threads reach [`ABANDONED_LIMIT`] gets no
@@ -99,14 +101,33 @@ const MAX_ANCESTORS: u32 = 64;
 
 /// How long the classic ancestor walk may take before the focus is
 /// reported with its ancestors unknown: checked between the walk's calls,
-/// each of which UIA ends after its call timeout.
+/// each of which UIA ends after its transaction timeout.
 const READ_BUDGET: Duration = Duration::from_secs(2);
 
+/// The most calls into the application one focus event's read makes
+/// outside the ancestor walk's budget, each of which UIA ends after its
+/// transaction timeout: the checks' nearest window, the last accepted
+/// focus's keyboard focus, and the sender's keyboard focus (3); the read's
+/// keyboard focus of the element read before and refresh of the sender's
+/// cache (2); the step of the walk under way when [`READ_BUDGET`] passes
+/// (1); and the most of the calls that exclude one another (4): the
+/// console check from the console window's element (4, a text area's
+/// takes 2), a list's selected child (2), or a menu item's legacy state
+/// (1).
+const READ_CALLS: u32 = 10;
+
 /// How long a reading thread may take over one focus event before the
-/// watchdog abandons it: a little longer than UIA's transaction timeout,
-/// which ends each of the read's calls on held elements.
-pub(crate) const READ_DEADLINE: Duration =
-    Duration::from_secs(verbatim_uia::TRANSACTION_TIMEOUT.as_secs() + 1);
+/// watchdog abandons it: the longest a read takes from an application
+/// that answers each of its calls just within UIA's transaction timeout,
+/// [`READ_CALLS`] calls, the raw probe's own wait at a window's first
+/// sight, and the walk's [`READ_BUDGET`], with one second to spare, so
+/// only a read whose application stops answering is abandoned.
+pub(crate) const READ_DEADLINE: Duration = Duration::from_secs(
+    verbatim_uia::TRANSACTION_TIMEOUT.as_secs() * READ_CALLS as u64
+        + verbatim_uia::RAW_PROBE_TIMEOUT_MS as u64 / 1000
+        + READ_BUDGET.as_secs()
+        + 1,
+);
 
 /// How many of an application's reading threads may be abandoned and still
 /// in their calls before its focus events are dropped without a read.

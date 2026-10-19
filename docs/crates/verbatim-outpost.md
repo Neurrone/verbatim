@@ -169,8 +169,13 @@ event's own element:
   verbatim.exe, never coalesced and never dropped on the way: the
   listener queues them unkeyed, and the supervisor's writer lets them
   through a full queue in order.
-- A watchdog abandons a thread whose read runs past `READ_DEADLINE`, a
-  second longer than UIA's call timeout: the event is reported dropped, a
+- A watchdog abandons a thread whose read runs past `READ_DEADLINE`, 56
+  seconds: the longest read of an application that answers each call just
+  within UIA's five-second transaction timeout, ten calls at most outside
+  the ancestor walk's budget (`READ_CALLS`), with the raw probe's
+  three-second wait, the walk's two-second budget, and a second to spare,
+  so only a read whose application stops answering is abandoned (a call
+  that times out ends the read itself): the event is reported dropped, a
   new thread takes the application's later events, and the abandoned
   thread, once its call returns, says nothing and ends. With two of an
   application's threads abandoned and still in their calls, its focus
