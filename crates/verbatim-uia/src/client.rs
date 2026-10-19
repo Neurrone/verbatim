@@ -28,8 +28,8 @@ use crate::com::init_mta;
 use crate::element::{ElementExt, current_selection, invoke, select, toggle};
 use crate::registry::NodeIdRegistry;
 use crate::shape::{
-    Ancestor, Cached, Direction, ElementValue, Live, Node, Request, SelectionContainer, Shape,
-    TreeDump,
+    Ancestor, Cached, Direction, ElementValue, Live, Node, ProviderOrigin, Request,
+    SelectionContainer, Shape, TreeDump,
 };
 
 /// A UIA client bound to the current thread's multithreaded apartment.
@@ -400,6 +400,23 @@ impl Uia {
         // SAFETY: HWND wraps a caller-supplied handle; ElementFromHandle
         // tolerates an invalid handle by returning an error.
         unsafe { self.client.ElementFromHandle(HWND(hwnd as *mut _)) }.map(Live::new)
+    }
+
+    /// [`window_live`](Self::window_live) for an outpost's own
+    /// application's window with a provider, under the proxy rule as
+    /// [`window_element`](Self::window_element) is: the lookup caches only
+    /// the provider description the rule reads, and an element only
+    /// `UIAutomationCore.dll`'s own proxies serve is refused. Cross-process,
+    /// one call, as `window_live` is.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the handle has no UIA element or the call
+    /// fails, and an error when the proxy rule refuses the element.
+    pub fn answered_window_live(&self, hwnd: isize) -> windows::core::Result<Live> {
+        let origin = self.request_fixed::<ProviderOrigin>()?;
+        let (cache, ()) = origin.parts();
+        self.element_from_handle(hwnd, cache).map(Live::new)
     }
 
     /// Re-finds the element `runtime_id` names inside `root`'s subtree, its

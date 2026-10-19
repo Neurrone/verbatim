@@ -973,11 +973,26 @@ fn resolve_uia_element(
     }
     // Gone only when every search finished without finding it; a search
     // that failed, a timeout above all, may have missed a live element.
-    // Nothing of a window's own element is read: it is searched under.
+    // Nothing of a window's own element is read: it is searched under. A
+    // window whose verdict says it has a provider is looked up under the
+    // proxy rule, and a lookup refused, as one of an application busy past
+    // the connection timeout is, is a search that failed, not one that
+    // found nothing.
     let mut failed = None;
     for hwnd in top_level_windows(context.target_pid()) {
-        let Ok(root) = uia.window_live(hwnd) else {
-            continue;
+        let root = if has_provider_verdict(context, hwnd) {
+            match uia.answered_window_live(hwnd) {
+                Ok(root) => root,
+                Err(error) => {
+                    failed = Some(error);
+                    continue;
+                }
+            }
+        } else {
+            let Ok(root) = uia.window_live(hwnd) else {
+                continue;
+            };
+            root
         };
         match uia.find_by_runtime_id(&root, &runtime_id, nodes) {
             Ok(Some(element)) => return Ok(element),
@@ -988,6 +1003,13 @@ fn resolve_uia_element(
     Err(failed.map_or(ReadError::Gone, |error| {
         ReadError::Failed(format!("searching for the element: {error}"))
     }))
+}
+
+/// Whether the arbitrator's verdict for `hwnd`, kept or from its class,
+/// says it has a UIA provider, without probing it. Local.
+fn has_provider_verdict(context: &Context, hwnd: isize) -> bool {
+    let classes = crate::arbitration::WindowClasses::of(hwnd);
+    context.arbitrator().verdict(hwnd, &classes) == Some(true)
 }
 
 /// A UIA node's live element, filled as a node, or the error a query

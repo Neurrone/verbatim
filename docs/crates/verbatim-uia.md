@@ -61,7 +61,9 @@ Public API:
   proxy rule as `window_element` is),
   `window_live(hwnd)` (a window's element with no cache, for a caller
   that reads nothing of it, only searches under it: `ElementFromHandle`,
-  one call), `children(parent, request)` (`parent`'s raw-view children,
+  one call), `answered_window_live(hwnd)` (the same for an outpost's own
+  application's window with a provider, under the proxy rule, the lookup
+  caching only the provider description: one call), `children(parent, request)` (`parent`'s raw-view children,
   each filled by `request`, in one `BuildUpdatedCache` on a copy of the
   request scoped to the children alone in the raw view, as NVDA fetches
   children, so `parent` itself is filled with nothing; a dialog's own
