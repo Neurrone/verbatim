@@ -453,7 +453,9 @@ fn run(
     // started if needed, and the answer is spoken like a switch to it.
     if let Some(pid) = foreground_pid() {
         // A console window's outpost is its console host's.
-        note_targeted_pid(&outposts, console_host_in_front(pid).unwrap_or(pid));
+        if let Some(server) = focus_now_server(pid) {
+            note_targeted_pid(&outposts, server);
+        }
         let _ = command_tx.send(ShellCommand::FocusNow(pid));
     }
 
@@ -838,20 +840,23 @@ fn window_pid(hwnd: isize) -> Option<Pid> {
     (pid != 0).then_some(Pid(pid))
 }
 
-/// The console host of the console window in front, when Windows names
-/// `pid`, the console's client, as that window's owner: the process that
-/// serves the window ([`verbatim_outpost::provider_process`]), which differs
-/// from its owner only for a console window. `None` for any other window
-/// in front. Local calls only.
-fn console_host_in_front(pid: Pid) -> Option<Pid> {
+/// The process whose outpost answers a focus-now query for the
+/// application `pid`. When Windows names `pid` as the owner of the window in
+/// front, the process that serves that window
+/// ([`verbatim_outpost::provider_process`]), which differs from its owner
+/// only for a console window, whose console host serves it; `None` when it
+/// cannot be read, for a console window whose host cannot be read from its
+/// client or a window closed since, so no outpost is asked: the client's
+/// own serves none of its console window. `pid` itself for any other
+/// window in front. Local calls only.
+fn focus_now_server(pid: Pid) -> Option<Pid> {
     use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
     // SAFETY: no preconditions.
     let hwnd = unsafe { GetForegroundWindow() }.0 as isize;
-    if window_pid(hwnd)? != pid {
-        return None;
+    if window_pid(hwnd) != Some(pid) {
+        return Some(pid);
     }
-    let provider = verbatim_outpost::provider_process(hwnd)?;
-    (provider != pid.0).then_some(Pid(provider))
+    verbatim_outpost::provider_process(hwnd).map(Pid)
 }
 
 /// The application holding the system foreground right now, read with a
@@ -1176,16 +1181,24 @@ impl ReducerThread<'_> {
     /// Asks the outpost serving the application `pid` for the current focus
     /// now if it is ready, or as soon as it is, starting one if there is
     /// none. A console's client whose console window is in front is served
-    /// by its console host's outpost, found locally
-    /// ([`console_host_in_front`]), whether or not that outpost has
-    /// reported for it yet: the client's own outpost serves none of the
-    /// console window, and connects to no other application's window
+    /// by its console host's outpost, found locally ([`focus_now_server`]),
+    /// whether or not that outpost has reported for it yet, and by none
+    /// when that host cannot be read: the client's own outpost serves none
+    /// of the console window, and connects to no other application's window
     /// (`docs/design/listener-without-connections.md`, section 4.3).
     fn want_focus_now(&mut self, pid: Pid) {
         if self.context.supervisor.is_ignored(pid) {
             return; // Nothing is asked of a process Verbatim ignores.
         }
-        if let Some(host) = console_host_in_front(pid) {
+        let Some(server) = focus_now_server(pid) else {
+            tracing::info!(
+                %pid,
+                "no outpost is asked for the focus: the window in front has no provider process that can be read"
+            );
+            return;
+        };
+        if server != pid {
+            let host = server;
             if let Some(outpost) = self.live.ready(host) {
                 self.live.reports_for(outpost, pid);
                 self.focus_now(outpost, pid);

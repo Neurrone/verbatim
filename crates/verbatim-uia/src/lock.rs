@@ -492,7 +492,7 @@ mod tests {
 
     use super::*;
     use crate::provider_process;
-    use crate::test_console::Console;
+    use verbatim_test_console::Console;
 
     const WAIT: Duration = Duration::from_secs(10);
 

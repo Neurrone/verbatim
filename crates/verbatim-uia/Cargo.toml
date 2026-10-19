@@ -14,10 +14,8 @@ windows.workspace = true
 windows-core.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
-[features]
-# A console the tests start (`test_console`), for other crates' tests of a
-# console window's provider process.
-test-console = []
+[dev-dependencies]
+verbatim-test-console.workspace = true
 
 [lints]
 workspace = true

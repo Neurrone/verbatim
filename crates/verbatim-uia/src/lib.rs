@@ -41,9 +41,10 @@
 //!   cached read of an element, declared together with the cache request
 //!   that fills it (`docs/design/uia-shapes.md`): the only cached reads in
 //!   the workspace.
-//! - [`provider_process`] and [`console_host_of`] — the process that
-//!   serves a window's UIA, a console window's being its console host,
-//!   read with local calls only; [`parent_across_process_boundary`], the
+//! - [`provider_process`], [`served_by`] and [`console_host_of`] — the
+//!   process that serves a window's UIA, a console window's being its
+//!   console host, read with local calls only;
+//!   [`parent_across_process_boundary`], the
 //!   parent window of another process where a walk up stops.
 //! - [`lock`] — the lock per application around the UIA calls that
 //!   collide (`docs/design/focus-pipeline.md`, section 20): which calls
@@ -74,8 +75,6 @@ mod proxy;
 mod registry;
 mod shape;
 mod subscribe;
-#[cfg(any(test, feature = "test-console"))]
-pub mod test_console;
 pub mod text;
 
 pub use bounded::{BoundedClient, Unanswered};
@@ -97,7 +96,7 @@ pub use nearest::nearest_window_handle;
 pub use probe::{
     RAW_PROBE_TIMEOUT_MS, RawProbe, has_server_side_provider, raw_probe, raw_probe_verdict,
 };
-pub use provider::{console_host_of, parent_across_process_boundary, provider_process};
+pub use provider::{console_host_of, parent_across_process_boundary, provider_process, served_by};
 pub use registry::{NodeIdRegistry, Released};
 pub use shape::{
     Absent, Agile, Ancestor, AncestorGates, Cached, Covers, Description, DialogText, Direction,

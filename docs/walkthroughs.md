@@ -88,9 +88,9 @@ releases Alt. Notepad has no outpost yet.
      (runtime id, role, name, value, states, details) as a
      `DeliveredFact::UiaFocus`. For an element with no window of its own,
      it also records `focus_window`: the foreground thread's keyboard focus
-     window, if the element's process serves it (`focus_window_of` in
-     `crates/verbatim-outpost/src/outpost/window.rs`, using
-     `GetGUIThreadInfo`, a local read). NVDA would walk up to the
+     window, if the element's process serves it (`focus_window_for` in
+     `crates/verbatim-outpost/src/listener.rs`, using `GetGUIThreadInfo`
+     and `verbatim_uia::provider_process`, local reads). NVDA would walk up to the
      element's nearest window, which is a cross-process call the listener
      may not make.
    - The switcher's end is noted and a threadpool timer set; 50 ms later

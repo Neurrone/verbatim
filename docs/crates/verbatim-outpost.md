@@ -204,11 +204,15 @@ event's source, and answers a focus-now query for its console window.
 An outpost's window filters (`window::served_by`, which
 `focus_window_of`, `foreground_window_of`, `main_window_of` and
 `top_level_windows` decide by) take a window as the application's when
-the application serves its UIA (`verbatim_uia::provider_process`, local
-calls), so a console window is its console host's and never its
-client's, and `read::focused_control` reads no focused element in a
-window another process serves
-(`docs/design/listener-without-connections.md`, section 4.3). The crate
+the application serves its UIA (`verbatim_uia::served_by`, local calls),
+so a console window is its console host's and never its client's, even
+when the host cannot be read from the client, and `read::focused_control`
+reads no focused element in a window another process serves
+(`read::control_window`; `docs/design/listener-without-connections.md`,
+section 4.3). Where the supervisor starts an outpost for a process on
+account of a fact in a window, it checks that the process serves that
+window (`check_served_by` in `supervisor/owner.rs`): a debug build fails,
+a release build logs an error. The crate
 re-exports `provider_process` and `console_host_of`, so Core routes a
 console client's focus-now query to its console host without depending
 on `verbatim-uia`. A focus whose top-level window belongs to

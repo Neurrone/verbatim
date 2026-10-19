@@ -469,10 +469,15 @@ Public API:
   `ProcessConsoleHostProcess`. An outpost's window filters, its refusal to
   read another application's focused element, and Core's routing of a
   console client's focus-now query decide by it
-  (`docs/design/listener-without-connections.md`, section 4.3). The
-  `test-console` feature exposes `test_console::Console`, a hidden console
-  the tests start, to other crates' tests.
-- `parent_across_process_boundary(hwnd)` — the window's parent
+  (`docs/design/listener-without-connections.md`, section 4.3). A console
+  window whose host cannot be read, such as one whose client runs as
+  another user, has no provider process. `served_by(hwnd, pid)` is
+  whether `pid` serves the window: its provider process, or for such a
+  console window whether it is one of `pid`'s threads' windows by
+  `EnumThreadWindows`, which goes by the thread that created it, so a
+  console host's outpost still recognizes its own console window. The
+  tests' console comes from the dev-only crate `verbatim-test-console`.
+- `parent_across_process_boundary(hwnd)` â€” the window's parent
   (`GetAncestor` with `GA_PARENT`) when another process owns it, by
   `GetWindowThreadProcessId`, and `None` for a top-level window, whose
   parent is the desktop: where the process boundary lies, at which the

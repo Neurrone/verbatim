@@ -1847,6 +1847,7 @@ dependencies = [
  "verbatim-ia2",
  "verbatim-model",
  "verbatim-process",
+ "verbatim-test-console",
  "verbatim-text",
  "verbatim-uia",
  "verbatim-uia-rops",
@@ -1957,6 +1958,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "verbatim-test-console"
+version = "0.1.0"
+dependencies = [
+ "windows",
+ "workspace-hack",
+]
+
+[[package]]
 name = "verbatim-text"
 version = "0.1.0"
 dependencies = [
@@ -1983,6 +1992,7 @@ version = "0.1.0"
 dependencies = [
  "tracing",
  "verbatim-model",
+ "verbatim-test-console",
  "verbatim-text",
  "windows",
  "windows-core",

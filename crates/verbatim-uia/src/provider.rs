@@ -5,11 +5,16 @@
 //! host. Also where a window's process ends: its parent window owned by
 //! another process ([`parent_across_process_boundary`]).
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+};
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GA_PARENT, GetAncestor, GetClassNameW, GetDesktopWindow, GetWindowThreadProcessId,
+    EnumThreadWindows, GA_PARENT, GetAncestor, GetClassNameW, GetDesktopWindow,
+    GetWindowThreadProcessId,
 };
+use windows::core::BOOL;
 
 /// The class of a console window, whose provider is the console host, the
 /// process of the window's thread, while `GetWindowThreadProcessId` names the
@@ -21,10 +26,47 @@ const CONSOLE_WINDOW_CLASS: &str = "ConsoleWindowClass";
 /// that call is the console's client while its provider is the console
 /// host. Windows names the client's thread for a console window too, so the
 /// host is read from the client instead ([`console_host_of`]). `None` for a
-/// window that no longer exists. Local calls only; a console window costs
-/// the client's lookup too.
+/// window that no longer exists, and for a console window whose host cannot
+/// be read, such as one whose client runs as another user, so that no
+/// outpost takes that window as its application's: never the client's,
+/// which would then connect into the console host. Local calls only; a
+/// console window costs the client's lookup too.
 #[must_use]
 pub fn provider_process(hwnd: isize) -> Option<u32> {
+    match provider(hwnd)? {
+        Provider::Process(process) => Some(process),
+        Provider::UnreadConsole => None,
+    }
+}
+
+/// Whether the process `pid` serves UIA for the window `hwnd`: whether it is
+/// the window's [`provider_process`], or, for a console window whose host
+/// cannot be read, whether the window is one of `pid`'s threads' own, which
+/// `EnumThreadWindows` answers by the thread that created the window where
+/// `GetWindowThreadProcessId` names the client's. So a console host
+/// recognizes its own console window whatever its client, and no other
+/// process does. Local calls only; that fallback costs a snapshot of the
+/// system's threads.
+#[must_use]
+pub fn served_by(hwnd: isize, pid: u32) -> bool {
+    match provider(hwnd) {
+        Some(Provider::Process(process)) => process == pid,
+        Some(Provider::UnreadConsole) => threads_own_window(pid, hwnd),
+        None => false,
+    }
+}
+
+/// A window's provider, as far as it can be read.
+#[derive(Debug, PartialEq, Eq)]
+enum Provider {
+    /// The process that serves the window's UIA.
+    Process(u32),
+    /// A console window whose console host cannot be read from its client.
+    UnreadConsole,
+}
+
+/// `hwnd`'s provider, `None` for a window that no longer exists.
+fn provider(hwnd: isize) -> Option<Provider> {
     let window = HWND(hwnd as *mut _);
     let mut class = [0u16; 32];
     // SAFETY: the buffer outlives the call, which writes at most its
@@ -40,10 +82,69 @@ pub fn provider_process(hwnd: isize) -> Option<u32> {
         .ok()
         .and_then(|length| class.get(..length))
         .map(String::from_utf16_lossy);
-    if class.as_deref() == Some(CONSOLE_WINDOW_CLASS) {
-        return console_host_of(owner).or(Some(owner));
+    Some(provider_of(class.as_deref(), owner, console_host_of))
+}
+
+/// The provider of a window of class `class` that `GetWindowThreadProcessId`
+/// says `owner` owns: the owner, except for a console window, whose console
+/// host `host` reads from the owner, its client.
+fn provider_of(class: Option<&str>, owner: u32, host: impl FnOnce(u32) -> Option<u32>) -> Provider {
+    if class == Some(CONSOLE_WINDOW_CLASS) {
+        host(owner).map_or(Provider::UnreadConsole, Provider::Process)
+    } else {
+        Provider::Process(owner)
     }
-    Some(owner)
+}
+
+/// Whether the top-level window `hwnd` belongs to one of `pid`'s threads by
+/// `EnumThreadWindows`, which goes by the thread that created the window: a
+/// console window's console host's. Local calls: a snapshot of the system's
+/// threads, and an enumeration of each of `pid`'s.
+fn threads_own_window(pid: u32, hwnd: isize) -> bool {
+    struct Search {
+        window: isize,
+        found: bool,
+    }
+    unsafe extern "system" fn visit(window: HWND, search: LPARAM) -> BOOL {
+        // SAFETY: `search` is the search passed below, alive for the call.
+        let search = unsafe { &mut *(search.0 as *mut Search) };
+        search.found = window.0 as isize == search.window;
+        BOOL::from(!search.found)
+    }
+    // SAFETY: a thread snapshot has no preconditions; the handle is closed
+    // below.
+    let Ok(snapshot) = (unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) }) else {
+        return false;
+    };
+    let mut entry = THREADENTRY32 {
+        dwSize: u32::try_from(size_of::<THREADENTRY32>()).unwrap_or(0),
+        ..Default::default()
+    };
+    let mut search = Search {
+        window: hwnd,
+        found: false,
+    };
+    // SAFETY: the snapshot just taken; `entry` has its `dwSize` set.
+    let mut has_entry = unsafe { Thread32First(snapshot, &raw mut entry) }.is_ok();
+    while has_entry && !search.found {
+        if entry.th32OwnerProcessID == pid {
+            // SAFETY: `visit` reads only the search, which outlives the
+            // synchronous enumeration; it answers an error for a thread
+            // with no windows, or when `visit` stopped it.
+            let _ = unsafe {
+                EnumThreadWindows(
+                    entry.th32ThreadID,
+                    Some(visit),
+                    LPARAM((&raw mut search) as isize),
+                )
+            };
+        }
+        // SAFETY: as above; the call overwrites `entry` with the next thread.
+        has_entry = unsafe { Thread32Next(snapshot, &raw mut entry) }.is_ok();
+    }
+    // SAFETY: the snapshot handle, closed once.
+    let _ = unsafe { CloseHandle(snapshot) };
+    search.found
 }
 
 /// The parent window of `hwnd` across the process boundary: its parent
@@ -127,7 +228,7 @@ mod tests {
     use windows::core::w;
 
     use super::*;
-    use crate::test_console::Console;
+    use verbatim_test_console::Console;
 
     #[test]
     fn a_console_window_is_served_by_its_console_host_not_its_owner() {
@@ -138,6 +239,32 @@ mod tests {
         assert_ne!(owner, console.host, "the console's client owns its window");
         assert_eq!(console_host_of(owner), Some(console.host));
         assert_eq!(provider_process(console.window), Some(console.host));
+    }
+
+    #[test]
+    fn a_console_window_whose_host_cannot_be_read_has_no_provider_process() {
+        assert_eq!(
+            provider_of(Some(CONSOLE_WINDOW_CLASS), 20, |_| None),
+            Provider::UnreadConsole
+        );
+        assert_eq!(
+            provider_of(Some(CONSOLE_WINDOW_CLASS), 20, |_| Some(30)),
+            Provider::Process(30)
+        );
+        assert_eq!(
+            provider_of(Some("Notepad"), 20, |_| panic!("the host is not read")),
+            Provider::Process(20)
+        );
+    }
+
+    #[test]
+    fn a_console_window_is_its_console_hosts_threads_own_not_its_clients() {
+        let console = Console::start();
+        let mut client = 0u32;
+        // SAFETY: `client` is a local; the window is the console's.
+        unsafe { GetWindowThreadProcessId(HWND(console.window as *mut _), Some(&raw mut client)) };
+        assert!(threads_own_window(console.host, console.window));
+        assert!(!threads_own_window(client, console.window));
     }
 
     #[test]

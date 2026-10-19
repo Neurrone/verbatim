@@ -243,6 +243,12 @@ pub(crate) fn window_is_hung(handle: isize) -> bool {
     unsafe { IsHungAppWindow(hwnd(handle)) }.as_bool()
 }
 
+/// Whether `handle` is a window that exists. A local call.
+pub(crate) fn window_exists(handle: isize) -> bool {
+    // SAFETY: IsWindow tolerates any handle.
+    unsafe { IsWindow(Some(hwnd(handle))) }.as_bool()
+}
+
 /// Why an event's own window, `handle`, cannot be read, or `None` when it
 /// can: it is no window, or no longer one; a ghost window stands in for it;
 /// or the system reports its application hung. NVDA drops such an event
@@ -316,12 +322,13 @@ pub(super) fn window_text(handle: isize) -> Option<String> {
 
 /// Whether window `handle` is `target_pid`'s, the application an outpost
 /// serves: whether that process serves the window's UIA
-/// ([`verbatim_uia::provider_process`]), so a console window is its console
-/// host's and never its client's, whom `GetWindowThreadProcessId` names
+/// ([`verbatim_uia::served_by`]), so a console window is its console host's
+/// and never its client's, whom `GetWindowThreadProcessId` names, even when
+/// the host cannot be read from the client
 /// (`docs/design/listener-without-connections.md`, section 4.3). Every
 /// filter below decides by it. Local calls only.
 pub(crate) fn served_by(handle: isize, target_pid: u32) -> bool {
-    verbatim_uia::provider_process(handle) == Some(target_pid)
+    verbatim_uia::served_by(handle, target_pid)
 }
 
 /// `GetForegroundWindow()` if it is `target_pid`'s ([`served_by`]), else
@@ -355,7 +362,7 @@ pub(crate) fn window_is_visible(handle: isize) -> bool {
 
 /// The window with the keyboard focus right now (falling back to the active
 /// window), whatever process it belongs to.
-pub(super) fn focus_window() -> Option<isize> {
+pub(crate) fn focus_window() -> Option<isize> {
     // SAFETY: `info` has cbSize set before the call; the call fails safely.
     unsafe {
         let mut info = GUITHREADINFO {
@@ -536,7 +543,7 @@ mod tests {
 
     #[test]
     fn a_console_window_is_its_console_hosts_not_its_clients() {
-        let console = verbatim_uia::test_console::Console::start();
+        let console = verbatim_test_console::Console::start();
         let (_, client) = window_owner(console.window);
         assert_ne!(
             client, console.host,

@@ -1,6 +1,7 @@
 //! A console the tests start: `conhost.exe` running PowerShell in a hidden
 //! console window, for the tests of a console window's provider process in
-//! this crate and, through the `test-console` feature, in others.
+//! `verbatim-uia` and `verbatim-outpost`. A dev-dependency only, so the
+//! crates it serves are built once for their tests and their builds alike.
 
 use std::cell::{Cell, RefCell};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};

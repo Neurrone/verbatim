@@ -49,6 +49,9 @@ commit updated only the changed crate's own guide.
   benchmark for Verbatim's pipes and relay (`cargo xtask relay-floor`).
 - [verbatim-trace-waits](verbatim-trace-waits.md) — how long threads
   waited to run, from a WPR trace (`cargo xtask trace waits`).
+- [verbatim-test-console](verbatim-test-console.md) — a console the tests
+  start, for tests of a console window's provider process; a
+  dev-dependency only.
 - [verbatim-synth-hosted](verbatim-synth-hosted.md) — `HostedSynth`, the
   driver that runs a synthesizer in a host process (D18).
 - [verbatim-synth-host](verbatim-synth-host.md) — `verbatim-synth-host.exe`,

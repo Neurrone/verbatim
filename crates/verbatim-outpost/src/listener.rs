@@ -1070,12 +1070,20 @@ fn capture(
 /// window; for a focus, in the reading thread's checks before its read and
 /// as the window the outpost reports the focus in when the read found
 /// none, its acceptance test running against the nearest window the read
-/// found. The keyboard focus window of the element's process `pid` now, a
-/// local read, when the element's cached window handle `hwnd` is 0 and the
-/// process has the keyboard focus; else 0.
+/// found. The keyboard focus window now, when the element's cached window
+/// handle `hwnd` is 0 and the element's process `pid` serves that window
+/// ([`verbatim_uia::provider_process`]: a console window is its console
+/// host's); else 0. Local calls on UIA's callback thread: the focus window,
+/// its class and owner, and for a console window its host, read from the
+/// client. A console window whose host cannot be read is no process's here,
+/// without the thread search an outpost makes for its own console window
+/// ([`verbatim_uia::served_by`]), which costs a snapshot of the system's
+/// threads.
 fn focus_window_for(pid: Pid, hwnd: isize) -> isize {
     if hwnd == 0 {
-        crate::outpost::window::focus_window_of(pid.0).unwrap_or(0)
+        crate::outpost::window::focus_window()
+            .filter(|&window| verbatim_uia::provider_process(window) == Some(pid.0))
+            .unwrap_or(0)
     } else {
         0
     }

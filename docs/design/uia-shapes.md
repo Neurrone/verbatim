@@ -811,8 +811,6 @@ so that it always carries the control type (section 7, decision 8).
 
 ### 5.3 Over-fetches (correct, but wasteful)
 
-- `hosts_console_window` (`read.rs:789` to 804) fills 27 to 34
-  properties of a console window's element to read `ProcessId`.
 - The shell's notification-area list (`verbatim-gui/src/shell_items.rs:145`
   and 269 to 281) fills all 34 to read five: `NativeWindowHandle`,
   `ControlType`, `Name`, `IsOffscreen`, `BoundingRectangle`.
@@ -918,8 +916,6 @@ is `cache_request_for(fetches)` unless said otherwise.
   thread, of which nothing is read (decided, section 5.4).
 - 726, `focused_control`: the focused element. Bug 2. Shape: `Node`
   (named `FocusRead` in section 4.2's sense, the same shape).
-- 802, `hosts_console_window`: `ProcessId`. Over-fetch. Shape:
-  `ProcessCheck`.
 - 868, a node's element found by its path, then kept. See section 6.
 - 1000, `uia_remote_step` (978): `NativeWindowHandle` of the kept element.
   Covered: every kept cache holds it.
@@ -1019,7 +1015,6 @@ Fetch shapes:
   `Description` group: 25 (decision 5). The dialog's own element is not a
   shape: it is a `Live`, in a root type of its own (section 5.5).
 - `WindowLookup`: `NativeWindowHandle`.
-- `ProcessCheck`: `ProcessId`.
 - `FrameworkCheck`: `FrameworkId`.
 - The empty shape: no request; the fetch returns `Live`.
 - `SelectionContainer`: `Selection2FirstSelectedItem` and the Selection
@@ -1320,7 +1315,7 @@ declare a shape of its own.
 
 - `verbatim-uia`'s fetches take `&Request<S>`, beside the old ones;
   `Node`, `Ancestor`, `TreeDump`, `DialogText`, `SelectionContainer`, the
-  refresh shapes, `WindowLookup`, `ProcessCheck`, `FrameworkCheck`,
+  refresh shapes, `WindowLookup`, `FrameworkCheck`,
   `FocusInput`, `ShellButton` and the empty shape replace the lists at
   every site in section 5.5 but the registry's readers.
 - `verbatim-uia-rops` takes `Fill<S>`, returns the absent record (decision

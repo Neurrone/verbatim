@@ -1001,6 +1001,9 @@ impl Owner {
         let now = Instant::now();
         let mut held = HeldFacts::default();
         if let Some(fact) = first {
+            if let Some(window) = fact_window(&fact.fact) {
+                check_served_by(pid, window);
+            }
             held.hold(fact);
         }
         self.records.insert(
@@ -2340,6 +2343,41 @@ impl Drop for Retirement {
 
 /// Asks an outpost for the idle barrier's round `round`, behind everything
 /// queued for it before. One that has ended answers by its end.
+/// The window an MSAA fact names, which the listener routed by: a focus's,
+/// a menu's, or the new foreground. `None` for a UIA fact.
+fn fact_window(fact: &DeliveredFact) -> Option<isize> {
+    match fact {
+        DeliveredFact::MsaaFocus { hwnd, .. }
+        | DeliveredFact::Foreground { hwnd }
+        | DeliveredFact::MenuPopup { hwnd, .. } => Some(*hwnd),
+        _ => None,
+    }
+}
+
+/// Checks that `pid`, for which an outpost is starting on account of a fact
+/// in the window `hwnd`, is the process that serves that window
+/// ([`verbatim_uia::provider_process`]), so no outpost is started for a
+/// console's client on account of its console window, whose console host
+/// serves it (`docs/design/listener-without-connections.md`, section 4.3).
+/// A debug build fails; a release build logs the error. A window closed
+/// since is not checked. Local calls only, once per outpost started.
+fn check_served_by(pid: Pid, hwnd: isize) {
+    let provider = verbatim_uia::provider_process(hwnd);
+    let served = provider == Some(pid.0) || !crate::outpost::window::window_exists(hwnd);
+    if !served {
+        tracing::error!(
+            %pid,
+            hwnd,
+            ?provider,
+            "an outpost is starting for a process that does not serve the window it starts for"
+        );
+    }
+    debug_assert!(
+        served,
+        "an outpost for {pid} started for window {hwnd:#x}, which {provider:?} serves"
+    );
+}
+
 fn ask_idle(writer: &WriterHandle, round: u64) {
     let query = SupervisorToOutpost::IdleQuery { round };
     if let Err(error) = writer.push(Outgoing::IdleQuery(query)) {

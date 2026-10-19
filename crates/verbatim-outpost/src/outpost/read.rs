@@ -26,9 +26,9 @@ use crate::protocol::{DumpedTree, FocusNow, FocusedControl};
 use super::Context;
 use super::text_reads::CONSOLE_WINDOW_CLASS;
 use super::window::{
-    desktop_window, focus_window_of, foreground_window_of, main_window_of, now_ms, top_level_of,
-    top_level_windows, window_belongs_to_hidden_frame, window_facts, window_is_hidden_frame,
-    window_text,
+    desktop_window, focus_window, foreground_window_of, main_window_of, now_ms, served_by,
+    top_level_of, top_level_windows, window_belongs_to_hidden_frame, window_facts,
+    window_is_hidden_frame, window_text,
 };
 
 /// Depth cap for a tree dump (the root is depth 0).
@@ -791,13 +791,13 @@ fn dialog_text_of(context: &Context, node: &NodeSnapshot) -> Option<String> {
 
 /// The application's focused control with its ancestors, selected child,
 /// and window, through the focus window's backend. `None` when the keyboard
-/// focus is not in a window this application serves ([`focus_window_of`]:
+/// focus is not in a window this application serves ([`control_window`]:
 /// a console window is its console host's), or is on Core's hidden frame,
 /// so the focused element is never read in another application, whose
 /// window this outpost would connect to
 /// (`docs/design/listener-without-connections.md`, section 4.3).
 pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<FocusedControl> {
-    let hwnd = focus_window_of(context.target_pid())?;
+    let hwnd = control_window(context.target_pid(), focus_window)?;
     if window_belongs_to_hidden_frame(hwnd) {
         return None;
     }
@@ -847,6 +847,14 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
             window: Some(window_facts(hwnd)),
         })
     }
+}
+
+/// The window whose focused element [`focused_control`] reads for the
+/// application `target_pid`: the focus window `focus` answers, only when
+/// that application serves it ([`served_by`]), so a console's client never
+/// reads its console window's focus, which its console host serves.
+fn control_window(target_pid: u32, focus: impl FnOnce() -> Option<isize>) -> Option<isize> {
+    focus().filter(|&hwnd| served_by(hwnd, target_pid))
 }
 
 /// Makes `node`, a focus read through UIA in `window`, the console host's
@@ -1245,7 +1253,8 @@ pub(super) fn dump_tree(context: &Context, client: &mut Client) -> Result<Dumped
 mod tests {
     use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet};
 
-    use super::{CONSOLE_WINDOW_CLASS, console_text_area_in, splice};
+    use super::super::window::window_owner;
+    use super::{CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, splice};
 
     fn node(id: u64) -> NodeSnapshot {
         NodeSnapshot {
@@ -1269,6 +1278,17 @@ mod tests {
         // The new walk read 4 and then met 2, its outermost entry.
         let spliced = splice(&previous, vec![node(2), node(4)], NodeId::new(2));
         assert_eq!(ids(&spliced), ids(&[node(1), node(2), node(4)]));
+    }
+
+    #[test]
+    fn only_the_console_host_reads_the_focus_in_its_console_window() {
+        let console = verbatim_test_console::Console::start();
+        let (_, client) = window_owner(console.window);
+        assert_eq!(control_window(client, || Some(console.window)), None);
+        assert_eq!(
+            control_window(console.host, || Some(console.window)),
+            Some(console.window)
+        );
     }
 
     #[test]
