@@ -472,6 +472,13 @@ Public API:
   (`docs/design/listener-without-connections.md`, section 4.3). The
   `test-console` feature exposes `test_console::Console`, a hidden console
   the tests start, to other crates' tests.
+- `parent_across_process_boundary(hwnd)` — the window's parent
+  (`GetAncestor` with `GA_PARENT`) when another process owns it, by
+  `GetWindowThreadProcessId`, and `None` for a top-level window, whose
+  parent is the desktop: where the process boundary lies, at which the
+  focus listener's walks up stop and the outpost continues the chain
+  through MSAA (`docs/design/listener-without-connections.md`, section
+  3). Local calls only.
 - `console_reports_formatting(hwnd)` and `is_windows_forms(hwnd)` â€” the
   checks NVDA makes on a window with a provider before using it: whether a
   console's text area reports one visible range with its font (the

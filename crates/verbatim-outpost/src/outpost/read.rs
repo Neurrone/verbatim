@@ -291,10 +291,12 @@ fn uia_ancestors(
     ) else {
         return Some(Vec::new());
     };
+    // This walk takes the step into a window of another process itself,
+    // and stops there when that window is read through MSAA.
     uia_chain_onward(
         context,
         (uia, request),
-        (uia_chain, crossed, walked),
+        (uia_chain, crossed, walked, None),
         previous,
         out_of_time,
     )
@@ -304,11 +306,22 @@ fn uia_ancestors(
 /// completed outward: spliced onto `previous` where it met a known
 /// ancestor, or continued through MSAA from the window `crossed` names, as
 /// NVDA switches API when its walk crosses into a window read through
-/// MSAA. `None` when the walk ran out of time.
+/// MSAA. A walk that stopped below the process boundary, its outermost
+/// element's own window (`outermost`) the child of another process's
+/// window, is continued from that parent window through MSAA in the same
+/// way when the parent is read through MSAA, as the Settings page's
+/// content is continued from its frame
+/// (`docs/design/listener-without-connections.md`, section 4.2). `None`
+/// when the walk ran out of time.
 fn uia_chain_onward(
     context: &Context,
     (uia, request): (&Uia, &Request<Ancestor>),
-    (uia_chain, crossed, walked): (Vec<NodeSnapshot>, Option<isize>, AncestorWalk),
+    (uia_chain, crossed, walked, outermost): (
+        Vec<NodeSnapshot>,
+        Option<isize>,
+        AncestorWalk,
+        Option<isize>,
+    ),
     previous: &[NodeSnapshot],
     out_of_time: Option<&dyn Fn() -> bool>,
 ) -> Option<Vec<NodeSnapshot>> {
@@ -318,6 +331,12 @@ fn uia_chain_onward(
         AncestorWalk::MetKnown(met) => return Some(splice(previous, uia_chain, met)),
         AncestorWalk::Complete => {}
     }
+    let crossed = crossed.or_else(|| {
+        let parent = outermost
+            .filter(|&window| window != 0)
+            .and_then(verbatim_uia::parent_across_process_boundary)?;
+        (!window_uses_uia(context, parent)).then_some(parent)
+    });
     let Some(hwnd) = crossed else {
         return Some(uia_chain);
     };
@@ -365,7 +384,7 @@ fn uia_chain_onward(
 pub(super) fn uia_chain_from_read(
     context: &Context,
     client: &mut Client,
-    ancestors: &[crate::protocol::UiaAncestorFact],
+    (ancestors, own_window): (&[crate::protocol::UiaAncestorFact], isize),
     previous: &[NodeSnapshot],
 ) -> Option<Vec<NodeSnapshot>> {
     let desktop = desktop_window();
@@ -395,13 +414,18 @@ pub(super) fn uia_chain_from_read(
             out_of_time: None,
         },
     );
+    // The listener's walk stops below the process boundary, at the window
+    // its last ancestor, or the focus itself, has.
+    let outermost = ancestors
+        .last()
+        .map_or(own_window, |ancestor| ancestor.hwnd);
     let clock = context.clock();
     let out_of_time = time_limit(&clock, ENRICHMENT_BUDGET);
     match client.uia_with(context, Context::ancestor_request) {
         Ok((uia, request)) => uia_chain_onward(
             context,
             (uia, &request),
-            (chain, crossed, walked),
+            (chain, crossed, walked, Some(outermost)),
             previous,
             Some(&out_of_time),
         ),
@@ -521,10 +545,17 @@ pub(super) fn uia_remote_enrichment(
         {
             walked = AncestorWalk::MetKnown(met);
         }
+        // The program, and the classic walk it falls back to, stop below
+        // the process boundary, at the window the last ancestor, or the
+        // focus itself, has.
+        let outermost = ancestry.ancestors.last().map_or_else(
+            || element.read().role.hwnd,
+            |ancestor| ancestor.read().node.role.hwnd,
+        );
         uia_chain_onward(
             context,
             (uia, request),
-            (chain, crossed, walked),
+            (chain, crossed, walked, Some(outermost)),
             previous,
             Some(&out_of_time),
         )

@@ -3131,7 +3131,7 @@ impl Worker<'_> {
             .as_ref()
             .map(|child| Self::uia_node(context, child, None));
         let ancestors = read.ancestors.as_ref().and_then(|ancestors| {
-            read::uia_chain_from_read(context, self.client, ancestors, &previous)
+            read::uia_chain_from_read(context, self.client, (ancestors, read.hwnd), &previous)
         });
         *context.focus_path() = Some(FocusPath::of(read));
         tracing::debug!(

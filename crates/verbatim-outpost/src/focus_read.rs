@@ -957,24 +957,34 @@ impl FocusReader {
 
     /// Completes `facts`, the ancestors a read found, nearest first, ending
     /// at `outermost` (the focus itself, whose own window is `hwnd`, when
-    /// there are none), up to the top-level window, as NVDA's raw-view walk
-    /// reaches it. A remote operation's walk ends at the top-level element
-    /// of the focus's own process, and in the Settings app that is the
-    /// content's window, inside the frame window of another process
-    /// (`ApplicationFrameHost`'s), whose parent the program reports as null.
-    /// So when the outermost ancestor is not a top-level window, the walk
-    /// goes on the classic way, one tree walker step per ancestor, until
-    /// the desktop root or an ancestor of the focus before, whose own
-    /// ancestors are then reused. The outpost reads the frame through its
-    /// own API from the handle each step brings, as NVDA switches API at a
-    /// window boundary. An outermost ancestor that is a top-level window
-    /// costs no call; a windowless one, one call, which finds the root.
+    /// there are none), up to the top-level window of the focus's process,
+    /// as NVDA's raw-view walk reaches it, but never across the process
+    /// boundary. A remote operation's walk ends at the top-level element of
+    /// the focus's own process, whose parent the program reports as null;
+    /// in the Settings app that is the content's window, inside the frame
+    /// window of another process (`ApplicationFrameHost`'s), where the
+    /// chain ends, and the outpost continues it from the frame through
+    /// MSAA (`docs/design/listener-without-connections.md`, section 3,
+    /// step 11). When the outermost ancestor is neither a top-level window
+    /// nor below the boundary, the walk goes on the classic way, one tree
+    /// walker step per ancestor, until the desktop root, an ancestor whose
+    /// window's parent is another process's, or an ancestor of the focus
+    /// before, whose own ancestors are then reused. An outermost ancestor
+    /// that is a top-level window, or below the boundary, costs no call; a
+    /// windowless one, one call, which finds the root.
     fn reach_the_top_level(&self, outermost: &Live, hwnd: isize, facts: &mut Vec<UiaAncestorFact>) {
         let window = facts.last().map_or(hwnd, |fact| fact.hwnd);
         if window != 0 && top_level_of(window) == window {
             tracing::debug!(
                 window,
                 "UIA focus ancestors: the outermost is a top-level window; no classic walk"
+            );
+            return;
+        }
+        if window != 0 && verbatim_uia::parent_across_process_boundary(window).is_some() {
+            tracing::debug!(
+                window,
+                "UIA focus ancestors: the outermost is below the process boundary; no classic walk"
             );
             return;
         }
@@ -1031,6 +1041,8 @@ impl FocusReader {
             }
             let fact = ancestor_fact(&parent);
             log_ancestor_fact("classic walk", &fact);
+            let below_the_boundary =
+                fact.hwnd != 0 && verbatim_uia::parent_across_process_boundary(fact.hwnd).is_some();
             facts.push(fact);
             if let Some(met) = known
                 .iter()
@@ -1039,6 +1051,12 @@ impl FocusReader {
                 if let Some(last) = &self.last {
                     facts.extend(reused_ancestors(&last.ancestors, met));
                 }
+                break;
+            }
+            if below_the_boundary {
+                tracing::debug!(
+                    "UIA focus ancestors: the classic walk reached the process boundary"
+                );
                 break;
             }
             current = parent.live().clone();

@@ -1473,6 +1473,115 @@ fn uia_repeated_focus_costs_exactly() {
     app.quit();
 }
 
+/// The listener's walks stop below the process boundary
+/// (`docs/design/listener-without-connections.md`, sections 3 and 7): one
+/// mockapp's UIA window is made the child of another mockapp's MSAA
+/// window, by `SetParent` from this process, as the Settings page's content
+/// is the child of `ApplicationFrameHost`'s frame. The listener's read of
+/// a focus in the child, by the remote program and `reach_the_top_level`
+/// and by the classic walk alike, ends its chain at the child's window and
+/// takes no step into the parent's process. The outpost then continues the
+/// chain from the parent window's client area through MSAA. With either
+/// walk's boundary check removed, its step up into the parent shows in the
+/// parent's calls: 6 `WM_GETOBJECT`, 2 `accParent`, 5 `get_accState`, 3
+/// `get_accValue`, 2 `get_accRole`, and one each of `get_accName`,
+/// `get_accHelp`, `get_accKeyboardShortcut`, and `accLocation`.
+///
+/// The parent still receives 2 `WM_GETOBJECT`s while the listener reads,
+/// each with `UiaRootObjectId` and a nonzero wParam, the message a UIA
+/// connection begins with (logged from mockapp's window procedure on
+/// 2026-10-19): one when the nearest-window lookup
+/// (`NormalizeElementBuildCache`) returns the child window's element, and
+/// one when the read returns it as an ancestor. UIA's client side sends
+/// them itself whenever a call on a held element hands it an element of a
+/// window whose parent is another process's; no walk step is made.
+fn uia_focus_chains_stop_below_the_process_boundary() {
+    for remote in [true, false] {
+        let path = if remote { "remote" } else { "classic" };
+        let parent_title = common::unique_title(&format!("mockapp-boundary-parent-{path}"));
+        let parent_app = common::spawn("small.json", "msaa", &parent_title);
+        let parent = common::find_window(&parent_title);
+        let title = common::unique_title(&format!("mockapp-boundary-child-{path}"));
+        let mut app = common::spawn("counts.json", "uia", &title);
+        let hwnd = common::find_window(&title);
+        let under_test = UiaUnderTest::new(hwnd);
+        // Made while the child is still a top-level window, which it finds
+        // by its title, and reads as the foreground window.
+        let outpost = OutpostUnderTest::with_options(
+            &app,
+            OutpostOptions {
+                remote_operations: remote,
+            },
+        );
+        // SAFETY: two live windows of other processes; the call only
+        // changes the first one's parent.
+        unsafe { windows::Win32::UI::WindowsAndMessaging::SetParent(hwnd, Some(parent)) }
+            .expect("the child window takes the other process's window as its parent");
+        app.send("set-focus first");
+        let focused = under_test.focused(hwnd);
+
+        common::reset_hits(parent);
+        let (judged, listener_calls) = outpost.listener_read(&focused);
+        // As a cold focus in a top-level window: the classic read takes
+        // two steps, to the group and to the child's window, and none to
+        // the desktop's root, where a top-level window's walk takes three.
+        let expected_calls = if remote {
+            calls(3, 0, 1)
+        } else {
+            calls(6, 0, 1)
+        };
+        assert_eq!(
+            listener_calls, expected_calls,
+            "the listener's calls ({path})"
+        );
+        assert_eq!(
+            common::read_hits(parent),
+            [("WM_GETOBJECT", 2)],
+            "the parent's calls while the listener read ({path})"
+        );
+        let verbatim_outpost::focus_read::Judged::Read(read) = &judged else {
+            panic!("the listener did not read the focus ({path}): {judged:?}");
+        };
+        let ancestors: Vec<(Option<&str>, isize)> = read
+            .ancestors
+            .as_deref()
+            .expect("the listener read the focus's ancestors")
+            .iter()
+            .map(|ancestor| (ancestor.snapshot.name.as_deref(), ancestor.hwnd))
+            .collect();
+        assert_eq!(
+            ancestors,
+            [
+                (Some("Settings"), 0),
+                (Some("Mockapp Counts Fixture"), hwnd.0 as isize)
+            ],
+            "the listener's chain ({path})"
+        );
+
+        let reported = outpost.focus(judged.into_fact(0));
+        // The parent's probe, then its client area and the chain above it
+        // through MSAA.
+        assert_eq!(
+            reported.calls,
+            calls(0, 9, 1),
+            "the outpost's calls ({path})"
+        );
+        assert_eq!(
+            reported.chain(),
+            [
+                Some("Mockapp Events Fixture"),
+                Some("Mockapp Counts Fixture"),
+                Some("Settings"),
+                Some("First")
+            ],
+            "the outpost's chain ({path})"
+        );
+        drop(outpost);
+        app.quit();
+        parent_app.quit();
+    }
+}
+
 /// One object-navigation step's cost through an outpost reading UIA as
 /// `remote` says: the next sibling of `First`, then the parent of
 /// `Second`, from the nodes a focus on `First` and the first step reported,
@@ -3538,6 +3647,10 @@ fn main() {
         (
             "uia_repeated_focus_costs_exactly",
             uia_repeated_focus_costs_exactly,
+        ),
+        (
+            "uia_focus_chains_stop_below_the_process_boundary",
+            uia_focus_chains_stop_below_the_process_boundary,
         ),
         (
             "uia_navigation_steps_cost_exactly",

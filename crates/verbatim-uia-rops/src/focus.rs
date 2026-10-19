@@ -90,8 +90,9 @@ pub enum FocusAncestry {
 #[derive(Debug)]
 pub struct Ancestry {
     /// The raw-view ancestors, nearest first, each filled by the query's
-    /// fill. The walk ends at the process's top-level window; the desktop
-    /// root is never included.
+    /// fill. The walk ends at the process's top-level window, or at the
+    /// window below the process boundary; the desktop root is never
+    /// included.
     pub ancestors: Vec<Cached<Ancestor>>,
     /// Which of the query's known runtime ids the last ancestor has, when
     /// the walk stopped at a known ancestor.
@@ -624,8 +625,11 @@ impl RemoteCache {
 /// the walk `Uia::ancestors` makes, every element filled by the query's
 /// fill's request, the steps up into another application holding its
 /// lock ([`FocusQuery::lock_up_from`]). Stops where the remote program
-/// stops: at a known ancestor, at the depth limit, or below the desktop
-/// root; and when the query's time is up. The nearest window comes from the
+/// stops: at a known ancestor, at the depth limit, below the desktop
+/// root, or below the process boundary, at an element whose own window's
+/// parent window is another process's
+/// ([`verbatim_uia::parent_across_process_boundary`]); and when the
+/// query's time is up. The nearest window comes from the
 /// walked ancestors' caches, or, when the walk stopped before reaching
 /// one, from one more call ([`verbatim_uia::nearest_window_handle`]).
 ///
@@ -686,6 +690,20 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     loop {
         if out_of_time() {
             ancestry.out_of_time = true;
+            break;
+        }
+        // The walk stops below the process boundary: an element whose own
+        // window is the child of another process's window, as the Settings
+        // page's content is of `ApplicationFrameHost`'s frame, is the last
+        // ancestor, and the outpost of its application continues the chain
+        // from that parent window through MSAA
+        // (`docs/design/listener-without-connections.md`, section 3, step
+        // 11, and section 4.2). A local check, made only for an element
+        // with a window of its own.
+        if current_window != 0
+            && verbatim_uia::parent_across_process_boundary(current_window).is_some()
+        {
+            complete = true;
             break;
         }
         // A step up into another application's window, as from the Settings

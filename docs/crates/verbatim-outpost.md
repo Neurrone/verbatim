@@ -131,11 +131,16 @@ event's own element:
   host's text area above all, has its window found by the classic walk,
   and the ancestor that is that window marked with it. A remote
   operation's walk ends at the top-level element of the focus's own
-  process; when that element is not a top-level window, as the Settings
-  page's inside its frame, the read goes on with classic tree walker
-  steps up to the desktop root, or to an ancestor of the focus before, as
-  NVDA's raw-view walk does. An outermost element that is a top-level
-  window costs no call. A read that fails
+  process; when that element is neither a top-level window nor below the
+  process boundary, the read goes on with classic tree walker steps up to
+  the desktop root, or to an ancestor of the focus before, as NVDA's
+  raw-view walk does. No walk of the listener's steps across the process
+  boundary: an element whose window's parent window is another process's
+  (`verbatim_uia::parent_across_process_boundary`), as the Settings page's
+  content inside `ApplicationFrameHost`'s frame, is the last ancestor it
+  reads (`docs/design/listener-without-connections.md`, section 3, steps
+  8 and 11). An outermost element that is a top-level window, or below
+  the boundary, costs no call. A read that fails
   reports the focus from its event, its ancestors unknown, unless the
   event said it lacked the keyboard focus, as NVDA lets a focus through
   whose read fails.
@@ -208,10 +213,13 @@ re-exports `provider_process` and `console_host_of`, so Core routes a
 console client's focus-now query to its console host without depending
 on `verbatim-uia`. A focus whose top-level window belongs to
 another process, as the Settings app's page inside `ApplicationFrameHost`'s
-frame, reaches that window through its ancestry: the listener's read
-continues past the top-level element of the focus's own process to the
-top-level window (`FocusReader::reach_the_top_level`), and the outpost
-reads the frame through its own API.
+frame, is read by the listener up to the window below the process
+boundary, and the outpost continues the chain from that window's parent
+through MSAA, from its client area up, when the parent is read through
+MSAA (`read::uia_chain_onward`, for the listener's read and a focus-now
+read alike), as NVDA switches API at a window boundary. A parent window
+with a UIA provider, such as a WinUI host of WebView2 content, ends the
+chain at the boundary for now (section 4.4 of that design).
 
 ### Starting an outpost and asking for the focus
 
@@ -320,13 +328,12 @@ that names its process, the one it holds or the table's, waiting for it on
 the table's condition variable when it has not arrived; the wait is logged
 with its length, and the listener's shutdown ends it. A thread that cannot
 open its process reads without a lock. The thread's lock is its thread's
-(`set_thread_lock`), which the read's guarded calls take; its classic
-walks up into another application's window, as from the Settings page to
-its frame in `ApplicationFrameHost`, the focus read's own
-(`FocusQuery::lock_up_from`) and the one that continues a remote read
-(`FocusReader::reach_the_top_level`), take that application's lock for
-each step into or within it when the listener holds it
-(`FocusReader::lock_up_into`). The
+(`set_thread_lock`), which the read's guarded calls take. Its classic
+walks, the focus read's own and the one that continues a remote read
+(`FocusReader::reach_the_top_level`), stop below the process boundary;
+a step from a window of the application inside another application's
+top-level window still takes that application's lock when the listener
+holds it (`FocusQuery::lock_up_from`, `FocusReader::lock_up_into`). The
 registrations take no lock and make no connection by handle: a scope of
 windows' subtrees is given as their elements (`Scope::Subtrees`).
 

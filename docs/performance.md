@@ -481,6 +481,33 @@ focus waits behind the events queued before it as NVDA's does.
   could still stop at the desktop's root element, which is known locally,
   instead of asking for its parent.
 
+### A focus below the process boundary, UIA
+
+The focus is in a window whose parent window belongs to another process,
+as the Settings page's content is inside `ApplicationFrameHost`'s frame
+(`docs/design/listener-without-connections.md`, section 3, steps 8 and
+11). The ratchet makes it with two mockapps, one's UIA window made the
+child of the other's MSAA window (`call_counts.rs`,
+`uia_focus_chains_stop_below_the_process_boundary`), as a cold focus.
+
+- Minimum: the listener's calls of a cold focus, none of them a step into
+  the parent's process; the outpost's probe of the parent window and the
+  MSAA calls that read its client area and the chain above it.
+- Today, with remote operations: the listener's 3 UIA calls and 1 window
+  message, as for a cold focus; its chain ends at the child's window,
+  which costs only local window calls. Classic: 6 UIA calls and 1 window
+  message, the walk's two steps ending at the child's window with no step
+  to the desktop's root. The outpost then makes 9 MSAA calls and 1 window
+  message. While the listener reads, the parent's process receives 2
+  `WM_GETOBJECT`s by either path, each with `UiaRootObjectId` and a
+  nonzero wParam, which UIA's client side sends itself when a call on a
+  held element returns the child window's element (the nearest window and
+  the read); no other call. Before the walks stopped at the boundary,
+  their step up into the parent cost it 6 `WM_GETOBJECT`s and 17 MSAA
+  calls.
+- Target: no message to the parent from the listener, which UIA's client
+  side does not allow while the listener holds the child window's element.
+
 ### A focus change into a list, UIA
 
 The focus lands on the list itself, and its selected item is read with it.
